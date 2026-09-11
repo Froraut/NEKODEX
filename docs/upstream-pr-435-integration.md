@@ -58,6 +58,8 @@ installed Full harness acceptance remain separate release checks.
 The first Windows CI run identified one test assertion that searched serialized `hooks.json`
 for an unescaped shell command. Recovery had produced the correct quoted Windows command; JSON
 necessarily escaped its quotes and backslashes. The fork now parses the JSON and compares the
-exact command value. Quotes and a backslash in the synthetic fixture reproduce this regression
-on macOS too. The corrected recovery test and three adjacent recovery/symlink cases pass.
+exact command value. A backslash in the synthetic fixture reproduces this regression on macOS
+too; literal quote characters in arguments remain rejected by the Windows command safety check.
+The fixture was also exercised through Windows, macOS and Linux command generation and exact
+JSON round trips. The corrected recovery test and three adjacent recovery/symlink cases pass.
 This correction changes tests only; the installed runtime and packaged artifact are unchanged.

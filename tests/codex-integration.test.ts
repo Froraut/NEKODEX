@@ -176,8 +176,8 @@ describe("reversible native Codex route integration", () => {
     const previousJournal = readFileSync(getCodexJournalPath(), "utf8");
     const updated = installCodexIntegration({
       ...config,
-      // Exercise JSON escaping on every platform, not only Windows command/path quoting.
-      runtimeCommand: ["/opt/new-runtime/bun", "/opt/new-runtime/cli.js", 'fixture "quoted" \\argument'],
+      // Backslashes require JSON escaping on every platform and remain valid cmd.exe arguments.
+      runtimeCommand: ["/opt/new-runtime/bun", "/opt/new-runtime/cli.js", "fixture \\argument"],
     });
     writeFileSync(getCodexJournalPath(), previousJournal);
     writeFileSync(hooksPath, previousHooks);
