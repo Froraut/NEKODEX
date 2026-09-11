@@ -117,9 +117,9 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
 });
 
 test("macOS passkey sign-in is additive and displays a separate Chrome continuation guide", () => {
-  assert.match(appSource, /onAction=\{openLogin\}/);
+  assert.match(appSource, /onSecondaryAction=\{openLogin\}/);
   assert.match(appSource, /<BrowserSurface[\s\S]*?operation=\{operation\}[\s\S]*?platform=\{snapshot\.platform\}/);
-  assert.match(appSource, /const \{ navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked, passkeyCanImport \} = browserControls\(/);
+  assert.match(appSource, /const \{[^}]*\bpasskeyCanImport\b[^}]*\} = browserControls\(/);
   assert.match(appSource, /\{passkeyAvailable \? \([\s\S]*?className="toolbar-text-button"[\s\S]*?passkeyLabel/);
   assert.match(appSource, /className="browser-empty-actions"[\s\S]*?passkeyLabel/);
   assert.match(appSource, /passkeyWaiting \? continuePasskeyLogin : openPasskeyLogin/);

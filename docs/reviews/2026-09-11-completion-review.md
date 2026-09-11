@@ -149,6 +149,25 @@ The final post-package edits affect only verification scripts, their fixtures an
 the installed production/runtime bytes are the ones covered by the checks above. Source
 publication and installation do not imply live ChatGPT, Codex/MCP or notarization acceptance.
 
+## Published 5.1.0-froraut.1 follow-up
+
+Commit [`d29ee40`](https://github.com/Froraut/codex-chatgpt-web/commit/d29ee40d86e30808b23e99e573b18d6d28d7318a)
+passed [CI run 34642372711](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34642372711).
+The macOS, Ubuntu and Windows jobs each passed the complete `bun run verify`, native packaging
+and packaged startup smoke. Actionlint also passed; Linux passed its current-Arch AppImage ABI
+check and Windows passed PowerShell 5.1 installer validation. These results certify that exact
+commit; later changes require their own checks.
+
+An additional native macOS arm64 test used temporary copies of the unchanged 5.0.7 and 5.1.0
+packages. The shipped updater completed replacement after real Electron renderer/runtime
+readiness, preserving all 7,303 prior bundle entries until commit. A deliberate failure after
+readiness restored the exact previous bundle and its rendered interface. Content, modes and
+symlink targets matched. To isolate this from the user's production app and Login Items, the
+private supervisor harness added `--dev-profile --hidden`, supplied fresh homes to every
+process, and redirected recovery registration to a private home. This proves native transaction
+and readiness behavior with that explicit isolation adjustment; it does not claim an actual
+reboot, production-profile migration, live download click or account acceptance.
+
 ## External release and acceptance gates
 
 - **Apple distribution signing is not available locally yet.** Xcode lists a Developer ID

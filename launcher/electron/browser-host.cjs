@@ -12,6 +12,7 @@ const { validateConnectorName } = require("./connector-identity.cjs");
 const { processRunning } = require("./process-tree.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { initialPasskeyProgress, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
+const { publicExistingChromeProgress, openExistingChromeLogin, cancelExistingChromeLogin } = require("./existing-chrome-login.cjs");
 const { createRemotePermissionPolicy, httpsOrigin } = require("./remote-permissions.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
@@ -335,6 +336,7 @@ class BrowserHost {
     helper,
     logger,
     loginWithPasskey,
+    loginWithExistingChrome,
     partition = "persist:codex-web-gpt-chatgpt",
     profile = "production",
     publishState,
@@ -358,6 +360,7 @@ class BrowserHost {
     this.helper = helper;
     this.logger = logger;
     this.loginWithPasskey = loginWithPasskey;
+    this.loginWithExistingChrome = loginWithExistingChrome;
     if (profile !== "production" && profile !== "development") {
       throw new Error("Browser host profile is invalid");
     }
@@ -1335,8 +1338,9 @@ class BrowserHost {
       maxTabs: MAX_BROWSER_TABS,
       navigationLocked: Boolean(this.activeTraceId || this.manualOperation || this.loginOperation),
       loginInProgress: Boolean(this.loginOperation),
-      loginKind: this.passkeyLoginOperation ? "passkey" : this.embeddedLoginController ? "embedded" : null,
+      loginKind: this.existingChromeLoginOperation ? "existing-chrome" : this.passkeyLoginOperation ? "passkey" : this.embeddedLoginController ? "embedded" : null,
       passkeyLogin: publicPasskeyProgress(this.passkeyProgress),
+      existingChromeLogin: publicExistingChromeProgress(this.existingChromeProgress),
     };
   }
 
@@ -2459,6 +2463,7 @@ class BrowserHost {
       return this.loginOperation;
     }
     this.passkeyProgress = null;
+    this.existingChromeProgress = null;
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     const controller = new AbortController();
     this.embeddedLoginController = controller;
@@ -2508,6 +2513,19 @@ class BrowserHost {
     return tracked;
   }
 
+  openExistingChromeLogin(confirmImport) {
+    requireAutomaticBrowserInspection(this, "Importing the existing Chrome sign-in");
+    return openExistingChromeLogin(this, async () => {
+      const consented = await confirmImport();
+      if (consented === true) requireAutomaticBrowserInspection(this, "Importing the existing Chrome sign-in");
+      return consented;
+    });
+  }
+
+  cancelExistingChromeLogin(cancelCapture) {
+    return cancelExistingChromeLogin(this, cancelCapture);
+  }
+
   openPasskeyLogin() {
     requireAutomaticBrowserInspection(this, "Automated ChatGPT passkey import");
     if (this.passkeyLoginOperation) return this.passkeyLoginOperation;
@@ -2520,6 +2538,7 @@ class BrowserHost {
     const embeddedController = this.embeddedLoginController;
     if (this.loginOperation && !embeddedLogin) return this.loginOperation;
     this.passkeyProgress = initialPasskeyProgress();
+    this.existingChromeProgress = null;
     const controller = new AbortController();
     this.passkeyLoginController = controller;
     this.authGeneration = (this.authGeneration ?? 0) + 1;
@@ -2707,6 +2726,7 @@ class BrowserHost {
   async logout() {
     requireAutomaticBrowserInspection(this, "Automated ChatGPT logout verification");
     return await this.withManualOperation("ChatGPT logout", async () => {
+      this.existingChromeProgress = null;
       this.authGeneration = (this.authGeneration ?? 0) + 1;
       if (this.authView) this.closeAuthView(this.authView, true, false);
       const contents = this.view.webContents;
@@ -3082,6 +3102,7 @@ class BrowserHost {
 
   destroy() {
     this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));
+    this.existingChromeLoginController?.abort(new Error("Existing Chrome sign-in cancelled during launcher shutdown"));
     this.permissionPolicy?.destroy();
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     try {

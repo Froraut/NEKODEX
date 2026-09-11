@@ -43,11 +43,22 @@ export interface BrowserState {
   zoomFactor: number;
   navigationLocked: boolean;
   loginInProgress: boolean;
-  loginKind: "embedded" | "passkey" | null;
+  loginKind: "embedded" | "passkey" | "existing-chrome" | null;
   passkeyLogin?: PasskeyLoginProgress | null;
+  existingChromeLogin?: ExistingChromeLoginProgress | null;
   activeTabId: string;
   maxTabs: number;
   tabs: BrowserTabState[];
+}
+
+export interface ExistingChromeLoginProgress {
+  phase: "consent" | "discovering" | "waiting-for-chrome" | "reading-session" | "verifying" | "cancelling" | "cancelled" | "timed-out" | "failed" | "completed";
+  startedAt: string;
+  deadlineAt: string;
+  active: boolean;
+  canCancel: boolean;
+  canCopySettings: boolean;
+  error: string | null;
 }
 
 export interface PasskeyLoginProgress {
@@ -176,6 +187,9 @@ export interface LauncherApi {
   continuePasskeyLogin(): Promise<boolean>;
   revealPasskeyLogin(): Promise<boolean>;
   cancelPasskeyLogin(): Promise<BrowserState>;
+  openExistingChromeLogin(): Promise<BrowserState>;
+  cancelExistingChromeLogin(): Promise<BrowserState>;
+  copyExistingChromeSettingsAddress(): Promise<boolean>;
   logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
   dismissSessionReminder(): Promise<LauncherState>;
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;

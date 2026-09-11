@@ -6,6 +6,8 @@ import { isAbsolute } from "node:path";
 import { stdin, stdout } from "node:process";
 import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } from "./browser-login";
 import { createPasskeyLoginControl } from "./passkey-login-control";
+import { createExistingChromeLoginControl } from "./existing-chrome-login-control";
+import { captureExistingChromeLoginToFile } from "./existing-chrome-login";
 import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
 import {
   inspectLauncherBrowserHost,
@@ -141,6 +143,11 @@ function assertNoArgs(args: string[]): void {
 
 async function loginCommand(args: string[]): Promise<void> {
   const launcherControl = takeFlag(args, "--launcher-control");
+  const existingChrome = takeFlag(args, "--existing-chrome");
+  const consentUserProfile = takeFlag(args, "--consent-user-profile");
+  if ((existingChrome || consentUserProfile) && !launcherControl) {
+    throw new Error("Existing Chrome import requires explicit consent in the launcher");
+  }
   if (!launcherControl) {
     assertNoArgs(args);
     const config = loadConfig();
@@ -155,6 +162,22 @@ async function loginCommand(args: string[]): Promise<void> {
   const chromeExecutablePath = takeOption(args, "--chrome");
   const storageStatePath = takeOption(args, "--storage-state");
   assertNoArgs(args);
+  if (existingChrome) {
+    authorizeLauncherControl("existing Chrome login");
+    if (!consentUserProfile || chromeExecutablePath || !storageStatePath || !isAbsolute(storageStatePath)) {
+      throw new Error("Existing Chrome import requires explicit profile consent and an absolute --storage-state path");
+    }
+    const control = createExistingChromeLoginControl();
+    try {
+      await captureExistingChromeLoginToFile({ ...defaultConfig(), storageStatePath }, {
+        consent: true, signal: control.signal,
+        onProgress: progress => stdout.write(`@codex-chrome-import:${JSON.stringify(progress)}\n`),
+      });
+    } finally { control.close(); }
+    stdout.write("Existing Chrome session captured for Launcher verification.\n");
+    return;
+  }
+  if (consentUserProfile) throw new Error("Profile consent is only valid for existing Chrome import");
   authorizeLauncherControl("passkey login");
   if (process.platform !== "darwin") throw new Error("Passkey sign-in is currently supported only on macOS");
   if (!chromeExecutablePath || !isAbsolute(chromeExecutablePath)) {

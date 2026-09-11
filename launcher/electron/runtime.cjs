@@ -17,6 +17,7 @@ const { embeddedRuntimeInvocation, runtimeInvocation } = require("./runtime-comm
 const { redactText } = require("./logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
 const { parsePasskeyProgress } = require("./passkey-login-progress.cjs");
+const existingChromeRuntime = require("./existing-chrome-runtime.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
@@ -27,12 +28,12 @@ const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
 const PASSKEY_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const MAX_PASSKEY_STATE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_PASSKEY_MARKER_FILE_BYTES = 64 * 1024;
-function collect(stream, chunks, onLine, onError) {
+function collect(stream, chunks, onLine, onError, retainOutput = true) {
   let buffered = "";
   let bytes = 0;
   stream.on("data", (chunk) => {
     bytes += chunk.length;
-    if (bytes <= MAX_CAPTURE_BYTES) chunks.push(chunk);
+    if (retainOutput && bytes <= MAX_CAPTURE_BYTES) chunks.push(chunk);
     buffered += chunk.toString("utf8");
     for (;;) {
       const newline = buffered.indexOf("\n");
@@ -210,6 +211,8 @@ class RuntimeHost {
     this.lifecycleOperation = null;
     this.cleanupEphemeralSecrets();
     this.passkeyContinuationRequested = false;
+    try { existingChromeRuntime.cleanupExistingChromeTransfers(this); }
+    catch { this.logger.warn("runtime.existing_chrome_cleanup_failed", { message: "Private Chrome import cleanup failed; retry required" }); }
     try {
       this.cleanupPasskeyTransfers();
     } catch (error) {
@@ -366,6 +369,15 @@ class RuntimeHost {
       child.once("exit", () => clearTimeout(force));
       return true;
     }
+  }
+
+  captureExistingChromeLogin(onProgress) {
+    if (this.getBrowserInteractionMode?.() === "manual") throw new Error("Existing Chrome import is unavailable in Manual mode");
+    return existingChromeRuntime.captureExistingChromeLogin(this, onProgress);
+  }
+
+  cancelExistingChromeLogin() {
+    return existingChromeRuntime.cancelExistingChromeLogin(this);
   }
 
   async capturePasskeyLogin(onProgress) {
@@ -694,13 +706,15 @@ class RuntimeHost {
         if (options.controlStdin) child.stdin.on("error", recordPipeError("stdin"));
         collect(child.stdout, stdout, (line) => {
           if (options.onStdoutLine?.(line)) return;
+          if (options.privateOutput) return;
           this.logger.info("runtime.stdout", { operation: name, line });
           this.publishOperation?.({ name, status: "running", message: redactText(line) });
-        }, recordPipeError("stdout"));
+        }, recordPipeError("stdout"), !options.privateOutput);
         collect(child.stderr, stderr, (line) => {
+          if (options.privateOutput) return;
           this.logger.warn("runtime.stderr", { operation: name, line });
           this.publishOperation?.({ name, status: "running", message: redactText(line) });
-        }, recordPipeError("stderr"));
+        }, recordPipeError("stderr"), !options.privateOutput);
         let settled = false;
         let timedOut = null;
         let terminationTimeout = null;
@@ -795,7 +809,9 @@ class RuntimeHost {
       this.publishOperation?.({ name, status: "completed", message: options.successMessage || "Completed" });
       return result;
     } catch (error) {
-      const message = redactText(error instanceof Error ? error.message : String(error));
+      const message = options.privateOutput
+        ? `${name} ${/timed out/i.test(error?.message ?? "") ? "timed out" : "failed"}`
+        : redactText(error instanceof Error ? error.message : String(error));
       this.logger.error("runtime.operation_failed", { name, message });
       this.publishOperation?.({ name, status: "failed", message });
       throw new Error(message);

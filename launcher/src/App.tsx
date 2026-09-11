@@ -14,6 +14,7 @@ import { Icon, type IconName } from "./icons";
 import { browserControls } from "./browser-controls";
 import { RouteDiagnostics } from "./RouteDiagnostics";
 import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
+import { ExistingChromeLoginGuide } from "./ExistingChromeLoginGuide";
 import type {
   BrowserInteractionMode,
   BrowserState,
@@ -855,9 +856,11 @@ function BrowserSurface({
 }) {
   const [passkeyStarting, setPasskeyStarting] = useState(false);
   const [passkeyRequestPending, setPasskeyRequestPending] = useState(false);
+  const [existingChromeStarting, setExistingChromeStarting] = useState(false);
   const visible = browser?.visible === true;
   const manualInteraction = interactionMode === "manual";
-  const { navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked, passkeyCanImport } = browserControls(
+  const { navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked, passkeyCanImport,
+    existingChromeAvailable, existingChromeWaiting, existingChromeBlocked } = browserControls(
     browser, operation, platform, interactionMode,
   );
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
@@ -920,6 +923,14 @@ function BrowserSurface({
     } finally {
       setPasskeyStarting(false);
     }
+  };
+  const openExistingChromeLogin = async () => {
+    if (existingChromeBlocked || existingChromeWaiting || existingChromeStarting) return;
+    setExistingChromeStarting(true);
+    setError(null);
+    try { await api!.openExistingChromeLogin(); }
+    catch { setError(copy.existingChromeFailure); }
+    finally { setExistingChromeStarting(false); }
   };
   const continuePasskeyLogin = async () => {
     if (!passkeyCanImport || passkeyRequestPending) return;
@@ -1034,6 +1045,11 @@ function BrowserSurface({
           </button>
           <IconButton icon="plus" label={copy.zoomIn} onClick={() => void zoom("in")} />
         </div>
+        {existingChromeAvailable ? (
+          <button className="toolbar-text-button" type="button"
+            disabled={existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
+            onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</button>
+        ) : null}
         {passkeyAvailable ? (
           <button
             className="toolbar-text-button"
@@ -1049,7 +1065,9 @@ function BrowserSurface({
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
-      {!manualInteraction && browser?.passkeyLogin && browser.passkeyLogin.phase !== "completed" ? (
+      {!manualInteraction && browser?.existingChromeLogin ? (
+        <ExistingChromeLoginGuide progress={browser.existingChromeLogin} copy={copy} onRetry={openExistingChromeLogin} setError={setError} />
+      ) : !manualInteraction && browser?.passkeyLogin && browser.passkeyLogin.phase !== "completed" ? (
         <PasskeyLoginGuide progress={browser.passkeyLogin} copy={copy} onRetry={openPasskeyLogin} setError={setError} />
       ) : browser?.loginKind === "embedded" ? (
         <div className="browser-login-guide" role="status">
@@ -1077,11 +1095,14 @@ function BrowserSurface({
               ? copy.stepAccountBody
               : browser?.authenticated
               ? copy.noActiveTaskBody
-              : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
+              : existingChromeWaiting ? copy.existingChromeBody : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
-              <PrimaryButton disabled={passkeyWaiting} onClick={() => void toggle()}>
+              {existingChromeAvailable ? <PrimaryButton
+                disabled={existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
+                onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</PrimaryButton> : null}
+              <SecondaryButton disabled={passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
                 {manualInteraction || browser?.authenticated ? copy.openChatgpt : copy.signIn}
-              </PrimaryButton>
+              </SecondaryButton>
               {passkeyAvailable ? (
                 <SecondaryButton
                   disabled={passkeyActionDisabled}
@@ -1201,6 +1222,11 @@ function SetupSurface({
     await activateBrowser();
     await api!.openLogin();
   });
+  const useExistingChrome = !manualInteraction && ["darwin", "win32", "linux"].includes(snapshot.platform);
+  const openExistingChromeLogin = () => run(async () => {
+    await activateBrowser(false);
+    await api!.openExistingChromeLogin();
+  });
   const smoke = () => run(async () => {
     await activateBrowser();
     await api!.smokeTest();
@@ -1228,12 +1254,15 @@ function SetupSurface({
           <SetupRow
             action={browser?.authenticated
               ? copy.signedIn
-              : browser?.status === "loading" ? copy.checkingSignIn : copy.signIn}
+              : browser?.status === "loading" ? copy.checkingSignIn : useExistingChrome ? copy.existingChromeSignIn : copy.signIn}
             complete={browser?.authenticated === true}
-            description={copy.stepAccountBody}
+            description={useExistingChrome ? copy.existingChromeBody : copy.stepAccountBody}
             disabled={busy}
             index={1}
-            onAction={openLogin}
+            onAction={useExistingChrome ? openExistingChromeLogin : openLogin}
+            secondaryAction={useExistingChrome && !browser?.authenticated ? copy.signIn : undefined}
+            onSecondaryAction={openLogin}
+            secondaryDisabled={busy}
             title={copy.stepAccount}
           />
           <SetupRow

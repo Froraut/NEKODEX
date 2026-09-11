@@ -189,6 +189,10 @@ that option clicks **Allow once**, never a permanent grant.
 
 ## Operations
 
+To reuse a ChatGPT account already signed in to your normal Chrome profile, see
+[existing Chrome sign-in](docs/existing-chrome-sign-in.md). This requires Chrome's explicit
+connection permission and transfers only the scoped ChatGPT/OpenAI session into the launcher.
+
 Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
 Use the [scoped account/UI acceptance runner](docs/account-ui-acceptance.md) for versioned offline
 fixtures and separately authorized local or account checks. It defaults to zero account operations.

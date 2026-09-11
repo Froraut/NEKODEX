@@ -6,6 +6,7 @@ const { pathToFileURL } = require("node:url");
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -35,6 +36,7 @@ const { createUpdateController } = require("./update.cjs");
 const { captureUpdateReadiness, proveUpdateReadiness } = require("./update-readiness.cjs");
 const updateReadinessHandoff = captureUpdateReadiness();
 const { recoverStartupFailure } = require("./startup-recovery.cjs");
+const { CHROME_SETTINGS_ADDRESS, confirmExistingChromeImport } = require("./existing-chrome-consent.cjs");
 const {
   createStateStore,
   nextSessionRefreshReminderAt,
@@ -539,6 +541,19 @@ function registerIpc({ logger, stateStore }) {
     return runtimeHost.revealPasskeyLogin();
   });
   handle("launcher:browser-passkey-login-cancel", () => browserHost.cancelPasskeyLogin(() => runtimeHost.cancelPasskeyLogin()));
+  handle("launcher:browser-existing-chrome-login", async () => {
+    const browser = await browserHost.openExistingChromeLogin(() => confirmExistingChromeImport(dialog, mainWindow, stateStore.read().language));
+    if (browser.authenticated) {
+      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
+      send("launcher:state-changed", state);
+    }
+    return browser;
+  });
+  handle("launcher:browser-existing-chrome-login-cancel", () => browserHost.cancelExistingChromeLogin(() => runtimeHost.cancelExistingChromeLogin()));
+  handle("launcher:browser-existing-chrome-settings-copy", () => {
+    clipboard.writeText(CHROME_SETTINGS_ADDRESS);
+    return true;
+  });
   handle("launcher:browser-logout", async () => {
     const browser = await browserHost.logout();
     const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
@@ -1055,6 +1070,7 @@ async function start() {
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
     loginWithPasskey: onProgress => runtimeHost.capturePasskeyLogin(onProgress),
+    loginWithExistingChrome: onProgress => runtimeHost.captureExistingChromeLogin(onProgress),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
     publishState: (state) => send("launcher:browser-state", state),

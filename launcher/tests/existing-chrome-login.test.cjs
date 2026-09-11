@@ -1,0 +1,298 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { BrowserHost } = require("../electron/browser-host.cjs");
+const { RuntimeHost } = require("../electron/runtime.cjs");
+const { openExistingChromeLogin, cancelExistingChromeLogin, initialExistingChromeProgress, publicExistingChromeProgress, parseExistingChromeProgress } = require("../electron/existing-chrome-login.cjs");
+const { captureExistingChromeLogin, cancelExistingChromeLogin: cancelRuntime } = require("../electron/existing-chrome-runtime.cjs");
+const { confirmExistingChromeImport, CHROME_SETTINGS_ADDRESS } = require("../electron/existing-chrome-consent.cjs");
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+function fixture() {
+  const events = [];
+  const host = {
+    state: { authenticated: false, status: "signed-out", loading: false, message: "previous session" },
+    authGeneration: 4, loginOperation: null, embeddedLoginController: null,
+    snapshot() { return { ...this.state, loginInProgress: Boolean(this.loginOperation), loginKind: this.existingChromeLoginOperation ? "existing-chrome" : this.embeddedLoginController ? "embedded" : null, existingChromeLogin: publicExistingChromeProgress(this.existingChromeProgress) }; },
+    setState(patch) { this.state = { ...this.state, ...patch }; },
+    publishState() {}, activateHomeSurface() {}, show() {},
+    withManualOperation: async (_label, action) => action(),
+    loginWithExistingChrome: async () => { events.push("capture"); return { storageState: {}, cleanup: async () => events.push("cleanup") }; },
+    installPasskeyLogin: async transfer => { events.push("verify"); await transfer.cleanup(); host.setState({ authenticated: true, status: "ready", loading: false }); return host.snapshot(); },
+  };
+  return { host, events };
+}
+
+test("no helper starts before explicit local consent; concurrent starts share one owner", async () => {
+  const { host, events } = fixture();
+  let allow;
+  const consent = new Promise(resolve => { allow = resolve; });
+  const pending = openExistingChromeLogin(host, () => consent);
+  assert.equal(host.authGeneration, 4);
+  assert.equal(host.snapshot().existingChromeLogin.phase, "consent");
+  assert.deepEqual(events, []);
+  assert.equal(openExistingChromeLogin(host, () => { throw new Error("duplicate consent"); }), pending);
+  allow(true);
+  const result = await pending;
+  assert.equal(result.authenticated, true);
+  assert.equal(result.loginInProgress, false);
+  assert.equal(result.loginKind, null);
+  assert.equal(result.existingChromeLogin.active, false);
+  assert.deepEqual(events, ["capture", "verify", "cleanup"]);
+  assert.equal(host.authGeneration, 5);
+  assert.equal(host.loginOperation, null);
+  assert.equal(host.snapshot().existingChromeLogin.phase, "completed");
+});
+
+test("declined consent preserves the previous session and an in-flight embedded owner", async () => {
+  const { host, events } = fixture();
+  const previous = { ...host.state };
+  const embedded = new Promise(() => {});
+  const embeddedController = new AbortController();
+  host.embeddedLoginController = embeddedController;
+  host.loginOperation = embedded;
+  await openExistingChromeLogin(host, async () => false);
+  assert.deepEqual(host.state, previous);
+  assert.deepEqual(events, []);
+  assert.equal(host.authGeneration, 4);
+  assert.equal(embeddedController.signal.aborted, false);
+  assert.equal(host.loginOperation, embedded);
+});
+
+test("declined consent resolves a final cancelled snapshot with navigation ownership released", async () => {
+  const { host } = fixture();
+  const result = await openExistingChromeLogin(host, async () => false);
+  assert.equal(result.existingChromeLogin.phase, "cancelled");
+  assert.equal(result.existingChromeLogin.active, false);
+  assert.equal(result.loginInProgress, false);
+  assert.equal(result.loginKind, null);
+});
+
+test("capture failure preserves old browser state, redacts raw errors, and permits retry", async () => {
+  const { host, events } = fixture();
+  const previous = { ...host.state };
+  const capture = host.loginWithExistingChrome;
+  host.loginWithExistingChrome = async () => { throw new Error("SECRET https://sensitive.test/cookie"); };
+  await assert.rejects(openExistingChromeLogin(host, async () => true), /Existing Chrome sign-in could not be imported/);
+  assert.deepEqual(host.state, previous);
+  assert.doesNotMatch(JSON.stringify(host.snapshot()), /SECRET|sensitive/);
+  assert.equal(host.loginOperation, null);
+  assert.deepEqual(events, []);
+  host.loginWithExistingChrome = capture;
+  assert.equal((await openExistingChromeLogin(host, async () => true)).authenticated, true);
+});
+
+test("an import failure is sanitized before withManualOperation can publish any snapshot", async () => {
+  const { host } = fixture();
+  const snapshots = [];
+  host.publishState = state => snapshots.push(state);
+  host.setState = patch => { host.state = { ...host.state, ...patch }; host.publishState(host.snapshot()); };
+  host.withManualOperation = BrowserHost.prototype.withManualOperation.bind(host);
+  host.ready = async () => {};
+  host.logger = { info() {}, error() {} };
+  let called = false;
+  host.installPasskeyLogin = async () => { called = true; throw new Error("SECRET cookie https://sensitive.test"); };
+  await assert.rejects(openExistingChromeLogin(host, async () => true), /could not be imported/);
+  assert.equal(called, true);
+  assert.doesNotMatch(JSON.stringify(snapshots), /SECRET|sensitive/);
+  assert.doesNotMatch(host.state.message, /SECRET|sensitive/);
+});
+
+test("authentication completed during consent or refresh is preserved without capture", async () => {
+  for (const where of ["consent", "refresh"]) {
+    const { host, events } = fixture();
+    let complete;
+    const waiting = new Promise(resolve => { complete = () => { host.setState({ authenticated: true, status: "ready", loading: false }); resolve(true); }; });
+    if (where === "refresh") host.sessionRefreshOperation = waiting;
+    const operation = openExistingChromeLogin(host, where === "consent" ? () => waiting : async () => true);
+    await flush();
+    complete();
+    const result = await operation;
+    assert.equal(result.authenticated, true);
+    assert.deepEqual(events, []);
+    assert.equal(host.authGeneration, 4);
+    assert.equal(host.existingChromeProgress, null);
+  }
+});
+
+test("a stale embedded navigation error cannot defeat an existing Chrome import", async () => {
+  const { host } = fixture(), install = host.installPasskeyLogin;
+  host.authNavigationError = new Error("stale login navigation");
+  host.installPasskeyLogin = async (...args) => { assert.equal(host.authNavigationError, null); return install(...args); };
+  assert.equal((await openExistingChromeLogin(host, async () => true)).authenticated, true);
+});
+
+test("cancellation does not conceal a failed private transfer cleanup", async () => {
+  const { host } = fixture();
+  let captured;
+  host.loginWithExistingChrome = () => new Promise(resolve => { captured = resolve; });
+  const operation = openExistingChromeLogin(host, async () => true);
+  const rejected = assert.rejects(operation, /cleanup failed/);
+  await flush();
+  await assert.rejects(cancelExistingChromeLogin(host, async () => captured({ storageState: {}, cleanup: async () => { throw new Error("SECRET removal"); } })), /cleanup failed/);
+  await rejected;
+  assert.equal(host.snapshot().existingChromeLogin.phase, "failed");
+  assert.equal(host.snapshot().existingChromeLogin.error, "existing-chrome-cleanup-failed");
+  assert.doesNotMatch(JSON.stringify(host.snapshot()), /SECRET/);
+});
+
+test("cancel during capture disconnects only its helper and cleans a late transfer without importing", async () => {
+  const { host, events } = fixture();
+  const previous = { ...host.state };
+  let captured;
+  host.loginWithExistingChrome = () => new Promise(resolve => { captured = resolve; });
+  const operation = openExistingChromeLogin(host, async () => true);
+  await flush();
+  const cancel = cancelExistingChromeLogin(host, async () => {
+    events.push("cancel-helper");
+    captured({ storageState: {}, cleanup: async () => events.push("cleanup") });
+  });
+  await Promise.all([operation, cancel]);
+  assert.deepEqual(events, ["cancel-helper", "cleanup"]);
+  assert.deepEqual(host.state, previous);
+  assert.equal(host.snapshot().existingChromeLogin.phase, "cancelled");
+});
+
+test("existing passkey/turn ownership and Manual policy prevent starting a different import", () => {
+  const { host, events } = fixture();
+  host.loginOperation = Promise.resolve({});
+  assert.throws(() => openExistingChromeLogin(host, async () => true), /Another ChatGPT sign-in/);
+  host.loginOperation = null;
+  host.getBrowserInteractionMode = () => "manual";
+  assert.throws(() => BrowserHost.prototype.openExistingChromeLogin.call(host, async () => true), /disabled in Manual mode/);
+  assert.deepEqual(events, []);
+});
+
+test("a mode change during native consent is rechecked before capturing Chrome", async () => {
+  const { host, events } = fixture();
+  let mode = "automatic", approve;
+  host.getBrowserInteractionMode = () => mode;
+  const operation = BrowserHost.prototype.openExistingChromeLogin.call(host, () => new Promise(resolve => { approve = resolve; }));
+  mode = "manual";
+  approve(true);
+  await assert.rejects(operation, /could not be imported/);
+  assert.deepEqual(events, []);
+});
+
+test("public progress accepts only known phases and does not expose arbitrary helper fields", () => {
+  const progress = initialExistingChromeProgress(1_000_000);
+  const deadlineAt = progress.deadlineAt;
+  assert.equal(publicExistingChromeProgress(progress).canCancel, false);
+  for (const phase of ["discovering", "waiting-for-chrome", "reading-session"]) {
+    assert.deepEqual(parseExistingChromeProgress(`@codex-chrome-import:${JSON.stringify({ version: 1, phase, deadlineAt, cookies: "SECRET" })}`), { phase, deadlineAt });
+  }
+  assert.equal(parseExistingChromeProgress('@codex-chrome-import:{"version":1,"phase":"completed"}'), null);
+  assert.equal(parseExistingChromeProgress('@codex-chrome-import:{"version":1,"phase":"waiting-for-chrome","deadlineAt":"bad"}'), null);
+  const publicState = publicExistingChromeProgress({ ...progress, phase: "waiting-for-chrome", cookies: "SECRET" });
+  assert.equal(publicState.canCancel, true);
+  assert.equal(publicState.canCopySettings, true);
+  assert.doesNotMatch(JSON.stringify(publicState), /SECRET/);
+});
+
+test("native consent is cancel by default and explains the broad Chrome permission in every language", async () => {
+  assert.equal(CHROME_SETTINGS_ADDRESS, "chrome://inspect/#remote-debugging");
+  for (const language of ["en", "zh-CN", "ja"]) {
+    let options;
+    const dialog = { showMessageBox: async (_window, value) => { options = value; return { response: 0 }; } };
+    assert.equal(await confirmExistingChromeImport(dialog, {}, language), false);
+    assert.equal(options.defaultId, 0);
+    assert.equal(options.cancelId, 0);
+    assert.ok(options.detail.includes(CHROME_SETTINGS_ADDRESS));
+    assert.ok(options.detail.includes("ChatGPT/OpenAI"));
+    assert.equal(await confirmExistingChromeImport({ showMessageBox: async () => ({ response: 1 }) }, {}, language), true);
+  }
+});
+
+function runtimeFixture(platform, root) {
+  const host = {
+    platform, app: { getPath: () => root }, currentOperation: () => null,
+    launcherControlEnvironment: () => ({ CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "fixture-only" }),
+    run: async (_name, args, options) => {
+      const storage = args[args.indexOf("--storage-state") + 1];
+      fs.writeFileSync(storage, JSON.stringify({ cookies: [], origins: [] }));
+      fs.writeFileSync(`${storage}.verified.json`, JSON.stringify({ version: 1, source: "existing-chrome-profile", captureComplete: true, capturedAt: new Date().toISOString() }));
+      host.invocation = { args, options };
+    },
+  };
+  return host;
+}
+
+test("all supported platforms capture a scoped private transfer with a distinct marker and no Chrome launch arguments", async () => {
+  for (const platform of ["darwin", "win32", "linux"]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-runtime-"));
+    try {
+      const host = runtimeFixture(platform, root);
+      const transfer = await captureExistingChromeLogin(host);
+      assert.deepEqual(transfer.storageState, { cookies: [], origins: [] });
+      assert.ok(host.invocation.args.includes("--existing-chrome"));
+      assert.ok(host.invocation.args.includes("--consent-user-profile"));
+      assert.ok(!host.invocation.args.includes("--chrome"));
+      assert.ok(!host.invocation.args.some(value => /user-data-dir|new-window|remote-debugging-port/.test(value)));
+      assert.equal(host.invocation.options.privateOutput, true);
+      assert.equal(host.invocation.options.onStdoutLine("SECRET"), true);
+      await transfer.cleanup();
+      assert.deepEqual(fs.readdirSync(path.join(root, "existing-chrome-login")), []);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("capture rejects an isolated-profile marker and removes all temporary state", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-runtime-"));
+  try {
+    const host = runtimeFixture("darwin", root), run = host.run;
+    host.run = async (...args) => {
+      await run(...args);
+      const storage = args[1][args[1].indexOf("--storage-state") + 1];
+      fs.writeFileSync(`${storage}.verified.json`, JSON.stringify({ version: 1, source: "isolated-normal-browser-profile", captureComplete: true, capturedAt: new Date().toISOString() }));
+    };
+    await assert.rejects(captureExistingChromeLogin(host), /could not be imported/);
+    assert.deepEqual(fs.readdirSync(path.join(root, "existing-chrome-login")), []);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("broken control cancels the exact importer process only and refuses unrelated operations", async () => {
+  const killed = [];
+  const child = { exitCode: null, signalCode: null, stdin: { writable: false }, kill: signal => killed.push(signal) };
+  const host = { active: "existing-chrome-login", activeChild: child };
+  assert.equal(await cancelRuntime(host), true);
+  assert.deepEqual(killed, ["SIGTERM"]);
+  host.active = "passkey-login";
+  await assert.rejects(cancelRuntime(host), /No existing Chrome/);
+  assert.deepEqual(killed, ["SIGTERM"]);
+  assert.throws(() => RuntimeHost.prototype.captureExistingChromeLogin.call({ getBrowserInteractionMode: () => "manual" }), /Manual mode/);
+});
+
+test("private runtime output is excluded from logs, operation events, returned captures, and thrown errors", async () => {
+  const published = [], logged = [];
+  const host = {
+    active: null, activeChild: null, browserDescriptorPath: "/unused-fixture-descriptor",
+    command: () => ({ executable: process.execPath, args: ["-e", "process.stdout.write('SECRET stdout'); process.stderr.write('SECRET stderr'); process.exitCode = 1"], cwd: os.tmpdir() }),
+    logger: { info: (...args) => logged.push(args), warn: (...args) => logged.push(args), error: (...args) => logged.push(args) },
+    publishOperation: value => published.push(value),
+  };
+  await assert.rejects(RuntimeHost.prototype.run.call(host, "existing-chrome-login", [], { privateOutput: true, timeoutMs: 5000 }), error => {
+    assert.doesNotMatch(error.message, /SECRET/);
+    return true;
+  });
+  assert.doesNotMatch(JSON.stringify({ logged, published }), /SECRET/);
+});
+
+test("retry cleans only abandoned owned transfer directories after checking runtime ownership", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-runtime-"));
+  try {
+    const parent = path.join(root, "existing-chrome-login"), stale = path.join(parent, "transfer-ABC123"), keep = path.join(parent, "keep-user-data");
+    fs.mkdirSync(stale, { recursive: true }); fs.mkdirSync(keep);
+    fs.writeFileSync(path.join(stale, "storage-state.json"), "private");
+    const host = runtimeFixture("darwin", root);
+    host.currentOperation = () => "existing-chrome-login";
+    await assert.rejects(captureExistingChromeLogin(host), /Another launcher operation/);
+    assert.equal(fs.existsSync(stale), true);
+    host.currentOperation = () => null;
+    const transfer = await captureExistingChromeLogin(host);
+    assert.equal(fs.existsSync(stale), false);
+    assert.equal(fs.existsSync(keep), true);
+    await transfer.cleanup();
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

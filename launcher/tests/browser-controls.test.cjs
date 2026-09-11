@@ -80,3 +80,25 @@ test("active turns and a verified authenticated session cannot start a competing
   assert.equal(authenticated.passkeyAvailable, false);
   assert.equal(authenticated.passkeyBlocked, true);
 });
+
+test("normal Chrome import is available across supported platforms without broadening Manual mode", () => {
+  for (const platform of ["darwin", "win32", "linux"]) {
+    const automatic = browserControls(signedOut, null, platform, "automatic");
+    assert.equal(automatic.existingChromeAvailable, true);
+    assert.equal(automatic.existingChromeBlocked, false);
+    const manual = browserControls(signedOut, null, platform, "manual");
+    assert.equal(manual.existingChromeAvailable, false);
+    assert.equal(manual.existingChromeBlocked, true);
+  }
+});
+
+test("Chrome import survives renderer reload and excludes competing passkey or runtime work", () => {
+  const browser = JSON.parse(JSON.stringify({ ...signedOut, existingChromeLogin: { phase: "waiting-for-chrome", active: true } }));
+  const controls = browserControls(browser, null, "darwin", "automatic");
+  assert.equal(controls.navigationLocked, true);
+  assert.equal(controls.existingChromeWaiting, true);
+  assert.equal(controls.passkeyBlocked, true);
+  for (const name of ["setup", "passkey-login"]) {
+    assert.equal(browserControls(signedOut, { name, status: "running" }, "darwin", "automatic").existingChromeBlocked, true);
+  }
+});
