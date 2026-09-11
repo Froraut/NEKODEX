@@ -174,11 +174,16 @@ describe("reversible native Codex route integration", () => {
     installCodexIntegration(config);
     const previousHooks = readFileSync(hooksPath, "utf8");
     const previousJournal = readFileSync(getCodexJournalPath(), "utf8");
-    const updated = installCodexIntegration({ ...config, runtimeCommand: ["/opt/new-runtime/bun", "/opt/new-runtime/cli.js"] });
+    const updated = installCodexIntegration({
+      ...config,
+      // Exercise JSON escaping on every platform, not only Windows command/path quoting.
+      runtimeCommand: ["/opt/new-runtime/bun", "/opt/new-runtime/cli.js", 'fixture "quoted" \\argument'],
+    });
     writeFileSync(getCodexJournalPath(), previousJournal);
     writeFileSync(hooksPath, previousHooks);
     expect(inspectCodexIntegration()).toMatchObject({ active: true, errors: [] });
-    expect(readFileSync(hooksPath, "utf8")).toContain(updated.interruptHook.command);
+    const recoveredHooks = JSON.parse(readFileSync(hooksPath, "utf8"));
+    expect(recoveredHooks.hooks.Interrupt[0].hooks[0].command).toBe(updated.interruptHook.command);
   });
 
   test("preserves a symlinked hooks.json while applying and restoring the owned hook", () => {
