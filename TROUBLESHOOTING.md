@@ -103,7 +103,9 @@ Video walkthroughs:
 - [Create an OpenAI tunnel and API key](launcher/src/assets/mcp-create-tunnel.mp4)
 - [Connect the local harness and attach the ChatGPT connector](launcher/src/assets/mcp-connect-connector.mp4)
 
-Browser-only mode needs no connector. Full harness mode requires all of the following:
+Browser-only mode does not use an MCP connector. The following checks apply to Full harness with
+**With Automation** selected. For **Zero Risk**, use the [manual workflow checks](#zero-risk-manual-workflow-stops)
+below; its connector and Tunnel are separate.
 
 - a newly created connector named exactly **Codex Native2**;
 - **Developer Mode** enabled in ChatGPT;
@@ -130,6 +132,34 @@ approval review**, disable that optional Codex review setting and restart Codex.
 sandbox and explicit approvals still apply; this only prevents an unavailable native model from
 being inserted as an extra reviewer after the Web tool call already completed.
 
+## Zero Risk manual workflow stops
+
+**Zero Risk** is the name of the manual browser interaction mode. It still exposes the local Codex
+harness through MCP, so manual submission does not remove account limits or local-tool risks.
+
+First check the mode-specific setup: manual turns use **Codex Zero Risk** and its own OpenAI Tunnel;
+automatic Full harness turns use **Codex Native2**. Do not substitute one connector for the other.
+The launcher does not inspect the ChatGPT page to verify the model, effort, or connector you choose.
+
+For a manual turn, wait for the launcher to prepare the prompt, then use **Copy prompt** if needed.
+In ChatGPT, select the intended model, effort, and **Codex Zero Risk** connector before pasting and
+sending the prompt. Return to the launcher and confirm **Sent** only after sending it in ChatGPT.
+
+To locate a failure, record the last step that worked and the next step that failed:
+
+- prompt preparation or **Copy prompt**;
+- selecting the ChatGPT model, effort, or connector;
+- pasting and sending in ChatGPT;
+- confirming **Sent**;
+- waiting for **Codex Zero Risk** to connect; or
+- MCP tool execution and delivery of the completed answer to Codex.
+
+In the bug-report form, choose **Zero Risk (manual browser interaction / MCP)** and the matching
+workflow step. Include the Codex picker entry separately from the actual ChatGPT model and effort;
+the picker entry alone does not establish what was selected in ChatGPT. If a selector was absent,
+say so. Attach the safe log exported immediately after the failed turn, and describe the steps
+without publishing the prepared prompt, raw browser state, credentials, or Tunnel IDs.
+
 ## `Reconnecting`, `stream disconnected`, or `ChatGPT failed`
 
 These are result boundaries, not one diagnosis. The bridge uses them when it cannot prove a complete
@@ -142,8 +172,9 @@ its bounded MCP deadline.
 - Retry once in a fresh Codex task. State whether the fresh task works and whether the failure is
   consistent.
 - Run **Settings → Run doctor** and export a safe log immediately after the failure.
-- Include the exact model, Browser-only or Full harness mode, whether tools ran, and whether the
-  ChatGPT page showed a final answer.
+- State whether the turn used Browser-only, automatic Full harness, or Zero Risk. Include the Codex
+  picker entry, whether tools ran, and whether ChatGPT displayed a final answer. For Zero Risk,
+  also give the actual ChatGPT model and effort and the failed manual workflow step.
 
 Do not assume that a generic 502 means the Tunnel is broken. Since v4.0.7, a native tool that
 outlives its turn binding is reported explicitly as `codex_tool_timeout` and retired rather than
@@ -233,7 +264,10 @@ safe log**. A useful report contains:
 - Codex Desktop and/or CLI version;
 - OS and architecture;
 - ChatGPT account tier;
-- Browser-only or Full harness mode and the exact selected model;
+- integration mode: Browser-only, Full harness with automatic browser interaction, or Zero Risk
+  with manual browser interaction;
+- exact Codex picker entry; for Zero Risk, also the actual ChatGPT model and effort and the failed
+  manual workflow step;
 - exact reproduction steps and complete final error;
 - whether it reproduces in a fresh Codex task; and
 - a safe log captured immediately after that reproduction.

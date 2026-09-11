@@ -35,6 +35,21 @@ describe("fixed ChatGPT Web model routes", () => {
   const plus = { solAvailable: true, proAvailable: false };
   const pro = { solAvailable: true, proAvailable: true };
 
+  test("independent Extra High capability exposes its route and limits without admitting Pro", () => {
+    const fourPositions = { solAvailable: true, extraHighAvailable: true, proAvailable: false };
+    expect(availableChatGptWebModelRoutes(fourPositions).map(route => route.slug)).toEqual([
+      "chatgpt-web/light", "chatgpt-web/medium", "chatgpt-web/high", "chatgpt-web/extra-high",
+    ]);
+    expect(requireChatGptWebModelRoute("chatgpt-web/extra-high", fourPositions).adapterEffort).toBe("xhigh");
+    expect(() => requireChatGptWebModelRoute("chatgpt-web/pro", fourPositions)).toThrow("Pro is not available");
+    expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", fourPositions))
+      .toEqual(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", pro));
+    expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", fourPositions))
+      .toEqual(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", pro));
+    expect(() => requireChatGptWebModelRoute("chatgpt-web/extra-high", { ...fourPositions, extraHighAvailable: false }))
+      .toThrow("Extra High is not available");
+  });
+
   test("uses unique stable slugs and one explicit adapter effort per model", () => {
     expect(new Set(CHATGPT_WEB_MODEL_ROUTES.map(route => route.slug)).size).toBe(CHATGPT_WEB_MODEL_ROUTES.length);
     expect(CHATGPT_WEB_MODEL_ROUTES.map(route => [route.slug, route.codexEffort, route.adapterEffort])).toEqual([
@@ -229,6 +244,7 @@ describe("fixed ChatGPT Web model routes", () => {
   test("binds the Pro model to the browser Pro effort and fails closed for unknown routes", () => {
     const config = defaultConfig("full");
     config.proAvailable = true;
+    config.extraHighAvailable = true;
     const request = parsed("chatgpt-web/pro", "low");
     expect(routeChatGptWebRequest(request, config).adapterEffort).toBe("max");
     expect(request.options.reasoning).toBe("max");
@@ -239,6 +255,7 @@ describe("fixed ChatGPT Web model routes", () => {
   test("keeps Pro compaction on the same retained Pro conversation", () => {
     const config = defaultConfig("full");
     config.proAvailable = true;
+    config.extraHighAvailable = true;
     const normal = parsed("chatgpt-web/pro", "low");
     const compact = parsed("chatgpt-web/pro", "low");
     const metadata = {

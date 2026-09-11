@@ -82,6 +82,8 @@ export interface AppConfig {
   brokerSocketPath: string;
   headed: boolean;
   solAvailable: boolean;
+  /** Independent Extra High evidence; missing legacy values use the prior Pro proof. */
+  extraHighAvailable?: boolean;
   proAvailable: boolean;
   experimentalBiggerContext: boolean;
   /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
@@ -210,6 +212,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     brokerSocketPath: defaultBrokerEndpoint(home),
     headed: true,
     solAvailable: true,
+    extraHighAvailable: false,
     proAvailable: false,
     experimentalBiggerContext: false,
     zeroRiskProEnabled: false,
@@ -360,7 +363,13 @@ export function loadConfigForSetup(): AppConfig {
     raw.automaticAppName = CHATGPT_CONNECTOR_NAME;
     if (interactionMode === "automatic") raw.appName = CHATGPT_CONNECTOR_NAME;
   }
-  return parseConfig(raw, path);
+  const config = parseConfig(raw, path);
+  // Runtime loading fails closed, while setup retains missing evidence so a legacy non-Pro
+  // account gets re-inspected before its Extra High availability is persisted.
+  if (config.browserInteractionMode !== "manual" && raw.extraHighAvailable === undefined && raw.proAvailable !== true) {
+    delete config.extraHighAvailable;
+  }
+  return config;
 }
 
 function parseConfig(value: unknown, path: string): AppConfig {
@@ -486,6 +495,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.solAvailable !== undefined && typeof parsed.solAvailable !== "boolean") {
     throw new Error(`Invalid solAvailable in ${path}`);
   }
+  if (parsed.extraHighAvailable !== undefined && typeof parsed.extraHighAvailable !== "boolean") {
+    throw new Error(`Invalid extraHighAvailable in ${path}`);
+  }
   if (parsed.experimentalBiggerContext !== undefined
     && typeof parsed.experimentalBiggerContext !== "boolean") {
     throw new Error(`Invalid experimentalBiggerContext in ${path}`);
@@ -499,6 +511,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   }
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;
+  const extraHighAvailable = parsed.extraHighAvailable ?? proAvailable;
   const experimentalBiggerContext = parsed.experimentalBiggerContext === true;
   const zeroRiskProEnabled = parsed.zeroRiskProEnabled === true;
   if (browserInteractionMode === "manual" && experimentalBiggerContext) {
@@ -507,6 +520,12 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (proAvailable && !solAvailable) {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
   }
+  if (extraHighAvailable && !solAvailable) {
+    throw new Error(`Invalid ChatGPT account capabilities in ${path}: Extra High requires Sol`);
+  }
+  if (proAvailable && !extraHighAvailable) {
+    throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Extra High`);
+  }
   return {
     ...parsed,
     appName: expectedAppName,
@@ -514,8 +533,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
     manualAppName,
     browserInteractionMode,
     subagentProtocol,
-    solAvailable,
-    proAvailable,
+    solAvailable: browserInteractionMode === "manual" ? false : solAvailable,
+    extraHighAvailable: browserInteractionMode === "manual" ? false : extraHighAvailable,
+    proAvailable: browserInteractionMode === "manual" ? false : proAvailable,
     experimentalBiggerContext,
     zeroRiskProEnabled,
   } as AppConfig;
@@ -541,7 +561,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
   const efforts = manual
     ? ["low"]
     : config.solAvailable
-    ? ["low", "medium", "high", "xhigh", ...(config.proAvailable ? ["max"] : [])]
+    ? ["low", "medium", "high", ...((config.extraHighAvailable ?? config.proAvailable) ? ["xhigh"] : []), ...(config.proAvailable ? ["max"] : [])]
     : ["low", "medium"];
   return {
     adapter: "chatgpt-web",
@@ -569,6 +589,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       headed: config.headed,
       localToolsEnabled: config.mode === "full",
       solAvailable: manual ? false : config.solAvailable,
+      extraHighAvailable: manual ? false : config.extraHighAvailable ?? config.proAvailable,
       proAvailable: manual ? false : config.proAvailable,
       experimentalBiggerContext: manual ? false : config.experimentalBiggerContext,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),

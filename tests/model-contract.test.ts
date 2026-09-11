@@ -27,6 +27,12 @@ test("the browser adapter maps fixed routed efforts to the visible ChatGPT modes
 });
 
 test("capabilities gate tools and Pro-only efforts explicitly without changing the selected model", () => {
+  expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "xhigh", {
+    localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: false,
+  })).toMatchObject({ uiEffortIndex: 3, localTools: true, displayLabel: "Extra High" });
+  expect(() => resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "xhigh", {
+    localToolsEnabled: true, solAvailable: true, extraHighAvailable: false, proAvailable: true,
+  })).toThrow("Extra High effort is not available");
   expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "high", {
     localToolsEnabled: false,
     solAvailable: true,

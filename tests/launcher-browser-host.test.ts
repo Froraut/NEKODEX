@@ -269,9 +269,53 @@ test("launcher session verification uses the authenticated control channel inste
     const path = descriptorFile(`http://127.0.0.1:${address.port}`);
     expect(await inspectLauncherBrowserHost(path, { detectCapabilities: true })).toEqual({
       solAvailable: true,
+      extraHighAvailable: true,
       proAvailable: true,
       url: "https://chatgpt.com/?temporary-chat=true",
     });
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+test("launcher capability inspection admits Extra High independently and rejects invalid evidence", async () => {
+  let capabilities: Record<string, unknown> = {};
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain request */ }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      authenticated: true,
+      temporary: true,
+      url: "https://chatgpt.com/?temporary-chat=true",
+      ...capabilities,
+    }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server has no port");
+    const path = descriptorFile(`http://127.0.0.1:${address.port}`);
+    capabilities = { solAvailable: true, extraHighAvailable: true, proAvailable: false };
+    expect(await inspectLauncherBrowserHost(path, { detectCapabilities: true })).toMatchObject(capabilities);
+    capabilities = { solAvailable: true, proAvailable: false };
+    expect(await inspectLauncherBrowserHost(path, { detectCapabilities: true })).toMatchObject({ ...capabilities, extraHighAvailable: false });
+    capabilities = { solAvailable: true, extraHighAvailable: false, proAvailable: false };
+    expect(await inspectLauncherBrowserHost(path, { detectCapabilities: true })).toMatchObject(capabilities);
+    for (const invalid of [
+      { solAvailable: true, extraHighAvailable: "true", proAvailable: false },
+      { solAvailable: true, extraHighAvailable: null, proAvailable: false },
+      { solAvailable: false, extraHighAvailable: true, proAvailable: false },
+      { solAvailable: true, extraHighAvailable: false, proAvailable: true },
+      { solAvailable: "true", extraHighAvailable: true, proAvailable: false },
+      { solAvailable: true, extraHighAvailable: true, proAvailable: "false" },
+      { solAvailable: true, extraHighAvailable: true },
+    ]) {
+      capabilities = invalid;
+      await expect(inspectLauncherBrowserHost(path, { detectCapabilities: true })).rejects.toThrow(/capability evidence/);
+    }
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

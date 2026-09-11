@@ -16,6 +16,7 @@ export interface BrowserLoginResult {
   storageStatePath: string;
   accountSurfaceUrl: string;
   solAvailable: boolean;
+  extraHighAvailable: boolean;
   proAvailable: boolean;
 }
 
@@ -43,6 +44,7 @@ interface LoginVerificationMarker {
   authenticated: true;
   verifiedAt: string;
   solAvailable?: boolean;
+  extraHighAvailable?: boolean;
   proAvailable?: boolean;
 }
 
@@ -181,7 +183,11 @@ export async function inspectBrowserLoginCapabilities(config: AppConfig): Promis
   if (!browserLoginStateExists(config)) throw new Error("ChatGPT login state is missing or unverified");
   const inspected = await inspectStoredState(config, config.storageStatePath);
   writeVerificationMarker(config.storageStatePath, inspected);
-  return { solAvailable: inspected.solAvailable, proAvailable: inspected.proAvailable };
+  return {
+    solAvailable: inspected.solAvailable,
+    extraHighAvailable: inspected.extraHighAvailable === true,
+    proAvailable: inspected.proAvailable,
+  };
 }
 
 export function storedBrowserLoginCapabilities(
@@ -190,8 +196,16 @@ export function storedBrowserLoginCapabilities(
   if (!browserLoginStateExists(config)) return {};
   try {
     const marker = JSON.parse(readFileSync(loginVerificationMarkerPath(config.storageStatePath), "utf8")) as Partial<LoginVerificationMarker>;
+    for (const field of ["solAvailable", "extraHighAvailable", "proAvailable"] as const) {
+      if (marker[field] !== undefined && typeof marker[field] !== "boolean") return {};
+    }
+    if ((marker.extraHighAvailable === true || marker.proAvailable === true) && marker.solAvailable === false) return {};
+    if (marker.proAvailable === true && marker.extraHighAvailable === false) return {};
     return {
       ...(typeof marker.solAvailable === "boolean" ? { solAvailable: marker.solAvailable } : {}),
+      ...(typeof marker.extraHighAvailable === "boolean"
+        ? { extraHighAvailable: marker.extraHighAvailable }
+        : marker.proAvailable === true ? { extraHighAvailable: true } : {}),
       ...(typeof marker.proAvailable === "boolean" ? { proAvailable: marker.proAvailable } : {}),
     };
   } catch {
@@ -426,6 +440,7 @@ export async function loginToChatGpt(
       storageStatePath: config.storageStatePath,
       accountSurfaceUrl: page.url(),
       solAvailable: inspected.solAvailable,
+      extraHighAvailable: inspected.extraHighAvailable === true,
       proAvailable: inspected.proAvailable,
     };
   } finally {

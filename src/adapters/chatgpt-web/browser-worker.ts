@@ -69,6 +69,7 @@ import {
   notifyLauncherTurn,
 } from "../../launcher-browser-host";
 import {
+  chatGptExtraHighAvailable,
   resolveChatGptWebContextLimits,
   resolveChatGptWebMessageTokenBudget,
   resolveChatGptWebTransportLimits,
@@ -976,9 +977,11 @@ export function resolveChatGptWebMultipartStagingMode(
   if (modelId !== CHATGPT_WEB_MODEL_ID) {
     throw new Error(`ChatGPT Bigger Context staging mode is not defined for model: ${modelId}`);
   }
-  const efforts: readonly ChatGptWebModelMode["effort"][] = capabilities.proAvailable
-    ? ["low", "medium", "max"]
-    : ["low", "medium"];
+  const efforts: readonly ChatGptWebModelMode["effort"][] = [
+    "low", "medium",
+    ...(chatGptExtraHighAvailable(capabilities) ? ["xhigh" as const] : []),
+    ...(capabilities.proAvailable ? ["max" as const] : []),
+  ];
   for (const effort of efforts) {
     const mode = resolveChatGptWebModelMode(modelId, effort, capabilities);
     const limits = resolveChatGptWebTransportLimits(modelId, effort, capabilities);
@@ -2157,6 +2160,7 @@ export class ChatGptBrowserWorker {
     temporary: true;
     url: string;
     solAvailable?: boolean;
+    extraHighAvailable?: boolean;
     proAvailable?: boolean;
   }> {
     return this.enqueueMaintenance("session inspection", () => this.inspectSessionExclusive(detectCapabilities));
@@ -3635,6 +3639,7 @@ export class ChatGptBrowserWorker {
     temporary: true;
     url: string;
     solAvailable?: boolean;
+    extraHighAvailable?: boolean;
     proAvailable?: boolean;
   }> {
     const page = await this.ensurePage();
@@ -3798,6 +3803,41 @@ export class ChatGptBrowserWorker {
       // CHATGPT_MARKDOWN_CONTENT_BEGIN
       const chatGptMarkdownContent = (markdownRoot: HTMLElement): HTMLElement => {
         const content = markdownRoot.cloneNode(true) as HTMLElement;
+        const labelSelector = "button.behavior-btn.entity-underline";
+        const originalLabels = Array.from(markdownRoot.querySelectorAll<HTMLElement>(labelSelector));
+        const hiddenLabelPart = (candidate: HTMLElement): boolean => {
+          const style = typeof getComputedStyle === "function" && candidate.isConnected
+            ? getComputedStyle(candidate) : candidate.style;
+          return candidate.hasAttribute("hidden")
+            || candidate.getAttribute("aria-hidden") === "true"
+            || candidate.getAttribute("role") === "tooltip"
+            || candidate.classList.contains("sr-only")
+            || style?.display === "none"
+            || ["hidden", "collapse"].includes(style?.visibility)
+            || style?.opacity === "0";
+        };
+        Array.from(content.querySelectorAll<HTMLElement>(labelSelector)).forEach((button, index) => {
+          const original = originalLabels[index]!;
+          for (let ancestor: HTMLElement | null = original; ancestor; ancestor = ancestor.parentElement) {
+            if (hiddenLabelPart(ancestor)) { button.remove(); return; }
+          }
+          const parts: string[] = [];
+          const collect = (node: Node) => {
+            if (node.nodeType === Node.TEXT_NODE) { parts.push(node.textContent ?? ""); return; }
+            if (!(node instanceof HTMLElement)
+              || ["BUTTON", "SCRIPT", "STYLE", "SVG", "IMG", "PICTURE", "SOURCE"].includes(node.nodeName)
+              || hiddenLabelPart(node)) return;
+            Array.from(node.childNodes).forEach(collect);
+          };
+          Array.from(original.childNodes).forEach(collect);
+          // Issue #434 supplies this entity-button shape without an authoritative URL. Preserve
+          // only its visible text on our detached projection; never use href, title or aria-label
+          // as a filename, synthesize a download, or mutate/click the live ChatGPT control.
+          const label = content.ownerDocument.createElement("span");
+          label.setAttribute("data-chatgpt-file-label", "");
+          label.textContent = parts.join("").trim();
+          button.parentNode?.replaceChild(label, button);
+        });
         // These are embedded renderers, not Markdown answer text. Their loading labels, controls
         // and plot axes change independently of generation (including after a later paragraph).
         // Keep their UI out of both the emitted HTML and the text consistency fingerprint.

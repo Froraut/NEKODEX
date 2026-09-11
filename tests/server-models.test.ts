@@ -15,6 +15,7 @@ test("proxies official /models auth and query, then appends the fixed ChatGPT We
   const config = defaultConfig("full");
   config.subagentProtocol = "native";
   config.proAvailable = true;
+    config.extraHighAvailable = true;
   const response = await modelsRequest(request, config, async input => {
     upstream = input;
     return Response.json({
@@ -105,6 +106,7 @@ test("Zero Risk returns one generic Web row without using scanned capabilities",
   config.browserInteractionMode = "manual";
   config.solAvailable = true;
   config.proAvailable = true;
+    config.extraHighAvailable = true;
   const response = await modelsRequest(
     new Request("http://127.0.0.1:17841/v1/models", {
       headers: { authorization: "Bearer codex-oauth-token" },

@@ -3088,6 +3088,10 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
 test("Bigger Context stages use the lowest account mode that can carry the stage", () => {
   const plus = { localToolsEnabled: false, solAvailable: true, proAvailable: false };
   const pro = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
+  const extraHighOnly = { ...plus, extraHighAvailable: true };
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", extraHighOnly, 100_000, 600_000).effort).toBe("xhigh");
+  expect(() => resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", extraHighOnly, 104_000, 1_200_000))
+    .toThrow("No ChatGPT effort available");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 30_000, 200_000).effort).toBe("low");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 30_000, 300_000).effort).toBe("medium");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 80_000, 300_000).effort).toBe("medium");

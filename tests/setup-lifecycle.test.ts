@@ -25,6 +25,7 @@ test("launcher setup refreshes account capabilities only when missing or explici
   const verifiedLauncher = {
     browserHost: "launcher",
     solAvailable: true,
+    extraHighAvailable: false,
     proAvailable: false,
   };
 
@@ -35,6 +36,19 @@ test("launcher setup refreshes account capabilities only when missing or explici
     proAvailable: false,
   } as never)).toBe(true);
   expect(launcherCapabilityProbeRequired(verifiedLauncher as never, true)).toBe(true);
+  expect(launcherCapabilityProbeRequired({
+    ...verifiedLauncher,
+    extraHighAvailable: undefined,
+  } as never)).toBe(true);
+  expect(launcherCapabilityProbeRequired({
+    ...verifiedLauncher,
+    extraHighAvailable: undefined,
+    proAvailable: true,
+  } as never)).toBe(false);
+  expect(launcherCapabilityProbeRequired({
+    ...verifiedLauncher,
+    extraHighAvailable: true,
+  } as never)).toBe(false);
   expect(launcherCapabilityProbeRequired({
     ...verifiedLauncher,
     browserInteractionMode: "manual",

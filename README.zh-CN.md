@@ -17,7 +17,8 @@ bun run dev:launcher
 ```
 
 请使用 Bun 1.4.0。`dev:launcher` 使用隔离的开发配置，供审查和登录测试使用。
-`bun run app` 会从此源码启动普通启动器。启用生产集成前，请先阅读[DEV 隔离](docs/dev-chat.md)。
+`bun run app` 同样启动源码开发版启动器。要替换已安装的应用，需要打包构建。
+启用生产集成前，请先阅读[DEV 隔离](docs/dev-chat.md)。
 
 <p align="center">
   <strong>将 ChatGPT Web（包括 Pro）作为 Codex 原生模型使用。</strong><br>

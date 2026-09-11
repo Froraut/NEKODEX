@@ -451,6 +451,28 @@ test("session inspection fails closed on incomplete shared-helper capability evi
   );
 });
 
+test("session inspection preserves independent Extra High evidence and rejects contradictions", async () => {
+  let capabilities = { solAvailable: true, extraHighAvailable: true, proAvailable: false };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    helper: {},
+    descriptorPath: "/runtime/launcher-browser.json",
+    getConnectorName: () => "Codex Native2",
+    logger: { info() {} },
+    view: { webContents: { getURL: () => "https://chatgpt.com/?temporary-chat=true" } },
+    refreshChatGptHomeDocument: async () => {},
+    runBrowserHelperOperation: async () => ({ type: "result", value: {
+      authenticated: true, temporary: true, url: "https://chatgpt.com/?temporary-chat=true", ...capabilities,
+    } }),
+  });
+  assert.equal((await BrowserHost.prototype.runSessionInspection.call(fixture, true)).extraHighAvailable, true);
+  capabilities = { solAvailable: false, extraHighAvailable: true, proAvailable: false };
+  await assert.rejects(BrowserHost.prototype.runSessionInspection.call(fixture, true), /contradictory/);
+  capabilities = { solAvailable: true, extraHighAvailable: false, proAvailable: true };
+  await assert.rejects(BrowserHost.prototype.runSessionInspection.call(fixture, true), /contradictory/);
+  capabilities = { solAvailable: true, extraHighAvailable: "true", proAvailable: false };
+  await assert.rejects(BrowserHost.prototype.runSessionInspection.call(fixture, true), /incomplete/);
+});
+
 test("browser surface reactivation preserves its last measured bounds", () => {
   const visibility = [];
   const fixture = {

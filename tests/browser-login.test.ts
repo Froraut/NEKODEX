@@ -8,6 +8,7 @@ import {
   loginToChatGpt,
   loginVerificationMarkerPath,
   sanitizeBrowserLoginStorageState,
+  storedBrowserLoginCapabilities,
 } from "../src/browser-login";
 import { CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
 import { defaultConfig } from "../src/config";
@@ -143,6 +144,42 @@ test("a storage-state file is not trusted without a verification marker", () => 
       { mode: 0o600 },
     );
     expect(browserLoginStateExists(config)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("stored login capabilities retain Extra High independently and only infer legacy affirmative Pro proof", () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-login-capabilities-"));
+  try {
+    const config = defaultConfig("browser-only");
+    config.storageStatePath = join(root, "storage-state.json");
+    writeFileSync(config.storageStatePath, "{}\n", { mode: 0o600 });
+    const writeMarker = (capabilities: Record<string, unknown>) => writeFileSync(
+      loginVerificationMarkerPath(config.storageStatePath),
+      JSON.stringify({ version: 1, authenticated: true, verifiedAt: "2026-09-11T00:00:00.000Z", ...capabilities }),
+      { mode: 0o600 },
+    );
+    writeMarker({ solAvailable: true, extraHighAvailable: true, proAvailable: false });
+    expect(storedBrowserLoginCapabilities(config)).toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: false });
+    writeMarker({ solAvailable: true, extraHighAvailable: false, proAvailable: false });
+    expect(storedBrowserLoginCapabilities(config)).toEqual({ solAvailable: true, extraHighAvailable: false, proAvailable: false });
+    writeMarker({ solAvailable: true, proAvailable: true });
+    expect(storedBrowserLoginCapabilities(config)).toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: true });
+    writeMarker({ solAvailable: true, proAvailable: false });
+    expect(storedBrowserLoginCapabilities(config)).toEqual({ solAvailable: true, proAvailable: false });
+
+    for (const invalid of [
+      { solAvailable: true, extraHighAvailable: "true", proAvailable: false },
+      { solAvailable: true, extraHighAvailable: null, proAvailable: false },
+      { solAvailable: false, extraHighAvailable: true, proAvailable: false },
+      { solAvailable: true, extraHighAvailable: false, proAvailable: true },
+      { solAvailable: "true", extraHighAvailable: true, proAvailable: false },
+      { solAvailable: true, extraHighAvailable: true, proAvailable: "false" },
+    ]) {
+      writeMarker(invalid);
+      expect(storedBrowserLoginCapabilities(config)).toEqual({});
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -19,8 +19,8 @@ bun run dev:launcher
 ```
 
 Use Bun 1.4.0. `dev:launcher` uses an isolated development profile for review and login testing.
-`bun run app` starts the normal launcher from this source. See [DEV isolation](docs/dev-chat.md)
-before enabling a production integration.
+`bun run app` also starts the source development launcher. A packaged build is required to replace
+the installed app. See [DEV isolation](docs/dev-chat.md) before enabling a production integration.
 
 <p align="center">
   <strong>Use ChatGPT Web (including Pro) as native Codex models.</strong><br>

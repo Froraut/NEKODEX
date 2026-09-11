@@ -297,7 +297,7 @@ export async function inspectLauncherBrowserHost(
     expectedProfile?: LauncherBrowserHostProfile;
     timeoutMs?: number;
   } = {},
-): Promise<{ solAvailable?: boolean; proAvailable?: boolean; url: string }> {
+): Promise<{ solAvailable?: boolean; extraHighAvailable?: boolean; proAvailable?: boolean; url: string }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   if (options.expectedProfile && descriptor.profile !== options.expectedProfile) {
     throw new Error(
@@ -332,13 +332,19 @@ export async function inspectLauncherBrowserHost(
       && (typeof body.solAvailable !== "boolean" || typeof body.proAvailable !== "boolean")) {
       throw new Error("Launcher did not return complete ChatGPT account capability evidence");
     }
-    if (options.detectCapabilities && body.proAvailable === true && body.solAvailable !== true) {
+    if (options.detectCapabilities && body.extraHighAvailable !== undefined && typeof body.extraHighAvailable !== "boolean") {
+      throw new Error("Launcher returned invalid ChatGPT Extra High capability evidence");
+    }
+    const extraHighAvailable = body.extraHighAvailable ?? body.proAvailable;
+    if (options.detectCapabilities && (((body.proAvailable === true || extraHighAvailable === true) && body.solAvailable !== true)
+      || (body.proAvailable === true && extraHighAvailable !== true))) {
       throw new Error("Launcher returned contradictory ChatGPT account capability evidence");
     }
     return {
       url: body.url,
       ...(options.detectCapabilities ? {
         solAvailable: body.solAvailable as boolean,
+        extraHighAvailable: extraHighAvailable as boolean,
         proAvailable: body.proAvailable as boolean,
       } : {}),
     };

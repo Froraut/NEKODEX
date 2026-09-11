@@ -13,6 +13,36 @@ const turndown = new TurndownService({
 
 turndown.use(gfm);
 turndown.remove(["button", "script", "style"]);
+const fileLabelSelector = "button.behavior-btn.entity-underline, span[data-chatgpt-file-label]";
+turndown.addRule("inertFileLabelLinks", {
+  filter: node => node.nodeName === "A" && Boolean(node.querySelector(fileLabelSelector)),
+  replacement: content => content,
+});
+turndown.addRule("inertFileLabels", {
+  filter: node => node.nodeName === "BUTTON"
+    && node.classList.contains("behavior-btn") && node.classList.contains("entity-underline")
+    || node.nodeName === "SPAN" && node.hasAttribute("data-chatgpt-file-label"),
+  replacement: (_content, node) => {
+    let label = visibleFileLabelText(node as HTMLElement);
+    if (!label) return "";
+    for (let ancestor = node.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor.nodeName === "TD" || ancestor.nodeName === "TH") {
+        label = label.replaceAll("|", "\\|");
+        break;
+      }
+    }
+    for (let ancestor = node.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor.nodeName === "CODE" || ancestor.nodeName === "PRE") return label;
+    }
+    // This control provides a label, not an authoritative download target. Inline code keeps
+    // file paths, URL-looking names and wiki syntax inert through later Markdown transforms.
+    let delimiterLength = 1;
+    for (const match of label.matchAll(/`+/g)) delimiterLength = Math.max(delimiterLength, match[0].length + 1);
+    const delimiter = "`".repeat(delimiterLength);
+    const padding = label.startsWith("`") || label.endsWith("`") ? " " : "";
+    return `${delimiter}${padding}${label}${padding}${delimiter}`;
+  },
+});
 turndown.addRule("removeImages", {
   filter: node => ["IMG", "PICTURE", "SOURCE"].includes(node.nodeName),
   replacement: () => "",
@@ -46,8 +76,28 @@ turndown.addRule("compactListItem", {
   },
 });
 
+function visibleFileLabelText(element: HTMLElement): string {
+  const hidden = (candidate: HTMLElement) => candidate.hasAttribute("hidden")
+    || candidate.getAttribute("aria-hidden") === "true"
+    || candidate.getAttribute("role") === "tooltip"
+    || candidate.classList.contains("sr-only")
+    || candidate.style?.display === "none"
+    || ["hidden", "collapse"].includes(candidate.style?.visibility)
+    || candidate.style?.opacity === "0";
+  for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
+    if (hidden(ancestor)) return "";
+  }
+  const label = element.cloneNode(true) as HTMLElement;
+  for (const child of Array.from(label.querySelectorAll<HTMLElement>("*"))) {
+    if (["BUTTON", "SCRIPT", "STYLE", "SVG", "IMG", "PICTURE", "SOURCE"].includes(child.nodeName.toUpperCase())
+      || hidden(child)) child.remove();
+  }
+  return (label.textContent ?? "").trim();
+}
+
 function inlineFilePath(node: Node): string | undefined {
   if (node.nodeName !== "CODE") return undefined;
+  if ((node as HTMLElement).querySelector(fileLabelSelector)) return undefined;
   for (let ancestor = node.parentNode; ancestor; ancestor = ancestor.parentNode) {
     if (["A", "PRE"].includes(ancestor.nodeName)) return undefined;
   }
@@ -63,12 +113,6 @@ function inlineFilePath(node: Node): string | undefined {
   const basename = withoutLocation.slice(separator + 1);
   if (!/\.[a-z\d][a-z\d._-]*$/i.test(basename)) return undefined;
   return path;
-}
-
-function preserveObsidianWikiLinks(markdown: string): string {
-  // Turndown escapes literal brackets, but Codex interprets the resulting `\[` as LaTeX.
-  // Restore the source syntax before converting it into a regular Markdown file link.
-  return markdown.replace(/\\\[\\\[([^\r\n]*?)\\\]\\\]/g, "[[$1]]");
 }
 
 function obsidianWikiLink(value: string): string | undefined {
@@ -88,7 +132,11 @@ function obsidianWikiLink(value: string): string | undefined {
 function linkObsidianWikiLinks(markdown: string): string {
   let fence: { marker: "`" | "~"; length: number } | undefined;
   return markdown.split("\n").map(line => {
-    const fenceRun = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    // Backtick fence info cannot contain another backtick. A filename code span may need
+    // three or more ticks, but closing on the same line does not open a fenced block.
+    const fenceRun = fenceMatch?.[1]?.startsWith("`") && fenceMatch[2]?.includes("`")
+      ? undefined : fenceMatch?.[1];
     if (fence) {
       const closingRun = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
       if (closingRun?.[0] === fence.marker && closingRun.length >= fence.length) fence = undefined;
@@ -111,13 +159,19 @@ function linkObsidianWikiLinks(markdown: string): string {
         index = end;
         continue;
       }
-      if (inlineCodeTicks === 0 && line.startsWith("[[", index) && line[index - 1] !== "!") {
-        const end = line.indexOf("]]", index + 2);
+      const escapedWiki = line.startsWith("\\[\\[", index);
+      if (inlineCodeTicks === 0 && (escapedWiki || line.startsWith("[[", index))) {
+        const openingLength = escapedWiki ? 4 : 2;
+        const closing = escapedWiki ? "\\]\\]" : "]]";
+        const end = line.indexOf(closing, index + openingLength);
         if (end >= 0) {
-          const linked = obsidianWikiLink(line.slice(index + 2, end));
-          if (linked) {
-            result += linked;
-            index = end + 2;
+          const value = line.slice(index + openingLength, end);
+          const linked = line[index - 1] === "!" ? undefined : obsidianWikiLink(value);
+          if (linked || escapedWiki) {
+            // Restore Turndown's bracket escaping only outside code. Filename labels and
+            // code examples must retain literal backslashes rather than changing identity.
+            result += linked ?? `[[${value}]]`;
+            index = end + closing.length;
             continue;
           }
         }
@@ -131,7 +185,7 @@ function linkObsidianWikiLinks(markdown: string): string {
 
 export function chatGptHtmlToMarkdown(html: string): string {
   if (!html.trim()) return "";
-  return linkObsidianWikiLinks(preserveObsidianWikiLinks(turndown.turndown(html))).trim();
+  return linkObsidianWikiLinks(turndown.turndown(html)).trim();
 }
 
 export interface ChatGptMarkdownSegment {

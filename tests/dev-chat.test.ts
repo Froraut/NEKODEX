@@ -268,7 +268,8 @@ test("browser-only DEV driver runs real turns without advertising simulated tool
     ...defaultConfig("browser-only"),
     purpose: "dev-harness" as const,
     solAvailable: true,
-    proAvailable: true,
+    extraHighAvailable: true,
+    proAvailable: false,
   };
   const factory = (): ProviderAdapter => ({
     name: "dev-browser-only-test",

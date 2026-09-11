@@ -17,6 +17,7 @@ import {
   resolveBrokerEndpoint,
   resolveInteractionConnectorIdentities,
   runtimeCommandForProcess,
+  saveConfig,
   ZERO_RISK_CHATGPT_CONNECTOR_NAME,
 } from "../src/config";
 import { removeLegacyRuntimeArtifacts } from "../src/service";
@@ -234,6 +235,7 @@ test("launcher browser ownership is explicit in provider configuration", () => {
     browserHost: "launcher",
     browserHostDescriptorPath: config.browserHostDescriptorPath,
     solAvailable: true,
+    extraHighAvailable: false,
     stallTimeoutSec: 900,
   });
 });
@@ -245,13 +247,94 @@ test("Luna-only provider configuration exposes only the Luna backend", () => {
   expect(provider.models).toEqual(["gpt-5.6-luna"]);
   expect(provider.defaultModel).toBe("gpt-5.6-luna");
   expect(provider.modelReasoningEfforts).toEqual({ "gpt-5.6-luna": ["low", "medium"] });
-  expect(provider.chatgptWeb).toMatchObject({ solAvailable: false, proAvailable: false });
+  expect(provider.chatgptWeb).toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+});
+
+test("provider efforts expose Extra High independently of Pro", () => {
+  const config = defaultConfig("browser-only");
+  expect(config.extraHighAvailable).toBe(false);
+  expect(providerConfig(config).modelReasoningEfforts).toEqual({ "gpt-5.6-sol": ["low", "medium", "high"] });
+  config.extraHighAvailable = true;
+  const provider = providerConfig(config);
+  expect(provider.modelReasoningEfforts).toEqual({ "gpt-5.6-sol": ["low", "medium", "high", "xhigh"] });
+  expect(provider.chatgptWeb).toMatchObject({ solAvailable: true, extraHighAvailable: true, proAvailable: false });
+  config.proAvailable = true;
+  expect(providerConfig(config).modelReasoningEfforts).toEqual({ "gpt-5.6-sol": ["low", "medium", "high", "xhigh", "max"] });
+  delete config.extraHighAvailable;
+  expect(providerConfig(config).chatgptWeb?.extraHighAvailable).toBe(true);
+});
+
+test("saved capability evidence preserves independent Extra High and migrates legacy proof conservatively", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-extra-high-config-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  const config = defaultConfig("browser-only");
+  config.runtimeCommand = [process.execPath];
+  config.extraHighAvailable = true;
+  saveConfig(config);
+  expect(loadConfig()).toMatchObject({ solAvailable: true, extraHighAvailable: true, proAvailable: false });
+
+  delete config.extraHighAvailable;
+  saveConfig(config);
+  expect(loadConfig()).toMatchObject({ extraHighAvailable: false, proAvailable: false });
+  expect(loadConfigForSetup().extraHighAvailable).toBeUndefined();
+  config.proAvailable = true;
+  saveConfig(config);
+  expect(loadConfig()).toMatchObject({ extraHighAvailable: true, proAvailable: true });
+  expect(loadConfigForSetup()).toMatchObject({ extraHighAvailable: true, proAvailable: true });
+});
+
+test("saved capability evidence rejects malformed and contradictory Extra High flags", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-invalid-extra-high-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const base = { ...defaultConfig("browser-only"), runtimeCommand: [process.execPath] };
+  for (const extraHighAvailable of ["true", 1, null, {}, []]) {
+    writeFileSync(join(root, "config.json"), JSON.stringify({ ...base, extraHighAvailable }));
+    expect(() => loadConfig()).toThrow("Invalid extraHighAvailable");
+    expect(() => loadConfigForSetup()).toThrow("Invalid extraHighAvailable");
+  }
+  writeFileSync(join(root, "config.json"), JSON.stringify({ ...base, solAvailable: false, extraHighAvailable: true }));
+  expect(() => loadConfig()).toThrow("Extra High requires Sol");
+  writeFileSync(join(root, "config.json"), JSON.stringify({ ...base, extraHighAvailable: false, proAvailable: true }));
+  expect(() => loadConfig()).toThrow("Pro requires Extra High");
+});
+
+test("manual configuration keeps all automatic account capabilities disabled after loading", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-manual-capabilities-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  const config = defaultConfig("full");
+  config.runtimeCommand = [process.execPath];
+  config.browserInteractionMode = "manual";
+  config.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  config.browserHost = "launcher";
+  config.browserHostDescriptorPath = join(root, "launcher-browser.json");
+  config.tunnel = {
+    binaryPath: process.execPath,
+    tunnelId: `tunnel_${"a".repeat(32)}`,
+    runtimeKeyFile: join(root, "runtime-key"),
+    profileDir: join(root, "tunnel"),
+    profileName: "manual",
+    alias: "manual",
+  };
+  config.solAvailable = true;
+  config.extraHighAvailable = true;
+  config.proAvailable = true;
+  saveConfig(config);
+  expect(loadConfig()).toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+  delete config.extraHighAvailable;
+  config.proAvailable = false;
+  saveConfig(config);
+  expect(loadConfigForSetup()).toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
 });
 
 test("manual provider configuration preserves a distinct backend without guessing a ChatGPT model", () => {
   const config = defaultConfig("full");
   config.browserInteractionMode = "manual";
   config.solAvailable = true;
+  config.extraHighAvailable = true;
   config.proAvailable = true;
   const provider = providerConfig(config);
 
@@ -264,6 +347,7 @@ test("manual provider configuration preserves a distinct backend without guessin
     appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
     browserInteractionMode: "manual",
     solAvailable: false,
+    extraHighAvailable: false,
     proAvailable: false,
     experimentalBiggerContext: false,
   });

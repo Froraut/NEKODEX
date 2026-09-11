@@ -204,7 +204,7 @@ export async function detectChatGptAccountCapabilities(
     if (composerReady && formReady && documentReady) {
       absenceSince ??= Date.now();
       if (Date.now() - absenceSince >= stableAbsenceMs) {
-        return { solAvailable: false, proAvailable: false };
+        return { solAvailable: false, extraHighAvailable: false, proAvailable: false };
       }
     } else {
       absenceSince = undefined;
@@ -236,7 +236,11 @@ export async function detectChatGptAccountCapabilities(
         { cause: new Error("ChatGPT effort slider exposed an invalid ARIA range") },
       );
     }
-    return { solAvailable: true, proAvailable: state.max - state.min + 1 >= 5 };
+    const positions = state.max - state.min + 1;
+    if (![3, 4, 5].includes(positions)) {
+      throw new Error("ChatGPT effort slider exposed an unsupported reasoning range; run Repair after updating the launcher");
+    }
+    return { solAvailable: true, extraHighAvailable: positions >= 4, proAvailable: positions === 5 };
   } finally {
     await page.keyboard.press("Escape").catch(() => {});
   }

@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please read [Troubleshooting](https://github.com/miuuyy/codex-chatgpt-web/blob/main/TROUBLESHOOTING.md), update to the latest release, and reproduce the failure once before filing.
+        Please read [Troubleshooting](https://github.com/Froraut/codex-chatgpt-web/blob/main/TROUBLESHOOTING.md), update to the latest release, and reproduce the failure once before filing.
         Never upload cookies, browser storage, API keys, Tunnel IDs, raw launcher logs, or unredacted Codex prompts/tool output.
 
   - type: input
@@ -68,17 +68,39 @@ body:
       label: Integration mode
       options:
         - Browser-only
-        - Full harness (MCP)
+        - Full harness (automatic browser interaction / MCP)
+        - Zero Risk (manual browser interaction / MCP)
         - Setup / sign-in (no model turn yet)
     validations:
       required: true
 
-  - type: input
+  - type: textarea
     id: model
     attributes:
-      label: Selected model
-      description: Use the exact Codex model-picker name, or write "not applicable" for setup failures.
-      placeholder: ChatGPT Web — High
+      label: Model selections
+      description: Give the exact Codex picker entry. In Zero Risk, also report the model and effort actually selected in ChatGPT; the launcher cannot verify those manual choices. Use "not applicable" for setup failures or a selector that was not available.
+      placeholder: |
+        Codex picker entry:
+        ChatGPT model (Zero Risk):
+        ChatGPT effort (Zero Risk):
+    validations:
+      required: true
+
+  - type: dropdown
+    id: manual-step
+    attributes:
+      label: Zero Risk workflow step
+      description: Select where the manual turn stopped. Describe the last successful step in your reproduction, without including the prepared prompt.
+      options:
+        - Not using Zero Risk
+        - Setup or sign-in before a manual turn
+        - Preparing or copying the prompt
+        - Choosing the ChatGPT model, effort, or connector
+        - Pasting or sending the prompt in ChatGPT
+        - Confirming Sent in the launcher
+        - Waiting for Codex Zero Risk to connect
+        - MCP tool execution or returning the completed answer to Codex
+        - Another manual-flow step (describe below)
     validations:
       required: true
 
