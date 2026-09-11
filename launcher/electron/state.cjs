@@ -10,7 +10,7 @@ const DEFAULT_STATE = Object.freeze({
   onboardingComplete: false,
   githubOpened: false,
   xOpened: false,
-  autoStart: true,
+  autoStart: false,
   keepRunningOnClose: true,
   showBrowserDuringTurns: true,
   browserInteractionMode: "automatic",

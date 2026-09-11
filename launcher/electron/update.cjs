@@ -4,12 +4,27 @@ const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
+const { Transform } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 
-const REPOSITORY = "miuuyy/codex-chatgpt-web";
-const RELEASE_API_URL = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
+// Update origin belongs to this packaged build, never to an ambient environment
+// variable. A fork must not silently replace itself with an upstream release.
+const REPOSITORY = validateRepository(require("../package.json").updateRepository);
 const USER_AGENT = "codex-web-gpt-launcher-updater";
 const MAX_REDIRECTS = 5;
+const MAX_ASSET_BYTES = 1024 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+
+function validateRepository(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(value)) {
+    throw new Error("The packaged update repository must be a GitHub owner/repository");
+  }
+  return value;
+}
+
+function releaseApiUrl(repository = REPOSITORY) {
+  return `https://api.github.com/repos/${validateRepository(repository)}/releases/latest`;
+}
 
 function parseVersion(value) {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(value || "").trim());
@@ -62,16 +77,17 @@ function expectedChecksum(contents, assetName) {
   throw new Error(`checksums.txt has no entry for ${assetName}`);
 }
 
-function validateReleaseAssetUrl(raw, version, assetName) {
+function validateReleaseAssetUrl(raw, version, assetName, repository = REPOSITORY) {
   const url = new URL(raw);
-  const expectedPath = `/${REPOSITORY}/releases/download/v${version}/${assetName}`;
-  if (url.protocol !== "https:" || url.hostname !== "github.com" || url.pathname !== expectedPath) {
+  const expectedPath = `/${validateRepository(repository)}/releases/download/v${version}/${assetName}`;
+  if (url.protocol !== "https:" || url.hostname !== "github.com" || url.pathname !== expectedPath
+    || url.username || url.password || url.port || url.search || url.hash) {
     throw new Error(`GitHub returned an unexpected release asset URL for ${assetName}`);
   }
   return url.toString();
 }
 
-function request(url, redirects = 0) {
+function request(url, redirects = 0, { signal } = {}) {
   return new Promise((resolve, reject) => {
     if (redirects > MAX_REDIRECTS) {
       reject(new Error(`Too many redirects while downloading ${url}`));
@@ -83,6 +99,7 @@ function request(url, redirects = 0) {
       return;
     }
     const req = https.get(parsed, {
+      signal,
       headers: {
         Accept: "application/vnd.github+json",
         "User-Agent": USER_AGENT,
@@ -91,12 +108,14 @@ function request(url, redirects = 0) {
       if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
         response.resume();
         const next = new URL(response.headers.location, parsed).toString();
-        request(next, redirects + 1).then(resolve, reject);
+        request(next, redirects + 1, { signal }).then(resolve, reject);
         return;
       }
       if (response.statusCode !== 200) {
         response.resume();
-        reject(new Error(`Update download failed with HTTP ${response.statusCode}`));
+        const error = new Error(`Update download failed with HTTP ${response.statusCode}`);
+        error.statusCode = response.statusCode;
+        reject(error);
         return;
       }
       resolve(response);
@@ -106,21 +125,73 @@ function request(url, redirects = 0) {
   });
 }
 
-async function downloadText(url, maxBytes = 2 * 1024 * 1024) {
-  const response = await request(url);
-  const chunks = [];
-  let bytes = 0;
-  for await (const chunk of response) {
-    bytes += chunk.length;
-    if (bytes > maxBytes) throw new Error("Update metadata exceeded its size limit");
-    chunks.push(chunk);
+async function downloadText(url, maxBytes = 2 * 1024 * 1024, {
+  timeoutMs = 60_000,
+  requestDownload = request,
+} = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("Update metadata exceeded its time limit")), timeoutMs);
+  let response;
+  const abortResponse = () => response?.destroy(controller.signal.reason);
+  try {
+    response = await requestDownload(url, 0, { signal: controller.signal });
+    controller.signal.addEventListener("abort", abortResponse, { once: true });
+    if (controller.signal.aborted) abortResponse();
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of response) {
+      bytes += chunk.length;
+      if (bytes > maxBytes) throw new Error("Update metadata exceeded its size limit");
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  } catch (error) {
+    response?.destroy();
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    controller.signal.removeEventListener("abort", abortResponse);
   }
-  return Buffer.concat(chunks).toString("utf8");
 }
 
-async function downloadFile(url, destination) {
-  const response = await request(url);
-  await pipeline(response, fs.createWriteStream(destination, { flags: "wx", mode: 0o600 }));
+async function downloadFile(url, destination, {
+  expectedBytes,
+  maxBytes = MAX_ASSET_BYTES,
+  timeoutMs = DOWNLOAD_TIMEOUT_MS,
+  requestDownload = request,
+} = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("Update download exceeded its time limit")), timeoutMs);
+  let response;
+  let created = false;
+  try {
+    response = await requestDownload(url, 0, { signal: controller.signal });
+    let bytes = 0;
+    const limit = new Transform({
+      transform(chunk, _encoding, callback) {
+        bytes += chunk.length;
+        if (bytes > maxBytes || (expectedBytes !== undefined && bytes > expectedBytes)) {
+          callback(new Error("Update download exceeded its size limit"));
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
+    const fd = fs.openSync(destination, "wx", 0o600);
+    created = true;
+    await pipeline(response, limit, fs.createWriteStream(destination, { fd }), { signal: controller.signal });
+    if (expectedBytes !== undefined && bytes !== expectedBytes) {
+      throw new Error("Update download size does not match the release metadata");
+    }
+  } catch (error) {
+    response?.destroy();
+    if (created) fs.rmSync(destination, { force: true });
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function sha256(filePath) {
@@ -207,7 +278,7 @@ function buildJob({ version, platform, executablePath, assetPath, stagingRoot, t
 
 function defaultDependencies() {
   return {
-    fetchRelease: async () => JSON.parse(await downloadText(RELEASE_API_URL)),
+    fetchRelease: async (url) => JSON.parse(await downloadText(url)),
     downloadText,
     downloadFile,
     sha256,
@@ -254,8 +325,10 @@ function createUpdateController({
   logsDirectory,
   publish,
   logger,
+  repository = REPOSITORY,
   dependencies = {},
 }) {
+  const apiUrl = releaseApiUrl(repository);
   const deps = { ...defaultDependencies(), ...dependencies };
   const supportedAsset = releaseAssetName(currentVersion, platform, arch);
   let state = packaged && supportedAsset ? { status: "idle" } : { status: "disabled" };
@@ -274,7 +347,18 @@ function createUpdateController({
     checked = true;
     transition({ status: "checking" });
     try {
-      const release = await deps.fetchRelease();
+      let release;
+      try {
+        release = await deps.fetchRelease(apiUrl);
+      } catch (error) {
+        // A new public fork has no latest release until its first stable build.
+        // Never fall back to a different repository in that case.
+        if (error?.statusCode !== 404) throw error;
+      }
+      if (!release) {
+        candidate = null;
+        return transition({ status: "up-to-date" });
+      }
       const version = releaseVersion(release?.tag_name);
       if (compareVersions(version, currentVersion) <= 0) {
         candidate = null;
@@ -288,11 +372,15 @@ function createUpdateController({
       if (!asset?.browser_download_url || !checksums?.browser_download_url) {
         throw new Error(`Release v${version} is missing ${assetName} or checksums.txt`);
       }
+      if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_ASSET_BYTES) {
+        throw new Error(`Release v${version} has an invalid or excessive download size`);
+      }
       candidate = {
         version,
         assetName,
-        assetUrl: validateReleaseAssetUrl(asset.browser_download_url, version, assetName),
-        checksumsUrl: validateReleaseAssetUrl(checksums.browser_download_url, version, "checksums.txt"),
+        assetBytes: asset.size,
+        assetUrl: validateReleaseAssetUrl(asset.browser_download_url, version, assetName, repository),
+        checksumsUrl: validateReleaseAssetUrl(checksums.browser_download_url, version, "checksums.txt", repository),
       };
       logger?.info("launcher.update_available", { currentVersion, version, platform, arch });
       return transition({ status: "available", version });
@@ -314,7 +402,7 @@ function createUpdateController({
         const checksums = await deps.downloadText(available.checksumsUrl);
         const expected = expectedChecksum(checksums, available.assetName);
         const assetPath = path.join(tempRoot, available.assetName);
-        await deps.downloadFile(available.assetUrl, assetPath);
+        await deps.downloadFile(available.assetUrl, assetPath, { expectedBytes: available.assetBytes });
         const actual = deps.sha256(assetPath);
         if (actual !== expected) throw new Error(`SHA-256 verification failed for ${available.assetName}`);
 
@@ -377,10 +465,14 @@ module.exports = {
   buildJob,
   compareVersions,
   createUpdateController,
+  downloadFile,
+  downloadText,
   expectedChecksum,
   macApplicationPath,
   parseVersion,
   releaseAssetName,
+  releaseApiUrl,
   releaseVersion,
   validateReleaseAssetUrl,
+  validateRepository,
 };

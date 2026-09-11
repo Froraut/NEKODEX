@@ -794,7 +794,7 @@ test("authentication windows stay inside the launcher-owned browser partition", 
   assert.equal(allowedAuthUrl("https://platform.openai.com/settings/organization/tunnels"), false);
   assert.equal(allowedAuthUrl("https://example.com/login"), false);
   const source = fs.readFileSync(require.resolve("../electron/browser-host.cjs"), "utf8");
-  assert.match(source, /createWindow:\s*\(options\)\s*=>\s*this\.createAuthView\(options,\s*url\)/);
+  assert.match(source, /createWindow:\s*\(options\)\s*=>\s*this\.createAuthView\(options,\s*url,\s*\{ referrer, postBody \}\)/);
   assert.match(source, /webContents:\s*options\.webContents/);
   assert.doesNotMatch(source, /loginWithSystemBrowser|captureSystemBrowserLogin|system_login_started/);
 });

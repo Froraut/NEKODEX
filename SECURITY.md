@@ -10,10 +10,12 @@ Read the complete [security model](docs/security-model.md) before enabling full 
 full mode lets an untrusted model response request tools from the current Codex turn; keep connector
 action control, Codex sandboxing, and approvals aligned with the workspace's risk.
 
-The stable MCP v1 SDK currently declares the vulnerable `@hono/node-server` 1.x range even though
-this project uses only its stdio transport. The lockfile explicitly resolves that unused HTTP
-adapter to patched 2.0.12. `bun audit`, the MCP protocol test, and the compiled-binary smoke test are
-release gates; remove the override when the stable SDK itself moves to the patched major.
+The application uses the MCP SDK's stdio transport. Its dependency graph also contains HTTP/SSG
+components that are not imported by this application. The fork pins `@hono/node-server` 2.0.12
+and `hono` 4.13.5 as dependency floors, and pins build-time `js-yaml` 4.3.2. These address the
+advisories found by the September 2026 review; an affected dependency is not by itself proof of
+a reachable application exploit. Run both dependency audits, MCP protocol tests, and runtime
+smoke checks when updating these pins. See the [review](docs/reviews/2026-09-11-review.md).
 
 Once the GitHub repository is public, use its private Security Advisory reporting flow. Until that
 is enabled, do not publish a proof of concept that exposes credentials or arbitrary local tool

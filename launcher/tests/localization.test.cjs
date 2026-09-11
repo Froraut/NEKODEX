@@ -37,6 +37,21 @@ function linkTargets(source) {
   return [...new Set([...markdown, ...html])].sort();
 }
 
+test("launcher errors remove IPC wrappers and offer localized navigation guidance", () => {
+  const { copyFor, localizeLauncherError } = loadI18nModule();
+  for (const language of ["en", "zh-CN", "ja"]) {
+    const copy = copyFor(language);
+    assert.equal(localizeLauncherError(copy, "Error invoking remote method 'launcher:browser-navigate': Error: Browser navigation is locked during ChatGPT login"), copy.embeddedLoginBody);
+    assert.equal(localizeLauncherError(copy, "Browser navigation is locked during ChatGPT passkey login"), copy.passkeyContinueBody);
+    assert.equal(localizeLauncherError(copy, "Browser navigation is locked during session inspection"), copy.browserNavigationBusy);
+    assert.equal(localizeLauncherError(copy, "Error invoking remote method 'launcher:snapshot': Error: Runtime unavailable"), "Runtime unavailable");
+    assert.equal(localizeLauncherError(copy, "Unknown diagnostic (42)"), "Unknown diagnostic (42)");
+    assert.ok(copy.passkeyContinueBody.includes("Chrome"));
+    assert.notEqual(copy.passkeyContinue, copy.continue);
+    assert.ok(copy.retry.length > 0);
+  }
+});
+
 test("localized READMEs preserve every command block and link target from English", () => {
   for (const source of [chineseReadme, japaneseReadme]) {
     assert.deepEqual(commandFences(source), commandFences(englishReadme));

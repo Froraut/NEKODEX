@@ -591,8 +591,9 @@ export function bridgeToResponsesSSE(
               // Redacted-only turns (or hidden thinking without a trailing signature event) still
               // need their envelope-only reasoning item so the blocks replay next turn.
               flushHiddenReasoningEnvelope();
-              if (options?.compaction) {
-                // Exactly one compaction item per turn; codex-rs takes the first and fatals on 0.
+              if (options?.compaction && event.stopReason !== "max_tokens" && event.stopReason !== "content_filter") {
+                // Exactly one checkpoint after authoritative completion. A truncated or filtered
+                // summary must never be advertised as replacement history.
                 const item = {
                   type: "compaction", id: `cmp_${uuid()}`,
                   encrypted_content: encodeCompactionSummary(compactionText),
@@ -867,6 +868,7 @@ export function buildResponseJSON(
   let incompleteEvent: Extract<AdapterEvent, { type: "incomplete" }> | undefined;
   let endTurn: boolean | undefined;
   let stopReason: string | undefined;
+  let receivedDone = false;
   let compactionText = "";
 
   let currentText = "";
@@ -1032,10 +1034,11 @@ export function buildResponseJSON(
         if (e.providerState) options?.onProviderState?.(e.providerState);
         break;
       case "done":
+        receivedDone = true;
         usage = e.usage;
         endTurn = e.endTurn;
         if (e.providerState) options?.onProviderState?.(e.providerState);
-        if (e.stopReason === "max_tokens") stopReason = "max_tokens";
+        if (e.stopReason === "max_tokens" || e.stopReason === "content_filter") stopReason = e.stopReason;
         break;
     }
   }
@@ -1043,18 +1046,20 @@ export function buildResponseJSON(
   flushSummaryReasoning();
   flushRawReasoning();
   flushToolCall();
-  // A truncated turn must never become replacement history. Emit a compaction item only after
-  // authoritative turn completion.
-  if (options?.compaction && !errorEvent && !incompleteEvent && stopReason !== "max_tokens") {
-    output.push({ type: "compaction", id: `cmp_${uuid()}`, encrypted_content: encodeCompactionSummary(compactionText) });
-  }
-
   const failure = errorEvent ? adapterFailureFromEvent(errorEvent) : undefined;
+  const implicitIncompleteReason = errorEvent || incompleteEvent ? undefined
+    : stopReason === "max_tokens" ? "max_output_tokens"
+      : stopReason === "content_filter" ? "content_filter"
+        : receivedDone ? undefined : "adapter_eof";
   const status = errorEvent
     ? "failed"
-    : incompleteEvent || stopReason === "max_tokens"
+    : incompleteEvent || implicitIncompleteReason
       ? "incomplete"
       : "completed";
+  // Match the SSE contract: only an explicit, successful terminal can replace history.
+  if (options?.compaction && status === "completed") {
+    output.push({ type: "compaction", id: `cmp_${uuid()}`, encrypted_content: encodeCompactionSummary(compactionText) });
+  }
   return {
     id: responseId, object: "response",
     created_at: Math.floor(Date.now() / 1000),
@@ -1069,8 +1074,8 @@ export function buildResponseJSON(
         ...(incompleteEvent.message ? { message: incompleteEvent.message } : {}),
         ...(incompleteEvent.retryable !== undefined ? { retryable: incompleteEvent.retryable } : {}),
       },
-    } : stopReason === "max_tokens" ? {
-      incomplete_details: { reason: "max_output_tokens" },
+    } : implicitIncompleteReason ? {
+      incomplete_details: { reason: implicitIncompleteReason },
     } : {}),
     usage: responsesUsage(incompleteEvent?.usage ?? usage),
   };

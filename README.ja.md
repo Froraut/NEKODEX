@@ -1,5 +1,27 @@
 <h1 align="center">Codex 用 ChatGPT Web</h1>
 
+> **Froraut メンテナンスフォーク。** [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
+> v5.0.6（`e85e369`）を基に、確認済みの認証、リクエスト境界、ライフサイクル、更新、操作性の問題を修正しています。
+> 根拠と残る制限は[レビューと改善計画](docs/reviews/2026-09-11-review.md)を参照してください。
+> 元の作者の帰属表示と MIT ライセンスは維持しています。
+>
+> **ソース公開：** このレビューは、新しいプラットフォーム向けリリースの認証や、実アカウントでの
+> Codex/MCP セッション成功を保証するものではありません。このフォークのバイナリはまだ公開されていません。
+> このフォークをクローンし、以下のソース実行コマンドを使用してください。上流のバイナリには、これらの修正は含まれません。
+> 内蔵の更新チェックはこのフォークのみを対象とし、上流のリリースを黙ってインストールすることはありません。
+
+```bash
+git clone https://github.com/Froraut/codex-chatgpt-web.git
+cd codex-chatgpt-web
+bun install --frozen-lockfile
+bun install --frozen-lockfile --cwd launcher
+bun run dev:launcher
+```
+
+Bun 1.4.0 を使用してください。`dev:launcher` はレビューとログインテスト用に隔離された開発プロファイルを使用します。
+`bun run app` は、このソースから通常のランチャーを起動します。本番環境への統合を有効にする前に、
+[DEV の隔離](docs/dev-chat.md)を確認してください。
+
 <p align="center">
   <strong>ChatGPT Web（Pro を含む）を Codex のネイティブモデルとして使用。</strong><br>
   モデルの利用枠を切り替えて、いつものワークフローを維持できます。
@@ -14,12 +36,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Froraut/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/Froraut/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT ライセンス"></a>
   <img src="https://img.shields.io/badge/macOS-arm64%20%7C%20x64-black?logo=apple" alt="macOS arm64 および x64">
   <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-fcc624?logo=linux&logoColor=black" alt="Linux x64">
-  <img src="https://img.shields.io/badge/Free_AI-no_API_fees-10a37f" alt="API 料金なしの AI">
 </p>
 
 Free および Go アカウントでは、Codex のネイティブモデル選択画面に
@@ -41,12 +62,6 @@ Codex タスク ──Responses + SSE──▶ codex-chatgpt-web ──内蔵ブ
 Codex はネイティブのタスク、コンテキストライフサイクル、UI、ツールハーネスを維持します。
 ローカル Responses ブリッジは、選択されたモデルのタスクだけをタスクに紐付いた ChatGPT 一時チャットへルーティングします。
 Full モードでは、次のコンパクション境界まで、MCP が ChatGPT を同じ Codex タスクのツールへ接続します。
-
-> [!TIP]
-> **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)** も開発しています。
-> ChatGPT/Codex の音声をローカル環境でほぼリアルタイムに変換するアプリです。
-> アカウント、ブラウザーセッション、ChatGPT リクエストには一切触れないため、
-> 使用によってアカウントがブロックされるリスクはありません。気に入っていただけたら、ぜひお試しください。
 
 ## 主な特長
 
@@ -70,6 +85,9 @@ Full モードでは、次のコンパクション境界まで、MCP が ChatGPT
 
 ## クイックスタート
 
+このフォークの最初のバイナリリリースが公開されるまでは、ページ上部のソース実行手順を使用してください。
+以下のインストールコマンドは、このフォークで今後公開されるバイナリリリース用です。
+
 デスクトップランチャーをインストールまたは更新します。既存のインストールを更新・修復する場合は、
 ランチャーを終了して同じコマンドをもう一度実行してください。ChatGPT プロファイルとランチャー設定を保持したまま、
 アプリケーションと内蔵ランタイムが置き換えられます。
@@ -77,19 +95,21 @@ Full モードでは、次のコンパクション境界まで、MCP が ChatGPT
 **macOS または Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 アプリ内で次の 3 項目を完了します。
 
-1. ランチャー内蔵の ChatGPT ブラウザーで直接サインインします。ログインページと ID プロバイダーの
-   ウィンドウは、同じランチャー管理の非公開ブラウザープロファイル内に保持されます。ブラウザー間でセッションをコピーしません。
+1. ランチャー内蔵の ChatGPT ブラウザーで直接サインインします。通常のログインページと ID プロバイダーの
+   ウィンドウは、ランチャー管理の非公開プロファイル内に保持されます。macOS では **パスキーを使用** を選ぶと
+   専用の Chrome プロファイルが開きます。そこでサインインを完了し、ランチャーの **Chrome のログインを取り込む** を
+   選ぶと、許可リストにある ChatGPT/OpenAI のセッションだけを転送して検証します。
 2. ブラウザーのスモークテストを実行します。
 3. **モデルをインストール**を押し、Codex を一度再起動して、**ChatGPT Web — …** モデルを選択します。
 
@@ -97,14 +117,15 @@ irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install
 Free/Go アカウントでは Luna のみが表示され、Pro はサインイン中のアカウントで利用可能な場合にのみ表示されます。
 独立した **MCP** ページは任意で、ターミナルコマンドを使わずに Full ハーネスの設定を案内します。
 
-パッケージ版ランチャーは、サインインと ChatGPT モデルのターンを内蔵ブラウザーで処理します。
-モデル API キー、インストール済みの Chrome/Chromium、システムの Node/Bun、
-プロジェクト管理のブラウザーダウンロードは不要です。
+パッケージ版ランチャーは ChatGPT モデルのターンを内蔵ブラウザーで処理します。
+通常の内蔵ブラウザーでのログインには、Chrome/Chromium のインストールは不要です。
+任意の macOS パスキーフローには Chrome が必要です。パッケージ版ではモデル API キー、
+システムの Node/Bun、プロジェクト管理のブラウザーダウンロードは不要です。
 
 **ソースから実行**
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
+git clone https://github.com/Froraut/codex-chatgpt-web.git && \
 cd codex-chatgpt-web && \
 bun run app
 ```

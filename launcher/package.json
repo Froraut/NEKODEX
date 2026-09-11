@@ -4,6 +4,7 @@
   "private": true,
   "description": "Desktop control center for Codex ChatGPT Web",
   "author": "miuuyy",
+  "updateRepository": "Froraut/codex-chatgpt-web",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -38,7 +39,8 @@
   },
   "overrides": {
     "@xmldom/xmldom": "0.8.15",
-    "fast-uri": "3.1.6"
+    "fast-uri": "3.1.6",
+    "js-yaml": "4.3.2"
   },
   "build": {
     "appId": "dev.codexwebgpt.launcher",

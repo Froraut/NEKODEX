@@ -4,6 +4,7 @@ import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker
 import { timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import {
+  activeStructuredCompactionCount,
   cancelAllStructuredCompactions,
   cancelStructuredCompactionNativeTurn,
   cancelStructuredCompactionTrace,
@@ -454,6 +455,7 @@ export async function responseRequest(
   try {
     raw = await readJsonRequestBody(req);
   } catch (error) {
+    void nativeRequest.body?.cancel().catch(() => {});
     return formatErrorResponse(
       400,
       "invalid_request_error",
@@ -478,6 +480,9 @@ export async function responseRequest(
       return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
     }
   }
+  // The native byte-for-byte replay branch is unused for a Web request. Release its tee buffer
+  // before the browser turn, which may stay active for minutes.
+  void nativeRequest.body?.cancel().catch(() => {});
   const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { previous_response_id?: unknown }).previous_response_id
     : undefined;
@@ -589,20 +594,35 @@ export async function responseRequest(
   const adapter = adapterFactory(provider);
   const queue = new AsyncEventQueue<AdapterEvent>();
   const abort = new AbortController();
-  if (req.signal.aborted) abort.abort();
-  else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
-  const run = async () => {
+  const onRequestAbort = () => abort.abort(req.signal.reason);
+  if (req.signal.aborted) onRequestAbort();
+  else req.signal.addEventListener("abort", onRequestAbort, { once: true });
+  let eventDeliveryFailed = false;
+  const deliverEvent = (event: AdapterEvent): void => {
+    if (eventDeliveryFailed) return;
     try {
-      await adapter.runTurn!(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
-        options.onAdapterEvent?.(event);
-        queue.push(event);
-      });
-    } catch (error) {
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
       options.onAdapterEvent?.(event);
       queue.push(event);
+    } catch (error) {
+      // Producers also emit from timer/process callbacks outside runTurn's promise. Never
+      // throw from that boundary, or try to enqueue an error into an already-full buffer.
+      eventDeliveryFailed = true;
+      queue.fail(error);
+      abort.abort(error);
+    }
+  };
+  const run = async () => {
+    try {
+      // The body may finish asynchronously after an operator shutdown scan. An already
+      // cancelled observer must not register a new detached compaction/browser owner.
+      abort.signal.throwIfAborted();
+      await adapter.runTurn!(parsed, { headers: req.headers, abortSignal: abort.signal }, deliverEvent);
+    } catch (error) {
+      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      deliverEvent(event);
     } finally {
       queue.close();
+      req.signal.removeEventListener("abort", onRequestAbort);
     }
   };
   const maps = toolBridgeMaps(parsed);
@@ -637,8 +657,15 @@ export async function responseRequest(
     });
   }
 
-  await run();
-  const events = await queue.collect();
+  const events: AdapterEvent[] = [];
+  const collect = (async () => {
+    try {
+      for await (const event of queue) events.push(event);
+    } catch (error) {
+      events.push({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  })();
+  await Promise.all([run(), collect]);
   const json = buildResponseJSON(events, responseModel, {
     hideThinkingSummary: parsed.options.hideThinkingSummary,
     toolNsMap: maps.toolNsMap,
@@ -663,6 +690,7 @@ export async function compactRequest(
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
     raw = parsed as Record<string, unknown>;
   } catch (error) {
+    void nativeRequest.body?.cancel().catch(() => {});
     return formatErrorResponse(
       400,
       "invalid_request_error",
@@ -694,6 +722,7 @@ export async function compactRequest(
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
   if (typeof raw.model !== "string" || !raw.model) {
+    void nativeRequest.body?.cancel().catch(() => {});
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
   }
   if (!isChatGptWebModelSlug(raw.model)) {
@@ -703,6 +732,7 @@ export async function compactRequest(
       return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
     }
   }
+  void nativeRequest.body?.cancel().catch(() => {});
   let route: ChatGptWebModelRoute;
   try {
     route = requireChatGptWebModelRoute(raw.model, config);
@@ -767,6 +797,48 @@ export async function compactRequest(
   return Response.json({ output: buildCompactV1Output(extractCompactUserMessages(input), summary) });
 }
 
+const JSON_REQUEST_PATHS = new Set([
+  "/v1/responses",
+  "/v1/responses/compact",
+  "/v1/alpha/search",
+]);
+
+/**
+ * Loopback is not itself a browser-origin boundary. Reject rebinding authorities and browser
+ * cross-site requests before reading a body or starting any account-backed work. Native Codex
+ * sends no Origin; it remains compatible without introducing a second bearer credential.
+ */
+function localHttpRequestRejection(req: Request, url: URL, port: number): Response | undefined {
+  const authority = (req.headers.get("host") ?? "").toLowerCase();
+  const allowedAuthorities = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+  if (port === 80) {
+    allowedAuthorities.add("127.0.0.1");
+    allowedAuthorities.add("localhost");
+  }
+  if (!allowedAuthorities.has(authority)) {
+    return formatErrorResponse(403, "permission_error", "The local bridge requires its exact loopback Host");
+  }
+  const origin = req.headers.get("origin");
+  if (origin !== null && origin !== `http://${authority}`) {
+    // URL.origin omits :80, so permit its canonical spelling when using the default HTTP port.
+    const canonicalOrigin = new URL(`http://${authority}`).origin;
+    if (origin !== canonicalOrigin) {
+      return formatErrorResponse(403, "permission_error", "Cross-origin browser requests are not allowed");
+    }
+  }
+  const fetchSite = req.headers.get("sec-fetch-site");
+  if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") {
+    return formatErrorResponse(403, "permission_error", "Cross-site browser requests are not allowed");
+  }
+  if (req.method === "POST" && JSON_REQUEST_PATHS.has(url.pathname)) {
+    const mediaType = (req.headers.get("content-type") ?? "").split(";", 1)[0]!.trim().toLowerCase();
+    if (mediaType !== "application/json") {
+      return formatErrorResponse(415, "invalid_request_error", "This endpoint requires application/json");
+    }
+  }
+  return undefined;
+}
+
 export function startServer(
   config: AppConfig,
   dependencies: { fetchUpstream?: NativeFetch; adapterFactory?: ChatGptWebAdapterFactory } = {},
@@ -791,6 +863,7 @@ export function startServer(
   const activity = () => ({
     active_http_turns: httpTurns.count(),
     active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0),
+    active_compaction_runs: activeStructuredCompactionCount(),
   });
   const controlAuthorized = (req: Request): boolean => {
     const header = req.headers.get("authorization") ?? "";
@@ -804,6 +877,8 @@ export function startServer(
     idleTimeout: 0,
     async fetch(req) {
       const url = new URL(req.url);
+      const rejection = localHttpRequestRejection(req, url, server.port!);
+      if (rejection) return rejection;
       if (req.method === "GET" && url.pathname === "/healthz") {
         return Response.json({
           status: "ok",
@@ -930,7 +1005,8 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/shutdown") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         const current = activity();
-        if (!draining || current.active_http_turns > 0 || current.active_browser_turns > 0) {
+        if (!draining || current.active_http_turns > 0 || current.active_browser_turns > 0
+          || current.active_compaction_runs > 0) {
           return Response.json(
             {
               status: "refused",
@@ -1040,10 +1116,19 @@ export function startServer(
   function shutdown(): void {
     if (shutdownPromise) return;
     draining = true;
+    turnBroker?.setExternalOwnersAccepted(false);
+    const reason = new Error("Runtime shutting down");
+    // Signal-driven shutdown can arrive without an idle drain. Revoke detached compaction
+    // owners before retiring their source sessions, otherwise a fallback can start fresh work.
+    const compactionCancellation = cancelAllStructuredCompactions(reason);
     chatGptTurnSessions.clear();
+    turnBroker?.revokeExternalOwners();
+    const httpCancellation = httpTurns.cancelAll(reason);
     flushResponseState();
     shutdownPromise = (async () => {
       const results = await Promise.allSettled([
+        compactionCancellation,
+        httpCancellation,
         closeChatGptBrowserWorkers(),
         closeTurnBrokers(),
       ]);

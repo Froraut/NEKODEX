@@ -198,7 +198,8 @@ export async function cancelActiveTurns(config: AppConfig): Promise<{
   const cancelledBrowserTurns = result.cancelled_browser_turns;
   if (!Number.isInteger(cancelledHttpTurns) || (cancelledHttpTurns as number) < 0
     || !Number.isInteger(cancelledBrowserTurns) || (cancelledBrowserTurns as number) < 0
-    || result.active_http_turns !== 0 || result.active_browser_turns !== 0) {
+    || result.active_http_turns !== 0 || result.active_browser_turns !== 0
+    || (result.active_compaction_runs !== undefined && result.active_compaction_runs !== 0)) {
     throw new Error("daemon did not acknowledge complete active-turn cancellation");
   }
   return {
@@ -218,11 +219,16 @@ export async function negotiateDrain(
     drained = true;
     const activeHttp = health.active_http_turns;
     const activeBrowser = health.active_browser_turns;
-    if (!Number.isInteger(activeHttp) || !Number.isInteger(activeBrowser) || health.accepting_turns !== false) {
+    // Older daemons did not expose detached compaction activity. Honour the stronger idle
+    // contract when present while allowing those daemons to complete an upgrade.
+    const activeCompaction = health.active_compaction_runs === undefined ? 0 : health.active_compaction_runs;
+    if (!Number.isInteger(activeHttp) || !Number.isInteger(activeBrowser)
+      || !Number.isInteger(activeCompaction) || (activeCompaction as number) < 0
+      || health.accepting_turns !== false) {
       throw new Error("daemon did not acknowledge the drain contract");
     }
-    if ((activeHttp as number) > 0 || (activeBrowser as number) > 0) {
-      throw new Error(`daemon has ${activeHttp} active HTTP turn(s) and ${activeBrowser} active browser turn(s)`);
+    if ((activeHttp as number) > 0 || (activeBrowser as number) > 0 || (activeCompaction as number) > 0) {
+      throw new Error(`daemon has ${activeHttp} active HTTP turn(s), ${activeBrowser} active browser turn(s), and ${activeCompaction} active compaction run(s)`);
     }
     return { release: async () => { if (drained) { await controlAction("resume"); drained = false; } } };
   } catch (error) {

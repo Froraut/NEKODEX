@@ -73,7 +73,10 @@ The Responses endpoint is loopback-only, but it has no independent bearer secret
 built-in Codex OpenAI provider cannot be configured with a bridge-specific credential while
 preserving the native provider/task identity. Another process under the same OS user can reach the
 port. Run on a trusted single-user account and treat local code execution as inside the trust
-boundary.
+boundary. The fork validates loopback Host/Origin and Fetch Metadata before dispatch, rejecting
+foreign browser origins and rebinding Host values. Requests without an Origin remain supported
+for the native Codex client. This is a web-origin boundary, not authentication against a local
+process that can forge HTTP headers.
 
 The lifecycle endpoints are separate from the Responses surface. `/admin/drain`, `/admin/resume`,
 `/admin/cancel-turn`, `/admin/cancel-turns`, and `/admin/shutdown` require a random bearer token stored in the
@@ -94,8 +97,15 @@ The launcher keeps ChatGPT login, identity-provider navigation, and model turns 
 Electron partition. Allowed login popups are adopted into an in-launcher `WebContentsView` that
 shares that partition; unrelated external links remain outside it. A visible composer alone is not
 authentication evidence: the launcher also requires a valid server session and an exact Temporary
-Chat URL before setup can continue. No cookies, local storage, or browser profile are copied from an
-external browser.
+Chat URL before setup can continue. Ordinary embedded login does not copy external browser state.
+The explicitly selected macOS passkey flow is an exception: it starts a dedicated Chrome profile,
+waits for the user's confirmation, imports only validated ChatGPT/OpenAI cookies and supported
+ChatGPT storage, then re-verifies the session inside Electron. It removes the temporary profile
+and transfer state before success. It never imports the user's ordinary Chrome profile.
+
+The fork cancels and awaits a pending embedded login before this handoff, and ignores obsolete
+authentication probes after the session generation changes. This prevents old login work from
+overwriting the imported session's state.
 
 ### Cross-turn data leakage
 
@@ -119,6 +129,9 @@ assistant prose as a structured handoff.
   and user-authorized attachment URLs through normal browser networking.
 
 ## Non-goals
+
+The UI's inherited "Zero Risk" name describes manual browser interaction. It does not eliminate
+MCP tool-execution, account, local-session, platform, or upstream-policy risks.
 
 - Defending against a compromised local OS user or compromised Codex/Electron binary.
 - Bypassing ChatGPT plan, workspace, usage, action-control, or model restrictions.

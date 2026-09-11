@@ -115,18 +115,47 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.doesNotMatch(electronMain, /IS_DEV_PROFILE && key === "experimentalBiggerContext"/);
 });
 
-test("macOS passkey sign-in is additive to the unchanged embedded login action", () => {
+test("macOS passkey sign-in is additive and displays a separate Chrome continuation guide", () => {
   assert.match(appSource, /onAction=\{openLogin\}/);
   assert.match(appSource, /<BrowserSurface[\s\S]*?operation=\{operation\}[\s\S]*?platform=\{snapshot\.platform\}/);
-  assert.match(appSource, /const passkeyAvailable = !manualInteraction[\s\S]*?platform === "darwin"[\s\S]*?browser\?\.authenticated !== true/);
+  assert.match(appSource, /const \{ navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked \} = browserControls\(/);
   assert.match(appSource, /\{passkeyAvailable \? \([\s\S]*?className="toolbar-text-button"[\s\S]*?copy\.passkeySignIn/);
   assert.match(appSource, /className="browser-empty-actions"[\s\S]*?copy\.passkeySignIn/);
   assert.match(appSource, /passkeyWaiting \? continuePasskeyLogin : openPasskeyLogin/);
+  assert.match(appSource, /disabled=\{passkeyActionDisabled\}/);
+  assert.match(appSource, /className="browser-login-guide" role="status"[\s\S]*?copy\.passkeyContinueBody/);
+  assert.match(appSource, /if \(navigationLocked\) return;/);
+  const shell = appSource.slice(appSource.indexOf("function LauncherShell("), appSource.indexOf("function BrowserSurface("));
+  assert.match(shell, /const \[passkeyContinuationRequested, setPasskeyContinuationRequested\] = useState\(false\)/);
+  assert.match(shell, /passkeyContinuationRequested=\{passkeyContinuationRequested\}/);
   assert.match(preloadSource, /openPasskeyLogin:[\s\S]*?launcher:browser-passkey-login/);
   assert.match(preloadSource, /continuePasskeyLogin:[\s\S]*?launcher:browser-passkey-login-continue/);
   assert.match(electronMain, /launcher:browser-passkey-login[\s\S]*?browserHost\.openPasskeyLogin\(\)/);
   assert.match(electronMain, /loginWithPasskey: \(\) => runtimeHost\.capturePasskeyLogin\(\)/);
   assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
+});
+
+test("onboarding can finish without visiting external social pages", () => {
+  const onboarding = appSource.slice(appSource.indexOf("function Onboarding("), appSource.indexOf("function LauncherShell("));
+  assert.doesNotMatch(onboarding, /disabled=\{[^}]*githubOpened|disabled=\{[^}]*xOpened/);
+  assert.doesNotMatch(electronMain, /if \(!current\.githubOpened \|\| !current\.xOpened\)/);
+});
+
+test("startup failures offer retry before the loading screen and ignore stale requests", () => {
+  const failure = appSource.indexOf("if (!snapshot && startupError)");
+  const loading = appSource.indexOf("if (!snapshot) return <LaunchLoading");
+  assert.ok(failure >= 0 && failure < loading);
+  assert.match(appSource, /if \(!cancelled\) setStartupError\(messageOf\(cause\)\)/);
+  assert.match(appSource, /setStartupAttempt\(\(attempt\) => attempt \+ 1\)/);
+  assert.match(appSource, /\}, \[startupAttempt\]\)/);
+});
+
+test("browser tabs expose keyboard selection and errors are announced", () => {
+  assert.match(appSource, /role="tablist" aria-label=\{copy\.browser\}/);
+  assert.match(appSource, /tabIndex=\{tab\.active \? 0 : -1\}/);
+  assert.match(appSource, /event\.key === "Enter" \|\| event\.key === " "/);
+  assert.match(appSource, /\["ArrowLeft", "ArrowRight", "Home", "End"\]/);
+  assert.match(appSource, /className="error-toast"\s+role="alert"/);
 });
 
 test("Bigger Context startup recommendation reuses the persisted setting and setup transaction", () => {

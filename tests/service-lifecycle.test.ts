@@ -29,4 +29,27 @@ describe("service drain lifecycle", () => {
     await lease.release();
     expect(actions).toEqual(["drain", "resume"]);
   });
+
+  test("refuses to stop a runtime with a detached compaction and compensates the drain", async () => {
+    const actions: string[] = [];
+    await expect(negotiateDrain(async action => {
+      actions.push(action);
+      return {
+        accepting_turns: action === "resume",
+        active_http_turns: 0,
+        active_browser_turns: 0,
+        active_compaction_runs: 1,
+      };
+    })).rejects.toThrow("1 active compaction run(s)");
+    expect(actions).toEqual(["drain", "resume"]);
+  });
+
+  for (const invalid of [-1, null, "0"]) test(`rejects malformed compaction activity ${JSON.stringify(invalid)}`, async () => {
+    await expect(negotiateDrain(async action => ({
+      accepting_turns: action === "resume",
+      active_http_turns: 0,
+      active_browser_turns: 0,
+      active_compaction_runs: invalid,
+    }))).rejects.toThrow("did not acknowledge the drain contract");
+  });
 });

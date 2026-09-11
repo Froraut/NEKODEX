@@ -65,9 +65,16 @@ window does not automatically transfer that session.
   running.
 - If the account offers **Try another way**, an alternate authentication method can avoid a
   platform-passkey limitation.
-- Passkey-only macOS accounts have a known open issue: [#209](https://github.com/miuuyy/codex-chatgpt-web/issues/209).
-  If no alternate method exists, follow that issue rather than repeatedly deleting the browser
-  profile; there is no safe generic workaround to claim yet.
+- For macOS passkeys, use **Use passkey** in the launcher's browser toolbar. The embedded
+  browser may not show the system passkey chooser. The launcher opens a separate Chrome profile:
+  finish sign-in there, wait for the ChatGPT composer, then return and choose **Import Chrome
+  sign-in**. The launcher verifies the imported session and removes the temporary transfer.
+- In this fork, choosing **Use passkey** during an embedded login cancels and awaits the previous
+  attempt before starting Chrome. You should not have to wait for the three-minute login timeout.
+  Only this explicit passkey flow transfers allowlisted ChatGPT/OpenAI state; it does not import
+  your ordinary Chrome profile. See [upstream issue #209](https://github.com/miuuyy/codex-chatgpt-web/issues/209).
+- Back, Forward, and Reload are intentionally disabled during an active login or browser
+  operation. A sign-in failure and a blocked navigation action are different conditions.
 
 If an ordinary login still fails, export a safe log immediately after one attempt. Include the OS,
 launcher version, account tier, sign-in provider, and whether the Temporary Chat composer ever

@@ -20,9 +20,11 @@ const { BrowserControlServer } = require("./control-server.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const {
   createLogger,
+  createRendererIpcGuard,
   exportSanitizedLogs,
   installProcessDiagnosticGuards,
   registerLoggedIpc,
+  registerLoggedIpcEvent,
 } = require("./logging.cjs");
 const { RuntimeHost } = require("./runtime.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime-install.cjs");
@@ -421,7 +423,11 @@ function smokePassedForCurrentVersion(state) {
 }
 
 function registerIpc({ logger, stateStore }) {
-  const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, handler);
+  const authorize = createRendererIpcGuard({
+    getMainWindow: () => mainWindow,
+    isRendererUrlAllowed: rendererNavigationAllowed,
+  });
+  const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, handler, authorize);
   handle("launcher:snapshot", async () => ({
     profile: LAUNCHER_PROFILE.kind,
     profilePaths: {
@@ -461,7 +467,6 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:complete-onboarding", (_event, language, rawInteractionMode) => {
     const current = stateStore.read();
-    if (!current.githubOpened || !current.xOpened) throw new Error("Open the GitHub and X pages before continuing");
     if (current.autoStart) setAutostart(app, true);
     const next = stateStore.update({
       language: validateLanguage(language),
@@ -856,13 +861,13 @@ function registerIpc({ logger, stateStore }) {
     const window = BrowserWindow.fromWebContents(event.sender);
     return windowStateSnapshot(window);
   });
-  ipcMain.on("launcher:window-control", (event, action) => {
+  registerLoggedIpcEvent(ipcMain, logger, "launcher:window-control", (event, action) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || window.isDestroyed()) return;
     if (action === "close") window.close();
     else if (action === "minimize") window.minimize();
     else if (action === "zoom") window.isMaximized() ? window.unmaximize() : window.maximize();
-  });
+  }, authorize);
 }
 
 async function requestQuit() {

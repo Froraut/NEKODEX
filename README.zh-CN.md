@@ -1,5 +1,24 @@
 <h1 align="center">ChatGPT Web for Codex</h1>
 
+> **Froraut 维护分支。** 基于 [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
+> v5.0.6（`e85e369`）。本分支修复已确认的身份验证、请求边界、生命周期、更新和易用性问题。
+> 证据和剩余限制见[审查与改进路线图](docs/reviews/2026-09-11-review.md)。保留原作者归属及 MIT 许可证。
+>
+> **源码发布：** 本次审查不代表新的平台发行版已通过认证，也不代表已在真实账户下成功完成
+> Codex/MCP 会话。当前尚未发布本分支的二进制安装包。请克隆本分支并使用下方的源码命令；
+> 上游安装包不包含这些修复。内置更新只检查本分支，不会静默安装上游版本。
+
+```bash
+git clone https://github.com/Froraut/codex-chatgpt-web.git
+cd codex-chatgpt-web
+bun install --frozen-lockfile
+bun install --frozen-lockfile --cwd launcher
+bun run dev:launcher
+```
+
+请使用 Bun 1.4.0。`dev:launcher` 使用隔离的开发配置，供审查和登录测试使用。
+`bun run app` 会从此源码启动普通启动器。启用生产集成前，请先阅读[DEV 隔离](docs/dev-chat.md)。
+
 <p align="center">
   <strong>将 ChatGPT Web（包括 Pro）作为 Codex 原生模型使用。</strong><br>
   切换模型档位，保留原有工作流。
@@ -14,12 +33,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Froraut/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/Froraut/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/macOS-arm64%20%7C%20x64-black?logo=apple" alt="macOS arm64 and x64">
   <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-fcc624?logo=linux&logoColor=black" alt="Linux x64">
-  <img src="https://img.shields.io/badge/Free_AI-no_API_fees-10a37f" alt="Free AI with no API fees">
 </p>
 
 Free 和 Go 账户会在 Codex 原生模型选择器中看到 **ChatGPT Web — Luna**。具有推理选择器的
@@ -41,11 +59,6 @@ Codex 会保留原生任务、上下文生命周期、界面和工具 harness。
 所选模型的任务转发到与该任务绑定的 ChatGPT 临时聊天；在完整模式下，MCP 会把 ChatGPT 连接回
 同一个 Codex 任务的工具，直到下一次上下文压缩边界。
 
-> [!TIP]
-> 我还开发了 **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)**：一款
-> 能够近实时改变 ChatGPT/Codex 声音的本地应用。它不会接触你的账户、浏览器会话或 ChatGPT
-> 请求，因此不会带来账户封禁风险。如果你喜欢我的作品，欢迎试用。
-
 ## 亮点
 
 - **Codex 原生模型。** ChatGPT Web 直接出现在 Codex 模型选择器中，同时保留原有任务界面、
@@ -66,25 +79,29 @@ Codex 会保留原生任务、上下文生命周期、界面和工具 harness。
 
 ## 快速开始
 
+在本分支发布首个二进制安装包前，请使用本页顶部的源码说明。
+下列安装命令用于本分支未来的二进制发行版。
+
 安装或更新桌面启动器。若要更新或修复现有安装，请先退出启动器，然后再次运行同一条命令；它会
 替换应用程序和内置运行时，同时保留 ChatGPT 配置文件和启动器配置。
 
 **macOS 或 Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 然后在应用中完成三项检查：
 
-1. 直接在启动器内置的 ChatGPT 浏览器中登录。登录页和身份提供商窗口都保留在同一个由启动器
-   管理的私有浏览器配置中；会话不会在不同浏览器之间复制。
+1. 直接在启动器内置的 ChatGPT 浏览器中登录。普通登录页和身份提供商窗口保留在启动器管理的
+   私有配置中。在 macOS 上，选择 **使用通行密钥** 会打开专用的 Chrome 配置；在那里完成登录后，
+   返回启动器并选择 **导入 Chrome 登录**，仅传输和验证白名单内的 ChatGPT/OpenAI 会话。
 2. 运行浏览器冒烟测试。
 3. 点击 **安装模型**，重启一次 Codex，然后选择一个 **ChatGPT Web — …** 模型。
 
@@ -92,13 +109,14 @@ irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install
 支持 Pro 时，Pro 才会显示。独立的 **MCP** 页面是可选项，它会在不需要终端命令的情况下引导你
 完成完整 harness 设置。
 
-打包后的启动器在其内置浏览器中完成登录并运行 ChatGPT 模型轮次，不需要模型 API 密钥、已安装的
-Chrome/Chromium、系统级 Node/Bun，也不会由本项目另行下载浏览器。
+打包后的启动器在内置浏览器中运行 ChatGPT 模型轮次。普通内置登录不需要安装 Chrome/Chromium，
+可选的 macOS 通行密钥流程需要 Chrome。打包版本不需要模型 API 密钥、系统级 Node/Bun，
+也不会由本项目另行下载浏览器。
 
 **从源码运行**
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
+git clone https://github.com/Froraut/codex-chatgpt-web.git && \
 cd codex-chatgpt-web && \
 bun run app
 ```

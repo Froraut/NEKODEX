@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash, randomBytes } = require("node:crypto");
+const { setTimeout: delay } = require("node:timers/promises");
 const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const {
@@ -88,6 +89,27 @@ const CHATGPT_VIEWPORT_CSS = `
 `;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function authViewOptions(options, partition) {
+  // Electron can omit webContents for a background-tab/window-open request. Passing an
+  // explicitly undefined webContents throws before the login surface can be attached.
+  // Reuse the supplied guest when available; otherwise create a sandboxed guest in our
+  // own partition, without inheriting a preload or privileged window preferences.
+  if (options?.webContents) return { webContents: options.webContents };
+  return {
+    webPreferences: {
+      partition,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      backgroundThrottling: false,
+      ...(options?.webPreferences?.javascript === false ? { javascript: false } : {}),
+      ...(Number.isInteger(options?.webPreferences?.openerSandboxFlags)
+        ? { openerSandboxFlags: options.webPreferences.openerSandboxFlags } : {}),
+    },
+  };
+}
 
 function javaScriptLiteral(value) {
   return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
@@ -360,6 +382,9 @@ class BrowserHost {
     this.selectedTabId = "home";
     this.manualOperation = null;
     this.loginOperation = null;
+    this.authGeneration = 0;
+    this.embeddedLoginController = null;
+    this.passkeyLoginOperation = null;
     this.sessionRefreshOperation = null;
     this.cloudflareChallengeRecovery = null;
     this.cloudflareChallengeRecoveryArmed = true;
@@ -959,11 +984,11 @@ class BrowserHost {
 
   bindWebContents() {
     const contents = this.view.webContents;
-    contents.setWindowOpenHandler(({ url }) => {
+    contents.setWindowOpenHandler(({ url, referrer, postBody }) => {
       if (allowedAuthUrl(url)) {
         return {
           action: "allow",
-          createWindow: (options) => this.createAuthView(options, url),
+          createWindow: (options) => this.createAuthView(options, url, { referrer, postBody }),
         };
       }
       let parsed;
@@ -1274,6 +1299,9 @@ class BrowserHost {
           ]
         : [homeTab],
       maxTabs: MAX_BROWSER_TABS,
+      navigationLocked: Boolean(this.activeTraceId || this.manualOperation || this.loginOperation),
+      loginInProgress: Boolean(this.loginOperation),
+      loginKind: this.passkeyLoginOperation ? "passkey" : this.embeddedLoginController ? "embedded" : null,
     };
   }
 
@@ -1595,9 +1623,9 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  createAuthView(options = {}, requestedUrl = "") {
+  createAuthView(options = {}, requestedUrl = "", { referrer, postBody } = {}) {
     this.closeAuthView(this.authView, true);
-    const authView = new WebContentsView({ webContents: options.webContents });
+    const authView = new WebContentsView(authViewOptions(options, this.partition));
     this.authView = authView;
     this.authNavigationError = null;
     this.window.contentView.addChildView(authView);
@@ -1715,6 +1743,29 @@ class BrowserHost {
       }
       return { action: "deny" };
     });
+    if (!options.webContents && requestedUrl) {
+      // Custom createWindow callbacks must initiate navigation themselves when Electron did
+      // not supply a guest. Supplied guests are already navigating and must not be loaded twice.
+      const loadOptions = {
+        ...(referrer ? { httpReferrer: referrer } : {}),
+        ...(postBody ? {
+          postData: postBody.data,
+          extraHeaders: `content-type: ${postBody.contentType}${postBody.boundary ? `; boundary=${postBody.boundary}` : ""}`,
+        } : {}),
+      };
+      void contents.loadURL(requestedUrl, loadOptions).catch(error => {
+        if (error?.code === "ERR_ABORTED" || this.authView !== authView || contents.isDestroyed()) return;
+        const message = "The sign-in window could not load. Retry sign-in or choose Use passkey.";
+        this.authNavigationError = new Error(message);
+        this.logger.error("browser.auth_window_open_failed", {
+          surface: "popup",
+          origin: navigationOriginForLog(requestedUrl),
+          ...navigationErrorForLog(error),
+        });
+        this.closeAuthView(authView, true, false);
+        this.setState({ status: "error", message, loading: false });
+      });
+    }
     this.syncViewVisibility();
     this.logger.info("browser.auth_surface_opened");
     return contents;
@@ -1811,8 +1862,8 @@ class BrowserHost {
     if (this.activeTraceId) {
       throw new Error("Browser navigation is locked while ChatGPT is running a Codex turn");
     }
-    if (this.manualOperation) {
-      throw new Error(`Browser navigation is locked during ${this.manualOperation}`);
+    if (this.manualOperation || this.loginOperation) {
+      throw new Error(`Browser navigation is locked during ${this.manualOperation || "ChatGPT login"}`);
     }
     const contents = this.activeView().webContents;
     navigateBrowser(contents, action);
@@ -2370,6 +2421,9 @@ class BrowserHost {
       this.show();
       return this.loginOperation;
     }
+    this.authGeneration = (this.authGeneration ?? 0) + 1;
+    const controller = new AbortController();
+    this.embeddedLoginController = controller;
     const operation = (async () => {
       const sessionRefresh = this.sessionRefreshOperation;
       if (sessionRefresh) {
@@ -2379,36 +2433,65 @@ class BrowserHost {
           // An explicit login is the recovery path after a failed saved-session refresh.
         }
       }
+      if (controller.signal.aborted) return this.snapshot();
       return await this.withManualOperation("ChatGPT login", async () => {
-        this.authNavigationError = null;
-        this.show();
-        this.logger.info("browser.login_opened");
-        const current = this.view.webContents.getURL();
-        if (!current.startsWith(CHATGPT_ORIGIN)) {
-          await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+        try {
+          controller.signal.throwIfAborted();
+          this.authNavigationError = null;
+          this.show();
+          this.logger.info("browser.login_opened");
+          const current = this.view.webContents.getURL();
+          if (!current.startsWith(CHATGPT_ORIGIN)) {
+            await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+          }
+          controller.signal.throwIfAborted();
+          await this.probeAuthentication();
+          controller.signal.throwIfAborted();
+          const authenticated = await this.waitForAuthenticated(180_000, controller.signal);
+          controller.signal.throwIfAborted();
+          await this.runSessionInspection(false);
+          controller.signal.throwIfAborted();
+          return authenticated;
+        } catch (error) {
+          // A user-requested switch is a handoff, not a failed login. Awaiting this operation
+          // below keeps its probes/inspection from racing the imported passkey session.
+          if (controller.signal.aborted) return this.snapshot();
+          throw error;
         }
-        await this.probeAuthentication();
-        const authenticated = await this.waitForAuthenticated();
-        await this.runSessionInspection(false);
-        return authenticated;
       });
     })();
     const tracked = operation.finally(() => {
       if (this.loginOperation === tracked) this.loginOperation = null;
+      if (this.embeddedLoginController === controller) this.embeddedLoginController = null;
+      this.publishState?.(this.snapshot());
     });
     this.loginOperation = tracked;
+    this.publishState?.(this.snapshot());
     return tracked;
   }
 
   openPasskeyLogin() {
     requireAutomaticBrowserInspection(this, "Automated ChatGPT passkey import");
+    if (this.passkeyLoginOperation) return this.passkeyLoginOperation;
     if (this.state.authenticated) {
       this.activateHomeSurface();
       this.show();
       return Promise.resolve(this.snapshot());
     }
-    if (this.loginOperation) return this.loginOperation;
+    const embeddedLogin = this.embeddedLoginController ? this.loginOperation : null;
+    const embeddedController = this.embeddedLoginController;
+    if (this.loginOperation && !embeddedLogin) return this.loginOperation;
+    this.authGeneration = (this.authGeneration ?? 0) + 1;
     const operation = (async () => {
+      if (embeddedLogin) {
+        embeddedController.abort();
+        for (const view of [this.view, this.authView]) {
+          if (view && !view.webContents.isDestroyed()) view.webContents.stop();
+        }
+        // No Chrome session is started until the previous operation releases browser ownership.
+        await embeddedLogin;
+        this.closeAuthView(this.authView, true, false);
+      }
       const sessionRefresh = this.sessionRefreshOperation;
       if (sessionRefresh) {
         try {
@@ -2432,13 +2515,18 @@ class BrowserHost {
     })();
     const tracked = operation.finally(() => {
       if (this.loginOperation === tracked) this.loginOperation = null;
+      if (this.passkeyLoginOperation === tracked) this.passkeyLoginOperation = null;
+      this.publishState?.(this.snapshot());
     });
     this.loginOperation = tracked;
+    this.passkeyLoginOperation = tracked;
+    this.publishState?.(this.snapshot());
     return tracked;
   }
 
   async clearOwnedSessionForPasskey() {
     if (!(this.turnTabs instanceof Map)) throw new Error("Owned ChatGPT tab registry is unavailable");
+    this.authGeneration = (this.authGeneration ?? 0) + 1;
     if (this.authView) this.closeAuthView(this.authView, true, false);
     const tabs = [...this.turnTabs.values()];
     const contents = [this.view, ...tabs.map(tab => tab.view)]
@@ -2535,6 +2623,7 @@ class BrowserHost {
   async logout() {
     requireAutomaticBrowserInspection(this, "Automated ChatGPT logout verification");
     return await this.withManualOperation("ChatGPT logout", async () => {
+      this.authGeneration = (this.authGeneration ?? 0) + 1;
       if (this.authView) this.closeAuthView(this.authView, true, false);
       const contents = this.view.webContents;
       await contents.session.clearStorageData();
@@ -2560,6 +2649,7 @@ class BrowserHost {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication refresh");
     if (this.sessionRefreshOperation) return this.sessionRefreshOperation;
     const operation = this.withManualOperation("session refresh", async () => {
+      this.authGeneration = (this.authGeneration ?? 0) + 1;
       this.setState({ status: "loading", message: "Checking saved ChatGPT session" });
       if (!isTemporaryChatUrl(this.view.webContents.getURL())) {
         await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
@@ -2581,7 +2671,27 @@ class BrowserHost {
   async probeAuthentication() {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
     if (!this.view || this.view.webContents.isDestroyed()) return this.snapshot();
-    let url = this.view.webContents.getURL();
+    const generation = this.authGeneration ?? 0;
+    const primaryView = this.view;
+    const primaryContents = primaryView.webContents;
+    let authView = this.authView;
+    // Page-load event probes run independently of the tracked login operation.
+    // A response from an old session or a replaced popup must not alter the new one.
+    const isCurrent = () => (this.authGeneration ?? 0) === generation
+      && this.view === primaryView
+      && !primaryContents.isDestroyed()
+      && this.authView === authView
+      && (!authView || !authView.webContents.isDestroyed());
+    const loadPrimary = async () => {
+      try {
+        await primaryContents.loadURL(TEMPORARY_CHAT_URL);
+      } catch (error) {
+        if (!isCurrent()) return false;
+        throw error;
+      }
+      return isCurrent();
+    };
+    let url = primaryContents.getURL();
     if (url === IDLE_BROWSER_URL) {
       this.setState({
         status: this.state.authenticated ? "ready" : "signed-out",
@@ -2651,30 +2761,32 @@ class BrowserHost {
       sessionAuthenticated: false,
       readyState: "unknown",
     }));
-    let result = await probe(this.view.webContents);
+    let result = await probe(primaryContents);
+    if (!isCurrent()) return this.snapshot();
     if (!(result.composer && result.temporary && result.sessionAuthenticated)
-      && this.authView
-      && !this.authView.webContents.isDestroyed()) {
-      const authResult = await probe(this.authView.webContents);
+      && authView) {
+      const authResult = await probe(authView.webContents);
+      if (!isCurrent()) return this.snapshot();
       if (authResult.sessionAuthenticated) {
-        const completedAuthView = this.authView;
-        this.closeAuthView(completedAuthView, true, false);
-        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
-        url = this.view.webContents.getURL();
-        result = await probe(this.view.webContents);
+        this.closeAuthView(authView, true, false);
+        authView = this.authView;
+        if (!isCurrent() || !(await loadPrimary())) return this.snapshot();
+        url = primaryContents.getURL();
+        result = await probe(primaryContents);
+        if (!isCurrent()) return this.snapshot();
       }
     }
     if (this.manualOperation === "ChatGPT login"
       && result.sessionAuthenticated
-      && !result.temporary
-      && !this.view.webContents.isDestroyed()) {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
-      url = this.view.webContents.getURL();
-      result = await probe(this.view.webContents);
+      && !result.temporary) {
+      if (!(await loadPrimary())) return this.snapshot();
+      url = primaryContents.getURL();
+      result = await probe(primaryContents);
+      if (!isCurrent()) return this.snapshot();
     }
     if (result.composer && result.temporary && result.sessionAuthenticated) {
-      if (this.authView && !this.authView.webContents.isDestroyed()) {
-        this.closeAuthView(this.authView, true, false);
+      if (authView) {
+        this.closeAuthView(authView, true, false);
       }
       const wasAuthenticated = this.state.authenticated;
       const availability = this.activeTraceId
@@ -2696,17 +2808,19 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  async waitForAuthenticated(timeoutMs = 180_000) {
+  async waitForAuthenticated(timeoutMs = 180_000, signal) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      signal?.throwIfAborted();
       if (this.authNavigationError) {
         const error = this.authNavigationError;
         this.authNavigationError = null;
         throw error;
       }
       const state = await this.probeAuthentication();
+      signal?.throwIfAborted();
       if (state.authenticated) return state;
-      await sleep(750);
+      await delay(750, undefined, { signal });
     }
     throw new Error("ChatGPT login was not completed before the timeout");
   }
@@ -2827,6 +2941,7 @@ class BrowserHost {
     }
     this.activateHomeSurface();
     this.manualOperation = name;
+    this.publishState?.(this.snapshot());
     const contents = this.view?.webContents;
     if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(false);
     try {
@@ -2838,6 +2953,7 @@ class BrowserHost {
     } finally {
       if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true);
       this.manualOperation = null;
+      this.publishState?.(this.snapshot());
     }
   }
 
@@ -2879,6 +2995,7 @@ class BrowserHost {
   }
 
   destroy() {
+    this.authGeneration = (this.authGeneration ?? 0) + 1;
     try {
       const current = JSON.parse(fs.readFileSync(this.descriptorPath, "utf8"));
       if (current.pid === process.pid) fs.rmSync(this.descriptorPath, { force: true });
@@ -2921,6 +3038,7 @@ class BrowserHost {
 
 module.exports = {
   allowedAuthUrl,
+  authViewOptions,
   BrowserHost,
   BrowserTurnCancelledError,
   CHATGPT_VIEWPORT_CSS,

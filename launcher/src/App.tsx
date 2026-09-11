@@ -9,8 +9,9 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
+import { copyFor, localizeRuntimeMessage, localizeLauncherError, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
+import { browserControls } from "./browser-controls";
 import type {
   BrowserInteractionMode,
   BrowserState,
@@ -38,6 +39,8 @@ export function App() {
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [logs, setLogs] = useState<LogRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [startupError, setStartupError] = useState<string | null>(null);
+  const [startupAttempt, setStartupAttempt] = useState(0);
   const documentLanguage = snapshot?.state.language ?? "en";
 
   useEffect(() => {
@@ -56,7 +59,9 @@ export function App() {
       if (next.operation?.status === "failed" && next.operation.name !== "mcp-verification") {
         setError(next.operation.message);
       }
-    }).catch((cause) => setError(messageOf(cause)));
+    }).catch((cause) => {
+      if (!cancelled) setStartupError(messageOf(cause));
+    });
     const unsubscribeState = api.onStateChanged((state) => {
       setSnapshot((current) => current
         ? {
@@ -84,7 +89,7 @@ export function App() {
       unsubscribeLog();
       unsubscribeUpdate();
     };
-  }, []);
+  }, [startupAttempt]);
 
   const updateState = useCallback((state: LauncherState) => {
     setSnapshot((current) => current
@@ -98,6 +103,16 @@ export function App() {
   }, []);
 
   if (!api) return <FatalMessage message="Launcher IPC is unavailable." />;
+  if (!snapshot && startupError) return (
+    <FatalMessage
+      message={localizeLauncherError(copyFor(documentLanguage), startupError)}
+      retryLabel={copyFor(documentLanguage).retry}
+      onRetry={() => {
+        setStartupError(null);
+        setStartupAttempt((attempt) => attempt + 1);
+      }}
+    />
+  );
   if (!snapshot) return <LaunchLoading />;
 
   const language = snapshot.state.language ?? "en";
@@ -135,7 +150,7 @@ export function App() {
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {error ? <ErrorToast copy={copy} message={error} onDismiss={() => setError(null)} /> : null}
+        {error ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
       </AnimatePresence>
     </div>
   );
@@ -294,6 +309,7 @@ function Onboarding({
           {!isLanguage ? (
             <button
               className="text-button"
+              disabled={busy}
               onClick={() => setStage(isInteraction ? "language" : "interaction")}
               type="button"
             >
@@ -310,7 +326,7 @@ function Onboarding({
           ))}
         </div>
         <PrimaryButton
-          disabled={busy || (stage === "support" && (!snapshot.state.githubOpened || !snapshot.state.xOpened))}
+          disabled={busy}
           onClick={isLanguage
             ? chooseLanguage
             : isInteraction ? () => setStage("support") : finish}
@@ -354,6 +370,7 @@ function LauncherShell({
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
   const [compactSidebar, setCompactSidebar] = useState(compactAtMount);
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
+  const [passkeyContinuationRequested, setPasskeyContinuationRequested] = useState(false);
   const [sessionReminderBusy, setSessionReminderBusy] = useState(false);
   const [sessionReminderDue, setSessionReminderDue] = useState(false);
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
@@ -656,8 +673,10 @@ function LauncherShell({
                 copy={copy}
                 interactionMode={snapshot.state.browserInteractionMode}
                 operation={operation}
+                passkeyContinuationRequested={passkeyContinuationRequested}
                 platform={snapshot.platform}
                 setError={setError}
+                setPasskeyContinuationRequested={setPasskeyContinuationRequested}
               />
             ) : null}
             {surface === "setup" ? (
@@ -813,33 +832,36 @@ function BrowserSurface({
   copy,
   interactionMode,
   operation,
+  passkeyContinuationRequested,
   platform,
   setError,
+  setPasskeyContinuationRequested,
 }: {
   browser: BrowserState | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
   copy: Copy;
   interactionMode: BrowserInteractionMode;
   operation: OperationState | null;
+  passkeyContinuationRequested: boolean;
   platform: string;
   setError: (error: string | null) => void;
+  setPasskeyContinuationRequested: (requested: boolean) => void;
 }) {
-  const [passkeyContinuationRequested, setPasskeyContinuationRequested] = useState(false);
+  const [passkeyStarting, setPasskeyStarting] = useState(false);
   const visible = browser?.visible === true;
   const manualInteraction = interactionMode === "manual";
-  const passkeyAvailable = !manualInteraction
-    && platform === "darwin"
-    && browser?.authenticated !== true;
+  const { navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked } = browserControls(
+    browser, operation, platform, interactionMode,
+  );
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
-  const navigationLocked = browser?.status === "running" || browser?.status === "testing";
-  const passkeyWaiting = passkeyAvailable
-    && operation?.name === "passkey-login"
-    && operation.status === "running"
-    && browser?.authenticated !== true;
+  const passkeyActionDisabled = passkeyBlocked
+    || (passkeyWaiting ? passkeyContinuationRequested : passkeyStarting);
   useEffect(() => {
     if (!passkeyWaiting) setPasskeyContinuationRequested(false);
-  }, [passkeyWaiting]);
+    else setPasskeyStarting(false);
+  }, [passkeyWaiting, setPasskeyContinuationRequested]);
   const navigate = async (action: "back" | "forward" | "reload") => {
+    if (navigationLocked) return;
     try {
       await api!.navigateBrowser(action);
     } catch (cause) {
@@ -875,10 +897,17 @@ function BrowserSurface({
       setError(messageOf(cause));
     }
   };
-  const openPasskeyLogin = () => {
-    if (operation?.status === "running") return;
+  const openPasskeyLogin = async () => {
+    if (passkeyActionDisabled || passkeyWaiting) return;
+    setPasskeyStarting(true);
     setError(null);
-    void api!.openPasskeyLogin().catch(cause => setError(messageOf(cause)));
+    try {
+      await api!.openPasskeyLogin();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setPasskeyStarting(false);
+    }
   };
   const continuePasskeyLogin = async () => {
     if (!passkeyWaiting || passkeyContinuationRequested) return;
@@ -908,14 +937,34 @@ function BrowserSurface({
 
   return (
     <section className="browser-surface">
-      <div className="browser-tab-strip" title={copy.browserTabLimit}>
+      <div className="browser-tab-strip" role="tablist" aria-label={copy.browser} title={copy.browserTabLimit}>
         {(browser?.tabs ?? []).map((tab) => (
           <div
             className={`browser-tab${tab.active ? " is-active" : ""}`}
             key={tab.id}
             onClick={() => void selectTab(tab.id)}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                void selectTab(tab.id);
+              }
+              if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                event.preventDefault();
+                const tabs = browser?.tabs ?? [];
+                const index = tabs.findIndex((candidate) => candidate.id === tab.id);
+                const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+                  : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                const next = tabs[nextIndex];
+                if (next) {
+                  void selectTab(next.id);
+                  event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus();
+                }
+              }
+            }}
             role="tab"
             aria-selected={tab.active}
+            tabIndex={tab.active ? 0 : -1}
           >
             <BrandMark small />
             <span title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
@@ -975,13 +1024,13 @@ function BrowserSurface({
         {passkeyAvailable ? (
           <button
             className="toolbar-text-button"
-            disabled={passkeyWaiting && passkeyContinuationRequested}
+            disabled={passkeyActionDisabled}
             onClick={() => void (passkeyWaiting ? continuePasskeyLogin() : openPasskeyLogin())}
             type="button"
           >
             {passkeyWaiting
               ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-              : copy.passkeySignIn}
+              : passkeyStarting ? copy.passkeyStarting : copy.passkeySignIn}
           </button>
         ) : null}
         <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
@@ -989,6 +1038,16 @@ function BrowserSurface({
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
+      {passkeyWaiting ? (
+        <div className="browser-login-guide" role="status">
+          <strong>{passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyWindowTitle}</strong>
+          <p>{passkeyContinuationRequested ? copy.passkeyImportingBody : copy.passkeyContinueBody}</p>
+        </div>
+      ) : browser?.loginKind === "embedded" ? (
+        <div className="browser-login-guide" role="status">
+          <p>{passkeyAvailable ? copy.embeddedLoginPasskeyBody : copy.embeddedLoginBody}</p>
+        </div>
+      ) : null}
       {selectedManualTab
         && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
         <ManualTurnGuide
@@ -1017,12 +1076,12 @@ function BrowserSurface({
               </PrimaryButton>
               {passkeyAvailable ? (
                 <SecondaryButton
-                  disabled={passkeyWaiting && passkeyContinuationRequested}
+                  disabled={passkeyActionDisabled}
                   onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
                 >
                   {passkeyWaiting
                     ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-                    : copy.passkeySignIn}
+                    : passkeyStarting ? copy.passkeyStarting : copy.passkeySignIn}
                 </SecondaryButton>
               ) : null}
             </div>
@@ -1111,7 +1170,9 @@ function SetupSurface({
   const busy = localBusy
     || operation?.status === "running"
     || (!manualInteraction && (
-      browser?.status === "loading"
+      browser?.loginInProgress === true
+      || browser?.navigationLocked === true
+      || browser?.status === "loading"
       || browser?.status === "testing"
       || browser?.status === "running"
     ));
@@ -2378,6 +2439,7 @@ function ErrorToast({ copy, message, onDismiss }: { copy: Copy; message: string;
     <motion.div
       animate={{ opacity: 1, y: 0 }}
       className="error-toast"
+      role="alert"
       exit={{ opacity: 0, y: 8 }}
       initial={{ opacity: 0, y: 8 }}
       transition={PANEL_TRANSITION}
@@ -2495,12 +2557,17 @@ function LaunchLoading() {
   );
 }
 
-function FatalMessage({ message }: { message: string }) {
+function FatalMessage({ message, onRetry, retryLabel }: {
+  message: string;
+  onRetry?: () => void;
+  retryLabel?: string;
+}) {
   return (
     <main className="fatal-message">
       <BrandMark />
       <h1>Codex Web GPT</h1>
-      <p>{message}</p>
+      <p role="alert">{message}</p>
+      {onRetry ? <PrimaryButton onClick={onRetry}>{retryLabel}</PrimaryButton> : null}
     </main>
   );
 }

@@ -395,6 +395,13 @@ const structuredCompactionOwners = new Map<string, Promise<void>>();
 const structuredCompactionInterruptions = new Map<string, StructuredCompactionInterruption>();
 const STRUCTURED_COMPACTION_RUN_TTL_MS = 30 * 60_000;
 
+/** Includes detached owners until their physical browser/helper cleanup has settled. */
+export function activeStructuredCompactionCount(): number {
+  let active = 0;
+  for (const run of structuredCompactionRuns.values()) if (run.active) active += 1;
+  return active;
+}
+
 function nativeTurnIdentityKey(threadId: string, turnId: string): string {
   if (!threadId.trim() || !turnId.trim()) {
     throw new Error("Structured compaction requires non-empty native thread and turn ids");

@@ -238,7 +238,7 @@ test("a real HTTP peer disconnect releases a streaming turn", async () => {
     const body = JSON.stringify({ query: "disconnect lifecycle proof" });
     socket.write([
       "POST /v1/alpha/search HTTP/1.1",
-      "Host: 127.0.0.1",
+      `Host: 127.0.0.1:${port}`,
       "Authorization: Bearer test-codex-session",
       "Content-Type: application/json",
       `Content-Length: ${Buffer.byteLength(body)}`,

@@ -1,4 +1,4 @@
-import { readJsonRequestBody } from "./http-body";
+import { readJsonRequestBody, readRequestBodyBytes } from "./http-body";
 import {
   BRIDGE_COMPACTION_PREFIX,
   SUMMARY_PREFIX,
@@ -229,11 +229,19 @@ export async function forwardNativeCodexRequest(
   let body: BodyInit | undefined;
   if (imageRequest) {
     // Standalone image requests use their own schema; never interpret them as Responses history.
-    body = await request.arrayBuffer();
+    // Preserve Bun's existing 128 MiB listener budget for opaque image/multipart bodies.
+    body = await readRequestBodyBytes(request, 128 * 1024 * 1024);
   } else if (method === "POST") {
     const parseRequest = decodedBody === undefined ? request.clone() : undefined;
-    const originalBody = await request.arrayBuffer();
-    const parsedBody = decodedBody === undefined ? await readJsonRequestBody(parseRequest!) : decodedBody;
+    let originalBody: Uint8Array<ArrayBuffer>;
+    let parsedBody: unknown;
+    try {
+      originalBody = await readRequestBodyBytes(request);
+      parsedBody = decodedBody === undefined ? await readJsonRequestBody(parseRequest!) : decodedBody;
+    } finally {
+      // If an upload is cancelled before parsing, its unused tee branch must not retain it.
+      void parseRequest?.body?.cancel().catch(() => {});
+    }
     if (isObject(parsedBody)) {
       if (typeof parsedBody.model === "string" && /^[A-Za-z0-9_./:-]{1,128}$/.test(parsedBody.model)) {
         model = parsedBody.model;

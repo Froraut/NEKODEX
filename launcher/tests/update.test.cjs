@@ -4,15 +4,158 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { Readable } = require("node:stream");
 const {
   buildJob,
   compareVersions,
   createUpdateController,
+  downloadFile,
+  downloadText,
   expectedChecksum,
   macApplicationPath,
   releaseAssetName,
+  releaseApiUrl,
   validateReleaseAssetUrl,
+  validateRepository,
 } = require("../electron/update.cjs");
+
+function updateController(dependencies) {
+  return createUpdateController({
+    currentVersion: "1.1.4",
+    platform: "linux",
+    arch: "x64",
+    packaged: true,
+    executablePath: "/tmp/launcher",
+    runtimeExecutable: "/tmp/bun",
+    logsDirectory: "/tmp/logs",
+    dependencies,
+  });
+}
+
+test("fork update checks stay on their packaged repository, including before the first release", async () => {
+  assert.equal(releaseApiUrl(), "https://api.github.com/repos/Froraut/codex-chatgpt-web/releases/latest");
+  assert.equal(validateRepository("another-owner/a-fork"), "another-owner/a-fork");
+  for (const invalid of [undefined, "../upstream", "owner/repo/extra", "https://github.com/owner/repo", "owner/repo?x=1"]) {
+    assert.throws(() => validateRepository(invalid), /owner\/repository/);
+  }
+  const requests = [];
+  const controller = updateController({
+    fetchRelease: async (url) => {
+      requests.push(url);
+      throw Object.assign(new Error("Not Found"), { statusCode: 404 });
+    },
+  });
+  assert.deepEqual(await controller.checkOnce(), { status: "up-to-date" });
+  assert.deepEqual(requests, [releaseApiUrl()]);
+  await assert.rejects(controller.beginInstall(), /No launcher update/);
+  const rateLimited = updateController({
+    fetchRelease: async () => { throw Object.assign(new Error("Rate limited"), { statusCode: 403 }); },
+  });
+  assert.deepEqual(await rateLimited.checkOnce(), { status: "error", message: "Rate limited" });
+});
+
+test("fork updates reject upstream assets, credentials and altered download URLs", () => {
+  const asset = "launcher.zip";
+  const allowed = "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip";
+  for (const url of [
+    allowed.replace("Froraut", "miuuyy"),
+    allowed.replace("github.com", "username:password@github.com"),
+    allowed.replace("github.com", "github.com:8443"),
+    `${allowed}?download=1`,
+    `${allowed}#fragment`,
+  ]) {
+    assert.throws(() => validateReleaseAssetUrl(url, "1.2.0", asset), /unexpected release asset URL/);
+  }
+});
+
+test("updates reject invalid or excessive asset sizes before offering installation", async () => {
+  for (const size of [undefined, -1, 0, 1.5, 1024 * 1024 * 1024 + 1]) {
+    const controller = updateController({
+      fetchRelease: async () => ({
+        tag_name: "v1.2.0",
+        assets: [
+          {
+            name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
+            size,
+            browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+          },
+          {
+            name: "checksums.txt",
+            browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+          },
+        ],
+      }),
+    });
+    const state = await controller.checkOnce();
+    assert.equal(state.status, "error");
+    assert.match(state.message, /invalid or excessive download size/);
+    await assert.rejects(controller.beginInstall(), /No launcher update/);
+  }
+});
+
+test("downloads enforce stream size and release size, and remove partial files", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-download-test-"));
+  const target = path.join(root, "asset.zip");
+  const requestDownload = async () => Readable.from([Buffer.from("abcd"), Buffer.from("efgh")]);
+  try {
+    await assert.rejects(downloadFile("https://example.invalid/asset.zip", target, {
+      requestDownload, maxBytes: 6,
+    }), /exceeded its size limit/);
+    assert.equal(fs.existsSync(target), false);
+    await assert.rejects(downloadFile("https://example.invalid/asset.zip", target, {
+      requestDownload, expectedBytes: 9,
+    }), /does not match the release metadata/);
+    assert.equal(fs.existsSync(target), false);
+    await assert.rejects(downloadFile("https://example.invalid/asset.zip", target, {
+      requestDownload, expectedBytes: 7,
+    }), /exceeded its size limit/);
+    assert.equal(fs.existsSync(target), false);
+    await downloadFile("https://example.invalid/asset.zip", target, {
+      requestDownload, expectedBytes: 8,
+    });
+    assert.equal(fs.readFileSync(target, "utf8"), "abcdefgh");
+    await assert.rejects(downloadFile("https://example.invalid/asset.zip", target, { requestDownload }), /EEXIST/);
+    assert.equal(fs.readFileSync(target, "utf8"), "abcdefgh");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a stalled update download has a total deadline and removes its partial file", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-download-deadline-"));
+  const target = path.join(root, "asset.zip");
+  const stream = new Readable({ read() {} });
+  try {
+    await assert.rejects(downloadFile("https://example.invalid/asset.zip", target, {
+      requestDownload: async () => stream,
+      timeoutMs: 20,
+    }), /exceeded its time limit/);
+    assert.equal(stream.destroyed, true);
+    assert.equal(fs.existsSync(target), false);
+  } finally {
+    stream.destroy();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release metadata and checksums enforce size limits and total deadlines", async () => {
+  assert.equal(await downloadText("https://example.invalid/metadata", 8, {
+    requestDownload: async () => Readable.from([Buffer.from("metadata")]),
+  }), "metadata");
+  await assert.rejects(downloadText("https://example.invalid/metadata", 7, {
+    requestDownload: async () => Readable.from([Buffer.from("metadata")]),
+  }), /metadata exceeded its size limit/);
+  const stream = new Readable({ read() {} });
+  try {
+    await assert.rejects(downloadText("https://example.invalid/metadata", 1024, {
+      requestDownload: async () => stream,
+      timeoutMs: 20,
+    }), /metadata exceeded its time limit/);
+    assert.equal(stream.destroyed, true);
+  } finally {
+    stream.destroy();
+  }
+});
 
 test("Linux auto-update fails closed without the stable installer wrapper", () => {
   const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
@@ -55,11 +198,11 @@ test("checksums and release URLs bind the exact expected asset", () => {
   assert.throws(() => expectedChecksum(`${hash}  other.zip\n`, "launcher.zip"), /no entry/);
   assert.equal(
     validateReleaseAssetUrl(
-      "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+      "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
       "1.2.0",
       "launcher.zip",
     ),
-    "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+    "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
   );
   assert.throws(
     () => validateReleaseAssetUrl("https://example.com/launcher.zip", "1.2.0", "launcher.zip"),
@@ -95,11 +238,12 @@ test("startup check runs once and exposes only a newer complete release", async 
           assets: [
             {
               name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              size: 1024,
+              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
             },
           ],
         };
@@ -142,16 +286,20 @@ test("verified update is handed to one detached worker", async () => {
           assets: [
             {
               name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              size: assetBody.length,
+              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
             },
           ],
         }),
         downloadText: async () => `${hash}  codex-web-gpt-1.2.0-linux-x64.AppImage\n`,
-        downloadFile: async (_url, destination) => fs.writeFileSync(destination, assetBody),
+        downloadFile: async (_url, destination, options) => {
+          assert.equal(options.expectedBytes, assetBody.length);
+          fs.writeFileSync(destination, assetBody);
+        },
         sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
         spawnWorker: (runtime, worker, job) => {
           spawned = { runtime, worker, job, data: JSON.parse(fs.readFileSync(job, "utf8")) };

@@ -40,6 +40,9 @@ export interface BrowserState {
   canGoBack: boolean;
   canGoForward: boolean;
   zoomFactor: number;
+  navigationLocked: boolean;
+  loginInProgress: boolean;
+  loginKind: "embedded" | "passkey" | null;
   activeTabId: string;
   maxTabs: number;
   tabs: BrowserTabState[];

@@ -1,5 +1,27 @@
 <h1 align="center">ChatGPT Web for Codex</h1>
 
+> **Froraut maintenance fork.** Based on [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
+> v5.0.6 (`e85e369`). This fork fixes confirmed authentication, request-boundary, lifecycle,
+> update, and usability bugs. See the [review and improvement roadmap](docs/reviews/2026-09-11-review.md)
+> for evidence and remaining limitations. Original authorship and MIT licensing are preserved.
+>
+> **Source publication:** this review does not certify a new platform release or a successful
+> account-bound Codex/MCP session. Fork binaries are not yet published. Clone this fork and use
+> the source commands below; the upstream binary does not contain these fixes. Built-in update
+> checks stay on this fork and never silently install upstream releases.
+
+```bash
+git clone https://github.com/Froraut/codex-chatgpt-web.git
+cd codex-chatgpt-web
+bun install --frozen-lockfile
+bun install --frozen-lockfile --cwd launcher
+bun run dev:launcher
+```
+
+Use Bun 1.4.0. `dev:launcher` uses an isolated development profile for review and login testing.
+`bun run app` starts the normal launcher from this source. See [DEV isolation](docs/dev-chat.md)
+before enabling a production integration.
+
 <p align="center">
   <strong>Use ChatGPT Web (including Pro) as native Codex models.</strong><br>
   Change the model tier, save your workflow.
@@ -14,12 +36,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Froraut/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/Froraut/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/macOS-arm64%20%7C%20x64-black?logo=apple" alt="macOS arm64 and x64">
   <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-fcc624?logo=linux&logoColor=black" alt="Linux x64">
-  <img src="https://img.shields.io/badge/Free_AI-no_API_fees-10a37f" alt="Free AI with no API fees">
 </p>
 
 Free and Go accounts get **ChatGPT Web — Luna** in Codex's native model picker. Accounts that
@@ -41,12 +62,6 @@ Codex task ──Responses + SSE──▶ codex-chatgpt-web ──embedded brows
 Codex keeps the native task, context lifecycle, UI, and tool harness. The local Responses bridge
 routes only the selected model task through a task-bound ChatGPT Temporary Chat; in full mode, MCP
 connects ChatGPT back to the tools of that same Codex task until its next compaction boundary.
-
-> [!TIP]
-> I also built **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)**, a local
-> app that changes the ChatGPT/Codex voice in near real time. It never touches your account, browser
-> session, or ChatGPT requests, so using it carries no account-blocking risk. If you like my work,
-> give it a try.
 
 ## Highlights
 
@@ -71,6 +86,9 @@ policies.
 
 ## Quick start
 
+Use the source instructions at the top of this page until this fork publishes its first binary
+release. The following packaged-install commands are for future releases of this fork.
+
 Install or update the desktop launcher. To update or repair an existing installation, quit the
 launcher and run the same command again; it replaces the application and embedded runtime while
 preserving the ChatGPT profile and launcher configuration.
@@ -78,20 +96,21 @@ preserving the ChatGPT profile and launcher configuration.
 **macOS or Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 Then complete the three checks in the app:
 
-1. Sign in directly in the launcher's embedded ChatGPT browser. Login pages and identity-provider
-   windows stay inside the same launcher-owned private browser profile; no session is copied between
-   browsers.
+1. Sign in directly in the launcher's embedded ChatGPT browser. Ordinary login pages and
+   identity-provider windows stay in the launcher-owned private profile. On macOS, **Use passkey**
+   explicitly opens a dedicated Chrome profile: finish sign-in there, then choose **Import Chrome
+   sign-in** in the launcher to transfer and verify only the allowlisted ChatGPT/OpenAI session.
 2. Run the browser smoke test.
 3. Press **Install models**, restart Codex once, and select a **ChatGPT Web — …** model.
 
@@ -99,13 +118,14 @@ The launcher detects the current account's ChatGPT controls during setup: Free/G
 only Luna, while Pro appears only when the signed-in account exposes it. The separate **MCP** page
 is optional and guides the full-harness setup without terminal commands.
 
-The packaged launcher keeps sign-in and ChatGPT model turns in its embedded browser. It needs no
-model API key, installed Chrome/Chromium, system Node/Bun, or project-managed browser download.
+The packaged launcher keeps ChatGPT model turns in its embedded browser. Ordinary embedded login
+needs no installed Chrome/Chromium. The optional macOS passkey flow requires Chrome. Packaged
+builds need no model API key, system Node/Bun, or project-managed browser download.
 
 **Run from source**
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
+git clone https://github.com/Froraut/codex-chatgpt-web.git && \
 cd codex-chatgpt-web && \
 bun run app
 ```

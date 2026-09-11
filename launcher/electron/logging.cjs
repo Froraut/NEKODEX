@@ -5,6 +5,7 @@ const { renameAtomicFile } = require("./atomic-file.cjs");
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
 const MAX_MEMORY_RECORDS = 300;
 const MAX_LOG_STRING_CHARS = 16 * 1024;
+const SENSITIVE_LOG_KEY_PATTERN = /(?:authorization|cookie|runtimeKey|controlToken)/i;
 
 function redactText(value) {
   const redacted = value
@@ -44,7 +45,8 @@ function sanitizeForExport(value, seen = new WeakSet()) {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
-      /^(?:prompt|response|html|dom|content|visibleRows|sidebarRows|sidebarTitles|conversationTitle|conversationTitles|chatTitle|chatTitles)$/i.test(key)
+      SENSITIVE_LOG_KEY_PATTERN.test(key)
+        || /^(?:prompt|response|html|dom|content|visibleRows|sidebarRows|sidebarTitles|conversationTitle|conversationTitles|chatTitle|chatTitles)$/i.test(key)
         ? "[redacted]"
         : sanitizeForExport(item, seen),
     ]),
@@ -103,7 +105,7 @@ function sanitize(value, seen = new WeakSet()) {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
-      /(?:authorization|cookie|runtimeKey|controlToken)/i.test(key)
+      SENSITIVE_LOG_KEY_PATTERN.test(key)
         ? "[redacted]"
         : sanitize(item, seen),
     ]),
@@ -195,9 +197,45 @@ function installProcessDiagnosticGuards({ filePath, streams = [process.stdout, p
   }
 }
 
-function registerLoggedIpc(ipcMain, logger, channel, handler) {
+function createRendererIpcGuard({ getMainWindow, isRendererUrlAllowed }) {
+  if (typeof getMainWindow !== "function" || typeof isRendererUrlAllowed !== "function") {
+    throw new TypeError("Launcher IPC authorization requires window and URL validators");
+  }
+  return (event) => {
+    let allowed = false;
+    try {
+      const window = getMainWindow();
+      if (window && !window.isDestroyed()) {
+        const contents = window.webContents;
+        if (contents && !contents.isDestroyed() && event?.sender === contents) {
+          const frame = event.senderFrame;
+          const mainFrame = contents.mainFrame;
+          // Electron can expose distinct wrappers for one frame. Match its current
+          // process/routing pair and reject unloading or detached documents.
+          allowed = Boolean(frame && mainFrame
+            && !frame.isDestroyed() && !mainFrame.isDestroyed()
+            && frame.detached === false && mainFrame.detached === false
+            && frame.parent === null && mainFrame.parent === null
+            && Number.isInteger(frame.processId) && Number.isInteger(frame.routingId)
+            && frame.processId === mainFrame.processId
+            && frame.routingId === mainFrame.routingId
+            && isRendererUrlAllowed(frame.url) === true
+            && isRendererUrlAllowed(mainFrame.url) === true);
+        }
+      }
+    } catch {
+      // Native frame getters can throw after navigation or renderer teardown.
+    }
+    if (!allowed) throw new Error("Unauthorized launcher IPC sender");
+    return true;
+  };
+}
+
+function registerLoggedIpc(ipcMain, logger, channel, handler, authorize) {
+  if (typeof authorize !== "function") throw new TypeError("Launcher IPC authorization is required");
   ipcMain.handle(channel, async (event, ...args) => {
     try {
+      if (authorize(event) !== true) throw new Error("Unauthorized launcher IPC sender");
       return await handler(event, ...args);
     } catch (error) {
       logger.error("launcher.ipc_failed", {
@@ -209,14 +247,31 @@ function registerLoggedIpc(ipcMain, logger, channel, handler) {
   });
 }
 
+function registerLoggedIpcEvent(ipcMain, logger, channel, handler, authorize) {
+  if (typeof authorize !== "function") throw new TypeError("Launcher IPC authorization is required");
+  ipcMain.on(channel, async (event, ...args) => {
+    try {
+      if (authorize(event) !== true) throw new Error("Unauthorized launcher IPC sender");
+      await handler(event, ...args);
+    } catch (error) {
+      logger.error("launcher.ipc_failed", {
+        channel,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+}
+
 module.exports = {
   createLogger,
+  createRendererIpcGuard,
   exportSanitizedLogs,
   installProcessDiagnosticGuards,
   readRecent,
   redactExportText,
   redactText,
   registerLoggedIpc,
+  registerLoggedIpcEvent,
   sanitize,
   sanitizeForExport,
 };
