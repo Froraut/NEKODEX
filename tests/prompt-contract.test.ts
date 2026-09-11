@@ -7,6 +7,7 @@ import {
   compileChatGptWebPrompt,
   formatChatGptWebMultipartCommit,
   formatChatGptWebMultipartStage,
+  withoutRetiredTurnHandles,
 } from "../src/adapters/chatgpt-web/prompt";
 import { CHATGPT_WEB_LUNA_MODEL_ID, CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { biggerContextPartCount } from "../src/adapters/chatgpt-web/usage";
@@ -51,6 +52,7 @@ test("Full-mode Pro prompts pass one stable turn token directly to native action
   expect(transportOnly).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
   expect(transportOnly).toContain("Call a Codex Native tool only when the latest active request requires a local effect or fresh local evidence that is not already present in the supplied context; otherwise answer the request directly without a tool call.");
   expect(transportOnly).toContain("Use actual Codex Native results as evidence for local observations and effects.");
+  expect(transportOnly).toContain("For reading a referenced Codex task, use codex_read_thread with the task ID.");
   expect(transportOnly).toContain("A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.");
   expect(transportOnly).toContain("After a deterministic tool failure, update the working hypothesis from that result");
   expect(transportOnly).toContain("do not repeat the same call unless its inputs or observable state changed.");
@@ -490,24 +492,29 @@ test("persisted one-pixel image sentinels are not attached to ChatGPT", () => {
 test("the replayed context never carries a finished turn's broker handles", () => {
   const staleToken = "turn_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   const staleBinding = "binding_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+  const staleCall = "call_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+  const staleRequest = "request_DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
+  const staleControl = "control_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  const staleHandoff = "handoff_ffffffffffffffffffffffffffffffff";
+  const staleHandles = [staleToken, staleBinding, staleCall, staleRequest, staleControl, staleHandoff];
   const token = "turn_12345678901234567890123456789012";
   const replayed: CodexParsedRequest = {
     modelId: CHATGPT_WEB_MODEL_ID,
     context: {
-      systemPrompt: ["preserve-system"],
+      systemPrompt: [`preserve-system\n${staleControl}`],
       messages: [
-        { role: "user", content: "keep working", timestamp: 1 },
+        { role: "user", content: `keep working\u001f${staleHandoff}`, timestamp: 1 },
         {
           role: "assistant",
-          content: [{ type: "toolCall", id: "call_1", name: "codex_bind_turn", arguments: { turn_token: staleToken } }],
+          content: [{ type: "toolCall", id: staleCall, name: "codex_bind_turn", arguments: { turn_token: staleToken } }],
           timestamp: 2,
         },
         {
           role: "toolResult",
-          toolCallId: "call_1",
+          toolCallId: staleCall,
           toolName: "codex_bind_turn",
           isError: false,
-          content: `{"binding_id":"${staleBinding}"}`,
+          content: JSON.stringify({ binding_id: staleBinding, request_id: staleRequest }),
           timestamp: 3,
         },
       ],
@@ -516,16 +523,64 @@ test("the replayed context never carries a finished turn's broker handles", () =
     options: { reasoning: "high" },
   };
 
-  const compiled = compileChatGptWebPrompt(replayed, { localToolsEnabled: true, solAvailable: true, proAvailable: true }, token);
+  for (const experimentalMultipartParts of [undefined, 2] as const) {
+    const compiled = compileChatGptWebPrompt(
+      replayed,
+      { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+      token,
+      { experimentalMultipartParts },
+    );
+    const payloads = compiled.multipart?.parts ?? [
+      compiled.text.split("<codex_context_json>")[1]!.split("</codex_context_json>")[0]!.trim(),
+    ];
+    const context = payloads.join("\n");
+    for (const handle of staleHandles) {
+      expect(context).not.toContain(handle);
+      expect(compiled.text).not.toContain(handle);
+      expect(context).toContain(`[retired ${handle.split("_")[0]} handle]`);
+    }
+    expect(context).not.toContain(token);
+    expect(compiled.text.split(token)).toHaveLength(2);
+    expect(context).toContain("keep working");
+    expect(context).toContain("preserve-system");
+    for (const payload of payloads) expect(() => JSON.parse(payload) as unknown).not.toThrow();
+  }
+});
 
-  expect(compiled.text).not.toContain(staleToken);
-  expect(compiled.text).not.toContain(staleBinding);
-  expect(compiled.text).toContain("[retired turn handle]");
-  expect(compiled.text).toContain("[retired binding handle]");
-  expect(compiled.text).toContain(token);
-  expect(compiled.text).toContain("keep working");
-  const envelope = compiled.text.split("<codex_context_json>")[1]!.split("</codex_context_json>")[0]!.trim();
-  expect(() => JSON.parse(envelope) as unknown).not.toThrow();
+test("every retired broker handle kind is scrubbed across JSON escape boundaries", () => {
+  const body = "0123456789abcdefghijklmnopqrst_-"; // 32 base64url chars, including both punctuation characters.
+  expect(body).toHaveLength(32);
+  const prefixes = ["", " ", "(", ":", "\"", "\\", ...Array.from({ length: 32 }, (_, index) => String.fromCharCode(index))];
+  for (const kind of ["turn", "binding", "call", "request", "control", "handoff"]) {
+    for (const prefix of prefixes) {
+      const source = JSON.stringify({ h: `${prefix}${kind}_${body}` });
+      const scrubbed = withoutRetiredTurnHandles(source);
+      expect(scrubbed).toBe(JSON.stringify({ h: `${prefix}[retired ${kind} handle]` }));
+      expect(JSON.parse(scrubbed)).toEqual({ h: `${prefix}[retired ${kind} handle]` });
+    }
+    expect(withoutRetiredTurnHandles(`"\\u001F${kind}_${body}"`))
+      .toBe(`"\\u001F[retired ${kind} handle]"`);
+  }
+});
+
+test("retired broker handle near-misses and adjacent identifier data are preserved", () => {
+  const body = "0123456789abcdefghijklmnopqrst_-";
+  expect(body).toHaveLength(32);
+  for (const kind of ["turn", "binding", "call", "request", "control", "handoff"]) {
+    const handle = `${kind}_${body}`;
+    const nearMisses = [
+      `${kind}_${body.slice(0, 31)}`,
+      `${kind}_${body.slice(0, 24)}`,
+      `${kind}x_${body}`,
+      ...["n", "A", "0", "_", "-"].flatMap(character => [`${character}${handle}`, `${handle}${character}`]),
+    ];
+    for (const keep of nearMisses) {
+      const source = JSON.stringify({ h: keep });
+      expect(withoutRetiredTurnHandles(source)).toBe(source);
+    }
+  }
+  const unknownKind = JSON.stringify({ h: `widget_${body}`, call_id: "call_1" });
+  expect(withoutRetiredTurnHandles(unknownKind)).toBe(unknownKind);
 });
 
 test("requires ChatGPT-native rich results to include a safe Markdown answer for Codex", () => {

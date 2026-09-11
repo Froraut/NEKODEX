@@ -106,7 +106,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       traceId: "abc123def456",
       helperPid: process.pid,
       conversationKey: "a".repeat(64),
-      connectorIdentity: "Codex Native2",
+      connectorIdentity: "Codex Native3",
       requireRetainedConversation: true,
     })).resolves.toEqual({
       surfaceId: "launcher_surface_id_0123456789AB",
@@ -119,7 +119,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       traceId: "abc123def456",
       helperPid: process.pid,
       conversationKey: "a".repeat(64),
-      connectorIdentity: "Codex Native2",
+      connectorIdentity: "Codex Native3",
       requireRetainedConversation: true,
     });
     await notifyLauncherTurn(path, {
@@ -445,6 +445,70 @@ test("launcher page selection rejects duplicated native target ownership", async
   expect(selectLauncherPage(browser, descriptor, 20)).rejects.toThrow(
     "2 surfaces with the same ownership id",
   );
+});
+
+for (const stalledPhase of ["acquire", "inspect", "detach"] as const) {
+  test(`launcher page selection bounds a peer stalled during ${stalledPhase}`, async () => {
+    const descriptor = readLauncherBrowserHostDescriptor(descriptorFile());
+    const peer = {} as Page;
+    const owned = {} as Page;
+    const never = new Promise<never>(() => {});
+    const context = {
+      pages: () => [peer, owned],
+      newCDPSession: async (page: Page) => {
+        if (page === peer && stalledPhase === "acquire") return never;
+        return {
+          send: async () => page === peer && stalledPhase === "inspect" ? never
+            : { targetInfo: { targetId: page === owned ? "native-owned-target" : "peer" } },
+          detach: async () => page === peer && stalledPhase === "detach" ? never : undefined,
+        };
+      },
+    } as unknown as BrowserContext;
+    const browser = { contexts: () => [context] } as unknown as Browser;
+    const started = Date.now();
+    expect(await selectLauncherPage(browser, descriptor, 40)).toEqual({ context, page: owned });
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+}
+
+test("launcher page selection cancels pending peer acquisition and detaches a late session", async () => {
+  const descriptor = readLauncherBrowserHostDescriptor(descriptorFile());
+  let release!: (value: unknown) => void;
+  let detached = 0;
+  let inspected = 0;
+  const pending = new Promise(resolve => { release = resolve; });
+  const context = { pages: () => [{}], newCDPSession: () => pending } as unknown as BrowserContext;
+  const browser = { contexts: () => [context] } as unknown as Browser;
+  const abort = new AbortController();
+  const selection = selectLauncherPage(browser, descriptor, 60_000, descriptor.surfaceId, abort.signal);
+  abort.abort();
+  await expect(selection).rejects.toMatchObject({ name: "AbortError" });
+  release({ send: async () => { inspected++; }, detach: async () => { detached++; } });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(detached).toBe(1);
+  expect(inspected).toBe(0);
+});
+
+test("launcher page selection observes cancellation during target inspection", async () => {
+  const descriptor = readLauncherBrowserHostDescriptor(descriptorFile());
+  let inspected!: () => void;
+  const inspectionStarted = new Promise<void>(resolve => { inspected = resolve; });
+  let detached = 0;
+  const context = {
+    pages: () => [{}],
+    newCDPSession: async () => ({
+      send: () => { inspected(); return new Promise(() => {}); },
+      detach: async () => { detached++; },
+    }),
+  } as unknown as BrowserContext;
+  const browser = { contexts: () => [context] } as unknown as Browser;
+  const abort = new AbortController();
+  const selection = selectLauncherPage(browser, descriptor, 60_000, descriptor.surfaceId, abort.signal);
+  await inspectionStarted;
+  abort.abort();
+  await expect(selection).rejects.toMatchObject({ name: "AbortError" });
+  expect(detached).toBe(1);
 });
 
 test("launcher descriptor rejects ambiguous native targets and selection rejects retired surfaces", async () => {

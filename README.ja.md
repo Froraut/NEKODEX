@@ -144,6 +144,8 @@ bun run app
 Full モードでは、利用可能なすべての effort が同じターン紐付き MCP capability を受け取ります。
 Pro 専用の制限や縮小されたツール契約はありません。
 
+旧 **Zero Risk** モードの表示名は**手動モード**に変更しました。既存の `chatgpt-web/zero-risk` と `chatgpt-web/zero-risk-pro` のモデル ID、コマンドオプション、保存済み設定は互換性を維持します。コネクタの正確な名前は `Codex Zero Risk2` のままです。ChatGPT ページの自動読み書きや送信は行いませんが、アカウント制限と MCP/ローカルツールの影響は引き続き適用されます。
+
 ## Full ハーネス
 
 Full モードは、公式の [OpenAI tunnel-client](https://github.com/openai/tunnel-client) を通じて、
@@ -163,11 +165,11 @@ ChatGPT のツール呼び出しを現在の Codex タスクへ接続します�
    Tunnel と通常の API キーを作成します。キーの作成は無料で、モデル API クレジットを消費しません。
 3. Tunnel ID と API キーを貼り付け、**ハーネスを接続**を押します。
 4. ChatGPT の設定で **Developer Mode** を有効にします。**Tunnel** を使う**新しい**コネクタを作成し、
-   対象の Tunnel を選択して、**Authentication** を **None**、名前を正確に **Codex Native2** に設定します。
-5. **Codex Native2** の **Permissions** で **Allow all actions** を選択します。
+   対象の Tunnel を選択して、**Authentication** を **None**、名前を正確に **Codex Native3** に設定します。
+5. **Codex Native3** の **Permissions** で **Allow all actions** を選択します。
    **Allow low-risk actions** では、コマンドとパッチがこのランタイムへ到達する前にブロックされます。
    外側の Codex ハーネスでは、引き続きサンドボックスと承認が適用されます。
-6. **ランタイムを検証**を実行し、**Codex Native2** が接続済みで利用可能であることを確認します。
+6. **ランタイムを検証**を実行し、**Codex Native3** が接続済みで利用可能であることを確認します。
 
 書き込み／変更操作には、ChatGPT ワークスペースと管理者ポリシー側での許可も必要です。
 [Developer Mode と MCP アプリ](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)を参照してください。
@@ -180,6 +182,18 @@ ChatGPT のツール呼び出しを現在の Codex タスクへ接続します�
 **設定 → 診断を実行**を使用します。設定から、保持中のブラウザーターンのキャンセルや、
 アンインストール前の Codex 統合削除も行えます。すべてのブラウザーチェックポイントでスクリーンショットが必要な場合にのみ、
 `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` を設定してください。
+[アカウントと UI の検証ツール](docs/account-ui-acceptance.md)では、バージョン付きのオフライン
+フィクスチャと、個別に明示して許可するローカル・アカウント検証を実行できます。既定ではアカウントを操作しません。
+ブラウザー診断は完了した最新 50 件を保持し、実行中のヘルパープロセスが所有する記録を保護します。
+`CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTIC_TRACE_LIMIT` を 1～1000 に設定すると保持件数を変更できます。
+クラッシュしたヘルパーの記録は通常の削除対象になります。
+
+**設定 → 自動 Pro モデル**では、自動 Pro ターンを **GPT-5.6 Sol Pro**、**GPT-5.5 Pro**、
+**GPT-6 Astra Pro** に固定できます。既定の **ChatGPT に合わせる**は従来の動作を維持します。
+次の Pro ターンから反映され、Codex やランチャーの再起動は不要です。他の推論レベルや
+手動モードのターンには影響しません。指定バージョンが利用できない、または確認できない場合は
+送信前にエラーとなり、別のモデルへ切り替えません。GPT-6 は 6 Pro と確認できる場合のみ
+**最新**を使用します。
 
 新規インストールでは、クロスバックエンドのサブエージェントに **Compatibility V1** を使用します。
 **Native** は Codex 独自の機能設定を維持し、プレーンテキストの Web-to-Web V2 delegation を有効にします。
@@ -222,7 +236,7 @@ bun run app:package
 Electron state、ブラウザーの cookie／ログイン、ChatGPT アカウント、設定、サンドボックス化された `CODEX_HOME`、
 チャット、診断、broker、トンネルプロファイルは本番環境から分離されます。通常のランチャーと同時に実行でき、
 Responses daemon の起動や Codex の変更は行いません。任意の Full セットアップでは、独立した ChatGPT コネクタ名
-`Codex Native2 DEV` を使用し、隔離された MCP トンネルのみを起動・監視します。
+`Codex Native3 DEV` を使用し、隔離された MCP トンネルのみを起動・監視します。
 
 `dev:chat` は名前付きの永続的な synthetic outer-Codex ハーネスです。現在の作業ツリーを、隔離されたランチャーの
 ブラウザー、一時チャット、プロンプトコンパイラー、Responses parser、コンパクションハンドラーを通して実行します。
@@ -233,7 +247,7 @@ Browser-only チャットは外側のツールを公開しません。Responses 
 **DEV** と表示されたウィンドウ内で一度サインインし、プロファイルを初期化してください。
 シミュレーションツールのターンが必要な場合にのみ、任意の Full ハーネスを設定します。
 ランチャーは DEV トンネルを使用可能な状態に保ち、名前付きチャットは必要に応じて broker を接続します。
-本番の認証情報や `Codex Native2` コネクタが暗黙的に再利用されることはありません。
+本番の認証情報や `Codex Native3` コネクタが暗黙的に再利用されることはありません。
 [DEV chat ハーネス](docs/dev-chat.md)を参照してください。
 
 - [アーキテクチャ](docs/architecture.md)
@@ -257,3 +271,5 @@ Browser-only チャットは外側のツールを公開しません。Responses 
 これは独立したソフトウェアであり、OpenAI との提携や OpenAI による推奨を受けたものではありません。
 ご自身のアカウントで、適用される[利用規約](https://openai.com/policies/terms-of-use/)と
 ワークスペースポリシーに従って使用してください。認証やアクセス制御を回避するものではありません。
+
+既存コネクタの更新には、新しい名前のコネクタが必要です。[MCP タスク読み取りの移行手順](docs/mcp-task-access-migration.md)を参照し、実際の Codex タスクで `codex_read_thread` を確認してください。

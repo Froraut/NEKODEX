@@ -227,13 +227,13 @@ export async function settleActiveZeroRiskCompactionSource(
       throw abortReason(signal);
     }
     if (!source.isActive() || source.runtime.mode !== "tools" || !source.runtime.manualControl) {
-      throw new Error("The active Zero Risk compaction source has no manual MCP tool boundary");
+      throw new Error("The active Manual mode compaction source has no manual MCP tool boundary");
     }
     const outstanding = source.outstanding();
     const results = currentToolResults(parsed, source);
     if (results.size !== outstanding.length) {
       throw new Error(
-        `Codex supplied ${results.size} of ${outstanding.length} required tool results for Zero Risk compaction`,
+        `Codex supplied ${results.size} of ${outstanding.length} required tool results for Manual mode compaction`,
       );
     }
     let token: string | undefined;
@@ -263,7 +263,7 @@ export async function settleActiveZeroRiskCompactionSource(
         || await broker.compactionDeliveryCount(token) > 0;
       if (!instructionDelivered) return undefined;
       const summary = browserOutcome.answer.trim();
-      if (!summary) throw new Error("The active Zero Risk response returned an empty compaction summary");
+      if (!summary) throw new Error("The active Manual mode response returned an empty compaction summary");
       return summary;
     } catch (error) {
       if (signal?.aborted) source.cancel(abortReason(signal));

@@ -38,7 +38,7 @@ function request(turnId: string): CodexParsedRequest {
       tools: [],
       messages: [
         { role: "developer", content: environment, timestamp: 1 },
-        { role: "user", content: "Inspect the Zero Risk transport.", timestamp: 2 },
+        { role: "user", content: "Inspect the Manual mode transport.", timestamp: 2 },
       ],
     },
     _rawBody: {
@@ -56,7 +56,7 @@ function request(turnId: string): CodexParsedRequest {
         {
           type: "message",
           role: "user",
-          content: [{ type: "input_text", text: "Inspect the Zero Risk transport." }],
+          content: [{ type: "input_text", text: "Inspect the Manual mode transport." }],
           internal_chat_message_metadata_passthrough: { turn_id: turnId },
         },
       ],
@@ -66,7 +66,7 @@ function request(turnId: string): CodexParsedRequest {
 
 function binding(prompt: string): { request_id: string } {
   const match = prompt.match(/<codex_zero_risk_request_json>\n(\{[^\n]+\})\n<\/codex_zero_risk_request_json>/);
-  if (!match) throw new Error("Zero Risk prompt did not expose its request id");
+  if (!match) throw new Error("Manual mode prompt did not expose its request id");
   return JSON.parse(match[1]!) as { request_id: string };
 }
 
@@ -75,7 +75,7 @@ function provider(name: string): CodexProviderConfig {
     adapter: "chatgpt-web",
     baseUrl: `manual://${name}-${Date.now()}`,
     chatgptWeb: {
-      appName: "Codex Zero Risk",
+      appName: "Codex Zero Risk2",
       browserInteractionMode: "manual",
       browserHost: "launcher",
       browserHostDescriptorPath: join(root, `${name}-launcher.json`),
@@ -96,7 +96,7 @@ for (const scenario of [
   { format: "v1", finalWins: false },
   { format: "v2", finalWins: false },
   { format: "v2", finalWins: true },
-] as const) test(`Zero Risk ${scenario.format} compaction resumes with exact launcher ownership (final wins: ${scenario.finalWins})`, async () => {
+] as const) test(`Manual mode ${scenario.format} compaction resumes with exact launcher ownership (final wins: ${scenario.finalWins})`, async () => {
   // Real adapter, broker, and launcher lifecycle. Only the Electron view/clipboard and the
   // human/model actions are simulated: a mock start/end that omits tombstones misses #318.
   const require = createRequire(import.meta.url);
@@ -233,13 +233,13 @@ for (const scenario of [
   }
 });
 
-test("Zero Risk adapter never starts the automatic browser worker and completes only through Zero Risk MCP", async () => {
+test("Manual mode adapter never starts the automatic browser worker and completes only through Manual mode MCP", async () => {
   const config = provider("complete");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   const worker = ChatGptBrowserWorker.forProvider(config);
   const originalRun = worker.run.bind(worker);
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async () => {
-    throw new Error("automatic browser worker must not run in Zero Risk mode");
+    throw new Error("automatic browser worker must not run in Manual mode");
   };
   let exactBinding: ReturnType<typeof binding> | undefined;
   let manualCompaction: true | undefined;
@@ -257,7 +257,7 @@ test("Zero Risk adapter never starts the automatic browser worker and completes 
     waitTerminal: noManualTerminal,
     async markStarted() {
       calls.push("started");
-      broker.completeSafeTurn(exactBinding!.request_id, "Zero Risk final answer");
+      broker.completeSafeTurn(exactBinding!.request_id, "Manual mode final answer");
     },
     async end(_path, activity) { calls.push(`end:${activity.status}:${activity.retain === true}`); },
     async cancel() { calls.push("cancel"); },
@@ -273,13 +273,13 @@ test("Zero Risk adapter never starts the automatic browser worker and completes 
     expect(manualCompaction).toBeUndefined();
     expect(events.some(event => event.type === "text_delta"
       && event.phase === "commentary"
-      && event.text.startsWith("> **Action required in Zero Risk**")
-      && event.text.includes("select the `Codex Zero Risk` plugin")
+      && event.text.startsWith("> **Action required in Manual mode**")
+      && event.text.includes("select the `Codex Zero Risk2` plugin")
       && event.text.includes("confirm it was sent in the launcher"))).toBeTrue();
     expect(events.filter((event): event is Extract<AdapterEvent, { type: "text_delta" }> => (
       event.type === "text_delta" && event.phase === "final_answer"
     )).map(event => event.text).join(""))
-      .toBe("Zero Risk final answer");
+      .toBe("Manual mode final answer");
     expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
   } finally {
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
@@ -288,7 +288,7 @@ test("Zero Risk adapter never starts the automatic browser worker and completes 
   }
 });
 
-test("a lost launcher completion acknowledgement cannot replace an authoritative Zero Risk answer", async () => {
+test("a lost launcher completion acknowledgement cannot replace an authoritative Manual mode answer", async () => {
   const config = provider("completion-ack-lost");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   let exactBinding: ReturnType<typeof binding> | undefined;
@@ -325,7 +325,7 @@ test("a lost launcher completion acknowledgement cannot replace an authoritative
   }
 });
 
-test("Zero Risk keeps image handoff manual and says so in the paste instruction", async () => {
+test("Manual mode keeps image handoff manual and says so in the paste instruction", async () => {
   const config = provider("image-boundary");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   const input = request("turn_safe_image_boundary");
@@ -361,7 +361,7 @@ test("Zero Risk keeps image handoff manual and says so in the paste instruction"
     expect(manualPrompt).toContain("image the user manually attached to this ChatGPT message");
     expect(events.some(event => event.type === "text_delta"
       && event.phase === "commentary"
-      && event.text.includes("add any images yourself because Zero Risk cannot transfer them"))).toBeTrue();
+      && event.text.includes("add any images yourself because Manual mode cannot transfer them"))).toBeTrue();
     expect(events.filter((event): event is Extract<AdapterEvent, { type: "text_delta" }> => (
       event.type === "text_delta" && event.phase === "final_answer"
     )).map(event => event.text).join(""))
@@ -372,7 +372,7 @@ test("Zero Risk keeps image handoff manual and says so in the paste instruction"
   }
 });
 
-test("a stopped Responses observer revokes its Zero Risk binding and releases the manual turn", async () => {
+test("a stopped Responses observer revokes its Manual mode binding and releases the manual turn", async () => {
   const config = provider("stopped-observer");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   let exactBinding: ReturnType<typeof binding> | undefined;
@@ -418,7 +418,7 @@ test("a stopped Responses observer revokes its Zero Risk binding and releases th
   }
 });
 
-test("a Zero Risk launcher failure remains failed when its own capability cleanup retires the broker", async () => {
+test("a Manual mode launcher failure remains failed when its own capability cleanup retires the broker", async () => {
   const config = provider("failed-cleanup");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   let exactBinding: ReturnType<typeof binding> | undefined;
@@ -446,7 +446,7 @@ test("a Zero Risk launcher failure remains failed when its own capability cleanu
   }
 });
 
-test("Zero Risk offers only the new Codex suffix when the launcher reuses its retained ChatGPT chat", async () => {
+test("Manual mode offers only the new Codex suffix when the launcher reuses its retained ChatGPT chat", async () => {
   const config = provider("incremental-resume");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   const input = request("turn_safe_incremental");
@@ -509,7 +509,7 @@ test("Zero Risk offers only the new Codex suffix when the launcher reuses its re
   }
 });
 
-test("Zero Risk compaction uses a fresh manual checkpoint without leaking guide text into the summary", async () => {
+test("Manual mode compaction uses a fresh manual checkpoint without leaking guide text into the summary", async () => {
   const config = provider("compaction");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   let exactBinding: ReturnType<typeof binding> | undefined;
@@ -526,7 +526,7 @@ test("Zero Risk compaction uses a fresh manual checkpoint without leaking guide 
     async markStarted() {
       broker.completeSafeTurn(
         exactBinding!.request_id,
-        "Zero Risk checkpoint summary",
+        "Manual mode checkpoint summary",
       );
     },
     async end() {},
@@ -547,7 +547,7 @@ test("Zero Risk compaction uses a fresh manual checkpoint without leaking guide 
     expect(manualCompaction).toBeTrue();
     expect(deltas.every(event => event.phase === "final_answer")).toBeTrue();
     expect(deltas.map(event => event.text).join(""))
-      .toContain("Zero Risk checkpoint summary\n\nCODEX_LATEST_USER_PROMPT_JSON");
+      .toContain("Manual mode checkpoint summary\n\nCODEX_LATEST_USER_PROMPT_JSON");
     expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
   } finally {
     chatGptTurnSessions.clear();
@@ -555,7 +555,7 @@ test("Zero Risk compaction uses a fresh manual checkpoint without leaking guide 
   }
 });
 
-test("closing the Zero Risk Launcher tab revokes the bound turn instead of waiting forever", async () => {
+test("closing the Manual mode Launcher tab revokes the bound turn instead of waiting forever", async () => {
   const config = provider("cancelled-tab");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   let exactBinding: ReturnType<typeof binding> | undefined;

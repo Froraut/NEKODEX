@@ -10,6 +10,10 @@ import {
 } from "./environment";
 import { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
+import {
+  CHATGPT_REPLAY_BYTES, CHATGPT_REGISTRY_REPLAY_BYTES, CHATGPT_TEXT_BUFFER_BYTES,
+  CHATGPT_TRACE_BUFFER_BYTES, ChatGptResourceLimitError, assertByteLimit, retainedRecordBytes,
+} from "./resource-budgets";
 
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
@@ -54,13 +58,21 @@ interface TraceWaiter {
 }
 
 export class ChatGptTraceFeed {
+  private queuedBytes = 0;
   private readonly queued: ChatGptTraceEvent[] = [];
   private readonly waiters = new Set<TraceWaiter>();
+
+  constructor(private readonly maxBytes = CHATGPT_TRACE_BUFFER_BYTES) {
+    assertByteLimit(0, maxBytes, "ChatGPT trace feed");
+  }
 
   push(event: ChatGptTraceEvent): void {
     const normalized = event.continuation ? event.text : event.text.trim();
     if (!normalized) return;
     const normalizedEvent = { ...event, text: normalized };
+    const bytes = retainedRecordBytes(normalizedEvent);
+    assertByteLimit(this.queuedBytes + bytes, this.maxBytes, "ChatGPT trace feed");
+    this.queuedBytes += bytes;
     this.queued.push(normalizedEvent);
     const waiter = this.waiters.values().next().value as TraceWaiter | undefined;
     if (!waiter) return;
@@ -70,6 +82,7 @@ export class ChatGptTraceFeed {
   }
 
   drain(): ChatGptTraceEvent[] {
+    this.queuedBytes = 0;
     return this.queued.splice(0);
   }
 
@@ -102,9 +115,20 @@ export class ChatGptTextFeed {
   private readonly queued: string[] = [];
   private readonly waiters = new Set<TextWaiter>();
   private text = "";
+  private textBytes = 0;
+  private queuedBytes = 0;
+
+  constructor(private readonly maxBytes = CHATGPT_TEXT_BUFFER_BYTES) {
+    assertByteLimit(0, maxBytes, "ChatGPT answer feed");
+  }
 
   push(delta: string): void {
     if (!delta) return;
+    const bytes = Buffer.byteLength(delta, "utf8");
+    assertByteLimit(this.textBytes + bytes, this.maxBytes, "ChatGPT answer feed");
+    assertByteLimit(this.queuedBytes + bytes + 64, this.maxBytes, "ChatGPT text progress queue");
+    this.textBytes += bytes;
+    this.queuedBytes += bytes + 64;
     this.text += delta;
     this.queued.push(delta);
     const waiter = this.waiters.values().next().value as TextWaiter | undefined;
@@ -115,6 +139,7 @@ export class ChatGptTextFeed {
   }
 
   drain(): string[] {
+    this.queuedBytes = 0;
     return this.queued.splice(0);
   }
 
@@ -284,11 +309,15 @@ export class ChatGptTurnSession {
   private attachedConversationKey: string | undefined;
   private tail: Promise<void> = Promise.resolve();
   private capabilityRetirementScheduled = false;
+  private replayBytes = 0;
+  private replayFailure?: ChatGptResourceLimitError;
+  private readonly replayFields = new Map<string, number>();
   private readonly rounds = new Map<string, {
     events: AdapterEvent[];
     reasoning: string[];
     completed: boolean;
     failure?: Error;
+    bytes: number;
   }>();
 
   constructor(
@@ -298,7 +327,12 @@ export class ChatGptTurnSession {
     readonly nativeTurnId?: string,
     readonly nativeThreadId?: string,
     readonly instruction?: string,
+    private readonly replayBudget: {
+      maxBytes?: number;
+      checkRegistry?: (additionalBytes: number) => void;
+    } = {},
   ) {
+    assertByteLimit(0, replayBudget.maxBytes ?? CHATGPT_REPLAY_BYTES, "ChatGPT replay journal");
     this.attachedConversationKey = runtime.conversationKey;
     this.physicalSettlement = runtime.physicalSettlement.then(
       () => { this.settledPhysical = true; },
@@ -361,12 +395,15 @@ export class ChatGptTurnSession {
 
   setOutstanding(requests: BrokerToolRequest[], reasoning: string[] = [], prelude: AdapterEvent[] = []): void {
     if (this.outstandingById.size > 0) throw new Error("cannot emit a new ChatGPT tool batch while the previous batch is unresolved");
+    const seen = new Set<string>();
     for (const request of requests) {
-      if (this.deliveredResultIds.has(request.callId) || this.outstandingById.has(request.callId)) {
+      if (seen.has(request.callId) || this.deliveredResultIds.has(request.callId)) {
         throw new Error(`duplicate ChatGPT bridge tool call id: ${request.callId}`);
       }
-      this.outstandingById.set(request.callId, request);
+      seen.add(request.callId);
     }
+    this.replaceReplayField("outstanding", retainedRecordBytes(requests) + retainedRecordBytes(reasoning) + retainedRecordBytes(prelude));
+    for (const request of requests) this.outstandingById.set(request.callId, request);
     this.outstandingReasoning = [...reasoning];
     this.outstandingPrelude = [...prelude];
   }
@@ -376,9 +413,13 @@ export class ChatGptTurnSession {
   }
 
   markResultDelivered(callId: string): void {
-    if (!this.outstandingById.delete(callId)) throw new Error(`ChatGPT bridge tool result does not match an outstanding call: ${callId}`);
+    if (!this.outstandingById.has(callId)) throw new Error(`ChatGPT bridge tool result does not match an outstanding call: ${callId}`);
+    const releasedBytes = this.outstandingById.size === 1 ? (this.replayFields.get("outstanding") ?? 0) : 0;
+    this.reserveReplayBytes(retainedRecordBytes(callId) - releasedBytes);
+    this.outstandingById.delete(callId);
     this.deliveredResultIds.add(callId);
     if (this.outstandingById.size === 0) {
+      this.replayFields.set("outstanding", 0);
       this.outstandingReasoning = [];
       this.outstandingPrelude = [];
     }
@@ -393,6 +434,7 @@ export class ChatGptTurnSession {
   }
 
   setFinalReasoning(reasoning: string[]): void {
+    this.replaceReplayField("finalReasoning", retainedRecordBytes(reasoning));
     this.finalReasoning = [...reasoning];
   }
 
@@ -401,6 +443,7 @@ export class ChatGptTurnSession {
   }
 
   setFinalEvents(events: AdapterEvent[]): void {
+    this.replaceReplayField("finalEvents", events.reduce((bytes, event) => bytes + retainedRecordBytes(event), 0));
     this.finalPrelude = [...events];
   }
 
@@ -424,14 +467,20 @@ export class ChatGptTurnSession {
     if (events.length === 0) return;
     const round = this.round(key);
     if (round.completed) throw new Error("cannot append to a completed ChatGPT native round");
-    round.events.push(...events);
+    const bytes = events.reduce((sum, event) => sum + retainedRecordBytes(event), 0);
+    this.reserveReplayBytes(bytes);
+    round.bytes += bytes;
+    for (const event of events) round.events.push(event);
   }
 
   appendRoundReasoning(key: string, values: readonly string[]): void {
     if (values.length === 0) return;
     const round = this.round(key);
     if (round.completed) throw new Error("cannot append reasoning to a completed ChatGPT native round");
-    round.reasoning.push(...values);
+    const bytes = values.reduce((sum, value) => sum + retainedRecordBytes(value), 0);
+    this.reserveReplayBytes(bytes);
+    round.bytes += bytes;
+    for (const value of values) round.reasoning.push(value);
   }
 
   completeRound(key: string): void {
@@ -439,6 +488,7 @@ export class ChatGptTurnSession {
   }
 
   failRound(key: string, error: Error): void {
+    if (this.replayFailure) return;
     const round = this.round(key);
     round.failure = error;
     round.completed = true;
@@ -477,18 +527,46 @@ export class ChatGptTurnSession {
       });
   }
 
+  retainedReplayBytes(): number {
+    return this.replayBytes;
+  }
+
+  private replaceReplayField(key: string, bytes: number): void {
+    this.reserveReplayBytes(bytes - (this.replayFields.get(key) ?? 0));
+    this.replayFields.set(key, bytes);
+  }
+
+  private reserveReplayBytes(additionalBytes: number): void {
+    if (this.replayFailure) throw this.replayFailure;
+    try {
+      assertByteLimit(this.replayBytes + additionalBytes, this.replayBudget.maxBytes ?? CHATGPT_REPLAY_BYTES, "ChatGPT replay journal");
+      if (additionalBytes > 0) this.replayBudget.checkRegistry?.(additionalBytes);
+    } catch (error) {
+      if (error instanceof ChatGptResourceLimitError) {
+        this.replayFailure = error;
+        this.runtime.cancel(error);
+      }
+      throw error;
+    }
+    this.replayBytes += additionalBytes;
+  }
+
   private round(key: string) {
+    if (this.replayFailure) throw this.replayFailure;
     let round = this.rounds.get(key);
     if (round) return round;
-    round = { events: [], reasoning: [], completed: false };
-    this.rounds.set(key, round);
-    while (this.rounds.size > 512) {
+    // Retain the existing count bound and evict only completed rounds. Byte exhaustion fails
+    // the turn instead of dropping accepted output that an exact reconnect still needs.
+    while (this.rounds.size >= 512) {
       const oldestCompleted = [...this.rounds].find(([, candidate]) => candidate.completed);
-      if (!oldestCompleted) {
-        throw new Error("ChatGPT native round journal is full (512 unfinished rounds)");
-      }
+      if (!oldestCompleted) throw new Error("ChatGPT native round journal is full (512 unfinished rounds)");
       this.rounds.delete(oldestCompleted[0]);
+      this.replayBytes -= oldestCompleted[1].bytes;
     }
+    const bytes = retainedRecordBytes(key);
+    this.reserveReplayBytes(bytes);
+    round = { events: [], reasoning: [], completed: false, bytes };
+    this.rounds.set(key, round);
     return round;
   }
 }
@@ -503,7 +581,10 @@ export class ChatGptTurnSessions {
   constructor(
     private readonly ttlMs = 30 * 60_000,
     private readonly maxEntries = 256,
-  ) {}
+    private readonly maxReplayBytes = CHATGPT_REGISTRY_REPLAY_BYTES,
+  ) {
+    assertByteLimit(0, maxReplayBytes, "ChatGPT session replay registry");
+  }
 
   getOrCreate(
     key: string,
@@ -528,7 +609,13 @@ export class ChatGptTurnSessions {
       );
     }
     if (this.entries.size >= this.maxEntries) throw new Error(`ChatGPT web session registry is full (${this.maxEntries} entries)`);
-    const session = new ChatGptTurnSession(start(), traceId, ownerKey, nativeTurnId, nativeThreadId, instruction);
+    const session = new ChatGptTurnSession(start(), traceId, ownerKey, nativeTurnId, nativeThreadId, instruction, {
+      checkRegistry: additionalBytes => {
+        let retained = additionalBytes;
+        for (const entry of this.entries.values()) retained += entry.retainedReplayBytes();
+        assertByteLimit(retained, this.maxReplayBytes, "ChatGPT session replay registry");
+      },
+    });
     this.entries.set(key, session);
     const conversationKey = session.conversationKey();
     if (conversationKey) this.conversationHeads.set(conversationKey, session);
@@ -544,6 +631,7 @@ export class ChatGptTurnSessions {
     nativeTurnId?: string,
     nativeThreadId?: string,
     instruction?: ChatGptInstructionLineage,
+    retainedConversationKey?: string,
   ): Promise<ChatGptTurnSession> {
     for (;;) {
       if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
@@ -559,7 +647,8 @@ export class ChatGptTurnSessions {
         continue;
       }
       const activeOwner = [...this.entries].find(([ownedKey, session]) => (
-        ownedKey !== key && session.ownerKey === ownerKey && !session.isPhysicallySettled()
+        ownedKey !== key && session.ownerKey === ownerKey
+        && (session.isActive() || !session.isPhysicallySettled())
       ));
       if (activeOwner) {
         const [ownedKey, ownedSession] = activeOwner;
@@ -578,12 +667,58 @@ export class ChatGptTurnSessions {
         }
         // A completed response may still be releasing its browser surface. Sequential work
         // waits for that cleanup; preemption requires a proven newer canonical instruction.
-        await awaitWithAbort(ownedSession.physicalSettlement, signal);
+        await awaitWithAbort(Promise.all([ownedSession.physicalSettlement, ownedSession.browserOutcome]), signal);
         continue;
       }
       if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+      const conversationRetirement = retainedConversationKey
+        ? this.releaseOtherOwnerConversations(ownerKey, retainedConversationKey)
+        : undefined;
+      if (conversationRetirement) {
+        await awaitWithAbort(conversationRetirement, signal);
+        continue;
+      }
       return this.getOrCreate(key, start, traceId, ownerKey, nativeTurnId, nativeThreadId, instruction?.current);
     }
+  }
+
+  /** A model switch closes stale browser history, while exact logical responses stay replayable. */
+  private releaseOtherOwnerConversations(ownerKey: string, nextConversationKey: string): Promise<void> | undefined {
+    const previous = [...this.entries.values()].filter(session => (
+      session.ownerKey === ownerKey && session.conversationKey() !== undefined
+      && session.conversationKey() !== nextConversationKey
+    ));
+    if (previous.length === 0) return undefined;
+    const releases = new Map<string, (() => Promise<void>) | undefined>();
+    for (const session of previous) {
+      if (session.isActive() || !session.isPhysicallySettled()) {
+        throw new Error("Cannot switch a retained ChatGPT model before its prior turn settles");
+      }
+      const conversationKey = session.conversationKey()!;
+      if (session.runtime.releaseRetainedConversation) {
+        releases.set(conversationKey, session.runtime.releaseRetainedConversation);
+      }
+    }
+    const retirement = Promise.resolve().then(async () => {
+      for (const release of releases.values()) await release?.();
+      // Detach only after release succeeds, so a failed close is retried before
+      // a future A -> B -> A selection can reuse an obsolete browser history.
+      for (const session of previous) {
+        const conversationKey = session.conversationKey();
+        if (conversationKey) {
+          this.conversationHeads.delete(conversationKey);
+          session.detachConversation(conversationKey);
+        }
+      }
+    });
+    this.ownerRetirements.set(ownerKey, retirement);
+    for (const conversationKey of releases.keys()) this.conversationRetirements.set(conversationKey, retirement);
+    return retirement.finally(() => {
+      if (this.ownerRetirements.get(ownerKey) === retirement) this.ownerRetirements.delete(ownerKey);
+      for (const conversationKey of releases.keys()) {
+        if (this.conversationRetirements.get(conversationKey) === retirement) this.conversationRetirements.delete(conversationKey);
+      }
+    });
   }
 
   find(key: string): ChatGptTurnSession | undefined {

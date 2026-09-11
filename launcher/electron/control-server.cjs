@@ -121,7 +121,7 @@ class BrowserControlServer {
       if (isSessionInspect) {
         if (host.browserInteractionMode() === "manual") {
           const error = new Error(
-            "ChatGPT session and capability inspection is disabled in Zero Risk mode",
+            "ChatGPT session and capability inspection is disabled in Manual mode",
           );
           error.code = "manual_browser_inspection_disabled";
           throw error;
@@ -179,7 +179,7 @@ class BrowserControlServer {
       if (manualAction) {
         if (manualAction === "start") {
           if (host.browserInteractionMode() !== "manual") {
-            throw new Error("Zero Risk is not enabled");
+            throw new Error("Manual mode is not enabled");
           }
           if (typeof body.prompt !== "string" || body.prompt.length < 1) {
             throw new Error("manual prompt is invalid");
@@ -221,11 +221,11 @@ class BrowserControlServer {
             return;
           }
           if (observed.status === "cancelled") {
-            writeJson(response, 409, { error: "Zero Risk turn was cancelled", code: "turn_cancelled" });
+            writeJson(response, 409, { error: "Manual mode turn was cancelled", code: "turn_cancelled" });
             return;
           }
           if (observed.status !== "sent") {
-            writeJson(response, 409, { error: "Zero Risk turn failed before Sent confirmation", code: "manual_turn_failed" });
+            writeJson(response, 409, { error: "Manual mode turn failed before Sent confirmation", code: "manual_turn_failed" });
             return;
           }
           writeJson(response, 200, { ok: true, status: "sent", sentAt: observed.sentAt });
@@ -243,7 +243,7 @@ class BrowserControlServer {
           }
           if (observed.status === "timeout") {
             writeJson(response, 408, {
-              error: "Codex Zero Risk did not start within its allowed time after Sent confirmation",
+              error: "Codex Zero Risk2 did not start within its allowed time after Sent confirmation",
               code: "manual_turn_timed_out",
             });
             return;

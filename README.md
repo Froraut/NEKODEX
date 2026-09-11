@@ -138,17 +138,21 @@ This source path requires Bun 1.4.0. The command installs locked dependencies an
 | --- | --- | --- | --- |
 | **Browser-only** | Free/Go: Luna; Plus: Instant–High; Pro: adds Extra High and Pro | No; Codex shows a warning | None |
 | **Full harness (With Automation)** | Free/Go: Luna; Plus: Instant–High; Pro: adds Extra High and Pro | Yes for every listed effort, including Pro | OpenAI tunnel + ChatGPT connector |
-| **Zero Risk** | Choose the ChatGPT model and effort manually; optional Pro-sized context | Yes; the full turn-bound Codex harness remains available | Separate OpenAI tunnel + `Codex Zero Risk` connector; paste and send manually |
+| **Manual mode** | Choose the ChatGPT model and effort manually; optional Pro-sized context | Yes; the full turn-bound Codex harness remains available | Separate OpenAI tunnel + `Codex Zero Risk2` connector; paste and send manually |
 
 Each automatic picker entry has one fixed ChatGPT mode. Codex still displays its built-in Effort and
 Speed rows, but changing them cannot silently change the selected browser model. In automatic Full
 mode every available effort receives the same turn-bound MCP capability. Pro has no separate
 restriction or reduced tool contract.
 
-Zero Risk keeps the local Responses bridge and full Codex harness, but never reads or changes the
+Manual mode keeps the local Responses bridge and full Codex harness, but never reads or changes the
 ChatGPT page and never sends a prompt for you. The launcher prepares and copies the prompt; you
-choose the model, effort, and `Codex Zero Risk` connector, then paste and send it yourself. This
-removes the account risk specifically associated with ChatGPT web automation.
+choose the model, effort, and `Codex Zero Risk2` connector, then paste and send it yourself. Account
+limits and the effects of MCP/local tools still apply.
+
+The former **Zero Risk** mode is now named **Manual mode**. Existing `chatgpt-web/zero-risk` and
+`chatgpt-web/zero-risk-pro` model IDs, command flags, and saved settings stay compatible. The exact
+connector name remains `Codex Zero Risk2`; the display rename does not rename your connectors.
 
 ## Full harness
 
@@ -170,8 +174,12 @@ The launcher's **MCP** page guides the complete setup. For the exact clicks, see
 1. Finish the required setup, open **MCP**, create the Tunnel and regular API key, then press
    **Connect harness**.
 2. Enable ChatGPT **Developer Mode** and create a new Tunnel connector named exactly
-   **Codex Native2**, with **Authentication: None** and **Allow all actions**.
-3. Run **Verify runtime** to confirm that **Codex Native2** is attached and available.
+   **Codex Native3**, with **Authentication: None** and **Allow all actions**.
+3. Run **Verify runtime** to confirm that **Codex Native3** is attached and available.
+
+Upgrading an existing connector requires a new identity, including **Codex Zero Risk2** for
+Manual mode. Follow [MCP task access migration](docs/mcp-task-access-migration.md) and verify the
+new `codex_read_thread` action through a real installed Codex task.
 
 Write/modify actions also require the ChatGPT workspace and its administrator policy to permit
 them. See
@@ -182,8 +190,19 @@ that option clicks **Allow once**, never a permanent grant.
 ## Operations
 
 Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
+Use the [scoped account/UI acceptance runner](docs/account-ui-acceptance.md) for versioned offline
+fixtures and separately authorized local or account checks. It defaults to zero account operations.
 Settings can also cancel a retained browser turn or remove the Codex integration before uninstall.
 Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.
+Browser diagnostics retain the latest 50 completed traces and preserve traces owned by active
+helper processes. Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTIC_TRACE_LIMIT` to a value from 1 to 1000
+to change completed-trace retention. Crashed helper traces become eligible for normal pruning.
+
+**Settings → Automated Pro model** can pin automated Pro turns to **GPT-5.6 Sol Pro**,
+**GPT-5.5 Pro**, or **GPT-6 Astra Pro**. The default **Follow ChatGPT** preserves existing behavior.
+The choice applies to the next Pro turn without restarting Codex or the launcher; other efforts and
+manual Manual mode turns are unchanged. An unavailable or unverifiable version stops before sending
+the pending prompt, with no fallback. GPT-6 uses **Latest** only while ChatGPT verifies it as 6 Pro.
 
 New installs use **Compatibility V1** for cross-backend subagents. **Native** preserves Codex's own
 feature settings and enables plaintext Web-to-Web V2 delegation. Restart Codex and start a new task
@@ -227,7 +246,7 @@ bun run app:package
 state, browser cookies/login, ChatGPT account, configuration, sandboxed `CODEX_HOME`, chats,
 diagnostics, broker, and tunnel profile. It can run beside the normal launcher and never starts a
 Responses daemon or changes Codex. Optional Full setup starts and supervises only its isolated MCP
-tunnel, using the distinct ChatGPT connector name `Codex Native2 DEV`.
+tunnel, using the distinct ChatGPT connector name `Codex Native3 DEV`.
 
 `dev:chat` is a named, persistent synthetic outer-Codex harness. It executes the current working
 tree through that isolated launcher browser, Temporary Chat, prompt compiler, Responses parser, and
@@ -237,7 +256,7 @@ not open a Responses listener, change `openai_base_url`, stop the live daemon, o
 Run it without a message for `/status`, `/fill 30000`, `/compact`, `/model`, and `/reset` commands.
 Sign in and initialize the profile once inside the window labelled **DEV**. Configure optional Full
 harness only for simulated tool rounds; its launcher keeps the DEV tunnel ready while named chats
-attach their broker on demand. Production credentials and the `Codex Native2` connector are never
+attach their broker on demand. Production credentials and the `Codex Native3` connector are never
 reused implicitly. See
 [DEV chat harness](docs/dev-chat.md).
 

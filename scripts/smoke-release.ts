@@ -69,7 +69,7 @@ const config = {
   host: "127.0.0.1",
   port,
   contextWindow: 256_000,
-  appName: "Codex Native",
+  appName: "Codex Native3",
   browserHost: "managed-chrome",
   chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   storageStatePath: join(appHome, "browser", "storage-state.json"),

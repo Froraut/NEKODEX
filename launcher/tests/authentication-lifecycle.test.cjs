@@ -150,6 +150,54 @@ test("authentication cancellation stops polling promptly and never accepts a sta
   assert.equal(probes, 1);
 });
 
+test("passkey cancellation holds ownership through transfer cleanup before retry", async () => {
+  const { fixture } = loginFixture();
+  const captured = deferred();
+  let beginImport;
+  let cleanup = false;
+  fixture.loginWithPasskey = async progress => {
+    progress({ phase: "waiting" });
+    captured.resolve();
+    return await new Promise(resolve => { beginImport = () => resolve({ cleanup: async () => { cleanup = true; } }); });
+  };
+  fixture.installPasskeyLogin = async (transfer, signal) => {
+    assert.equal(signal.aborted, true);
+    await transfer.cleanup();
+    signal.throwIfAborted();
+  };
+  const pending = fixture.openPasskeyLogin();
+  await captured.promise;
+  assert.equal(fixture.passkeyProgress.phase, "waiting");
+  const cancellation = fixture.cancelPasskeyLogin(async () => { beginImport(); });
+  assert.equal(fixture.openPasskeyLogin(), pending);
+  await cancellation;
+  assert.equal(cleanup, true);
+  assert.equal(fixture.passkeyProgress.phase, "cancelled");
+  assert.equal(fixture.loginOperation, null);
+  assert.equal(fixture.state.authenticated, false);
+});
+
+test("passkey cancelled cleanup failures remain failures with recovery evidence", async () => {
+  const { fixture, transferWaiting, transfer } = loginFixture();
+  fixture.installPasskeyLogin = async () => { throw new Error("Passkey sign-in cancelled; removing temporary passkey state failed"); };
+  const pending = fixture.openPasskeyLogin();
+  await transferWaiting.promise;
+  const cancelled = fixture.cancelPasskeyLogin(async () => { transfer.resolve("verified-transfer"); });
+  await assert.rejects(cancelled, /removing temporary/);
+  await assert.rejects(pending, /removing temporary/);
+  assert.equal(fixture.passkeyProgress.phase, "failed");
+});
+
+test("switching to embedded sign-in clears obsolete passkey recovery guidance", async () => {
+  const { fixture, loginWaiting } = loginFixture();
+  fixture.passkeyProgress = { phase: "failed", error: "previous failure" };
+  const pending = fixture.openLogin();
+  await loginWaiting.promise;
+  assert.equal(fixture.passkeyProgress, null);
+  fixture.embeddedLoginController.abort();
+  await pending;
+});
+
 test("navigation is locked even while login is waiting to acquire the browser", () => {
   assert.throws(() => BrowserHost.prototype.navigate.call({
     loginOperation: Promise.resolve(),

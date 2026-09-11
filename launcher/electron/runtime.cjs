@@ -16,6 +16,7 @@ const {
 const { embeddedRuntimeInvocation, runtimeInvocation } = require("./runtime-command.cjs");
 const { redactText } = require("./logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
+const { parsePasskeyProgress } = require("./passkey-login-progress.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
@@ -306,6 +307,7 @@ class RuntimeHost {
       throw new Error("No passkey sign-in is waiting for Continue");
     }
     this.passkeyContinuationRequested = true;
+    this.passkeyProgress?.({ phase: "importing", revealError: null });
     this.publishOperation?.({
       name: "passkey-login",
       status: "running",
@@ -316,7 +318,9 @@ class RuntimeHost {
         `${JSON.stringify({ version: 1, type: "passkey-login-continue" })}\n`,
         error => {
           if (error) {
-            this.passkeyContinuationRequested = false;
+            // A broken pipe is not proof that the child did not receive Import. Keep the
+            // authoritative phase locked; Cancel/Retry is the recovery path.
+            this.passkeyProgress?.({ phase: "importing", error: "Passkey import request failed; cancel and retry sign-in" });
             reject(error);
           } else {
             resolve(true);
@@ -326,7 +330,47 @@ class RuntimeHost {
     });
   }
 
-  async capturePasskeyLogin() {
+  passkeyControl(type) {
+    const child = this.activeChild;
+    if (this.active !== "passkey-login" || !child || child.exitCode !== null
+      || child.signalCode !== null || !child.stdin?.writable) {
+      throw new Error("No dedicated Chrome sign-in is active");
+    }
+    return new Promise((resolve, reject) => {
+      child.stdin.write(`${JSON.stringify({ version: 1, type })}\n`, error => error ? reject(error) : resolve(true));
+    });
+  }
+
+  revealPasskeyLogin() {
+    if (this.passkeyContinuationRequested) throw new Error("Chrome sign-in is already being imported");
+    return this.passkeyControl("passkey-login-reveal");
+  }
+
+  async cancelPasskeyLogin() {
+    const child = this.activeChild;
+    try { return await this.passkeyControl("passkey-login-cancel"); } catch (error) {
+      if (this.active !== "passkey-login" || !child || child !== this.activeChild
+        || child.exitCode !== null || child.signalCode !== null) throw error;
+      // With an unusable control pipe, terminate only the launcher-owned runtime process group.
+      // capturePasskeyLogin's finally/cleanup still removes the private transfer directory.
+      child.passkeyForcedCancellation = true;
+      terminateOwnedProcessTree(child);
+      const force = setTimeout(() => {
+        if (this.activeChild === child && child.exitCode === null && child.signalCode === null) {
+          try { terminateOwnedProcessTree(child, "SIGKILL"); } catch (cause) {
+            this.logger.warn("runtime.passkey_cancel_failed", { message: String(cause) });
+          }
+        }
+      }, 5_000);
+      force.unref?.();
+      child.once("exit", () => clearTimeout(force));
+      return true;
+    }
+  }
+
+  async capturePasskeyLogin(onProgress) {
+    // Claim runtime ownership before deleting any stale transfers or changing continuation state.
+    if (this.currentOperation() || this.passkeyProgress) throw new Error("Another launcher operation is active");
     this.cleanupPasskeyTransfers();
     const chrome = this.passkeyChromeExecutable();
     const parent = path.join(this.app.getPath("userData"), "passkey-login");
@@ -338,6 +382,7 @@ class RuntimeHost {
     const markerPath = `${storageStatePath}.verified.json`;
     const cleanup = async () => fs.rmSync(transferRoot, { recursive: true, force: true });
     this.passkeyContinuationRequested = false;
+    this.passkeyProgress = onProgress || (() => {});
     try {
       await this.run("passkey-login", [
         "login",
@@ -353,6 +398,12 @@ class RuntimeHost {
         message: "Sign in with your passkey in Chrome, then return here and choose Continue",
         successMessage: "Passkey session captured for private Launcher verification",
         timeoutMs: PASSKEY_LOGIN_TIMEOUT_MS,
+        onStdoutLine: line => {
+          const progress = parsePasskeyProgress(line);
+          if (!progress) return false;
+          this.passkeyProgress?.(progress);
+          return true;
+        },
       });
       const stateStat = fs.lstatSync(storageStatePath);
       if (!stateStat.isFile() || stateStat.size < 1 || stateStat.size > MAX_PASSKEY_STATE_FILE_BYTES) {
@@ -378,6 +429,7 @@ class RuntimeHost {
       throw error;
     } finally {
       this.passkeyContinuationRequested = false;
+      this.passkeyProgress = null;
     }
   }
 
@@ -639,7 +691,9 @@ class RuntimeHost {
         const recordPipeError = (stream) => (error) => {
           pipeErrors.push(`${name} ${stream} pipe failed: ${error instanceof Error ? error.message : String(error)}`);
         };
+        if (options.controlStdin) child.stdin.on("error", recordPipeError("stdin"));
         collect(child.stdout, stdout, (line) => {
+          if (options.onStdoutLine?.(line)) return;
           this.logger.info("runtime.stdout", { operation: name, line });
           this.publishOperation?.({ name, status: "running", message: redactText(line) });
         }, recordPipeError("stdout"));
@@ -708,13 +762,14 @@ class RuntimeHost {
           if (settled) return;
           settled = true;
           clearTimers();
-          if (timedOut) {
+          if (timedOut || child.passkeyForcedCancellation) {
+            const reason = timedOut || new Error("Passkey sign-in cancelled");
             try {
               terminateOwnedProcessTree(child, "SIGKILL");
-              reject(timedOut);
+              reject(reason);
             } catch (error) {
               reject(new Error(
-                `${timedOut.message}; final process-group cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+                `${reason.message}; final process-group cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
               ));
             }
             return;
@@ -839,6 +894,23 @@ class RuntimeHost {
     return parseBridgeRouteResult(result.stdout, { requireInstalled: true });
   }
 
+  async routeDiagnostics() {
+    const { withCatalogObservation } = require("./route-diagnostics.cjs");
+    const result = await this.run("route-diagnostics", ["route", "diagnostics"], {
+      embedded: true,
+      message: "Checking Codex configuration and catalog requests",
+      successMessage: "Routing diagnostics collected",
+      timeoutMs: 15_000,
+    });
+    let config = null;
+    let health = null;
+    try {
+      config = this.supervisor.readConfig();
+      if (config) health = await this.supervisor.proxyHealthPayload(config);
+    } catch { /* An unavailable daemon is diagnostic information, not a failed inspection. */ }
+    return withCatalogObservation(JSON.parse(result.stdout), health, config, this.supervisor.daemon?.pid);
+  }
+
   async restoreBridgeRouteWithinOperation(operationName) {
     const current = await this.bridgeStatus(operationName);
     if (!current.installed || !current.active) return current;
@@ -910,9 +982,10 @@ class RuntimeHost {
     if (!current.configured || current.mode !== "full") {
       throw new Error("The native MCP runtime is not configured");
     }
+    const runtimeName = requireCurrentRuntimeConnectorName(current.config?.appName);
     return this.launcherProfile === "development"
-      ? connectorNameForDevSetup(current.config?.appName)
-      : requireCurrentRuntimeConnectorName(current.config?.appName);
+      ? connectorNameForDevSetup(runtimeName)
+      : runtimeName;
   }
 
   browserConnectorName() {
@@ -999,7 +1072,7 @@ class RuntimeHost {
       ? existing.config?.browserInteractionMode ?? this.browserInteractionMode()
       : this.browserInteractionMode();
     if (!existing.configured && interactionMode === "manual") {
-      throw new Error("Zero Risk must be installed through MCP setup because tunnel credentials are required");
+      throw new Error("Manual mode must be installed through MCP setup because tunnel credentials are required");
     }
     const args = [
       "setup",
@@ -1098,13 +1171,55 @@ class RuntimeHost {
     return { ...result, mode, enabled: enabled === true };
   }
 
+  proModelVersion() {
+    return this.runtimeConfigSnapshot().config?.proModelVersion ?? null;
+  }
+
+  async setProModelVersion(value) {
+    if (value !== null && value !== "5.6" && value !== "5.5" && value !== "6") {
+      throw new Error("Pro model version must be follow, 5.6, 5.5, or 6");
+    }
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) {
+      throw new Error("Install the Codex integration before changing the Pro model version");
+    }
+    const persisted = current.config?.proModelVersion ?? null;
+    if (persisted === value) return { proModelVersion: persisted };
+
+    const version = value ?? "follow";
+    const args = [
+      ...(this.launcherProfile === "development" ? ["dev"] : []),
+      "config",
+      "pro-model-version",
+      version,
+      "--launcher-control",
+    ];
+    const options = {
+      ...(this.launcherProfile === "development" ? {
+        embedded: true,
+        environment: this.devSetupEnvironment(),
+      } : {}),
+      env: this.launcherControlEnvironment(),
+      message: "Saving the automated Pro model version",
+      successMessage: "Automated Pro model version saved for the next Pro turn",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    await this.run("pro-model-version", args, options);
+
+    const saved = this.proModelVersion();
+    if (saved !== value) {
+      throw new Error("Runtime configuration did not persist the requested Pro model version");
+    }
+    return { proModelVersion: saved };
+  }
+
   async setZeroRiskPro(enabled) {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) {
-      throw new Error("Install the Codex integration before changing Zero Risk model profiles");
+      throw new Error("Install the Codex integration before changing Manual model profiles");
     }
     if (current.config?.browserInteractionMode !== "manual" || current.mode !== "full") {
-      throw new Error("Zero Risk Pro is available only while the Full Zero Risk harness is active");
+      throw new Error("Manual mode Pro is available only while the Full Manual mode harness is active");
     }
     const profileFlag = enabled === true ? "--zero-risk-pro" : "--zero-risk-default";
     const args = [
@@ -1120,10 +1235,10 @@ class RuntimeHost {
     ];
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {
-      message: enabled ? "Installing the Zero Risk Pro model" : "Removing the Zero Risk Pro model",
+      message: enabled ? "Installing the Manual mode Pro model" : "Removing the Manual mode Pro model",
       successMessage: enabled
-        ? `Zero Risk Pro installed${this.launcherProfile === "production" ? "; restart Codex" : ""}`
-        : `Default Zero Risk model restored${this.launcherProfile === "production" ? "; restart Codex" : ""}`,
+        ? `Manual mode Pro installed${this.launcherProfile === "production" ? "; restart Codex" : ""}`
+        : `Default Manual model restored${this.launcherProfile === "production" ? "; restart Codex" : ""}`,
       timeoutMs: CORE_SETUP_TIMEOUT_MS,
     };
     const result = this.launcherProfile === "development"
@@ -1176,10 +1291,10 @@ class RuntimeHost {
     ];
     const result = await this.runSetup("runtime-upgrade", args, {
       message: tunnelProfileMigrationRequired
-        ? `Separating ${interactionMode === "manual" ? "Zero Risk" : "Automatic"} MCP credentials`
+        ? `Separating ${interactionMode === "manual" ? "Manual mode" : "Automatic"} MCP credentials`
         : `Upgrading launcher runtime from ${existing.config.releaseVersion} to ${currentVersion}`,
       successMessage: tunnelProfileMigrationRequired
-        ? `${interactionMode === "manual" ? "Zero Risk" : "Automatic"} MCP profile migrated`
+        ? `${interactionMode === "manual" ? "Manual mode" : "Automatic"} MCP profile migrated`
         : `Launcher runtime upgraded to ${currentVersion}`,
       timeoutMs: existing.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
     });
@@ -1295,7 +1410,7 @@ class RuntimeHost {
       throw new Error("Install the Codex integration before changing browser interaction mode");
     }
     if (mode === "manual" && current.mode !== "full") {
-      throw new Error("Connect the Full MCP harness before enabling Zero Risk");
+      throw new Error("Connect the Full MCP harness before enabling Manual mode");
     }
     const args = [
       ...(this.launcherProfile === "development" ? ["dev", "setup"] : ["setup"]),
@@ -1312,10 +1427,10 @@ class RuntimeHost {
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {
       message: mode === "manual"
-        ? "Enabling Zero Risk"
+        ? "Enabling Manual mode"
         : "Enabling automatic browser interaction",
       successMessage: mode === "manual"
-        ? `Zero Risk enabled${this.launcherProfile === "production" ? "; restart Codex" : ""}`
+        ? `Manual mode enabled${this.launcherProfile === "production" ? "; restart Codex" : ""}`
         : `Automatic browser interaction enabled${this.launcherProfile === "production" ? "; restart Codex" : ""}`,
       timeoutMs: current.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
       afterRuntimeReady,

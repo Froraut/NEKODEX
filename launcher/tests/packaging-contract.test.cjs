@@ -30,7 +30,9 @@ test("launcher publishes native packages for all supported desktop operating sys
     manifest.build.mac.signIgnore,
     ["[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]runtime[/\\\\]bun$"],
   );
-  assert.deepEqual(manifest.build.win.target, ["nsis"]);
+  assert.deepEqual(manifest.build.win.target, ["nsis", "zip"]);
+  assert.ok(manifest.build.files.includes("release-trust.json"));
+  assert.deepEqual(manifest.build.win.signExts, ["!bun.exe"]);
   assert.equal(manifest.build.win.icon, "assets/icon.ico");
   assert.deepEqual(manifest.build.linux.target, ["AppImage"]);
   assert.ok(manifest.build.files.includes("assets/icon.png"));
@@ -63,7 +65,7 @@ test("release installers resolve checksummed native launcher assets", () => {
   assert.match(packager, /const executable = "node"/);
   assert.doesNotMatch(packager, /process\.execPath/);
   assert.match(packager, /electron-builder\/out\/cli\/cli\.js/);
-  assert.match(packager, /target === "--mac" && !env\.CSC_LINK && !env\.CSC_NAME/);
+  assert.match(packager, /target === "--mac" && !signing\.release && !env\.CSC_LINK && !env\.CSC_NAME/);
   assert.match(packager, /--config\.mac\.identity=-/);
   assert.match(packager, /verifySignedMacArchive\(\)/);
   assert.match(packager, /codesign[\s\S]*--verify[\s\S]*--deep[\s\S]*--strict/);
@@ -102,7 +104,7 @@ test("release installers resolve checksummed native launcher assets", () => {
   assert.match(packageSmoke, /reg\.exe[\s\S]*InstallLocation/);
 });
 
-test("packaged launcher owns a detached checksummed updater for every release platform", () => {
+test("packaged launcher owns a detached authenticated updater for every release platform", () => {
   const updater = fs.readFileSync(path.join(launcherRoot, "electron", "update.cjs"), "utf8");
   const worker = fs.readFileSync(path.join(launcherRoot, "electron", "update-worker.cjs"), "utf8");
   for (const platform of ["darwin", "win32", "linux"]) {
@@ -113,7 +115,7 @@ test("packaged launcher owns a detached checksummed updater for every release pl
   assert.match(updater, /SHA-256 verification failed/);
   assert.match(updater, /detached:\s*true/);
   assert.match(worker, /waitForParent/);
-  assert.doesNotMatch(worker, /backup/i);
+  // Rollback retention/readiness is exercised behaviorally by update-worker.test.cjs.
 });
 
 test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
@@ -126,9 +128,10 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   assert.match(ci, /prepare-linux-appimage-tools\.cjs/);
   assert.match(ci, /archlinux:base/);
   assert.match(ci, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0/);
-  for (const runner of ["macos-15", "macos-15-intel", "ubuntu-latest", "windows-latest"]) {
-    assert.match(release, new RegExp(runner));
-  }
+  const { releasePlan } = require("../../scripts/release-plan.cjs");
+  const plan = releasePlan({ event: "push", refType: "tag", tag: `v${manifest.version}`, version: manifest.version });
+  assert.deepEqual(plan.include.map(item => item.runner), ["macos-15", "macos-15-intel", "ubuntu-latest", "windows-latest"]);
+  assert.match(release, /node scripts\/release-plan\.cjs/);
   assert.match(release, /launcher\/build\/runtime/);
   assert.match(release, /bun run app:smoke/);
   assert.match(release, /prepare-linux-libnotify\.sh/);
@@ -137,7 +140,10 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   assert.match(release, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0/);
   assert.match(release, /codesign --verify --deep --strict --verbose=2/);
   assert.match(release, /Codex Web GPT\.app/);
-  assert.doesNotMatch(release, /gh release create[\s\S]*?--draft/);
+  assert.match(release, /node scripts\/sign-release-metadata\.cjs release-assets/);
+  assert.match(release, /node scripts\/publish-release\.cjs release-assets/);
+  assert.match(release, /uses: actions\/attest@[a-f0-9]{40}/);
+  assert.match(release, /CODEX_WEB_GPT_RELEASE: "1"/);
 });
 
 test("Linux AppImage fallback uses one owned extraction and removes it on exit", {

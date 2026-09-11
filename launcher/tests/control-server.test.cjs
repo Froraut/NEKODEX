@@ -55,7 +55,7 @@ test("browser control server authenticates and owns turn visibility", async () =
         traceId: "abcdef123456",
         helperPid: process.pid,
         conversationKey: "a".repeat(64),
-        connectorIdentity: "Codex Native2",
+        connectorIdentity: "Codex Native3",
         requireRetainedConversation: true,
       }),
     });
@@ -112,7 +112,7 @@ test("browser control server authenticates and owns turn visibility", async () =
         true,
         process.pid,
         "a".repeat(64),
-        "Codex Native2",
+        "Codex Native3",
         true,
       ],
       ["heartbeat", "abcdef123456", process.pid, true],
@@ -287,7 +287,7 @@ test("manual control rejects session inspection before any browser helper can ru
       browserInteractionMode: () => "manual",
       inspectSession() {
         inspected = true;
-        const error = new Error("ChatGPT session and capability inspection is disabled in Zero Risk mode");
+        const error = new Error("ChatGPT session and capability inspection is disabled in Manual mode");
         error.code = "manual_browser_inspection_disabled";
         throw error;
       },
@@ -303,7 +303,7 @@ test("manual control rejects session inspection before any browser helper can ru
     });
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), {
-      error: "ChatGPT session and capability inspection is disabled in Zero Risk mode",
+      error: "ChatGPT session and capability inspection is disabled in Manual mode",
       code: "manual_browser_inspection_disabled",
     });
     assert.equal(inspected, false);
@@ -495,7 +495,7 @@ test("browser control server rejects malformed retained-conversation contracts",
   try {
     assert.equal((await post({ conversationKey: "ABC" })).status, 400);
     assert.equal((await post({ requireRetainedConversation: true })).status, 400);
-    assert.equal((await post({ connectorIdentity: "Codex Native2" })).status, 400);
+    assert.equal((await post({ connectorIdentity: "Codex Native3" })).status, 400);
   } finally {
     await server.close();
   }

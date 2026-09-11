@@ -69,7 +69,7 @@ body:
       options:
         - Browser-only
         - Full harness (automatic browser interaction / MCP)
-        - Zero Risk (manual browser interaction / MCP)
+        - Manual mode (manual browser interaction / MCP)
         - Setup / sign-in (no model turn yet)
     validations:
       required: true
@@ -78,27 +78,27 @@ body:
     id: model
     attributes:
       label: Model selections
-      description: Give the exact Codex picker entry. In Zero Risk, also report the model and effort actually selected in ChatGPT; the launcher cannot verify those manual choices. Use "not applicable" for setup failures or a selector that was not available.
+      description: Give the exact Codex picker entry. In Manual mode, also report the model and effort actually selected in ChatGPT; the launcher cannot verify those manual choices. Use "not applicable" for setup failures or a selector that was not available.
       placeholder: |
         Codex picker entry:
-        ChatGPT model (Zero Risk):
-        ChatGPT effort (Zero Risk):
+        ChatGPT model (Manual mode):
+        ChatGPT effort (Manual mode):
     validations:
       required: true
 
   - type: dropdown
     id: manual-step
     attributes:
-      label: Zero Risk workflow step
+      label: Manual mode workflow step
       description: Select where the manual turn stopped. Describe the last successful step in your reproduction, without including the prepared prompt.
       options:
-        - Not using Zero Risk
+        - Not using Manual mode
         - Setup or sign-in before a manual turn
         - Preparing or copying the prompt
         - Choosing the ChatGPT model, effort, or connector
         - Pasting or sending the prompt in ChatGPT
         - Confirming Sent in the launcher
-        - Waiting for Codex Zero Risk to connect
+        - Waiting for Codex Zero Risk2 to connect
         - MCP tool execution or returning the completed answer to Codex
         - Another manual-flow step (describe below)
     validations:

@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createHash, randomBytes } = require("node:crypto");
 const { setTimeout: delay } = require("node:timers/promises");
-const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
+const { clipboard, dialog, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const {
   runBrowserHelperOperation,
@@ -11,6 +11,8 @@ const {
 const { validateConnectorName } = require("./connector-identity.cjs");
 const { processRunning } = require("./process-tree.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
+const { initialPasskeyProgress, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
+const { createRemotePermissionPolicy, httpsOrigin } = require("./remote-permissions.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -243,7 +245,7 @@ function browserInteractionModeFor(host) {
 
 function requireAutomaticBrowserInspection(host, operation) {
   if (browserInteractionModeFor(host) === "manual") {
-    const error = new Error(`${operation} is disabled in Zero Risk mode`);
+    const error = new Error(`${operation} is disabled in Manual mode`);
     error.code = "manual_browser_inspection_disabled";
     throw error;
   }
@@ -338,6 +340,7 @@ class BrowserHost {
     publishState,
     showWindow = () => {},
     clipboardApi = clipboard,
+    dialogApi = dialog,
     getBrowserInteractionMode = () => "automatic",
   }) {
     if (typeof getConnectorName !== "function") {
@@ -428,6 +431,32 @@ class BrowserHost {
         sandbox: true,
         spellcheck: true,
         backgroundThrottling: true,
+        webSecurity: true,
+      },
+    });
+    this.permissionPolicy = createRemotePermissionPolicy({
+      session: this.view.webContents.session,
+      isAllowedPage: (url, kind) => httpsOrigin(url) === CHATGPT_ORIGIN
+        || (kind === "auth" && httpsOrigin(url) !== null && allowedAuthUrl(url)),
+      isVisible: contents => this.window.isVisible() && !this.window.isMinimized()
+        && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady)
+        && this.activeView().webContents === contents,
+      requestConsent: async ({ permission, origin, signal }) => {
+        const reading = permission === "clipboard-read";
+        const { response } = await dialogApi.showMessageBox(this.window, {
+          type: "question",
+          title: "ChatGPT browser permission",
+          message: reading ? "Allow this page to read your clipboard once?" : "Allow this page to copy to your clipboard once?",
+          detail: `${origin}\n${reading
+            ? "Only allow this if you requested Paste. Clipboard contents may include private information."
+            : "Only allow this if you requested Copy. This replaces the current clipboard contents."}`,
+          buttons: ["Deny", "Allow once"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+          signal,
+        });
+        return response === 1;
       },
     });
     window.contentView.addChildView(this.view);
@@ -565,6 +594,7 @@ class BrowserHost {
         sandbox: true,
         spellcheck: true,
         backgroundThrottling: false,
+        webSecurity: true,
       },
     });
     const tab = {
@@ -635,6 +665,7 @@ class BrowserHost {
         sandbox: true,
         spellcheck: true,
         backgroundThrottling: false,
+        webSecurity: true,
       },
     });
     const tab = {
@@ -652,7 +683,7 @@ class BrowserHost {
       pageTitle: "ChatGPT",
       url: TEMPORARY_CHAT_URL,
       loading: true,
-      message: "Paste the copied prompt, add any images yourself because Zero Risk cannot transfer them, choose a model and effort, then press Sent",
+      message: "Paste the copied prompt, add any images yourself because Manual mode cannot transfer them, choose a model and effort, then press Sent",
       interactionMode: "manual",
       manualState: "awaiting-user",
       manualSubmitTimeoutMs,
@@ -774,6 +805,7 @@ class BrowserHost {
 
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
+    this.permissionPolicy?.register(contents);
     contents.setWindowOpenHandler(({ url }) => {
       if (allowedAuthUrl(url)) {
         this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
@@ -894,6 +926,7 @@ class BrowserHost {
 
   bindManualTurnContents(tab) {
     const contents = tab.view.webContents;
+    this.permissionPolicy?.register(contents);
     const invalidateConversation = (url, inPlace) => {
       // History state updates and anchor scrolling keep the same document/context.
       if (inPlace && url.split("#", 1)[0] === tab.url?.split("#", 1)[0]) return;
@@ -904,7 +937,7 @@ class BrowserHost {
       tab.conversationKey = undefined;
       if (tab.manualConversationReused && tab.status === "running") {
         tab.status = "error";
-        tab.message = "ChatGPT page changed during a resumed Zero Risk turn. Start a new Codex turn to resend the full context.";
+        tab.message = "ChatGPT page changed during a resumed Manual mode turn. Start a new Codex turn to resend the full context.";
         this.signalManualTerminal(tab, "failed");
       }
       this.logger.info("browser.manual_conversation_invalidated", {
@@ -984,6 +1017,7 @@ class BrowserHost {
 
   bindWebContents() {
     const contents = this.view.webContents;
+    this.permissionPolicy?.register(contents, "auth");
     contents.setWindowOpenHandler(({ url, referrer, postBody }) => {
       if (allowedAuthUrl(url)) {
         return {
@@ -1302,6 +1336,7 @@ class BrowserHost {
       navigationLocked: Boolean(this.activeTraceId || this.manualOperation || this.loginOperation),
       loginInProgress: Boolean(this.loginOperation),
       loginKind: this.passkeyLoginOperation ? "passkey" : this.embeddedLoginController ? "embedded" : null,
+      passkeyLogin: publicPasskeyProgress(this.passkeyProgress),
     };
   }
 
@@ -1524,6 +1559,7 @@ class BrowserHost {
       this.presentTurnView(tab, tabVisible);
     }
     this.authView?.setVisible(visible);
+    this.permissionPolicy?.refreshVisibility();
   }
 
   selectTab(tabId) {
@@ -1634,6 +1670,7 @@ class BrowserHost {
     authView.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(authView.webContents);
     const contents = authView.webContents;
+    this.permissionPolicy?.register(contents, "auth");
     const clearNavigationTimeout = () => {
       if (!authView.navigationTimeout) return;
       clearTimeout(authView.navigationTimeout);
@@ -1977,14 +2014,14 @@ class BrowserHost {
     const completion = this.manualCompletionSignals.get(traceId);
     if (completion) {
       throw new Error(completion.helperPid === helperPid
-        ? `Zero Risk turn ${traceId} is already completed`
-        : `Zero Risk turn ${traceId} is owned by another process`);
+        ? `Manual mode turn ${traceId} is already completed`
+        : `Manual mode turn ${traceId} is owned by another process`);
     }
     const terminal = this.manualTerminalSignals.get(traceId);
     if (terminal?.helperPid === helperPid) {
       const error = new Error(terminal.status === "timeout"
-        ? `Zero Risk turn ${traceId} timed out before Sent confirmation`
-        : `Zero Risk turn ${traceId} is already ${terminal.status}`);
+        ? `Manual mode turn ${traceId} timed out before Sent confirmation`
+        : `Manual mode turn ${traceId} is already ${terminal.status}`);
       error.code = terminal.status === "timeout" ? "manual_turn_timed_out" : "turn_cancelled";
       throw error;
     }
@@ -1995,24 +2032,24 @@ class BrowserHost {
       }
       if (sameTrace.helperPid !== helperPid) {
         if (processRunning(sameTrace.helperPid)) {
-          throw new Error(`Zero Risk turn ${traceId} is owned by another process`);
+          throw new Error(`Manual mode turn ${traceId} is owned by another process`);
         }
         this.signalManualTerminal(sameTrace, "failed");
         this.removeTurnTab(sameTrace, true);
         this.rememberManualTerminal(traceId, helperPid, "failed");
         const error = new Error(
-          `Zero Risk turn ${traceId} lost its original runtime owner and cannot be resumed; start a new Codex turn`,
+          `Manual mode turn ${traceId} lost its original runtime owner and cannot be resumed; start a new Codex turn`,
         );
         error.code = "manual_turn_owner_lost";
         throw error;
       }
       if (sameTrace.manualSubmitTimeoutMs !== manualSubmitTimeoutMs) {
-        throw new Error(`Zero Risk turn ${traceId} was retried with a different compaction mode`);
+        throw new Error(`Manual mode turn ${traceId} was retried with a different compaction mode`);
       }
       const retryPrompt = sameTrace.manualConversationReused ? resumePrompt : prompt;
       if (typeof retryPrompt !== "string"
         || sameTrace.promptDigest !== manualPromptDigest(retryPrompt)) {
-        throw new Error(`Zero Risk turn ${traceId} was retried with a different prompt`);
+        throw new Error(`Manual mode turn ${traceId} was retried with a different prompt`);
       }
       sameTrace.helperPid = helperPid;
       this.selectedTabId = sameTrace.id;
@@ -2039,14 +2076,14 @@ class BrowserHost {
     let tab = retained[0];
     if (tab) {
       if (typeof resumePrompt !== "string" || !resumePrompt) {
-        throw new Error("A retained Zero Risk conversation requires an incremental resume prompt");
+        throw new Error("A retained Manual mode conversation requires an incremental resume prompt");
       }
       this.writeManualPrompt(resumePrompt);
       tab.traceId = traceId;
       tab.helperPid = helperPid;
       tab.status = "running";
       tab.loading = false;
-      tab.message = "Paste the copied prompt, add any images yourself because Zero Risk cannot transfer them, choose a model and effort, then press Sent";
+      tab.message = "Paste the copied prompt, add any images yourself because Manual mode cannot transfer them, choose a model and effort, then press Sent";
       tab.manualState = "awaiting-user";
       tab.manualSubmitTimeoutMs = manualSubmitTimeoutMs;
       tab.manualDeadlineAt = Date.now() + manualSubmitTimeoutMs;
@@ -2095,10 +2132,10 @@ class BrowserHost {
     if (!tab) {
       const terminal = this.manualTerminalSignals.get(traceId);
       if (terminal?.helperPid === helperPid) return { status: terminal.status };
-      throw new Error(`Zero Risk turn ownership mismatch: no browser tab owns ${traceId}`);
+      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
     }
     if (tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      throw new Error(`Zero Risk turn ${traceId} ownership is invalid`);
+      throw new Error(`Manual mode turn ${traceId} ownership is invalid`);
     }
     if (["sent", "running", "completed"].includes(tab.manualState)) {
       return { status: "sent", sentAt: tab.sentAt };
@@ -2126,7 +2163,7 @@ class BrowserHost {
     if (terminal?.helperPid === helperPid) return { status: terminal.status };
     const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
     if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      throw new Error(`Zero Risk turn ownership mismatch: no browser tab owns ${traceId}`);
+      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
     }
     return await new Promise((resolve) => {
       let settled = false;
@@ -2155,10 +2192,10 @@ class BrowserHost {
 
   confirmManualSent(tabId) {
     const tab = this.turnTabs.get(tabId);
-    if (!tab || tab.interactionMode !== "manual") throw new Error("Zero Risk tab does not exist");
+    if (!tab || tab.interactionMode !== "manual") throw new Error("Manual mode tab does not exist");
     if (tab.manualState !== "awaiting-user") {
       if (["sent", "running", "completed"].includes(tab.manualState)) return this.snapshot();
-      throw new Error("Zero Risk turn can no longer be marked as sent");
+      throw new Error("Manual mode turn can no longer be marked as sent");
     }
     if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
     tab.manualDeadlineTimer = null;
@@ -2179,10 +2216,10 @@ class BrowserHost {
   markManualTurnStarted(traceId, helperPid) {
     const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
     if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      throw new Error(`Zero Risk turn ownership mismatch: no browser tab owns ${traceId}`);
+      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
     }
     if (tab.manualState !== "sent" && tab.manualState !== "running") {
-      throw new Error(`Zero Risk turn ${traceId} was not confirmed as sent`);
+      throw new Error(`Manual mode turn ${traceId} was not confirmed as sent`);
     }
     if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
     tab.manualDeadlineTimer = null;
@@ -2201,14 +2238,14 @@ class BrowserHost {
     if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
       const terminal = this.manualTerminalSignals.get(traceId);
       if (terminal?.helperPid === helperPid) return { cancelledByUser: terminal.status === "cancelled" };
-      throw new Error(`Zero Risk turn ownership mismatch: no browser tab owns ${traceId}`);
+      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
     }
     if (tab.manualState === "completed") {
       this.rememberManualCompletion(traceId, helperPid);
       return { cancelledByUser: false };
     }
     if (status === "completed" && tab.manualState !== "sent" && tab.manualState !== "running") {
-      throw new Error(`Zero Risk turn ${traceId} cannot complete before Sent confirmation`);
+      throw new Error(`Manual mode turn ${traceId} cannot complete before Sent confirmation`);
     }
     if (status === "completed" && retain && tab.conversationKey) {
       if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
@@ -2245,7 +2282,7 @@ class BrowserHost {
   cancelManualTurn(traceId, helperPid) {
     const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
     if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      throw new Error(`Zero Risk turn ownership mismatch: no browser tab owns ${traceId}`);
+      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
     }
     this.signalManualTerminal(tab, "cancelled");
     this.removeTurnTab(tab, true);
@@ -2268,7 +2305,7 @@ class BrowserHost {
     }
     const sameTrace = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
     if (sameTrace && sameTrace.interactionMode !== "automatic") {
-      throw new Error(`Browser turn ${traceId} already belongs to Zero Risk interaction`);
+      throw new Error(`Browser turn ${traceId} already belongs to Manual mode interaction`);
     }
     if (sameTrace && (sameTrace.conversationKey !== conversationKey
       || sameTrace.connectorIdentity !== connectorIdentity)) {
@@ -2421,6 +2458,7 @@ class BrowserHost {
       this.show();
       return this.loginOperation;
     }
+    this.passkeyProgress = null;
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     const controller = new AbortController();
     this.embeddedLoginController = controller;
@@ -2481,6 +2519,9 @@ class BrowserHost {
     const embeddedLogin = this.embeddedLoginController ? this.loginOperation : null;
     const embeddedController = this.embeddedLoginController;
     if (this.loginOperation && !embeddedLogin) return this.loginOperation;
+    this.passkeyProgress = initialPasskeyProgress();
+    const controller = new AbortController();
+    this.passkeyLoginController = controller;
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     const operation = (async () => {
       if (embeddedLogin) {
@@ -2501,6 +2542,7 @@ class BrowserHost {
         }
       }
       return await this.withManualOperation("ChatGPT passkey login", async () => {
+        controller.signal.throwIfAborted();
         this.authNavigationError = null;
         this.setState({
           authenticated: false,
@@ -2509,19 +2551,55 @@ class BrowserHost {
           loading: true,
         });
         this.logger.info("browser.passkey_login_started");
-        const transfer = await this.loginWithPasskey();
-        return await this.installPasskeyLogin(transfer);
+        const transfer = await this.loginWithPasskey(patch => {
+          if (!controller.signal.aborted) this.updatePasskeyProgress(patch);
+        });
+        this.updatePasskeyProgress({ phase: controller.signal.aborted ? "cancelling" : "verifying" });
+        const result = await this.installPasskeyLogin(transfer, controller.signal);
+        this.updatePasskeyProgress({ phase: "completed", error: null });
+        return result;
       });
     })();
-    const tracked = operation.finally(() => {
+    const tracked = operation.catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      const cancelled = controller.signal.aborted && !/(cleanup|clearing|removing|did not exit|termination|refused)/i.test(message);
+      const phase = cancelled ? "cancelled" : /timed out/i.test(message) ? "timed-out" : "failed";
+      this.updatePasskeyProgress({ phase, error: phase === "cancelled" ? null : message });
+      this.setState({ loading: false, status: "signed-out", authenticated: false,
+        message: phase === "cancelled" ? "Passkey sign-in cancelled" : message });
+      if (phase === "cancelled") return this.snapshot();
+      throw error;
+    }).finally(() => {
       if (this.loginOperation === tracked) this.loginOperation = null;
       if (this.passkeyLoginOperation === tracked) this.passkeyLoginOperation = null;
+      if (this.passkeyLoginController === controller) this.passkeyLoginController = null;
       this.publishState?.(this.snapshot());
     });
     this.loginOperation = tracked;
     this.passkeyLoginOperation = tracked;
     this.publishState?.(this.snapshot());
     return tracked;
+  }
+
+  updatePasskeyProgress(patch) {
+    this.passkeyProgress = { ...this.passkeyProgress, ...patch };
+    this.publishState?.(this.snapshot());
+  }
+
+  async cancelPasskeyLogin(cancelCapture) {
+    const controller = this.passkeyLoginController;
+    if (!controller || !this.passkeyLoginOperation) throw new Error("No passkey sign-in is active");
+    const capturePhase = ["starting", "waiting", "importing"].includes(this.passkeyProgress?.phase);
+    controller.abort(new Error("Passkey sign-in cancelled"));
+    this.updatePasskeyProgress({ phase: "cancelling" });
+    if (capturePhase) {
+      try { await cancelCapture(); } catch (error) {
+        // Cancellation can race a finished capture. The signal also guards the import transaction.
+        this.logger.warn?.("browser.passkey_cancel_capture", { message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    await this.passkeyLoginOperation;
+    return this.snapshot();
   }
 
   async clearOwnedSessionForPasskey() {
@@ -2553,7 +2631,7 @@ class BrowserHost {
     this.setState({ authenticated: false, loading: false, status: "signed-out", message: "Sign in to ChatGPT" });
   }
 
-  async installPasskeyLogin(transfer) {
+  async installPasskeyLogin(transfer, signal) {
     requireAutomaticBrowserInspection(this, "Automated ChatGPT session import");
     if (!transfer || typeof transfer !== "object" || typeof transfer.cleanup !== "function") {
       throw new Error("Passkey sign-in returned an invalid transfer handle");
@@ -2564,12 +2642,16 @@ class BrowserHost {
     let sessionDiscarded = false;
     let state;
     try {
+      signal?.throwIfAborted();
       state = validatePasskeyLoginState(transfer.storageState);
       const contents = this.view?.webContents;
       if (!contents || contents.isDestroyed()) throw new Error("Owned ChatGPT browser session is unavailable");
       sessionMutated = true;
       await this.clearOwnedSessionForPasskey();
-      for (const cookie of state.cookies) await contents.session.cookies.set(cookie);
+      for (const cookie of state.cookies) {
+        signal?.throwIfAborted();
+        await contents.session.cookies.set(cookie);
+      }
       contents.session.flushStorageData();
       await contents.session.cookies.flushStore();
       await contents.loadURL(TEMPORARY_CHAT_URL);
@@ -2583,8 +2665,10 @@ class BrowserHost {
         })()`, true);
         await contents.loadURL(TEMPORARY_CHAT_URL);
       }
-      result = await this.waitForAuthenticated(60_000);
+      signal?.throwIfAborted();
+      result = await this.waitForAuthenticated(60_000, signal);
       await this.runSessionInspection(false);
+      signal?.throwIfAborted();
       this.activateHomeSurface();
       this.show();
       this.logger.info("browser.passkey_login_imported");
@@ -2997,6 +3081,8 @@ class BrowserHost {
   }
 
   destroy() {
+    this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));
+    this.permissionPolicy?.destroy();
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     try {
       const current = JSON.parse(fs.readFileSync(this.descriptorPath, "utf8"));

@@ -49,6 +49,12 @@ test("launcher errors remove IPC wrappers and offer localized navigation guidanc
     assert.ok(copy.passkeyContinueBody.includes("Chrome"));
     assert.notEqual(copy.passkeyContinue, copy.continue);
     assert.ok(copy.retry.length > 0);
+    for (const key of ["passkeyReveal", "passkeyCancel", "passkeyVerifying", "passkeyTimedOut", "passkeyRecoveryBody"]) {
+      assert.ok(copy[key].length > 0, `${language}.${key}`);
+    }
+    assert.match(copy.passkeyTimeRemaining, /\{time\}/);
+    assert.equal(localizeLauncherError(copy, "Timed out waiting for passkey sign-in"), copy.passkeyTimedOut);
+    assert.equal(localizeLauncherError(copy, "No passkey sign-in is waiting for Continue"), copy.passkeyImporting);
   }
 });
 
@@ -85,8 +91,8 @@ test("Japanese launcher runtime messages localize connector verification and doc
     "トンネルランタイムは正常で、使用可能です",
   );
   assert.equal(
-    localizeRuntimeMessage(copy, 'ChatGPT connector "Codex Native2" is available', "connector", "ja"),
-    "ChatGPT コネクタ「Codex Native2」を利用できます",
+    localizeRuntimeMessage(copy, 'ChatGPT connector "Codex Native3" is available', "connector", "ja"),
+    "ChatGPT コネクタ「Codex Native3」を利用できます",
   );
 });
 
@@ -94,7 +100,7 @@ for (const language of ["ja", "zh-CN"]) test(`${language} runtime localization p
   const { copyFor, localizeRuntimeMessage } = loadI18nModule();
   const copy = copyFor(language);
   const connectorNames = [
-    "Codex Native2",
+    "Codex Native3",
     "Native $&",
     "Native $'",
     "Native $`",
@@ -121,7 +127,7 @@ for (const language of ["ja", "zh-CN"]) test(`${language} runtime localization p
 
 test("runtime message localization preserves other languages and unknown backend messages", () => {
   const { copyFor, localizeRuntimeMessage } = loadI18nModule();
-  const connectorNames = ["Codex Native2", "Native $&", "Native $'", "Native $`", 'Native "quoted"', "Native \\path"];
+  const connectorNames = ["Codex Native3", "Native $&", "Native $'", "Native $`", 'Native "quoted"', "Native \\path"];
 
   for (const language of ["en"]) {
     for (const connectorName of connectorNames) {
@@ -146,16 +152,16 @@ test("runtime message localization preserves other languages and unknown backend
     'ChatGPT connector "unterminated is available',
   );
   assert.equal(
-    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native2" is available', "wrong-id", "ja"),
-    'ChatGPT connector "Codex Native2" is available',
+    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native3" is available', "wrong-id", "ja"),
+    'ChatGPT connector "Codex Native3" is available',
   );
   assert.equal(
     localizeRuntimeMessage(copyFor("ja"), "Checking ChatGPT connector", "unknown-check", "ja"),
     "Checking ChatGPT connector",
   );
   assert.equal(
-    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native2" is available (warning)', "connector", "ja"),
-    'ChatGPT connector "Codex Native2" is available (warning)',
+    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native3" is available (warning)', "connector", "ja"),
+    'ChatGPT connector "Codex Native3" is available (warning)',
   );
 });
 
@@ -165,6 +171,26 @@ test("launcher UI localizes MCP verification progress and doctor check messages"
     appSource,
     /check\.status === "ok"\s*\?\s*localizeRuntimeMessage\(copy, check\.message, check\.id, language\)\s*:\s*check\.message/,
   );
+});
+
+test("launcher localizes exact Pro model choices and the no-fallback contract", () => {
+  const { copyFor } = loadI18nModule();
+  for (const language of ["en", "zh-CN", "ja"]) {
+    const copy = copyFor(language);
+    assert.equal(copy.proModel56, "GPT-5.6 Sol Pro");
+    assert.equal(copy.proModel55, "GPT-5.5 Pro");
+    assert.equal(copy.proModel6, "GPT-6 Astra Pro");
+    assert.ok(copy.proModelFollow.length > 0);
+    assert.match(copy.proModelVersionBody, /Pro/);
+  }
+  const english = copyFor("en").proModelVersionBody;
+  assert.match(english, /next (?:automated )?Pro turn/i);
+  assert.match(english, /only affects automated Pro routing/i);
+  assert.match(english, /without silently falling back/i);
+  assert.ok(english.length < 240, "the Settings explanation should stay concise");
+  assert.doesNotMatch(english, /Latest|reports a GPT-6 model/i);
+  assert.doesNotMatch(copyFor("zh-CN").proModelVersionBody, /最新/);
+  assert.doesNotMatch(copyFor("ja").proModelVersionBody, /最新/);
 });
 
 test("Chinese diagnostics cover the same progress and successful checks as Japanese", () => {

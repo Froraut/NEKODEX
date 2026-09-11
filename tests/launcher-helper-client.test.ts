@@ -6,10 +6,49 @@ import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "../src
 import { LauncherBrowserHelperClient } from "../src/adapters/chatgpt-web/launcher-helper-client";
 import type { BrowserTurn, ResolvedBrowserConfig } from "../src/adapters/chatgpt-web/browser-worker";
 import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
+import { ChatGptResourceLimitError } from "../src/adapters/chatgpt-web/resource-budgets";
 
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+test("a progress consumer byte overflow aborts the helper turn and cannot become success", async () => {
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/state.json", chromeExecutablePath: "/durable/chrome", turnTimeoutMs: 60_000,
+    headed: true, autoApproveToolCalls: false,
+  });
+  const internal = client as unknown as {
+    child: unknown;
+    pending: Map<string, { turn: BrowserTurn; resolve(value: string): void; reject(error: Error): void }>;
+    handleLine(child: unknown, line: string): void;
+    send(message: unknown): Promise<void>;
+  };
+  const child = {};
+  internal.child = child;
+  const sent: unknown[] = [];
+  internal.send = async message => { sent.push(message); };
+  const failure = new ChatGptResourceLimitError("Synthetic text queue", 100);
+  let callbacks = 0;
+  const result = new Promise<string>((resolve, reject) => internal.pending.set("overflow-123", {
+    turn: {
+      traceId: "overflow-123", modelId: "chatgpt-web/medium",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+      prepare: async () => ({ text: "inspect", images: [], release() {} }),
+      onTextDelta() { callbacks++; throw failure; },
+    },
+    resolve, reject,
+  }));
+  const observed = result.then(() => undefined, error => error);
+  const event = JSON.stringify({ type: "event", id: "overflow-123", event: "text", text: "large" });
+  expect(() => internal.handleLine(child, event)).not.toThrow();
+  internal.handleLine(child, event);
+  internal.handleLine(child, JSON.stringify({ type: "result", id: "overflow-123", text: "apparently complete" }));
+  expect(await observed).toBe(failure);
+  expect(sent).toEqual([{ type: "abort", id: "overflow-123" }]);
+  expect(callbacks).toBe(1);
+  expect(internal.pending.size).toBe(0);
 });
 
 test("daemon streams browser lifecycle through the real helper process", async () => {
@@ -66,7 +105,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });
   const config: ResolvedBrowserConfig = {
-    appName: "Codex Native2",
+    appName: "Codex Native3",
     browserHost: "launcher",
     browserHostDescriptorPath: descriptorPath,
     browserHelperScriptPath: helper,
@@ -176,7 +215,7 @@ test("accepted compaction retires through the helper as completed without hiding
     surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
   }), { mode: 0o600 });
   const client = new LauncherBrowserHelperClient({
-    appName: "Codex Native2", browserHost: "launcher", browserHostDescriptorPath: descriptorPath,
+    appName: "Codex Native3", browserHost: "launcher", browserHostDescriptorPath: descriptorPath,
     browserHelperScriptPath: helper, browserDiagnosticsPath: join(root, "diagnostics"),
     storageStatePath: join(root, "unused-state.json"), chromeExecutablePath: join(root, "unused-chrome"),
     turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
@@ -224,7 +263,7 @@ test("accepted compaction retires through the helper as completed without hiding
 test("launcher helper protocol preserves multipart context and the compaction flag", async () => {
   const sent: Record<string, unknown>[] = [];
   const client = new LauncherBrowserHelperClient({
-    appName: "Codex Native2 DEV",
+    appName: "Codex Native3 DEV",
     browserHost: "launcher",
     browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/unused-state.json",

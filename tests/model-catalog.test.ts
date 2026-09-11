@@ -215,7 +215,7 @@ describe("native /models augmentation", () => {
     });
   });
 
-  test("Zero Risk publishes exactly one generic model without capability inference", () => {
+  test("Manual mode publishes exactly one generic model without capability inference", () => {
     const config = defaultConfig("full");
     config.browserInteractionMode = "manual";
     config.solAvailable = false;
@@ -224,6 +224,8 @@ describe("native /models augmentation", () => {
     const web = models.filter(model => String(model.slug).startsWith("chatgpt-web/"));
 
     expect(web).toHaveLength(1);
+    expect(CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.slug).toBe("chatgpt-web/zero-risk");
+    expect(CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.displayName).toBe("ChatGPT Web — Manual mode");
     expect(web[0]).toMatchObject({
       slug: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.slug,
       display_name: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.displayName,
@@ -241,6 +243,8 @@ describe("native /models augmentation", () => {
     const proModels = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
     const proWeb = proModels.filter(model => String(model.slug).startsWith("chatgpt-web/"));
     expect(proWeb).toHaveLength(2);
+    expect(CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE.slug).toBe("chatgpt-web/zero-risk-pro");
+    expect(CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE.displayName).toBe("ChatGPT Web — Manual mode Pro");
     expect(proWeb[1]).toMatchObject({
       slug: CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE.slug,
       display_name: CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE.displayName,

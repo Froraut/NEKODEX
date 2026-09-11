@@ -11,6 +11,7 @@ import {
   detectChatGptAccountCapabilities,
 } from "./chatgpt-session";
 import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import { revealOwnedLoginBrowser } from "./passkey-login-control";
 
 export interface BrowserLoginResult {
   storageStatePath: string;
@@ -37,6 +38,8 @@ export interface SystemBrowserLoginCapture {
 interface SystemBrowserLoginOptions {
   continuation: Promise<void>;
   timeoutMs?: number;
+  signal?: AbortSignal;
+  onBrowserReady?: (reveal: () => Promise<void>, deadlineAt: string) => void;
 }
 
 interface LoginVerificationMarker {
@@ -229,6 +232,7 @@ export async function captureSystemBrowserLogin(
   }
   const deadline = Date.now() + timeoutMs;
   const remainingTime = () => {
+    options.signal?.throwIfAborted();
     const remaining = deadline - Date.now();
     if (remaining < 1) throw new Error("Timed out waiting for passkey sign-in");
     return remaining;
@@ -257,9 +261,18 @@ export async function captureSystemBrowserLogin(
     ], { env: process.env, stdio: "ignore" });
     let continuationRequested = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let abort: (() => void) | undefined;
     try {
       await new Promise<void>((resolve, reject) => {
+        abort = () => reject(options.signal?.reason ?? new Error("Passkey sign-in cancelled"));
+        options.signal?.addEventListener("abort", abort, { once: true });
         timeout = setTimeout(() => reject(new Error("Timed out waiting for passkey sign-in")), remainingTime());
+        loginBrowser.once("spawn", () => {
+          options.onBrowserReady?.(
+            () => revealOwnedLoginBrowser(loginBrowser, config.chromeExecutablePath, profileDir),
+            new Date(deadline).toISOString(),
+          );
+        });
         void options.continuation.then(() => {
           continuationRequested = true;
           if (!loginBrowser.kill() && !browserProcessExited(loginBrowser)) {
@@ -285,6 +298,7 @@ export async function captureSystemBrowserLogin(
       throw error;
     } finally {
       if (timeout) clearTimeout(timeout);
+      if (abort) options.signal?.removeEventListener("abort", abort);
     }
 
     // Authentication happens before Playwright ever owns this profile. Chrome does not load
@@ -292,6 +306,7 @@ export async function captureSystemBrowserLogin(
     // the disposable profile's tab-session files first, so restoring cookies cannot reopen the
     // authenticated or identity-provider pages during the offline capture.
     removeTemporaryChromeTabSessions(profileDir);
+    remainingTime();
     context = await chromium.launchPersistentContext(profileDir, {
       executablePath: config.chromeExecutablePath,
       headless: true,
@@ -314,6 +329,7 @@ export async function captureSystemBrowserLogin(
       timeout: Math.min(30_000, remainingTime()),
     });
     await context.setOffline(true);
+    remainingTime();
     await context.route("**/*", route => route.fulfill({
       status: 200,
       contentType: "text/html",
@@ -328,6 +344,7 @@ export async function captureSystemBrowserLogin(
       throw new Error("Offline passkey-state capture reached an unexpected origin");
     }
     const storageState = sanitizeBrowserLoginStorageState(await context.storageState());
+    remainingTime();
     if (storageState.cookies.length === 0) {
       throw new Error("The dedicated Chrome profile contains no ChatGPT/OpenAI cookies");
     }

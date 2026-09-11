@@ -1,9 +1,9 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "5.0.7-froraut.1",
+  "version": "5.1.0-froraut.1",
   "private": true,
-  "description": "Desktop control center for Codex ChatGPT Web",
-  "author": "miuuyy",
+  "description": "FroRaut maintained fork of Codex ChatGPT Web desktop control center",
+  "author": "FroRaut",
   "updateRepository": "Froraut/codex-chatgpt-web",
   "type": "module",
   "main": "electron/main.cjs",
@@ -58,7 +58,8 @@
       "electron/**",
       "assets/icon.png",
       "assets/linux-appimage-runner.sh",
-      "package.json"
+      "package.json",
+      "release-trust.json"
     ],
     "extraResources": [
       {
@@ -74,16 +75,36 @@
       "signIgnore": [
         "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]runtime[/\\\\]bun$"
       ],
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "extendInfo": {
+        "CFBundleGetInfoString": "FroRaut maintained fork \u00b7 replaces upstream compatibly"
+      }
     },
     "win": {
       "icon": "assets/icon.ico",
-      "target": ["nsis"]
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "signExts": [
+        "!bun.exe"
+      ],
+      "signtoolOptions": {
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
+        "rfc3161TimeStampServer": "https://timestamp.digicert.com"
+      }
     },
     "linux": {
       "category": "Development",
       "icon": "assets/icon.png",
-      "target": ["AppImage"]
+      "target": [
+        "AppImage"
+      ]
     },
     "nsis": {
       "guid": "d1a6026a-6210-588e-9a2b-da3936f94e02",
@@ -93,6 +114,14 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "runAfterFinish": true
-    }
+    },
+    "copyright": "Copyright \u00a9 FroRaut and upstream contributors"
+  },
+  "forkIdentity": {
+    "publisher": "FroRaut",
+    "repository": "Froraut/codex-chatgpt-web",
+    "upstream": "miuuyy/codex-chatgpt-web",
+    "installationMode": "replace-upstream",
+    "profileCompatibility": "dev.codexwebgpt.launcher"
   }
 }

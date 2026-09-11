@@ -73,6 +73,15 @@ window does not automatically transfer that session.
   attempt before starting Chrome. You should not have to wait for the three-minute login timeout.
   Only this explicit passkey flow transfers allowlisted ChatGPT/OpenAI state; it does not import
   your ordinary Chrome profile. See [upstream issue #209](https://github.com/miuuyy/codex-chatgpt-web/issues/209).
+- Use **Show sign-in Chrome window** to bring the exact dedicated Chrome process to the front,
+  including when it is on another macOS Space. If macOS cannot reveal it, use Mission Control.
+  The button cannot target your ordinary Chrome session.
+- The main process retains the login phase and deadline across renderer reloads. **Import Chrome
+  sign-in** is enabled only while that Chrome attempt is waiting. Once import begins, Chrome closes
+  and its disposable profile is captured offline before the launcher verifies the imported session.
+- **Cancel sign-in** stops the active attempt and removes its temporary state. On timeout or failure,
+  **Retry** opens a fresh dedicated profile; repeat sign-in there. Never copy your everyday browser
+  profile into the launcher.
 - Back, Forward, and Reload are intentionally disabled during an active login or browser
   operation. A sign-in failure and a blocked navigation action are different conditions.
 
@@ -104,10 +113,10 @@ Video walkthroughs:
 - [Connect the local harness and attach the ChatGPT connector](launcher/src/assets/mcp-connect-connector.mp4)
 
 Browser-only mode does not use an MCP connector. The following checks apply to Full harness with
-**With Automation** selected. For **Zero Risk**, use the [manual workflow checks](#zero-risk-manual-workflow-stops)
+**With Automation** selected. For **Manual mode**, use the [manual workflow checks](#zero-risk-manual-workflow-stops)
 below; its connector and Tunnel are separate.
 
-- a newly created connector named exactly **Codex Native2**;
+- a newly created connector named exactly **Codex Native3**;
 - **Developer Mode** enabled in ChatGPT;
 - the exact Tunnel selected with **Authentication: None**;
 - the connector and Tunnel on the same OpenAI account as the ChatGPT workspace;
@@ -115,7 +124,7 @@ below; its connector and Tunnel are separate.
 - **Connect harness** completed before **Verify runtime**.
 
 Do not rename or refresh an old **Codex Native** connector. ChatGPT caches the public MCP contract by
-connector identity, so create **Codex Native2** as a new connector.
+connector identity, so create **Codex Native3** as a new connector.
 
 ### ChatGPT shows `Error creating connector`
 
@@ -132,17 +141,19 @@ approval review**, disable that optional Codex review setting and restart Codex.
 sandbox and explicit approvals still apply; this only prevents an unavailable native model from
 being inserted as an extra reviewer after the Web tool call already completed.
 
-## Zero Risk manual workflow stops
+<a id="zero-risk-manual-workflow-stops"></a>
 
-**Zero Risk** is the name of the manual browser interaction mode. It still exposes the local Codex
+## Manual workflow stops
+
+**Manual mode** is the name of the manual browser interaction mode. It still exposes the local Codex
 harness through MCP, so manual submission does not remove account limits or local-tool risks.
 
-First check the mode-specific setup: manual turns use **Codex Zero Risk** and its own OpenAI Tunnel;
-automatic Full harness turns use **Codex Native2**. Do not substitute one connector for the other.
+First check the mode-specific setup: manual turns use **Codex Zero Risk2** and its own OpenAI Tunnel;
+automatic Full harness turns use **Codex Native3**. Do not substitute one connector for the other.
 The launcher does not inspect the ChatGPT page to verify the model, effort, or connector you choose.
 
 For a manual turn, wait for the launcher to prepare the prompt, then use **Copy prompt** if needed.
-In ChatGPT, select the intended model, effort, and **Codex Zero Risk** connector before pasting and
+In ChatGPT, select the intended model, effort, and **Codex Zero Risk2** connector before pasting and
 sending the prompt. Return to the launcher and confirm **Sent** only after sending it in ChatGPT.
 
 To locate a failure, record the last step that worked and the next step that failed:
@@ -151,10 +162,10 @@ To locate a failure, record the last step that worked and the next step that fai
 - selecting the ChatGPT model, effort, or connector;
 - pasting and sending in ChatGPT;
 - confirming **Sent**;
-- waiting for **Codex Zero Risk** to connect; or
+- waiting for **Codex Zero Risk2** to connect; or
 - MCP tool execution and delivery of the completed answer to Codex.
 
-In the bug-report form, choose **Zero Risk (manual browser interaction / MCP)** and the matching
+In the bug-report form, choose **Manual mode (manual browser interaction / MCP)** and the matching
 workflow step. Include the Codex picker entry separately from the actual ChatGPT model and effort;
 the picker entry alone does not establish what was selected in ChatGPT. If a selector was absent,
 say so. Attach the safe log exported immediately after the failed turn, and describe the steps
@@ -172,8 +183,8 @@ its bounded MCP deadline.
 - Retry once in a fresh Codex task. State whether the fresh task works and whether the failure is
   consistent.
 - Run **Settings → Run doctor** and export a safe log immediately after the failure.
-- State whether the turn used Browser-only, automatic Full harness, or Zero Risk. Include the Codex
-  picker entry, whether tools ran, and whether ChatGPT displayed a final answer. For Zero Risk,
+- State whether the turn used Browser-only, automatic Full harness, or Manual mode. Include the Codex
+  picker entry, whether tools ran, and whether ChatGPT displayed a final answer. For Manual mode,
   also give the actual ChatGPT model and effort and the failed manual workflow step.
 
 Do not assume that a generic 502 means the Tunnel is broken. Since v4.0.7, a native tool that
@@ -249,7 +260,7 @@ To remove the integration safely:
 1. Open **Settings → Remove Codex integration** and wait for it to restore the previous Codex route.
 2. Fully restart Codex.
 3. Quit the launcher and uninstall the application normally for the platform.
-4. If Full harness was configured and is no longer wanted, separately delete **Codex Native2**, its
+4. If Full harness was configured and is no longer wanted, separately delete **Codex Native3**, its
    Tunnel, and the API key created for that Tunnel from the corresponding account settings.
 
 Deleting the application before step 1 can leave Codex pointed at a local route that no longer
@@ -264,9 +275,9 @@ safe log**. A useful report contains:
 - Codex Desktop and/or CLI version;
 - OS and architecture;
 - ChatGPT account tier;
-- integration mode: Browser-only, Full harness with automatic browser interaction, or Zero Risk
+- integration mode: Browser-only, Full harness with automatic browser interaction, or Manual mode
   with manual browser interaction;
-- exact Codex picker entry; for Zero Risk, also the actual ChatGPT model and effort and the failed
+- exact Codex picker entry; for Manual mode, also the actual ChatGPT model and effort and the failed
   manual workflow step;
 - exact reproduction steps and complete final error;
 - whether it reproduces in a fresh Codex task; and

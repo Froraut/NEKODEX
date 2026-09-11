@@ -3,28 +3,53 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      platform_scope:
+        description: Platforms to publish from the selected existing version tag
+        type: choice
+        required: true
+        default: macos
+        options:
+          - macos
+          - all
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  plan:
+    if: github.repository == 'Froraut/codex-chatgpt-web'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - id: plan
+        name: Validate selected release tag and platform scope
+        env:
+          RELEASE_PLATFORM_SCOPE: ${{ inputs.platform_scope || 'all' }}
+        run: node scripts/release-plan.cjs
+
   build:
+    needs: plan
+    environment: release-signing
+    timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            runtime_asset: codex-chatgpt-web-darwin-arm64.tar.gz
-          - runner: macos-15-intel
-            runtime_asset: codex-chatgpt-web-darwin-amd64.tar.gz
-          - runner: ubuntu-latest
-            runtime_asset: codex-chatgpt-web-linux-amd64.tar.gz
-          - runner: windows-latest
-            runtime_asset: codex-chatgpt-web-windows-amd64.zip
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
@@ -44,7 +69,34 @@ jobs:
         if: runner.os == 'Linux'
         run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
       - run: bun run verify
-      - run: bun run app:package
+      - name: Prepare macOS publisher credentials
+        if: runner.os == 'macOS'
+        env:
+          CSC_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_PASSWORD }}
+          CSC_NAME: ${{ vars.MACOS_DEVELOPER_ID_NAME }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ vars.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ vars.APPLE_NOTARY_API_ISSUER }}
+        run: node scripts/prepare-release-signing-macos.cjs
+      - name: Prepare Windows publisher credentials
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+          CODEX_WEB_GPT_WINDOWS_CERT_SHA1: ${{ vars.WINDOWS_SIGNING_CERT_SHA1 }}
+        run: ./scripts/prepare-release-signing-windows.ps1
+      - name: Package authenticated publisher release
+        env:
+          CODEX_WEB_GPT_RELEASE: "1"
+          CSC_NAME: ${{ vars.MACOS_DEVELOPER_ID_NAME }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ vars.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ vars.APPLE_NOTARY_API_ISSUER }}
+          CODEX_WEB_GPT_WINDOWS_CERT_SHA1: ${{ vars.WINDOWS_SIGNING_CERT_SHA1 }}
+        run: bun run app:package
       - name: Verify Linux AppImage ABI on current Arch
         if: runner.os == 'Linux'
         run: |
@@ -74,7 +126,17 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path launcher/build/runtime/* -DestinationPath "${{ matrix.runtime_asset }}"
-      - uses: actions/upload-artifact@v4
+      - name: Build third-party notices
+        if: matrix.notices
+        run: bun run licenses
+      - name: Upload third-party notices
+        if: matrix.notices
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-notices
+          path: dist/THIRD_PARTY_NOTICES.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ matrix.runner }}
           path: |
@@ -84,22 +146,37 @@ jobs:
             launcher/artifacts/*.exe
             launcher/artifacts/*.AppImage
           if-no-files-found: error
+      - name: Remove temporary macOS signing credentials
+        if: always() && runner.os == 'macOS'
+        run: |
+          keychain="$RUNNER_TEMP/codex-web-release-signing/release.keychain-db"
+          if [ -f "$keychain" ]; then security delete-keychain "$keychain"; fi
+          rm -rf "$RUNNER_TEMP/codex-web-release-signing"
+      - name: Remove temporary Windows signing certificate
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          SIGNING_CERT_SHA1: ${{ vars.WINDOWS_SIGNING_CERT_SHA1 }}
+        run: |
+          if ($env:SIGNING_CERT_SHA1 -match '^[A-Fa-f0-9]{40}$') {
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:SIGNING_CERT_SHA1" -Force -ErrorAction SilentlyContinue
+          }
+          Remove-Item -LiteralPath "$env:RUNNER_TEMP/codex-web-release-signing.pfx" -Force -ErrorAction SilentlyContinue
 
   publish:
     needs: build
+    environment: release-publishing
+    timeout-minutes: 20
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          bun-version: 1.4.0
-      - run: bun install --frozen-lockfile
-      - run: bun install --frozen-lockfile
-        working-directory: launcher
-      - run: bun run licenses
-      - uses: actions/download-artifact@v4
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           merge-multiple: true
@@ -112,7 +189,6 @@ jobs:
           cp LICENSE release-assets/LICENSE
           cp LICENSES/Bun-1.4.0.md release-assets/Bun-1.4.0.md
           cp LICENSES/libnotify-0.8.7-LGPL-2.1.md release-assets/libnotify-0.8.7-LGPL-2.1.md
-          cp dist/THIRD_PARTY_NOTICES.txt release-assets/THIRD_PARTY_NOTICES.txt
           cp scripts/install.sh release-assets/install.sh
           cp scripts/install-launcher.sh release-assets/install-launcher.sh
           cp scripts/install-launcher.ps1 release-assets/install-launcher.ps1
@@ -152,66 +228,15 @@ jobs:
             echo "checksums.txt is missing entries for:$missing" >&2
             exit 1
           fi
-      - name: Publish GitHub release
+      - name: Sign release metadata with the fork trust key
+        env:
+          RELEASE_METADATA_SIGNING_KEYS: ${{ secrets.RELEASE_METADATA_SIGNING_KEYS }}
+        run: node scripts/sign-release-metadata.cjs release-assets
+      - name: Attest final assets and signed metadata
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release-assets/*
+      - name: Publish only after signature and draft digest verification
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          mapfile -d '' release_files < <(find release-assets -type f -print0)
-          test "${#release_files[@]}" -gt 0
-          release_flags=(--latest)
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            release_flags=(--prerelease --latest=false)
-          fi
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${release_files[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
-            gh release edit "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --draft=false \
-              "${release_flags[@]}"
-          else
-            gh release create "$GITHUB_REF_NAME" "${release_files[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$GITHUB_REF_NAME" \
-              "${release_flags[@]}" \
-              --generate-notes
-          fi
-
-          published_manifest="$(mktemp)"
-          gh release view "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json assets \
-            --jq '.assets[] | select(.name != "checksums.txt") | [.name, .digest] | @tsv' \
-            | while IFS=$'\t' read -r name digest; do
-                if [[ "$digest" != sha256:* || -z "${digest#sha256:}" ]]; then
-                  echo "Published asset has no SHA-256 digest: $name" >&2
-                  exit 1
-                fi
-                printf '%s  %s\n' "${digest#sha256:}" "$name"
-              done \
-            | LC_ALL=C sort -k2 > "$published_manifest"
-          test -s "$published_manifest"
-          mv "$published_manifest" release-assets/checksums.txt
-          gh release upload "$GITHUB_REF_NAME" release-assets/checksums.txt \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-
-          while IFS=$'\t' read -r name digest; do
-            if [ "$name" = checksums.txt ]; then continue; fi
-            expected="$(awk -v asset="$name" '$2 == asset { print $1 }' release-assets/checksums.txt)"
-            if [ -z "$expected" ] || [ "sha256:$expected" != "$digest" ]; then
-              echo "Published asset checksum mismatch: $name" >&2
-              exit 1
-            fi
-          done < <(gh release view "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json assets \
-            --jq '.assets[] | [.name, .digest] | @tsv')
-
-          local_manifest_digest="$(sha256sum release-assets/checksums.txt | awk '{ print $1 }')"
-          remote_manifest_digest="$(gh release view "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json assets \
-            --jq '.assets[] | select(.name == "checksums.txt") | .digest')"
-          test "sha256:$local_manifest_digest" = "$remote_manifest_digest"
+        run: node scripts/publish-release.cjs release-assets

@@ -91,7 +91,7 @@ describe("fixed ChatGPT Web model routes", () => {
     })).toThrow("only available for Luna-only accounts");
   });
 
-  test("Zero Risk exposes one generic route independent of account capabilities", () => {
+  test("Manual mode exposes one generic route independent of account capabilities", () => {
     const manual = {
       solAvailable: false,
       proAvailable: false,
@@ -101,7 +101,7 @@ describe("fixed ChatGPT Web model routes", () => {
     expect(requireChatGptWebModelRoute("chatgpt-web/zero-risk", manual))
       .toBe(CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE);
     expect(() => requireChatGptWebModelRoute("chatgpt-web/zero-risk-pro", manual))
-      .toThrow("not enabled in Zero Risk model settings");
+      .toThrow("not enabled in Manual model settings");
     const manualPro = { ...manual, zeroRiskProEnabled: true };
     expect(availableChatGptWebModelRoutes(manualPro)).toEqual([
       CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE,
@@ -110,12 +110,12 @@ describe("fixed ChatGPT Web model routes", () => {
     expect(requireChatGptWebModelRoute("chatgpt-web/zero-risk-pro", manualPro))
       .toBe(CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE);
     expect(() => requireChatGptWebModelRoute("chatgpt-web/luna", manual))
-      .toThrow("not available while Zero Risk is enabled");
+      .toThrow("not available while Manual mode is enabled");
     expect(() => requireChatGptWebModelRoute("chatgpt-web/zero-risk", plus))
-      .toThrow("only available while Zero Risk is enabled");
+      .toThrow("only available while Manual mode is enabled");
   });
 
-  test("Zero Risk always publishes its fixed three-turn compaction interval and rejects multipart Bigger Context", () => {
+  test("Manual mode always publishes its fixed three-turn compaction interval and rejects multipart Bigger Context", () => {
     const manual = {
       solAvailable: true,
       proAvailable: true,
@@ -297,7 +297,7 @@ describe("fixed ChatGPT Web model routes", () => {
     expect(request.options.reasoning).toBe("medium");
   });
 
-  test("Zero Risk routing preserves its internal backend identity and only a technical Codex effort", () => {
+  test("Manual mode routing preserves its internal backend identity and only a technical Codex effort", () => {
     const config = defaultConfig("full");
     config.browserInteractionMode = "manual";
     const request = parsed("chatgpt-web/zero-risk", "ultra");

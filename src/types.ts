@@ -1,3 +1,5 @@
+import type { ChatGptWebProModelVersion } from "./chatgpt-web-models";
+
 export interface CodexParsedRequest {
   modelId: string;
   previousResponseId?: string;
@@ -301,6 +303,8 @@ export interface CodexProviderConfig {
     extraHighAvailable?: boolean;
     /** Account capability proven by the authenticated browser probe. */
     proAvailable?: boolean;
+    /** Optional explicit ChatGPT model family used for automatic Pro turns. */
+    proModelVersion?: ChatGptWebProModelVersion;
     /** Authorize per-call "Allow once" confirmation clicks for this connector. */
     autoApproveToolCalls?: boolean;
     /** DEV-only experimental transport: adapt one context across one, two, or three ChatGPT messages. */

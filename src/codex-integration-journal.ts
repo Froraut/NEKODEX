@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { atomicWriteFile, stripUtf8Bom } from "./config";
+import { readBoundedUtf8File } from "./read-bounded-file";
 import {
   CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
   getCodexConfigPath,
@@ -63,8 +64,8 @@ function isInstalledInterruptHookV11(value: unknown): boolean {
     && typeof hook.trustFragment === "string" && hook.trustFragment.length > 0;
 }
 
-function parseJournal(path: string): AnyCodexIntegrationJournal {
-  const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
+function parseJournal(path: string, contents?: string): AnyCodexIntegrationJournal {
+  const value = JSON.parse(stripUtf8Bom(contents ?? readFileSync(path, "utf8"))) as Record<string, unknown>;
   const installed = value.installed as Record<string, unknown> | undefined;
   if (value.version === 11
     && typeof value.active === "boolean"
@@ -238,6 +239,20 @@ function recoverPendingJsonHookWrite(
     { path: getCodexJournalPath(), data: serializeJournal(recovery) },
   ]);
   return true;
+}
+
+/** Inspect copies without invoking any journal, config or hooks recovery writes. */
+export function readJournalSnapshot(options: { primaryPath?: string; recoveryPath?: string } = {}): {
+  journal?: AnyCodexIntegrationJournal;
+  recoveryPending: boolean;
+} {
+  const primaryPath = options.primaryPath ?? getCodexJournalPath();
+  const recoveryPath = options.recoveryPath ?? getCodexJournalRecoveryPath();
+  const primary = existsSync(primaryPath) ? parseJournal(primaryPath, readBoundedUtf8File(primaryPath)) : undefined;
+  const recovery = existsSync(recoveryPath) ? parseJournal(recoveryPath, readBoundedUtf8File(recoveryPath)) : undefined;
+  if (!primary && !recovery) return { recoveryPending: false };
+  const identical = Boolean(primary && recovery && serializeJournal(primary) === serializeJournal(recovery));
+  return { journal: primary ?? recovery, recoveryPending: !identical };
 }
 
 export function readJournal(): AnyCodexIntegrationJournal | undefined {

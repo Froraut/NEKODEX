@@ -272,25 +272,25 @@ function baseConfig(
   }
   if (options.zeroRiskProEnabled !== undefined) {
     if (config.browserInteractionMode !== "manual") {
-      throw new Error("Zero Risk Pro can be configured only with --zero-risk-browser-interaction");
+      throw new Error("Manual mode Pro can be configured only with --zero-risk-browser-interaction");
     }
     config.zeroRiskProEnabled = options.zeroRiskProEnabled;
   }
   if (config.browserInteractionMode === "manual") {
     if (options.refreshAccountCapabilities) {
-      throw new Error("Zero Risk cannot refresh account capabilities");
+      throw new Error("Manual mode cannot refresh account capabilities");
     }
     if (options.forceLogin) {
-      throw new Error("Zero Risk uses the launcher's existing ChatGPT session; --login is unavailable");
+      throw new Error("Manual mode uses the launcher's existing ChatGPT session; --login is unavailable");
     }
     if (options.experimentalBiggerContext === true) {
-      throw new Error("Zero Risk does not support Bigger Context");
+      throw new Error("Manual mode does not support Bigger Context");
     }
     if (config.mode !== "full") {
-      throw new Error("Zero Risk requires --full so Codex Zero Risk can signal start, tools, and completion");
+      throw new Error("Manual mode requires --full so Codex Zero Risk2 can signal start, tools, and completion");
     }
     if (config.browserHost !== "launcher") {
-      throw new Error("Zero Risk requires the Launcher; pass --browser-host-descriptor from the running Launcher");
+      throw new Error("Manual mode requires the Launcher; pass --browser-host-descriptor from the running Launcher");
     }
     config.experimentalBiggerContext = false;
     config.solAvailable = false;
@@ -347,7 +347,7 @@ async function configureTunnel(config: AppConfig, existing: AppConfig | undefine
   const existingTunnel = interactionMode === "manual" ? manualTunnel : automaticTunnel;
   const tunnelId = options.tunnelId ?? existingTunnel?.tunnelId;
   if (!tunnelId) {
-    throw new Error(`${interactionMode === "manual" ? "Zero Risk" : "Automatic"} mode requires its own Tunnel ID`);
+    throw new Error(`${interactionMode === "manual" ? "Manual mode" : "Automatic"} mode requires its own Tunnel ID`);
   }
   let runtimeKeyFile = existingTunnel?.runtimeKeyFile;
   const managedKeyFile = managedRuntimeKeyPath(interactionMode);
@@ -360,7 +360,7 @@ async function configureTunnel(config: AppConfig, existing: AppConfig | undefine
     runtimeKeyFile = installRuntimeKey(runtimeKeyFile, interactionMode);
   }
   if (!runtimeKeyFile || !existsSync(runtimeKeyFile)) {
-    throw new Error(`${interactionMode === "manual" ? "Zero Risk" : "Automatic"} mode requires its own runtime key`);
+    throw new Error(`${interactionMode === "manual" ? "Manual mode" : "Automatic"} mode requires its own runtime key`);
   }
   const installedBinary = await installTunnelClient();
   const productionProfileName = interactionMode === "manual"
@@ -378,7 +378,7 @@ async function configureTunnel(config: AppConfig, existing: AppConfig | undefine
   });
   const otherTunnel = interactionMode === "manual" ? automaticTunnel : manualTunnel;
   if (otherTunnel?.tunnelId === configuredTunnel.tunnelId) {
-    throw new Error("Automatic and Zero Risk require different Tunnel IDs and separate ChatGPT connectors");
+    throw new Error("Automatic and Manual mode require different Tunnel IDs and separate ChatGPT connectors");
   }
   if (interactionMode === "manual") manualTunnel = configuredTunnel;
   else automaticTunnel = configuredTunnel;
@@ -444,7 +444,7 @@ export function preflightSetup(options: SetupOptions): void {
     const tunnelId = options.tunnelId ?? saved?.tunnelId;
     if (!tunnelId) {
       throw new Error(
-        `${config.browserInteractionMode === "manual" ? "Zero Risk" : "Automatic"} mode needs its own MCP Tunnel ID`,
+        `${config.browserInteractionMode === "manual" ? "Manual mode" : "Automatic"} mode needs its own MCP Tunnel ID`,
       );
     }
     const savedKey = saved?.runtimeKeyFile;
@@ -457,7 +457,7 @@ export function preflightSetup(options: SetupOptions): void {
     );
     if (!hasRuntimeKey) {
       throw new Error(
-        `${config.browserInteractionMode === "manual" ? "Zero Risk" : "Automatic"} mode needs its own MCP runtime key`,
+        `${config.browserInteractionMode === "manual" ? "Manual mode" : "Automatic"} mode needs its own MCP runtime key`,
       );
     }
     const otherMode = config.browserInteractionMode === "manual" ? "automatic" : "manual";
@@ -465,7 +465,7 @@ export function preflightSetup(options: SetupOptions): void {
       ? tunnelConfigForInteractionMode(existing, otherMode)
       : undefined;
     if (other?.tunnelId === tunnelId) {
-      throw new Error("Automatic and Zero Risk require different Tunnel IDs and separate ChatGPT connectors");
+      throw new Error("Automatic and Manual mode require different Tunnel IDs and separate ChatGPT connectors");
     }
   }
   preflightCodexIntegration(config, {

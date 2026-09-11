@@ -101,7 +101,7 @@ test("Luna-only account exposes no paid ChatGPT Web routes", async () => {
     .toEqual(["chatgpt-web/luna", "chatgpt-web/think"]);
 });
 
-test("Zero Risk returns one generic Web row without using scanned capabilities", async () => {
+test("Manual mode returns one generic Web row without using scanned capabilities", async () => {
   const config = defaultConfig("full");
   config.browserInteractionMode = "manual";
   config.solAvailable = true;

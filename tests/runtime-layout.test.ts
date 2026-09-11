@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -100,12 +100,55 @@ test("default setup uses the fixed production connector identities", () => {
   expect(defaultConfig("full").subagentProtocol).toBe("compatibility-v1");
   expect(defaultConfig("full").browserInteractionMode).toBe("automatic");
   expect(defaultConfig("full").zeroRiskProEnabled).toBe(false);
+  expect(defaultConfig("full").proModelVersion).toBeUndefined();
 });
+
+test("legacy configurations without a Pro model version keep generic Pro selection", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-pro-version-default-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const legacyV3: Record<string, unknown> = { ...defaultConfig("browser-only") };
+  delete legacyV3.proModelVersion;
+  writeFileSync(join(root, "config.json"), `${JSON.stringify(legacyV3)}\n`);
+
+  expect(loadConfig().proModelVersion).toBeUndefined();
+  expect(loadConfigForSetup().proModelVersion).toBeUndefined();
+  expect(providerConfig(loadConfig()).chatgptWeb).not.toHaveProperty("proModelVersion");
+});
+
+test.each(["5.6", "5.5", "6"] as const)("configuration round-trips Pro model version %s", version => {
+  const root = join(tmpdir(), `codex-chatgpt-web-pro-version-${version}-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  const config = defaultConfig("browser-only");
+  config.proModelVersion = version;
+  saveConfig(config);
+
+  expect(loadConfig().proModelVersion).toBe(version);
+  expect(providerConfig(loadConfig()).chatgptWeb?.proModelVersion).toBe(version);
+});
+
+test.each([null, true, 5.6, "", "5", "5.7", "gpt-5.6"])(
+  "configuration rejects invalid Pro model version %p",
+  invalid => {
+    const root = join(tmpdir(), `codex-chatgpt-web-invalid-pro-version-${process.pid}-${Date.now()}-${String(invalid)}`);
+    roots.push(root);
+    process.env.CODEX_CHATGPT_WEB_HOME = root;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "config.json"), `${JSON.stringify({
+      ...defaultConfig("browser-only"),
+      proModelVersion: invalid,
+    })}\n`);
+
+    expect(() => loadConfig()).toThrow("Invalid proModelVersion");
+  },
+);
 
 test.each([
   ["production", CHATGPT_CONNECTOR_NAME],
   ["development", DEV_CHATGPT_CONNECTOR_NAME],
-] as const)("%s setup preserves its fixed automatic identity across Zero Risk", (profile, automaticAppName) => {
+] as const)("%s setup preserves its fixed automatic identity across Manual mode", (profile, automaticAppName) => {
   expect(resolveInteractionConnectorIdentities("manual", profile)).toEqual({
     appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
     automaticAppName,
@@ -118,7 +161,7 @@ test.each([
   });
 });
 
-test("setup repairs a legacy automatic connector name that collides with Zero Risk", () => {
+test("setup repairs a legacy automatic connector name that collides with Manual mode", () => {
   const root = join(tmpdir(), `codex-chatgpt-web-connector-collision-${process.pid}-${Date.now()}`);
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
@@ -128,11 +171,60 @@ test("setup repairs a legacy automatic connector name that collides with Zero Ri
   collided.automaticAppName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
   writeFileSync(join(root, "config.json"), `${JSON.stringify(collided)}\n`);
 
-  expect(() => loadConfig()).toThrow(/Automatic and Zero Risk connector names must differ/);
+  expect(() => loadConfig()).toThrow(/Automatic and Manual mode connector names must differ/);
   expect(loadConfigForSetup()).toMatchObject({
     appName: CHATGPT_CONNECTOR_NAME,
     automaticAppName: CHATGPT_CONNECTOR_NAME,
     manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+  });
+});
+
+test.each([
+  ["Codex Native", CHATGPT_CONNECTOR_NAME],
+  ["Codex Native2", CHATGPT_CONNECTOR_NAME],
+  ["Codex Native2 DEV", DEV_CHATGPT_CONNECTOR_NAME],
+] as const)("runtime rejects cached %s while setup targets a fresh identity", (legacyName, currentName) => {
+  const root = join(tmpdir(), `codex-chatgpt-web-abi-migration-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const saved = {
+    ...defaultConfig("browser-only"), runtimeCommand: [process.execPath],
+    appName: legacyName, automaticAppName: legacyName, manualAppName: "Codex Zero Risk",
+  };
+  const bytes = JSON.stringify(saved);
+  writeFileSync(join(root, "config.json"), bytes);
+  expect(() => loadConfig()).toThrow(`newly created connector named "${currentName}"`);
+  expect(loadConfigForSetup()).toMatchObject({
+    appName: currentName, automaticAppName: currentName, manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+    autoApproveToolCalls: false,
+  });
+  expect(readFileSync(join(root, "config.json"), "utf8")).toBe(bytes);
+});
+
+test("manual ABI migration preserves its distinct tunnel and requires a new connector", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-manual-abi-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const manualTunnel = {
+    binaryPath: process.execPath, tunnelId: `tunnel_${"a".repeat(32)}`,
+    runtimeKeyFile: join(root, "manual-key"), profileDir: join(root, "manual-tunnel"),
+    profileName: "manual", alias: "manual",
+  };
+  const automaticTunnel = { ...manualTunnel, tunnelId: `tunnel_${"b".repeat(32)}`, runtimeKeyFile: join(root, "automatic-key") };
+  const saved = {
+    ...defaultConfig("full"), runtimeCommand: [process.execPath],
+    browserInteractionMode: "manual", browserHost: "launcher", browserHostDescriptorPath: join(root, "browser.json"),
+    appName: "Codex Zero Risk", manualAppName: "Codex Zero Risk", automaticAppName: "Codex Native2 DEV",
+    tunnel: manualTunnel, manualTunnel, automaticTunnel,
+  };
+  writeFileSync(join(root, "config.json"), JSON.stringify(saved));
+  expect(() => loadConfig()).toThrow('newly created connector named "Codex Zero Risk2"');
+  expect(loadConfigForSetup()).toMatchObject({
+    appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME, manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+    automaticAppName: DEV_CHATGPT_CONNECTOR_NAME, tunnel: manualTunnel, manualTunnel, automaticTunnel,
+    autoApproveToolCalls: false,
   });
 });
 
@@ -192,7 +284,7 @@ test("existing v3 configurations deterministically retain automatic browser inte
   });
 });
 
-test("Zero Risk fails closed without the Launcher browser host", () => {
+test("Manual mode fails closed without the Launcher browser host", () => {
   const root = join(tmpdir(), `codex-chatgpt-web-manual-host-${process.pid}-${Date.now()}`);
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
@@ -336,6 +428,7 @@ test("manual provider configuration preserves a distinct backend without guessin
   config.solAvailable = true;
   config.extraHighAvailable = true;
   config.proAvailable = true;
+  config.proModelVersion = "5.6";
   const provider = providerConfig(config);
 
   expect(provider.models).toEqual([CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL]);
@@ -351,6 +444,7 @@ test("manual provider configuration preserves a distinct backend without guessin
     proAvailable: false,
     experimentalBiggerContext: false,
   });
+  expect(provider.chatgptWeb).not.toHaveProperty("proModelVersion");
 
   config.zeroRiskProEnabled = true;
   const proProvider = providerConfig(config);

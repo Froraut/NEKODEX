@@ -1,7 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { createInterface } from "node:readline";
+import { createProcessLineReader } from "./process-line-reader";
+import {
+  CHATGPT_HELPER_DIAGNOSTIC_BYTES, CHATGPT_HELPER_FRAME_BYTES,
+  CHATGPT_HELPER_PENDING_BYTES, assertByteLimit,
+} from "./resource-budgets";
 import { notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import type { CompiledChatGptWebPrompt } from "./prompt";
@@ -343,21 +347,12 @@ export class LauncherBrowserHelperClient {
       this.readyResolve = resolveReady;
       this.readyReject = rejectReady;
     });
-    const output = createInterface({ input: child.stdout });
-    output.on("line", line => this.handleLine(child, line));
-    const errors = createInterface({ input: child.stderr });
-    errors.on("line", line => console.info(`[chatgpt-web-helper] ${line}`));
-    const failChild = (error: Error) => {
-      const owned = this.child === child;
-      this.handleExit(child, error);
-      if (owned && Number.isInteger(child.pid) && child.exitCode === null && child.signalCode === null) {
-        void this.terminateChild(child, 0).catch(cleanupError => {
-          console.error(
-            `[chatgpt-web-helper] process-error cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-          );
-        });
-      }
-    };
+    const failChild = (error: Error) => this.failChild(child, error);
+    const output = createProcessLineReader(child.stdout, line => this.handleLine(child, line), failChild);
+    const errors = createProcessLineReader(child.stderr, line => console.info(`[chatgpt-web-helper] ${line}`), failChild, {
+      maxLineBytes: CHATGPT_HELPER_DIAGNOSTIC_BYTES,
+    });
+    child.once("close", () => { output.close(); errors.close(); });
     child.once("error", failChild);
     child.stdin.once("error", error => failChild(new Error(
       `Launcher browser helper input failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -390,6 +385,16 @@ export class LauncherBrowserHelperClient {
     }
   }
 
+  private failChild(child: ChildProcessWithoutNullStreams, error: Error): void {
+    const owned = this.child === child;
+    this.handleExit(child, error);
+    if (owned && Number.isInteger(child.pid) && child.exitCode === null && child.signalCode === null) {
+      void this.terminateChild(child, 0).catch(cleanupError => {
+        console.error(`[chatgpt-web-helper] process-error cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+      });
+    }
+  }
+
   private handleLine(child: ChildProcessWithoutNullStreams, line: string): void {
     if (this.child !== child) return;
     let message: HelperMessage;
@@ -413,144 +418,149 @@ export class LauncherBrowserHelperClient {
     const pending = this.pending.get(message.id);
     if (!pending) return;
     if (message.type === "event") {
-      if (message.event === "heartbeat") pending.turn.onHeartbeat?.();
-      else if (message.event === "tool_batch_observed") {
-        const progress = pending.turn.externalProgress;
-        if (!progress) {
-          this.abortWithLocalFailure(
-            message.id,
-            new Error("Launcher browser helper observed a tool boundary for a turn without progress transport"),
-            pending,
-          );
-          return;
-        }
-        void progress.acknowledgeToolBatch(message.revision).catch(error => this.abortWithLocalFailure(
-          message.id,
-          error instanceof Error ? error : new Error(String(error)),
-          pending,
-        ));
-      }
-      else if (message.event === "completion_fence_begin") {
-        const fence = pending.turn.completionFence;
-        if (!fence) {
-          this.abortWithLocalFailure(
-            message.id,
-            new Error("Launcher browser helper requested a completion fence for an unfenced turn"),
-            pending,
-          );
-          return;
-        }
-        void fence.begin().then(revision => {
-          if (this.pending.get(message.id) !== pending || pending.localFailure || pending.turn.abortSignal?.aborted) return;
-          return this.send({
-            type: "completion_fence_begin_ack",
-            id: message.id,
-            requestId: message.requestId,
-            revision: revision ?? null,
-          });
-        }).catch(error => this.abortWithLocalFailure(
-          message.id,
-          error instanceof Error ? error : new Error(String(error)),
-          pending,
-        ));
-      }
-      else if (message.event === "completion_fence_commit") {
-        const fence = pending.turn.completionFence;
-        if (!fence) {
-          this.abortWithLocalFailure(
-            message.id,
-            new Error("Launcher browser helper requested a completion fence for an unfenced turn"),
-            pending,
-          );
-          return;
-        }
-        void fence.commit(message.revision).then(committed => {
-          if (this.pending.get(message.id) !== pending || pending.localFailure || pending.turn.abortSignal?.aborted) return;
-          return this.send({
-            type: "completion_fence_commit_ack",
-            id: message.id,
-            requestId: message.requestId,
-            committed,
-          });
-        }).catch(error => this.abortWithLocalFailure(
-          message.id,
-          error instanceof Error ? error : new Error(String(error)),
-          pending,
-        ));
-      }
-      else if (message.event === "send_activated") {
-        void Promise.resolve().then(() => pending.turn.onSendActivated?.()).then(() => {
-          if (this.pending.get(message.id) !== pending) return;
-          return this.send({ type: "send_activation_ack", id: message.id });
-        }).catch(error => this.abortWithLocalFailure(
-          message.id,
-          error instanceof Error ? error : new Error(String(error)),
-          pending,
-        ));
-      }
-      else if (message.event === "submitted") pending.turn.onSubmitted?.();
-      else if (message.event === "multipart_stage_acknowledged") {
-        const multipart = pending.prepared?.multipart;
-        if (!multipart
-          || message.stageIndex >= multipart.parts.length
-          || message.stageIndex !== (pending.acknowledgedMultipartStage ?? 0) + 1) {
-          this.abortWithLocalFailure(
-            message.id,
-            new Error("Launcher browser helper acknowledged an unexpected multipart stage"),
-            pending,
-          );
-          return;
-        }
-        pending.acknowledgedMultipartStage = message.stageIndex;
-        void Promise.resolve().then(() => pending.turn.onMultipartStageAcknowledged?.(message.stageIndex))
-          .catch(error => this.abortWithLocalFailure(
+      if (pending.localFailure) return;
+      try {
+        if (message.event === "heartbeat") pending.turn.onHeartbeat?.();
+        else if (message.event === "tool_batch_observed") {
+          const progress = pending.turn.externalProgress;
+          if (!progress) {
+            this.abortWithLocalFailure(
+              message.id,
+              new Error("Launcher browser helper observed a tool boundary for a turn without progress transport"),
+              pending,
+            );
+            return;
+          }
+          void progress.acknowledgeToolBatch(message.revision).catch(error => this.abortWithLocalFailure(
             message.id,
             error instanceof Error ? error : new Error(String(error)),
             pending,
           ));
-      }
-      else if (message.event === "prepared_selected") {
-        const prepare = message.reused ? pending.turn.prepareResume : pending.turn.prepare;
-        void Promise.resolve().then(() => prepare?.()).then(prepared => {
-          if (!prepared) throw new Error("Launcher browser helper selected an unavailable continuation prompt");
-          if (this.pending.get(message.id) !== pending) {
-            prepared.release();
+        }
+        else if (message.event === "completion_fence_begin") {
+          const fence = pending.turn.completionFence;
+          if (!fence) {
+            this.abortWithLocalFailure(
+              message.id,
+              new Error("Launcher browser helper requested a completion fence for an unfenced turn"),
+              pending,
+            );
             return;
           }
-          pending.prepared = prepared;
-          return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused)).then(() => {
-            if (this.pending.get(message.id) !== pending) return;
+          void fence.begin().then(revision => {
+            if (this.pending.get(message.id) !== pending || pending.localFailure || pending.turn.abortSignal?.aborted) return;
             return this.send({
-              type: "prepared_selected_ack",
+              type: "completion_fence_begin_ack",
               id: message.id,
-              prepared: {
-                text: prepared.text,
-                images: prepared.images,
-                ...(prepared.multipart ? { multipart: prepared.multipart } : {}),
-                ...(prepared.trimmedCompactionMessages !== undefined
-                  ? { trimmedCompactionMessages: prepared.trimmedCompactionMessages }
-                  : {}),
-              } satisfies CompiledChatGptWebPrompt,
+              requestId: message.requestId,
+              revision: revision ?? null,
             });
-          });
-        }).catch(error => this.abortWithLocalFailure(
-          message.id,
-          error instanceof Error ? error : new Error(String(error)),
-          pending,
-        ));
-      }
-      else if (message.event === "luna_checkpoint") {
-        if (!pending.turn.captureLunaCheckpoint || !pending.turn.onLunaCheckpoint) {
-          this.finishWithError(message.id, new Error("Launcher browser helper emitted an unexpected Luna checkpoint"));
-          return;
+          }).catch(error => this.abortWithLocalFailure(
+            message.id,
+            error instanceof Error ? error : new Error(String(error)),
+            pending,
+          ));
         }
-        pending.turn.onLunaCheckpoint({ checkpoint: message.checkpoint, answerHash: message.answerHash });
+        else if (message.event === "completion_fence_commit") {
+          const fence = pending.turn.completionFence;
+          if (!fence) {
+            this.abortWithLocalFailure(
+              message.id,
+              new Error("Launcher browser helper requested a completion fence for an unfenced turn"),
+              pending,
+            );
+            return;
+          }
+          void fence.commit(message.revision).then(committed => {
+            if (this.pending.get(message.id) !== pending || pending.localFailure || pending.turn.abortSignal?.aborted) return;
+            return this.send({
+              type: "completion_fence_commit_ack",
+              id: message.id,
+              requestId: message.requestId,
+              committed,
+            });
+          }).catch(error => this.abortWithLocalFailure(
+            message.id,
+            error instanceof Error ? error : new Error(String(error)),
+            pending,
+          ));
+        }
+        else if (message.event === "send_activated") {
+          void Promise.resolve().then(() => pending.turn.onSendActivated?.()).then(() => {
+            if (this.pending.get(message.id) !== pending) return;
+            return this.send({ type: "send_activation_ack", id: message.id });
+          }).catch(error => this.abortWithLocalFailure(
+            message.id,
+            error instanceof Error ? error : new Error(String(error)),
+            pending,
+          ));
+        }
+        else if (message.event === "submitted") pending.turn.onSubmitted?.();
+        else if (message.event === "multipart_stage_acknowledged") {
+          const multipart = pending.prepared?.multipart;
+          if (!multipart
+            || message.stageIndex >= multipart.parts.length
+            || message.stageIndex !== (pending.acknowledgedMultipartStage ?? 0) + 1) {
+            this.abortWithLocalFailure(
+              message.id,
+              new Error("Launcher browser helper acknowledged an unexpected multipart stage"),
+              pending,
+            );
+            return;
+          }
+          pending.acknowledgedMultipartStage = message.stageIndex;
+          void Promise.resolve().then(() => pending.turn.onMultipartStageAcknowledged?.(message.stageIndex))
+            .catch(error => this.abortWithLocalFailure(
+              message.id,
+              error instanceof Error ? error : new Error(String(error)),
+              pending,
+            ));
+        }
+        else if (message.event === "prepared_selected") {
+          const prepare = message.reused ? pending.turn.prepareResume : pending.turn.prepare;
+          void Promise.resolve().then(() => prepare?.()).then(prepared => {
+            if (!prepared) throw new Error("Launcher browser helper selected an unavailable continuation prompt");
+            if (this.pending.get(message.id) !== pending) {
+              prepared.release();
+              return;
+            }
+            pending.prepared = prepared;
+            return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused)).then(() => {
+              if (this.pending.get(message.id) !== pending) return;
+              return this.send({
+                type: "prepared_selected_ack",
+                id: message.id,
+                prepared: {
+                  text: prepared.text,
+                  images: prepared.images,
+                  ...(prepared.multipart ? { multipart: prepared.multipart } : {}),
+                  ...(prepared.trimmedCompactionMessages !== undefined
+                    ? { trimmedCompactionMessages: prepared.trimmedCompactionMessages }
+                    : {}),
+                } satisfies CompiledChatGptWebPrompt,
+              });
+            });
+          }).catch(error => this.abortWithLocalFailure(
+            message.id,
+            error instanceof Error ? error : new Error(String(error)),
+            pending,
+          ));
+        }
+        else if (message.event === "luna_checkpoint") {
+          if (!pending.turn.captureLunaCheckpoint || !pending.turn.onLunaCheckpoint) {
+            this.finishWithError(message.id, new Error("Launcher browser helper emitted an unexpected Luna checkpoint"));
+            return;
+          }
+          pending.turn.onLunaCheckpoint({ checkpoint: message.checkpoint, answerHash: message.answerHash });
+        }
+        else if (message.event === "reasoning" && message.text) {
+          pending.turn.onReasoningSummary?.(message.text, message.continuation === true);
+        }
+        else if (message.event === "commentary" && message.text) pending.turn.onCommentary?.(message.text, message.continuation === true);
+        else if (message.event === "text" && message.text) pending.turn.onTextDelta(message.text);
+      } catch (error) {
+        this.abortWithLocalFailure(message.id, error instanceof Error ? error : new Error(String(error)), pending);
       }
-      else if (message.event === "reasoning" && message.text) {
-        pending.turn.onReasoningSummary?.(message.text, message.continuation === true);
-      }
-      else if (message.event === "commentary" && message.text) pending.turn.onCommentary?.(message.text, message.continuation === true);
-      else if (message.event === "text" && message.text) pending.turn.onTextDelta(message.text);
       return;
     }
     if (message.type === "result") {
@@ -721,6 +731,14 @@ export class LauncherBrowserHelperClient {
 
   private async sendTo(child: ChildProcessWithoutNullStreams, message: unknown): Promise<void> {
     const encoded = `${JSON.stringify(message)}\n`;
+    try {
+      const bytes = Buffer.byteLength(encoded, "utf8");
+      assertByteLimit(bytes - 1, CHATGPT_HELPER_FRAME_BYTES, "Browser helper IPC frame");
+      assertByteLimit(child.stdin.writableLength + bytes, CHATGPT_HELPER_PENDING_BYTES, "Browser helper IPC input queue");
+    } catch (error) {
+      this.failChild(child, error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
     if (child.stdin.destroyed || child.stdin.writableEnded) {
       throw new Error("Launcher browser helper input is closed");
     }

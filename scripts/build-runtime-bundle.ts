@@ -14,6 +14,8 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../src/version";
+import { createRequire } from "node:module";
+const { signEmbeddedRuntime } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
@@ -93,6 +95,8 @@ if (install.exitCode !== 0) {
 const bunName = process.platform === "win32" ? "bun.exe" : "bun";
 cpSync(embeddedBunExecutable(), join(runtimeDir, bunName));
 if (process.platform !== "win32") chmodSync(join(runtimeDir, bunName), 0o755);
+// Sign before recording manifest hashes; packaging preserves this exact Bun signature.
+signEmbeddedRuntime(join(runtimeDir, bunName));
 
 const launcherName = process.platform === "win32" ? "codex-chatgpt-web.cmd" : "codex-chatgpt-web";
 const launcher = process.platform === "win32" ? `@echo off

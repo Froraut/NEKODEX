@@ -34,9 +34,9 @@ export interface CompileChatGptWebPromptOptions {
   captureLunaCheckpoint?: boolean;
   experimentalMultipartParts?: ChatGptWebMultipartPartCount;
   /**
-   * Manual Zero Risk transport keeps ChatGPT model/effort selection and prompt submission under the
+   * Manual Manual mode transport keeps ChatGPT model/effort selection and prompt submission under the
    * user's control. The browser bridge may open the owned tab and copy this prompt, but it never
-   * reads or mutates ChatGPT's DOM. Completion is accepted only through the bound Zero Risk MCP tools.
+   * reads or mutates ChatGPT's DOM. Completion is accepted only through the bound Manual mode MCP tools.
    */
   manualControl?: true;
 }
@@ -143,7 +143,11 @@ export function formatChatGptWebMultipartCommit(
   ].join("\n");
 }
 
-const RETIRED_TURN_HANDLE = /\b(turn|request|binding)_[A-Za-z0-9_-]{24,}/g;
+const RETIRED_HANDLE_KIND = "turn|binding|call|request|control|handoff";
+const RETIRED_TURN_HANDLE = new RegExp(
+  `(?:(?<![A-Za-z0-9_-])|(?<=\\\\[bfnrt])|(?<=\\\\u00[01][0-9a-fA-F]))(${RETIRED_HANDLE_KIND})_[A-Za-z0-9_-]{32}(?![A-Za-z0-9_-])`,
+  "g",
+);
 
 /**
  * The accumulated Codex context replays earlier turns, including the broker handles those turns
@@ -427,17 +431,17 @@ export function compileChatGptWebPrompt(
 ): CompiledChatGptWebPrompt {
   const manualControl = options?.manualControl === true;
   const mode = manualControl
-    ? { localTools: true, effort: "low" as const, displayLabel: "Zero Risk" as const }
+    ? { localTools: true, effort: "low" as const, displayLabel: "Manual mode" as const }
     : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
   const captureLunaCheckpoint = options?.captureLunaCheckpoint === true;
   const multipartParts = options?.experimentalMultipartParts;
   const multipartEnabled = multipartParts !== undefined;
   if (manualControl) {
     if (!capabilities.localToolsEnabled) {
-      throw new Error("ChatGPT Zero Risk requires the Full Codex harness");
+      throw new Error("ChatGPT Manual mode requires the Full Codex harness");
     }
     if (captureLunaCheckpoint || multipartEnabled) {
-      throw new Error("ChatGPT Zero Risk does not support rolling or multipart browser transport");
+      throw new Error("ChatGPT Manual mode does not support rolling or multipart browser transport");
     }
   }
   if (multipartParts !== undefined && multipartParts !== 2 && multipartParts !== CHATGPT_BIGGER_CONTEXT_PARTS) {
@@ -454,7 +458,7 @@ export function compileChatGptWebPrompt(
   }
   if (mode.localTools && !turnToken) {
     throw new Error(manualControl
-      ? "ChatGPT Zero Risk requires a broker request id"
+      ? "ChatGPT Manual mode requires a broker request id"
       : "Tool-capable ChatGPT web mode requires a broker turn token");
   }
   if (!mode.localTools && turnToken !== undefined) {
@@ -498,6 +502,7 @@ export function compileChatGptWebPrompt(
       "For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.",
       "Call a Codex Native tool only when the latest active request requires a local effect or fresh local evidence that is not already present in the supplied context; otherwise answer the request directly without a tool call.",
       "Use actual Codex Native results as evidence for local observations and effects.",
+      "For reading a referenced Codex task, use codex_read_thread with the task ID. It can only invoke the current outer read_thread tool; report an unavailable-tool error instead of trying a different action to bypass that limit.",
       "A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
       "Continue using the available tools until the requested work is complete and verified.",

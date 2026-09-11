@@ -751,7 +751,7 @@ test("active compaction aborts its source when the shared handoff deadline expir
   expect(cancellations).toBe(1);
 });
 
-test("Zero Risk active compaction returns through its explicit completion control", async () => {
+test("Manual mode active compaction returns through its explicit completion control", async () => {
   const completed: BrokerToolResult[] = [];
   const broker = {
     requestCompaction: () => 0,
@@ -766,7 +766,7 @@ test("Zero Risk active compaction returns through its explicit completion contro
     token: Promise.resolve("turn_active_zero_risk"),
     externalProgress: { recordToolResult() {} } as never,
     manualControl: { surfaceNonce: "n".repeat(24) },
-    browser: Promise.resolve("Zero Risk checkpoint"),
+    browser: Promise.resolve("Manual mode checkpoint"),
     physicalSettlement: Promise.resolve(),
     trace: new ChatGptTraceFeed(),
     text: new ChatGptTextFeed(),
@@ -784,7 +784,7 @@ test("Zero Risk active compaction returns through its explicit completion contro
   });
 
   await expect(settleActiveZeroRiskCompactionSource(parsed, source, broker))
-    .resolves.toBe("Zero Risk checkpoint");
+    .resolves.toBe("Manual mode checkpoint");
   expect(JSON.stringify(completed)).toContain("Return only the complete checkpoint summary to Codex with codex_turn_complete");
   expect(JSON.stringify(completed)).not.toContain("CODEX_ACTIVE_COMPACTION_CHECKPOINT_");
 });
@@ -1023,7 +1023,7 @@ test("adapter compact returns one same-agent handoff and preserves a pre-existin
       browserHost: "launcher",
       browserHostDescriptorPath: join(root, "launcher.json"),
       brokerSocketPath: defaultBrokerEndpoint(root),
-      appName: "Codex Native DEV",
+      appName: "Codex Native3 DEV",
       localToolsEnabled: true,
       solAvailable: true,
       proAvailable: true,
@@ -1118,7 +1118,7 @@ test("a compact HTTP observer can reconnect without sending a second retained-ch
       browserHost: "launcher",
       browserHostDescriptorPath: join(root, "launcher.json"),
       brokerSocketPath: defaultBrokerEndpoint(root),
-      appName: "Codex Native DEV",
+      appName: "Codex Native3 DEV",
       localToolsEnabled: true,
       solAvailable: true,
       proAvailable: true,

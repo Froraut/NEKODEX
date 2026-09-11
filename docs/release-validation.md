@@ -1,5 +1,9 @@
 # Release validation
 
+Publisher authentication, signing inputs, trust rotation and the protected workflow are defined in
+[release-signing.md](release-signing.md). A distributable release must pass those signing gates
+in addition to the platform/account checks below. Local ad-hoc packaging does not satisfy them.
+
 CI proves that the runtime builds, the launcher starts, and native packages pass their smoke
 contract on macOS, Windows, and Linux. It does not prove an authenticated ChatGPT session, a live
 MCP connector, or a complete Codex turn. A release candidate is not ready until those account-bound
@@ -20,12 +24,12 @@ Run this list on a maintained Windows 11 x64 machine with a real ChatGPT account
 3. Install the Codex model route, restart Codex, and prove that every account-available ChatGPT Web
    effort appears exactly once without removing native models.
 4. Complete one Browser-only turn and verify streamed commentary plus the final answer.
-5. Configure the `Codex Native2` connector, run **Verify runtime**, and complete one Full-mode local
+5. Configure the `Codex Native3` connector, run **Verify runtime**, and complete one Full-mode local
    tool turn. Repeat with Pro when the account exposes Pro.
 6. Drive a chat past the compaction threshold and prove that it continues after compaction without
    a duplicate or orphaned browser turn.
 7. On a clean install, prove that setup offers both interaction modes and defaults to With
-   Automation. Select Zero Risk and prove that Codex shows exactly one generic Web model after
+   Automation. Select Manual mode and prove that Codex shows exactly one generic Web model after
    restart, a retained chat receives only the next prompt, and
    compaction completes through MCP before the compacted continuation opens a fresh manual chat.
    Inspect the copied prompt and prove that it contains only the current `request_id`, never a
@@ -63,3 +67,29 @@ interactive account flow.
 CI packaging smoke is required. Before claiming interactive Linux support for a release, repeat
 items 2 through 7 under a supported desktop session and record the display server and packaging
 format used.
+
+## MCP task-reader ABI migration
+
+Follow [MCP task access migration](mcp-task-access-migration.md) for the exact `Codex Native3`,
+`Codex Native3 DEV`, and `Codex Zero Risk2` (Manual mode) identities. Record connector creation
+separately from **Verify runtime** and the
+installed Codex task that actually invokes `codex_read_thread`. Exercise Automatic and Manual
+flows independently; local stdio regressions do not certify account-bound connector dispatch.
+
+## Remote permissions and startup recovery
+
+On each supported desktop platform, verify native copy/paste, ChatGPT's Copy/Paste controls and
+ordinary file attachments/downloads. A web clipboard permission prompt must identify the exact
+origin and default to Deny; verify Allow once, Deny, navigating away and switching tabs while it
+is open. An embedded or background frame must not receive a grant. Confirm that unsupported
+camera, microphone, screen, device and broad filesystem requests are denied without changing OS
+privacy settings. Repeat supported sign-in-provider and explicit macOS passkey flows separately;
+pure permission fixtures do not prove real account login or browser file-picker compatibility.
+
+Inject an idle-browser bootstrap failure in an isolated test profile, including Windows ARM64
+when available. The launcher must show a native **Restart / Quit** recovery dialog without a
+working renderer. Restart must close the failed instance and open a fresh visible process;
+Quit must release the process and single-instance lock. A native-dialog or cleanup failure must
+still terminate the old process. Automated package smoke uses the terminal failure path and must
+never wait for an operator. This recovery does not establish the original upstream #422 cause or
+change the browser's initialization deadline.

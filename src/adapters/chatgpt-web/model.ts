@@ -2,6 +2,8 @@ import {
   CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   chatGptExtraHighAvailable,
+  parseChatGptWebProModelVersion,
+  type ChatGptWebProModelVersion,
 } from "../../chatgpt-web-models";
 
 export const CHATGPT_WEB_MODEL_ID = CHATGPT_WEB_BACKEND_MODEL;
@@ -12,10 +14,12 @@ export interface ChatGptWebCapabilities {
   solAvailable: boolean;
   extraHighAvailable?: boolean;
   proAvailable: boolean;
+  proModelVersion?: ChatGptWebProModelVersion;
 }
 
 export interface ChatGptWebModelMode {
   modelId: string;
+  modelVersion?: ChatGptWebProModelVersion;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
   displayLabel: "Luna" | "Think" | "Instant" | "Medium" | "High" | "Extra High" | "Pro";
   uiEffortIndex: 0 | 1 | 2 | 3 | 4 | null;
@@ -63,9 +67,11 @@ export function resolveChatGptWebModelMode(
     case "xhigh":
       if (!chatGptExtraHighAvailable(capabilities)) throw new Error("ChatGPT Extra High effort is not available for this account");
       return { modelId, effort, displayLabel: "Extra High", uiEffortIndex: 3, thinkEnabled: false, localTools: capabilities.localToolsEnabled };
-    case "max":
+    case "max": {
       if (!capabilities.proAvailable) throw new Error("ChatGPT Pro effort is not available for this account");
-      return { modelId, effort, displayLabel: "Pro", uiEffortIndex: 4, thinkEnabled: false, localTools: capabilities.localToolsEnabled };
+      const modelVersion = parseChatGptWebProModelVersion(capabilities.proModelVersion);
+      return { modelId, ...(modelVersion ? { modelVersion } : {}), effort, displayLabel: "Pro", uiEffortIndex: 4, thinkEnabled: false, localTools: capabilities.localToolsEnabled };
+    }
     default:
       throw new Error(`ChatGPT web effort is not supported: ${effort}`);
   }

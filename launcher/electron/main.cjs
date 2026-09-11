@@ -32,6 +32,9 @@ const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { DEVELOPMENT_PROFILE, resolveLauncherProfile } = require("./profile.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
 const { createUpdateController } = require("./update.cjs");
+const { captureUpdateReadiness, proveUpdateReadiness } = require("./update-readiness.cjs");
+const updateReadinessHandoff = captureUpdateReadiness();
+const { recoverStartupFailure } = require("./startup-recovery.cjs");
 const {
   createStateStore,
   nextSessionRefreshReminderAt,
@@ -93,6 +96,7 @@ let lastOperation = null;
 let catalogVerificationTimer = null;
 let catalogVerificationInFlight = false;
 let updateController = null;
+let startupPhase = "runtime-files";
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -410,6 +414,13 @@ function validateBrowserInteractionMode(value) {
   return value;
 }
 
+function validateProModelVersion(value) {
+  if (value !== null && value !== "5.6" && value !== "5.5" && value !== "6") {
+    throw new Error("Pro model version must be follow, 5.6, 5.5, or 6");
+  }
+  return value;
+}
+
 function validateBounds(value) {
   if (!value || typeof value !== "object") throw new Error("Browser bounds are required");
   for (const key of ["x", "y", "width", "height"]) {
@@ -436,11 +447,12 @@ function registerIpc({ logger, stateStore }) {
       userData: launcherUserData,
     },
     state: stateStore.read(),
+    proModelVersion: runtimeHost.proModelVersion(),
     browser: browserHost?.snapshot() ?? null,
     connectorName: runtimeHost.browserConnectorName(),
     connectorNames: {
       automatic: runtimeHost.setupConnectorName(),
-      manual: "Codex Zero Risk",
+      manual: "Codex Zero Risk2",
     },
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
     logs: logger.recent(),
@@ -518,7 +530,15 @@ function registerIpc({ logger, stateStore }) {
     }
     return browser;
   });
-  handle("launcher:browser-passkey-login-continue", () => runtimeHost.continuePasskeyLogin());
+  handle("launcher:browser-passkey-login-continue", () => {
+    if (browserHost.snapshot().passkeyLogin?.canImport !== true) throw new Error("No passkey sign-in is waiting for Continue");
+    return runtimeHost.continuePasskeyLogin();
+  });
+  handle("launcher:browser-passkey-login-reveal", () => {
+    if (browserHost.snapshot().passkeyLogin?.canReveal !== true) throw new Error("No dedicated Chrome sign-in is waiting");
+    return runtimeHost.revealPasskeyLogin();
+  });
+  handle("launcher:browser-passkey-login-cancel", () => browserHost.cancelPasskeyLogin(() => runtimeHost.cancelPasskeyLogin()));
   handle("launcher:browser-logout", async () => {
     const browser = await browserHost.logout();
     const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
@@ -532,7 +552,7 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:browser-smoke", async () => {
     if (stateStore.read().browserInteractionMode === "manual") {
-      throw new Error("Browser smoke testing is disabled in Zero Risk mode");
+      throw new Error("Browser smoke testing is disabled in Manual mode");
     }
     const result = await browserHost.smokeTest();
     stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
@@ -578,7 +598,7 @@ function registerIpc({ logger, stateStore }) {
     if (stateStore.read().browserInteractionMode === "manual") {
       const state = stateStore.update({ mcpSetupComplete: true });
       send("launcher:state-changed", state);
-      const successMessage = "Local Zero Risk runtime is healthy; connector selection remains a manual turn step";
+      const successMessage = "Local Manual mode runtime is healthy; connector selection remains a manual turn step";
       publishOperation({ name: operationName, status: "completed", message: successMessage });
       return {
         ...report,
@@ -587,7 +607,7 @@ function registerIpc({ logger, stateStore }) {
           {
             id: "connector",
             status: "warning",
-            message: `Select ChatGPT connector ${JSON.stringify(runtimeHost.mcpConnectorName())} manually for every Zero Risk turn`,
+            message: `Select ChatGPT connector ${JSON.stringify(runtimeHost.mcpConnectorName())} manually for every Manual mode turn`,
           },
         ],
       };
@@ -628,6 +648,7 @@ function registerIpc({ logger, stateStore }) {
   });
 
   handle("launcher:doctor", () => IS_DEV_PROFILE ? runtimeHost.devDoctor() : runtimeHost.doctor());
+  handle("launcher:route-diagnostics", () => runtimeHost.routeDiagnostics());
   handle("launcher:cancel-turns", () => {
     if (IS_DEV_PROFILE) throw new Error("DEV chat turns are owned by the repository CLI process");
     return runtimeHost.cancelActiveTurns();
@@ -776,8 +797,8 @@ function registerIpc({ logger, stateStore }) {
     if (browserHost.activeTraceId || browserOperation) {
       throw new Error(
         browserHost.activeTraceId
-          ? "Finish or cancel active ChatGPT turns before changing Zero Risk model profiles"
-          : `Finish ${browserOperation} before changing Zero Risk model profiles`,
+          ? "Finish or cancel active ChatGPT turns before changing Manual model profiles"
+          : `Finish ${browserOperation} before changing Manual model profiles`,
       );
     }
     const result = await runtimeHost.setZeroRiskPro(enabled === true);
@@ -823,6 +844,18 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:browser-state", browserHost.snapshot());
     if (!IS_DEV_PROFILE && result.configured) startCatalogVerificationMonitor({ logger, stateStore });
     return { state, credentialsRequired: false, targetMode: mode };
+  });
+  handle("launcher:pro-model-version", async (_event, rawVersion) => {
+    const version = validateProModelVersion(rawVersion);
+    const browserOperation = browserHost.currentOperation();
+    if (browserHost.activeTraceId || browserOperation) {
+      throw new Error(
+        browserHost.activeTraceId
+          ? "Finish or cancel active ChatGPT turns before changing the Pro model version"
+          : `Finish ${browserOperation} before changing the Pro model version`,
+      );
+    }
+    return runtimeHost.setProModelVersion(version);
   });
   handle("launcher:set-preference", (_event, key, value) => {
     const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns";
@@ -933,6 +966,7 @@ async function start() {
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
   app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
 
+  startupPhase = "electron-ready";
   await app.whenReady();
 
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
@@ -967,12 +1001,14 @@ async function start() {
   });
   const startHidden = process.argv.includes("--hidden") && stateStore.read().onboardingComplete;
   nativeTheme.themeSource = "system";
+  startupPhase = "window";
   mainWindow = createWindow({
     logger,
     stateStore,
     windowStatePath: path.join(app.getPath("userData"), "window-state.json"),
     startHidden,
   });
+  startupPhase = "browser-control";
   browserControl = await new BrowserControlServer({
     logger,
     getBrowserHost: () => browserHost,
@@ -1008,6 +1044,7 @@ async function start() {
     && stateStore.read().browserInteractionMode !== configuredInteractionMode) {
     stateStore.update({ browserInteractionMode: configuredInteractionMode });
   }
+  startupPhase = "browser";
   browserHost = new BrowserHost({
     window: mainWindow,
     descriptorPath: BROWSER_DESCRIPTOR_PATH,
@@ -1017,7 +1054,7 @@ async function start() {
     getConnectorName: () => runtimeHost.browserConnectorName(),
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
-    loginWithPasskey: () => runtimeHost.capturePasskeyLogin(),
+    loginWithPasskey: onProgress => runtimeHost.capturePasskeyLogin(onProgress),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
     publishState: (state) => send("launcher:browser-state", state),
@@ -1051,7 +1088,13 @@ async function start() {
       });
     });
   }
+  startupPhase = "renderer";
   await loadRenderer(mainWindow);
+  startupPhase = "runtime";
+  // Signal only after the main renderer, browser control, packaged runtime and
+  // host bootstrap succeeded; the worker retains the old app until this proof.
+  proveUpdateReadiness(updateReadinessHandoff, { version: app.getVersion() },
+    updateReadinessHandoff ? runtimeSupervisor.runtimeCommand(["--version"]) : null);
   if (!launcherSmokeTest) void updateController.checkOnce();
   if (launcherSmokeTest) {
     const smokeRuntimeRoot = runtimeRootProvider();
@@ -1258,13 +1301,23 @@ async function start() {
   process.once("SIGTERM", () => { void requestQuit(); });
 }
 
-void start().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  try {
-    fs.appendFileSync(path.join(app.getPath("logs"), "launcher-fatal.log"), `${new Date().toISOString()} ${error?.stack || error}\n`);
-  } catch {}
-  try {
-    dialog.showErrorBox("Codex Web GPT could not start", message);
-  } catch {}
-  app.exit(1);
-});
+void start().catch(error => recoverStartupFailure({
+  app,
+  dialog,
+  error,
+  phase: startupPhase,
+  interactive: !process.argv.includes("--launcher-smoke-test"),
+  recordFailure: details => fs.appendFileSync(path.join(app.getPath("logs"), "launcher-fatal.log"),
+    `${JSON.stringify({ at: new Date().toISOString(), ...details })}\n`, { mode: 0o600 }),
+  cleanup: async () => {
+    quitting = true;
+    exitCommitted = true;
+    stopCatalogVerificationMonitor();
+    // Each release is independent: one failed view must not skip the control socket or
+    // leave a hidden window holding the app alive while recovery is displayed.
+    try { browserHost?.destroy(); } catch {}
+    try { tray?.destroy(); } catch {}
+    try { mainWindow?.destroy(); } catch {}
+    await browserControl?.close();
+  },
+}));

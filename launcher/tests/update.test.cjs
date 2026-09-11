@@ -15,6 +15,7 @@ const {
   macApplicationPath,
   releaseAssetName,
   releaseApiUrl,
+  selectRelease,
   validateReleaseAssetUrl,
   validateRepository,
 } = require("../electron/update.cjs");
@@ -33,7 +34,7 @@ function updateController(dependencies) {
 }
 
 test("fork update checks stay on their packaged repository, including before the first release", async () => {
-  assert.equal(releaseApiUrl(), "https://api.github.com/repos/Froraut/codex-chatgpt-web/releases/latest");
+  assert.equal(releaseApiUrl(), "https://api.github.com/repos/Froraut/codex-chatgpt-web/releases?per_page=20");
   assert.equal(validateRepository("another-owner/a-fork"), "another-owner/a-fork");
   for (const invalid of [undefined, "../upstream", "owner/repo/extra", "https://github.com/owner/repo", "owner/repo?x=1"]) {
     assert.throws(() => validateRepository(invalid), /owner\/repository/);
@@ -68,6 +69,73 @@ test("fork updates reject upstream assets, credentials and altered download URLs
   }
 });
 
+test("fork prerelease updates are discoverable without opting stable users into another release channel", () => {
+  const releases = [
+    { tag_name: "v9.0.0", draft: true },
+    { tag_name: "v6.0.0-beta.1", prerelease: true },
+    { tag_name: "v5.2.0-froraut.2", prerelease: true },
+    { tag_name: "v5.2.0-froraut.1", prerelease: true },
+    { tag_name: "v5.1.0", prerelease: false },
+    { tag_name: "malformed" },
+  ];
+  assert.equal(selectRelease(releases, "5.0.7-froraut.1").tag_name, "v5.2.0-froraut.2");
+  assert.equal(selectRelease(releases, "5.0.7").tag_name, "v5.1.0");
+  assert.equal(selectRelease([], "5.0.7-froraut.1"), undefined);
+});
+
+function scopedRelease(version, platforms = ["darwin", "win32", "linux"]) {
+  return { tag_name: `v${version}`, prerelease: true, assets: [
+    ...platforms.map(platform => releaseAssetName(version, platform, "x64")), "checksums.txt", "release-metadata.json",
+  ].map(name => ({ name, size: 10,
+    browser_download_url: `https://github.com/Froraut/codex-chatgpt-web/releases/download/v${version}/${name}` })) };
+}
+
+test("Apple-only prereleases are skipped only for platforms whose archive is absent", async () => {
+  const newest = scopedRelease("5.2.0-froraut.1", ["darwin"]);
+  const previous = scopedRelease("5.1.0-froraut.1");
+  const releases = [newest, previous];
+  assert.equal(selectRelease(releases, "5.0.7-froraut.1", { platform: "darwin", arch: "x64" }), newest);
+  for (const platform of ["win32", "linux"]) {
+    assert.equal(selectRelease(releases, "5.0.7-froraut.1", { platform, arch: "x64" }), previous);
+    const controller = createUpdateController({ currentVersion: "5.0.7-froraut.1", platform, arch: "x64", packaged: true,
+      dependencies: { fetchRelease: async () => [newest] } });
+    assert.deepEqual(await controller.checkOnce(), { status: "up-to-date" });
+  }
+});
+
+test("present platform archives with missing or malformed metadata fail closed instead of selecting older releases", async () => {
+  for (const defect of ["missing-checksums", "missing-metadata", "wrong-metadata-origin", "missing-asset-url", "malformed-assets-list"]) {
+    const newest = scopedRelease("5.2.0-froraut.1", ["win32"]);
+    if (defect === "missing-checksums") newest.assets = newest.assets.filter(asset => asset.name !== "checksums.txt");
+    if (defect === "missing-metadata") newest.assets = newest.assets.filter(asset => asset.name !== "release-metadata.json");
+    if (defect === "wrong-metadata-origin") newest.assets.find(asset => asset.name === "release-metadata.json").browser_download_url = "https://example.invalid/release-metadata.json";
+    if (defect === "missing-asset-url") delete newest.assets[0].browser_download_url;
+    if (defect === "malformed-assets-list") delete newest.assets;
+    const releases = [newest, scopedRelease("5.1.0-froraut.1")];
+    assert.equal(selectRelease(releases, "5.0.7-froraut.1", { platform: "win32", arch: "x64" }), newest);
+    const controller = createUpdateController({ currentVersion: "5.0.7-froraut.1", platform: "win32", arch: "x64", packaged: true,
+      dependencies: { fetchRelease: async () => releases } });
+    assert.equal((await controller.checkOnce()).status, "error", defect);
+    await assert.rejects(controller.beginInstall(), /No launcher update/);
+  }
+});
+
+test("a selected platform release with an invalid signature never falls back to an older signed-looking release", async () => {
+  const newest = scopedRelease("5.2.0-froraut.1", ["win32"]);
+  const requests = [];
+  const controller = createUpdateController({ currentVersion: "5.0.7-froraut.1", platform: "win32", arch: "x64", packaged: true,
+    dependencies: {
+      fetchRelease: async () => [newest, scopedRelease("5.1.0-froraut.1")],
+      downloadText: async url => { requests.push(url); return "invalid signature envelope"; },
+      verifyReleaseMetadata() { throw new Error("untrusted signature"); },
+      downloadFile() { throw new Error("must not download an unauthenticated archive"); },
+    } });
+  assert.deepEqual(await controller.checkOnce(), { status: "available", version: "5.2.0-froraut.1" });
+  await assert.rejects(controller.beginInstall(), /untrusted signature/);
+  assert.deepEqual(requests, [newest.assets.find(asset => asset.name === "release-metadata.json").browser_download_url]);
+  assert.deepEqual(controller.getState(), { status: "available", version: "5.2.0-froraut.1" });
+});
+
 test("updates reject invalid or excessive asset sizes before offering installation", async () => {
   for (const size of [undefined, -1, 0, 1.5, 1024 * 1024 * 1024 + 1]) {
     const controller = updateController({
@@ -82,6 +150,9 @@ test("updates reject invalid or excessive asset sizes before offering installati
           {
             name: "checksums.txt",
             browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+            },
+            { name: "release-metadata.json",
+              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/release-metadata.json",
           },
         ],
       }),
@@ -187,7 +258,7 @@ test("release comparison and platform assets are strict", () => {
   assert.equal(compareVersions("1.2.0", "1.1.99"), 1);
   assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "codex-web-gpt-1.2.0-mac-arm64.zip");
   assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "codex-web-gpt-1.2.0-mac-x64.zip");
-  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-web-gpt-1.2.0-win-x64.exe");
+  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-web-gpt-1.2.0-win-x64.zip");
   assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "codex-web-gpt-1.2.0-linux-x64.AppImage");
   assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), null);
 });
@@ -245,6 +316,9 @@ test("startup check runs once and exposes only a newer complete release", async 
               name: "checksums.txt",
               browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
             },
+            { name: "release-metadata.json",
+              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/release-metadata.json",
+            },
           ],
         };
       },
@@ -293,6 +367,9 @@ test("verified update is handed to one detached worker", async () => {
               name: "checksums.txt",
               browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
             },
+            { name: "release-metadata.json",
+              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/release-metadata.json",
+            },
           ],
         }),
         downloadText: async () => `${hash}  codex-web-gpt-1.2.0-linux-x64.AppImage\n`,
@@ -300,6 +377,9 @@ test("verified update is handed to one detached worker", async () => {
           assert.equal(options.expectedBytes, assetBody.length);
           fs.writeFileSync(destination, assetBody);
         },
+        verifyReleaseMetadata: () => ({ assets: [{ name: "codex-web-gpt-1.2.0-linux-x64.AppImage", size: assetBody.length, sha256: hash }] }),
+        extractLinux() {},
+        validateStagedApplication() {},
         sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
         spawnWorker: (runtime, worker, job) => {
           spawned = { runtime, worker, job, data: JSON.parse(fs.readFileSync(job, "utf8")) };
@@ -328,56 +408,54 @@ test("verified update is handed to one detached worker", async () => {
   }
 });
 
-test("detached worker replaces an installed Linux AppImage and removes the old version", {
-  skip: process.platform === "win32" ? "Linux AppImage execution is not meaningful on Windows" : false,
-}, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-worker-test-"));
-  const jobRoot = path.join(root, "job");
-  const versionsRoot = path.join(root, "versions");
-  const oldTarget = path.join(versionsRoot, "1.1.4", "Codex Web GPT.AppImage");
-  const newTarget = path.join(versionsRoot, "1.2.0", "Codex Web GPT.AppImage");
-  const wrapper = path.join(root, "bin", "codex-web-gpt");
-  const marker = path.join(root, "launched");
-  const source = path.join(jobRoot, "update.AppImage");
-  const runnerSource = path.join(jobRoot, "run-appimage");
-  const logPath = path.join(root, "logs", "update-worker.log");
-  fs.mkdirSync(path.dirname(oldTarget), { recursive: true });
-  fs.mkdirSync(path.dirname(wrapper), { recursive: true });
-  fs.mkdirSync(jobRoot, { recursive: true });
-  fs.writeFileSync(oldTarget, "old");
-  fs.writeFileSync(wrapper, "old wrapper");
-  fs.writeFileSync(source, `#!/bin/sh\nprintf launched > ${JSON.stringify(marker)}\n`, { mode: 0o755 });
-  fs.writeFileSync(runnerSource, "#!/bin/sh\ntarget=\"$1\"\nshift\nexec \"$target\" \"$@\"\n", { mode: 0o755 });
-  const jobPath = path.join(jobRoot, "job.json");
-  fs.writeFileSync(jobPath, JSON.stringify({
-    version: "1.2.0",
-    platform: "linux",
-    parentPid: 2_147_483_647,
-    tempRoot: jobRoot,
-    logPath,
-    source,
-    target: oldTarget,
-    wrapper,
-    runnerSource,
-  }));
+test("every authentication, staging and worker-start failure preserves the existing app and cleans downloads", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "update-failure-order-"));
+  const assetName = "codex-web-gpt-1.2.0-linux-x64.AppImage";
+  const body = Buffer.from("signed new image");
+  const digest = require("node:crypto").createHash("sha256").update(body).digest("hex");
+  const target = path.join(root, "versions", "1.0.0", "old.AppImage");
+  const wrapper = path.join(root, "wrapper");
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, "exact previous image");
+  fs.writeFileSync(wrapper, "exact previous wrapper");
+  const previous = { image: process.env.CODEX_WEB_GPT_APPIMAGE, wrapper: process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE };
+  process.env.CODEX_WEB_GPT_APPIMAGE = target;
+  process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = wrapper;
   try {
-    const result = spawnSync(process.execPath, [path.join(__dirname, "..", "electron", "update-worker.cjs"), jobPath], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(fs.existsSync(newTarget), true);
-    assert.equal(fs.existsSync(path.dirname(oldTarget)), false);
-    assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/Codex Web GPT\.AppImage/);
-    assert.doesNotMatch(fs.readFileSync(wrapper, "utf8"), /APPIMAGE_EXTRACT_AND_RUN/);
-    assert.equal(fs.existsSync(path.join(versionsRoot, "run-appimage")), true);
-    const deadline = Date.now() + 3_000;
-    while (!fs.existsSync(marker) && Date.now() < deadline) {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    for (const failure of ["signature", "signed-size", "signed-hash", "stage", "worker"]) {
+      const calls = [];
+      let downloaded;
+      const controller = createUpdateController({ currentVersion: "1.0.0", platform: "linux", arch: "x64", packaged: true,
+        executablePath: "/tmp/launcher", runtimeExecutable: process.execPath, logsDirectory: path.join(root, "logs"),
+        dependencies: {
+          fetchRelease: async () => ({ tag_name: "v1.2.0", assets: [assetName, "checksums.txt", "release-metadata.json"].map(name => ({
+            name, size: body.length, browser_download_url: `https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/${name}`,
+          })) }),
+          downloadText: async url => { calls.push(url.endsWith("release-metadata.json") ? "metadata" : "checksums"); return `${digest}  ${assetName}\n`; },
+          verifyReleaseMetadata() {
+            calls.push("verify");
+            if (failure === "signature") throw new Error("untrusted signature");
+            return { assets: [{ name: assetName, size: body.length + (failure === "signed-size" ? 1 : 0), sha256: failure === "signed-hash" ? "0".repeat(64) : digest }] };
+          },
+          downloadFile: async (_url, destination) => { calls.push("download"); downloaded = destination; fs.writeFileSync(destination, body); },
+          extractLinux() { calls.push("extract"); },
+          validateStagedApplication() { calls.push("validate"); if (failure === "stage") throw new Error("invalid staged identity"); },
+          spawnWorker() { calls.push("worker"); throw new Error("worker could not start"); },
+        },
+      });
+      await controller.checkOnce();
+      await assert.rejects(controller.beginInstall());
+      assert.equal(fs.readFileSync(target, "utf8"), "exact previous image");
+      assert.equal(fs.readFileSync(wrapper, "utf8"), "exact previous wrapper");
+      assert.deepEqual(calls.slice(0, 2), ["metadata", "verify"]);
+      if (["signature", "signed-size", "signed-hash"].includes(failure)) assert.equal(calls.includes("extract"), false);
+      if (failure !== "worker") assert.equal(calls.includes("worker"), false);
+      if (downloaded) assert.equal(fs.existsSync(path.dirname(downloaded)), false);
+      assert.equal(controller.getState().status, "available");
     }
-    assert.equal(fs.readFileSync(marker, "utf8"), "launched");
-    assert.match(fs.readFileSync(logPath, "utf8"), /installed and relaunched/);
   } finally {
+    if (previous.image === undefined) delete process.env.CODEX_WEB_GPT_APPIMAGE; else process.env.CODEX_WEB_GPT_APPIMAGE = previous.image;
+    if (previous.wrapper === undefined) delete process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE; else process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = previous.wrapper;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

@@ -2,6 +2,7 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { signingConfiguration, verifyMacPublisher, verifyWindowsTree } = require("./release-signing.cjs");
 const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
 
 const root = path.resolve(__dirname, "..");
@@ -28,6 +29,14 @@ if (target !== nativeTarget) {
 }
 
 const env = { ...process.env };
+const signing = signingConfiguration(process.platform, env);
+if (signing.release && process.platform === "darwin") {
+  env.CSC_KEYCHAIN = env.CODEX_WEB_GPT_SIGNING_KEYCHAIN;
+  if (env.APPLE_KEYCHAIN_PROFILE) {
+    // Select existing notarytool credentials without exporting their secrets.
+    for (const name of ["APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"]) delete env[name];
+  }
+}
 if (!env.CSC_LINK && !env.CSC_NAME) env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
 const builderArgs = [
   electronBuilderCli,
@@ -35,7 +44,12 @@ const builderArgs = [
   "--publish",
   "never",
 ];
-if (target === "--mac" && !env.CSC_LINK && !env.CSC_NAME) {
+if (signing.release && process.platform !== "linux") {
+  builderArgs.push("--config.forceCodeSigning=true");
+  if (target === "--mac") builderArgs.push("--config.mac.notarize=true", `--config.mac.identity=${env.CSC_NAME.replace(/^Developer ID Application:\s*/, "")}`);
+  if (target === "--win") builderArgs.push(`--config.win.signtoolOptions.certificateSha1=${env.CODEX_WEB_GPT_WINDOWS_CERT_SHA1}`);
+}
+if (target === "--mac" && !signing.release && !env.CSC_LINK && !env.CSC_NAME) {
   builderArgs.push("--config.mac.identity=-");
 }
 
@@ -66,6 +80,10 @@ function verifySignedMacArchive() {
     runChecked("ditto", ["-x", "-k", path.join(staging, archives[0]), verificationRoot]);
     const appBundle = path.join(verificationRoot, `${launcherManifest.build.productName}.app`);
     runChecked("codesign", ["--verify", "--deep", "--strict", appBundle]);
+    if (signing.release) {
+      verifyMacPublisher(appBundle, env, { notarized: true });
+      verifyMacPublisher(path.join(appBundle, "Contents", "Resources", "runtime", "runtime", "bun"), env);
+    }
     validateRuntimeBundle(path.join(appBundle, "Contents", "Resources", "runtime"), {
       version: launcherManifest.version,
       platform: "darwin",
@@ -89,6 +107,7 @@ try {
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
   if (target === "--mac") verifySignedMacArchive();
+  if (target === "--win" && signing.release) verifyWindowsTree(staging, env);
 
   fs.mkdirSync(artifactsDirectory, { recursive: true });
   for (const entry of fs.readdirSync(artifactsDirectory, { withFileTypes: true })) {

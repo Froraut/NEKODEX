@@ -135,6 +135,8 @@ bun run app
 选项，但更改它们不会在后台静默切换所选的浏览器模型。在完整模式下，每一个可用 effort 都会
 获得同一个与当前回合绑定的 MCP 能力；Pro 没有单独限制，也没有缩减后的工具契约。
 
+旧版 **Zero Risk** 模式现改名为**手动模式**。现有 `chatgpt-web/zero-risk` 和 `chatgpt-web/zero-risk-pro` 模型 ID、命令行选项及已保存设置保持兼容。连接器的准确名称仍为 `Codex Zero Risk2`。手动模式不自动读写 ChatGPT 页面或发送提示，但账户限制及 MCP/本地工具的实际影响仍然存在。
+
 ## 完整 harness
 
 完整模式通过官方
@@ -154,10 +156,10 @@ bun run app
    和普通 API 密钥；创建密钥本身免费，也不会消耗模型 API 额度。
 3. 粘贴 Tunnel ID 和 API 密钥，然后点击 **连接 Harness**。
 4. 在 ChatGPT 设置中启用 **开发者模式**。新建连接器时选择 **Tunnel**，选择刚创建的
-   Tunnel，将 **身份验证** 设为 **无**，并将名称准确设置为 **Codex Native2**。
-5. 在 **Codex Native2** 的 **权限** 中选择 **允许所有操作**；**允许低风险操作** 会在命令和
+   Tunnel，将 **身份验证** 设为 **无**，并将名称准确设置为 **Codex Native3**。
+5. 在 **Codex Native3** 的 **权限** 中选择 **允许所有操作**；**允许低风险操作** 会在命令和
    补丁到达本地运行时前将其拦截。外层 Codex harness 仍会执行沙箱和审批规则。
-6. 运行 **验证运行时**，确认 **Codex Native2** 已连接并可用。
+6. 运行 **验证运行时**，确认 **Codex Native3** 已连接并可用。
 
 写入/修改操作还需要 ChatGPT 工作区及其管理员政策允许。请参阅
 [开发者模式和 MCP 应用](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)。
@@ -169,6 +171,16 @@ bun run app
 使用 **活动** 页面查看安全的本地诊断，并通过 **设置 → 运行诊断** 执行端到端健康检查。设置页还可
 取消保留的浏览器任务，或在卸载前移除 Codex 集成。仅在需要为每个浏览器检查点保存截图时设置
 `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1`。
+使用[账户与 UI 验收工具](docs/account-ui-acceptance.md)运行带版本的离线样例，或单独明确启用
+本地检查与账户检查。默认不会执行任何账户操作。
+浏览器诊断默认保留最近 50 个已完成任务的记录，并保护仍由活动进程持有的记录。
+将 `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTIC_TRACE_LIMIT` 设为 1 至 1000 可调整已完成记录的保留数量。
+进程崩溃后留下的记录会进入正常清理范围。
+
+**设置 → 自动化 Pro 模型**可将自动化 Pro 回合固定为 **GPT-5.6 Sol Pro**、**GPT-5.5 Pro**
+或 **GPT-6 Astra Pro**。默认的**跟随 ChatGPT**保留原有行为。选项从下一次 Pro 回合生效，
+无需重启 Codex 或启动器，不影响其他档位及手动模式回合。所选版本不可用或无法验证时，
+会在发送当前提示词前报错，不会切换到其他版本；GPT-6 仅在验证显示为 6 Pro 时使用“最新”选项。
 
 新安装默认使用 **Compatibility V1** 以支持跨后端 subagent。**Native** 会保留 Codex 自身的
 功能设置，并启用明文 Web-to-Web V2 委派。切换协议后，请重启 Codex 并创建新任务：
@@ -210,7 +222,7 @@ bun run app:package
 浏览器 Cookie/登录、ChatGPT 账户、配置、沙箱化 `CODEX_HOME`、聊天、诊断、broker 和 tunnel
 配置均与正式启动器隔离。它可以与正式启动器同时运行，绝不会启动 Responses daemon 或修改
 Codex。可选的完整模式只会启动并监管隔离的 DEV MCP tunnel，并使用独立连接器名称
-`Codex Native2 DEV`。
+`Codex Native3 DEV`。
 
 `dev:chat` 是一个具名、持久的合成外层 Codex harness。它通过隔离的启动器浏览器、临时聊天、
 prompt compiler、Responses parser 和压缩处理器执行当前工作树。可选的完整模式也会测试 MCP
@@ -218,7 +230,7 @@ prompt compiler、Responses parser 和压缩处理器执行当前工作树。可
 打开 Responses listener、修改 `openai_base_url`、停止正式 daemon，也不会占用 17841 端口。
 不带消息运行时，可使用 `/status`、`/fill 30000`、`/compact`、`/model` 和 `/reset`。首次使用时，
 请在标有 **DEV** 的窗口中登录并初始化一次配置。完整模式仅用于模拟工具轮次；DEV 启动器会保持
-DEV tunnel 就绪，具名聊天按需连接 broker。正式凭据和 `Codex Native2` 连接器绝不会被隐式复用。
+DEV tunnel 就绪，具名聊天按需连接 broker。正式凭据和 `Codex Native3` 连接器绝不会被隐式复用。
 详见 [DEV chat harness](docs/dev-chat.md)。
 
 - [架构说明](docs/architecture.md)
@@ -242,3 +254,5 @@ DEV tunnel 就绪，具名聊天按需连接 broker。正式凭据和 `Codex Nat
 本项目是独立软件，与 OpenAI 无关联，也未获得 OpenAI 背书。请仅使用自己的账户，并遵守适用的
 [使用条款](https://openai.com/policies/terms-of-use/)和工作区政策；本项目不会绕过身份验证或
 访问控制。
+
+升级现有连接器时，需要创建使用新名称的连接器。请参阅 [MCP 任务读取迁移指南](docs/mcp-task-access-migration.md)，并在实际 Codex 任务中验证 `codex_read_thread`。

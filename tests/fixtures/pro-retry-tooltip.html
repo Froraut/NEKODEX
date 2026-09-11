@@ -1,0 +1,28 @@
+<!doctype html>
+<!--
+  Source: https://github.com/miuuyy/codex-chatgpt-web/pull/432
+  Commit: 5b8face7b97f066da8e5fe40fbfcc4d7c0e0a3c8
+  Author-reported on 2026-09-11: exact Pro menuitemradio; hovering mounts a
+  portal showing "Limit reached. Try again after Sep 15, 2026."
+
+  SYNTHETIC linkage and layout: aria-describedby, role=tooltip, all IDs, HTML
+  structure and competing chat/tooltips below were not supplied by upstream.
+  This fixture validates conservative attribution; it is not captured live DOM.
+-->
+<html><body>
+  <main>
+    <article data-testid="conversation-turn-1" data-message-author-role="user">
+      <p id="chat-date">My reminder: Try again after Oct 31, 2026.</p>
+      <span id="chat-tooltip" role="tooltip">Try again after Nov 1, 2026.</span>
+    </article>
+    <form><div contenteditable="true" id="prompt-textarea">Try again after Dec 1, 2026.</div></form>
+  </main>
+  <div id="picker" role="menu">
+    <div role="menuitemradio">Extra High</div>
+    <div id="pro" role="menuitemradio">Pro</div>
+  </div>
+  <div id="unrelated-tooltip" role="tooltip">Try again after Aug 20, 2026.</div>
+  <template id="hover-portal">
+    <div id="pro-tooltip" role="tooltip">Limit reached. Try again after Sep 15, 2026.</div>
+  </template>
+</body></html>

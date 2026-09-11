@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright-core";
-import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import type { ChatGptWebAccountCapabilities, ChatGptWebProModelVersion } from "./chatgpt-web-models";
 
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 export const CHATGPT_COMPOSER_SELECTOR = [
@@ -149,6 +149,24 @@ export function parseChatGptEffortSliderState(
   if (optionCount < 1 || optionCount > CHATGPT_EFFORT_SLIDER_MAX_OPTIONS) return undefined;
   if (value < min || value > max) return undefined;
   return { min, max, value };
+}
+
+/** Verify version and effort in one owned accessibility description, without reading a page. */
+export function chatGptModelStateMatches(
+  descriptions: readonly string[],
+  version: ChatGptWebProModelVersion,
+  requirePro: boolean,
+): boolean {
+  const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const versionPrefix = new RegExp(
+    `^(?:GPT[-\\s]?)?${escapedVersion}(?=$|\\s|[,，:：;；()（）·•—–-])`,
+    "i",
+  );
+  return descriptions.some(description => {
+    const normalized = description.replace(/\s+/g, " ").trim();
+    return versionPrefix.test(normalized)
+      && (!requirePro || /\bPro\b/i.test(normalized));
+  });
 }
 
 async function anyVisible(locator: Locator): Promise<boolean> {

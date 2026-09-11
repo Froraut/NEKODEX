@@ -120,7 +120,7 @@ export async function runDoctor(): Promise<DoctorReport> {
         id: "browser-host",
         status: "ok",
         message: config.browserInteractionMode === "manual"
-          ? `Embedded launcher browser is reachable for Zero Risk (pid ${descriptor.pid})`
+          ? `Embedded launcher browser is reachable for Manual mode (pid ${descriptor.pid})`
           : `Embedded launcher browser is authenticated and reachable (pid ${descriptor.pid})`,
       });
     } catch (error) {

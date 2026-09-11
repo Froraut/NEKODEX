@@ -40,7 +40,7 @@ test("Electron and Bun agree on the exact launcher idle surface", () => {
   ));
 });
 
-test("descriptor publishes native surface identities without inspecting renderers or Zero Risk tabs", () => {
+test("descriptor publishes native surface identities without inspecting renderers or Manual mode tabs", () => {
   const dir = fs.mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "browser-targets-"));
   const queried = [];
   const contents = id => ({
@@ -397,7 +397,7 @@ test("session inspection delegates navigation and capability detection to the sh
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
     descriptorPath: "/runtime/launcher-browser.json",
-    getConnectorName: () => "Codex Native2",
+    getConnectorName: () => "Codex Native3",
     logger: { info() {} },
     view: { webContents: { getURL: () => "https://chatgpt.com/" } },
     refreshChatGptHomeDocument: async () => calls.push({ operation: "refresh" }),
@@ -428,7 +428,7 @@ test("session inspection delegates navigation and capability detection to the sh
   assert.equal(calls.length, 2);
   assert.equal(calls[0].operation, "refresh");
   assert.equal(calls[1].operation, "inspect");
-  assert.equal(calls[1].appName, "Codex Native2");
+  assert.equal(calls[1].appName, "Codex Native3");
   assert.deepEqual(calls[1].payload, { detectCapabilities: true });
 });
 
@@ -456,7 +456,7 @@ test("session inspection preserves independent Extra High evidence and rejects c
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     helper: {},
     descriptorPath: "/runtime/launcher-browser.json",
-    getConnectorName: () => "Codex Native2",
+    getConnectorName: () => "Codex Native3",
     logger: { info() {} },
     view: { webContents: { getURL: () => "https://chatgpt.com/?temporary-chat=true" } },
     refreshChatGptHomeDocument: async () => {},
@@ -1347,12 +1347,12 @@ test("browser chrome state is read from the owned WebContents", () => {
     canGoForward: false,
   });
   assert.equal(readBrowserNavigationState(webContents, {
-    title: "Zero Risk tab",
+    title: "Manual mode tab",
     url: "about:blank",
     loading: true,
     canGoBack: false,
     canGoForward: true,
-  }, { readPageTitle: false }).title, "Zero Risk tab");
+  }, { readPageTitle: false }).title, "Manual mode tab");
 });
 
 test("launcher delegates every ChatGPT model and turn operation to the shared browser worker", async () => {
@@ -1360,7 +1360,7 @@ test("launcher delegates every ChatGPT model and turn operation to the shared br
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
     descriptorPath: "/runtime/launcher-browser.json",
-    getConnectorName: () => "Codex Native2",
+    getConnectorName: () => "Codex Native3",
     logger: { info: (...args) => calls.push(["log", ...args]) },
     show: () => calls.push(["show"]),
     waitForSurfaceReady: async () => calls.push(["ready"]),
@@ -1378,7 +1378,7 @@ test("launcher delegates every ChatGPT model and turn operation to the shared br
   });
   const helperCall = calls.find(call => call[0] === "helper")[1];
   assert.equal(helperCall.operation, "smoke");
-  assert.equal(helperCall.appName, "Codex Native2");
+  assert.equal(helperCall.appName, "Codex Native3");
 });
 
 test("browser helper operations fail closed when the configured connector name is invalid", async () => {
@@ -1413,9 +1413,9 @@ test("connector verification is effort-independent and works while the browser s
     },
   };
 
-  const result = await BrowserHost.prototype.runConnectorVerification.call(fixture, "Codex Native2");
+  const result = await BrowserHost.prototype.runConnectorVerification.call(fixture, "Codex Native3");
 
-  assert.deepEqual(result, { ok: true, appName: "Codex Native2" });
+  assert.deepEqual(result, { ok: true, appName: "Codex Native3" });
   assert.equal(calls.some(([type]) => type === "show"), false);
   assert.deepEqual(
     calls.filter(([type]) => ["refresh", "helper"].includes(type)),
@@ -1424,7 +1424,7 @@ test("connector verification is effort-independent and works while the browser s
       ["helper", {
         helper: fixture.helper,
         descriptorPath: fixture.descriptorPath,
-        appName: "Codex Native2",
+        appName: "Codex Native3",
         logger: fixture.logger,
       }],
     ],
@@ -1449,14 +1449,14 @@ test("connector verification records the helper failure in launcher diagnostics"
   };
 
   await assert.rejects(
-    BrowserHost.prototype.runConnectorVerification.call(fixture, "Codex Native2"),
+    BrowserHost.prototype.runConnectorVerification.call(fixture, "Codex Native3"),
     failure,
   );
   assert.deepEqual(calls.find(call => call[1] === "connector.verification_failed"), [
     "error",
     "connector.verification_failed",
     {
-      appName: "Codex Native2",
+      appName: "Codex Native3",
       traceId: "verify-contract-trace",
       errorName: "ChatGptPersistentBrowserStateError",
       message: "ChatGPT connector proof did not leave a verified empty composer",
@@ -2090,7 +2090,7 @@ test("a later provider round reuses only its exact connector-bound conversation"
     surfaceId: "surface-reused",
     traceId: "trace_previous",
     conversationKey,
-    connectorIdentity: "Codex Native2",
+    connectorIdentity: "Codex Native3",
     connectorBound: true,
     interactionMode: "automatic",
     helperPid: 111,
@@ -2124,7 +2124,7 @@ test("a later provider round reuses only its exact connector-bound conversation"
     false,
     222,
     conversationKey,
-    "Codex Native2",
+    "Codex Native3",
   );
 
   assert.deepEqual(lease, {
@@ -2151,7 +2151,7 @@ test("a retained conversation is not reused for a different connector identity",
     traceId: "trace_old",
     status: "ready",
     conversationKey,
-    connectorIdentity: "Codex Native2",
+    connectorIdentity: "Codex Native3",
     connectorBound: true,
     interactionMode: "automatic",
   };
@@ -2189,7 +2189,7 @@ test("a retained conversation is not reused for a different connector identity",
   assert.equal(retained.status, "ready");
 });
 
-test("an Automatic turn never reuses a retained Zero Risk conversation", async () => {
+test("an Automatic turn never reuses a retained Manual mode conversation", async () => {
   const conversationKey = "m".repeat(64);
   const retained = {
     id: "manual-retained",
@@ -2197,7 +2197,7 @@ test("an Automatic turn never reuses a retained Zero Risk conversation", async (
     status: "ready",
     interactionMode: "manual",
     conversationKey,
-    connectorIdentity: "Codex Native2",
+    connectorIdentity: "Codex Native3",
     connectorBound: true,
   };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -2219,7 +2219,7 @@ test("an Automatic turn never reuses a retained Zero Risk conversation", async (
       false,
       222,
       conversationKey,
-      "Codex Native2",
+      "Codex Native3",
     ),
     {
       surfaceId: "surface-fresh",
@@ -2236,9 +2236,9 @@ test("an Automatic turn never reuses a retained Zero Risk conversation", async (
       false,
       222,
       conversationKey,
-      "Codex Native2",
+      "Codex Native3",
     ),
-    /already belongs to Zero Risk interaction/,
+    /already belongs to Manual mode interaction/,
   );
 });
 
@@ -2249,7 +2249,7 @@ test("a connector conversation is not reused until its connector was bound", asy
     traceId: "trace_old",
     status: "ready",
     conversationKey,
-    connectorIdentity: "Codex Native2",
+    connectorIdentity: "Codex Native3",
     connectorBound: false,
     interactionMode: "automatic",
   };
@@ -2272,7 +2272,7 @@ test("a connector conversation is not reused until its connector was bound", asy
       false,
       222,
       conversationKey,
-      "Codex Native2",
+      "Codex Native3",
     ),
     {
       surfaceId: "surface-fresh",
@@ -2410,7 +2410,7 @@ test("a completed keyed turn is retained for thirty minutes and preserves its ac
     surfaceId: "surface-retained",
     traceId: "trace_retained",
     conversationKey: "e".repeat(64),
-    connectorIdentity: "Codex Native2",
+    connectorIdentity: "Codex Native3",
     connectorBound: false,
     helperPid: 777,
     status: "running",
@@ -2485,7 +2485,7 @@ test("a completed connector turn without binding is released instead of retained
     id: "tab-unbound",
     traceId: "trace_unbound",
     conversationKey: "f".repeat(64),
-    connectorIdentity: "Codex Native2",
+    connectorIdentity: "Codex Native3",
     helperPid: 777,
     status: "running",
     loading: true,
@@ -2705,7 +2705,7 @@ test("manual completion is idempotent and cannot be downgraded after a lost ackn
   );
 });
 
-test("terminal Zero Risk tabs are reclaimed before retained conversations", () => {
+test("terminal Manual mode tabs are reclaimed before retained conversations", () => {
   const { fixture } = manualTurnFixture();
   fixture.turnTabs.set("manual-timeout", {
     id: "manual-timeout",
@@ -3023,7 +3023,7 @@ test("interaction-mode changes preserve mode-bound retained tabs on failure and 
   );
 });
 
-test("switching from Zero Risk to Automatic marks the already-loaded primary surface", async () => {
+test("switching from Manual mode to Automatic marks the already-loaded primary surface", async () => {
   const scripts = [];
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     getBrowserInteractionMode: () => "manual",
@@ -3076,7 +3076,7 @@ test("a failed Automatic ownership proof stays inside the runtime rollback bound
   assert.equal(fixture.browserInteractionMode(), "manual");
 });
 
-test("Zero Risk reveal navigates without inspecting the ChatGPT DOM", async () => {
+test("Manual mode reveal navigates without inspecting the ChatGPT DOM", async () => {
   const calls = [];
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     show: () => calls.push("show"),
@@ -3092,7 +3092,7 @@ test("Zero Risk reveal navigates without inspecting the ChatGPT DOM", async () =
   assert.deepEqual(calls, ["show", ["loadURL", "https://chatgpt.com/?temporary-chat=true"]]);
 });
 
-test("Zero Risk fails closed at every primary-surface inspection boundary", async () => {
+test("Manual mode fails closed at every primary-surface inspection boundary", async () => {
   let domOperations = 0;
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     getBrowserInteractionMode: () => "manual",
@@ -3106,10 +3106,10 @@ test("Zero Risk fails closed at every primary-surface inspection boundary", asyn
     viewportCssKey: null,
     surfaceId: "manual-surface",
   });
-  await assert.rejects(fixture.applyViewportCss(), /disabled in Zero Risk mode/);
-  await assert.rejects(fixture.markOwnedSurface(), /disabled in Zero Risk mode/);
-  await assert.rejects(fixture.probeAuthentication(), /disabled in Zero Risk mode/);
-  await assert.rejects(fixture.inspectSession(true), /disabled in Zero Risk mode/);
+  await assert.rejects(fixture.applyViewportCss(), /disabled in Manual mode/);
+  await assert.rejects(fixture.markOwnedSurface(), /disabled in Manual mode/);
+  await assert.rejects(fixture.probeAuthentication(), /disabled in Manual mode/);
+  await assert.rejects(fixture.inspectSession(true), /disabled in Manual mode/);
   assert.equal(domOperations, 0);
 });
 

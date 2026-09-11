@@ -1,4 +1,5 @@
-import { createInterface } from "node:readline";
+import { createProcessLineReader } from "./process-line-reader";
+import { CHATGPT_HELPER_DIAGNOSTIC_BYTES } from "./resource-budgets";
 import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
 import { ChatGptBrowserWorker, closeChatGptBrowserWorkers, type BrowserTurn } from "./browser-worker";
@@ -76,7 +77,10 @@ const handleOutputFailure = (error: Error): void => {
   void requestShutdown();
 };
 const protocolOutput = createProcessLineWriter(stdout, handleOutputFailure);
-const diagnosticOutput = createProcessLineWriter(stderr, handleOutputFailure);
+const diagnosticOutput = createProcessLineWriter(stderr, handleOutputFailure, {
+  maxLineBytes: CHATGPT_HELPER_DIAGNOSTIC_BYTES,
+  maxPendingBytes: 1024 * 1024,
+});
 
 const writeProtocol = (message: unknown): boolean => protocolOutput.write(JSON.stringify(message));
 
@@ -383,8 +387,7 @@ async function maintain(message: InspectMessage | SmokeMessage): Promise<void> {
   }
 }
 
-const input = createInterface({ input: stdin, crlfDelay: Infinity });
-input.on("line", line => {
+const input = createProcessLineReader(stdin, line => {
   if (shuttingDown) return;
   let message: InputMessage;
   try { message = JSON.parse(line) as InputMessage; }
@@ -505,10 +508,10 @@ input.on("line", line => {
       message: `Browser helper received an unsupported message type: ${String((message as { type?: unknown }).type)}`,
     });
   }
-});
-input.on("close", () => {
+}, error => {
+  diagnostic(error.message);
   void requestShutdown();
-});
+}, { onClose: () => { void requestShutdown(); } });
 process.once("SIGINT", () => {
   void requestShutdown();
 });

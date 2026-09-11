@@ -1,6 +1,7 @@
 export type Language = "en" | "zh-CN" | "ja";
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
+export type ProModelVersion = "5.6" | "5.5" | "6";
 export type Surface = "browser" | "setup" | "mcp" | "activity" | "settings";
 
 export interface LauncherState {
@@ -43,9 +44,22 @@ export interface BrowserState {
   navigationLocked: boolean;
   loginInProgress: boolean;
   loginKind: "embedded" | "passkey" | null;
+  passkeyLogin?: PasskeyLoginProgress | null;
   activeTabId: string;
   maxTabs: number;
   tabs: BrowserTabState[];
+}
+
+export interface PasskeyLoginProgress {
+  phase: "starting" | "waiting" | "importing" | "verifying" | "cancelling" | "cancelled" | "timed-out" | "failed" | "completed";
+  startedAt: string;
+  deadlineAt: string;
+  active: boolean;
+  canImport: boolean;
+  canReveal: boolean;
+  canCancel: boolean;
+  error: string | null;
+  revealError: string | null;
 }
 
 export interface BrowserTabState {
@@ -102,6 +116,7 @@ export interface LauncherSnapshot {
     userData: string;
   };
   state: LauncherState;
+  proModelVersion: ProModelVersion | null;
   browser: BrowserState | null;
   connectorName: string;
   connectorNames: Record<BrowserInteractionMode, string>;
@@ -120,6 +135,24 @@ export interface LauncherSnapshot {
   smokePassed: boolean;
   operation: OperationState | null;
   update: UpdateState;
+}
+
+export interface RouteDiagnosticsReport {
+  schemaVersion: 1;
+  codexHome: string;
+  configPath: string;
+  profilePath: string | null;
+  configStatus: "missing" | "loaded" | "invalid" | "unreadable";
+  profile: string | null;
+  provider: string | null;
+  providerSource: "default" | "root" | "profile" | "unknown";
+  customProvider: boolean;
+  modelCatalogOverride: boolean;
+  installed: boolean | null;
+  active: boolean | null;
+  routeMatches: boolean | null;
+  issueCodes: string[];
+  catalog: { status: "observed" | "waiting" | "unavailable"; successfulRequests: number | null; lastSuccessfulAt: string | null };
 }
 
 export interface LauncherApi {
@@ -141,11 +174,14 @@ export interface LauncherApi {
   openLogin(): Promise<BrowserState>;
   openPasskeyLogin(): Promise<BrowserState>;
   continuePasskeyLogin(): Promise<boolean>;
+  revealPasskeyLogin(): Promise<boolean>;
+  cancelPasskeyLogin(): Promise<BrowserState>;
   logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
   dismissSessionReminder(): Promise<LauncherState>;
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
   verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;
+  routeDiagnostics(): Promise<RouteDiagnosticsReport>;
   cancelTurns(): Promise<{ stdout: string }>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
@@ -159,6 +195,7 @@ export interface LauncherApi {
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
+  setProModelVersion(version: ProModelVersion | null): Promise<{ proModelVersion: ProModelVersion | null }>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
     state: LauncherState;
     credentialsRequired: boolean;

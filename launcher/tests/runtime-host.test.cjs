@@ -61,7 +61,7 @@ function devHostFor(existingConfig, interactionMode = "automatic") {
 }
 
 test("core setup preserves an existing full-harness installation", async () => {
-  const fixture = hostFor({ mode: "full", appName: "Codex Native2" });
+  const fixture = hostFor({ mode: "full", appName: "Codex Native3" });
   const result = await fixture.host.setupCore();
   assert.equal(result.mode, "full");
   assert.deepEqual(fixture.invocation().args, [
@@ -94,16 +94,16 @@ test("core setup starts in browser-only mode when no installation exists", async
   assert.equal(fixture.invocation().args.includes("--chrome"), false);
 });
 
-test("core setup refuses an implicit Automatic fallback for a new Zero Risk installation", async () => {
+test("core setup refuses an implicit Automatic fallback for a new Manual mode installation", async () => {
   const fixture = hostFor(null, "manual");
   await assert.rejects(
     fixture.host.setupCore(),
-    /Zero Risk must be installed through MCP setup because tunnel credentials are required/,
+    /Manual mode must be installed through MCP setup because tunnel credentials are required/,
   );
   assert.equal(fixture.invocation(), undefined);
 });
 
-test("Zero Risk can be enabled only from an installed Full harness", async () => {
+test("Manual mode can be enabled only from an installed Full harness", async () => {
   await assert.rejects(
     hostFor(null).host.setBrowserInteractionMode("manual"),
     /Install the Codex integration/,
@@ -118,7 +118,7 @@ test("browser interaction mode changes reuse the transactional setup and refresh
   const config = {
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: "Codex Native3",
     experimentalBiggerContext: true,
   };
   const manual = hostFor(config);
@@ -136,19 +136,19 @@ test("browser interaction mode changes reuse the transactional setup and refresh
   assert.equal(automatic.invocation().args.includes("--bigger-context"), true);
 });
 
-test("switching back from Zero Risk preserves the saved automatic connector identity", async () => {
+test("switching back from Manual mode preserves the saved automatic connector identity", async () => {
   const fixture = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Zero Risk",
-    automaticAppName: "Codex Native2",
+    appName: "Codex Zero Risk2",
+    automaticAppName: "Codex Native3",
     browserInteractionMode: "manual",
   }, "manual");
   await fixture.host.setBrowserInteractionMode("automatic");
   const args = fixture.invocation().args;
   assert.equal(args.includes("--app-name"), false);
   assert.equal(fixture.host.setupConnectorName(), CURRENT_CONNECTOR_NAME);
-  assert.equal(args.includes("Codex Zero Risk"), false);
+  assert.equal(args.includes("Codex Zero Risk2"), false);
 });
 
 test("DEV core setup configures only the isolated harness contract", async () => {
@@ -173,7 +173,7 @@ test("DEV core setup configures only the isolated harness contract", async () =>
 });
 
 test("Bigger Context uses the setup transaction and refreshes the production Codex catalog", async () => {
-  const fixture = hostFor({ mode: "full", appName: "Codex Native2" });
+  const fixture = hostFor({ mode: "full", appName: "Codex Native3" });
   const result = await fixture.host.setBiggerContext(true);
   assert.equal(result.enabled, true);
   assert.deepEqual(fixture.invocation(), {
@@ -211,13 +211,13 @@ test("Bigger Context updates the isolated DEV config without installing a Codex 
   });
 });
 
-test("Zero Risk Pro transaction installs or removes only its explicit model profile", async () => {
+test("Manual mode Pro transaction installs or removes only its explicit model profile", async () => {
   const config = {
     mode: "full",
     browserHost: "launcher",
     browserInteractionMode: "manual",
-    appName: "Codex Zero Risk",
-    automaticAppName: "Codex Native2",
+    appName: "Codex Zero Risk2",
+    automaticAppName: "Codex Native3",
   };
   const enabled = hostFor(config, "manual");
   const result = await enabled.host.setZeroRiskPro(true);
@@ -243,7 +243,100 @@ test("Zero Risk Pro transaction installs or removes only its explicit model prof
   assert.equal(disabled.invocation().args.includes("--zero-risk-default"), true);
   await assert.rejects(
     hostFor({ ...config, browserInteractionMode: "automatic" }).host.setZeroRiskPro(true),
-    /only while the Full Zero Risk harness is active/,
+    /only while the Full Manual mode harness is active/,
+  );
+});
+
+test("Pro model version changes use the config-only launcher command", async () => {
+  const config = {
+    mode: "full",
+    browserHost: "launcher",
+    browserInteractionMode: "automatic",
+    appName: "Codex Native3",
+  };
+  const fixture = hostFor(config);
+  const invocations = [];
+  fixture.host.launcherControlEnvironment = () => ({
+    CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "launcher-control-token",
+  });
+  fixture.host.run = async (name, args, options) => {
+    invocations.push({ name, args, options });
+    const value = args[2];
+    if (value === "follow") delete config.proModelVersion;
+    else config.proModelVersion = value;
+    return { code: 0, stdout: `${JSON.stringify({ proModelVersion: config.proModelVersion ?? null })}\n`, stderr: "" };
+  };
+
+  assert.deepEqual(await fixture.host.setProModelVersion("5.5"), { proModelVersion: "5.5" });
+  assert.deepEqual(invocations[0].args, [
+    "config",
+    "pro-model-version",
+    "5.5",
+    "--launcher-control",
+  ]);
+  assert.deepEqual(invocations[0].options.env, {
+    CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "launcher-control-token",
+  });
+  assert.equal(invocations[0].args.includes("setup"), false);
+  assert.equal(invocations[0].args.includes("--restart-service"), false);
+
+  assert.deepEqual(await fixture.host.setProModelVersion(null), { proModelVersion: null });
+  assert.equal(invocations[1].args[2], "follow");
+});
+
+test("DEV Pro model version changes stay inside the isolated config profile", async () => {
+  const config = {
+    purpose: "dev-harness",
+    mode: "browser-only",
+    browserHost: "launcher",
+    browserInteractionMode: "automatic",
+    appName: "Codex Native3 DEV",
+  };
+  const fixture = devHostFor(config);
+  let invocation;
+  fixture.host.launcherControlEnvironment = () => ({
+    CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "launcher-control-token",
+  });
+  fixture.host.run = async (name, args, options) => {
+    invocation = { name, args, options };
+    config.proModelVersion = "6";
+    return { code: 0, stdout: '{"proModelVersion":"6"}\n', stderr: "" };
+  };
+
+  assert.deepEqual(await fixture.host.setProModelVersion("6"), { proModelVersion: "6" });
+  assert.deepEqual(invocation.args, [
+    "dev",
+    "config",
+    "pro-model-version",
+    "6",
+    "--launcher-control",
+  ]);
+  assert.equal(invocation.options.embedded, true);
+  assert.equal(invocation.options.environment.CODEX_WEB_GPT_DEV_HOME, path.resolve("/dev"));
+});
+
+test("Pro model version settings reject invalid values and unconfigured runtimes", async () => {
+  const config = {
+    mode: "browser-only",
+    browserHost: "launcher",
+    browserInteractionMode: "automatic",
+    appName: "Codex Native3",
+    proModelVersion: "5.6",
+  };
+  const configured = hostFor(config);
+  configured.host.run = async () => assert.fail("invalid settings must not invoke the runtime");
+  await assert.rejects(configured.host.setProModelVersion("latest"), /must be follow, 5\.6, 5\.5, or 6/);
+  assert.deepEqual(await configured.host.setProModelVersion("5.6"), { proModelVersion: "5.6" });
+  await assert.rejects(hostFor(null).host.setProModelVersion("5.6"), /Install the Codex integration/);
+
+  const notPersisted = hostFor(config);
+  notPersisted.host.launcherControlEnvironment = () => ({
+    CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "launcher-control-token",
+  });
+  notPersisted.host.run = async () => ({ code: 0, stdout: '{"proModelVersion":"5.5"}\n', stderr: "" });
+  await assert.rejects(
+    notPersisted.host.setProModelVersion("5.5"),
+    /did not persist the requested Pro model version/,
   );
 });
 
@@ -281,7 +374,7 @@ test("DEV MCP setup reuses only DEV-home credentials and targets its distinct co
     purpose: "dev-harness",
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: "Codex Native3",
     tunnel: {
       tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
       runtimeKeyFile,
@@ -313,7 +406,7 @@ test("DEV doctor requires live tunnel readiness without probing a Responses list
   const fixture = devHostFor({
     purpose: "dev-harness",
     mode: "full",
-    appName: "Codex Native2 DEV",
+    appName: "Codex Native3 DEV",
     tunnel: { runtimeKeyFile },
   });
   fixture.host.supervisor.readTunnelHealth = async () => ({
@@ -367,7 +460,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
   const fixture = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: "Codex Native3",
     releaseVersion: "1.1.1",
     solAvailable: true,
     proAvailable: false,
@@ -437,12 +530,12 @@ test("launcher update transaction does not preserve a stale disconnected route p
   assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), true);
 });
 
-test("launcher update preserves Zero Risk and never probes its account capabilities", async () => {
+test("launcher update preserves Manual mode and never probes its account capabilities", async () => {
   const fixture = hostFor({
     mode: "full",
     browserHost: "launcher",
     browserInteractionMode: "manual",
-    appName: "Codex Zero Risk",
+    appName: "Codex Zero Risk2",
     releaseVersion: "1.1.1",
   });
 
@@ -457,7 +550,7 @@ test("launcher update transaction leaves current and externally owned runtimes u
   const currentFull = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: "Codex Native3",
     releaseVersion: "1.1.3",
   });
   const external = hostFor({ mode: "browser-only", browserHost: "managed-chrome", releaseVersion: "1.1.1" });
@@ -476,7 +569,7 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
   fs.writeFileSync(keyPath, "saved-private-runtime-key\n", { mode: 0o600 });
   const fixture = hostFor({
     mode: "full",
-    appName: "Codex Native2",
+    appName: "Codex Native3",
     tunnel: {
       tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
       runtimeKeyFile: keyPath,
@@ -732,13 +825,13 @@ test("integration removal rejects a command that leaves an inactive journal behi
 });
 
 test("connector verification uses the current identity and rejects a legacy local runtime", () => {
-  const full = hostFor({ mode: "full", appName: "Codex Native2" });
-  assert.equal(full.host.mcpConnectorName(), "Codex Native2");
-  assert.equal(full.host.browserConnectorName(), "Codex Native2");
+  const full = hostFor({ mode: "full", appName: "Codex Native3" });
+  assert.equal(full.host.mcpConnectorName(), "Codex Native3");
+  assert.equal(full.host.browserConnectorName(), "Codex Native3");
   const defaultName = hostFor(null);
   assert.equal(defaultName.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const legacyFull = hostFor({ mode: "full", appName: "Codex Native" });
-  assert.equal(legacyFull.host.browserConnectorName(), "Codex Native2");
+  assert.equal(legacyFull.host.browserConnectorName(), "Codex Native3");
   assert.throws(
     () => legacyFull.host.mcpConnectorName(),
     /still targets legacy ChatGPT connector.*create that connector as a new ChatGPT plugin/,
@@ -747,11 +840,27 @@ test("connector verification uses the current identity and rejects a legacy loca
   assert.throws(() => invalidFull.host.mcpConnectorName(), /Connector name is invalid/);
   assert.throws(() => invalidFull.host.browserConnectorName(), /Connector name is invalid/);
   const browserOnly = hostFor({ mode: "browser-only", appName: "Codex Native" });
-  assert.equal(browserOnly.host.browserConnectorName(), "Codex Native2");
+  assert.equal(browserOnly.host.browserConnectorName(), "Codex Native3");
   assert.throws(() => browserOnly.host.mcpConnectorName(), /MCP runtime is not configured/);
-  const dev = devHostFor({ mode: "full", appName: "Codex Native2" });
+  const dev = devHostFor({ mode: "full", appName: "Codex Native3" });
   assert.equal(dev.host.browserConnectorName(), DEV_CONNECTOR_NAME);
   assert.equal(dev.host.mcpConnectorName(), DEV_CONNECTOR_NAME);
+});
+
+test("native and manual cached ABIs cannot be verified as current in either launcher profile", () => {
+  for (const [legacyName, currentName] of [
+    ["Codex Native2", "Codex Native3"],
+    ["Codex Native2 DEV", "Codex Native3 DEV"],
+    ["Codex Zero Risk", "Codex Zero Risk2"],
+  ]) {
+    const fixture = hostFor({ mode: "full", appName: legacyName });
+    assert.equal(fixture.host.browserConnectorName(), currentName);
+    assert.throws(() => fixture.host.mcpConnectorName(), /still targets legacy ChatGPT connector/);
+    const dev = devHostFor({ mode: "full", appName: legacyName });
+    assert.throws(() => dev.host.mcpConnectorName(), /still targets legacy ChatGPT connector/);
+  }
+  const manual = devHostFor({ mode: "full", appName: "Codex Zero Risk2" });
+  assert.equal(manual.host.mcpConnectorName(), "Codex Zero Risk2");
 });
 
 test("launcher-controlled CLI operations use the live descriptor token", () => {
@@ -1261,4 +1370,53 @@ test("passkey sign-in is rejected outside macOS even if IPC is invoked directly"
   const fixture = hostFor(null).host;
   fixture.platform = "win32";
   assert.throws(() => fixture.passkeyChromeExecutable(), /supported only on macOS/);
+});
+
+test("uncertain Import pipe failure cannot unlock a duplicate session import", async () => {
+  const fixture = hostFor(null).host;
+  fixture.active = "passkey-login";
+  const phases = [];
+  fixture.passkeyProgress = patch => phases.push(patch);
+  fixture.activeChild = { exitCode: null, signalCode: null, stdin: {
+    writable: true, write(_value, callback) { callback(new Error("EPIPE")); },
+  } };
+  await assert.rejects(fixture.continuePasskeyLogin(), /EPIPE/);
+  assert.equal(fixture.passkeyContinuationRequested, true);
+  assert.equal(phases.at(-1).phase, "importing");
+  assert.throws(() => fixture.continuePasskeyLogin(), /No passkey sign-in is waiting/);
+});
+
+test("owned runtime control-stream errors become operation failures instead of uncaught main errors", async () => {
+  const fixture = hostFor(null).host;
+  fixture.command = () => ({ executable: process.execPath, args: ["-e", "setTimeout(() => process.exit(0), 50)"], cwd: os.tmpdir() });
+  const pending = fixture.run("passkey-login", [], { controlStdin: true, timeoutMs: 2_000 });
+  const rejected = assert.rejects(pending, /stdin pipe failed: EPIPE/);
+  fixture.activeChild.stdin.emit("error", new Error("EPIPE"));
+  await rejected;
+});
+
+test("broken passkey control cancellation kills surviving owned descendants after leader exit", { skip: process.platform === "win32" }, async () => {
+  const fixture = hostFor(null).host;
+  const descendantCode = "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);";
+  const leaderCode = `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendantCode)}], {stdio:['ignore','pipe','ignore']}); child.stdout.once('data', () => console.log(child.pid)); setInterval(() => {}, 1000);`;
+  fixture.command = () => ({ executable: process.execPath, args: ["-e", leaderCode], cwd: os.tmpdir() });
+  let ready;
+  const descendantReady = new Promise(resolve => { ready = resolve; });
+  const result = fixture.run("passkey-login", [], {
+    controlStdin: true, timeoutMs: 3_000,
+    onStdoutLine: line => { if (/^\d+$/.test(line)) ready(Number(line)); return true; },
+  }).then(() => new Error("Unexpected success"), error => error);
+  const pid = await Promise.race([descendantReady, result.then(error => { throw error; })]);
+  fixture.activeChild.stdin.destroy();
+  await fixture.cancelPasskeyLogin();
+  assert.match((await result).message, /cancelled/);
+  let running = true;
+  for (let i = 0; i < 100; i += 1) {
+    try { process.kill(pid, 0); } catch (error) {
+      if (error.code === "ESRCH") { running = false; break; }
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  if (running) process.kill(pid, "SIGKILL");
+  assert.equal(running, false, "the SIGTERM-resistant owned descendant must be gone before cancellation is accepted");
 });

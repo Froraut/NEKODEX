@@ -30,11 +30,23 @@ test("a waiting embedded login locks navigation while retaining the macOS passke
   }
 });
 
-test("a pending passkey switch exposes its continuation before runtime progress arrives", () => {
+test("a pending passkey switch locks Import until the owned child confirms it is waiting", () => {
   const state = browserControls({ ...signedOut, loginInProgress: true, loginKind: "passkey" }, null, "darwin", "automatic");
   assert.equal(state.navigationLocked, true);
   assert.equal(state.passkeyWaiting, true);
   assert.equal(state.passkeyBlocked, false);
+  assert.equal(state.passkeyCanImport, false);
+});
+
+test("only a current main-process waiting phase can enable Import after a renderer reload", () => {
+  for (const phase of ["waiting", "starting", "importing", "verifying", "cancelling"]) {
+    const browser = JSON.parse(JSON.stringify({ ...signedOut, loginKind: "passkey", passkeyLogin: {
+      phase, active: true, canImport: phase === "waiting",
+    } }));
+    const controls = browserControls(browser, null, "darwin", "automatic");
+    assert.equal(controls.passkeyCanImport, phase === "waiting");
+    assert.equal(controls.navigationLocked, true);
+  }
 });
 
 test("passkey progress and unrelated runtime work have distinct controls", () => {

@@ -52,9 +52,9 @@ DEV launchers can therefore run at the same time with different ChatGPT accounts
 
 The working-tree adapter attaches to a tab leased only from that DEV launcher. In Full mode the DEV
 launcher owns one persistent, isolated tunnel runtime; a named CLI chat owns only the private turn
-broker attached to that tunnel for the command's lifetime. The distinct `Codex Native2 DEV`
+broker attached to that tunnel for the command's lifetime. The distinct `Codex Native3 DEV`
 connector reaches the same MCP server and turn-token contract without requiring any Responses
-daemon or colliding with the production `Codex Native2` connector.
+daemon or colliding with the production `Codex Native3` connector.
 
 Only the responsibilities normally owned by native Codex are synthetic: named history storage,
 turn metadata, tool-result execution, context-threshold scheduling, and installation of compacted
@@ -71,12 +71,14 @@ state, thread authority, checkpoints, and named chat state live
 under `~/.codex-chatgpt-web-dev` by default.
 
 The ChatGPT connector name is also the public MCP ABI identity. The direct turn-token contract uses
-`Codex Native2`; the retired `Codex Native` identity is never selected or refreshed in place. Setup
-migrates known legacy local configuration to the new name, clears prior verification state, and
+`Codex Native3`; the retired `Codex Native` and `Codex Native2` identities are never selected or
+refreshed in place. Setup migrates known legacy local configuration to the new name, clears prior verification state, and
 requires the user to create the new connector. Browser verification accepts the exact new identity,
 reports a specific migration error when only the legacy identity is visible, and never falls back to
 the legacy connector. Future public schema changes require another explicit connector identity.
-Repository DEV mode uses `Codex Native2 DEV` so the same ChatGPT account can keep both production
+The Manual contract uses the separate `Codex Zero Risk2` identity; the retired `Codex Zero Risk`
+is not reused. See [MCP task access migration](mcp-task-access-migration.md).
+Repository DEV mode uses `Codex Native3 DEV` so the same ChatGPT account can keep both production
 and development connectors installed without renaming, refreshing, or deleting either one.
 
 ## Browser lifecycle
@@ -112,16 +114,16 @@ the envelope. Attachment acceptance and send readiness are verified before the t
 
 Initial Launcher setup asks which interaction mode to install and defaults to With Automation. The
 same choice remains available in Settings; changing it uses the transactional setup path, replaces
-the installed catalog, and requires a Codex restart. Zero Risk never reads or mutates the ChatGPT DOM.
+the installed catalog, and requires a Codex restart. Manual mode never reads or mutates the ChatGPT DOM.
 For a new ChatGPT chat the adapter provides the complete compiled prompt; for an exactly retained
 chat it also provides an incremental prompt containing only the Codex suffix after the last assistant
 reply. The Launcher chooses between those two prompts from its own retained-tab ownership and writes
 the selected text to the system clipboard. The user has thirty seconds to paste, select the visible
-ChatGPT model, effort, and Zero Risk connector, send, and confirm Sent; a manual compaction handoff
+ChatGPT model, effort, and Manual mode connector, send, and confirm Sent; a manual compaction handoff
 allows two minutes. Sent ends that confirmation deadline. Waiting for the first MCP bind is part of
 the live turn, which remains subject to explicit cancellation and runtime-owner cleanup.
 The pasted task carries one opaque `request_id` for routing concurrent requests. Start/completion
-sequencing lives in the Zero Risk MCP server metadata, not in user-authored imperative text; the
+sequencing lives in the Manual mode MCP server metadata, not in user-authored imperative text; the
 per-tab nonce used to validate the Launcher confirmation never leaves the local runtime.
 
 The appended models advertise the authenticated account's context window and a ten-percent
@@ -141,13 +143,13 @@ effort, attachment references and three-part maximum remain unchanged.
 
 In Full mode, routed compaction v1/v2 uses the exact retained source agent and a one-shot MCP control
 capability that accepts only the bound checkpoint; it cannot claim or invoke the ordinary Codex tool
-environment. Zero Risk always advertises a fixed three-times compaction interval without enabling
+environment. Manual mode always advertises a fixed three-times compaction interval without enabling
 Bigger Context multipart transport. At that boundary its active ChatGPT response receives the
 checkpoint instruction as an MCP result, returns the compacted context through its bound completion
 control, and ends. The old manual chat is retired; the next compacted Codex request owns a fresh
 Temporary Chat and its locally compiled prompt is copied to the clipboard. A missing Automatic
 retained source falls back to a dedicated read-only Temporary Chat built from canonical Codex
-history; a missing Zero Risk source uses the same explicit manual checkpoint contract. An invalid or
+history; a missing Manual mode source uses the same explicit manual checkpoint contract. An invalid or
 ambiguous handoff still fails explicitly. Browser-only mode
 uses the same read-only summarization path, then returns the native replacement-history shape expected
 by Codex. A prompt-level checkpoint marker is translated into a visible Codex trace item;

@@ -99,6 +99,36 @@ test("passkey login authenticates in normal Chrome before isolated offline pipe 
   }
 });
 
+test("passkey cancellation and timeout close only the owned browser and remove its fresh profile", async () => {
+  if (process.platform !== "darwin") return;
+  const root = mkdtempSync(join(tmpdir(), "codex-passkey-cancel-"));
+  const executable = join(root, "fake-chrome");
+  writeFileSync(executable, "#!/bin/sh\ntrap 'exit 0' TERM INT HUP\nwhile :; do sleep 0.1; done\n", { mode: 0o700 });
+  const config = { ...defaultConfig("browser-only"), chromeExecutablePath: executable,
+    storageStatePath: join(root, "transfer", "storage-state.json") };
+  const profiles: string[] = [];
+  try {
+    for (const cancel of [true, false]) {
+      const controller = new AbortController();
+      let reachedReady = false;
+      await expect(captureSystemBrowserLogin(config, {
+        continuation: new Promise<void>(() => {}),
+        timeoutMs: 250,
+        signal: controller.signal,
+        onBrowserReady: () => {
+          reachedReady = true;
+          profiles.push(readdirSync(join(root, "transfer")).find(name => name.startsWith("login-profile-"))!);
+          if (cancel) controller.abort(new Error("Passkey sign-in cancelled"));
+        },
+      })).rejects.toThrow(cancel ? "cancelled" : "Timed out");
+      expect(reachedReady).toBe(true);
+      expect(readdirSync(join(root, "transfer"))).toEqual([]);
+      expect(existsSync(config.storageStatePath)).toBe(false);
+    }
+    expect(profiles[0]).not.toBe(profiles[1]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("passkey storage capture excludes identity-provider and partitioned state", () => {
   const cookie = (name: string, domain: string, extra = {}) => ({
     name,

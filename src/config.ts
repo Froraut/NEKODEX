@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import {
   CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
   CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
+  parseChatGptWebProModelVersion,
+  type ChatGptWebProModelVersion,
 } from "./chatgpt-web-models";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
@@ -16,23 +18,31 @@ export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
 
 /**
- * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
- * contract therefore has a new identity instead of mutating the retired connector in place.
+ * ChatGPT caches the complete public MCP schema by connector identity. Adding the read-only
+ * task action changes both native and manual contracts, so neither may reuse a cached identity.
  */
-export const CHATGPT_CONNECTOR_NAME = "Codex Native2";
+export const CHATGPT_CONNECTOR_NAME = "Codex Native3";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
-export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk";
-export const LEGACY_CHATGPT_CONNECTOR_NAMES = ["Codex Native"] as const;
+export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk2";
+export const LEGACY_CHATGPT_CONNECTOR_NAMES = [
+  "Codex Native", "Codex Native DEV", "Codex Native2", "Codex Native2 DEV", "Codex Zero Risk",
+] as const;
 
 export function isLegacyChatGptConnectorName(value: string): boolean {
   return (LEGACY_CHATGPT_CONNECTOR_NAMES as readonly string[]).includes(value);
 }
 
+export function currentChatGptConnectorName(legacyName: string): string {
+  if (legacyName === "Codex Zero Risk") return ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  return legacyName.endsWith(" DEV") ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
+}
+
 export function legacyChatGptConnectorMigrationMessage(legacyName: string): string {
+  const currentName = currentChatGptConnectorName(legacyName);
   return `Legacy ChatGPT connector ${JSON.stringify(legacyName)} was found, but this release requires`
-    + ` a newly created connector named ${JSON.stringify(CHATGPT_CONNECTOR_NAME)}. Create`
-    + ` ${JSON.stringify(CHATGPT_CONNECTOR_NAME)} against the same tunnel with Authentication set to None;`
-    + ` do not rename or refresh ${JSON.stringify(legacyName)}.`;
+    + ` a newly created connector named ${JSON.stringify(currentName)}. Reconnect the harness in setup, then create`
+    + ` ${JSON.stringify(currentName)} against that mode's tunnel with Authentication set to None;`
+    + ` do not rename or refresh ${JSON.stringify(legacyName)}. Verify the new codex_read_thread action in a real Codex task.`;
 }
 
 export interface InteractionConnectorIdentities {
@@ -85,8 +95,10 @@ export interface AppConfig {
   /** Independent Extra High evidence; missing legacy values use the prior Pro proof. */
   extraHighAvailable?: boolean;
   proAvailable: boolean;
+  /** Optional explicit ChatGPT model family used for automatic Pro turns. */
+  proModelVersion?: ChatGptWebProModelVersion;
   experimentalBiggerContext: boolean;
-  /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
+  /** Explicitly install the additional Pro-sized model row while Manual mode is active. */
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
   stallTimeoutSec?: number;
@@ -106,8 +118,8 @@ export function tunnelConfigForInteractionMode(
   const configured = mode === "manual" ? config.manualTunnel : config.automaticTunnel;
   if (configured) return configured;
   if (config.automaticTunnel || config.manualTunnel) return undefined;
-  // The single tunnel field predates Zero Risk. Released 4.x configurations therefore always
-  // belong to Automatic mode; Zero Risk is populated only by an explicit setup or migration.
+  // The single tunnel field predates Manual mode. Released 4.x configurations therefore always
+  // belong to Automatic mode; Manual mode is populated only by an explicit setup or migration.
   return mode === "automatic" ? config.tunnel : undefined;
 }
 
@@ -359,9 +371,20 @@ export function loadConfigForSetup(): AppConfig {
   const interactionMode = raw.browserInteractionMode ?? "automatic";
   const automaticName = raw.automaticAppName
     ?? (interactionMode === "automatic" ? raw.appName : CHATGPT_CONNECTOR_NAME);
-  if (automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
+  // Only setup migrates persisted names. Runtime loading rejects an active retired identity;
+  // targeting a fresh identity never claims that ChatGPT has created or verified its connector.
+  if (typeof automaticName === "string" && isLegacyChatGptConnectorName(automaticName)) {
+    raw.automaticAppName = automaticName === "Codex Zero Risk"
+      ? CHATGPT_CONNECTOR_NAME : currentChatGptConnectorName(automaticName);
+  } else if (automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
     raw.automaticAppName = CHATGPT_CONNECTOR_NAME;
-    if (interactionMode === "automatic") raw.appName = CHATGPT_CONNECTOR_NAME;
+  }
+  if (raw.manualAppName === "Codex Zero Risk") raw.manualAppName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  if (typeof raw.appName === "string" && (
+    isLegacyChatGptConnectorName(raw.appName) || automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME
+  )) {
+    raw.appName = interactionMode === "manual"
+      ? ZERO_RISK_CHATGPT_CONNECTOR_NAME : raw.automaticAppName ?? CHATGPT_CONNECTOR_NAME;
   }
   const config = parseConfig(raw, path);
   // Runtime loading fails closed, while setup retains missing evidence so a legacy non-Pro
@@ -394,10 +417,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid browserInteractionMode in ${path}`);
   }
   if (browserInteractionMode === "manual" && parsed.mode !== "full") {
-    throw new Error(`Zero Risk requires full mode in ${path}`);
+    throw new Error(`Manual mode requires full mode in ${path}`);
   }
   if (browserInteractionMode === "manual" && parsed.browserHost !== "launcher") {
-    throw new Error(`Zero Risk requires the launcher browser host in ${path}`);
+    throw new Error(`Manual mode requires the launcher browser host in ${path}`);
   }
   if (!Number.isInteger(parsed.port) || parsed.port! < 1 || parsed.port! > 65_535) throw new Error(`Invalid port in ${path}`);
   if (!Number.isSafeInteger(parsed.contextWindow) || parsed.contextWindow! <= 0) {
@@ -414,17 +437,23 @@ function parseConfig(value: unknown, path: string): AppConfig {
     if (typeof parsed[key] !== "string" || !(parsed[key] as string).trim()) throw new Error(`Missing ${key} in ${path}`);
   }
   if (parsed.appName!.length > 80) throw new Error(`appName is too long in ${path}`);
+  if (isLegacyChatGptConnectorName(parsed.appName!)) {
+    throw new Error(legacyChatGptConnectorMigrationMessage(parsed.appName!));
+  }
   const automaticAppName = parsed.automaticAppName
     ?? (browserInteractionMode === "automatic" ? parsed.appName : CHATGPT_CONNECTOR_NAME);
   const manualAppName = parsed.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
   if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
     throw new Error(`Invalid automaticAppName in ${path}`);
   }
+  if (typeof manualAppName === "string" && isLegacyChatGptConnectorName(manualAppName)) {
+    throw new Error(legacyChatGptConnectorMigrationMessage(manualAppName));
+  }
   if (manualAppName !== ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
     throw new Error(`manualAppName must be ${JSON.stringify(ZERO_RISK_CHATGPT_CONNECTOR_NAME)} in ${path}`);
   }
   if (automaticAppName === manualAppName) {
-    throw new Error(`Automatic and Zero Risk connector names must differ in ${path}; rerun setup`);
+    throw new Error(`Automatic and Manual mode connector names must differ in ${path}; rerun setup`);
   }
   const expectedAppName = browserInteractionMode === "manual" ? manualAppName : automaticAppName;
   if (parsed.appName !== expectedAppName) {
@@ -474,7 +503,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     if (parsed.manualTunnel !== undefined) validateTunnel(parsed.manualTunnel, "manualTunnel");
     if (parsed.automaticTunnel && parsed.manualTunnel
       && parsed.automaticTunnel.tunnelId === parsed.manualTunnel.tunnelId) {
-      throw new Error(`Automatic and Zero Risk must use different Tunnel IDs in ${path}`);
+      throw new Error(`Automatic and Manual mode must use different Tunnel IDs in ${path}`);
     }
     const activeTunnel = browserInteractionMode === "manual" ? parsed.manualTunnel : parsed.automaticTunnel;
     if ((parsed.automaticTunnel || parsed.manualTunnel) && !activeTunnel) {
@@ -491,6 +520,12 @@ function parseConfig(value: unknown, path: string): AppConfig {
   assertDurableRuntimeCommand(parsed.runtimeCommand as string[]);
   if (parsed.proAvailable !== undefined && typeof parsed.proAvailable !== "boolean") {
     throw new Error(`Invalid proAvailable in ${path}`);
+  }
+  let proModelVersion: ChatGptWebProModelVersion | undefined;
+  try {
+    proModelVersion = parseChatGptWebProModelVersion(parsed.proModelVersion);
+  } catch {
+    throw new Error(`Invalid proModelVersion in ${path}`);
   }
   if (parsed.solAvailable !== undefined && typeof parsed.solAvailable !== "boolean") {
     throw new Error(`Invalid solAvailable in ${path}`);
@@ -515,7 +550,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   const experimentalBiggerContext = parsed.experimentalBiggerContext === true;
   const zeroRiskProEnabled = parsed.zeroRiskProEnabled === true;
   if (browserInteractionMode === "manual" && experimentalBiggerContext) {
-    throw new Error(`Zero Risk does not support Bigger Context in ${path}`);
+    throw new Error(`Manual mode does not support Bigger Context in ${path}`);
   }
   if (proAvailable && !solAvailable) {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
@@ -536,6 +571,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     solAvailable: browserInteractionMode === "manual" ? false : solAvailable,
     extraHighAvailable: browserInteractionMode === "manual" ? false : extraHighAvailable,
     proAvailable: browserInteractionMode === "manual" ? false : proAvailable,
+    proModelVersion,
     experimentalBiggerContext,
     zeroRiskProEnabled,
   } as AppConfig;
@@ -591,6 +627,9 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       solAvailable: manual ? false : config.solAvailable,
       extraHighAvailable: manual ? false : config.extraHighAvailable ?? config.proAvailable,
       proAvailable: manual ? false : config.proAvailable,
+      ...(!manual && config.proModelVersion !== undefined
+        ? { proModelVersion: config.proModelVersion }
+        : {}),
       experimentalBiggerContext: manual ? false : config.experimentalBiggerContext,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,

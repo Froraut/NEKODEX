@@ -255,6 +255,12 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     && typeof config.experimentalBiggerContext !== "boolean") {
     throw new Error("Runtime configuration has an invalid experimentalBiggerContext");
   }
+  if (config.proModelVersion !== undefined
+    && config.proModelVersion !== "5.6"
+    && config.proModelVersion !== "5.5"
+    && config.proModelVersion !== "6") {
+    throw new Error("Runtime configuration has an invalid proModelVersion");
+  }
   if (config.stallTimeoutSec !== undefined
     && (!Number.isFinite(config.stallTimeoutSec) || config.stallTimeoutSec <= 0)) {
     throw new Error("Runtime configuration has an invalid stallTimeoutSec");
@@ -296,7 +302,7 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     if (config.manualTunnel !== undefined) validateTunnel(config.manualTunnel, "manualTunnel");
     if (config.automaticTunnel && config.manualTunnel
       && config.automaticTunnel.tunnelId === config.manualTunnel.tunnelId) {
-      throw new Error("Automatic and Zero Risk tunnel IDs must differ");
+      throw new Error("Automatic and Manual mode tunnel IDs must differ");
     }
     const activeTunnel = config.browserInteractionMode === "manual"
       ? config.manualTunnel

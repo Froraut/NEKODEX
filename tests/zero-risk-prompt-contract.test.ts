@@ -26,7 +26,7 @@ function request(compaction = false): CodexParsedRequest {
   };
 }
 
-test("Zero Risk prompt carries only a neutral request id while MCP metadata owns its lifecycle", () => {
+test("Manual mode prompt carries only a neutral request id while MCP metadata owns its lifecycle", () => {
   const compiled = compileChatGptWebPrompt(request(), capabilities, requestId, {
     manualControl: true,
   });
@@ -43,7 +43,7 @@ test("Zero Risk prompt carries only a neutral request id while MCP metadata owns
   expect(compiled.text).not.toContain("ChatGPT Web Medium with no Codex Native bridge");
 });
 
-test("Zero Risk compaction prompt stays task-focused while MCP metadata owns completion", () => {
+test("Manual mode compaction prompt stays task-focused while MCP metadata owns completion", () => {
   const compiled = compileChatGptWebPrompt(request(true), capabilities, requestId, {
     manualControl: true,
   });
@@ -54,7 +54,7 @@ test("Zero Risk compaction prompt stays task-focused while MCP metadata owns com
   expect(compiled.text).not.toContain("codex_turn_complete");
 });
 
-test("Zero Risk prompt fails closed without Full harness or an exact manual binding", () => {
+test("Manual mode prompt fails closed without Full harness or an exact manual binding", () => {
   expect(() => compileChatGptWebPrompt(request(), { ...capabilities, localToolsEnabled: false }, requestId, {
     manualControl: true,
   })).toThrow("requires the Full Codex harness");
@@ -67,7 +67,7 @@ test("Zero Risk prompt fails closed without Full harness or an exact manual bind
   })).toThrow("does not support rolling or multipart browser transport");
 });
 
-test("active Zero Risk compaction returns its checkpoint through the bound completion control", () => {
+test("active Manual mode compaction returns its checkpoint through the bound completion control", () => {
   const automatic = activeCompactionToolResultInstruction();
   const safe = zeroRiskActiveCompactionToolResultInstruction(true);
 

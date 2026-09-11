@@ -68,7 +68,7 @@ export function resolveBiggerContextMultipartParts(
   capabilities: ChatGptWebCapabilities,
 ): ChatGptWebMultipartPartCount | undefined {
   if (isChatGptWebZeroRiskBackendModel(parsed.modelId)) {
-    throw new Error("Bigger Context is unavailable for ChatGPT Zero Risk");
+    throw new Error("Bigger Context is unavailable for ChatGPT Manual mode");
   }
   if (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error("Bigger Context is unavailable for Luna because its accumulated browser transcript still shares one 28,000-token transport budget");

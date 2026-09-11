@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "repository": "Froraut/codex-chatgpt-web",
+  "threshold": 1,
+  "keys": [
+    {
+      "keyId": "2175d07bb3fdb619aba59b9739d346ca4354a4fa6b81b1f76edaaa3256c4f048",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEACJiU70zrWLssiLbR+hPV9OB6/nbQi14qegzMYI5QUIE=\n-----END PUBLIC KEY-----\n",
+      "notBefore": "2026-09-11T19:04:10.618Z",
+      "notAfter": "2031-09-11T19:09:10.618Z"
+    }
+  ]
+}

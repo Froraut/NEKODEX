@@ -1,16 +1,15 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
-import { timingSafeEqual } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { stdin, stdout } from "node:process";
 import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } from "./browser-login";
+import { createPasskeyLoginControl } from "./passkey-login-control";
 import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
-  readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
 import {
   activateCodexIntegration,
@@ -30,6 +29,8 @@ import { installRuntimeKeyBytes, managedRuntimeKeyPath, stopTunnel, tunnelStatus
 import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
 import { runDevCommand } from "./dev-chat/cli";
+import { authorizeLauncherControl, runProModelVersionConfigCommand } from "./pro-model-config";
+import { readCodexRouteDiagnostics } from "./route-diagnostics";
 
 const HELP = `codex-chatgpt-web ${VERSION}
 
@@ -40,8 +41,9 @@ Usage:
   codex-chatgpt-web setup --full --tunnel-id ID --runtime-key-file PATH [options]
   codex-chatgpt-web login
   codex-chatgpt-web doctor [--json]
-  codex-chatgpt-web route <status|connect|disconnect>
+  codex-chatgpt-web route <status|connect|disconnect|diagnostics> [--profile NAME]
   codex-chatgpt-web subagents <status|compatibility-v1|native>
+  codex-chatgpt-web config pro-model-version <follow|5.6|5.5|6> --launcher-control
   codex-chatgpt-web browser check
   codex-chatgpt-web dev launcher
   codex-chatgpt-web dev status [--json]
@@ -62,8 +64,8 @@ Setup options:
                                Send prompts and read ChatGPT state through browser automation (default)
   --zero-risk-browser-interaction
                                Full mode: select, paste, and send in the launcher yourself
-  --zero-risk-pro              Zero Risk: also install the explicit Pro-sized model row
-  --zero-risk-default          Zero Risk: install only the default model row
+  --zero-risk-pro              Manual mode: also install the explicit Pro-sized model row
+  --zero-risk-default          Manual mode: install only the default model row
   --port NUMBER                Loopback Responses port (default: 17841)
   --chrome PATH                Google Chrome/Chromium executable used for account login
   --browser-host-descriptor PATH
@@ -137,90 +139,6 @@ function assertNoArgs(args: string[]): void {
   if (args.length > 0) throw new Error(`Unknown arguments: ${args.join(" ")}`);
 }
 
-function authorizeLauncherControl(operation: string): void {
-  const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
-  const supplied = process.env.CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN?.trim();
-  delete process.env.CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN;
-  if (!descriptorPath || !supplied) {
-    throw new Error(`Launcher-controlled ${operation} requires a live launcher authorization`);
-  }
-  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-  const expectedBytes = Buffer.from(descriptor.control.token);
-  const suppliedBytes = Buffer.from(supplied);
-  if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {
-    throw new Error(`Launcher-controlled ${operation} authorization is invalid`);
-  }
-}
-
-function launcherLoginContinuation(): { promise: Promise<void>; close: () => void } {
-  const maxBytes = 1_024;
-  let buffered = "";
-  let bytes = 0;
-  let settled = false;
-  let resolveContinuation!: () => void;
-  let rejectContinuation!: (error: Error) => void;
-  const promise = new Promise<void>((resolve, reject) => {
-    resolveContinuation = resolve;
-    rejectContinuation = reject;
-  });
-  const cleanup = () => {
-    stdin.off("data", onData);
-    stdin.off("end", onEnd);
-    stdin.pause();
-  };
-  const fail = (message: string) => {
-    if (settled) return;
-    settled = true;
-    cleanup();
-    rejectContinuation(new Error(message));
-  };
-  const onData = (chunk: Buffer | string) => {
-    if (settled) return;
-    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    bytes += data.length;
-    if (bytes > maxBytes) {
-      fail("Launcher passkey control message is too large");
-      return;
-    }
-    buffered += data.toString("utf8");
-    const newline = buffered.indexOf("\n");
-    if (newline < 0) return;
-    const line = buffered.slice(0, newline);
-    if (buffered.slice(newline + 1).trim()) {
-      fail("Launcher passkey control sent unexpected trailing data");
-      return;
-    }
-    let message: unknown;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      fail("Launcher passkey control sent invalid JSON");
-      return;
-    }
-    if (!message || typeof message !== "object"
-      || (message as { version?: unknown }).version !== 1
-      || (message as { type?: unknown }).type !== "passkey-login-continue") {
-      fail("Launcher passkey control sent an invalid continuation message");
-      return;
-    }
-    settled = true;
-    cleanup();
-    resolveContinuation();
-  };
-  const onEnd = () => fail("Launcher closed the passkey control channel before Continue");
-  stdin.on("data", onData);
-  stdin.once("end", onEnd);
-  stdin.resume();
-  return {
-    promise,
-    close: () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-    },
-  };
-}
-
 async function loginCommand(args: string[]): Promise<void> {
   const launcherControl = takeFlag(args, "--launcher-control");
   if (!launcherControl) {
@@ -245,15 +163,15 @@ async function loginCommand(args: string[]): Promise<void> {
   if (!storageStatePath || !isAbsolute(storageStatePath)) {
     throw new Error("Launcher passkey sign-in requires --storage-state with an absolute path");
   }
-  const continuation = launcherLoginContinuation();
+  const control = createPasskeyLoginControl();
   try {
     await captureSystemBrowserLoginToFile({
       ...defaultConfig(),
       chromeExecutablePath,
       storageStatePath,
-    }, { continuation: continuation.promise });
+    }, { continuation: control.continuation, signal: control.signal, onBrowserReady: control.onBrowserReady });
   } finally {
-    continuation.close();
+    control.close();
   }
   stdout.write("Passkey session captured for Launcher verification.\n");
 }
@@ -306,7 +224,7 @@ async function setupCommand(args: string[]): Promise<void> {
   const zeroRiskPro = takeFlag(args, "--zero-risk-pro");
   const zeroRiskDefault = takeFlag(args, "--zero-risk-default");
   if (zeroRiskPro && zeroRiskDefault) {
-    throw new Error("Choose at most one Zero Risk model profile: --zero-risk-pro or --zero-risk-default");
+    throw new Error("Choose at most one Manual model profile: --zero-risk-pro or --zero-risk-default");
   }
   if (zeroRiskPro || zeroRiskDefault) options.zeroRiskProEnabled = zeroRiskPro;
   options.replaceCodexRoute = takeFlag(args, "--replace-codex-route");
@@ -367,6 +285,12 @@ async function doctorCommand(args: string[]): Promise<void> {
 
 async function routeCommand(args: string[]): Promise<void> {
   const action = args.shift() ?? "status";
+  if (action === "diagnostics") {
+    const profile = takeOption(args, "--profile");
+    assertNoArgs(args);
+    stdout.write(`${JSON.stringify(readCodexRouteDiagnostics({ profile }), null, 2)}\n`);
+    return;
+  }
   assertNoArgs(args);
   const result = action === "status"
     ? (() => {
@@ -515,7 +439,9 @@ async function uninstallCommand(args: string[]): Promise<void> {
   if (!yes && !await confirm("Restore Codex config, stop services, and remove this installation?")) {
     throw new Error("Uninstall cancelled");
   }
-  const config = existsSync(getConfigPath()) ? loadConfig() : undefined;
+  // Teardown must remain possible before a cached connector identity is migrated. This loader
+  // validates the existing ownership/tunnel fields and migrates only the in-memory target name.
+  const config = existsSync(getConfigPath()) ? loadConfigForSetup() : undefined;
   if (config?.browserHost === "launcher" && !launcherControl) {
     throw new Error(
       "Launcher-owned integration must be removed from Codex Web GPT Settings so the active runtime can be drained safely.",
@@ -558,6 +484,7 @@ async function main(): Promise<void> {
   else if (command === "doctor" || command === "status") await doctorCommand(args);
   else if (command === "route") await routeCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
+  else if (command === "config") await runProModelVersionConfigCommand(args);
   else if (command === "browser") {
     const action = args.shift();
     assertNoArgs(args);
@@ -566,7 +493,7 @@ async function main(): Promise<void> {
     if (config.browserHost === "launcher") {
       if (config.browserInteractionMode === "manual") {
         await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!);
-        stdout.write("The launcher browser is reachable; ChatGPT DOM inspection is intentionally disabled in Zero Risk.\n");
+        stdout.write("The launcher browser is reachable; ChatGPT DOM inspection is intentionally disabled in Manual mode.\n");
       } else {
         await inspectLauncherBrowserHost(config.browserHostDescriptorPath!);
         stdout.write("Playwright can reach the authenticated ChatGPT surface embedded in the launcher.\n");
@@ -578,7 +505,9 @@ async function main(): Promise<void> {
   } else if (command === "serve") {
     assertNoArgs(args);
     const config = loadConfig();
-    const server = startServer(config);
+    const server = startServer(config, {
+      readProModelVersion: () => loadConfig().proModelVersion,
+    });
     stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
     await new Promise<void>(() => {});
   } else if (command === "dev") await runDevCommand(args);

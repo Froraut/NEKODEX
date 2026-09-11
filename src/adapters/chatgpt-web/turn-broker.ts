@@ -202,7 +202,7 @@ function ownerEnvironment(value: unknown): ChatGptTurnEnvironment {
 
 function assertSurfaceNonce(value: unknown): asserts value is string {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{20,256}$/.test(value)) {
-    throw new Error("Zero Risk local browser binding is invalid");
+    throw new Error("Manual mode local browser binding is invalid");
   }
 }
 
@@ -324,7 +324,7 @@ export class TurnBroker implements TurnBrokerOwner {
     assertSurfaceNonce(surfaceNonce);
     const token = await this.register(environment, ttlMs, traceId, externalOwner, "request");
     const channel = this.channels.get(token);
-    if (!channel) throw new Error("Zero Risk turn registration was revoked before initialization");
+    if (!channel) throw new Error("Manual mode turn registration was revoked before initialization");
     channel.safe = {
       state: "awaiting_start",
       surfaceNonce,
@@ -364,8 +364,8 @@ export class TurnBroker implements TurnBrokerOwner {
     if (environmentIdentity(channel.environment) !== environmentIdentity(environment)) {
       throw new Error("Codex turn environment changed during an active ChatGPT tool loop");
     }
-    if (channel.safe?.state === "revoked") throw new Error("Zero Risk turn is already terminal");
-    // A no-tool Zero Risk answer can complete before its outer Responses observer reaches this owner
+    if (channel.safe?.state === "revoked") throw new Error("Manual mode turn is already terminal");
+    // A no-tool Manual mode answer can complete before its outer Responses observer reaches this owner
     // readback. The environment is already proven identical, so completion makes this a no-op.
     if (channel.safe?.state === "completed") return;
     channel.environment = {
@@ -389,7 +389,7 @@ export class TurnBroker implements TurnBrokerOwner {
       if (!channel) throw new Error("turn token is invalid or expired");
     }
     // This owner-only empty batch tells the adapter to consume the already accepted completion.
-    // Public Zero Risk MCP calls remain fail-closed after the turn reaches its terminal state.
+    // Public Manual mode MCP calls remain fail-closed after the turn reaches its terminal state.
     if (channel.safe?.state === "completed") return [];
     this.assertSafeHarnessRunning(channel);
     if (channel.compactionRequested) {
@@ -507,11 +507,11 @@ export class TurnBroker implements TurnBrokerOwner {
   startSafeTurn(requestId: string): { started: true; duplicate: boolean } {
     this.prune();
     const channel = this.channels.get(requestId);
-    if (!channel) throw new Error("Zero Risk request_id is invalid, expired, or revoked");
+    if (!channel) throw new Error("Manual mode request_id is invalid, expired, or revoked");
     const safe = channel.safe;
-    if (!safe) throw new Error("request_id is not registered for Zero Risk browser interaction");
+    if (!safe) throw new Error("request_id is not registered for Manual mode browser interaction");
     if (safe.state === "completed" || safe.state === "revoked") {
-      throw new Error("Zero Risk turn is already terminal");
+      throw new Error("Manual mode turn is already terminal");
     }
     if (safe.connectorStarted) return { started: true, duplicate: true };
     safe.connectorStarted = true;
@@ -523,12 +523,12 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     assertSurfaceNonce(surfaceNonce);
     const channel = this.channels.get(requestId);
-    if (!channel) throw new Error("Zero Risk request_id is invalid, expired, or revoked");
+    if (!channel) throw new Error("Manual mode request_id is invalid, expired, or revoked");
     const safe = channel.safe;
-    if (!safe) throw new Error("request_id is not registered for Zero Risk browser interaction");
+    if (!safe) throw new Error("request_id is not registered for Manual mode browser interaction");
     this.assertSafeNonce(safe, surfaceNonce);
     if (safe.state === "completed" || safe.state === "revoked") {
-      throw new Error("Zero Risk turn is already terminal");
+      throw new Error("Manual mode turn is already terminal");
     }
     if (safe.launcherSent) return { confirmed: true, duplicate: true };
     safe.launcherSent = true;
@@ -543,25 +543,25 @@ export class TurnBroker implements TurnBrokerOwner {
   ): { completed: true; duplicate: boolean } {
     this.prune();
     if (typeof finalAnswer !== "string" || finalAnswer.trim().length === 0) {
-      throw new Error("Zero Risk turn final_answer must not be empty");
+      throw new Error("Manual mode turn final_answer must not be empty");
     }
     const channel = this.channels.get(requestId);
-    if (!channel) throw new Error("Zero Risk request_id is invalid, expired, or revoked");
+    if (!channel) throw new Error("Manual mode request_id is invalid, expired, or revoked");
     const safe = channel.safe;
-    if (!safe) throw new Error("request_id is not registered for Zero Risk browser interaction");
+    if (!safe) throw new Error("request_id is not registered for Manual mode browser interaction");
     if (safe.state === "completed") {
       if (safe.finalAnswer !== finalAnswer) {
-        throw new Error("Zero Risk turn completion conflicts with the accepted final_answer");
+        throw new Error("Manual mode turn completion conflicts with the accepted final_answer");
       }
       return { completed: true, duplicate: true };
     }
-    if (safe.state === "revoked") throw new Error("Zero Risk turn is already terminal");
-    if (safe.state !== "running") throw new Error("Zero Risk turn has not started");
+    if (safe.state === "revoked") throw new Error("Manual mode turn is already terminal");
+    if (safe.state !== "running") throw new Error("Manual mode turn has not started");
     if (channel.invocations.size > 0) {
-      throw new Error(`Zero Risk turn cannot complete with ${channel.invocations.size} pending Codex tool invocation(s)`);
+      throw new Error(`Manual mode turn cannot complete with ${channel.invocations.size} pending Codex tool invocation(s)`);
     }
     if (channel.activities.size > 0) {
-      throw new Error(`Zero Risk turn cannot complete with ${channel.activities.size} active Codex MCP request(s)`);
+      throw new Error(`Manual mode turn cannot complete with ${channel.activities.size} active Codex MCP request(s)`);
     }
     safe.state = "completed";
     safe.finalAnswer = finalAnswer;
@@ -572,34 +572,34 @@ export class TurnBroker implements TurnBrokerOwner {
   waitForSafeStart(requestId: string, signal?: AbortSignal): Promise<void> {
     this.prune();
     const channel = this.channels.get(requestId);
-    if (!channel) return Promise.reject(new Error("Zero Risk request_id is invalid, expired, or revoked"));
+    if (!channel) return Promise.reject(new Error("Manual mode request_id is invalid, expired, or revoked"));
     const safe = channel.safe;
-    if (!safe) return Promise.reject(new Error("request_id is not registered for Zero Risk browser interaction"));
+    if (!safe) return Promise.reject(new Error("request_id is not registered for Manual mode browser interaction"));
     if (safe.state === "running" || safe.state === "completed") return Promise.resolve();
-    if (safe.state === "revoked") return Promise.reject(new Error("Zero Risk turn was revoked"));
-    return this.waitForSafeState(safe.startWaiters, signal, "Zero Risk turn start wait aborted");
+    if (safe.state === "revoked") return Promise.reject(new Error("Manual mode turn was revoked"));
+    return this.waitForSafeState(safe.startWaiters, signal, "Manual mode turn start wait aborted");
   }
 
   private waitForSafeSent(requestId: string, signal?: AbortSignal): Promise<void> {
     this.prune();
     const channel = this.channels.get(requestId);
-    if (!channel) return Promise.reject(new Error("Zero Risk request_id is invalid, expired, or revoked"));
+    if (!channel) return Promise.reject(new Error("Manual mode request_id is invalid, expired, or revoked"));
     const safe = channel.safe;
-    if (!safe) return Promise.reject(new Error("request_id is not registered for Zero Risk browser interaction"));
+    if (!safe) return Promise.reject(new Error("request_id is not registered for Manual mode browser interaction"));
     if (safe.launcherSent) return Promise.resolve();
-    if (safe.state === "revoked") return Promise.reject(new Error("Zero Risk turn was revoked"));
-    return this.waitForSafeState(safe.sentWaiters, signal, "Zero Risk turn Sent wait aborted");
+    if (safe.state === "revoked") return Promise.reject(new Error("Manual mode turn was revoked"));
+    return this.waitForSafeState(safe.sentWaiters, signal, "Manual mode turn Sent wait aborted");
   }
 
   waitForSafeCompletion(requestId: string, signal?: AbortSignal): Promise<string> {
     this.prune();
     const channel = this.channels.get(requestId);
-    if (!channel) return Promise.reject(new Error("Zero Risk request_id is invalid, expired, or revoked"));
+    if (!channel) return Promise.reject(new Error("Manual mode request_id is invalid, expired, or revoked"));
     const safe = channel.safe;
-    if (!safe) return Promise.reject(new Error("request_id is not registered for Zero Risk browser interaction"));
+    if (!safe) return Promise.reject(new Error("request_id is not registered for Manual mode browser interaction"));
     if (safe.state === "completed" && safe.finalAnswer !== undefined) return Promise.resolve(safe.finalAnswer);
-    if (safe.state === "revoked") return Promise.reject(new Error("Zero Risk turn was revoked"));
-    return this.waitForSafeState(safe.completionWaiters, signal, "Zero Risk turn completion wait aborted");
+    if (safe.state === "revoked") return Promise.reject(new Error("Manual mode turn was revoked"));
+    return this.waitForSafeState(safe.completionWaiters, signal, "Manual mode turn completion wait aborted");
   }
 
   revoke(token: string, reason = new Error("Codex turn binding was revoked")): void {
@@ -658,14 +658,14 @@ export class TurnBroker implements TurnBrokerOwner {
   }
 
   private assertSafeNonce(safe: SafeTurnControl, surfaceNonce: string): void {
-    if (safe.surfaceNonce !== surfaceNonce) throw new Error("Zero Risk local browser binding does not match this turn");
+    if (safe.surfaceNonce !== surfaceNonce) throw new Error("Manual mode local browser binding does not match this turn");
   }
 
   private activateSafeTurn(channel: TurnChannel, safe: SafeTurnControl): void {
     if (safe.state !== "awaiting_start" || !safe.launcherSent || !safe.connectorStarted) return;
     safe.state = "running";
     // The setup window may be bounded, but a turn authorized by the user and bound by the
-    // Zero Risk connector remains live until completion, cancellation, or runtime shutdown.
+    // Manual mode connector remains live until completion, cancellation, or runtime shutdown.
     delete channel.environment.expiresAt;
     this.resolveSafeWaiters(safe.startWaiters, undefined);
   }
@@ -674,12 +674,12 @@ export class TurnBroker implements TurnBrokerOwner {
     const safe = channel.safe;
     if (!safe) return;
     if (safe.state === "awaiting_start") {
-      if (!safe.launcherSent) throw new Error("Zero Risk turn is waiting for the user's Sent confirmation");
-      throw new Error("Zero Risk request is not connected yet. Call codex_turn_start with its request_id first");
+      if (!safe.launcherSent) throw new Error("Manual mode turn is waiting for the user's Sent confirmation");
+      throw new Error("Manual mode request is not connected yet. Call codex_turn_start with its request_id first");
     }
-    if (safe.state !== "running") throw new Error("Zero Risk turn is already terminal");
+    if (safe.state !== "running") throw new Error("Manual mode turn is already terminal");
     if (channel.compactionRequested && !allowCompaction) {
-      throw new Error("Zero Risk turn is awaiting completion for Codex context compaction");
+      throw new Error("Manual mode turn is awaiting completion for Codex context compaction");
     }
   }
 
@@ -885,12 +885,12 @@ export class TurnBroker implements TurnBrokerOwner {
   private async dispatch(request: BrokerRequest, socketSignal?: AbortSignal): Promise<unknown> {
     this.prune();
     if (request.method === "safe_start") {
-      if (!request.token) throw new Error("Zero Risk request_id is required");
+      if (!request.token) throw new Error("Manual mode request_id is required");
       return this.startSafeTurn(request.token);
     }
     if (request.method === "safe_complete") {
-      if (!request.token) throw new Error("Zero Risk request_id is required");
-      if (typeof request.finalAnswer !== "string") throw new Error("Zero Risk turn final_answer is required");
+      if (!request.token) throw new Error("Manual mode request_id is required");
+      if (typeof request.finalAnswer !== "string") throw new Error("Manual mode turn final_answer is required");
       let channel = this.channels.get(request.token);
       if (channel?.safe?.state === "awaiting_start" && !channel.safe.launcherSent) {
         await this.waitForSafeSent(request.token, socketSignal);
@@ -1018,7 +1018,7 @@ export class TurnBroker implements TurnBrokerOwner {
           : `${contract === "safe" ? "request id" : "turn token"} is invalid, expired, or revoked`);
       }
       if (activeChannel.safe) {
-        if (contract !== "safe") throw new Error("Zero Risk request id requires the Zero Risk MCP contract");
+        if (contract !== "safe") throw new Error("Manual mode request id requires the Manual mode MCP contract");
         if (activeChannel.safe.state === "awaiting_start" && !activeChannel.safe.launcherSent) {
           // ChatGPT can issue its first Harness call in the brief interval between the user sending
           // the copied prompt and confirming Sent in the Launcher. Hold that call behind the local
@@ -1032,7 +1032,7 @@ export class TurnBroker implements TurnBrokerOwner {
         }
         this.assertSafeHarnessRunning(activeChannel);
       } else if (contract === "safe") {
-        throw new Error("Zero Risk MCP contract requires a Zero Risk request id");
+        throw new Error("Manual mode MCP contract requires a Manual mode request id");
       }
       if (typeof request.activityId !== "string" || !/^activity_[A-Za-z0-9_-]{16,128}$/.test(request.activityId)) {
         throw new Error("turn activity id is invalid");
@@ -1343,7 +1343,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       ...(traceId !== "unknown" ? { traceId } : {}),
     });
     if (typeof response.token !== "string" || !response.token.startsWith("request_")) {
-      throw new Error("DEV Zero Risk turn owner received an invalid broker request id");
+      throw new Error("DEV Manual mode turn owner received an invalid broker request id");
     }
     return response.token;
   }
@@ -1362,7 +1362,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       surfaceNonce,
     });
     if (response.confirmed !== true || typeof response.duplicate !== "boolean") {
-      throw new Error("DEV Zero Risk turn owner received an invalid Sent confirmation result");
+      throw new Error("DEV Manual mode turn owner received an invalid Sent confirmation result");
     }
     return { confirmed: true, duplicate: response.duplicate };
   }
@@ -1402,7 +1402,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       null,
       signal,
     );
-    if (response.started !== true) throw new Error("DEV Zero Risk turn owner received an invalid start result");
+    if (response.started !== true) throw new Error("DEV Manual mode turn owner received an invalid start result");
   }
 
   async waitForSafeCompletion(token: string, signal?: AbortSignal): Promise<string> {
@@ -1413,7 +1413,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       signal,
     );
     if (typeof response.finalAnswer !== "string" || response.finalAnswer.trim().length === 0) {
-      throw new Error("DEV Zero Risk turn owner received an invalid completion result");
+      throw new Error("DEV Manual mode turn owner received an invalid completion result");
     }
     return response.finalAnswer;
   }
@@ -1425,7 +1425,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       toolResult: queuedResult,
     }, null);
     if (!Number.isSafeInteger(response.interrupted) || Number(response.interrupted) < 0) {
-      throw new Error("DEV Zero Risk turn owner received an invalid compaction interrupt count");
+      throw new Error("DEV Manual mode turn owner received an invalid compaction interrupt count");
     }
     return Number(response.interrupted);
   }
@@ -1436,7 +1436,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       token,
     });
     if (!Number.isSafeInteger(response.count) || Number(response.count) < 0) {
-      throw new Error("DEV Zero Risk turn owner received an invalid compaction delivery count");
+      throw new Error("DEV Manual mode turn owner received an invalid compaction delivery count");
     }
     return Number(response.count);
   }

@@ -6,6 +6,9 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { Transform } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
+const { validateStagedApplication } = require("./update-validation.cjs");
+const { verifyReleaseMetadata } = require("./release-trust.cjs");
+const BUILD = require("../package.json");
 
 // Update origin belongs to this packaged build, never to an ambient environment
 // variable. A fork must not silently replace itself with an upstream release.
@@ -23,7 +26,29 @@ function validateRepository(value) {
 }
 
 function releaseApiUrl(repository = REPOSITORY) {
-  return `https://api.github.com/repos/${validateRepository(repository)}/releases/latest`;
+  // Fork versions use an explicit prerelease suffix. GitHub's /latest silently
+  // excludes them, so resolve the newest compatible channel from published releases.
+  return `https://api.github.com/repos/${validateRepository(repository)}/releases?per_page=20`;
+}
+
+function selectRelease(releases, currentVersion, { platform, arch } = {}) {
+  const current = parseVersion(currentVersion);
+  const channel = current?.prerelease?.split(".")[0];
+  return (Array.isArray(releases) ? releases : releases ? [releases] : [])
+    .filter(release => {
+      if (release?.draft) return false;
+      const version = parseVersion(String(release?.tag_name || "").replace(/^v/, ""));
+      if (!version) return false;
+      if (platform && Array.isArray(release.assets)) {
+        const assetName = releaseAssetName(releaseVersion(release.tag_name), platform, arch);
+        // A platform-scoped release can intentionally omit other platforms. Once
+        // this archive is present, keep the candidate: missing/bad trust metadata,
+        // URLs, sizes or signatures must fail closed instead of falling back.
+        if (assetName && !release.assets.some(asset => asset?.name === assetName)) return false;
+      }
+      return !version.prerelease || (channel && version.prerelease.split(".")[0] === channel);
+    })
+    .sort((a, b) => compareVersions(releaseVersion(b.tag_name), releaseVersion(a.tag_name)))[0];
 }
 
 function parseVersion(value) {
@@ -61,7 +86,7 @@ function releaseAssetName(version, platform = process.platform, arch = process.a
     return `codex-web-gpt-${version}-mac-${arch}.zip`;
   }
   if (platform === "win32" && arch === "x64") {
-    return `codex-web-gpt-${version}-win-x64.exe`;
+    return `codex-web-gpt-${version}-win-x64.zip`;
   }
   if (platform === "linux" && arch === "x64") {
     return `codex-web-gpt-${version}-linux-x64.AppImage`;
@@ -228,27 +253,27 @@ function findMacApplication(root) {
   return application;
 }
 
-function buildJob({ version, platform, executablePath, assetPath, stagingRoot, tempRoot, logPath }) {
+function buildJob({ version, platform, arch = process.arch, executablePath, assetPath, stagingRoot, tempRoot, logPath,
+  runtimeExecutable, repository = REPOSITORY }) {
+  const common = { version, platform, arch, parentPid: process.pid, tempRoot, logPath, runtimeExecutable,
+    identity: BUILD.build.appId, productName: BUILD.build.productName, packageName: BUILD.name, repository };
   if (platform === "darwin") {
+    const target = macApplicationPath(executablePath);
     return {
-      version,
-      platform,
-      parentPid: process.pid,
-      tempRoot,
-      logPath,
+      ...common,
       source: findMacApplication(stagingRoot),
-      target: macApplicationPath(executablePath),
+      stagedApplication: findMacApplication(stagingRoot),
+      target,
+      transactionRoot: `${target}.update-recovery`,
     };
   }
   if (platform === "win32") {
     return {
-      version,
-      platform,
-      parentPid: process.pid,
-      tempRoot,
-      logPath,
+      ...common,
       source: assetPath,
-      target: executablePath,
+      stagedApplication: stagingRoot,
+      target: path.dirname(executablePath),
+      transactionRoot: `${path.dirname(executablePath)}.update-recovery`,
     };
   }
   if (platform === "linux") {
@@ -262,14 +287,12 @@ function buildJob({ version, platform, executablePath, assetPath, stagingRoot, t
       throw new Error("Linux auto-update requires the stable install-launcher.sh wrapper; reinstall once");
     }
     return {
-      version,
-      platform,
-      parentPid: process.pid,
-      tempRoot,
-      logPath,
+      ...common,
       source: assetPath,
+      stagedApplication: path.join(stagingRoot, "squashfs-root"),
       target,
       wrapper,
+      transactionRoot: `${wrapper}.update-recovery`,
       runnerSource: path.join(tempRoot, "linux-appimage-runner.sh"),
     };
   }
@@ -282,6 +305,8 @@ function defaultDependencies() {
     downloadText,
     downloadFile,
     sha256,
+    verifyReleaseMetadata,
+    validateStagedApplication,
     extractMac(archive, destination) {
       fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
       const result = spawnSync("/usr/bin/ditto", ["-x", "-k", archive, destination], {
@@ -290,6 +315,24 @@ function defaultDependencies() {
       });
       if (result.error) throw result.error;
       if (result.status !== 0) throw new Error(`Could not extract the macOS update: ${result.stderr.trim()}`);
+    },
+    extractWindows(archive, destination) {
+      fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
+      const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+        "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:CODEX_UPDATE_ARCHIVE -DestinationPath $env:CODEX_UPDATE_STAGE"], {
+        env: { ...process.env, CODEX_UPDATE_ARCHIVE: archive, CODEX_UPDATE_STAGE: destination },
+        encoding: "utf8", timeout: 180_000, windowsHide: true,
+      });
+      if (result.error) throw result.error;
+      if (result.status !== 0) throw new Error(`Could not extract the Windows update: ${result.stderr.trim()}`);
+    },
+    extractLinux(archive, destination) {
+      fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
+      // Execute only after independently authenticated release metadata and hash verification.
+      const result = spawnSync(archive, ["--appimage-extract"], { cwd: destination, encoding: "utf8", timeout: 180_000,
+        maxBuffer: 1024 * 1024, stdio: ["ignore", "ignore", "pipe"] });
+      if (result.error) throw result.error;
+      if (result.status !== 0) throw new Error(`Could not extract the Linux update: ${result.stderr?.trim()}`);
     },
     linuxRunnerSource() {
       if (typeof process.resourcesPath === "string" && process.resourcesPath) {
@@ -305,12 +348,14 @@ function defaultDependencies() {
       if (fs.statSync(source, { throwIfNoEntry: false })?.isFile()) return source;
       throw new Error("Packaged Linux AppImage runner is missing");
     },
-    spawnWorker(runtimeExecutable, workerPath, jobPath) {
-      return spawn(runtimeExecutable, [workerPath, jobPath], {
+    async spawnWorker(runtimeExecutable, workerPath, jobPath) {
+      const child = spawn(runtimeExecutable, [workerPath, jobPath], {
         detached: true,
         stdio: "ignore",
         windowsHide: true,
       });
+      await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+      return child;
     },
   };
 }
@@ -349,7 +394,7 @@ function createUpdateController({
     try {
       let release;
       try {
-        release = await deps.fetchRelease(apiUrl);
+        release = selectRelease(await deps.fetchRelease(apiUrl), currentVersion, { platform, arch });
       } catch (error) {
         // A new public fork has no latest release until its first stable build.
         // Never fall back to a different repository in that case.
@@ -369,8 +414,9 @@ function createUpdateController({
       const assets = Array.isArray(release?.assets) ? release.assets : [];
       const asset = assets.find((item) => item?.name === assetName);
       const checksums = assets.find((item) => item?.name === "checksums.txt");
-      if (!asset?.browser_download_url || !checksums?.browser_download_url) {
-        throw new Error(`Release v${version} is missing ${assetName} or checksums.txt`);
+      const metadata = assets.find((item) => item?.name === "release-metadata.json");
+      if (!asset?.browser_download_url || !checksums?.browser_download_url || !metadata?.browser_download_url) {
+        throw new Error(`Release v${version} is missing ${assetName}, checksums.txt or signed release-metadata.json`);
       }
       if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_ASSET_BYTES) {
         throw new Error(`Release v${version} has an invalid or excessive download size`);
@@ -381,6 +427,7 @@ function createUpdateController({
         assetBytes: asset.size,
         assetUrl: validateReleaseAssetUrl(asset.browser_download_url, version, assetName, repository),
         checksumsUrl: validateReleaseAssetUrl(checksums.browser_download_url, version, "checksums.txt", repository),
+        metadataUrl: validateReleaseAssetUrl(metadata.browser_download_url, version, "release-metadata.json", repository),
       };
       logger?.info("launcher.update_available", { currentVersion, version, platform, arch });
       return transition({ status: "available", version });
@@ -399,8 +446,15 @@ function createUpdateController({
       transition({ status: "downloading", version: available.version });
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-update-"));
       try {
+        const metadataText = await deps.downloadText(available.metadataUrl, 512 * 1024);
+        const metadata = deps.verifyReleaseMetadata(metadataText, { repository, tag: `v${available.version}`, version: available.version });
+        const authenticatedAsset = metadata.assets.find(asset => asset.name === available.assetName);
+        if (!authenticatedAsset || authenticatedAsset.size !== available.assetBytes) {
+          throw new Error("Signed release metadata does not match the selected asset size");
+        }
         const checksums = await deps.downloadText(available.checksumsUrl);
         const expected = expectedChecksum(checksums, available.assetName);
+        if (expected !== authenticatedAsset.sha256) throw new Error("Checksums do not match independently authenticated release metadata");
         const assetPath = path.join(tempRoot, available.assetName);
         await deps.downloadFile(available.assetUrl, assetPath, { expectedBytes: available.assetBytes });
         const actual = deps.sha256(assetPath);
@@ -408,27 +462,35 @@ function createUpdateController({
 
         const stagingRoot = path.join(tempRoot, "stage");
         if (platform === "darwin") deps.extractMac(assetPath, stagingRoot);
+        if (platform === "win32") deps.extractWindows(assetPath, stagingRoot);
         if (platform === "linux") {
           fs.chmodSync(assetPath, 0o755);
+          deps.extractLinux(assetPath, stagingRoot);
           const runnerSource = deps.linuxRunnerSource();
           fs.copyFileSync(runnerSource, path.join(tempRoot, "linux-appimage-runner.sh"));
           fs.chmodSync(path.join(tempRoot, "linux-appimage-runner.sh"), 0o755);
         }
 
         const workerPath = path.join(tempRoot, "update-worker.cjs");
-        fs.copyFileSync(path.join(__dirname, "update-worker.cjs"), workerPath);
+        for (const filename of ["update-worker.cjs", "update-validation.cjs", "update-recovery.cjs", "update-launcher.cjs"]) {
+          fs.copyFileSync(path.join(__dirname, filename), path.join(tempRoot, filename));
+        }
         const job = buildJob({
           version: available.version,
           platform,
+          arch,
           executablePath,
           assetPath,
           stagingRoot,
           tempRoot,
+          runtimeExecutable,
+          repository,
           logPath: path.join(logsDirectory, "update-worker.log"),
         });
+        deps.validateStagedApplication(job.stagedApplication, job);
         const jobPath = path.join(tempRoot, "job.json");
         fs.writeFileSync(jobPath, `${JSON.stringify(job)}\n`, { mode: 0o600 });
-        const child = deps.spawnWorker(runtimeExecutable, workerPath, jobPath);
+        const child = await deps.spawnWorker(runtimeExecutable, workerPath, jobPath);
         if (!Number.isInteger(child?.pid) || child.pid <= 0) throw new Error("The update worker did not start");
         child.unref?.();
         logger?.info("launcher.update_worker_started", { pid: child.pid, version: available.version });
@@ -472,6 +534,7 @@ module.exports = {
   parseVersion,
   releaseAssetName,
   releaseApiUrl,
+  selectRelease,
   releaseVersion,
   validateReleaseAssetUrl,
   validateRepository,

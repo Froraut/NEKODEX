@@ -26,7 +26,7 @@ created. Repository contents, tool output, websites, and prompt text are untrust
 5. MCP can request only a callable tool advertised by the active outer Codex turn. The unrestricted
    raw orchestration `exec` gateway remains available in Full mode. Before caller-authored
    JavaScript runs, the bridge wraps its tool registry with a transparent proxy that enforces the
-   exact 10-second `wait_agent` polling contract and prevents recursive raw `exec`. The generic
+   exact 30-second `wait_agent` polling contract and prevents recursive raw `exec`. The generic
    inventory/call pair also provides a structured exact-name path. Codex remains responsible for
    its sandbox, approval, UI, command sessions, and tool result.
 6. Before a Codex tool batch is dispatched, the browser records and acknowledges the current answer
@@ -41,9 +41,12 @@ The bridge transports decisions; it does not add a second planner, semantic rout
 model. Every available effort uses the same MCP contract. An unavailable account route, missing
 connector, or missing outer tool fails explicitly instead of becoming an effort-specific exception.
 
-The direct turn-token MCP schema is attached only through the `Codex Native2` connector identity.
-The pre-v4 `Codex Native` connector is treated as legacy and is never selected as a fallback. This
-prevents a cached legacy schema from being mistaken for the current capability contract.
+The direct turn-token MCP schema is attached only through the `Codex Native3` connector identity.
+The older `Codex Native` and `Codex Native2` connectors are treated as legacy and are never selected
+as a fallback. Manual mode similarly requires `Codex Zero Risk2` instead of its retired connector.
+This prevents a cached legacy schema from being mistaken for the current capability contract.
+The dedicated `codex_read_thread` action invokes only the exact advertised structured task-reader
+tool. See [MCP task access migration](mcp-task-access-migration.md).
 
 ## Principal risks
 
@@ -107,6 +110,24 @@ The fork cancels and awaits a pending embedded login before this handoff, and ig
 authentication probes after the session generation changes. This prevents old login work from
 overwriting the imported session's state.
 
+### Remote browser permissions
+
+Every owned ChatGPT/authentication view uses explicit Electron permission-check and
+permission-request handlers in its private partition. Checks never create a persistent grant.
+Only clipboard read/write requests from a currently visible, owned main frame at the exact
+ChatGPT or supported sign-in origin can show an **Allow once / Deny** dialog. Each approval is
+bound to the requesting document; navigation, renderer loss, tab hiding, timeout and host teardown
+cancel it. Foreign frames, unowned views, background workers and missing frame evidence are denied.
+
+Camera, microphone, screen capture, geolocation, notifications, device APIs, third-party storage
+access, external-protocol launches and unknown permissions are denied. Broad File System Access
+grants are also denied: Electron 41 does not supply reliable main-frame evidence for that API.
+Use ordinary browser file selection and downloads for attachments; the policy does not replace
+their native pickers or grant access to Chromium-restricted paths. Native copy/paste and the
+launcher's explicit **Copy prompt** action remain available without a persistent web permission.
+This policy does not alter OS privacy controls, certificate validation, the renderer sandbox,
+context isolation or browser web security.
+
 ### Cross-turn data leakage
 
 Browser turns use at most five independent task-bound tabs in one private login partition. Every
@@ -130,7 +151,7 @@ assistant prose as a structured handoff.
 
 ## Non-goals
 
-The UI's inherited "Zero Risk" name describes manual browser interaction. It does not eliminate
+The UI's inherited "Manual mode" name describes manual browser interaction. It does not eliminate
 MCP tool-execution, account, local-session, platform, or upstream-policy risks.
 
 - Defending against a compromised local OS user or compromised Codex/Electron binary.

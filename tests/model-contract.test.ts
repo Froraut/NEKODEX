@@ -1,6 +1,33 @@
 import { expect, test } from "bun:test";
 import { CHATGPT_WEB_LUNA_MODEL_ID, CHATGPT_WEB_MODEL_ID, resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 
+test.each(["5.6", "5.5", "6"] as const)("Pro carries the explicitly requested model version %s without changing tool access", version => {
+  const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true, proModelVersion: version };
+  expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "max", capabilities)).toMatchObject({
+    modelVersion: version, effort: "max", uiEffortIndex: 4, localTools: true,
+  });
+  expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "high", capabilities)).not.toHaveProperty("modelVersion");
+});
+
+test("an invalid Pro version is rejected before any browser work", () => {
+  expect(() => resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "max", {
+    localToolsEnabled: true, solAvailable: true, proAvailable: true,
+    proModelVersion: "not-a-model",
+  } as never)).toThrow("Pro model version");
+});
+
+test("a saved Pro preference does not remove independently available Extra High", () => {
+  const capabilities = {
+    localToolsEnabled: true, solAvailable: true, extraHighAvailable: true,
+    proAvailable: false, proModelVersion: "6" as const,
+  };
+  expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "xhigh", capabilities)).toMatchObject({
+    effort: "xhigh", uiEffortIndex: 3, localTools: true,
+  });
+  expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "xhigh", capabilities)).not.toHaveProperty("modelVersion");
+  expect(() => resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "max", capabilities)).toThrow("Pro effort is not available");
+});
+
 test("the browser adapter maps fixed routed efforts to the visible ChatGPT modes", () => {
   const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
   expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "low", capabilities)).toMatchObject({

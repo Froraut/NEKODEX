@@ -36,8 +36,12 @@ for (const [path, needle] of expected) {
   if (!readFileSync(resolve(root, path), "utf8").includes(needle)) throw new Error(`${path} is not synchronized to ${packageVersion}`);
 }
 const releaseWorkflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
-if (releaseWorkflow.split(`bun-version: ${bunVersion}`).length - 1 !== 2) {
-  throw new Error(`release.yml must pin Bun ${bunVersion} in both jobs`);
+const bunSetupCount = [...releaseWorkflow.matchAll(/uses:\s*oven-sh\/setup-bun@/g)].length;
+const releaseBunPins = [...releaseWorkflow.matchAll(/^\s+bun-version:\s*(\S+)\s*$/gm)].map(match => match[1]);
+// The dependency-free publication job uses Node and must not install a runtime or dependencies
+// beside the signing key. Validate every actual Bun setup instead of assuming two Bun jobs.
+if (bunSetupCount < 1 || releaseBunPins.length !== bunSetupCount || releaseBunPins.some(version => version !== bunVersion)) {
+  throw new Error(`release.yml must pin Bun ${bunVersion} in every Bun setup step`);
 }
 const launcherVersion = (JSON.parse(readFileSync(resolve(root, "launcher/package.json"), "utf8")) as { version?: string }).version;
 if (launcherVersion !== packageVersion) throw new Error(`launcher/package.json is not synchronized to ${packageVersion}`);

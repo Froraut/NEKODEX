@@ -167,7 +167,7 @@ test("new DEV chats default to the cheapest account-supported browser model", ()
   })).toBe("chatgpt-web/zero-risk");
 });
 
-test("Zero Risk DEV chats open only the generic route", () => {
+test("Manual mode DEV chats open only the generic route", () => {
   const root = scratch("cgw-dev-safe-model");
   const config = {
     ...defaultConfig("full"),
@@ -183,7 +183,7 @@ test("Zero Risk DEV chats open only the generic route", () => {
   );
   expect(driver.open("safe").state.model).toBe("chatgpt-web/zero-risk");
   expect(() => driver.open("automatic", "chatgpt-web/high")).toThrow(
-    "not available while Zero Risk is enabled",
+    "not available while Manual mode is enabled",
   );
 });
 
@@ -211,7 +211,7 @@ test("an existing DEV chat changes route only when the user explicitly requests 
     root,
   );
   expect(() => manual.open("switchable")).toThrow(
-    "not available while Zero Risk is enabled",
+    "not available while Manual mode is enabled",
   );
   const migrated = manual.open("switchable", "chatgpt-web/zero-risk").state;
   expect(migrated).toMatchObject({

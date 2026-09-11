@@ -12,6 +12,8 @@ import { createPortal } from "react-dom";
 import { copyFor, localizeRuntimeMessage, localizeLauncherError, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import { browserControls } from "./browser-controls";
+import { RouteDiagnostics } from "./RouteDiagnostics";
+import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
 import type {
   BrowserInteractionMode,
   BrowserState,
@@ -21,6 +23,7 @@ import type {
   LauncherState,
   LogRecord,
   OperationState,
+  ProModelVersion,
   Surface,
 } from "./types";
 
@@ -102,6 +105,10 @@ export function App() {
       : current);
   }, []);
 
+  const updateProModelVersion = useCallback((proModelVersion: ProModelVersion | null) => {
+    setSnapshot((current) => current ? { ...current, proModelVersion } : current);
+  }, []);
+
   if (!api) return <FatalMessage message="Launcher IPC is unavailable." />;
   if (!snapshot && startupError) return (
     <FatalMessage
@@ -145,6 +152,7 @@ export function App() {
             operation={operation}
             setError={setError}
             snapshot={snapshot}
+            updateProModelVersion={updateProModelVersion}
             updateState={updateState}
           />
         )}
@@ -346,6 +354,7 @@ function LauncherShell({
   operation,
   setError,
   snapshot,
+  updateProModelVersion,
   updateState,
 }: {
   browser: BrowserState | null;
@@ -355,6 +364,7 @@ function LauncherShell({
   operation: OperationState | null;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
+  updateProModelVersion: (value: ProModelVersion | null) => void;
   updateState: (state: LauncherState) => void;
 }) {
   const interactionSetupComplete = snapshot.state.coreSetupComplete === true
@@ -370,7 +380,6 @@ function LauncherShell({
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
   const [compactSidebar, setCompactSidebar] = useState(compactAtMount);
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
-  const [passkeyContinuationRequested, setPasskeyContinuationRequested] = useState(false);
   const [sessionReminderBusy, setSessionReminderBusy] = useState(false);
   const [sessionReminderDue, setSessionReminderDue] = useState(false);
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
@@ -673,10 +682,8 @@ function LauncherShell({
                 copy={copy}
                 interactionMode={snapshot.state.browserInteractionMode}
                 operation={operation}
-                passkeyContinuationRequested={passkeyContinuationRequested}
                 platform={snapshot.platform}
                 setError={setError}
-                setPasskeyContinuationRequested={setPasskeyContinuationRequested}
               />
             ) : null}
             {surface === "setup" ? (
@@ -716,6 +723,7 @@ function LauncherShell({
             ) : null}
             {surface === "settings" ? (
               <SettingsSurface
+                browser={browser}
                 configureInteractionMode={(mode) => {
                   setMcpTargetMode(mode);
                   setSurface("mcp");
@@ -723,8 +731,10 @@ function LauncherShell({
                 copy={copy}
                 devProfile={devProfile}
                 language={language}
+                operation={operation}
                 setError={setError}
                 snapshot={snapshot}
+                updateProModelVersion={updateProModelVersion}
                 updateState={updateState}
               />
             ) : null}
@@ -832,34 +842,36 @@ function BrowserSurface({
   copy,
   interactionMode,
   operation,
-  passkeyContinuationRequested,
   platform,
   setError,
-  setPasskeyContinuationRequested,
 }: {
   browser: BrowserState | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
   copy: Copy;
   interactionMode: BrowserInteractionMode;
   operation: OperationState | null;
-  passkeyContinuationRequested: boolean;
   platform: string;
   setError: (error: string | null) => void;
-  setPasskeyContinuationRequested: (requested: boolean) => void;
 }) {
   const [passkeyStarting, setPasskeyStarting] = useState(false);
+  const [passkeyRequestPending, setPasskeyRequestPending] = useState(false);
   const visible = browser?.visible === true;
   const manualInteraction = interactionMode === "manual";
-  const { navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked } = browserControls(
+  const { navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked, passkeyCanImport } = browserControls(
     browser, operation, platform, interactionMode,
   );
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
-  const passkeyActionDisabled = passkeyBlocked
-    || (passkeyWaiting ? passkeyContinuationRequested : passkeyStarting);
+  const passkeyLabel = passkeyStarting || browser?.passkeyLogin?.phase === "starting" ? copy.passkeyStarting
+    : !passkeyWaiting ? copy.passkeySignIn
+    : passkeyCanImport ? copy.passkeyContinue
+    : browser?.passkeyLogin?.phase === "verifying" ? copy.passkeyVerifying
+    : browser?.passkeyLogin?.phase === "cancelling" ? copy.passkeyCancelling
+    : copy.passkeyImporting;
+  const passkeyActionDisabled = passkeyBlocked || passkeyRequestPending
+    || (passkeyWaiting ? !passkeyCanImport : passkeyStarting);
   useEffect(() => {
-    if (!passkeyWaiting) setPasskeyContinuationRequested(false);
-    else setPasskeyStarting(false);
-  }, [passkeyWaiting, setPasskeyContinuationRequested]);
+    if (passkeyWaiting) setPasskeyStarting(false);
+  }, [passkeyWaiting]);
   const navigate = async (action: "back" | "forward" | "reload") => {
     if (navigationLocked) return;
     try {
@@ -910,14 +922,15 @@ function BrowserSurface({
     }
   };
   const continuePasskeyLogin = async () => {
-    if (!passkeyWaiting || passkeyContinuationRequested) return;
-    setPasskeyContinuationRequested(true);
+    if (!passkeyCanImport || passkeyRequestPending) return;
+    setPasskeyRequestPending(true);
     setError(null);
     try {
       await api!.continuePasskeyLogin();
     } catch (cause) {
-      setPasskeyContinuationRequested(false);
       setError(messageOf(cause));
+    } finally {
+      setPasskeyRequestPending(false);
     }
   };
   const copyManualPrompt = async (tabId: string) => {
@@ -1028,9 +1041,7 @@ function BrowserSurface({
             onClick={() => void (passkeyWaiting ? continuePasskeyLogin() : openPasskeyLogin())}
             type="button"
           >
-            {passkeyWaiting
-              ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-              : passkeyStarting ? copy.passkeyStarting : copy.passkeySignIn}
+            {passkeyLabel}
           </button>
         ) : null}
         <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
@@ -1038,11 +1049,8 @@ function BrowserSurface({
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
-      {passkeyWaiting ? (
-        <div className="browser-login-guide" role="status">
-          <strong>{passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyWindowTitle}</strong>
-          <p>{passkeyContinuationRequested ? copy.passkeyImportingBody : copy.passkeyContinueBody}</p>
-        </div>
+      {!manualInteraction && browser?.passkeyLogin && browser.passkeyLogin.phase !== "completed" ? (
+        <PasskeyLoginGuide progress={browser.passkeyLogin} copy={copy} onRetry={openPasskeyLogin} setError={setError} />
       ) : browser?.loginKind === "embedded" ? (
         <div className="browser-login-guide" role="status">
           <p>{passkeyAvailable ? copy.embeddedLoginPasskeyBody : copy.embeddedLoginBody}</p>
@@ -1079,9 +1087,7 @@ function BrowserSurface({
                   disabled={passkeyActionDisabled}
                   onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
                 >
-                  {passkeyWaiting
-                    ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-                    : passkeyStarting ? copy.passkeyStarting : copy.passkeySignIn}
+                  {passkeyLabel}
                 </SecondaryButton>
               ) : null}
             </div>
@@ -1167,6 +1173,8 @@ function SetupSurface({
 }) {
   const [localBusy, setLocalBusy] = useState(false);
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
+  const catalogPending = !devProfile && snapshot.state.coreSetupComplete === true
+    && snapshot.state.codexCatalogVerified !== true;
   const busy = localBusy
     || operation?.status === "running"
     || (!manualInteraction && (
@@ -1243,12 +1251,12 @@ function SetupSurface({
             ? devProfile ? copy.devReinstall : copy.reinstall
             : devProfile ? copy.devInstall : copy.install}
           complete={snapshot.state.codexCatalogVerified === true}
-          description={devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
+          description={catalogPending ? copy.stepInstallWaitingBody : devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
           disabled={busy || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
           index={manualInteraction ? 1 : 3}
           onAction={install}
           repeatable
-          title={devProfile ? copy.devStepInstall : copy.stepInstall}
+          title={catalogPending ? copy.stepInstallWaiting : devProfile ? copy.devStepInstall : copy.stepInstall}
           titleAction={manualInteraction ? (
             <ZeroRiskModelMenu
               busy={busy || snapshot.state.coreSetupComplete !== true}
@@ -1264,6 +1272,14 @@ function SetupSurface({
         <NoticeRow icon="alert" tone="warning">
           {copy.restartCodex}
         </NoticeRow>
+      ) : null}
+
+      {!devProfile && snapshot.state.coreSetupComplete && !snapshot.state.codexCatalogVerified ? (
+        <RouteDiagnostics
+          disabled={busy}
+          language={snapshot.state.language ?? "en"}
+          readReport={() => api!.routeDiagnostics()}
+        />
       ) : null}
 
       <SectionHeading label="MCP" meta={manualInteraction ? copy.required : copy.optional} spaced />
@@ -1637,26 +1653,35 @@ function ActivitySurface({
 }
 
 function SettingsSurface({
+  browser,
   configureInteractionMode,
   copy,
   devProfile,
   language,
+  operation,
   setError,
   snapshot,
+  updateProModelVersion,
   updateState,
 }: {
+  browser: BrowserState | null;
   configureInteractionMode: (mode: BrowserInteractionMode) => void;
   copy: Copy;
   devProfile: boolean;
   language: Language;
+  operation: OperationState | null;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
+  updateProModelVersion: (value: ProModelVersion | null) => void;
   updateState: (state: LauncherState) => void;
 }) {
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const proModelBusy = busy
+    || operation?.status === "running"
+    || browser?.tabs.some((tab) => tab.status === "running") === true;
 
   const updateLanguage = async (next: Language) => {
     try {
@@ -1711,6 +1736,18 @@ function SettingsSurface({
       setBusy(false);
     }
   };
+  const setProModelVersion = async (value: ProModelVersion | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api!.setProModelVersion(value);
+      updateProModelVersion(result.proModelVersion);
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const uninstallIntegration = async () => {
     setBusy(true);
     setError(null);
@@ -1745,6 +1782,14 @@ function SettingsSurface({
           mode={snapshot.state.browserInteractionMode}
           onChange={(mode) => void setInteractionMode(mode)}
         />
+        <SettingRow body={copy.proModelVersionBody} label={copy.proModelVersion}>
+          <ProModelVersionMenu
+            copy={copy}
+            disabled={proModelBusy || snapshot.state.coreSetupComplete !== true}
+            onChange={(value) => void setProModelVersion(value)}
+            value={snapshot.proModelVersion}
+          />
+        </SettingRow>
         <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
           <Switch
             checked={snapshot.state.keepRunningOnClose}
@@ -1788,6 +1833,11 @@ function SettingsSurface({
       ) : null}
 
       <SectionHeading label={copy.diagnostics} spaced />
+      {!devProfile ? <RouteDiagnostics
+        disabled={busy || operation?.status === "running" || browser?.navigationLocked === true}
+        language={language}
+        readReport={() => api!.routeDiagnostics()}
+      /> : null}
       <button className="diagnostic-row" disabled={busy} onClick={() => void runDoctor()} type="button">
         <Icon name="activity" />
         <span>
@@ -2410,6 +2460,35 @@ function LanguageMenu({ copy, language, onChange }: { copy: Copy; language: Lang
         </>
       ) : null}
     </div>
+  );
+}
+
+function ProModelVersionMenu({
+  copy,
+  disabled,
+  onChange,
+  value,
+}: {
+  copy: Copy;
+  disabled: boolean;
+  onChange: (value: ProModelVersion | null) => void;
+  value: ProModelVersion | null;
+}) {
+  return (
+    <select
+      aria-label={copy.proModelVersion}
+      className="settings-select"
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value === ""
+        ? null
+        : event.target.value as ProModelVersion)}
+      value={value ?? ""}
+    >
+      <option value="">{copy.proModelFollow}</option>
+      <option value="5.6">{copy.proModel56}</option>
+      <option value="5.5">{copy.proModel55}</option>
+      <option value="6">{copy.proModel6}</option>
+    </select>
   );
 }
 

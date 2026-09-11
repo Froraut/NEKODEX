@@ -1,3 +1,4 @@
+import { CHATGPT_MARKDOWN_BUFFER_BYTES, assertByteLimit, retainedRecordBytes } from "./resource-budgets";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 
@@ -242,25 +243,33 @@ export class ChatGptMarkdownBuffer {
   private readonly committed: CommittedChatGptMarkdownSegment[] = [];
   private latest: ChatGptMarkdownSegment[] = [];
   private markdown = "";
+  private retainedBytes = 0;
+  private snapshotBytes = 0;
   private lastGroup: string | undefined;
   private consistencyError: ChatGptMarkdownConsistencyError | undefined;
 
   constructor(
     private readonly transform: (markdown: string) => string = markdown => markdown,
     private readonly stabilityMs = 750,
+    private readonly maxBytes = CHATGPT_MARKDOWN_BUFFER_BYTES,
   ) {
+    assertByteLimit(0, maxBytes, "ChatGPT Markdown progress buffer");
     if (!Number.isFinite(stabilityMs) || stabilityMs < 0) {
       throw new Error("ChatGPT Markdown stability window must be a non-negative finite number");
     }
   }
 
   observe(segments: ChatGptMarkdownSegment[], now = Date.now()): string {
+    // Candidates and the latest snapshot both retain DOM records before Markdown is emitted.
+    const snapshotBytes = 2 * segments.reduce((bytes, segment) => bytes + retainedRecordBytes(segment), 0);
+    assertByteLimit(this.retainedBytes + snapshotBytes, this.maxBytes, "ChatGPT Markdown progress buffer");
     const reconciled = this.reconcile(segments);
     if (reconciled instanceof ChatGptMarkdownConsistencyError) {
       this.consistencyError = reconciled;
       return "";
     }
     this.consistencyError = undefined;
+    this.snapshotBytes = snapshotBytes;
     this.latest = reconciled.map(segment => ({ ...segment }));
 
     const visibleCandidates = new Set<string>();
@@ -304,6 +313,7 @@ export class ChatGptMarkdownBuffer {
       committedCount += 1;
     }
     this.latest = this.latest.slice(committedCount);
+    this.snapshotBytes = 2 * this.latest.reduce((bytes, segment) => bytes + retainedRecordBytes(segment), 0);
     return delta;
   }
 
@@ -316,6 +326,7 @@ export class ChatGptMarkdownBuffer {
     }
     this.candidates.clear();
     this.latest = [];
+    this.snapshotBytes = 0;
     return { markdown: this.markdown, delta };
   }
 
@@ -449,11 +460,19 @@ export class ChatGptMarkdownBuffer {
 
   private commit(segment: ChatGptMarkdownSegment): string {
     const block = this.transform(chatGptHtmlToMarkdown(segment.html));
-    if (!block) return "";
+    const recordBytes = retainedRecordBytes(this.committedSegment(segment));
+    if (!block) {
+      assertByteLimit(this.retainedBytes + this.snapshotBytes + recordBytes, this.maxBytes, "ChatGPT Markdown progress buffer");
+      this.retainedBytes += recordBytes;
+      return "";
+    }
     const separator = this.markdown
       ? segment.group !== undefined && segment.group === this.lastGroup ? "\n" : "\n\n"
       : "";
     const delta = `${separator}${block}`;
+    const bytes = Buffer.byteLength(delta, "utf8") + recordBytes;
+    assertByteLimit(this.retainedBytes + this.snapshotBytes + bytes, this.maxBytes, "ChatGPT Markdown progress buffer");
+    this.retainedBytes += bytes;
     this.markdown += delta;
     this.lastGroup = segment.group;
     return delta;

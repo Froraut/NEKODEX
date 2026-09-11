@@ -22,6 +22,24 @@ export class ChatGptWebAdapterError extends Error {
   }
 }
 
+/** An unclassified provider error does not prove that replaying an accepted transaction is safe. */
+export function chatGptSubmittedProviderFailure(error: unknown, stage?: string): unknown {
+  if (!stage || !(error instanceof ChatGptWebAdapterError)
+    || error.code !== "upstream_server_error" || !error.retryable) return error;
+  return new ChatGptWebAdapterError(
+    `ChatGPT reported a response error during ${stage} after submission began. `
+    + "Automatic replay of this submitted transaction is disabled. "
+    + "Check the ChatGPT conversation and any completed tool actions before starting a new turn.",
+    {
+      status: error.status,
+      errorType: error.errorType,
+      code: "chatgpt_submitted_provider_error",
+      retryable: false,
+      cause: error,
+    },
+  );
+}
+
 // Only the compaction owner may signal this after the broker accepts its one-shot handoff.
 // It cancels browser observation, while the accepted summary remains the native result.
 export class ChatGptCompactionHandoffAccepted extends DOMException {

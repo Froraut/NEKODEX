@@ -1943,6 +1943,31 @@ code {
   padding: 12px 0;
 }
 
+.settings-select {
+  min-width: 178px;
+  height: 30px;
+  padding: 0 28px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-background-control);
+  color: var(--color-text-secondary);
+  color-scheme: dark;
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.settings-select:hover:not(:disabled),
+.settings-select:focus-visible {
+  border-color: var(--color-border-heavy);
+  color: var(--color-text-primary);
+}
+
+.settings-select:disabled {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .language-menu {
   position: relative;
   z-index: 1;
@@ -2122,6 +2147,49 @@ code {
   display: block;
   margin-top: 3px;
   color: var(--color-text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.route-diagnostics-result {
+  padding: 4px 12px 10px;
+  border-left: 2px solid var(--color-border-heavy);
+  background: var(--color-background-control);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.route-diagnostics-result dl {
+  margin: 12px 0;
+}
+
+.route-diagnostics-result dl > div {
+  display: grid;
+  grid-template-columns: minmax(115px, 0.8fr) minmax(0, 1.5fr);
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.route-diagnostics-result dt {
+  color: var(--color-text-tertiary);
+}
+
+.route-diagnostics-result dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.route-diagnostics-result ul {
+  padding-left: 18px;
+}
+
+.route-diagnostics-result li + li {
+  margin-top: 8px;
+}
+
+.route-diagnostics-error {
+  color: var(--red-300);
   font-size: var(--text-xs);
 }
 

@@ -42,9 +42,9 @@ export function activeCompactionToolResultInstruction(): string {
 }
 
 /**
- * Zero Risk cannot submit a second browser message automatically. When Codex compacts at an
+ * Manual mode cannot submit a second browser message automatically. When Codex compacts at an
  * already-visible native tool boundary, the same manually submitted response returns the
- * checkpoint through the same Zero Risk request instead.
+ * checkpoint through the same Manual mode request instead.
  */
 export function zeroRiskActiveCompactionToolResultInstruction(toolExecuted: boolean): string {
   return [

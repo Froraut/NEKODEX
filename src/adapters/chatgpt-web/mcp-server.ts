@@ -22,6 +22,7 @@ const BRIDGE_TOOL_NAMES = new Set([
   "codex_write_stdin",
   "codex_apply_patch",
   "codex_view_image",
+  "codex_read_thread",
   "codex_tool_inventory",
   "codex_tool_call",
   "codex_turn_complete",
@@ -106,7 +107,7 @@ function result(value: Record<string, unknown>, isError = false) {
 
 function afterSafeStart(contract: ChatGptMcpContract, description: string): string {
   return contract === "safe"
-    ? `For a Zero Risk request connected by codex_turn_start. ${description}`
+    ? `For a Manual mode request connected by codex_turn_start. ${description}`
     : description;
 }
 
@@ -116,6 +117,14 @@ function wireName(tool: CodexTool): string {
 
 function exactTool(environment: ChatGptTurnEnvironment, name: string): CodexTool | undefined {
   return environment.tools.find(tool => !tool.namespace && tool.name === name);
+}
+
+function exactCodexAppTool(environment: ChatGptTurnEnvironment, name: string): CodexTool | undefined {
+  const candidates = environment.tools.filter(tool => tool.namespace === "mcp__codex_app" && tool.name === name);
+  if (candidates.length > 1 || candidates.some(tool => tool.freeform)) {
+    throw new Error(`The current outer Codex turn must advertise exactly one structured mcp__codex_app__${name} tool`);
+  }
+  return candidates[0];
 }
 
 function gatewayToolNameIsValid(name: string): boolean {
@@ -520,7 +529,7 @@ export async function runChatGptMcpServer(options: {
     server.registerTool(
       "codex_turn_start",
       {
-        title: "Connect a Codex Zero Risk request",
+        title: "Connect a Codex Manual mode request",
         description: "Connect the request_id included in the pasted Codex Web GPT request so its Codex tools can be used.",
         inputSchema: {
           request_id: turnTokenSchema,
@@ -746,11 +755,52 @@ export async function runChatGptMcpServer(options: {
   );
 
   server.registerTool(
+    "codex_read_thread",
+    {
+      title: "Read a referenced Codex task",
+      description: afterSafeStart(
+        contract,
+        "Invoke the outer Codex read_thread tool for a referenced task. This action is read-only and cannot continue, archive, or otherwise modify the task.",
+      ),
+      inputSchema: {
+        ...turnReferenceInput(contract),
+        threadId: z.string().min(1).max(256),
+        cursor: z.string().max(16_384).optional(),
+        hostId: z.string().max(256).optional(),
+        includeOutputs: z.boolean().optional(),
+        maxOutputCharsPerItem: z.number().int().min(1).max(1_000_000).optional(),
+        turnLimit: z.number().int().min(1).max(10).optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input, extra) => withClaimedTurn(
+      "codex_read_thread",
+      turnReference(contract, input),
+      extra,
+      async claimed => {
+        const { threadId, cursor, hostId, includeOutputs, maxOutputCharsPerItem, turnLimit } = input;
+        const tool = exactCodexAppTool(claimed.environment, "read_thread");
+        if (!tool) throw new Error("The current outer Codex turn does not advertise read_thread");
+        return invoke(claimed.bindingId, claimed.environment, tool, {
+          arguments: {
+            threadId,
+            ...(cursor !== undefined ? { cursor } : {}),
+            ...(hostId !== undefined ? { hostId } : {}),
+            ...(includeOutputs !== undefined ? { includeOutputs } : {}),
+            ...(maxOutputCharsPerItem !== undefined ? { maxOutputCharsPerItem } : {}),
+            ...(turnLimit !== undefined ? { turnLimit } : {}),
+          },
+        }, extra.signal);
+      },
+    ),
+  );
+
+  server.registerTool(
     "codex_tool_inventory",
     {
       title: "Discover tools from the current Codex harness",
       description: contract === "safe"
-        ? "List tools available to the connected Zero Risk request, including configured MCP and app tools."
+        ? "List tools available to the connected Manual mode request, including configured MCP and app tools."
         : "Search the exact tool registry supplied to the current outer Codex turn, including configured MCP/app tools.",
       inputSchema: {
         ...turnReferenceInput(contract),

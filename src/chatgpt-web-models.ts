@@ -1,9 +1,17 @@
 export const CHATGPT_WEB_MODEL_PREFIX = "chatgpt-web/";
 export const CHATGPT_WEB_BACKEND_MODEL = "gpt-5.6-sol";
 export const CHATGPT_WEB_LUNA_BACKEND_MODEL = "gpt-5.6-luna";
+
+/** A pinned version for automatic Pro turns; omission preserves the existing Web selection. */
+export type ChatGptWebProModelVersion = "5.6" | "5.5" | "6";
+
+export function parseChatGptWebProModelVersion(value: unknown): ChatGptWebProModelVersion | undefined {
+  if (value === undefined || value === "5.6" || value === "5.5" || value === "6") return value;
+  throw new Error("Invalid ChatGPT Pro model version; choose 5.6, 5.5, or 6");
+}
 /** Internal adapter identity for a turn whose ChatGPT model is selected by the user in the launcher. */
 export const CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL = "chatgpt-web-zero-risk";
-/** Internal adapter identity for the explicitly enabled, Pro-sized Zero Risk context profile. */
+/** Internal adapter identity for the explicitly enabled, Pro-sized Manual mode context profile. */
 export const CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL = "chatgpt-web-zero-risk-pro";
 
 export type ChatGptWebAutomaticBackendModel =
@@ -27,7 +35,7 @@ export type ChatGptWebAdapterEffort = "low" | "medium" | "high" | "xhigh" | "max
 export const CHATGPT_WEB_INSTANT_CONTEXT_WINDOW = 41_000;
 export const CHATGPT_WEB_INSTANT_AUTO_COMPACT_TOKEN_LIMIT = 32_000;
 /**
- * Zero Risk keeps one visible ChatGPT conversation across sequential Codex turns. Its fixed route
+ * Manual mode keeps one visible ChatGPT conversation across sequential Codex turns. Its fixed route
  * therefore uses the requested three-turn compaction interval without enabling Bigger Context's
  * automatic multipart transport; the user still pastes exactly one incremental prompt per turn.
  */
@@ -54,7 +62,7 @@ export const CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW =
 export const CHATGPT_WEB_PRO_MODEL_CONTEXT_WINDOW =
   CHATGPT_WEB_PRO_MODEL_MESSAGE_TOKEN_LIMIT + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + 1;
 /**
- * Zero Risk Pro keeps the same three-turn manual conversation budget as the default profile, but
+ * Manual mode Pro keeps the same three-turn manual conversation budget as the default profile, but
  * sizes each turn from the measured ChatGPT Pro boundary. The launcher cannot verify that the user
  * actually selected Pro, so this profile is exposed only through an explicit user setting.
  */
@@ -112,7 +120,7 @@ export function resolveChatGptWebContextLimits(
 ): ChatGptWebContextLimits {
   if (isChatGptWebZeroRiskBackendModel(backendModel)) {
     if (capabilities.experimentalBiggerContext) {
-      throw new Error("Zero Risk does not support Bigger Context");
+      throw new Error("Manual mode does not support Bigger Context");
     }
     if (backendModel === CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL) {
       return contextLimits(
@@ -234,7 +242,7 @@ export interface ChatGptWebAutomaticModelRoute extends ChatGptWebModelRouteBase 
 export interface ChatGptWebZeroRiskModelRoute extends ChatGptWebModelRouteBase {
   interactionMode: "manual";
   backendModel: ChatGptWebZeroRiskBackendModel;
-  /** Technical protocol value only; Zero Risk must not use it to choose the ChatGPT model. */
+  /** Technical protocol value only; Manual mode must not use it to choose the ChatGPT model. */
   adapterEffort: "low";
 }
 
@@ -259,8 +267,8 @@ export function chatGptExtraHighAvailable(capabilities: {
 
 export const CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE: ChatGptWebZeroRiskModelRoute = {
   slug: "chatgpt-web/zero-risk",
-  displayName: "ChatGPT Web — Zero Risk",
-  description: "Zero Risk keeps model selection and prompt submission under your control while preserving the native Codex harness.",
+  displayName: "ChatGPT Web — Manual mode",
+  description: "Manual mode keeps model selection and prompt submission under your control while preserving the native Codex harness.",
   interactionMode: "manual",
   backendModel: CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
   codexEffort: "low",
@@ -270,8 +278,8 @@ export const CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE: ChatGptWebZeroRiskModelRoute = {
 
 export const CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE: ChatGptWebZeroRiskModelRoute = {
   slug: "chatgpt-web/zero-risk-pro",
-  displayName: "ChatGPT Web — Zero Risk Pro",
-  description: "Explicit Pro-sized Zero Risk context; select ChatGPT Pro manually for every turn.",
+  displayName: "ChatGPT Web — Manual mode Pro",
+  description: "Explicit Pro-sized Manual mode context; select ChatGPT Pro manually for every turn.",
   interactionMode: "manual",
   backendModel: CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
   codexEffort: "low",
@@ -387,7 +395,7 @@ export function availableChatGptWebModelRoutes(
 ): readonly ChatGptWebModelRoute[] {
   if (capabilities.browserInteractionMode === "manual") {
     if (capabilities.experimentalBiggerContext) {
-      throw new Error("Zero Risk does not support Bigger Context");
+      throw new Error("Manual mode does not support Bigger Context");
     }
     return capabilities.zeroRiskProEnabled
       ? [CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE, CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE]
@@ -405,21 +413,21 @@ export function requireChatGptWebModelRoute(
   capabilities: ChatGptWebAccountCapabilities,
 ): ChatGptWebModelRoute {
   if (capabilities.browserInteractionMode === "manual" && capabilities.experimentalBiggerContext) {
-    throw new Error("Zero Risk does not support Bigger Context");
+    throw new Error("Manual mode does not support Bigger Context");
   }
   const route = routesBySlug.get(modelId);
   if (!route) throw new Error(`ChatGPT web model is not enabled: ${modelId}`);
   if (capabilities.browserInteractionMode === "manual") {
     if (route.interactionMode !== "manual") {
-      throw new Error(`${route.displayName} is not available while Zero Risk is enabled`);
+      throw new Error(`${route.displayName} is not available while Manual mode is enabled`);
     }
     if (route === CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE && !capabilities.zeroRiskProEnabled) {
-      throw new Error(`${route.displayName} is not enabled in Zero Risk model settings`);
+      throw new Error(`${route.displayName} is not enabled in Manual model settings`);
     }
     return route;
   }
   if (route.interactionMode === "manual") {
-    throw new Error(`${route.displayName} is only available while Zero Risk is enabled`);
+    throw new Error(`${route.displayName} is only available while Manual mode is enabled`);
   }
   if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
     if (capabilities.solAvailable) {

@@ -9,6 +9,7 @@ const stylesSource = fs.readFileSync(path.join(launcherRoot, "src", "styles.css"
 const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.cjs"), "utf8");
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
+const runtimeHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "runtime.cjs"), "utf8");
 
 test("embedded ChatGPT is measured only after its animated surface mounts", () => {
   assert.match(appSource, /const \[browserSlot, setBrowserSlot\] = useState<HTMLDivElement \| null>\(null\)/);
@@ -118,21 +119,21 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
 test("macOS passkey sign-in is additive and displays a separate Chrome continuation guide", () => {
   assert.match(appSource, /onAction=\{openLogin\}/);
   assert.match(appSource, /<BrowserSurface[\s\S]*?operation=\{operation\}[\s\S]*?platform=\{snapshot\.platform\}/);
-  assert.match(appSource, /const \{ navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked \} = browserControls\(/);
-  assert.match(appSource, /\{passkeyAvailable \? \([\s\S]*?className="toolbar-text-button"[\s\S]*?copy\.passkeySignIn/);
-  assert.match(appSource, /className="browser-empty-actions"[\s\S]*?copy\.passkeySignIn/);
+  assert.match(appSource, /const \{ navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked, passkeyCanImport \} = browserControls\(/);
+  assert.match(appSource, /\{passkeyAvailable \? \([\s\S]*?className="toolbar-text-button"[\s\S]*?passkeyLabel/);
+  assert.match(appSource, /className="browser-empty-actions"[\s\S]*?passkeyLabel/);
   assert.match(appSource, /passkeyWaiting \? continuePasskeyLogin : openPasskeyLogin/);
   assert.match(appSource, /disabled=\{passkeyActionDisabled\}/);
-  assert.match(appSource, /className="browser-login-guide" role="status"[\s\S]*?copy\.passkeyContinueBody/);
+  assert.match(appSource, /<PasskeyLoginGuide progress=\{browser\.passkeyLogin\}/);
   assert.match(appSource, /if \(navigationLocked\) return;/);
   const shell = appSource.slice(appSource.indexOf("function LauncherShell("), appSource.indexOf("function BrowserSurface("));
-  assert.match(shell, /const \[passkeyContinuationRequested, setPasskeyContinuationRequested\] = useState\(false\)/);
-  assert.match(shell, /passkeyContinuationRequested=\{passkeyContinuationRequested\}/);
+  assert.doesNotMatch(shell, /setPasskeyContinuationRequested/);
+  assert.match(appSource, /passkeyLabel = passkeyStarting/);
   assert.match(preloadSource, /openPasskeyLogin:[\s\S]*?launcher:browser-passkey-login/);
   assert.match(preloadSource, /continuePasskeyLogin:[\s\S]*?launcher:browser-passkey-login-continue/);
   assert.match(electronMain, /launcher:browser-passkey-login[\s\S]*?browserHost\.openPasskeyLogin\(\)/);
-  assert.match(electronMain, /loginWithPasskey: \(\) => runtimeHost\.capturePasskeyLogin\(\)/);
-  assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
+  assert.match(electronMain, /loginWithPasskey: onProgress => runtimeHost\.capturePasskeyLogin\(onProgress\)/);
+  assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000, signal\)[\s\S]*?runSessionInspection\(false\)/);
 });
 
 test("onboarding can finish without visiting external social pages", () => {
@@ -174,7 +175,45 @@ test("Bigger Context startup recommendation reuses the persisted setting and set
   assert.doesNotMatch(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*backdrop-filter:/s);
 });
 
-test("Zero Risk setup commits state after the runtime transaction and preserves manual inspection boundaries", () => {
+test("Settings wires exact Pro versions through a config-only guarded IPC", () => {
+  assert.match(appSource, /<ProModelVersionMenu[\s\S]*?value=\{snapshot\.proModelVersion\}/);
+  assert.match(appSource, /api!\.setProModelVersion\(value\)/);
+  assert.match(preloadSource, /setProModelVersion:[\s\S]*?launcher:pro-model-version/);
+  const handlerStart = electronMain.indexOf('handle("launcher:pro-model-version"');
+  const handlerEnd = electronMain.indexOf('handle("launcher:set-preference"', handlerStart);
+  const handler = electronMain.slice(handlerStart, handlerEnd);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, "Pro model version IPC must be registered");
+  assert.match(handler, /browserHost\.activeTraceId/);
+  assert.match(handler, /browserHost\.currentOperation\(\)/);
+  assert.match(handler, /runtimeHost\.setProModelVersion/);
+  const setterStart = runtimeHostSource.indexOf("async setProModelVersion(");
+  const setterEnd = runtimeHostSource.indexOf("async setZeroRiskPro(", setterStart);
+  const setter = runtimeHostSource.slice(setterStart, setterEnd);
+  assert.ok(setterStart >= 0 && setterEnd > setterStart, "Pro model version runtime setter must exist");
+  assert.match(setter, /"config",\s*"pro-model-version"/);
+  assert.doesNotMatch(setter, /"setup"|--restart-service/);
+});
+
+test("running turns lock only the Pro selector and leave cancellation actionable", () => {
+  const settings = appSource.slice(
+    appSource.indexOf("function SettingsSurface("),
+    appSource.indexOf("function ContentSurface(", appSource.indexOf("function SettingsSurface(")),
+  );
+  assert.match(settings, /const \[busy, setBusy\] = useState\(false\);/);
+  assert.match(
+    settings,
+    /const proModelBusy = busy\s*\|\| operation\?\.status === "running"\s*\|\| browser\?\.tabs\.some\(\(tab\) => tab\.status === "running"\) === true;/,
+  );
+  assert.match(settings, /<ProModelVersionMenu[\s\S]*?disabled=\{proModelBusy \|\| snapshot\.state\.coreSetupComplete !== true\}/);
+
+  const cancelButton = settings.match(
+    /<button className="diagnostic-row" disabled=\{([^}]+)\} onClick=\{\(\) => void cancelTurns\(\)\}/,
+  );
+  assert.ok(cancelButton, "Settings must keep the active-turn cancellation action");
+  assert.equal(cancelButton[1], "busy");
+});
+
+test("Manual mode setup commits state after the runtime transaction and preserves manual inspection boundaries", () => {
   const modeSwitchHandler = electronMain.slice(
     electronMain.indexOf('handle("launcher:browser-interaction-mode"'),
     electronMain.indexOf('handle("launcher:set-preference"'),
@@ -208,7 +247,7 @@ test("Zero Risk setup commits state after the runtime transaction and preserves 
     /page-title-updated[\s\S]*?browserInteractionModeFor\(this\) === "manual"\) return;/,
   );
   assert.doesNotMatch(modeSwitchHandler, /const pending = stateStore\.update|catch \(error\)/);
-  assert.match(electronMain, /browserInteractionMode === "manual"[\s\S]*?Local Zero Risk runtime is healthy/);
+  assert.match(electronMain, /browserInteractionMode === "manual"[\s\S]*?Local Manual mode runtime is healthy/);
 
 });
 

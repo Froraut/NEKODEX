@@ -1,4 +1,5 @@
 import type { Writable } from "node:stream";
+import { CHATGPT_HELPER_FRAME_BYTES, CHATGPT_HELPER_PENDING_BYTES, assertByteLimit } from "./resource-budgets";
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
@@ -12,8 +13,13 @@ export interface ProcessLineWriter {
 export function createProcessLineWriter(
   stream: Writable,
   onFailure: (error: Error) => void,
+  options: { maxLineBytes?: number; maxPendingBytes?: number } = {},
 ): ProcessLineWriter {
   let writable = true;
+  const maxLineBytes = options.maxLineBytes ?? CHATGPT_HELPER_FRAME_BYTES;
+  const maxPendingBytes = options.maxPendingBytes ?? CHATGPT_HELPER_PENDING_BYTES;
+  assertByteLimit(0, maxLineBytes, "Browser helper IPC frame");
+  assertByteLimit(0, maxPendingBytes, "Browser helper IPC output queue");
 
   const fail = (error: unknown): void => {
     if (!writable) return;
@@ -30,6 +36,9 @@ export function createProcessLineWriter(
     write(line: string): boolean {
       if (!writable || stream.destroyed || stream.writableEnded) return false;
       try {
+        const bytes = Buffer.byteLength(line, "utf8");
+        assertByteLimit(bytes, maxLineBytes, "Browser helper IPC frame");
+        assertByteLimit(stream.writableLength + bytes + 1, maxPendingBytes, "Browser helper IPC output queue");
         stream.write(`${line}\n`, error => {
           if (error) fail(error);
         });

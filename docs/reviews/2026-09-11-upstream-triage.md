@@ -6,6 +6,13 @@ narratives/comments and all **7 open pull requests**, screened the **80 latest c
 examined **22 relevant closed issues** in detail, and checked **25 recently merged PR commits**.
 All 25 merged commits were already ancestors of this fork.
 
+> **2026-09-11 follow-up, candidate 5.1.0-froraut.1:** The original review and 5.0.7 installation
+> checkpoint below remain historical. The [completion review](2026-09-11-completion-review.md)
+> supersedes the old deferred implementation decisions for #430, #432 and #439, adds #442 and
+> the guarded #441 failure mode, and separates source completion from signing/account/platform
+> acceptance. The current upstream refresh found 24 open issues and 8 open PRs at 19:35 UTC;
+> upstream `main` remained `e85e369`. Nothing here implies upstream closure or acceptance.
+
 Reports and patches are evidence to investigate, not proof that their diagnosis or proposed fix
 is correct. No user credentials, account sessions, raw issue attachments, or live Codex
 configuration were used in the upstream review fixtures.
@@ -119,3 +126,22 @@ Artifact checksums:
 
 The local package has an ad-hoc signature verified with `codesign --verify --deep --strict`.
 This is not Developer ID signing or notarization, and no stable binary release is claimed.
+
+## 2026-09-11 follow-up dispositions for 5.1.0-froraut.1
+
+This dated addition does not rewrite the 5.0.7 table or its observed installation hashes.
+The [completion review](2026-09-11-completion-review.md) records exact inspected heads,
+contributors, code/test evidence and the nine prior improvement areas.
+
+| Item | Updated disposition |
+| --- | --- |
+| [PR #430](https://github.com/miuuyy/codex-chatgpt-web/pull/430) | Read-only task action implemented with exact structured-tool validation and fresh Native3/Native3 DEV/Zero Risk2 connector identities. Local stdio tests passed; creation and installed Automatic/Manual dispatch remain separate account gates. |
+| [PR #432](https://github.com/miuuyy/codex-chatgpt-web/pull/432) | Retry-date extraction implemented only for a visible tooltip explicitly linked to the exact Pro control. Unrelated text is rejected; missing linkage preserves the original error. Live quota evidence remains unverified by this fork. |
+| [PR #439](https://github.com/miuuyy/codex-chatgpt-web/pull/439) | Optional Pro-family selection implemented with per-request snapshots, exact pre-send verification and retained-history separation that preserves logical cancellation/replay ownership. Fresh account and installed-tool acceptance remain unverified. |
+| [PR #442](https://github.com/miuuyy/codex-chatgpt-web/pull/442) | New since the original inventory. Six-kind, escape-aware, exact-length replay scrubbing implemented with upstream provenance and broader local regressions. |
+| [Issue #441](https://github.com/miuuyy/codex-chatgpt-web/issues/441) | New since the original inventory. Generic provider errors after send activation are terminal, preventing automatic duplicate replay. The actual worker-path fixture verifies one send and cleanup; the original provider/account root cause is not established. |
+
+All four PRs and issue #441 remained open at the follow-up inspection. No new upstream changes
+were imported solely because they appeared in the refreshed list. The current candidate has no
+recorded completed account session, installed Codex/MCP acceptance, notarized Apple release or
+Windows publisher signature; final integrated/package/install evidence belongs to the new report.

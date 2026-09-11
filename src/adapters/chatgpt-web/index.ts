@@ -20,7 +20,7 @@ import {
 import { namespacedToolName, type AdapterEvent, type CodexContentPart, type CodexParsedRequest, type CodexProviderConfig, type CodexToolResultMessage, type CodexUsage } from "../../types";
 import type { ProviderAdapter } from "../base";
 import { parseDataUrl } from "../image";
-import { ChatGptWebAdapterError } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptSubmittedProviderFailure } from "./adapter-error";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
@@ -177,14 +177,14 @@ function safeManualAdapterError(error: unknown): Error {
 
 function safeManualTerminalError(status: "cancelled" | "failed"): ChatGptWebAdapterError {
   if (status === "cancelled") {
-    return new ChatGptWebAdapterError("The Zero Risk browser turn was cancelled in the Launcher", {
+    return new ChatGptWebAdapterError("The Manual mode browser turn was cancelled in the Launcher", {
       status: 409,
       errorType: "invalid_request_error",
       code: "manual_turn_cancelled",
       retryable: false,
     });
   }
-  return new ChatGptWebAdapterError("The Zero Risk browser tab failed before ChatGPT completed the turn", {
+  return new ChatGptWebAdapterError("The Manual mode browser tab failed before ChatGPT completed the turn", {
     status: 502,
     errorType: "server_error",
     code: "manual_launcher_failed",
@@ -193,17 +193,28 @@ function safeManualTerminalError(status: "cancelled" | "failed"): ChatGptWebAdap
 }
 
 export function chatGptWebExecutionNamespace(provider: CodexProviderConfig): string {
+  // A preference change must not create a new logical turn: cancellation,
+  // replay, retry budgets, and owner exclusion survive a change of Pro pin.
+  const { proModelVersion: _proModelVersion, ...chatgptWeb } = provider.chatgptWeb ?? {};
   return createHash("sha256").update(JSON.stringify({
     baseUrl: provider.baseUrl,
-    chatgptWeb: provider.chatgptWeb ?? {},
+    chatgptWeb,
   })).digest("hex");
+}
+
+export function chatGptWebConversationNamespace(provider: CodexProviderConfig, parsed: CodexParsedRequest): string {
+  const namespace = chatGptWebExecutionNamespace(provider);
+  const version = parsed.options.reasoning === "max" && provider.chatgptWeb?.browserInteractionMode !== "manual"
+    ? provider.chatgptWeb?.proModelVersion
+    : undefined;
+  return version ? createHash("sha256").update(`${namespace}:pro-version:${version}`).digest("hex") : namespace;
 }
 
 export function chatGptWebTraceId(provider: CodexProviderConfig, parsed: CodexParsedRequest): string {
   const namespace = chatGptWebExecutionNamespace(provider);
   // The logical response key survives compaction so a final answer that won the handoff race
   // can still be replayed. A new physical browser owner must instead belong to the new context
-  // epoch; otherwise Zero Risk correctly rejects it against the previous owner's completion.
+  // epoch; otherwise Manual mode correctly rejects it against the previous owner's completion.
   const conversation = parsed._compactionRequest ? undefined : chatGptConversationKey(parsed, namespace);
   return createHash("sha256")
     .update(`${namespace}:${chatGptTurnExecutionKey(parsed)}`)
@@ -295,9 +306,11 @@ function replayEvents(events: AdapterEvent[], emit: (event: AdapterEvent) => voi
 }
 
 function submittedTurnFailure(session: ChatGptTurnSession, error: unknown): Error {
-  const normalized = error instanceof Error ? error : new Error(String(error));
-  if (normalized instanceof ChatGptWebAdapterError) return normalized;
   const phase = session.runtime.submission?.phase;
+  const classified = chatGptSubmittedProviderFailure(error,
+    phase && phase !== "prepared" ? "response" : undefined);
+  const normalized = classified instanceof Error ? classified : new Error(String(classified));
+  if (normalized instanceof ChatGptWebAdapterError) return normalized;
   if (!phase || phase === "prepared") return normalized;
   const ambiguous = phase === "send_activated";
   return new ChatGptWebAdapterError(
@@ -357,6 +370,9 @@ export function createChatGptWebAdapter(
     solAvailable: provider.chatgptWeb?.solAvailable !== false,
     extraHighAvailable: provider.chatgptWeb?.extraHighAvailable ?? provider.chatgptWeb?.proAvailable === true,
     proAvailable: provider.chatgptWeb?.proAvailable === true,
+    ...(provider.chatgptWeb?.proModelVersion !== undefined
+      ? { proModelVersion: provider.chatgptWeb.proModelVersion }
+      : {}),
   };
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
   const executionNamespace = chatGptWebExecutionNamespace(provider);
@@ -366,10 +382,10 @@ export function createChatGptWebAdapter(
       : undefined;
   if (manualInteraction) {
     if (!configuredCapabilities.localToolsEnabled) {
-      throw new Error("ChatGPT Zero Risk requires the Full Codex harness");
+      throw new Error("ChatGPT Manual mode requires the Full Codex harness");
     }
     if (!retainedLauncherDescriptor) {
-      throw new Error("ChatGPT Zero Risk requires the Launcher browser host");
+      throw new Error("ChatGPT Manual mode requires the Launcher browser host");
     }
   }
   const environmentStore = new ChatGptThreadEnvironmentStore(
@@ -399,8 +415,8 @@ export function createChatGptWebAdapter(
     if (manualRequest !== manualInteraction) {
       throw new Error(
         manualInteraction
-          ? "ChatGPT Zero Risk requires the Zero Risk Web model route"
-          : "The Zero Risk Web model route requires ChatGPT Zero Risk interaction mode",
+          ? "ChatGPT Manual mode requires the Manual mode Web model route"
+          : "The Manual mode Web model route requires ChatGPT Manual mode interaction mode",
       );
     }
     const mode = manualRequest
@@ -417,7 +433,7 @@ export function createChatGptWebAdapter(
       && parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
       && mode.localTools
       && retainedLauncherDescriptor
-      ? chatGptConversationKey(checkpointInput.parsed, executionNamespace)
+      ? chatGptConversationKey(checkpointInput.parsed, chatGptWebConversationNamespace(provider, checkpointInput.parsed))
       : undefined;
     const resumeInput = conversationKey
       ? retainedConversationResumeRequest(checkpointInput.parsed)
@@ -505,8 +521,8 @@ export function createChatGptWebAdapter(
       ? { onMultipartStageAcknowledged: hooks.onCompactionProgress }
       : {};
     if (manualRequest) {
-      if (!environment) throw new Error("ChatGPT Zero Risk requires a trusted Codex environment");
-      if (!retainedLauncherDescriptor) throw new Error("ChatGPT Zero Risk requires the Launcher browser host");
+      if (!environment) throw new Error("ChatGPT Manual mode requires a trusted Codex environment");
+      if (!retainedLauncherDescriptor) throw new Error("ChatGPT Manual mode requires the Launcher browser host");
       const token = deferred<string>();
       const externalProgress = new ChatGptExternalTurnProgress();
       const surfaceNonce = randomBytes(32).toString("base64url");
@@ -545,7 +561,7 @@ export function createChatGptWebAdapter(
           for (const candidate of [compiled, resumeCompiled]) {
             if (!candidate) continue;
             if (candidate.multipart) {
-              throw new ChatGptWebAdapterError("ChatGPT Zero Risk does not support multipart browser transport", {
+              throw new ChatGptWebAdapterError("ChatGPT Manual mode does not support multipart browser transport", {
                 status: 409,
                 errorType: "invalid_request_error",
                 code: "manual_multipart_unsupported",
@@ -558,7 +574,7 @@ export function createChatGptWebAdapter(
           if (!parsed._compactionRequest) {
             trace.push({
               kind: "commentary",
-              text: "> **Action required in Zero Risk**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Zero Risk cannot transfer them, select the `Codex Zero Risk` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
+              text: "> **Action required in Manual mode**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Manual mode cannot transfer them, select the `Codex Zero Risk2` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
             });
           }
           await zeroRiskManualControl.start(retainedLauncherDescriptor, {
@@ -576,7 +592,7 @@ export function createChatGptWebAdapter(
           submission.phase = "accepted";
           if (!parsed._compactionRequest) trace.push({
             kind: "commentary",
-            text: "> **Waiting for ChatGPT**\n>\n> The prompt is marked `Sent`. Waiting for `Codex Zero Risk` to bind this turn through the selected ChatGPT connector.",
+            text: "> **Waiting for ChatGPT**\n>\n> The prompt is marked `Sent`. Waiting for `Codex Zero Risk2` to bind this turn through the selected ChatGPT connector.",
           });
           const terminalAbort = new AbortController();
           const abortTerminal = () => terminalAbort.abort();
@@ -598,7 +614,7 @@ export function createChatGptWebAdapter(
             await zeroRiskManualControl.markStarted(retainedLauncherDescriptor, owner);
             if (!parsed._compactionRequest) trace.push({
               kind: "commentary",
-              text: "> **Zero Risk connected**\n>\n> `Codex Zero Risk` is connected. ChatGPT is now working through the native Codex harness; progress remains visible in the launcher.",
+              text: "> **Manual mode connected**\n>\n> `Codex Zero Risk2` is connected. ChatGPT is now working through the native Codex harness; progress remains visible in the launcher.",
             });
             answer = await Promise.race([
               broker.waitForSafeCompletion(activeToken, browserAbort.signal),
@@ -616,7 +632,7 @@ export function createChatGptWebAdapter(
             // leave UI cleanup pending, but it must not replace a completed Codex answer with an
             // error or trigger a contradictory failed terminal mutation.
             console.error(
-              `[chatgpt-web] completed Zero Risk turn but could not confirm launcher cleanup: ${controlError instanceof Error ? controlError.message : String(controlError)}`,
+              `[chatgpt-web] completed Manual mode turn but could not confirm launcher cleanup: ${controlError instanceof Error ? controlError.message : String(controlError)}`,
             );
           }
           return answer;
@@ -631,7 +647,7 @@ export function createChatGptWebAdapter(
             await finishLauncher(externallyAborted ? "aborted" : "failed");
           } catch (controlError) {
             console.error(
-              `[chatgpt-web] failed to release Zero Risk launcher turn: ${controlError instanceof Error ? controlError.message : String(controlError)}`,
+              `[chatgpt-web] failed to release Manual mode launcher turn: ${controlError instanceof Error ? controlError.message : String(controlError)}`,
             );
           }
           throw normalized;
@@ -663,7 +679,7 @@ export function createChatGptWebAdapter(
           browserTurn.cancel(reason);
           if (activeToken) {
             void Promise.resolve(broker.revoke(activeToken, reason)).catch(error => {
-              console.error(`[chatgpt-web] failed to revoke cancelled Zero Risk request: ${error instanceof Error ? error.message : String(error)}`);
+              console.error(`[chatgpt-web] failed to revoke cancelled Manual mode request: ${error instanceof Error ? error.message : String(error)}`);
             });
           }
         },
@@ -806,8 +822,8 @@ export function createChatGptWebAdapter(
           emit({
             type: "error",
             message: manualInteraction
-              ? "ChatGPT Zero Risk requires the Zero Risk Web model route."
-              : "The Zero Risk Web model route is unavailable while automatic browser interaction is enabled.",
+              ? "ChatGPT Manual mode requires the Manual mode Web model route."
+              : "The Manual mode Web model route is unavailable while automatic browser interaction is enabled.",
             status: 409,
             errorType: "invalid_request_error",
             code: "browser_interaction_mode_mismatch",
@@ -858,7 +874,7 @@ export function createChatGptWebAdapter(
             emit({
               type: "error",
               message: manualRequest
-                ? "Zero Risk could not resume the active ChatGPT conversation for context handoff. Retry the task from the Launcher."
+                ? "Manual mode could not resume the active ChatGPT conversation for context handoff. Retry the task from the Launcher."
                 : "ChatGPT could not resume the active conversation for context handoff. Retry the task.",
               status: 409,
               errorType: "invalid_request_error",
@@ -924,7 +940,7 @@ export function createChatGptWebAdapter(
                   };
                   armHandoffDeadline();
                   const operationSignal = AbortSignal.any([operatorSignal, handoffDeadline.signal]);
-                  const sourceConversationKey = chatGptConversationKey(parsed, executionNamespace);
+                  const sourceConversationKey = chatGptConversationKey(parsed, chatGptWebConversationNamespace(provider, parsed));
                   const runFreshCompactionFallback = async (reason: string): Promise<string> => {
                     console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
                     // The fallback is a new bounded phase. Each exact multipart acknowledgement
@@ -1127,6 +1143,10 @@ export function createChatGptWebAdapter(
           nativeTurnId,
           nativeIdentity.threadId,
           chatGptInstructionLineage(parsed),
+          !manualRequest && turnCapabilities.localToolsEnabled && retainedLauncherDescriptor
+            && parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
+            ? chatGptConversationKey(parsed, chatGptWebConversationNamespace(provider, parsed))
+            : undefined,
         );
         const roundKey = chatGptTurnRoundKey(parsed);
         const emitRoundEvents = (events: readonly AdapterEvent[]): void => {
@@ -1280,7 +1300,7 @@ export function createChatGptWebAdapter(
               let nextTools = armNextTools();
               const browserOutcome = session.browserOutcome.then(outcome => ({ type: "browser" as const, outcome }));
               const finishBrowserOutcome = async (completedOutcome: ChatGptBrowserOutcome): Promise<void> => {
-                // Zero Risk completion and its owner-only empty-batch signal are resolved by the
+                // Manual mode completion and its owner-only empty-batch signal are resolved by the
                 // same broker transition. Drain once more so the accepted final answer cannot be
                 // overtaken by the terminal owner notification.
                 emitNewTrace(session.runtime.trace.drain());
@@ -1369,7 +1389,7 @@ export function createChatGptWebAdapter(
         } catch (error) {
           if (incoming.abortSignal?.aborted && error instanceof DOMException && error.name === "AbortError") {
             if (session.runtime.manualControl) {
-              // Zero Risk is user-driven and has no DOM observer that can distinguish continued
+              // Manual mode is user-driven and has no DOM observer that can distinguish continued
               // work from a stopped native turn. A closed Responses stream is therefore terminal:
               // revoke the MCP capability and release the Launcher tab instead of leaving a task
               // that Codex already shows as stopped waiting forever.
@@ -1399,14 +1419,22 @@ export function createChatGptWebAdapter(
             void session.runtime.token.then(turnToken => broker.revoke(turnToken)).catch(() => {});
           }
           if (handledError instanceof ChatGptWebAdapterError) {
-            emitRoundEvent({
+            const failureEvent: AdapterEvent = {
               type: "error",
               message: handledError.message,
               status: handledError.status,
               errorType: handledError.errorType,
               code: handledError.code,
               retryable: handledError.retryable,
-            });
+            };
+            if (handledError.code === "chatgpt_resource_limit") {
+              // A full replay journal cannot accept its own failure frame. Keep failure terminal
+              // and deliver it directly; never silently truncate/restart an accepted browser turn.
+              session.failRound(roundKey, handledError);
+              emit(failureEvent);
+              return;
+            }
+            emitRoundEvent(failureEvent);
             session.completeRound(roundKey);
             return;
           }

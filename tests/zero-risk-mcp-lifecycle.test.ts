@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,15 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const nonceA = "surface_nonce_A_0123456789";
 const nonceB = "surface_nonce_B_0123456789";
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
 
 function endpoint(name: string): string {
   return defaultBrokerEndpoint(join(root, name));
@@ -42,7 +52,7 @@ function toolResult(value: Record<string, unknown>): BrokerToolResult {
   };
 }
 
-describe("Zero Risk turn broker lifecycle", () => {
+describe("Manual mode turn broker lifecycle", () => {
   test("requires both Launcher Sent and connector start before tools can run", async () => {
     const socketPath = endpoint("strict-lifecycle");
     const broker = TurnBroker.forSocket(socketPath);
@@ -61,7 +71,7 @@ describe("Zero Risk turn broker lifecycle", () => {
         Bun.sleep(20).then(() => "waiting_for_confirmation"),
       ])).toBe("waiting_for_confirmation");
       await expect(callTurnBroker(socketPath, { method: "claim", token: requestId, contract: "native" }))
-        .rejects.toThrow("requires the Zero Risk MCP contract");
+        .rejects.toThrow("requires the Manual mode MCP contract");
       expect(() => broker.startSafeTurn("request_missing_012345678901234567890123"))
         .toThrow("request_id is invalid");
 
@@ -130,7 +140,7 @@ describe("Zero Risk turn broker lifecycle", () => {
     }
   }, 15_000);
 
-  test("holds an early Zero Risk completion behind the Launcher confirmation", async () => {
+  test("holds an early Manual mode completion behind the Launcher confirmation", async () => {
     const socketPath = endpoint("early-completion");
     const broker = TurnBroker.forSocket(socketPath);
     try {
@@ -184,8 +194,8 @@ describe("Zero Risk turn broker lifecycle", () => {
       ownerBatchAbort.abort();
       await expect(abandonedBatch).rejects.toMatchObject({ name: "AbortError" });
 
-      broker.revoke(first, new Error("operator cancelled first Zero Risk turn"));
-      await expect(firstCompletion).rejects.toThrow("operator cancelled first Zero Risk turn");
+      broker.revoke(first, new Error("operator cancelled first Manual mode turn"));
+      await expect(firstCompletion).rejects.toThrow("operator cancelled first Manual mode turn");
       broker.startSafeTurn(second);
       broker.confirmSafeTurnSent(second, nonceB);
       broker.completeSafeTurn(second, "second survived");
@@ -197,7 +207,7 @@ describe("Zero Risk turn broker lifecycle", () => {
     }
   });
 
-  test("allows Zero Risk completion as the one-shot compaction result while keeping Harness tools blocked", async () => {
+  test("allows Manual mode completion as the one-shot compaction result while keeping Harness tools blocked", async () => {
     const socketPath = endpoint("compaction-completion");
     const broker = TurnBroker.forSocket(socketPath);
     try {
@@ -253,7 +263,7 @@ describe("Zero Risk turn broker lifecycle", () => {
   }, 15_000);
 });
 
-describe("Zero Risk public MCP ABI", () => {
+describe("Manual mode public MCP ABI", () => {
   test("exposes start and completion while hiding the bridge namespace", async () => {
     const socketPath = endpoint("stdio-contract");
     const broker = TurnBroker.forSocket(socketPath);
@@ -266,6 +276,7 @@ describe("Zero Risk public MCP ABI", () => {
       { name: "codex_exec", namespace: ownNamespace, description: "Recursive bridge", parameters: { type: "object" } },
       { name: "codex_turn_complete", namespace: ownNamespace, description: "Recursive completion", parameters: { type: "object" } },
       { name: "shadow_tool", namespace: ownNamespace, description: "Same recursive namespace", parameters: { type: "object" } },
+      { name: "read_thread", namespace: "mcp__codex_app", description: "Read a Codex task", parameters: { type: "object" } },
       { name: "useful_tool", namespace: "mcp__useful", description: "Useful external tool", parameters: { type: "object" } },
     ]), nonceA, 60_000, "safe-stdio");
     const transport = new StdioClientTransport({
@@ -280,9 +291,17 @@ describe("Zero Risk public MCP ABI", () => {
       expect(client.getInstructions()).toContain("begin with codex_turn_start using the request_id");
       expect(client.getInstructions()).toContain("send the complete answer with codex_turn_complete");
       const listed = await client.listTools();
+      const publicConnectorAbi = listed.tools.map(tool => ({
+        name: tool.name, title: tool.title ?? null, description: tool.description ?? null,
+        inputSchema: tool.inputSchema, outputSchema: tool.outputSchema ?? null, annotations: tool.annotations ?? null,
+      }));
+      // This complete public tools/list schema belongs to the new Codex Zero Risk2 identity.
+      expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
+        .toBe("e05351002a367d8891dbeb9f314779378a0a59853a62b1fc3f7115b2e6496911");
       expect(listed.tools.map(tool => tool.name).sort()).toEqual([
         "codex_apply_patch",
         "codex_exec",
+        "codex_read_thread",
         "codex_tool_call",
         "codex_tool_inventory",
         "codex_turn_complete",
@@ -293,7 +312,7 @@ describe("Zero Risk public MCP ABI", () => {
       expect(listed.tools.find(tool => tool.name === "codex_turn_start")?.description)
         .toContain("request_id included in the pasted Codex Web GPT request");
       expect(listed.tools.find(tool => tool.name === "codex_tool_inventory")?.description)
-        .toStartWith("List tools available to the connected Zero Risk request");
+        .toStartWith("List tools available to the connected Manual mode request");
       const startSchema = listed.tools.find(tool => tool.name === "codex_turn_start")?.inputSchema;
       expect(startSchema).toMatchObject({ required: ["request_id"] });
       expect(JSON.stringify(startSchema)).not.toContain("turn_token");
@@ -301,6 +320,14 @@ describe("Zero Risk public MCP ABI", () => {
       const inventorySchema = listed.tools.find(tool => tool.name === "codex_tool_inventory")?.inputSchema;
       expect(inventorySchema).toMatchObject({ required: expect.arrayContaining(["request_id"]) });
       expect(JSON.stringify(inventorySchema)).not.toContain("turn_token");
+
+      expect(listed.tools.find(tool => tool.name === "codex_read_thread")?.annotations).toEqual({
+        readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+      });
+      const readSchema = listed.tools.find(tool => tool.name === "codex_read_thread")?.inputSchema;
+      expect(readSchema).toMatchObject({ required: expect.arrayContaining(["request_id", "threadId"]) });
+      expect(JSON.stringify(readSchema)).not.toContain("turn_token");
+      expect(JSON.stringify(readSchema)).not.toContain("wire_name");
 
       expect(broker.confirmSafeTurnSent(requestId, nonceA)).toEqual({ confirmed: true, duplicate: false });
       const beforeStart = await client.callTool({
@@ -310,6 +337,16 @@ describe("Zero Risk public MCP ABI", () => {
       expect(beforeStart.isError).toBe(true);
       expect(JSON.stringify(beforeStart.content))
         .toContain("codex_turn_start with its request_id first");
+
+      const readBeforeStart = await client.callTool({
+        name: "codex_read_thread", arguments: { request_id: requestId, threadId: "thread_test" },
+      });
+      expect(readBeforeStart.isError).toBe(true);
+      expect(JSON.stringify(readBeforeStart.content)).toContain("codex_turn_start with its request_id first");
+      const wrongReference = await client.callTool({
+        name: "codex_read_thread", arguments: { turn_token: requestId, threadId: "thread_test" },
+      });
+      expect(wrongReference.isError).toBe(true);
 
       const remoteStart = await client.callTool({
         name: "codex_turn_start",
@@ -332,9 +369,10 @@ describe("Zero Risk public MCP ABI", () => {
       });
       const inventory = await inventoryAfterStart;
       expect(inventory.structuredContent).toMatchObject({
-        total: 2,
+        total: 3,
         tools: [
           { wire_name: "exec_command" },
+          { wire_name: "mcp__codex_app__read_thread" },
           { wire_name: "mcp__useful__useful_tool" },
         ],
       });
@@ -342,6 +380,30 @@ describe("Zero Risk public MCP ABI", () => {
       expect(JSON.stringify(inventory)).not.toContain("Top-level recursive bridge");
       expect(JSON.stringify(inventory)).not.toContain("Recursive freeform gateway");
       expect(JSON.stringify(inventory)).not.toContain(CODEX_COMPACTION_CONTROL_WIRE_NAME);
+
+      const threadRead = client.callTool({
+        name: "codex_read_thread",
+        arguments: {
+          request_id: requestId,
+          threadId: "thread_test",
+          hostId: "local",
+          turnLimit: 1,
+          includeOutputs: false,
+        },
+      });
+      const [threadReadRequest] = await broker.nextToolBatch(requestId);
+      expect(threadReadRequest).toMatchObject({
+        wireName: "mcp__codex_app__read_thread",
+        freeform: false,
+        arguments: {
+          threadId: "thread_test",
+          hostId: "local",
+          turnLimit: 1,
+          includeOutputs: false,
+        },
+      });
+      broker.completeTool(requestId, threadReadRequest!.callId, toolResult({ title: "Referenced task" }));
+      expect((await threadRead).structuredContent).toEqual({ title: "Referenced task" });
 
       const recursive = await client.callTool({
         name: "codex_tool_call",
@@ -390,6 +452,10 @@ describe("Zero Risk public MCP ABI", () => {
         duplicate: false,
       });
       await expect(broker.waitForSafeCompletion(requestId)).resolves.toBe("done");
+      const readAfterComplete = await client.callTool({
+        name: "codex_read_thread", arguments: { request_id: requestId, threadId: "thread_test" },
+      });
+      expect(readAfterComplete.isError).toBe(true);
     } finally {
       await client.close().catch(() => {});
       broker.revoke(requestId);
