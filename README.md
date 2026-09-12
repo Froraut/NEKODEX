@@ -150,6 +150,13 @@ ChatGPT page and never sends a prompt for you. The launcher prepares and copies 
 choose the model, effort, and `Codex Zero Risk2` connector, then paste and send it yourself. Account
 limits and the effects of MCP/local tools still apply.
 
+Manual mode's Codex route is **text-only** and does not automatically receive Computer Use
+screenshots or other image inputs. Images must be attached manually in ChatGPT; doing so does
+not enable automatic screenshot delivery through the route. For visual checks, use a route that
+supports image input and verify the actual tool result. See the [Computer Use image limitation
+review](docs/upstream-issue-457-computer-use.md) for the separate image, Windows-binding and
+keyboard-error boundaries.
+
 The former **Zero Risk** mode is now named **Manual mode**. Existing `chatgpt-web/zero-risk` and
 `chatgpt-web/zero-risk-pro` model IDs, command flags, and saved settings stay compatible. The exact
 connector name remains `Codex Zero Risk2`; the display rename does not rename your connectors.

@@ -33,6 +33,25 @@ tokenizer regression remains present. The four affected suites passed locally: *
 that run. Root TypeScript and scoped diff checks also passed. These are test-data corrections;
 the installed pre4 runtime is unchanged. The failed run is not recorded as a cross-platform pass.
 
+The correction was published as
+[`72801f3`](https://github.com/Froraut/codex-chatgpt-web/commit/72801f39c9074b30a507c2d2686ce86ffbce50ff).
+Its replacement [CI run 34690318500](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34690318500)
+**passed all four jobs**, finishing at **11:17:53 UTC**. Each platform completed the full verify
+step, native packaging and packaged startup smoke; actionlint also passed.
+
+| Platform | Core tests | Launcher tests | Packaging and runtime checks |
+| --- | --- | --- | --- |
+| macOS | 988 passed, 0 failed, 1 skipped; 5,591 assertions | 522 passed, 0 failed, 1 skipped | Relocated and packaged smoke passed |
+| Linux | 988 passed, 0 failed, 1 skipped; 5,555 assertions | 523 passed, 0 failed, 0 skipped | Relocated and packaged smoke, plus AppImage ABI check passed |
+| Windows | 988 passed, 0 failed, 1 skipped; 5,531 assertions | 513 passed, 0 failed, 10 skipped | Relocated and installed-package smoke passed |
+
+The three corrected cases took **4.89 / 3.22 / 0.15 s** on Linux and
+**1.98 / 1.67 / 0.08 s** on Windows, within their unchanged deadlines. Counts differ because of
+platform-specific branches and skips; they must not be added together as unique tests.
+Subsequent README and review edits document issue #457 and this result without changing any
+runtime, tests, dependencies or build configuration. Those documentation edits receive link
+and whitespace checks without repeating the cross-platform build.
+
 The installed build remains ad-hoc signed. Developer ID signing, notarization, live session
 import, installed Codex/MCP execution, and a signed public binary release remain separate gates.
 

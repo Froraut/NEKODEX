@@ -10,6 +10,12 @@ There are seven new issues, three new open PRs, four newly created and closed PR
 meaningfully updated older issues. No issue was newly closed in the updated-issue result.
 Upstream `main` remains `e85e3693fdb4e3e033348c08df0298c20fcdb612`.
 
+A further refresh at **11:05 UTC** found one additional new issue,
+[#457](https://github.com/miuuyy/codex-chatgpt-web/issues/457), created at 10:47 UTC and without
+comments. The open inventory is now **32 issues and 11 PRs**. Its separately reviewed image,
+Windows-native-binding and key-name symptoms are documented below; the earlier inventory and
+patch-head timestamps are preserved rather than presented as a later snapshot.
+
 The published fork baseline is **`72ff04ac31acbd5885eed2de76aa96bccd6cb429`**,
 version **5.1.0-froraut.2**. Its successful CI is recorded separately in
 [run 34645507128](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34645507128).
@@ -48,6 +54,7 @@ macOS, Windows and Linux. These results do not prove the original reporters' acc
 | [#445 — native Deep Research in DEV](https://github.com/miuuyy/codex-chatgpt-web/issues/445) | Optional workflow proposal with author-reported live prototype evidence. The issue supplies no published feature commit or reviewable patch. Not a fix for existing import, retention, MCP or catalog failures. No new workflow is imported in this maintenance batch. |
 | [#444 — Luna forgets / context exhausted / newer model absent](https://github.com/miuuyy/codex-chatgpt-web/issues/444) | New but insufficiently specified: the application-version field contains an account tier, and repeated narrative replaces diagnostics. Current Luna exact-parent rolling-checkpoint tests do not reproduce this account's failure. Need the actual route/model, canonical history/checkpoint sequence, context usage and capability probe before attributing the symptom to #447 or increasing limits. |
 | [#443 — Interrupt hook changed](https://github.com/miuuyy/codex-chatgpt-web/issues/443) | New Windows report with the exact refusal and an attachment link, but no changed hook fragment or minimal reproduction in the body. Do not overwrite unknown changes. #431's independently reproduced interleaving may explain a subset, but #443 itself is not proven to be that same case. |
+| [#457 — Computer Use screenshots / Windows bindings / key name](https://github.com/miuuyy/codex-chatgpt-web/issues/457) | Added in the 11:05 UTC refresh. Manual routes advertise text-only input; official Codex replaces unsupported MCP image blocks with the exact reported omission message before the bridge receives their bytes. Manual prompt handoff also lacks an attachment-transfer contract, so advertising image support alone would be false. Automatic routes have a separate image-capable path. Windows native bindings and `asciitilde` are external tool errors without the necessary invocation evidence in this report. See the [separate source review](../upstream-issue-457-computer-use.md); this is a confirmed Manual-mode limitation, not a completed vision fix. |
 | [#441 update — first acknowledgement](https://github.com/miuuyy/codex-chatgpt-web/issues/441#issuecomment-5641493262) | New comment reports the generic provider error after the first acknowledgement in a long-context chat. Existing fork fixtures already cover both retained-response send activation and the first multipart context send, making the resulting error terminal. The additional comment does not identify ChatGPT's underlying failure or justify resending an activated prompt. |
 | [#438 update — catalog counter zero](https://github.com/miuuyy/codex-chatgpt-web/issues/438#issuecomment-5642517228) | Reporter now supplies `successful_model_catalog_requests = 0` after opening the picker and reports only one official client. A later comment shows managed multi-agent settings, which does not prove the model catalog reached the route. Another user's reopen/reconnect workaround is anecdotal, not a cause. Preserve installed/waiting status and inspect effective home/profile/overrides and runtime acceptance without repeated blind reinstall. |
 | [#431 update — proxy, downgrade, hook interleaving](https://github.com/miuuyy/codex-chatgpt-web/issues/431#issuecomment-5642829351) | Reporter now distinguishes three causes: an older binary cannot parse a newer active journal; unstable proxy/DNS/connection failures masquerade as failed session verification; and a foreign table breaks the hook locator. The last is source-reproduced and selected above. Stable-proxy success is author-reported; downgrade recovery must retain version ownership and reversible setup semantics. No credential reset or generic timeout increase is justified. |
@@ -127,8 +134,8 @@ ownership plus replacement, sibling-continuation and committed-output consistenc
 
 ## Unchanged open issues
 
-Together with the eleven rows in “New issues and meaningful updates,” these twenty rows account
-for the complete 31-open-issue inventory. They were refreshed, not silently treated as resolved.
+Together with the twelve rows in “New issues and meaningful updates,” these twenty rows account
+for the refreshed 32-open-issue inventory. They were refreshed, not silently treated as resolved.
 
 | Issue | Current boundary |
 | --- | --- |
@@ -174,6 +181,7 @@ as a duplicate of #431 by the new proxy report.
 | #451 diagnostic proposal review | Actual fork SDK accepted the deep-input fixture; the proposed observer instead raised `RangeError` before dispatch. No source adoption. |
 | #455 feature review | Exact proposed DEV argument parsing rejected both emitted policy flags; exact helper evaluation matched an unrelated namespaced `send_message`. No source adoption. |
 | #452 diagnostic boundaries | Two existing drained-runtime/catalog-observation fixtures passed, **8 assertions**. They establish local behavior, not the reporter's cause. |
+| #457 image and tool boundaries | Three existing focused tests passed, **24 assertions**: Manual text-only catalog, Manual image-attachment instructions, and Automatic native image preparation. These establish the source contracts, not live Windows Computer Use acceptance. No modality or native-key mapping change was made. |
 
 Focused counts overlap and must not be added as a unique repository total. Root TypeScript and
 scoped whitespace checks passed for all three completed corrections. The hook correction's
