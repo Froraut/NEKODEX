@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { parseExistingChromeProgress } = require("./existing-chrome-login.cjs");
+const { parseExistingChromeError, existingChromeError } = require("./existing-chrome-errors.cjs");
 const IMPORT_TIMEOUT_MS = 180_000;
 
 function cleanupExistingChromeTransfers(host) {
@@ -40,6 +41,7 @@ async function captureExistingChromeLogin(host, onProgress) {
     }
   };
   host.existingChromeProgress = onProgress || (() => {});
+  let reportedErrorCode = null;
   try {
     await host.run("existing-chrome-login", ["login", "--existing-chrome", "--launcher-control", "--consent-user-profile", "--storage-state", storageStatePath], {
       embedded: true, controlStdin: true, privateOutput: true, env: host.launcherControlEnvironment(),
@@ -47,6 +49,8 @@ async function captureExistingChromeLogin(host, onProgress) {
       successMessage: "Existing Chrome session captured for private Launcher verification",
       timeoutMs: IMPORT_TIMEOUT_MS + 10_000,
       onStdoutLine: line => {
+        const code = parseExistingChromeError(line);
+        if (code) reportedErrorCode = code;
         const progress = parseExistingChromeProgress(line);
         if (progress) host.existingChromeProgress?.(progress);
         // The session helper does not have general-purpose output. Never log raw CDP errors/data.
@@ -66,6 +70,10 @@ async function captureExistingChromeLogin(host, onProgress) {
     return { storageState: JSON.parse(fs.readFileSync(storageStatePath, "utf8")), cleanup };
   } catch (error) {
     await cleanup();
+    if (reportedErrorCode) {
+      host.logger?.warn?.("runtime.existing_chrome_import_failed", { code: reportedErrorCode });
+      throw existingChromeError(reportedErrorCode);
+    }
     const timeout = /timed out/i.test(error?.message ?? "");
     const failure = new Error(timeout ? "Existing Chrome sign-in timed out" : "Existing Chrome sign-in could not be imported");
     if (timeout) failure.code = "existing_chrome_timeout";

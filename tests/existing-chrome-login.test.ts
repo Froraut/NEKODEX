@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, existsSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -275,6 +275,24 @@ test("discovery reads only a bounded regular file, and missing or stale endpoint
     writeFileSync(marker, `65534\n${browserPath}`);
     await expect(captureExistingChromeLogin({ consent: true, timeoutMs: 100 }, { portFile: () => marker })).rejects.toBeInstanceOf(Error);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("OS-denied marker access reports a distinct safe code before connecting to Chrome", async () => {
+  // Windows ACLs do not follow POSIX chmod, and root may legitimately bypass these mode bits.
+  if (process.platform === "win32" || process.getuid?.() === 0) return;
+  const f = await fixture();
+  const phases: string[] = [];
+  try {
+    chmodSync(f.portFile, 0o000);
+    const error = await captureExistingChromeLogin({ consent: true, onProgress: p => phases.push(p.phase) }, f.dependencies)
+      .catch(error => error);
+    expect(error).toMatchObject({ code: "chrome-profile-access-denied" });
+    expect(error.message).not.toContain(f.portFile);
+    expect(error.message).not.toContain(browserPath);
+    expect(phases).toEqual(["discovering"]);
+    expect(f.upgrades).toEqual([]);
+    expect(f.calls).toEqual([]);
+  } finally { chmodSync(f.portFile, 0o600); await f.close(); }
 });
 
 test("private file capture remains unverified until the launcher's isolated verifier succeeds", async () => {

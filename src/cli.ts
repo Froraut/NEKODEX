@@ -7,7 +7,7 @@ import { stdin, stdout } from "node:process";
 import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } from "./browser-login";
 import { createPasskeyLoginControl } from "./passkey-login-control";
 import { createExistingChromeLoginControl } from "./existing-chrome-login-control";
-import { captureExistingChromeLoginToFile } from "./existing-chrome-login";
+import { captureExistingChromeLoginToFile, ExistingChromeLoginError } from "./existing-chrome-login";
 import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
 import {
   inspectLauncherBrowserHost,
@@ -163,7 +163,10 @@ async function loginCommand(args: string[]): Promise<void> {
   const storageStatePath = takeOption(args, "--storage-state");
   assertNoArgs(args);
   if (existingChrome) {
-    authorizeLauncherControl("existing Chrome login");
+    try { authorizeLauncherControl("existing Chrome login"); } catch {
+      stdout.write('@codex-chrome-import-error:{"version":1,"code":"launcher-authorization-failed"}\n');
+      throw new Error("The launcher could not authorize its private Chrome import helper");
+    }
     if (!consentUserProfile || chromeExecutablePath || !storageStatePath || !isAbsolute(storageStatePath)) {
       throw new Error("Existing Chrome import requires explicit profile consent and an absolute --storage-state path");
     }
@@ -173,6 +176,10 @@ async function loginCommand(args: string[]): Promise<void> {
         consent: true, signal: control.signal,
         onProgress: progress => stdout.write(`@codex-chrome-import:${JSON.stringify(progress)}\n`),
       });
+    } catch (error) {
+      const code = error instanceof ExistingChromeLoginError ? error.code : "import-failed";
+      stdout.write(`@codex-chrome-import-error:${JSON.stringify({ version: 1, code })}\n`);
+      throw error instanceof ExistingChromeLoginError ? error : new Error("Existing Chrome sign-in could not be imported");
     } finally { control.close(); }
     stdout.write("Existing Chrome session captured for Launcher verification.\n");
     return;

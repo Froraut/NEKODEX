@@ -1,6 +1,7 @@
 // Credential-free UI fixture. Build the renderer first, then run this file with
 // Node or Bun and open the loopback URL it prints. No Electron or ChatGPT calls.
-// Scenarios: ?scenario=embedded, passkey, onboarding, startup-error
+// Scenarios: ?scenario=embedded, passkey, onboarding, startup-error, existing-chrome-failed
+// Add &no-animation-frames=true to keep requestAnimationFrame callbacks permanently paused.
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -10,6 +11,11 @@ const dist = path.resolve(__dirname, "../../dist");
 function installMockLauncher() {
   const parameters = new URLSearchParams(location.search);
   const scenario = parameters.get("scenario") || "embedded";
+  if (parameters.get("no-animation-frames") === "true") {
+    window.fixtureAnimationRequests = 0;
+    window.requestAnimationFrame = () => { window.fixtureAnimationRequests++; return 1; };
+    window.cancelAnimationFrame = () => {};
+  }
   const language = ["en", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
   const listeners = {};
   const emit = (name, value) => (listeners[name] || []).forEach((listener) => listener(value));
@@ -35,6 +41,12 @@ function installMockLauncher() {
     ],
   };
   let operation = scenario === "passkey" ? { name: "passkey-login", status: "running", message: "Waiting in Chrome" } : null;
+  if (scenario === "existing-chrome-failed") {
+    Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: null, visible: false,
+      existingChromeLogin: { phase: "failed", startedAt: new Date().toISOString(), deadlineAt: new Date().toISOString(),
+        active: false, canCancel: false, canCopySettings: true, error: "chrome-profile-access-denied" } });
+    operation = { name: "existing-chrome-login", status: "failed", message: "Fixture Chrome access was denied" };
+  }
   const snapshot = () => ({
     profile: "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
@@ -62,6 +74,9 @@ function installMockLauncher() {
       emit("browser", { ...browser }); emit("operation", operation); return { ...browser };
     },
     continuePasskeyLogin: async () => { calls.push(["continue"]); return true; },
+    openExistingChromeLogin: async () => { calls.push(["existing-chrome-retry"]); return { ...browser }; },
+    cancelExistingChromeLogin: async () => { calls.push(["existing-chrome-cancel"]); return { ...browser }; },
+    copyExistingChromeSettingsAddress: async () => { calls.push(["existing-chrome-settings-copy"]); return true; },
     selectBrowserTab: async (tabId) => {
       calls.push(["tab", tabId]); browser.tabs = browser.tabs.map((tab) => ({ ...tab, active: tab.id === tabId }));
       emit("browser", { ...browser }); return { ...browser };
@@ -75,12 +90,17 @@ function installMockLauncher() {
   };
 }
 
-const server = http.createServer((request, response) => {
+function createFixtureServer() { return http.createServer((request, response) => {
   const pathname = new URL(request.url, "http://localhost").pathname;
+  if (pathname === "/fixture-setup.js") {
+    response.setHeader("Content-Type", "text/javascript");
+    response.end(`(${installMockLauncher.toString()})()`);
+    return;
+  }
   if (pathname === "/") {
     response.setHeader("Content-Type", "text/html; charset=utf-8");
     response.end(fs.readFileSync(path.join(dist, "index.html"), "utf8")
-      .replace("<head>", `<head><script>(${installMockLauncher.toString()})()</script>`));
+      .replace("</head>", '<script src="/fixture-setup.js"></script></head>'));
     return;
   }
   const file = path.resolve(dist, `.${pathname}`);
@@ -89,5 +109,9 @@ const server = http.createServer((request, response) => {
   }
   response.setHeader("Content-Type", file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "application/octet-stream");
   fs.createReadStream(file).pipe(response);
-});
-server.listen(0, "127.0.0.1", () => process.stdout.write(`Launcher UI fixture: http://127.0.0.1:${server.address().port}/\n`));
+}); }
+if (require.main === module) {
+  const server = createFixtureServer();
+  server.listen(0, "127.0.0.1", () => process.stdout.write(`Launcher UI fixture: http://127.0.0.1:${server.address().port}/\n`));
+}
+module.exports = { createFixtureServer };

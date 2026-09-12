@@ -52,7 +52,7 @@ export interface BrowserState {
 }
 
 export interface ExistingChromeLoginProgress {
-  phase: "consent" | "discovering" | "waiting-for-chrome" | "reading-session" | "verifying" | "cancelling" | "cancelled" | "timed-out" | "failed" | "completed";
+  phase: "consent" | "preparing" | "discovering" | "waiting-for-chrome" | "reading-session" | "verifying" | "cancelling" | "cancelled" | "timed-out" | "failed" | "completed";
   startedAt: string;
   deadlineAt: string;
   active: boolean;

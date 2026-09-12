@@ -1,4 +1,3 @@
-import { AnimatePresence, motion } from "motion/react";
 import {
   useCallback,
   useEffect,
@@ -29,7 +28,6 @@ import type {
 } from "./types";
 
 const api = window.codexWebLauncher;
-const PANEL_TRANSITION = { duration: 0.3, ease: [0.16, 1, 0.3, 1] } as const;
 const COMPACT_SIDEBAR_QUERY = "(max-width: 820px)";
 const MCP_GUIDE_MEDIA = [
   new URL("./assets/mcp-create-tunnel.mp4", import.meta.url).href,
@@ -134,7 +132,6 @@ export function App() {
       data-profile={snapshot.profile}
       data-theme="dark"
     >
-      <AnimatePresence mode="wait">
         {!snapshot.state.onboardingComplete ? (
           <Onboarding
             key="onboarding"
@@ -157,10 +154,7 @@ export function App() {
             updateState={updateState}
           />
         )}
-      </AnimatePresence>
-      <AnimatePresence>
         {error ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
-      </AnimatePresence>
     </div>
   );
 }
@@ -227,12 +221,8 @@ function Onboarding({
   };
 
   return (
-    <motion.main
-      animate={{ opacity: 1 }}
+    <main
       className="welcome"
-      exit={{ opacity: 0 }}
-      initial={{ opacity: 0 }}
-      transition={{ duration: 0.22 }}
     >
       <header className="welcome-top draggable">
         <div className="welcome-brand no-drag">
@@ -243,14 +233,9 @@ function Onboarding({
         <span className="welcome-version no-drag">v{snapshot.version}</span>
       </header>
 
-      <AnimatePresence mode="wait">
-        <motion.section
-          animate={{ opacity: 1, y: 0 }}
+        <section
           className="welcome-stage"
-          exit={{ opacity: 0, y: -8 }}
-          initial={{ opacity: 0, y: 8 }}
           key={stage}
-          transition={PANEL_TRANSITION}
         >
           <span className="welcome-kicker">0{stageIndex + 1}</span>
           <h1>{isLanguage
@@ -310,8 +295,7 @@ function Onboarding({
               />
             </div>
           )}
-        </motion.section>
-      </AnimatePresence>
+        </section>
 
       <footer className="welcome-footer">
         <div>
@@ -343,7 +327,7 @@ function Onboarding({
           {stage === "support" ? localized.finishWelcome : localized.continue}
         </PrimaryButton>
       </footer>
-    </motion.main>
+    </main>
   );
 }
 
@@ -556,10 +540,8 @@ function LauncherShell({
   };
 
   return (
-    <motion.main
-      animate={{ opacity: 1 }}
+    <main
       className={`app-shell${compactSidebar ? " is-compact" : ""}${sidebarOpen ? " is-sidebar-open" : ""}`}
-      initial={{ opacity: 0 }}
     >
       <TitleBar
         copy={copy}
@@ -578,11 +560,9 @@ function LauncherShell({
         />
       ) : null}
 
-      <motion.aside
-        animate={{ width: sidebarOpen ? "var(--sidebar-width)" : 0 }}
+      <aside
+        style={{ width: sidebarOpen ? "var(--sidebar-width)" : 0 }}
         className="app-sidebar"
-        initial={false}
-        transition={{ type: "spring", duration: 0.5, bounce: 0.08 }}
       >
         <div className="sidebar-clip">
           <div className="sidebar-content">
@@ -664,17 +644,12 @@ function LauncherShell({
             </div>
           </div>
         </div>
-      </motion.aside>
+      </aside>
 
       <section className="workspace">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            animate={{ opacity: 1 }}
+          <div
             className="surface-transition"
-            exit={{ opacity: 0 }}
-            initial={{ opacity: 0 }}
             key={surface}
-            transition={{ duration: 0.16 }}
           >
             {surface === "browser" ? (
               <BrowserSurface
@@ -739,11 +714,9 @@ function LauncherShell({
                 updateState={updateState}
               />
             ) : null}
-          </motion.div>
-        </AnimatePresence>
+          </div>
       </section>
 
-      <AnimatePresence>
         {biggerContextRecommendationOpen ? (
           <BiggerContextRecommendation
             busy={biggerContextRecommendationBusy || operation?.status === "running"}
@@ -753,9 +726,7 @@ function LauncherShell({
             onClose={() => setBiggerContextRecommendationOpen(false)}
           />
         ) : null}
-      </AnimatePresence>
 
-      <AnimatePresence>
         {sessionReminderDue && !biggerContextRecommendationOpen ? (
           <SessionRefreshReminder
             busy={sessionReminderBusy}
@@ -764,8 +735,7 @@ function LauncherShell({
             onLogout={() => void logoutChatGpt()}
           />
         ) : null}
-      </AnimatePresence>
-    </motion.main>
+    </main>
   );
 }
 
@@ -1471,14 +1441,9 @@ function McpSurface({
           />
         ) : null}
 
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.section
-            animate={{ opacity: 1, x: 0 }}
+          <section
             className="wizard-content"
-            exit={{ opacity: 0, x: -8 }}
-            initial={{ opacity: 0, x: 8 }}
             key={step}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
           >
             <header>
               <span>0{step + 1}</span>
@@ -1592,8 +1557,7 @@ function McpSurface({
                 {doctor ? <DoctorSummary copy={copy} language={language} report={doctor} /> : null}
               </div>
             ) : null}
-          </motion.section>
-        </AnimatePresence>
+          </section>
       </div>
 
       <div className="wizard-footer">
@@ -2544,13 +2508,9 @@ function BrandMark({ small = false }: { small?: boolean }) {
 
 function ErrorToast({ copy, message, onDismiss }: { copy: Copy; message: string; onDismiss: () => void }) {
   return (
-    <motion.div
-      animate={{ opacity: 1, y: 0 }}
+    <div
       className="error-toast"
       role="alert"
-      exit={{ opacity: 0, y: 8 }}
-      initial={{ opacity: 0, y: 8 }}
-      transition={PANEL_TRANSITION}
     >
       <StateDot state="error" />
       <span>
@@ -2558,7 +2518,7 @@ function ErrorToast({ copy, message, onDismiss }: { copy: Copy; message: string;
         <p>{message}</p>
       </span>
       <button onClick={onDismiss} type="button">{copy.dismiss}</button>
-    </motion.div>
+    </div>
   );
 }
 
@@ -2574,13 +2534,9 @@ function SessionRefreshReminder({
   onLogout: () => void;
 }) {
   return (
-    <motion.aside
-      animate={{ opacity: 1, y: 0 }}
+    <aside
       aria-live="polite"
       className="session-refresh-reminder"
-      exit={{ opacity: 0, y: -8 }}
-      initial={{ opacity: 0, y: -8 }}
-      transition={PANEL_TRANSITION}
     >
       <span className="session-refresh-reminder-icon"><Icon name="alert" /></span>
       <div className="session-refresh-reminder-copy">
@@ -2595,7 +2551,7 @@ function SessionRefreshReminder({
           {copy.logOut}
         </button>
       </div>
-    </motion.aside>
+    </aside>
   );
 }
 
@@ -2613,23 +2569,15 @@ function BiggerContextRecommendation({
   onClose: () => void;
 }) {
   return (
-    <motion.div
-      animate={{ opacity: 1 }}
+    <div
       aria-describedby="bigger-context-recommendation-body"
       aria-labelledby="bigger-context-recommendation-title"
       aria-modal="true"
       className="bigger-context-recommendation-backdrop"
-      exit={{ opacity: 0 }}
-      initial={{ opacity: 0 }}
       role="dialog"
-      transition={{ duration: 0.18 }}
     >
-      <motion.section
-        animate={{ opacity: 1, scale: 1, y: 0 }}
+      <section
         className="bigger-context-recommendation"
-        exit={{ opacity: 0, scale: 0.98, y: 6 }}
-        initial={{ opacity: 0, scale: 0.98, y: 8 }}
-        transition={PANEL_TRANSITION}
       >
         <header className="bigger-context-recommendation-header">
           <small>{copy.biggerContext}</small>
@@ -2647,8 +2595,8 @@ function BiggerContextRecommendation({
         <footer>
           <SecondaryButton disabled={busy} onClick={onClose}>{copy.close}</SecondaryButton>
         </footer>
-      </motion.section>
-    </motion.div>
+      </section>
+    </div>
   );
 }
 

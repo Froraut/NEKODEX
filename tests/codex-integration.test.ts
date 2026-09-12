@@ -153,6 +153,86 @@ describe("reversible native Codex route integration", () => {
     expect(inspectCodexIntegration()).toMatchObject({ active: true, errors: [] });
   });
 
+  test("preserves foreign tables interleaved into TOML hooks during setup, migration, and removal", () => {
+    const foreign = '[marketplaces.claude-plugins-official]\nsource = "user-marketplace"\n\n';
+    const originalHooks = '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"user-stop"}]}]}}\n';
+    for (const version of [10, 11]) {
+      for (const action of ["reinstall", "migrate-json", "uninstall", "disconnect"]) {
+        const originalConfig = action === "disconnect"
+          ? 'model = "gpt-5.6-sol"\n# last user comment'
+          : 'model = "gpt-5.6-sol"';
+        const { codexHome } = fixture();
+        const configPath = join(codexHome, "config.toml");
+        const hooksPath = join(codexHome, "hooks.json");
+        const config = nativeConfig("browser-only");
+        writeFileSync(configPath, originalConfig);
+        const installed = installCodexIntegration(config);
+        expect(installed.interruptHook.storage).toBe("toml");
+        if (version === 10) {
+          const legacy = JSON.parse(readFileSync(getCodexJournalPath(), "utf8"));
+          legacy.version = 10;
+          delete legacy.interruptHook.storage;
+          const journal = JSON.stringify(legacy, null, 2) + "\n";
+          writeFileSync(getCodexJournalPath(), journal);
+          writeFileSync(getCodexJournalRecoveryPath(), journal);
+        }
+        writeFileSync(configPath, readFileSync(configPath, "utf8").replace("[hooks.state.", foreign + "[hooks.state."));
+        if (action === "migrate-json") writeFileSync(hooksPath, originalHooks);
+        preflightCodexIntegration(config);
+        if (action === "reinstall" || action === "migrate-json") {
+          const updated = installCodexIntegration(config);
+          expect(updated.interruptHook.storage).toBe(action === "migrate-json" ? "json" : "toml");
+          expect(inspectCodexIntegration().errors).toEqual([]);
+          expect(readFileSync(configPath, "utf8")).toContain(foreign);
+        }
+        if (action === "disconnect") deactivateCodexIntegration();
+        uninstallCodexIntegration();
+        const restored = readFileSync(configPath, "utf8");
+        expect(Bun.TOML.parse(restored)).toEqual(Bun.TOML.parse(originalConfig + "\n" + foreign));
+        expect(restored).toContain(foreign.trimEnd());
+        expect(restored.match(/\[marketplaces\.claude-plugins-official\]/g)).toHaveLength(1);
+        if (action === "migrate-json") {
+          expect(JSON.parse(readFileSync(hooksPath, "utf8"))).toEqual(JSON.parse(originalHooks));
+        }
+      }
+    }
+  });
+
+  test("refuses modified interleaved TOML hooks before changing configuration or migrating JSON", () => {
+    for (const version of [10, 11]) {
+      const { codexHome } = fixture();
+      const configPath = join(codexHome, "config.toml");
+      const hooksPath = join(codexHome, "hooks.json");
+      const config = nativeConfig("browser-only");
+      writeFileSync(configPath, 'model = "gpt-5.6-sol"\n');
+      installCodexIntegration(config);
+      if (version === 10) {
+        const legacy = JSON.parse(readFileSync(getCodexJournalPath(), "utf8"));
+        legacy.version = 10;
+        delete legacy.interruptHook.storage;
+        const journal = JSON.stringify(legacy, null, 2) + "\n";
+        writeFileSync(getCodexJournalPath(), journal);
+        writeFileSync(getCodexJournalRecoveryPath(), journal);
+      }
+      writeFileSync(configPath, readFileSync(configPath, "utf8")
+        .replace("timeout = 3", "timeout = 2")
+        .replace("[hooks.state.", '[marketplaces.claude-plugins-official]\nsource = "user-marketplace"\n\n[hooks.state.'));
+      writeFileSync(hooksPath, '{"hooks":{"Stop":[]}}\n');
+      const paths = [configPath, hooksPath, getCodexJournalPath(), getCodexJournalRecoveryPath()];
+      const snapshots = paths.map(path => readFileSync(path));
+      for (const operation of [
+        () => preflightCodexIntegration(config),
+        () => installCodexIntegration(config),
+        () => installCodexIntegration(config, { replaceExistingRoute: true }),
+        () => deactivateCodexIntegration(),
+        () => uninstallCodexIntegration(),
+      ]) {
+        expect(operation).toThrow("changed after setup");
+        expect(paths.map(path => readFileSync(path))).toEqual(snapshots);
+      }
+    }
+  });
+
   test("recovers a first JSON install interrupted before the JSON write", () => {
     const { codexHome } = fixture();
     const hooksPath = join(codexHome, "hooks.json");

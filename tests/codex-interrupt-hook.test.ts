@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   MANAGED_INTERRUPT_HOOK_END,
+  MANAGED_INTERRUPT_HOOK_START,
   MANAGED_INTERRUPT_HOOK_TRUST_START,
   MANAGED_INTERRUPT_HOOK_TRUST_END,
   codexInterruptHookCommand,
@@ -284,6 +285,82 @@ test("preserves native TOML editor tables inserted before the trailing hook comm
     expect(() => restoreCodexInterruptHook(
       edited.replace("timeout = 3", "timeout = 2"), installed.installed,
     )).toThrow("changed after setup");
+  }
+});
+
+test("preserves foreign tables inserted between the managed command and trust state", () => {
+  const original = 'model = "gpt-5.6-sol"\n\n[[hooks.Interrupt]]\n[[hooks.Interrupt.hooks]]\ntype = "command"\ncommand = "user-hook"\n';
+  const foreign = '[marketplaces.claude-plugins-official] # native editor\nsource = "user-marketplace"\n\n[marketplaces.claude-plugins-official.settings]\nenabled = true\n\n';
+  for (const ending of ["\n", "\r\n"]) {
+    const installed = installCodexInterruptHook(original.replaceAll("\n", ending), "/Users/test/.codex/config.toml", {
+      runtimeCommand: ["/opt/runtime"],
+    });
+    for (const normalize of [false, true]) {
+      const actualEnding = normalize ? "\n" : ending;
+      const current = normalize ? installed.text.replaceAll("\r\n", "\n") : installed.text;
+      for (const endMarkerPosition of ["after-state", "before-command", "inside-foreign-table"]) {
+        let edited = current.replace("[hooks.state.", foreign.replaceAll("\n", actualEnding) + "[hooks.state.");
+        if (endMarkerPosition === "before-command") {
+          edited = MANAGED_INTERRUPT_HOOK_END + actualEnding
+            + edited.replace(MANAGED_INTERRUPT_HOOK_END + actualEnding, "");
+        } else if (endMarkerPosition === "inside-foreign-table") {
+          edited = edited.replace(MANAGED_INTERRUPT_HOOK_END + actualEnding, "")
+            .replace('source = "user-marketplace"', `${MANAGED_INTERRUPT_HOOK_END}${actualEnding}source = "user-marketplace"`);
+        }
+        verifyCodexInterruptHook(edited, installed.installed);
+        const restored = restoreCodexInterruptHook(edited, installed.installed);
+        expect(Bun.TOML.parse(restored)).toEqual(Bun.TOML.parse(original + foreign));
+        expect(restored).toContain(foreign.replaceAll("\n", actualEnding));
+        expect(restored.match(/\[marketplaces\.claude-plugins-official\]/g)).toHaveLength(1);
+        verifyCodexInterruptHookRestored(restored);
+      }
+    }
+  }
+});
+
+test("foreign table interleaving does not permit changed or ambiguous hook ownership", () => {
+  const installed = installCodexInterruptHook('model = "gpt-5.6-sol"\n', "/Users/test/.codex/config.toml", {
+    runtimeCommand: ["/opt/runtime"],
+  });
+  const foreign = '[marketplaces.claude-plugins-official]\nsource = "user-marketplace"\n\n';
+  const edited = installed.text.replace("[hooks.state.", foreign + "[hooks.state.");
+  for (const changed of [
+    edited.replace("timeout = 3", "timeout = 2"),
+    edited.replace('type = "command"', 'type = "other"'),
+    edited.replace("/opt/runtime", "/opt/other-runtime"),
+    edited.replace(installed.installed.trustedHash, "sha256:" + "a".repeat(64)),
+    edited.replace("[hooks.state.", '[[hooks.Interrupt.hooks]]\ntype = "command"\ncommand = "foreign"\n\n[hooks.state.'),
+    edited.replace(MANAGED_INTERRUPT_HOOK_END, `\n[hooks.state.${JSON.stringify(installed.installed.stateKey)}.unexpected]\nvalue = true\n${MANAGED_INTERRUPT_HOOK_END}`),
+    edited.replace(MANAGED_INTERRUPT_HOOK_END, `approved = false\n${MANAGED_INTERRUPT_HOOK_END}`),
+    edited + `\n[hooks.state.${JSON.stringify(installed.installed.stateKey)}.unexpected]\nvalue = true\n`,
+    edited.replace('source = "user-marketplace"', 'source = "unterminated'),
+    edited + MANAGED_INTERRUPT_HOOK_END,
+    edited + MANAGED_INTERRUPT_HOOK_START,
+    '[[hooks.Interrupt]]\n[[hooks.Interrupt.hooks]]\ntype = "command"\ncommand = "earlier-hook"\n' + edited,
+    // An inserted table header inside a string is data, not an unrelated TOML table.
+    installed.text.replace("[hooks.state.", 'description = """\n' + foreign + '"""\n[hooks.state.'),
+  ]) {
+    expect(() => verifyCodexInterruptHook(changed, installed.installed)).toThrow("changed after setup");
+    expect(() => restoreCodexInterruptHook(changed, installed.installed)).toThrow("changed after setup");
+  }
+});
+
+test("retains the separator before surviving foreign tables when the original config has no final newline", () => {
+  const foreign = '[marketplaces.claude-plugins-official]\nsource = "user-marketplace"\n\n';
+  for (const ending of ["\n", "\r\n"]) {
+    for (const original of ['model = "native"', 'model = "native"\n# last user comment']) {
+      const input = original.replaceAll("\n", ending);
+      const installed = installCodexInterruptHook(input, "/Users/test/.codex/config.toml", {
+        runtimeCommand: ["/opt/runtime"],
+      });
+      const current = installed.text.replaceAll("\r\n", "\n").replaceAll("\n", ending);
+      const edited = current.replace("[hooks.state.", foreign.replaceAll("\n", ending) + "[hooks.state.");
+      verifyCodexInterruptHook(edited, installed.installed);
+      const restored = restoreCodexInterruptHook(edited, installed.installed);
+      expect(Bun.TOML.parse(restored)).toEqual(Bun.TOML.parse(original + "\n" + foreign));
+      expect(restored).toBe(input + ending + foreign.replaceAll("\n", ending));
+      verifyCodexInterruptHookRestored(restored);
+    }
   }
 });
 

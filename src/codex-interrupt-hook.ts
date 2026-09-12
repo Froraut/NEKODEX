@@ -310,7 +310,79 @@ function hookTextPattern(text: string): string {
     .join("(?:\\r\\n|\\n|\\r)");
 }
 
-function locateCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): Array<{
+function locateInterleavedCodexInterruptHook(
+  text: string,
+  installed: InstalledCodexInterruptHook,
+  ownedPrefix: string,
+): Array<{ start: number; end: number }> {
+  const changed = () => new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
+  const stateHeader = `[hooks.state.${JSON.stringify(installed.stateKey)}]`;
+  const stateOffset = ownedPrefix.indexOf(stateHeader);
+  if (stateOffset < 0 || ownedPrefix.indexOf(stateHeader, stateOffset + 1) !== -1) throw changed();
+  const uniqueRange = (fragment: string): { start: number; end: number } => {
+    const pattern = new RegExp(hookTextPattern(fragment), "g");
+    const match = pattern.exec(text);
+    if (!match || pattern.exec(text)) throw changed();
+    return { start: match.index, end: match.index + match[0].length };
+  };
+  const command = uniqueRange(ownedPrefix.slice(0, stateOffset));
+  const state = uniqueRange(ownedPrefix.slice(stateOffset));
+  if (state.start <= command.end) throw changed();
+  const intervening = text.slice(command.end, state.start);
+  const firstAssignment = intervening.split(/\r\n|\n|\r/)
+    .map(line => line.trim()).find(line => line && !line.startsWith("#"));
+  if (!firstAssignment || !/^\[\[?.+\]\]?(?:\s*#.*)?$/.test(firstAssignment)) throw changed();
+
+  // Codex Desktop can insert an unrelated table before the owned trust state. Relocate only
+  // in memory, proving that table order is semantically irrelevant before reusing the strict
+  // contiguous locator. This does not rewrite user tables or accept changed owned fields.
+  const reordered = text.slice(0, command.end) + text.slice(state.start, state.end)
+    + intervening + text.slice(state.end);
+  try {
+    const original = Bun.TOML.parse(text) as {
+      hooks?: { Interrupt?: unknown[]; state?: Record<string, unknown> };
+    };
+    const expected = Bun.TOML.parse(ownedPrefix) as {
+      hooks: { Interrupt: unknown[]; state: Record<string, unknown> };
+    };
+    const values = (value: unknown) => JSON.stringify(canonicalJson(value));
+    if (values(original) !== values(Bun.TOML.parse(reordered))
+      || values(original.hooks?.Interrupt?.[installed.groupIndex]) !== values(expected.hooks.Interrupt[0])
+      || values(original.hooks?.state?.[installed.stateKey]) !== values(expected.hooks.state[installed.stateKey])) {
+      throw changed();
+    }
+  } catch {
+    throw changed();
+  }
+  const owned = locateCodexInterruptHook(reordered, installed, false);
+  const stateLength = state.end - state.start;
+  // Translate the strict locator's ranges back through the two exchanged source segments.
+  const segments = [
+    { start: 0, end: command.end, originalStart: 0 },
+    { start: command.end, end: command.end + stateLength, originalStart: state.start },
+    { start: command.end + stateLength, end: state.end, originalStart: command.end },
+    { start: state.end, end: text.length, originalStart: state.end },
+  ];
+  const ranges = owned.flatMap(range => segments.flatMap(segment => {
+    const start = Math.max(range.start, segment.start);
+    const end = Math.min(range.end, segment.end);
+    return start < end ? [{
+      start: segment.originalStart + start - segment.start,
+      end: segment.originalStart + end - segment.start,
+    }] : [];
+  }));
+  const removedCommand = ranges.find(range => range.start === command.start);
+  if (removedCommand && command.start > 0 && !/[\r\n]/.test(text[command.start - 1]!)) {
+    // The installed fragment owns its leading separator. Keep one of its trailing line
+    // endings so a pre-existing assignment or comment cannot absorb the surviving table.
+    const separator = /(?:\r\n|\n|\r)$/.exec(text.slice(removedCommand.start, removedCommand.end))?.[0];
+    if (!separator) throw changed();
+    removedCommand.end -= separator.length;
+  }
+  return ranges;
+}
+
+function locateCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook, allowInterleaved = true): Array<{
   start: number; end: number;
 }> {
   const marker = installed.fragment.indexOf(MANAGED_INTERRUPT_HOOK_END);
@@ -319,6 +391,7 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   // Native config writes normalize CRLF to LF; commands and owned fields must still match exactly.
   const pattern = new RegExp(hookTextPattern(ownedPrefix), "g");
   const match = pattern.exec(text);
+  if (!match && allowInterleaved) return locateInterleavedCodexInterruptHook(text, installed, ownedPrefix);
   if (!match || pattern.exec(text)) {
     throw new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
   }

@@ -5,7 +5,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { BrowserHost } = require("../electron/browser-host.cjs");
 const { RuntimeHost } = require("../electron/runtime.cjs");
-const { openExistingChromeLogin, cancelExistingChromeLogin, initialExistingChromeProgress, publicExistingChromeProgress, parseExistingChromeProgress } = require("../electron/existing-chrome-login.cjs");
+const { openExistingChromeLogin, cancelExistingChromeLogin, initialExistingChromeProgress, publicExistingChromeProgress, parseExistingChromeProgress, waitForPreviousAuthentication } = require("../electron/existing-chrome-login.cjs");
+const { isExistingChromeErrorCode, parseExistingChromeError, existingChromeError } = require("../electron/existing-chrome-errors.cjs");
 const { captureExistingChromeLogin, cancelExistingChromeLogin: cancelRuntime } = require("../electron/existing-chrome-runtime.cjs");
 const { confirmExistingChromeImport, CHROME_SETTINGS_ADDRESS } = require("../electron/existing-chrome-consent.cjs");
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -295,4 +296,78 @@ test("retry cleans only abandoned owned transfer directories after checking runt
     assert.equal(fs.existsSync(keep), true);
     await transfer.cleanup();
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("typed helper errors preserve only allowlisted codes, never raw diagnostics", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-safe-error-"));
+  try {
+    for (const code of ["chrome-profile-access-denied", "chrome-permission-denied", "chrome-permission-timeout", "launcher-authorization-failed"]) {
+      const host = runtimeFixture("darwin", root), logs = [];
+      host.logger = { warn: (...args) => logs.push(args) };
+      host.run = async (_name, _args, options) => {
+        options.onStdoutLine(`@codex-chrome-import-error:${JSON.stringify({ version: 1, code })}`);
+        options.onStdoutLine('@codex-chrome-import-error:{"version":1,"code":"SECRET"}');
+        throw new Error("SECRET raw endpoint or cookie");
+      };
+      await assert.rejects(captureExistingChromeLogin(host), error => {
+        assert.equal(error.code, code);
+        assert.doesNotMatch(error.message, /SECRET/);
+        return true;
+      });
+      assert.deepEqual(logs, [["runtime.existing_chrome_import_failed", { code }]]);
+      assert.deepEqual(fs.readdirSync(path.join(root, "existing-chrome-login")), []);
+    }
+    for (const invalid of [
+      '{"version":1,"code":"__proto__"}', '{"version":1,"code":"constructor"}',
+      '{"version":1,"code":"chrome-unavailable","message":"SECRET"}',
+      '{"version":1,"code":"chrome-unavailable","endpoint":"SECRET"}',
+      '{"version":2,"code":"chrome-unavailable"}', '{"version":1,"code":null}', '[]',
+    ]) assert.equal(parseExistingChromeError(`@codex-chrome-import-error:${invalid}`), null);
+    assert.equal(isExistingChromeErrorCode("toString"), false);
+    assert.equal(existingChromeError("SECRET").code, "import-failed");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("specific failure progress and progress logs contain safe codes only", async () => {
+  const { host } = fixture(), logs = [];
+  host.logger = { info: (...args) => logs.push(args) };
+  host.loginWithExistingChrome = async () => { const error = new Error("SECRET"); error.code = "chrome-profile-access-denied"; throw error; };
+  await assert.rejects(openExistingChromeLogin(host, async () => true), error => error.code === "chrome-profile-access-denied");
+  assert.equal(host.snapshot().existingChromeLogin.error, "chrome-profile-access-denied");
+  assert.equal(host.snapshot().existingChromeLogin.phase, "failed");
+  assert.deepEqual(logs.filter(([event]) => event === "browser.existing_chrome_progress").map(([, fields]) => fields.phase), ["consent", "preparing", "discovering", "failed"]);
+  assert.deepEqual(logs.at(-1), ["browser.existing_chrome_operation_settled", { phase: "failed", previousLoginPending: false }]);
+  assert.doesNotMatch(JSON.stringify({ state: host.snapshot(), logs }), /SECRET/);
+});
+
+test("previous authentication waits have an external deadline and consume late rejection", async () => {
+  const controller = new AbortController(); let rejectOld;
+  const never = new Promise((_resolve, reject) => { rejectOld = reject; });
+  await assert.rejects(waitForPreviousAuthentication(never, controller.signal, 5), error => error.code === "existing_chrome_handoff_timeout");
+  rejectOld(new Error("late previous login failure"));
+  await flush();
+  assert.equal(await waitForPreviousAuthentication(Promise.resolve("done"), controller.signal, 50), "done");
+});
+
+test("post-consent preparing can cancel promptly without starting Chrome or discarding prior ownership", async () => {
+  for (const previous of ["embedded", "refresh"]) {
+    const { host, events } = fixture();
+    const originalState = { ...host.state };
+    const pending = new Promise(() => {});
+    if (previous === "embedded") {
+      host.embeddedLoginController = new AbortController();
+      host.loginOperation = pending;
+    } else host.sessionRefreshOperation = pending;
+    const operation = openExistingChromeLogin(host, async () => true);
+    await flush();
+    assert.equal(host.snapshot().existingChromeLogin.phase, "preparing");
+    assert.equal(host.snapshot().existingChromeLogin.canCancel, true);
+    const result = await cancelExistingChromeLogin(host, async () => { throw new Error("Importer must not be started"); });
+    await operation;
+    assert.deepEqual(events, []);
+    assert.equal(result.existingChromeLogin.phase, "cancelled");
+    assert.equal(result.existingChromeLogin.active, false);
+    assert.deepEqual(host.state, originalState);
+    assert.equal(previous === "embedded" ? host.loginOperation : host.sessionRefreshOperation, pending);
+  }
 });

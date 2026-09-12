@@ -28,13 +28,14 @@ const MAX_COOKIES = 1000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const CLEANUP_TIMEOUT_MS = 2_000;
 
-export type ExistingChromeLoginErrorCode = "consent-required" | "unsupported-platform" | "chrome-unavailable"
+export type ExistingChromeLoginErrorCode = "consent-required" | "unsupported-platform" | "chrome-unavailable" | "chrome-profile-access-denied"
   | "invalid-endpoint" | "chrome-permission-denied" | "chrome-permission-timeout" | "chrome-too-old"
   | "chrome-disconnected" | "invalid-response" | "session-missing" | "cancelled" | "capture-write-failed";
 const MESSAGES: Record<ExistingChromeLoginErrorCode, string> = {
   "consent-required": "Confirm access to your current Chrome profile before importing its ChatGPT sign-in.",
   "unsupported-platform": "Existing Chrome sign-in import is unavailable on this operating system.",
   "chrome-unavailable": "Open Google Chrome and enable its remote debugging approval setting, then retry the import.",
+  "chrome-profile-access-denied": "The operating system denied access to Chrome's local connection information. Review access permissions for Codex Web GPT, then retry.",
   "invalid-endpoint": "Chrome's local connection information is unavailable or invalid. Reopen its remote debugging settings and retry.",
   "chrome-permission-denied": "Chrome did not allow the connection. Choose Allow in Chrome when you retry.",
   "chrome-permission-timeout": "Chrome did not finish approving the connection in time. Check its Allow prompt and retry.",
@@ -119,6 +120,7 @@ function discoverEndpoint(path: string): string {
     return parseExistingChromeEndpoint(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, count)));
   } catch (error) {
     if (error instanceof ExistingChromeLoginError) throw error;
+    if (object(error) && (error.code === "EACCES" || error.code === "EPERM")) throw failure("chrome-profile-access-denied");
     if (object(error) && error.code === "ENOENT") throw failure("chrome-unavailable");
     throw failure("invalid-endpoint");
   } finally { if (fd !== undefined) closeSync(fd); }
