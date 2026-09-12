@@ -51,6 +51,49 @@ remain local and are removed by the owned import cleanup.
 The separate-profile passkey flow remains available. Its profile is intentionally isolated;
 choosing that alternative does not reuse an existing Chrome account.
 
+## macOS 27: grant access to the connection file
+
+The tested macOS 27 build denied automatic access to Chrome's connection descriptor even though
+Chrome remote debugging was enabled. Apple documents new default-denied protections for other
+apps' data; adding a privacy usage-description string does not itself authorize that access.
+[macOS 27 release notes](https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes)
+
+Starting with **5.1.0-froraut.4**, the specific `chrome-profile-access-denied` error offers a native
+single-file selection path. Select only `DevToolsActivePort` at Chrome's expected location.
+The picker grants the installed app access to the selected resource. The same Electron main
+process reads at most the bounded connection descriptor and validates the exact path, file type,
+owner and endpoint. It passes the descriptor privately to its helper, without placing it in
+arguments, environment variables, renderer state or logs. No Chrome profile directory is copied.
+
+This is an explicit system-mediated file grant, not a change to Full Disk Access. Apple describes
+native open panels for individual resources belonging to other apps. Dynamic file grants are
+not automatically inherited by spawned helpers, which is why the selecting main process must
+read and transfer the data itself. No persistent MAS-only security-scoped bookmark is assumed.
+[Apple's app-data privacy guidance](https://developer.apple.com/videos/play/wwdc2023/10053/?time=466),
+[Apple's sandbox inheritance guidance](https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/EnablingAppSandbox.html)
+
+Selecting this file does not replace Chrome's separate native connection approval. If macOS
+still denies the selected file, the app must report that outcome and leave the OS protection
+unchanged. A successful real file-selection grant and authenticated import need their own live
+evidence; the supported mechanism and its local tests do not guarantee every macOS 27 policy
+allows the operation.
+
+The selected-file implementation passed 47 focused core tests (265 assertions) and 231 launcher
+tests, both typechecks, version consistency and the production renderer/runtime build. The
+native picker itself remains an explicit user action; its injected tests do not grant access to
+the user's protected Chrome file. Selected data travels only through the private helper stdin;
+invalid, missing, cancelled or late data never falls back to an ungranted filesystem read.
+
+The macOS pre4 package and relocated runtime smoke also passed, as did the native UI test with
+animation frames disabled. The installed app visibly reports 5.1.0-froraut.4, preserves prior
+preferences, and opens the native picker in Chrome's expected directory after the actual denied
+discovery result. User confirmation of the selected file and the subsequent authenticated import
+were still pending at this publication checkpoint.
+
+- pre4 ZIP SHA-256: `0e7f331db555852e85e2ba88bf9a6a2bd23d10f9656f0c13fb26a32003d02961`
+- pre4 installed ASAR SHA-256: `2625bad942f39cde35ca6dc6162f2be35f77a60b64daa62ce8526c25ef737e1c`
+- pre4 runtime bundle: `1de1a09389d9c13b8d8579dc3489a684817a0580e7a8a8c89324d2145b1754fc`
+
 ## Verification and provenance
 
 The `5.1.0-froraut.2` implementation passed **48 focused core tests / 262 assertions** and

@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { parseExistingChromeProgress } = require("./existing-chrome-login.cjs");
 const { parseExistingChromeError, existingChromeError } = require("./existing-chrome-errors.cjs");
+const { validateConnectionContents } = require("./existing-chrome-file-access.cjs");
 const IMPORT_TIMEOUT_MS = 180_000;
 
 function cleanupExistingChromeTransfers(host) {
@@ -22,9 +23,14 @@ function cleanupExistingChromeTransfers(host) {
   }
 }
 
-async function captureExistingChromeLogin(host, onProgress) {
+async function captureExistingChromeLogin(host, onProgress, options = {}) {
   if (!["darwin", "win32", "linux"].includes(host.platform)) throw new Error("Existing Chrome sign-in is unavailable on this platform");
   if (host.currentOperation() || host.passkeyProgress || host.existingChromeProgress) throw new Error("Another launcher operation is active");
+  let selectedDiscoveryContents;
+  if (Object.hasOwn(options, "selectedDiscoveryContents")) {
+    if (host.platform !== "darwin") throw existingChromeError("chrome-file-selection-invalid");
+    selectedDiscoveryContents = validateConnectionContents(options.selectedDiscoveryContents);
+  }
   cleanupExistingChromeTransfers(host);
   const parent = path.join(host.app.getPath("userData"), "existing-chrome-login");
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
@@ -43,8 +49,10 @@ async function captureExistingChromeLogin(host, onProgress) {
   host.existingChromeProgress = onProgress || (() => {});
   let reportedErrorCode = null;
   try {
-    await host.run("existing-chrome-login", ["login", "--existing-chrome", "--launcher-control", "--consent-user-profile", "--storage-state", storageStatePath], {
+    await host.run("existing-chrome-login", ["login", "--existing-chrome", "--launcher-control", "--consent-user-profile", "--storage-state", storageStatePath,
+      ...(selectedDiscoveryContents === undefined ? [] : ["--selected-chrome-discovery"])], {
       embedded: true, controlStdin: true, privateOutput: true, env: host.launcherControlEnvironment(),
+      ...(selectedDiscoveryContents === undefined ? {} : { privateControlMessage: `${JSON.stringify({ version: 1, type: "existing-chrome-discovery", contents: selectedDiscoveryContents })}\n` }),
       message: "Waiting for Chrome permission to import the existing ChatGPT sign-in",
       successMessage: "Existing Chrome session captured for private Launcher verification",
       timeoutMs: IMPORT_TIMEOUT_MS + 10_000,

@@ -44,7 +44,7 @@ function installMockLauncher() {
   if (scenario === "existing-chrome-failed") {
     Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: null, visible: false,
       existingChromeLogin: { phase: "failed", startedAt: new Date().toISOString(), deadlineAt: new Date().toISOString(),
-        active: false, canCancel: false, canCopySettings: true, error: "chrome-profile-access-denied" } });
+        active: false, canCancel: false, canCopySettings: true, canAllowFileAccess: true, error: "chrome-profile-access-denied" } });
     operation = { name: "existing-chrome-login", status: "failed", message: "Fixture Chrome access was denied" };
   }
   const snapshot = () => ({
@@ -76,6 +76,7 @@ function installMockLauncher() {
     continuePasskeyLogin: async () => { calls.push(["continue"]); return true; },
     openExistingChromeLogin: async () => { calls.push(["existing-chrome-retry"]); return { ...browser }; },
     cancelExistingChromeLogin: async () => { calls.push(["existing-chrome-cancel"]); return { ...browser }; },
+    allowExistingChromeFileAccess: async () => { calls.push(["existing-chrome-file-access"]); return { ...browser }; },
     copyExistingChromeSettingsAddress: async () => { calls.push(["existing-chrome-settings-copy"]); return true; },
     selectBrowserTab: async (tabId) => {
       calls.push(["tab", tabId]); browser.tabs = browser.tabs.map((tab) => ({ ...tab, active: tab.id === tabId }));

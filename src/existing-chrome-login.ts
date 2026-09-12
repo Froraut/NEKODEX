@@ -65,6 +65,9 @@ export interface ExistingChromeLoginOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   onProgress?: (progress: ExistingChromeLoginProgress) => void;
+  /** One-use discovery contents from the launcher's private pipe after native file selection.
+   * Never provide a path or endpoint through argv, environment, renderer state or logs. */
+  discoveryData?: Promise<string>;
 }
 export interface ExistingChromeLoginCapture {
   storageState: BrowserLoginStorageState;
@@ -94,7 +97,7 @@ export function existingChromePortFile(options: {
 }
 
 export function parseExistingChromeEndpoint(contents: string): string {
-  if (Buffer.byteLength(contents) > 2048) throw failure("invalid-endpoint");
+  if (typeof contents !== "string" || contents.length > 2048 || Buffer.byteLength(contents) > 2048) throw failure("invalid-endpoint");
   const match = /^([1-9][0-9]{0,4})\r?\n(\/devtools\/browser\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\r?\n?$/i.exec(contents);
   const port = match ? Number(match[1]) : 0;
   if (!match || port < 1024 || port > 65535) throw failure("invalid-endpoint");
@@ -166,6 +169,21 @@ async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<
     void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
     if (signal.aborted) abort();
   });
+}
+
+async function selectedDiscoveryEndpoint(data: Promise<string> | undefined, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // The parent alone receives the native single-file grant. Its owned child gets only these
+  // bounded contents, once, over stdin; it must not try reading the protected path again.
+  const received = Promise.resolve(data).then(
+    contents => parseExistingChromeEndpoint(contents as string),
+    () => { throw failure("invalid-endpoint"); },
+  );
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(failure("chrome-permission-timeout")), timeoutMs);
+  });
+  try { return await abortable(Promise.race([received, timeout]), signal); }
+  finally { if (timer) clearTimeout(timer); }
 }
 
 class RestrictedChromeConnection {
@@ -270,7 +288,11 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
     options.onProgress?.({ version: 1, phase, deadlineAt: new Date(deadline).toISOString() });
   };
   progress("discovering");
-  const endpoint = discoverEndpoint((dependencies.portFile ?? existingChromePortFile)());
+  // An explicitly requested selected-file transfer never falls back to discovery on disk,
+  // including when the control payload is missing, malformed, cancelled or late.
+  const endpoint = Object.hasOwn(options, "discoveryData")
+    ? await selectedDiscoveryEndpoint(options.discoveryData, check(), options.signal)
+    : discoverEndpoint((dependencies.portFile ?? existingChromePortFile)());
   progress("waiting-for-chrome");
   const connection = await connect(endpoint, check(), options.signal);
   let targetId: string | undefined;

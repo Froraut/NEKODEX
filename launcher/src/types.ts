@@ -52,12 +52,13 @@ export interface BrowserState {
 }
 
 export interface ExistingChromeLoginProgress {
-  phase: "consent" | "preparing" | "discovering" | "waiting-for-chrome" | "reading-session" | "verifying" | "cancelling" | "cancelled" | "timed-out" | "failed" | "completed";
+  phase: "consent" | "preparing" | "file-access" | "discovering" | "waiting-for-chrome" | "reading-session" | "verifying" | "cancelling" | "cancelled" | "timed-out" | "failed" | "completed";
   startedAt: string;
   deadlineAt: string;
   active: boolean;
   canCancel: boolean;
   canCopySettings: boolean;
+  canAllowFileAccess?: boolean;
   error: string | null;
 }
 
@@ -189,6 +190,7 @@ export interface LauncherApi {
   cancelPasskeyLogin(): Promise<BrowserState>;
   openExistingChromeLogin(): Promise<BrowserState>;
   cancelExistingChromeLogin(): Promise<BrowserState>;
+  allowExistingChromeFileAccess(): Promise<BrowserState>;
   copyExistingChromeSettingsAddress(): Promise<boolean>;
   logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
   dismissSessionReminder(): Promise<LauncherState>;

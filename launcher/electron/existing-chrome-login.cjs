@@ -1,5 +1,5 @@
 const { isExistingChromeErrorCode, existingChromeError } = require("./existing-chrome-errors.cjs");
-const ACTIVE_PHASES = new Set(["consent", "preparing", "discovering", "waiting-for-chrome", "reading-session", "verifying", "cancelling"]);
+const ACTIVE_PHASES = new Set(["consent", "preparing", "file-access", "discovering", "waiting-for-chrome", "reading-session", "verifying", "cancelling"]);
 const CAPTURE_PHASES = new Set(["discovering", "waiting-for-chrome", "reading-session"]);
 const PREFIX = "@codex-chrome-import:";
 const AUTH_HANDOFF_TIMEOUT_MS = 15_000;
@@ -31,12 +31,13 @@ function initialExistingChromeProgress(now = Date.now()) {
   return { phase: "consent", startedAt: new Date(now).toISOString(), deadlineAt: new Date(now + 180_000).toISOString(), error: null };
 }
 
-function publicExistingChromeProgress(progress) {
+function publicExistingChromeProgress(progress, platform = process.platform) {
   if (!progress) return null;
   return {
     phase: progress.phase, startedAt: progress.startedAt, deadlineAt: progress.deadlineAt,
     error: progress.error, active: ACTIVE_PHASES.has(progress.phase),
     canCancel: ACTIVE_PHASES.has(progress.phase) && !["consent", "cancelling"].includes(progress.phase),
+    canAllowFileAccess: platform === "darwin" && progress.phase === "failed" && progress.error === "chrome-profile-access-denied",
     canCopySettings: progress.error !== "existing-chrome-handoff-timeout"
       && ["discovering", "waiting-for-chrome", "failed", "timed-out", "cancelled"].includes(progress.phase),
   };
@@ -75,7 +76,7 @@ function safeImportError(error, cleanupFailed = false) {
   return failure;
 }
 
-function openExistingChromeLogin(host, confirmImport) {
+function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } = {}) {
   if (host.existingChromeLoginOperation) return host.existingChromeLoginOperation;
   if (host.state.authenticated) { host.activateHomeSurface(); host.show(); return Promise.resolve(host.snapshot()); }
   const embeddedLogin = host.embeddedLoginController ? host.loginOperation : null;
@@ -124,11 +125,19 @@ function openExistingChromeLogin(host, confirmImport) {
       let cleanupFailed = false;
       try {
         controller.signal.throwIfAborted();
+        let captureOptions;
+        if (selectConnectionFile) {
+          updateExistingChromeProgress(host, { phase: "file-access" });
+          const contents = await selectConnectionFile(controller.signal);
+          if (contents === null) controller.abort(new Error("Existing Chrome sign-in cancelled"));
+          controller.signal.throwIfAborted();
+          captureOptions = { selectedDiscoveryContents: contents };
+        }
         updateExistingChromeProgress(host, { phase: "discovering", deadlineAt: new Date(Date.now() + 180_000).toISOString() });
         host.setState({ status: "loading", loading: true, message: "Waiting for permission to import the existing Chrome sign-in" });
         const capture = await host.loginWithExistingChrome(patch => {
           if (!controller.signal.aborted) updateExistingChromeProgress(host, patch);
-        });
+        }, captureOptions);
         const transfer = { storageState: capture.storageState, cleanup: async () => {
           try { await capture.cleanup(); } catch { cleanupFailed = true; throw safeImportError(null, true); }
         } };

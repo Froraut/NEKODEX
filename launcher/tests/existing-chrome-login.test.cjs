@@ -371,3 +371,67 @@ test("post-consent preparing can cancel promptly without starting Chrome or disc
     assert.equal(previous === "embedded" ? host.loginOperation : host.sessionRefreshOperation, pending);
   }
 });
+
+test("file recovery is offered only for a macOS access denial and remains a guarded native action", async () => {
+  const base = { ...initialExistingChromeProgress(), phase: "failed", error: "chrome-profile-access-denied" };
+  assert.equal(publicExistingChromeProgress(base, "darwin").canAllowFileAccess, true);
+  for (const platform of ["win32", "linux"]) assert.equal(publicExistingChromeProgress(base, platform).canAllowFileAccess, false);
+  for (const patch of [{ phase: "consent" }, { phase: "cancelled" }, { error: "chrome-unavailable" }]) {
+    assert.equal(publicExistingChromeProgress({ ...base, ...patch }, "darwin").canAllowFileAccess, false);
+  }
+  const { host, events } = fixture();
+  host.getBrowserInteractionMode = () => "automatic";
+  host.existingChromeProgress = { ...base, error: "chrome-unavailable" };
+  assert.throws(() => BrowserHost.prototype.allowExistingChromeFileAccess.call(host, async () => "must not read"), /only after/);
+  host.getBrowserInteractionMode = () => "manual";
+  assert.throws(() => BrowserHost.prototype.allowExistingChromeFileAccess.call(host, async () => "must not read"), /Manual mode/);
+  assert.deepEqual(events, []);
+});
+
+test("selected connection contents stay out of progress and travel only in the private runtime control pipe", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-selected-"));
+  const contents = "9222\n/devtools/browser/11111111-2222-3333-4444-555555555555\n";
+  try {
+    const host = runtimeFixture("darwin", root);
+    const transfer = await captureExistingChromeLogin(host, undefined, { selectedDiscoveryContents: contents });
+    assert.ok(host.invocation.args.includes("--selected-chrome-discovery"));
+    assert.deepEqual(JSON.parse(host.invocation.options.privateControlMessage), { version: 1, type: "existing-chrome-discovery", contents });
+    assert.doesNotMatch(JSON.stringify({ args: host.invocation.args, env: host.invocation.options.env }), /devtools|11111111/);
+    await transfer.cleanup();
+    await assert.rejects(captureExistingChromeLogin(host, undefined, { selectedDiscoveryContents: undefined }));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("file selection cancellation never starts a helper and clears the import owner", async () => {
+  const { host, events } = fixture();
+  const result = await openExistingChromeLogin(host, async () => true, { selectConnectionFile: async () => null });
+  assert.deepEqual(events, []);
+  assert.equal(result.existingChromeLogin.phase, "cancelled");
+  assert.equal(result.loginInProgress, false);
+});
+
+test("cancelled file recovery does not pass a late selection to the helper", async () => {
+  const { host, events } = fixture(); let select;
+  const operation = openExistingChromeLogin(host, async () => true, { selectConnectionFile: () => new Promise(resolve => { select = resolve; }) });
+  await flush();
+  assert.equal(host.snapshot().existingChromeLogin.phase, "file-access");
+  const cancelled = cancelExistingChromeLogin(host, async () => { throw new Error("No helper should exist"); });
+  select("late connection file contents");
+  await Promise.all([operation, cancelled]);
+  assert.deepEqual(events, []);
+  assert.equal(host.snapshot().existingChromeLogin.phase, "cancelled");
+});
+
+test("private control delivery is successful without logging the message or falsely recording a pipe error", async () => {
+  const logged = [];
+  const host = { active: null, activeChild: null, browserDescriptorPath: "/fixture",
+    command: () => ({ executable: process.execPath, args: ["-e", "process.stdin.once('data', data => { const message=JSON.parse(data); if(message.type !== 'existing-chrome-discovery') process.exitCode=1; process.stdout.write('private-control-received'); process.stdin.destroy(); });"], cwd: os.tmpdir() }),
+    logger: { info: (...args) => logged.push(args), warn: (...args) => logged.push(args), error: (...args) => logged.push(args) },
+  };
+  const message = JSON.stringify({ version: 1, type: "existing-chrome-discovery", contents: "SECRET-private-discovery" }) + "\n";
+  const result = await RuntimeHost.prototype.run.call(host, "existing-chrome-login", [], { controlStdin: true, privateOutput: true, privateControlMessage: message, timeoutMs: 3000 });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, "");
+  assert.doesNotMatch(JSON.stringify(logged), /SECRET|private-control-received/);
+  await assert.rejects(RuntimeHost.prototype.run.call(host, "bad-private", [], { controlStdin: true, privateControlMessage: message }), /Private runtime control/);
+});

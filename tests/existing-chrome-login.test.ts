@@ -99,6 +99,91 @@ test("explicit local consent is required before discovery or a native Chrome pro
   expect(discovery).toBe(false);
 });
 
+test("selected discovery data skips disk access and preserves the same scoped Chrome connection", async () => {
+  const f = await fixture();
+  const contents = readFileSync(f.portFile, "utf8");
+  const progress: unknown[] = [];
+  let diskAccessed = false;
+  try {
+    // Remove even the synthetic marker: this path must use only the private control payload.
+    rmSync(f.portFile);
+    const result = await captureExistingChromeLogin({ consent: true, discoveryData: Promise.resolve(contents),
+      onProgress: value => progress.push(value) }, { portFile: () => { diskAccessed = true; throw new Error("Disk access is forbidden"); } });
+    expect(diskAccessed).toBe(false);
+    expect(result.marker.source).toBe("existing-chrome-profile");
+    expect(result.storageState.origins).toEqual([]);
+    expect(f.calls.map(call => call.method)).toEqual(["Browser.getVersion", "Target.createTarget", "Target.attachToTarget", "Network.getCookies", "Target.closeTarget"]);
+    expect(f.calls[1]!.params).toEqual({ url: "about:blank", background: true, hidden: true });
+    expect(f.calls[3]).toMatchObject({ sessionId: "OWN-SESSION", params: { urls: ["https://chatgpt.com/", "https://auth.openai.com/"] } });
+    expect(f.upgrades[0]!.origin).toBeUndefined();
+    expect(JSON.stringify(progress)).not.toContain(browserPath);
+    expect(JSON.stringify(progress)).not.toContain("PRIVATE-SESSION-VALUE");
+  } finally { await f.close(); }
+});
+
+test("selected discovery input cannot replace consent or native Chrome approval", async () => {
+  const f = await fixture({ deny: true });
+  let consumed = false;
+  let diskAccessed = false;
+  const contents = readFileSync(f.portFile, "utf8");
+  try {
+    const data = { then: () => { consumed = true; } } as unknown as Promise<string>;
+    await expect(captureExistingChromeLogin({ consent: false, discoveryData: data }, f.dependencies))
+      .rejects.toMatchObject({ code: "consent-required" });
+    expect(consumed).toBe(false);
+    expect(f.upgrades).toEqual([]);
+    await expect(captureExistingChromeLogin({ consent: true, discoveryData: Promise.resolve(contents) }, {
+      portFile: () => { diskAccessed = true; return f.portFile; },
+    })).rejects.toMatchObject({ code: "chrome-permission-denied" });
+    expect(diskAccessed).toBe(false);
+    expect(f.calls).toEqual([]);
+  } finally { await f.close(); }
+});
+
+test("invalid selected discovery data never falls back to reading the default Chrome marker", async () => {
+  const f = await fixture();
+  let diskAccessed = false;
+  try {
+    for (const input of [undefined, Promise.resolve(undefined as unknown as string), Promise.resolve(123 as unknown as string),
+      Promise.resolve("x".repeat(2049)), Promise.resolve(`9222\nws://attacker.example/${browserPath}`),
+      Promise.resolve(`9222\n${browserPath}?private=PRIVATE-DATA`), Promise.reject(new Error("PRIVATE-REJECTION-REASON"))]) {
+      const error = await captureExistingChromeLogin({ consent: true, discoveryData: input }, {
+        portFile: () => { diskAccessed = true; return f.portFile; },
+      }).catch(error => error);
+      expect(error).toMatchObject({ code: "invalid-endpoint" });
+      expect(error.message).not.toContain("PRIVATE");
+      expect(error.message).not.toContain(browserPath);
+    }
+    expect(diskAccessed).toBe(false);
+    expect(f.upgrades).toEqual([]);
+    expect(f.calls).toEqual([]);
+  } finally { await f.close(); }
+});
+
+test("selected discovery wait is bounded and cancellation ignores late data without connecting", async () => {
+  const f = await fixture();
+  const contents = readFileSync(f.portFile, "utf8");
+  let diskAccessed = false;
+  try {
+    for (const cancel of [false, true]) {
+      let deliver!: (contents: string) => void;
+      const discoveryData = new Promise<string>(resolve => { deliver = resolve; });
+      const controller = new AbortController();
+      const timer = cancel ? setTimeout(() => controller.abort(new Error("PRIVATE-ABORT-REASON")), 10) : undefined;
+      try {
+        await expect(captureExistingChromeLogin({ consent: true, timeoutMs: 40, signal: controller.signal, discoveryData }, {
+          portFile: () => { diskAccessed = true; return f.portFile; },
+        })).rejects.toMatchObject({ code: cancel ? "cancelled" : "chrome-permission-timeout" });
+        deliver(contents);
+        await Promise.resolve();
+        expect(f.upgrades).toEqual([]);
+        expect(f.calls).toEqual([]);
+      } finally { if (timer) clearTimeout(timer); }
+    }
+    expect(diskAccessed).toBe(false);
+  } finally { await f.close(); }
+});
+
 test("only owned blank target and explicit ChatGPT cookie URLs are accessed", async () => {
   const f = await fixture({ cookies: [cookie(), cookie("auth.openai.com", { name: "auth" }), cookie("accounts.google.com", { value: "OTHER-ACCOUNT-SECRET" })] });
   try {

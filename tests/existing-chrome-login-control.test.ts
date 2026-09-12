@@ -52,3 +52,36 @@ test("invalid launcher authorization emits only a fixed diagnostic envelope befo
   expect(stdout + stderr).not.toContain("SECRET");
   expect(stdout).not.toContain('@codex-chrome-import:');
 });
+
+test("selected discovery accepts exactly one bounded private frame and keeps cancellation active", async () => {
+  const input = new PassThrough();
+  const control = createExistingChromeLoginControl(input as unknown as NodeJS.ReadStream, { selectedDiscovery: true });
+  const contents = "9222\n/devtools/browser/11111111-2222-3333-4444-555555555555\n";
+  const message = JSON.stringify({ version: 1, type: "existing-chrome-discovery", contents }) + "\n";
+  input.write(message);
+  expect(await control.discoveryData).toBe(contents);
+  expect(control.signal.aborted).toBe(false);
+  input.write(message);
+  expect(control.signal.aborted).toBe(true);
+  control.close();
+});
+
+test("discovery frames are unavailable without selected mode and cannot carry extra fields or oversized data", async () => {
+  for (const [selectedDiscovery, message] of [
+    [false, { version: 1, type: "existing-chrome-discovery", contents: "test" }],
+    [true, { version: 1, type: "existing-chrome-discovery", contents: "x".repeat(2049) }],
+    [true, { version: 1, type: "existing-chrome-discovery", contents: "test", endpoint: "https://untrusted.test" }],
+  ] as const) {
+    const input = new PassThrough();
+    const control = createExistingChromeLoginControl(input as unknown as NodeJS.ReadStream, { selectedDiscovery });
+    input.write(JSON.stringify(message) + "\n");
+    expect(control.signal.aborted).toBe(true);
+    if (control.discoveryData) await expect(control.discoveryData).rejects.toThrow();
+    control.close();
+  }
+  const input = new PassThrough();
+  const control = createExistingChromeLoginControl(input as unknown as NodeJS.ReadStream, { selectedDiscovery: true });
+  input.emit("end");
+  await expect(control.discoveryData!).rejects.toThrow();
+  control.close();
+});

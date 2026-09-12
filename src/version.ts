@@ -1,1 +1,1 @@
-export const VERSION = "5.1.0-froraut.3";
+export const VERSION = "5.1.0-froraut.4";

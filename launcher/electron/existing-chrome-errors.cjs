@@ -4,6 +4,7 @@ const MESSAGES = Object.freeze({
   "unsupported-platform": "Existing Chrome sign-in is unavailable on this platform",
   "chrome-unavailable": "Chrome remote debugging is not available; open its settings and enable it",
   "chrome-profile-access-denied": "macOS or the operating system denied access to Chrome connection information",
+  "chrome-file-selection-invalid": "Choose only the Chrome DevToolsActivePort connection file shown in the file picker",
   "invalid-endpoint": "Chrome connection information is invalid; reopen its remote debugging settings",
   "chrome-permission-denied": "Chrome did not approve the connection",
   "chrome-permission-timeout": "Chrome permission timed out",

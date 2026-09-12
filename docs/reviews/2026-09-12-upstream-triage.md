@@ -13,7 +13,7 @@ Upstream `main` remains `e85e3693fdb4e3e033348c08df0298c20fcdb612`.
 The published fork baseline is **`72ff04ac31acbd5885eed2de76aa96bccd6cb429`**,
 version **5.1.0-froraut.2**. Its successful CI is recorded separately in
 [run 34645507128](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34645507128).
-Current uncommitted existing-Chrome import/error/progress work is a separate scope; it is not
+The existing-Chrome import/error/progress work was a separate scope during this comparison; it is not
 credited as an upstream issue fix merely because similar login symptoms were reported.
 No account state, browser cookies, credentials, or raw attachments are included in this report.
 No upstream issue, review, comment, or PR was modified.
@@ -25,9 +25,11 @@ Author-reported tests and live observations are distinguished from local source/
 
 ## Selected corrections
 
-Three narrowly confirmed corrections are implemented and frozen for candidate **5.1.0-froraut.3**. Their
-implementation and test results are recorded in the provenance documents linked below; they
-are not yet a new installed release or proof of the reporters' account outcomes.
+Three narrowly confirmed corrections were implemented for **5.1.0-froraut.3** and published in
+[`f4f79a0`](https://github.com/Froraut/codex-chatgpt-web/commit/f4f79a065a0b42d9ee1761ccf2f58ea519866757).
+The [validation checkpoint](2026-09-12-validation.md) records its installation and local checks;
+[CI 34688359018](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34688359018) passed on
+macOS, Windows and Linux. These results do not prove the original reporters' account outcomes.
 
 | Report / patch | Source-confirmed defect and correction |
 | --- | --- |

@@ -16,14 +16,14 @@ const { copyFor } = load("i18n.ts");
 const { ExistingChromeLoginGuide, existingChromeFailureText } = load("ExistingChromeLoginGuide.tsx");
 const progress = (phase, overrides = {}) => ({
   phase, startedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 120000).toISOString(),
-  active: ["consent", "preparing", "discovering", "waiting-for-chrome", "reading-session", "verifying", "cancelling"].includes(phase),
+  active: ["consent", "preparing", "file-access", "discovering", "waiting-for-chrome", "reading-session", "verifying", "cancelling"].includes(phase),
   canCopySettings: ["discovering", "waiting-for-chrome", "failed", "timed-out", "cancelled"].includes(phase),
-  canCancel: ["preparing", "discovering", "waiting-for-chrome", "reading-session", "verifying"].includes(phase), error: null, ...overrides,
+  canCancel: ["preparing", "file-access", "discovering", "waiting-for-chrome", "reading-session", "verifying"].includes(phase), error: null, ...overrides,
 });
 test("existing Chrome phases render scoped instructions in every language without importing on render", () => {
   for (const language of ["en", "zh-CN", "ja"]) {
     const copy = copyFor(language);
-    for (const phase of ["consent", "preparing", "discovering", "waiting-for-chrome", "reading-session", "verifying", "cancelling", "cancelled", "failed", "timed-out", "completed"]) {
+    for (const phase of ["consent", "preparing", "file-access", "discovering", "waiting-for-chrome", "reading-session", "verifying", "cancelling", "cancelled", "failed", "timed-out", "completed"]) {
       const html = renderToStaticMarkup(React.createElement(ExistingChromeLoginGuide, { progress: progress(phase, { error: phase === "failed" ? "SECRET raw CDP output" : null }), copy, onRetry: () => { throw new Error("Unexpected import"); }, setError: () => {} }));
       assert.doesNotMatch(html, /SECRET|href=|https:\/\/sensitive/);
       assert.ok(html.includes('role="status"'));
@@ -93,4 +93,19 @@ test("failed API controls show fixed text and terminal retries never use the fre
   controls[1].props.onClick(); await flush();
   assert.equal(retry, 1);
   delete global.window;
+});
+
+test("the explicit file-access recovery button calls only its guarded IPC and renders in every language", async () => {
+  let calls = 0;
+  const state = progress("failed", { error: "chrome-profile-access-denied", canAllowFileAccess: true });
+  const view = harness({ allowExistingChromeFileAccess: async () => { calls++; }, retry() {} }, state);
+  const button = buttons(view.render()).find(button => button.props.children === copyFor("en").existingChromeAllowFile);
+  assert.ok(button); button.props.onClick(); await flush(); assert.equal(calls, 1);
+  delete global.window;
+  for (const language of ["en", "zh-CN", "ja"]) {
+    const copy = copyFor(language);
+    const html = renderToStaticMarkup(React.createElement(ExistingChromeLoginGuide, { progress: state, copy, onRetry() {}, setError() {} }));
+    assert.ok(html.includes(copy.existingChromeAllowFile));
+    assert.ok(!html.includes("/Users/") && !html.includes("/devtools/browser/"));
+  }
 });

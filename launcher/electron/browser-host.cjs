@@ -2526,6 +2526,24 @@ class BrowserHost {
     return cancelExistingChromeLogin(this, cancelCapture);
   }
 
+  allowExistingChromeFileAccess(selectConnectionFile) {
+    requireAutomaticBrowserInspection(this, "Access to the Chrome connection file");
+    if (process.platform !== "darwin" || this.existingChromeLoginOperation
+      || this.existingChromeProgress?.phase !== "failed"
+      || this.existingChromeProgress?.error !== "chrome-profile-access-denied"
+      || typeof selectConnectionFile !== "function") {
+      throw new Error("Chrome connection file access is available only after an operating-system access denial");
+    }
+    // The failed attempt already obtained local import consent. This explicit recovery action
+    // asks macOS for the single file; Chrome still separately approves the actual connection.
+    return openExistingChromeLogin(this, async () => true, { selectConnectionFile: async signal => {
+      requireAutomaticBrowserInspection(this, "Access to the Chrome connection file");
+      const contents = await selectConnectionFile(signal);
+      requireAutomaticBrowserInspection(this, "Access to the Chrome connection file");
+      return contents;
+    } });
+  }
+
   openPasskeyLogin() {
     requireAutomaticBrowserInspection(this, "Automated ChatGPT passkey import");
     if (this.passkeyLoginOperation) return this.passkeyLoginOperation;

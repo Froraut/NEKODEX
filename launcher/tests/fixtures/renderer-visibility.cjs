@@ -63,6 +63,8 @@ app.whenReady().then(async () => {
   await waitFor(".existing-chrome-login-guide");
   const failure = await assertVisible(".existing-chrome-login-guide");
   assert.match(failure.text, /operating system blocked access/i);
+  await clickByText(".existing-chrome-login-guide button", "Allow access to Chrome connection file");
+  assert.equal(await window.webContents.executeJavaScript("window.fixtureCalls.some(call => call[0] === 'existing-chrome-file-access')"), true);
   await clickByText(".existing-chrome-login-guide button", "Retry");
   assert.equal(await window.webContents.executeJavaScript("window.fixtureCalls.some(call => call[0] === 'existing-chrome-retry')"), true);
   await clickByText(".sidebar-item", "Setup"); await waitFor(".setup-list"); await assertVisible(".setup-list");

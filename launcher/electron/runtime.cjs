@@ -371,9 +371,9 @@ class RuntimeHost {
     }
   }
 
-  captureExistingChromeLogin(onProgress) {
+  captureExistingChromeLogin(onProgress, options) {
     if (this.getBrowserInteractionMode?.() === "manual") throw new Error("Existing Chrome import is unavailable in Manual mode");
-    return existingChromeRuntime.captureExistingChromeLogin(this, onProgress);
+    return existingChromeRuntime.captureExistingChromeLogin(this, onProgress, options);
   }
 
   cancelExistingChromeLogin() {
@@ -664,6 +664,10 @@ class RuntimeHost {
   }
 
   async run(name, args, options = {}) {
+    if (options.privateControlMessage !== undefined && (!options.privateOutput || !options.controlStdin
+      || typeof options.privateControlMessage !== "string" || Buffer.byteLength(options.privateControlMessage) > 4096)) {
+      throw new Error("Private runtime control message is invalid");
+    }
     if (this.active) throw new Error(`Another launcher operation is active: ${this.active}`);
     if (this.activeChild
       && this.activeChild.exitCode === null
@@ -704,6 +708,9 @@ class RuntimeHost {
           pipeErrors.push(`${name} ${stream} pipe failed: ${error instanceof Error ? error.message : String(error)}`);
         };
         if (options.controlStdin) child.stdin.on("error", recordPipeError("stdin"));
+        if (options.privateControlMessage !== undefined) child.stdin.write(options.privateControlMessage, error => {
+          if (error) recordPipeError("stdin")(error);
+        });
         collect(child.stdout, stdout, (line) => {
           if (options.onStdoutLine?.(line)) return;
           if (options.privateOutput) return;

@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   cancelPasskeyLogin: () => ipcRenderer.invoke("launcher:browser-passkey-login-cancel"),
   openExistingChromeLogin: () => ipcRenderer.invoke("launcher:browser-existing-chrome-login"),
   cancelExistingChromeLogin: () => ipcRenderer.invoke("launcher:browser-existing-chrome-login-cancel"),
+  allowExistingChromeFileAccess: () => ipcRenderer.invoke("launcher:browser-existing-chrome-file-access"),
   copyExistingChromeSettingsAddress: () => ipcRenderer.invoke("launcher:browser-existing-chrome-settings-copy"),
   logoutChatGpt: () => ipcRenderer.invoke("launcher:browser-logout"),
   dismissSessionReminder: () => ipcRenderer.invoke("launcher:session-reminder-dismiss"),

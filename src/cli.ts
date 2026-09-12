@@ -145,6 +145,10 @@ async function loginCommand(args: string[]): Promise<void> {
   const launcherControl = takeFlag(args, "--launcher-control");
   const existingChrome = takeFlag(args, "--existing-chrome");
   const consentUserProfile = takeFlag(args, "--consent-user-profile");
+  const selectedChromeDiscovery = takeFlag(args, "--selected-chrome-discovery");
+  if (selectedChromeDiscovery && (!existingChrome || !launcherControl || !consentUserProfile)) {
+    throw new Error("Selected Chrome discovery requires the owned launcher consent route");
+  }
   if ((existingChrome || consentUserProfile) && !launcherControl) {
     throw new Error("Existing Chrome import requires explicit consent in the launcher");
   }
@@ -170,10 +174,11 @@ async function loginCommand(args: string[]): Promise<void> {
     if (!consentUserProfile || chromeExecutablePath || !storageStatePath || !isAbsolute(storageStatePath)) {
       throw new Error("Existing Chrome import requires explicit profile consent and an absolute --storage-state path");
     }
-    const control = createExistingChromeLoginControl();
+    const control = createExistingChromeLoginControl(undefined, { selectedDiscovery: selectedChromeDiscovery });
     try {
       await captureExistingChromeLoginToFile({ ...defaultConfig(), storageStatePath }, {
         consent: true, signal: control.signal,
+        ...(selectedChromeDiscovery ? { discoveryData: control.discoveryData! } : {}),
         onProgress: progress => stdout.write(`@codex-chrome-import:${JSON.stringify(progress)}\n`),
       });
     } catch (error) {

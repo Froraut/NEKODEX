@@ -5,6 +5,7 @@ import type { ExistingChromeLoginProgress } from "./types";
 export function existingChromeFailureText(code: string | null, copy: Copy): string {
   switch (code) {
     case "chrome-profile-access-denied": return copy.existingChromeAccessDenied;
+    case "chrome-file-selection-invalid": return copy.existingChromeWrongFile;
     case "chrome-unavailable": return copy.existingChromeMissingConnection;
     case "invalid-endpoint": return copy.existingChromeInvalidConnection;
     case "chrome-permission-denied": return copy.existingChromeDenied;
@@ -44,6 +45,7 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: 
   const terminal = !progress.active && progress.phase !== "completed";
   const title = progress.phase === "consent" ? copy.existingChromeConsent
     : progress.phase === "preparing" ? copy.existingChromePreparing
+    : progress.phase === "file-access" ? copy.existingChromeFileSelection
     : progress.phase === "discovering" ? copy.existingChromeSetup
     : progress.phase === "waiting-for-chrome" ? copy.existingChromeWaiting
     : progress.phase === "reading-session" ? copy.existingChromeReading
@@ -67,6 +69,7 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: 
       <strong>{title}</strong>
       {settings ? <p>{copy.existingChromeSteps}</p>
         : progress.phase !== "completed" ? <p>{progress.phase === "consent" ? copy.existingChromeBody
+          : progress.phase === "file-access" ? copy.existingChromeFileBody
           : progress.phase === "preparing" || progress.error === "existing-chrome-handoff-timeout" ? copy.existingChromePreparingBody : copy.existingChromeDuringImport}</p> : null}
     </div>
     {settings ? <p><label>{copy.existingChromeAddress}: <code>chrome://inspect/#remote-debugging</code></label></p> : null}
@@ -74,6 +77,8 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: 
     {progress.active && progress.phase === "preparing" ? <p>{copy.existingChromeHandoffRemaining.replace("{time}", remaining)}</p> : null}
     {progress.error ? <p role="alert">{existingChromeFailureText(progress.error, copy)}</p> : null}
     <div className="browser-empty-actions">
+      {progress.canAllowFileAccess ? <button className="toolbar-text-button" type="button" disabled={pending}
+        onClick={() => void act(() => window.codexWebLauncher!.allowExistingChromeFileAccess())}>{copy.existingChromeAllowFile}</button> : null}
       {progress.canCopySettings ? <button className="toolbar-text-button" type="button" disabled={pending}
         onClick={() => void act(async () => { await window.codexWebLauncher!.copyExistingChromeSettingsAddress(); setCopied(true); })}>
         {copied ? copy.existingChromeCopied : copy.existingChromeCopy}</button> : null}

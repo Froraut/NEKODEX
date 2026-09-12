@@ -37,6 +37,7 @@ const { captureUpdateReadiness, proveUpdateReadiness } = require("./update-readi
 const updateReadinessHandoff = captureUpdateReadiness();
 const { recoverStartupFailure } = require("./startup-recovery.cjs");
 const { CHROME_SETTINGS_ADDRESS, confirmExistingChromeImport } = require("./existing-chrome-consent.cjs");
+const { selectChromeConnectionFile } = require("./existing-chrome-file-access.cjs");
 const {
   createStateStore,
   nextSessionRefreshReminderAt,
@@ -550,6 +551,18 @@ function registerIpc({ logger, stateStore }) {
     return browser;
   });
   handle("launcher:browser-existing-chrome-login-cancel", () => browserHost.cancelExistingChromeLogin(() => runtimeHost.cancelExistingChromeLogin()));
+  handle("launcher:browser-existing-chrome-file-access", async () => {
+    const browser = await browserHost.allowExistingChromeFileAccess(signal => selectChromeConnectionFile({
+      dialog, window: mainWindow, homeDir: app.getPath("home"), language: stateStore.read().language, signal,
+      isCurrent: () => browserHost.existingChromeLoginController?.signal === signal
+        && stateStore.read().browserInteractionMode === "automatic" && mainWindow && !mainWindow.isDestroyed(),
+    }));
+    if (browser.authenticated) {
+      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
+      send("launcher:state-changed", state);
+    }
+    return browser;
+  });
   handle("launcher:browser-existing-chrome-settings-copy", () => {
     clipboard.writeText(CHROME_SETTINGS_ADDRESS);
     return true;
@@ -1070,7 +1083,7 @@ async function start() {
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
     loginWithPasskey: onProgress => runtimeHost.capturePasskeyLogin(onProgress),
-    loginWithExistingChrome: onProgress => runtimeHost.captureExistingChromeLogin(onProgress),
+    loginWithExistingChrome: (onProgress, options) => runtimeHost.captureExistingChromeLogin(onProgress, options),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
     publishState: (state) => send("launcher:browser-state", state),
