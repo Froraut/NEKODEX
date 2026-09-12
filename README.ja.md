@@ -1,6 +1,6 @@
 <h1 align="center">Codex 用 ChatGPT Web</h1>
 
-> **Froraut メンテナンスフォーク。** [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
+> **FroRaut メンテナンスフォーク。** [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
 > v5.0.6（`e85e369`）を基に、確認済みの認証、リクエスト境界、ライフサイクル、更新、操作性の問題を修正しています。
 > 根拠と残る制限は[レビューと改善計画](docs/reviews/2026-09-11-review.md)を参照してください。
 > 元の作者の帰属表示と MIT ライセンスは維持しています。
@@ -146,6 +146,13 @@ Pro 専用の制限や縮小されたツール契約はありません。
 
 旧 **Zero Risk** モードの表示名は**手動モード**に変更しました。既存の `chatgpt-web/zero-risk` と `chatgpt-web/zero-risk-pro` のモデル ID、コマンドオプション、保存済み設定は互換性を維持します。コネクタの正確な名前は `Codex Zero Risk2` のままです。ChatGPT ページの自動読み書きや送信は行いませんが、アカウント制限と MCP/ローカルツールの影響は引き続き適用されます。
 
+手動モードの Codex ルートは**テキスト専用**で、Computer Use のスクリーンショットや
+その他の画像入力を自動では受け取りません。画像は ChatGPT で手動添付する必要があり、
+手動添付しても、このルートでスクリーンショットが自動転送されるようにはなりません。
+視覚的な確認には、画像入力をサポートするルートを使用し、実際のツール結果を検証してください。
+画像、Windows のバインディング、キーボードエラーのそれぞれの制限については、
+[Computer Use の画像制限レビュー](docs/upstream-issue-457-computer-use.md)を参照してください。
+
 ## Full ハーネス
 
 Full モードは、公式の [OpenAI tunnel-client](https://github.com/openai/tunnel-client) を通じて、
@@ -262,11 +269,11 @@ Browser-only チャットは外側のツールを公開しません。Responses 
 
 ## Star の履歴
 
-<a href="https://www.star-history.com/?repos=miuuyy%2Fcodex-chatgpt-web&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=Froraut%2Fcodex-chatgpt-web&type=date&legend=top-left">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&theme=dark&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
-    <img alt="Star 履歴チャート" src="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&theme=dark&legend=top-left">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&legend=top-left">
+    <img alt="Star 履歴チャート" src="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&legend=top-left">
   </picture>
 </a>
 

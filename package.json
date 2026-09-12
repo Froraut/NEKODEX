@@ -1,8 +1,9 @@
 {
   "name": "codex-chatgpt-web",
-  "version": "5.1.0-froraut.4",
+  "version": "5.1.0-froraut.5",
   "private": true,
   "description": "FroRaut maintained fork: a local Responses bridge for Codex tasks through a user-authenticated ChatGPT web session.",
+  "author": "FroRaut",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Froraut/codex-chatgpt-web.git"

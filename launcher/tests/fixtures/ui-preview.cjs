@@ -51,7 +51,7 @@ function installMockLauncher() {
     profile: "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
     connectorNames: { automatic: "Fixture connector", manual: "Fixture manual" }, mcpCredentialsConfigured: false,
-    logs: [], urls: { github: "https://github.com/miuuyy/codex-chatgpt-web", x: "https://x.com/", connectors: "", tunnels: "", keys: "" },
+    logs: [], urls: { github: "https://github.com/Froraut/codex-chatgpt-web", x: "", connectors: "", tunnels: "", keys: "" },
     platform: "darwin", packaged: false, version: "fixture", smokePassed: false, operation, update: { status: "disabled" },
   });
   let startupAttempts = 0;

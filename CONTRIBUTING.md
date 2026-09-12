@@ -1,9 +1,9 @@
 # Contributing
 
-Codex Web GPT was created and is primarily developed and maintained by
-[@miuuyy](https://github.com/miuuyy). Product direction, core architecture, and release decisions
-remain with the creator. Other contributors listed by GitHub have provided focused external fixes
-rather than shared product or architectural ownership.
+This fork of Codex Web GPT is developed and maintained by
+[FroRaut](https://github.com/Froraut). Submit issues and pull requests to
+[Froraut/codex-chatgpt-web](https://github.com/Froraut/codex-chatgpt-web).
+Original project attribution and the MIT license are preserved in the repository.
 
 External contributions are welcome, but this is an intentionally maintainer-led project. Pull
 requests are expected to be small, focused, and easy to review and verify. Good contributions

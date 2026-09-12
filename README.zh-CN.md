@@ -1,6 +1,6 @@
 <h1 align="center">ChatGPT Web for Codex</h1>
 
-> **Froraut 维护分支。** 基于 [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
+> **FroRaut 维护分支。** 基于 [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
 > v5.0.6（`e85e369`）。本分支修复已确认的身份验证、请求边界、生命周期、更新和易用性问题。
 > 证据和剩余限制见[审查与改进路线图](docs/reviews/2026-09-11-review.md)。保留原作者归属及 MIT 许可证。
 >
@@ -137,6 +137,11 @@ bun run app
 
 旧版 **Zero Risk** 模式现改名为**手动模式**。现有 `chatgpt-web/zero-risk` 和 `chatgpt-web/zero-risk-pro` 模型 ID、命令行选项及已保存设置保持兼容。连接器的准确名称仍为 `Codex Zero Risk2`。手动模式不自动读写 ChatGPT 页面或发送提示，但账户限制及 MCP/本地工具的实际影响仍然存在。
 
+手动模式的 Codex 路由**仅支持文本**，不会自动接收 Computer Use 截图或其他图片输入。
+图片必须在 ChatGPT 中手动添加；这样做也不会启用此路由的自动截图传递。进行视觉检查时，
+请使用支持图片输入的路由，并验证实际的工具返回结果。关于图片、Windows 绑定和键盘错误
+各自的限制，请参阅 [Computer Use 图片限制审查](docs/upstream-issue-457-computer-use.md)。
+
 ## 完整 harness
 
 完整模式通过官方
@@ -245,11 +250,11 @@ DEV tunnel 就绪，具名聊天按需连接 broker。正式凭据和 `Codex Nat
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=miuuyy%2Fcodex-chatgpt-web&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=Froraut%2Fcodex-chatgpt-web&type=date&legend=top-left">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&theme=dark&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=miuuyy/codex-chatgpt-web&type=date&legend=top-left&sealed_token=hBVvg_eOjfMFDrfyeo5FPQkIwcvBEmXc6F7ZoOKnfFE4KPCs67o34w4XwVuM-bHGnKR-SKCAN_TSTWrzuqSBNU-RjNZCLT4f-xNs9qcDhciQtemxHKuuFj0N5YNqZIihdaQfakrh2ANhOrvP0K2LmLXX2zbsYyVaYZknyTnlYeIS_mOGvMcO32ZmPCHK">
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&theme=dark&legend=top-left">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&legend=top-left">
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&legend=top-left">
   </picture>
 </a>
 

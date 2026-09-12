@@ -287,10 +287,10 @@ function Onboarding({
                 onClick={() => openSocial("github")}
               />
               <WelcomeAction
-                complete={snapshot.state.xOpened}
-                disabled={busy}
+                complete={Boolean(snapshot.urls.x) && snapshot.state.xOpened}
+                disabled={busy || !snapshot.urls.x}
                 icon="x"
-                label={snapshot.state.xOpened ? localized.followed : localized.follow}
+                label={!snapshot.urls.x ? localized.xUnavailable : snapshot.state.xOpened ? localized.followed : localized.follow}
                 onClick={() => openSocial("x")}
               />
             </div>
@@ -575,12 +575,13 @@ function LauncherShell({
               <div className="sidebar-brand-actions">
                 <IconButton
                   icon="github"
-                  label="GitHub"
+                  label="GitHub · FroRaut"
                   onClick={() => void api!.openExternal(snapshot.urls.github).catch((cause) => setError(messageOf(cause)))}
                 />
                 <IconButton
+                  disabled={!snapshot.urls.x}
                   icon="x"
-                  label="X"
+                  label={snapshot.urls.x ? "X" : copy.xUnavailable}
                   onClick={() => void api!.openExternal(snapshot.urls.x).catch((cause) => setError(messageOf(cause)))}
                 />
               </div>
@@ -1863,7 +1864,7 @@ function SettingsSurface({
           <strong>{copy.product}</strong>
           <small>
             {devProfile ? `${copy.devBadge} · ${snapshot.profilePaths.coreHome} · ` : ""}
-            {platformLabel(snapshot.platform)} · v{snapshot.version}
+            FroRaut · {platformLabel(snapshot.platform)} · v{snapshot.version}
           </small>
         </span>
       </div>
