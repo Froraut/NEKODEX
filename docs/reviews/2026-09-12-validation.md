@@ -1,4 +1,42 @@
-# 5.1.0-froraut.3 validation checkpoint
+# September 12 validation checkpoints
+
+## Installed 5.1.0-froraut.4
+
+The current installed candidate is **5.1.0-froraut.4**, published in
+[`e4f4560`](https://github.com/Froraut/codex-chatgpt-web/commit/e4f4560d7fa2c66448f7af21b78f153010d9421c).
+It adds the narrow native file-selection recovery described in
+[existing Chrome sign-in](../existing-chrome-sign-in.md). Its local validation passed:
+
+- 47 focused core tests, 265 assertions, and 231 launcher tests.
+- Both typechecks, version consistency, and renderer/runtime builds.
+- Native packaged startup and relocated runtime smoke.
+- The native launcher visibility check with animation frames disabled.
+
+The installed archive and ASAR matched the build, and Settings visibly reports the new version.
+The native picker opened in Chrome's expected directory after the real automatic discovery
+denial. At the **11:05 UTC** checkpoint, user selection of `DevToolsActivePort` and the native
+file grant were still pending. No real session transfer or embedded authentication is recorded.
+
+- ZIP SHA-256: `0e7f331db555852e85e2ba88bf9a6a2bd23d10f9656f0c13fb26a32003d02961`
+- Installed ASAR SHA-256: `2625bad942f39cde35ca6dc6162f2be35f77a60b64daa62ce8526c25ef737e1c`
+- Runtime bundle: `1de1a09389d9c13b8d8579dc3489a684817a0580e7a8a8c89324d2145b1754fc`
+
+[CI run 34689690042](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34689690042)
+passed on macOS and passed actionlint, but failed on Linux and Windows due to three distinct
+CPU-heavy test timeouts. The two packing/planning cases repeatedly tokenized 450,000-character
+homogeneous whitespace records; a Windows compaction case used homogeneous 160,000-character
+records. The logs showed deadline failures, not failed behavioral assertions. The affected
+fixtures now use short separated runs while retaining their byte sizes, full record/order
+comparisons, expected partition counts and unchanged deadlines. The independent pathological
+tokenizer regression remains present. The four affected suites passed locally: **161 tests,
+1,365 assertions**, with the three previously slow cases taking 1.60 s, 1.14 s and 0.05 s in
+that run. Root TypeScript and scoped diff checks also passed. These are test-data corrections;
+the installed pre4 runtime is unchanged. The failed run is not recorded as a cross-platform pass.
+
+The installed build remains ad-hoc signed. Developer ID signing, notarization, live session
+import, installed Codex/MCP execution, and a signed public binary release remain separate gates.
+
+## 5.1.0-froraut.3
 
 This candidate includes the [September 12 upstream fixes](2026-09-12-upstream-triage.md),
 safe existing-Chrome error codes, bounded/cancellable login handoff, and visible recovery UI.

@@ -29,7 +29,9 @@ test("multipart selection accounts for whole-record and composer fit before subm
   for (const [contents, expected] of [
     [["small task"], undefined],
     [[50_000, 40_000, 50_000, 5_000].map(n => "word ".repeat(n)), 3],
-    [Array.from({ length: 3 }, () => " ".repeat(450_000)), 2],
+    // Homogeneous padding took 30.6s on Linux / 49.3s on Windows CI in repeated tokenization.
+    // Same 450,000-character low-token records and composer-fit boundary, with short runs.
+    [Array.from({ length: 3 }, () => `${" ".repeat(249)}.`.repeat(1_800)), 2],
   ] as const) {
     const parsed = request("");
     parsed.context.messages = contents.map((content, index) => ({ role: "user", content, timestamp: index + 1 }));

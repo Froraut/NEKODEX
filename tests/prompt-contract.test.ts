@@ -262,7 +262,9 @@ test("Bigger Context compaction preserves history above the retired inline byte 
   compact.context.systemPrompt = [];
   compact.context.messages = Array.from({ length: 6 }, (_unused, index) => ({
     role: "user" as const,
-    content: `multipart-history-${index + 1}-${String.fromCharCode(97 + index).repeat(160_000)}`,
+    // Homogeneous 160,000-character records made this byte-budget test take 6.7s on Windows CI.
+    // Preserve the record size and oversized byte envelope, with short tokenizer runs.
+    content: `multipart-history-${index + 1}-${`${String.fromCharCode(97 + index).repeat(63)}.`.repeat(2_500)}`,
     timestamp: index + 1,
   }));
 

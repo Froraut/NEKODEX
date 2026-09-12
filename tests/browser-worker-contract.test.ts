@@ -2954,7 +2954,10 @@ test("Bigger Context fits mixed-density whole records within both token and comp
   const capabilities = { localToolsEnabled: false, solAvailable: true, proAvailable: false, experimentalBiggerContext: true };
   const dense = "a!b@c#d$e%f^g&h*".repeat(3_750);
   const sparse = "x".repeat(dense.length);
-  const whitespace = " ".repeat(450_000);
+  // Consecutive-space padding made this packing test take 26.8s on Linux / 46.3s on Windows CI.
+  // Keep 450,000 low-token characters, but separate short runs to avoid repeated tokenizer work.
+  // Pathological-run chunking remains covered independently in token-estimate.test.ts.
+  const whitespace = `${" ".repeat(249)}.`.repeat(1_800);
   // Equal byte sizes must not pack two dense records into one oversized stage. Conversely,
   // token-only balancing must not leave all the low-token whitespace in one oversized composer.
   for (const contents of [

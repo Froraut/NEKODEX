@@ -155,7 +155,7 @@ for the complete 31-open-issue inventory. They were refreshed, not silently trea
 
 ## Current local Chrome work
 
-The current working tree improves error classification/progress for the explicitly approved
+The published fork improves error classification/progress for the explicitly approved
 reuse of the user's existing normal Chrome session. In particular, operating-system denial of
 Chrome connection-information access, launcher authorization failure, Chrome permission denial,
 timeout, missing session, capture and verification are distinct boundaries. This work does not
@@ -180,8 +180,10 @@ scoped whitespace checks passed for all three completed corrections. The hook co
 provenance records its final verification, including independent no-final-newline review.
 
 This review uses official issue/PR bodies, comments, current patch heads, source inspection and
-isolated fixtures. The three selected corrections still require final combined release
-verification and installation. Their provenance documents record completed local results. No upstream
+isolated fixtures. The three selected corrections passed combined local verification and
+three-platform CI in pre3 and are included in the installed pre4 build. Pre4 adds a separate
+Chrome file-selection recovery; its own CI and live acceptance are recorded in the
+[validation checkpoints](2026-09-12-validation.md). No upstream
 review status, patch merge, synthetic fixture, successful catalog request or package build is
 reported as a completed user login, installed Codex/MCP task, or resolution of every reporter's
 account/platform symptom.
