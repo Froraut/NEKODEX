@@ -100,9 +100,13 @@ yet been shown completing on pre11.** These are source-level fixes and bounded e
 a claim that every bridge path is now reliable.
 
 Apple confirmed the existing individual developer account is Account Holder; no new team was
-needed. A new Developer ID Application certificate was issued. Its browser download was
-blocked locally before a certificate file was saved, and the separate CLI authentication and
-notarization remain pending. No publisher-signed GitHub release is claimed by this report.
+needed. A new Developer ID Application certificate was issued. The initial download was
+blocked by the operator's Browser Use download interception: a download event must be awaited
+before clicking its link. Using that supported flow saved the certificate in the same Chrome
+profile without changing browser policies or security settings. The certificate's public key
+matched the newly generated local private key, and importing both made Developer ID Application
+a valid local code-signing identity. CLI authentication and notarization remain pending. No
+publisher-signed GitHub release is claimed by this report.
 
 | Path | Observed result | Boundary |
 | --- | --- | --- |
