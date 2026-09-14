@@ -30,6 +30,35 @@ the earlier native file/tool/final-answer cycle and the subsequent desktop Web s
 now separate observed passes. Image generation, every model tier and every native tool were
 not re-exercised as part of this narrow restart check.
 
+## Follow-up: image generation, file edits and context settings
+
+The user's subsequent desktop request on **ChatGPT Web — Instant** completed an actual native
+image-generation item and final answer. The saved PNG was opened and inspected: **1536 × 1024**,
+2,359,266 bytes. The complete user turn took 58.04 seconds. This reuses the user's real result;
+no duplicate image request or public upload of the artifact was made.
+
+A separate bounded Web Instant check invoked the native file-change tool and created a
+disposable text file whose bytes matched the requested content. The 30-second check deadline
+ended the client before its planned shell read and final answer, so those later phases are
+not claimed as passed in this run. The earlier native High read/command/final-answer proof
+remains the completed evidence for that path. No background browser turn remained at the
+cleanup observation. No full suite or exhaustive plugin/tool sweep was run.
+
+For GPT-6 Astra, [the API model specification](https://developers.openai.com/api/docs/models/gpt-6-astra)
+advertises a **1,050,000-token** total context window. The installed Codex client's matching
+[0.154.0 model catalog](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/models-manager/models.json)
+sets Astra's default to 272,000 and its maximum configuration override to **872,000**. Codex
+[clamps an override to that maximum](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/models-manager/src/model_info.rs).
+An API limit alone is not proof of a larger usable Codex or browser window.
+
+The existing native context setting was already 872,000 and was preserved. The global
+`model_auto_compact_token_limit = 820000` was removed with a private backup so model-specific
+compaction metadata is no longer replaced. With Codex's normal 95% headroom, Astra's nominal
+usable window is 828,400; its default automatic-compaction threshold is 90% of the raw window,
+or 784,800. The current Web catalog retains its separate explicit 95,000-token compaction
+budget. The configured model, account, model route and permissions were preserved. This
+configuration was parsed and inspected; a million-token workload was not sent.
+
 ## Outcomes
 
 | Path | Observed result | Boundary |
