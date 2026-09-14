@@ -11,15 +11,10 @@ function installHermesProvider({ coreHome, config, hermesHome = process.env.HERM
   const python = ["venv", ".venv"].map(venv => path.join(checkout, venv,
     process.platform === "win32" ? "Scripts/python.exe" : "bin/python")).find(candidate => fs.existsSync(candidate));
   if (!python) throw new Error("Install Hermes with its Python environment first. See the Hermes integration guide for a custom installation.");
-  const models = config.solAvailable
-    ? ["chatgpt-web/light", "chatgpt-web/medium", "chatgpt-web/high",
-      ...(config.extraHighAvailable ? ["chatgpt-web/extra-high"] : []), ...(config.proAvailable ? ["chatgpt-web/pro"] : [])]
-    : ["chatgpt-web/luna", "chatgpt-web/think"];
   // Electron can read ASAR members; an external Python process cannot open that virtual path.
   const script = fs.readFileSync(path.join(__dirname, "hermes-config.py"), "utf8");
   const result = spawnSync(python, ["-c", script], {
-    input: JSON.stringify({ coreHome, hermesHome: path.resolve(hermesHome), port: config.port,
-      models, contextWindow: config.contextWindow }), encoding: "utf8", timeout: 10_000,
+    input: JSON.stringify({ coreHome, hermesHome: path.resolve(hermesHome), port: config.port }), encoding: "utf8", timeout: 10_000,
     maxBuffer: 64 * 1024, windowsHide: true,
   });
   let receipt;

@@ -1,5 +1,6 @@
 """Add one named Hermes provider; input is private stdin, stdout is a redacted receipt."""
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -51,16 +52,31 @@ def install(options):
     token = token_path.read_text().strip() if token_path.exists() else secrets.token_hex(32)
     if len(token) != 64 or any(c not in "0123456789abcdef" for c in token):
         raise ValueError("The Hermes connection token is invalid; repair the local provider setup.")
+    atomic(token_path, token + "\n")
+    # Use the running bridge's canonical per-model limits. Direct loopback HTTP ignores PAC/env
+    # proxies and does not follow redirects with this private local credential.
+    connection = http.client.HTTPConnection("127.0.0.1", options["port"], timeout=5)
+    try:
+        connection.request("GET", "/hermes/v1/models", headers={"Authorization": "Bearer " + token})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise ValueError("Start the updated Codex Web GPT runtime before adding Hermes.")
+        models = json.loads(response.read(128 * 1024)).get("data", [])
+    finally:
+        connection.close()
+    if not models or any(not isinstance(model.get("context_length"), int) or model["context_length"] < 64000 for model in models):
+        raise ValueError("The active bridge has no Hermes-compatible model catalog. Update the app and choose an account mode with at least 64k usable context.")
+    names = [model["id"] for model in models]
     provider = {
         "name": "ChatGPT Web · FroRaut",
         "api": endpoint,
         "api_key": token,
         "transport": "codex_responses",
-        "default_model": "chatgpt-web/high" if "chatgpt-web/high" in options["models"] else options["models"][0],
+        "default_model": "chatgpt-web/high" if "chatgpt-web/high" in names else names[0],
         "discover_models": True,
-        "models": {name: {"context_length": min(options["contextWindow"], 32000), "vision": True,
+        "models": {model["id"]: {"context_length": model["context_length"], "vision": True,
                           "tool_calling": True, "openai_native_compaction": False}
-                   for name in options["models"]},
+                   for model in models},
         "capabilities": {"openai_native_compaction": False},
     }
     providers["codex-web"] = provider

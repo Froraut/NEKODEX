@@ -39,8 +39,8 @@ sequenceDiagram
 The automatic installer supports the usual Hermes checkout at `~/.hermes/hermes-agent` with
 `venv` or `.venv`. It writes to the configured `HERMES_HOME`, or `~/.hermes` by default.
 For a custom installation, run `launcher/electron/hermes-config.py` with that installation's
-Python (PyYAML required). Its JSON stdin takes `hermesHome`, `coreHome`, `port`, `contextWindow`
-and the available `models` array. Use actual local paths and catalog values; no OpenAI API key
+Python (PyYAML required). Its JSON stdin takes `hermesHome`, `coreHome` and `port`. It reads available models and their
+limits from the running bridge over authenticated loopback HTTP. Use actual local paths; no OpenAI API key
 belongs in this input. The helper generates the local credential and returns only a receipt.
 
 The local provider URL is `http://127.0.0.1:<bridge-port>/hermes/v1`. It supports authenticated
@@ -65,10 +65,12 @@ sessions keep their previous settings; changing the main provider does not prove
   restart or 30 minutes of inactivity, start a new user turn instead of replaying a pending tool
   result. Hermes context compression starts a fresh browser turn; native Codex compaction is not
   advertised for this provider.
-- The initial installer uses a conservative **32,000-token maximum** for Hermes model entries
-  (or a smaller configured limit). This is a client transport budget, not a claim about the
-  underlying model's full window. Large inline contexts and attachments retain the browser
-  adapter's limits. Manual mode is not offered by this integration.
+- Hermes requires at least **64,000 tokens**. The catalog derives each entry from the smaller
+  of the ordinary browser message budget and the established compaction threshold; Bigger
+  Context does not inflate it. Modes below the Hermes floor (including Plus Instant) and the
+  unverified Luna/Think browser envelope are omitted. Compatible Pro-account modes currently
+  expose a 95,000-token client budget; Plus Medium/High expose 80,000. These remain transport
+  limits, not claims about a model's full underlying window. Manual mode is not offered.
 
 ## Recovery and removal
 
@@ -103,3 +105,7 @@ ChatGPT-to-Hermes tool execution requires the account connector and a separate o
 do not equate a saved provider entry with that outcome.
 
 On 2026-09-14, the provider was added through the installed macOS app. The authenticated local catalog returned five configured Web models. Comparing with the installer backup confirmed that other providers and all non-provider settings were preserved, with private config permissions. The matching ChatGPT/Platform account has been confirmed and its tunnel is visible in ChatGPT. The runtime key was replaced, Codex Native3 was connected and verified by the installed app, and Hermes resolved the named provider to `codex_responses`. Live tool execution remains unverified at this checkpoint.
+
+The first real Hermes invocation exposed its 64k minimum: pre7's conservative 32k entry was rejected before inference. Pre8 corrects the catalog to use the bridge's canonical per-mode budgets rather than inflating an unsupported mode.
+
+With pre8 installed, the real Hermes agent passed initialization and reached the owned ChatGPT browser, selected Instant, attached Codex Native3 and submitted the task. The 20-second bounded local probe stopped before a completed Hermes result was collected. The browser subsequently displayed a safety-block response. No successful `read_file` result or full Hermes turn is claimed. The exact origin of that refusal was not established from the available structured evidence; it is not treated as a proven local permission bug or bypassed by relabeling tools.

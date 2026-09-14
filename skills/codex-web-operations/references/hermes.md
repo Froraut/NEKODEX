@@ -28,6 +28,6 @@ action. Reuse existing explicit authorization. Do not weaken global plugin actio
 
 An unknown/expired pending tool result requires a new user turn after daemon restart or idle
 expiry. Native compaction and Codex lifecycle metadata are unsupported on the Hermes route;
-Hermes supplies its own full history and session-scoped prompt cache key. The initial 32k client
-budget is conservative, not an advertised full model window. Model, tool and platform capabilities
+Hermes supplies its own full history and session-scoped prompt cache key. Hermes enforces a 64k minimum. Use the live per-mode catalog and omit smaller browser modes;
+never inflate their advertised window just to pass Hermes initialization. Model, tool and platform capabilities
 not exercised remain unverified.
