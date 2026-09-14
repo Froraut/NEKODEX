@@ -64,9 +64,9 @@ test('compaction viewport failure is recoverable only before send activation', a
 
 test('stopped-thinking diagnostics report observed progress without permitting replay', () => {
   const error = chatGptStoppedThinkingError({ responsePresent: true, finalTextChars: 0,
-    activeToolCalls: 1, toolResultObserved: true, lastProgressAgeMs: 2500 });
+    activeToolCalls: 1, toolBatchObserved: true, lastProgressAgeMs: 2500 });
   expect(error.retryable).toBe(false);
   expect(error.message).toContain('1 tool calls in flight');
-  expect(error.message).toContain('tool results observed');
+  expect(error.message).toContain('tool requests observed');
   expect(error.message).toContain('does not identify the cause');
 });

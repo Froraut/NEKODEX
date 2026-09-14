@@ -5085,7 +5085,7 @@ export class ChatGptBrowserWorker {
             responsePresent: snapshot.responsePresent,
             finalTextChars: snapshot.markdownSegments.reduce((sum, value) => sum + value.text.length, 0),
             activeToolCalls: progress?.activeToolCalls ?? 0,
-            toolResultObserved: (progress?.lastToolBatchRevision ?? 0) > 0,
+            toolBatchObserved: (progress?.lastToolBatchRevision ?? 0) > 0,
             ...(progress?.lastProgressAt ? { lastProgressAgeMs: Date.now() - progress.lastProgressAt } : {}),
           });
           await diagnostics.capture(page, "stopped-thinking", error);

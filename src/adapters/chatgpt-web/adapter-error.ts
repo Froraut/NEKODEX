@@ -69,12 +69,12 @@ export function chatGptTurnSupersededError(): ChatGptWebAdapterError {
 
 export function chatGptStoppedThinkingError(evidence?: {
   responsePresent: boolean; finalTextChars: number; activeToolCalls: number;
-  toolResultObserved: boolean; lastProgressAgeMs?: number;
+  toolBatchObserved: boolean; lastProgressAgeMs?: number;
 }): ChatGptWebAdapterError {
   const detail = evidence ? ` Observed state: response ${evidence.responsePresent ? "present" : "absent"}; `
     + `${Math.max(0, evidence.finalTextChars)} final-text characters; `
     + `${Math.max(0, evidence.activeToolCalls)} tool calls in flight; `
-    + `tool results ${evidence.toolResultObserved ? "observed" : "not observed"}.`
+    + `tool requests ${evidence.toolBatchObserved ? "observed" : "not observed"}.`
     + (Number.isFinite(evidence.lastProgressAgeMs)
       ? ` Last tool progress ${Math.max(0, Math.round(evidence.lastProgressAgeMs! / 1000))}s ago.` : "") : "";
   return new ChatGptWebAdapterError(
