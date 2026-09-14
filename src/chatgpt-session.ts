@@ -6,6 +6,9 @@ export const CHATGPT_COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
   '[contenteditable="true"][data-lexical-editor="true"]',
+  // ProseMirror may omit the legacy id/Lexical marker. Scope its fallback to
+  // the message form rather than matching unrelated editable controls.
+  'form:has([data-testid="send-button"]) .ProseMirror[contenteditable="true"]',
 ].join(", ");
 export const CHATGPT_EFFORT_CONTROL_SELECTOR = [
   'button[aria-haspopup="menu"][data-tone="neutral"]',

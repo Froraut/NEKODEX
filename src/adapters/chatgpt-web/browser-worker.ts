@@ -2134,6 +2134,17 @@ export function insertPlainTextIntoComposer(element: HTMLElement, value: string)
   ) {
     return false;
   }
+  // Adapted from Enhanced's escaped-fragment approach. Creating thousands of
+  // paragraphs through insertText is expensive. Text nodes must stay literal;
+  // CR/NUL are excluded because HTML parsing normalizes them. The caller's
+  // complete readback check remains mandatory before a prompt can be sent.
+  if (value.length >= 16_384 && value.includes("\n") && !value.endsWith("\n") && !/[\r\u0000]/u.test(value)) {
+    // Inline pre-wrapped text avoids Chromium adding a trailing empty paragraph
+    // when block fragments are inserted after the connector inside a paragraph.
+    const escaped = value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    const fragment = `<span style="white-space:pre-wrap">${escaped}</span>`;
+    return document.execCommand("insertHTML", false, fragment);
+  }
   return document.execCommand("insertText", false, value);
 }
 
@@ -3757,8 +3768,9 @@ export class ChatGptBrowserWorker {
     // CDP Input.insertText is interpreted as live typing by ChatGPT's Lexical plugins. On a large
     // JSON transport it can turn literal Markdown backticks into rich code nodes, remove the
     // delimiters from textContent, and leave the next insertion outside the intended block. The
-    // browser's plain-text editing command updates the same focused contenteditable atomically
-    // without running those Markdown shortcuts. Exact readback below remains the authority.
+    // browser's editing command updates the same focused contenteditable atomically.
+    // Large multiline inputs use escaped text blocks, never source HTML.
+    // Exact readback before submission remains the authority.
     const inserted = await composer.evaluate(insertPlainTextIntoComposer, text, {
       timeout: 20_000,
       signal: abortSignal,
