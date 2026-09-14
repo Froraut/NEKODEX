@@ -3058,6 +3058,7 @@ class BrowserHost {
       throw new Error("Browser helper returned contradictory ChatGPT capability evidence");
     }
     if (startedIdle) await this.returnToIdle();
+    else this.setState({ status: "ready", message: "ChatGPT is ready", authenticated: true, loading: false });
     return inspected;
   }
 

@@ -432,6 +432,26 @@ test("session inspection delegates navigation and capability detection to the sh
   assert.deepEqual(calls[1].payload, { detectCapabilities: true });
 });
 
+test("successful capability inspection clears the refresh loading state", async () => {
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    state: { status: "ready", authenticated: true, loading: false },
+    helper: {}, descriptorPath: "/runtime/launcher-browser.json",
+    getConnectorName: () => "Codex Native3", logger: { info() {} },
+    view: { webContents: { getURL: () => "https://chatgpt.com/?temporary-chat=true" } },
+    refreshChatGptHomeDocument: async () => {
+      fixture.state = { status: "loading", authenticated: true, loading: true };
+    },
+    runBrowserHelperOperation: async () => ({ type: "result", value: {
+      authenticated: true, temporary: true, url: "https://chatgpt.com/?temporary-chat=true",
+      solAvailable: true, proAvailable: true,
+    } }),
+  });
+  await BrowserHost.prototype.runSessionInspection.call(fixture, true);
+  assert.equal(fixture.state.status, "ready");
+  assert.equal(fixture.state.loading, false);
+  assert.equal(fixture.state.authenticated, true);
+});
+
 test("session inspection fails closed on incomplete shared-helper capability evidence", async () => {
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     helper: {},
