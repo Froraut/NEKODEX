@@ -1,4 +1,5 @@
 import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
+import { normalizeNativeDelegation } from "./adapters/chatgpt-web/native-delegation";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { timingSafeEqual } from "node:crypto";
@@ -499,6 +500,8 @@ export async function responseRequest(
   let route: ChatGptWebModelRoute;
   try {
     parsed = parseRequest(expanded);
+    const delegated = normalizeNativeDelegation(parsed);
+    if (delegated) parsed = parseRequest(delegated);
     if (options.hermesContext) parsed._hermesContext = options.hermesContext;
     route = routeChatGptWebRequest(parsed, config);
     const identity = extractChatGptTurnIdentity(parsed);

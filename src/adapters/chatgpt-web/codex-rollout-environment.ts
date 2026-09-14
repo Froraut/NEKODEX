@@ -24,6 +24,40 @@ import type {
 
 type RolloutIdentity = ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
 
+/** Authenticate a cross-task delivery against the native current-turn journal.
+ * HTTP input is only a claim; neither a matching tool name nor XML is authority. */
+export function verifyNativeDelegation(codexHome: string, threadId: string, turnId: string,
+  claimed: Record<string, unknown>): boolean {
+  if (!CODEX_ID.test(threadId) || !CODEX_ID.test(turnId)) return false;
+  const owner: ChatGptRootThreadMetadata = { threadId, sandboxType: "platform", workspaceRoots: [] };
+  const indexed = indexedRollout(configuredSqliteHome(codexHome), owner);
+  if (indexed.kind !== "found") return false;
+  const filename = validateRolloutPath(codexHome, indexed.path, threadId);
+  const fd = openSync(filename, "r");
+  try {
+    const size = fstatSync(fd).size;
+    validateSessionMeta(firstRolloutRecord(fd, size), owner);
+    if (latestTurnContext(fd, size)?.turn_id !== turnId) return false;
+    const length = Math.min(size, MAX_ROLLOUT_JSON_LINE_BYTES);
+    const tail = Buffer.alloc(length);
+    if (readSync(fd, tail, 0, length, size - length) !== length) return false;
+    const lines = tail.toString("utf8").split("\n");
+    // Ignore a cut first record and an incomplete final write.
+    if (size > length) lines.shift();
+    lines.pop();
+    for (const line of lines.reverse()) {
+      if (!line.trim()) continue;
+      const event = record(JSON.parse(line));
+      const payload = record(event?.payload);
+      if (event?.type === "turn_context") break;
+      if (event?.type !== "response_item" || !payload || payload.id !== claimed.id) continue;
+      return ["type", "id", "name", "namespace", "output", "internal_chat_message_metadata_passthrough"]
+        .every(key => isDeepStrictEqual(payload[key], claimed[key]));
+    }
+    return false;
+  } finally { closeSync(fd); }
+}
+
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
 const ROLLOUT_READ_CHUNK_BYTES = 64 * 1024;

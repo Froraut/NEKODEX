@@ -5079,7 +5079,18 @@ export class ChatGptBrowserWorker {
             continue;
           }
         }
-        if (snapshot.stoppedThinkingVisible) throw chatGptStoppedThinkingError();
+        if (snapshot.stoppedThinkingVisible) {
+          const progress = turn.externalProgress?.snapshot();
+          const error = chatGptStoppedThinkingError({
+            responsePresent: snapshot.responsePresent,
+            finalTextChars: snapshot.markdownSegments.reduce((sum, value) => sum + value.text.length, 0),
+            activeToolCalls: progress?.activeToolCalls ?? 0,
+            toolResultObserved: (progress?.lastToolBatchRevision ?? 0) > 0,
+            ...(progress?.lastProgressAt ? { lastProgressAgeMs: Date.now() - progress.lastProgressAt } : {}),
+          });
+          await diagnostics.capture(page, "stopped-thinking", error);
+          throw error;
+        }
         if (snapshot.responsePresent) consecutiveObservationRebinds = 0;
         // The page was read successfully, so the fault budget is genuinely consecutive even when
         // this iteration goes on to `continue` for a rebind, confirmation, or liveness pause.

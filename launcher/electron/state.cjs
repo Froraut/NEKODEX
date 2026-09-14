@@ -93,6 +93,11 @@ function readState(filePath) {
     ]) {
       if (state[key] !== undefined && typeof state[key] !== "boolean") delete state[key];
     }
+    if (!Number.isSafeInteger(state.setupContract) || state.setupContract < 1) delete state.setupContract;
+    if (typeof state.setupIdentityHash !== "string" || !/^[a-f0-9]{64}$/.test(state.setupIdentityHash)) delete state.setupIdentityHash;
+    for (const key of ["setupVerifiedAt", "pickerVerifiedAt"]) {
+      if (typeof state[key] !== "string" || !Number.isFinite(Date.parse(state[key]))) delete state[key];
+    }
     return state;
   } catch {
     return { ...DEFAULT_STATE };

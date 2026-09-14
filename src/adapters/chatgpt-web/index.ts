@@ -941,8 +941,14 @@ export function createChatGptWebAdapter(
                   armHandoffDeadline();
                   const operationSignal = AbortSignal.any([operatorSignal, handoffDeadline.signal]);
                   const sourceConversationKey = chatGptConversationKey(parsed, chatGptWebConversationNamespace(provider, parsed));
+                  const reportCompaction = (message: string): void => {
+                    emit({ type: "thinking_delta", thinking: `${message}\n` });
+                    emit({ type: "heartbeat" });
+                  };
+                  reportCompaction("Preparing context compaction.");
                   const runFreshCompactionFallback = async (reason: string): Promise<string> => {
                     console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
+                    reportCompaction("Recovering context compaction in a fresh page; previous task results are preserved.");
                     // The fallback is a new bounded phase. Each exact multipart acknowledgement
                     // and the final accepted compact prompt re-arms the five-minute liveness budget;
                     // transport time cannot consume the model-generation window.
@@ -952,12 +958,16 @@ export function createChatGptWebAdapter(
                       manualRequest ? environment : undefined,
                       `${handoffTraceId}_fallback`,
                       turnCapabilities,
-                      { onCompactionProgress: armHandoffDeadline },
+                      { onCompactionProgress: () => {
+                        armHandoffDeadline();
+                        reportCompaction("Context transfer acknowledged; waiting for the next stage or summary.");
+                      } },
                     );
                     retainOwnershipUntil(fallbackRuntime.physicalSettlement);
                     try {
                       const rawSummary = await withAbort(fallbackRuntime.browser, operationSignal);
                       await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
+                      reportCompaction("Context summary received; preparing replacement history.");
                       return canonicalizeCompactionHandoff(parsed, rawSummary);
                     } catch (error) {
                       fallbackRuntime.cancel(error instanceof Error ? error : new Error(String(error)));

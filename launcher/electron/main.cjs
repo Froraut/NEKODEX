@@ -37,6 +37,7 @@ const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { DEVELOPMENT_PROFILE, resolveLauncherProfile } = require("./profile.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
 const { createUpdateController } = require("./update.cjs");
+const { SETUP_CONTRACT, setupIdentity, preserveSetup } = require("./upgrade-readiness.cjs");
 const { captureUpdateReadiness, proveUpdateReadiness } = require("./update-readiness.cjs");
 const updateReadinessHandoff = captureUpdateReadiness();
 const { recoverStartupFailure } = require("./startup-recovery.cjs");
@@ -634,7 +635,8 @@ function registerIpc({ logger, stateStore }) {
       return report;
     }
     if (stateStore.read().browserInteractionMode === "manual") {
-      const state = stateStore.update({ mcpSetupComplete: true });
+      const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
+        setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel) });
       send("launcher:state-changed", state);
       const successMessage = "Local Manual mode runtime is healthy; connector selection remains a manual turn step";
       publishOperation({ name: operationName, status: "completed", message: successMessage });
@@ -653,7 +655,8 @@ function registerIpc({ logger, stateStore }) {
     try {
       publishOperation({ name: operationName, status: "running", message: "Checking ChatGPT connector" });
       await browserHost.verifyConnector(runtimeHost.mcpConnectorName());
-      const state = stateStore.update({ mcpSetupComplete: true });
+      const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
+        setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel) });
       send("launcher:state-changed", state);
       const successMessage = IS_DEV_PROFILE
         ? "DEV harness and connector verified"
@@ -850,7 +853,9 @@ function registerIpc({ logger, stateStore }) {
     if (!current.coreSetupComplete || !current.codexCatalogVerified || typeof current.pendingBiggerContext === "boolean") {
       throw new Error("Wait for the configured model catalog before confirming the Codex picker");
     }
-    const state = stateStore.update({ codexPickerConfirmed: true, codexRestartRequired: false });
+    const state = stateStore.update({ codexPickerConfirmed: true, codexRestartRequired: false,
+      setupContract: SETUP_CONTRACT, pickerVerifiedAt: new Date().toISOString(),
+      setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel) });
     send("launcher:state-changed", state);
     return state;
   });
@@ -1259,19 +1264,21 @@ async function start() {
       });
     }
   } else void (async () => {
+    const previousSetupIdentity = stateStore.read().setupIdentityHash ?? null;
     await startupAuthenticationRefresh;
     const upgrade = await runtimeHost.upgradeManagedRuntime();
     if (upgrade.updated) {
+      const preserve = preserveSetup(previousSetupIdentity,
+        setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
+        stateStore.read(), upgrade.connectorMigrated || upgrade.tunnelProfileMigrated);
       const state = stateStore.update({
         coreSetupComplete: true,
-        codexCatalogVerified: false,
-        codexRestartRequired: true,
+        ...(!preserve ? { codexCatalogVerified: false, codexRestartRequired: true } : {}),
         experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
         zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
         ...(upgrade.mode === "full" ? {
           mcpRuntimeInstalled: true,
-          mcpSetupComplete: false,
-          mcpGuideStep: 2,
+          ...(!preserve ? { mcpSetupComplete: false, mcpGuideStep: 2 } : {}),
         } : {
           mcpRuntimeInstalled: false,
           mcpSetupComplete: false,

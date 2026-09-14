@@ -8,6 +8,7 @@ const { Transform } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 const { validateStagedApplication } = require("./update-validation.cjs");
 const { verifyReleaseMetadata } = require("./release-trust.cjs");
+const { downloadAuthenticatedAsset } = require("./resumable-download.cjs");
 const BUILD = require("../package.json");
 
 // Update origin belongs to this packaged build, never to an ambient environment
@@ -112,7 +113,7 @@ function validateReleaseAssetUrl(raw, version, assetName, repository = REPOSITOR
   return url.toString();
 }
 
-function request(url, redirects = 0, { signal } = {}) {
+function request(url, redirects = 0, { signal, headers = {}, allowPartial = false } = {}) {
   return new Promise((resolve, reject) => {
     if (redirects > MAX_REDIRECTS) {
       reject(new Error(`Too many redirects while downloading ${url}`));
@@ -128,15 +129,16 @@ function request(url, redirects = 0, { signal } = {}) {
       headers: {
         Accept: "application/vnd.github+json",
         "User-Agent": USER_AGENT,
+        ...headers,
       },
     }, (response) => {
       if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
         response.resume();
         const next = new URL(response.headers.location, parsed).toString();
-        request(next, redirects + 1, { signal }).then(resolve, reject);
+        request(next, redirects + 1, { signal, headers, allowPartial }).then(resolve, reject);
         return;
       }
-      if (response.statusCode !== 200) {
+      if (response.statusCode !== 200 && !(allowPartial && response.statusCode === 206)) {
         response.resume();
         const error = new Error(`Update download failed with HTTP ${response.statusCode}`);
         error.statusCode = response.statusCode;
@@ -182,10 +184,15 @@ async function downloadText(url, maxBytes = 2 * 1024 * 1024, {
 
 async function downloadFile(url, destination, {
   expectedBytes,
+  expectedSha256,
+  onProgress,
   maxBytes = MAX_ASSET_BYTES,
   timeoutMs = DOWNLOAD_TIMEOUT_MS,
   requestDownload = request,
 } = {}) {
+  if (expectedSha256) return downloadAuthenticatedAsset(url, destination, {
+    expectedBytes, expectedSha256, onProgress, requestDownload,
+  });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error("Update download exceeded its time limit")), timeoutMs);
   let response;
@@ -456,7 +463,20 @@ function createUpdateController({
         const expected = expectedChecksum(checksums, available.assetName);
         if (expected !== authenticatedAsset.sha256) throw new Error("Checksums do not match independently authenticated release metadata");
         const assetPath = path.join(tempRoot, available.assetName);
-        await deps.downloadFile(available.assetUrl, assetPath, { expectedBytes: available.assetBytes });
+        const cacheRoot = path.join(logsDirectory, "..", "update-downloads");
+        fs.mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
+        const cachedAsset = path.join(cacheRoot, `${expected}-${available.assetName}`);
+        if (fs.existsSync(cachedAsset) && (fs.lstatSync(cachedAsset).isSymbolicLink()
+          || !fs.lstatSync(cachedAsset).isFile())) throw new Error("Unsafe cached update asset");
+        if (fs.existsSync(cachedAsset) && deps.sha256(cachedAsset) !== expected) {
+          fs.rmSync(cachedAsset);
+          throw new Error("Cached update checksum mismatch; removed damaged cache, retry download");
+        }
+        if (!fs.existsSync(cachedAsset)) await deps.downloadFile(available.assetUrl, cachedAsset, {
+          expectedBytes: available.assetBytes, expectedSha256: expected,
+          onProgress: progress => transition({ status: "downloading", version: available.version, ...progress }),
+        });
+        fs.copyFileSync(cachedAsset, assetPath);
         const actual = deps.sha256(assetPath);
         if (actual !== expected) throw new Error(`SHA-256 verification failed for ${available.assetName}`);
 

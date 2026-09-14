@@ -67,10 +67,19 @@ export function chatGptTurnSupersededError(): ChatGptWebAdapterError {
   );
 }
 
-export function chatGptStoppedThinkingError(): ChatGptWebAdapterError {
+export function chatGptStoppedThinkingError(evidence?: {
+  responsePresent: boolean; finalTextChars: number; activeToolCalls: number;
+  toolResultObserved: boolean; lastProgressAgeMs?: number;
+}): ChatGptWebAdapterError {
+  const detail = evidence ? ` Observed state: response ${evidence.responsePresent ? "present" : "absent"}; `
+    + `${Math.max(0, evidence.finalTextChars)} final-text characters; `
+    + `${Math.max(0, evidence.activeToolCalls)} tool calls in flight; `
+    + `tool results ${evidence.toolResultObserved ? "observed" : "not observed"}.`
+    + (Number.isFinite(evidence.lastProgressAgeMs)
+      ? ` Last tool progress ${Math.max(0, Math.round(evidence.lastProgressAgeMs! / 1000))}s ago.` : "") : "";
   return new ChatGptWebAdapterError(
     "ChatGPT displayed 'Stopped thinking' and could not continue this response. "
-    + "The status does not identify the cause. This turn will not be automatically sent again.",
+    + "The status does not identify the cause. This turn will not be automatically sent again." + detail,
     {
       status: 502,
       errorType: "server_error",

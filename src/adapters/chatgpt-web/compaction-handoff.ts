@@ -6,7 +6,7 @@ import type {
 } from "../../types";
 import { extractChatGptCompactionSourceRevision } from "./environment";
 import type { ChatGptBrowserWorker } from "./browser-worker";
-import { ChatGptCompactionHandoffAccepted } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import type { CompactionTransactionHandle } from "./compaction-transaction";
 import type { ChatGptWebCapabilities } from "./model";
 import {
@@ -300,6 +300,7 @@ export async function requestRetainedCompactionHandoff(
   const abortBrowser = () => browserAbort.abort(operationSignal.reason);
   let transaction: CompactionTransactionHandle | undefined;
   let browser: Promise<string> | undefined;
+  let sendActivated = false;
   if (operationSignal.aborted) abortBrowser();
   else operationSignal.addEventListener("abort", abortBrowser, { once: true });
   try {
@@ -326,6 +327,7 @@ export async function requestRetainedCompactionHandoff(
       requireRetainedConversation: true,
       abortSignal: browserAbort.signal,
       onTextDelta: () => {},
+      onSendActivated: () => { sendActivated = true; },
     });
     const browserFailure = browser.then<never>(
       () => new Promise<never>(() => {}),
@@ -347,6 +349,17 @@ export async function requestRetainedCompactionHandoff(
       operationSignal,
     );
     return summary;
+  } catch (error) {
+    // Only page acquisition failure before Send is safe to replace. A model
+    // refusal, timeout after submission or cancellation must never be resent.
+    if (!sendActivated && !operationSignal.aborted && error instanceof Error
+      && error.message.startsWith("ChatGPT browser surface did not expose an operational viewport:")) {
+      throw new ChatGptWebAdapterError("Retained page unavailable before compaction submission", {
+        status: 409, errorType: "invalid_request_error", code: "compaction_source_unavailable",
+        retryable: false, cause: error,
+      });
+    }
+    throw error;
   } finally {
     browserAbort.abort();
     if (transaction) broker.abortCompactionTransaction(transaction.token);

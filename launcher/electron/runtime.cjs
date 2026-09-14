@@ -1333,6 +1333,7 @@ class RuntimeHost {
       fromVersion: existing.config.releaseVersion,
       toVersion: currentVersion,
       connectorMigrated: connectorMigrationRequired,
+      tunnelProfileMigrated: tunnelProfileMigrationRequired,
       stdout: result.stdout,
     };
   }

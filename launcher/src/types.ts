@@ -26,6 +26,10 @@ export interface LauncherState {
   coreSetupComplete?: boolean;
   codexCatalogVerified?: boolean;
   codexPickerConfirmed?: boolean;
+  setupContract?: number;
+  setupVerifiedAt?: string;
+  pickerVerifiedAt?: string;
+  setupIdentityHash?: string | null;
   mcpSetupComplete?: boolean;
   mcpRuntimeInstalled?: boolean;
   codexRestartRequired?: boolean;
@@ -122,7 +126,8 @@ export interface OperationState {
 
 export type UpdateState =
   | { status: "disabled" | "idle" | "checking" | "up-to-date" }
-  | { status: "available" | "downloading" | "installing"; version: string }
+  | { status: "available" | "downloading" | "installing"; version: string;
+      downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null }
   | { status: "error"; message: string };
 
 export interface LauncherSnapshot {
