@@ -34,12 +34,18 @@ may require the user. Cookies present or capture complete is not signed-in evide
 
 ## Models
 
+These are initial-setup acceptance paths, not a mandatory repeated test sequence. Reuse current
+successful evidence after routine packaging changes and respect the user's shared verification
+budget. Do not launch a long context workload just to complete this list.
+
 1. Complete login in Setup.
 2. Run the single connection test. The observed prompt was `Reply with exactly: CODEX WEB GPT READY`.
 3. Install models. Inspect route diagnostics and a real Codex catalog request. Do not repeat
    installation while the already-saved route waits for a catalog refresh.
 4. The desktop host may be named Codex or ChatGPT and may retain an app-server after its window
    closes. Explain the actual restart/picker requirement; avoid interrupting active work blindly.
+   In versions with an explicit picker confirmation, select it only after observing the actual
+   Web entries in Codex. A background catalog request cannot stand in for that observation.
 5. A fresh native CLI request with an explicitly selected `chatgpt-web/high` must return a
    recognizable fixed marker. Use an empty/disposable cwd and no private project input.
 

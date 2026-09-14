@@ -49,6 +49,9 @@ verification limits; do not import an old full-suite requirement from this runbo
 deliver the scoped change, preserve rollback, verify the installed identity, and finish authorized
 Git publication. Keep account data and raw diagnostics out of commits and this skill.
 
+For a signed macOS release, read [publisher release](references/publishing.md). Keep Developer ID,
+Apple acceptance, the stapled installed app and the GitHub asset/attestation result distinct.
+
 ## Hermes
 
 Read [Hermes integration](references/hermes.md) when the user wants Hermes to use Web models

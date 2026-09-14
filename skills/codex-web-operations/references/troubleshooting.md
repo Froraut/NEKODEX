@@ -15,6 +15,10 @@
 | External tool safety refusal | Preserve the refusal. No label change, alternate execution channel or weakened approval is a fix. Distinguish transport receipt, SDK validation, broker invocation, native result and final answer. |
 | Image omitted | Check route input modalities. Manual image handling is incomplete; base64 prose is not image support. Native Computer Use availability/key-name errors are separate. |
 | Healthy doctor but tools unavailable | Local health and connector readiness differ. Inspect warnings and perform a real tool call. |
+| Download says an organization blocked it | This wording does not identify an organization. Browser Use may return BlockedByClient when a file response was not awaited. Start the supported download wait before the final Download click, then inspect the saved file; do not change browser policies from this message alone. |
+| Bigger Context fails with extra conversation turns | Inspect the bounded multipart trace and exact transaction acknowledgements. Pre11 introduced preservation of verified staging acknowledgements when ChatGPT remounts turns; the original large Pro continuation remained unverified. Do not accept arbitrary extra responses to make the request pass. |
+| Context setting is queued | Inspect the active profile and request counts. The saved choice is not active until applied. Native forwarded HTTP requests also keep the runtime busy even with zero browser turns. |
+| Signing succeeded but runtime integrity failed | Confirm Bun was signed before its manifest size/hash and aggregate bundle ID were recorded. Re-signing Bun afterward changes those bytes. Repair the artifact, then sign its containing app; do not disable integrity checks. |
 
 ## Operator observations
 
@@ -32,6 +36,10 @@ Inspect credential permissions/existence without values. Keep raw captures out o
 
 For completed fixes, preserve source provenance and state what was actually exercised. Every
 installed/account observation can change; dated reports are pointers, not current proof.
+
+A download-wait timeout can occur even after a file was saved. Check the expected file's
+existence, size and identity before another click, especially for one-time Apple API downloads.
+Keep API keys in the private signing directory or Keychain; never print their contents.
 
 ## Distinguish MCP failure layers
 
