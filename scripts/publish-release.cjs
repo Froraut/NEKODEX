@@ -22,8 +22,10 @@ async function publish() {
   // Published tags are immutable here. A previous failed draft requires explicit maintainer cleanup.
   const existing = spawnSync("gh", ["release", "view", tag, "--repo", repository], { stdio: "pipe" });
   if (existing.status === 0) throw new Error("Release tag already exists; refusing to overwrite release assets");
+  const notes = path.resolve(__dirname, "../docs/releases", `${version}.md`);
   gh(["release", "create", tag, ...files.map(file => path.join(directory, file)), "--repo", repository,
-    "--verify-tag", "--draft", "--title", `${tag} · FroRaut fork`, "--generate-notes"]);
+    "--verify-tag", "--draft", "--title", `${tag} · FroRaut fork`,
+    ...(fs.existsSync(notes) ? ["--notes-file", notes] : ["--generate-notes"])]);
   const remote = JSON.parse(gh(["release", "view", tag, "--repo", repository, "--json", "assets"]));
   if (remote.assets.length !== files.length) throw new Error("Draft release asset count mismatch; draft remains unpublished");
   for (const file of files) {

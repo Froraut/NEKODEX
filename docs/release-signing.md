@@ -131,6 +131,13 @@ and Apple-ID options so Electron Builder uses that profile. `CODEX_WEB_GPT_SIGNI
 can point to an existing signing keychain; no certificate export is needed for a local build.
 The signing identity must still be Developer ID Application, not Apple Development.
 
+For CI, use a PKCS#12 format accepted by macOS Keychain. An OpenSSL export using its current
+default protection failed at `security import` on both macOS runners. Exporting with
+`-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`, a strong random password supplied
+through a private password file, and the same certificate/key succeeded in a temporary local
+keychain. Store only the encrypted container and password in the designated GitHub secrets;
+never put either in command output or tracked files.
+
 CI prepares a temporary keychain,
 imports the approved certificate, and deletes it and the temporary API key even when later steps
 fail. The Bun executable is signed with hardened runtime/JIT entitlements **before** its runtime

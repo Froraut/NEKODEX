@@ -18,7 +18,7 @@ const password = crypto.randomBytes(32).toString("hex");
 function security(args) {
   const result = spawnSync("security", args, { stdio: "pipe" });
   // Never echo commands or keychain/import output containing credential context.
-  if (result.error || result.status !== 0) throw new Error("Temporary release keychain setup failed");
+  if (result.error || result.status !== 0) throw new Error(`Temporary release keychain ${args[0]} failed (exit ${result.status ?? "unavailable"})`);
 }
 security(["create-keychain", "-p", password, keychain]);
 security(["set-keychain-settings", "-lut", "21600", keychain]);
