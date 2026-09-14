@@ -3,7 +3,7 @@ const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 
-function installHermesProvider({ coreHome, config, hermesHome = process.env.HERMES_HOME || path.join(os.homedir(), ".hermes") }) {
+function installHermesProvider({ coreHome, config, runtime = "codex_responses", makeDefault = false, hermesHome = process.env.HERMES_HOME || path.join(os.homedir(), ".hermes") }) {
   if (!config || config.mode !== "full" || config.browserInteractionMode === "manual") {
     throw new Error("Connect ChatGPT tools in Automatic mode before adding Hermes.");
   }
@@ -14,7 +14,8 @@ function installHermesProvider({ coreHome, config, hermesHome = process.env.HERM
   // Electron can read ASAR members; an external Python process cannot open that virtual path.
   const script = fs.readFileSync(path.join(__dirname, "hermes-config.py"), "utf8");
   const result = spawnSync(python, ["-c", script], {
-    input: JSON.stringify({ coreHome, hermesHome: path.resolve(hermesHome), port: config.port }), encoding: "utf8", timeout: 10_000,
+    input: JSON.stringify({ coreHome, hermesHome: path.resolve(hermesHome), port: config.port, runtime, makeDefault,
+      hermesRoot: checkout, modelForwardingPatch: fs.readFileSync(path.join(__dirname, "hermes-model-forwarding.patch"), "utf8") }), encoding: "utf8", timeout: 20_000,
     maxBuffer: 64 * 1024, windowsHide: true,
   });
   let receipt;

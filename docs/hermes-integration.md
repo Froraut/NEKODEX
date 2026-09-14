@@ -1,144 +1,115 @@
-# Hermes integration
+# ChatGPT Web in Hermes
 
-**Experimental tool integration:** the model transport is implemented, but the observed live Hermes file-tool runs stopped after inventory and did not execute the file read. See the [complete live investigation](reviews/2026-09-14-live-blocks.md). Native Codex full-harness execution passed separately.
-
-The fork exposes a separate, authenticated **Responses API** provider for Hermes. Hermes keeps
-its own conversation loop and executes its own tools. The local application supplies ChatGPT
-Web responses and relays structured tool requests through the ChatGPT connector.
+The recommended setup uses **Hermes' Codex runtime**. Hermes supplies the interface and session,
+while Codex executes file and command tools and uses this fork's ChatGPT Web model route.
+The original direct Hermes Responses provider remains available as an experimental alternative.
 
 ```mermaid
-sequenceDiagram
-  participant H as Hermes
-  participant L as Codex Web GPT
-  participant W as ChatGPT Web
-  H->>L: Responses request + Hermes tools
-  L->>W: Task context in the signed-in browser
-  W->>L: MCP tool request
-  L->>H: Responses function_call
-  H->>H: Apply Hermes approvals and run the tool
-  H->>L: function_call_output
-  L->>W: Bound tool result
-  W->>L: Final answer
-  L->>H: Streamed Responses answer
+flowchart LR
+  H[Hermes] --> C[Codex app-server]
+  C --> L[Codex Web GPT]
+  L --> W[ChatGPT Web]
+  W --> M[Codex Native3 connector]
+  M --> C
+  C --> H
 ```
 
-## Setup
+## Recommended setup
 
-1. Install and start Hermes normally. This integration does not install Hermes itself or alter
-   its source tree.
-2. In Codex Web GPT, sign in, test the browser response and finish **Codex tools (MCP)** in
-   Automatic mode. The ChatGPT connector remains necessary for tool calls. An available tunnel
-   by itself is not sufficient.
-3. In **Setup → Hermes**, click **Add Hermes provider**. The installer backs up the existing
-   Hermes settings, adds `providers.codex-web`, and creates a separate local bearer credential.
-   Existing providers and the selected/default model are preserved.
-4. Restart Hermes to refresh its configuration. In a **new Hermes session**, choose
-   **ChatGPT Web · FroRaut** and one of its models. The provider must use
-   `transport: codex_responses`, not `chat_completions` or `codex_app_server`.
-5. Keep Codex Web GPT open. First request a short reply, then ask Hermes to use one enabled
-   tool on a disposable fixture and check the actual tool result in Hermes.
+1. Complete ChatGPT sign-in and Codex tools setup in **Codex Web GPT**. Use the same account in
+   the embedded browser, ChatGPT and OpenAI Platform. The connector is installed in ChatGPT.
+2. In **Setup → Hermes**, choose **Use Codex runtime in Hermes**.
+3. Restart Hermes and start a new session. The selected provider is
+   **ChatGPT Web via Codex · FroRaut**, with **ChatGPT Web High** selected by default.
+4. Keep Codex Web GPT open. Ask Hermes to read or edit a file in the session's workspace using
+   its available tools. In this runtime, file operations use Codex tools such as `exec_command`
+   and `apply_patch`; do not require a tool literally named Hermes `read_file`.
 
-The automatic installer supports the usual Hermes checkout at `~/.hermes/hermes-agent` with
-`venv` or `.venv`. It writes to the configured `HERMES_HOME`, or `~/.hermes` by default.
-For a custom installation, run `launcher/electron/hermes-config.py` with that installation's
-Python (PyYAML required). Its JSON stdin takes `hermesHome`, `coreHome` and `port`. It reads available models and their
-limits from the running bridge over authenticated loopback HTTP. Use actual local paths; no OpenAI API key
-belongs in this input. The helper generates the local credential and returns only a receipt.
+The installer adds `providers.codex-web-native`, uses `transport: codex_app_server`, and selects
+that provider's Web High model for new sessions. It backs up the existing Hermes config and
+preserves other providers and unrelated settings. It does not rewrite global Codex permissions,
+copy account credentials, migrate every Hermes MCP server, or select a paid API fallback.
+Existing sessions retain their old runtime until a new session is started.
 
-The local provider URL is `http://127.0.0.1:<bridge-port>/hermes/v1`. It supports authenticated
-`GET /models` and `POST /responses`. The installer sets the actual port. No remote endpoint or
-paid API fallback is selected. Auxiliary Hermes models, fallbacks, scheduled jobs and existing
-sessions keep their previous settings; changing the main provider does not prove those use Web.
+## Why a compatibility patch is needed
 
-## Tool and session behavior
+The inspected Hermes runtime started Codex without forwarding the selected model. Simply
+turning on `codex_app_server` could therefore run Codex's default model while the Hermes UI
+showed a Web model. This fork ships a small, reviewable
+[model-forwarding patch](../integrations/hermes/codex-model-forwarding.patch): the current
+`agent.model` is sent in the app-server `turn/start` request, including subsequent turns.
 
-- Hermes supplies function schemas. `codex_tool_inventory` and `codex_tool_call` expose only
-  that current registry. The Responses function call goes back to Hermes for execution and
-  permission checks; the bridge does not run the function or reinterpret plain text as a command.
-- This keeps Hermes-native memory, delegation and enabled plugins available through its normal
-  loop. Availability still depends on the actual Hermes session, enabled toolsets and credentials.
-  A successful file tool does not prove every external plugin, browser or image tool works.
-- Requests must contain a session-scoped `prompt_cache_key` and full history, as the inspected
-  Hermes Responses transport does. Producer identity is separate from native Codex metadata.
-  The endpoint rejects caller-supplied Codex metadata, unknown models and native compaction
-  controls. Native Codex's environment checks remain in effect on its original endpoint.
-- Continuations must include the issued tool calls and corresponding results. Another session
-  cannot consume them. Simultaneous requests to one conversation are rejected. After a daemon
-  restart or 30 minutes of inactivity, start a new user turn instead of replaying a pending tool
-  result. Hermes context compression starts a fresh browser turn; native Codex compaction is not
-  advertised for this provider.
-- Hermes requires at least **64,000 tokens**. The catalog derives each entry from the smaller
-  of the ordinary browser message budget and the established compaction threshold; Bigger
-  Context does not inflate it. Modes below the Hermes floor (including Plus Instant) and the
-  unverified Luna/Think browser envelope are omitted. Compatible Pro-account modes currently
-  expose a 95,000-token client budget; Plus Medium/High expose 80,000. These remain transport
-  limits, not claims about a model's full underlying window. Manual mode is not offered.
+The installer checks whether the patch is already applied, validates it against the installed
+Hermes source before applying it, and backs up the affected files. It refuses an incompatible
+Hermes version instead of silently using another model. The patch remains a local compatibility
+change in the Hermes checkout and is published here; no changes are pushed to NousResearch.
+After Hermes updates, run this setup again. If the upstream implementation changes, the patch
+may need review before reapplication. Do not reset or discard unrelated Hermes source changes.
 
-## Recovery and removal
+The automatic installer supports `~/.hermes/hermes-agent` with `venv` or `.venv`, and writes to
+`HERMES_HOME` or `~/.hermes`. The bridge's private installation receipts are under
+`<coreHome>/hermes/`; settings and compatibility-source backups are under
+`<hermesHome>/backups/codex-web/`. These private files must not be published.
 
-For `401`, add/update the provider from Setup and reload Hermes; do not reuse the bridge's admin
-token or an OpenAI runtime key. For `404`, check the exact `/hermes/v1` URL and Responses transport.
-For missing tools, finish the ChatGPT connector and verify it uses the same account as the
-embedded app; then inspect Hermes' enabled toolsets. An empty tunnel list in another account
-does not mean the existing tunnel was deleted.
+## Capabilities and limits
 
-The private key is stored at `<coreHome>/hermes/provider-token` and in the private Hermes config.
-The installer stores a receipt without the key at `<coreHome>/hermes/installation.json`; original
-settings backups are under `<hermesHome>/backups/codex-web/`. Do not publish any of these files.
-The installer refuses to overwrite a manually changed `codex-web` entry. For removal, select
-another provider in Hermes, remove only `providers.codex-web` in its settings and delete the local
-`provider-token` to revoke access. Keep unrelated settings and sessions; restoring an old entire
-config can overwrite changes made since installation.
+Codex owns commands, files, patches, sandboxing and tool approvals in the selected runtime.
+Installed Codex tools remain subject to their existing permissions and account access.
+Hermes' own in-loop `memory`, `delegate_task`, `session_search` and `todo` tools are not available
+in the same way. A curated Hermes MCP callback can be configured separately, but this installer
+does not promise or migrate it automatically. Auxiliary models, existing scheduled jobs and
+other profiles are not reconfigured by this provider installation.
 
-## Why not Hermes' Codex runtime?
+The bridge's authenticated catalog provides actual per-mode usable context budgets. Hermes
+requires at least 64k; smaller modes are omitted rather than inflated. The initial 32k provider
+value was corrected in pre8. The Codex runtime uses the normal native Codex model catalog and
+this fork's existing account/model restrictions. API credentials in the custom-provider entry
+are a separate local catalog token, not an OpenAI model API key.
 
-Hermes also has an optional `codex_app_server` runtime. Its documented stateless Hermes MCP
-callback does not expose its in-loop `memory`, `delegate_task`, `session_search` and `todo`
-tools. This integration uses Hermes' normal loop instead. See the
-[Hermes runtime documentation](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/codex-app-server-runtime.md)
-and [Responses transport source](https://github.com/NousResearch/hermes-agent/blob/main/agent/transports/codex.py).
+## Verification
 
-## Evidence boundary
+A real Hermes AIAgent using the patched `codex_app_server` runtime and `chatgpt-web/high`
+completed a file-read task in **72.84 seconds**. Hermes emitted actual `exec_command` start and
+completion callbacks, received the independently prepared marker from the file, and received
+the model's final answer. The marker was not included in the user prompt. The answer escaped
+underscores as Markdown, so raw string equality differed; the rendered answer represented the
+same marker. This proves that mode's model/tool/final-response cycle, not every tool, tier,
+operating system or background workflow.
 
-The focused regression verifies a Responses function call and its continuation through the
-production parser/serializer, separate producer identity, no forwarded local bearer key, and
-rejection of a foreign-session result. This is protocol evidence with a fixture adapter. Live
-ChatGPT-to-Hermes tool execution requires the account connector and a separate observed result;
-do not equate a saved provider entry with that outcome.
+Before this, a test incorrectly demanded Hermes' `read_file` in the Codex runtime. The model
+correctly reported that this tool was not advertised. The successful task used an available
+file or command tool, matching the runtime selected by the user.
 
-On 2026-09-14, the provider was added through the installed macOS app. The authenticated local catalog returned five configured Web models. Comparing with the installer backup confirmed that other providers and all non-provider settings were preserved, with private config permissions. The matching ChatGPT/Platform account has been confirmed and its tunnel is visible in ChatGPT. The runtime key was replaced, Codex Native3 was connected and verified by the installed app, and Hermes resolved the named provider to `codex_responses`. Live tool execution remains unverified at this checkpoint.
+## Experimental direct runtime
 
-The first real Hermes invocation exposed its 64k minimum: pre7's conservative 32k entry was rejected before inference. Pre8 corrects the catalog to use the bridge's canonical per-mode budgets rather than inflating an unsupported mode.
+Expand **Experimental direct Hermes runtime** in Setup to add `providers.codex-web` without
+changing the selected default. This path uses `/hermes/v1/responses` and keeps Hermes' own
+agent loop. It requires the same ChatGPT connector for tool calls.
 
-With pre8 installed, the real Hermes agent passed initialization and reached the owned ChatGPT browser, selected Instant, attached Codex Native3 and submitted the task. The 20-second bounded local probe stopped before a completed Hermes result was collected. The browser subsequently displayed a safety-block response. No successful `read_file` result or full Hermes turn is claimed. The exact origin of that refusal was not established from the available structured evidence; it is not treated as a proven local permission bug or bypassed by relabeling tools.
+The direct adapter's local contract was exercised with real Hermes, an isolated profile and a
+synthetic model: Hermes executed a deferred arithmetic tool for 20 + 22 and received `42` through
+the complete Responses continuation. That proves the client contract, not the ChatGPT layer.
+Live direct-mode Instant and High file-read attempts stopped after successful MCP inventory
+replies, before the execution request reached Hermes. ChatGPT returned a safety-block message;
+a structured cloud-side rejection was not recovered. More permissive local settings are not a
+demonstrated repair. See [the direct-mode investigation](reviews/2026-09-14-live-blocks.md).
 
-## Isolating the client contract
+The direct endpoint checks a private bearer token, session-scoped prompt cache identity, full
+history and issued tool-call IDs. It rejects foreign/expired continuations, native Codex metadata
+and native compaction controls. It never executes a function locally or treats plain model text
+as a command. Native Codex's original endpoint retains its environment and approval checks.
 
-A subsequent local contract probe used the installed Hermes agent, an empty disposable Hermes
-home, the production Responses parser/serializer and a synthetic model adapter. Hermes executed
-an arithmetic tool with inputs 20 and 22, returned its result through the provider, and received
-`42` as the final answer. The test also exercised Hermes' deferred-tool `tool_call` wrapper.
-This confirms a complete local client/tool/continuation cycle; it does not prove acceptance by
-ChatGPT or repair the observed live refusal. An initial fixture incorrectly requested an
-unadvertised deferred tool directly; correcting the fixture to invoke the actually advertised
-wrapper made the contract probe pass. That was not a production adapter fix.
+## Recovery
 
-## Practical implementation choices
+- Wrong model: verify `codex-web-native` and `codex_app_server` are selected, and reapply the
+  checked compatibility setup after a Hermes update. A model label alone is not execution proof.
+- Missing literal `read_file`: use the file/command tools actually supplied by the Codex runtime.
+- Missing connector or empty tunnel list: compare accounts/workspaces before creating duplicates.
+- Direct-provider 401: update the provider from Setup; do not substitute an admin or OpenAI key.
+- Incompatible compatibility patch: retain the backup and inspect the changed Hermes version.
+- Removal: select another provider, then remove only the corresponding provider entry. Do not
+  restore an old entire config over unrelated changes. Reversing the local source patch should
+  be reviewed against the current Hermes source, not forced after an update.
 
-The built-in Hermes `codex_app_server` runtime is a separate integration path. It hands execution
-to native Codex and has a curated Hermes MCP callback. Its own memory, delegation, session-search
-and todo tools are not available in the same way as in Hermes' normal loop. Enabling it therefore
-requires an explicit user choice; it is not a silent fallback for a rejected tool call.
-
-The installed implementation must also be checked for model forwarding: the inspected
-`agent/codex_runtime.py` creates `CodexAppServerSession` without a model and calls `run_turn`
-without one; `thread/start` carries only cwd. Merely enabling this runtime can therefore use
-Codex's default model instead of the Web model selected in Hermes. A correct integration must
-forward and verify the selected model at the app-server boundary, preserve the user's other
-Codex settings and permissions, and pass a real turn before being advertised as working.
-
-Keeping the current direct Hermes loop preserves its native tools, but the observed ChatGPT
-stop after inventory is unresolved. More permissive local settings are not a demonstrated fix:
-connector-specific Allow all actions is already enabled. A different tool contract should be
-considered only with truthful capabilities and unchanged approval enforcement; it must not
-mislabel a generic mutating action as read-only or bypass a refused operation.
+References: [Hermes Codex runtime](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/codex-app-server-runtime.md),
+[Hermes Responses transport](https://github.com/NousResearch/hermes-agent/blob/main/agent/transports/codex.py).

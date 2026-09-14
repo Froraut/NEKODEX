@@ -764,9 +764,11 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return { ok: true, stdout: result.stdout, restartRequired: !IS_DEV_PROFILE };
   });
-  handle("launcher:setup-hermes", async () => {
+  handle("launcher:setup-hermes", async (_event, input) => {
     if (IS_DEV_PROFILE) throw new Error("Add Hermes from the production app profile.");
-    return installHermesProvider({ coreHome: CORE_HOME, config: runtimeHost.runtimeConfigSnapshot().config });
+    if (input?.runtime !== undefined && !["codex_responses", "codex_app_server"].includes(input.runtime)) throw new Error("Invalid Hermes runtime");
+    return installHermesProvider({ coreHome: CORE_HOME, config: runtimeHost.runtimeConfigSnapshot().config,
+      runtime: input?.runtime || "codex_responses", makeDefault: input?.makeDefault === true });
   });
   handle("launcher:setup-mcp", async (_event, input) => {
     const currentMode = stateStore.read().browserInteractionMode;

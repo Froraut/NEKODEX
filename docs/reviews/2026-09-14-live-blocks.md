@@ -1,13 +1,14 @@
 # Live execution and block investigation — 2026-09-14
 
-Build: **5.1.0-froraut.9**, macOS arm64. This continues the [issue/PR investigation](2026-09-14-investigation.md).
+Initial evidence: **5.1.0-froraut.9**, macOS arm64. The later native-runtime resolution is installed in **5.1.0-froraut.10**. This continues the [issue/PR investigation](2026-09-14-investigation.md).
 
 ## Outcomes
 
 | Path | Observed result | Boundary |
 | --- | --- | --- |
 | Native Codex → ChatGPT Web High → MCP → native file read → final answer | **Passed** in 51.25 seconds, CLI exit 0. The file contained a random marker withheld from the prompt; the received answer matched it exactly. | One real read-only task, not all models, tools or operating systems. |
-| Hermes → ChatGPT Web → Hermes final response | **Transport completed.** A real Hermes AIAgent received the model's final response. | The response was a refusal, not the requested file contents. |
+| Hermes Codex runtime → Web High → exec_command → final response | **Passed** in 72.84 seconds. Actual tool callbacks and file contents were returned. | User-selected alternative; does not repair the direct Hermes loop. |
+| Direct Hermes → ChatGPT Web → Hermes final response | **Transport completed.** A real Hermes AIAgent received the model's final response. | The response was a refusal, not the requested file contents. |
 | Hermes Instant → MCP inventory | Receipt observed; a successful reply was written after SDK processing. | No subsequent read_file invocation reached Hermes. Full cycle ended in 17.34 seconds. |
 | Hermes High → MCP inventory | Receipt observed; a successful reply was written in 3 ms. | No subsequent read_file invocation reached Hermes. Full cycle ended in 36.19 seconds. |
 | Publisher signing | Only Apple Development identity is usable in the local keychain. | Developer ID/notarization and Windows publisher signing remain unavailable. |
@@ -26,7 +27,7 @@ The earlier 20-second attempt could not establish end-to-end completion. This fo
 - Hermes context initialization: corrected in pre8. The initial 32k value was below Hermes' 64k minimum; the provider now uses canonical per-mode budgets without inflating smaller modes.
 - Missing MCP boundary evidence: corrected in pre9 with a bounded, payload-free transport observer.
 - Native Codex real tool operation and final response: now directly verified.
-- Hermes local tool operation: **blocked/unverified in the observed live runs**. No blanket claim that Hermes tools work is made.
+- Direct Hermes tool operation: **blocked/unverified in the observed direct-mode runs**. The later selected Codex-runtime path passed its scoped acceptance below.
 - Public publisher-signed distribution: still requires the missing signing identities/credentials and successful notarization.
 
 The upstream [issue #446](https://github.com/miuuyy/codex-chatgpt-web/issues/446) reports intermittent read-only safety-status failures. Its comments also describe successful local execution followed by a missing web final answer, and similar reports on other connectors. These reports support investigating multiple layers; they do not prove the cause of this particular Hermes stop or authorize removing safeguards.
@@ -46,3 +47,38 @@ Events contain only an in-process sequence number, an allowlisted public tool na
 The focused observer regression passed and the core typecheck and macOS package build passed. No full test suite or broad CI pipeline was run for this follow-up.
 
 For the current native tunnel installation, obtain the log location from `tunnel-client runtimes status codex-chatgpt-web --json`. Share only the `[chatgpt-web-mcp] transport` records needed for the incident; other lines in a full runtime log may contain private data.
+
+## Later resolution: user-selected Hermes Codex runtime
+
+The user subsequently chose Hermes' built-in Codex runtime instead of the experimental direct
+loop. Inspection found that Hermes did not forward `agent.model` to Codex's `turn/start`; a small
+checked compatibility patch corrects that. A real Hermes native-runtime task then executed
+`exec_command`, received the private fixture's marker and completed its final response in 72.84
+seconds. Markdown escaping changed raw underscores but preserved the displayed marker. The
+new provider `codex-web-native` selects Web High; other providers and unrelated settings were
+verified against the backup and remained unchanged. See the [current runbook](../hermes-integration.md).
+This does not retroactively repair or certify the direct-mode path described above.
+
+## Installed state after the Hermes update
+
+Hermes' own updater completed successfully on `1782bf79c8` (v0.21.2) and parked the local
+model-forwarding change in its update stash. The pre10 setup button reapplied the checked patch
+to the new source. The root provider remains `custom:codex-web-native`, model
+`chatgpt-web/high`, transport `codex_app_server`, with a 95k context budget. After rebuilding and
+restarting Hermes, its new-session picker displayed that provider/model and Gateway ready.
+The installed bridge's core setup, Codex catalog, tunnel runtime and connector verification all
+reported complete. The earlier actual read/tool/final-answer result is retained; no claim is
+made that every desktop feature was exercised again after the update.
+
+The user then reported **Couldn't check for updates / GitHub API rate limit reached (HTTP 403)**.
+This was a separate discovery failure in the unmodified upstream API-first checker, not an
+installation failure or a change to the model route. The old Git executable repair did not
+cover this API path. The new checked-in [Hermes patch](../../integrations/hermes/manual-update-rate-limit.patch)
+keeps passive checks API-only and permits one bounded ref query for an explicit check when the
+API returns 403/429. The targeted behavior regression passed. The rebuilt installed desktop's
+original version-button check then displayed **New update available** and cached a real target
+SHA, with no error and an unknown commit count. No further update was installed for this check.
+
+Hermes Desktop updates deliberately use `--keep-stash`. These local compatibility and updater
+patches are retained in this repository with upstream attribution; future upstream installations
+can park them again. See [reapplication and maintenance](../../integrations/hermes/README.md).

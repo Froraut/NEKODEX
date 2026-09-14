@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   cancelTurns: () => ipcRenderer.invoke("launcher:cancel-turns"),
   uninstallIntegration: () => ipcRenderer.invoke("launcher:uninstall-integration"),
   setupCore: () => ipcRenderer.invoke("launcher:setup-core"),
-  setupHermes: () => ipcRenderer.invoke("launcher:setup-hermes"),
+  setupHermes: (input) => ipcRenderer.invoke("launcher:setup-hermes", input),
   setupMcp: (input) => ipcRenderer.invoke("launcher:setup-mcp", input),
   setMcpStep: (step) => ipcRenderer.invoke("launcher:set-mcp-step", step),
   setAutostart: (enabled) => ipcRenderer.invoke("launcher:autostart", enabled),

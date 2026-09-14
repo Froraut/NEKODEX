@@ -1,0 +1,35 @@
+diff --git a/agent/codex_runtime.py b/agent/codex_runtime.py
+index 48a6c1a673..0f49bab8d7 100644
+--- a/agent/codex_runtime.py
++++ b/agent/codex_runtime.py
+@@ -479,7 +479,7 @@ def run_codex_app_server_turn(agent, *, user_message: str, original_user_message
+                                   "without a truthful pre-compaction transcript boundary")
+     _ensure_codex_session(agent)
+     try:
+-        turn = agent._codex_session.run_turn(user_input=user_message)
++        turn = agent._codex_session.run_turn(user_input=user_message, model=agent.model)
+     except Exception as exc:
+         logger.exception("codex app-server turn failed")
+         _close_codex_session(agent)
+diff --git a/agent/transports/codex_app_server_session.py b/agent/transports/codex_app_server_session.py
+index effc28e69d..2d1e160004 100644
+--- a/agent/transports/codex_app_server_session.py
++++ b/agent/transports/codex_app_server_session.py
+@@ -326,6 +326,7 @@ class CodexAppServerSession:
+     def run_turn(
+         self, user_input: Any, *, turn_timeout: float = 600.0,
+         notification_poll_timeout: float = 0.25, post_tool_quiet_timeout: float = 90.0,
++        model: Optional[str] = None,
+     ) -> TurnResult:
+         """Send a user message and block until turn/completed, bridging approvals and projecting items.
+ 
+@@ -346,7 +347,8 @@ class CodexAppServerSession:
+                 result.submitted_user_text = _coerce_turn_input_text(user_input)
+                 ts = self._request_for(
+                     result, "turn/start",
+-                    {"threadId": self._thread_id, "input": [{"type": "text", "text": result.submitted_user_text}]},
++                    {"threadId": self._thread_id, "input": [{"type": "text", "text": result.submitted_user_text}],
++                     **({"model": model} if model else {})},
+                     "turn/start",
+                 )
+                 if ts is not None:

@@ -1209,11 +1209,11 @@ function SetupSurface({
     updateState(await api!.setZeroRiskPro(enabled));
   });
   // Saving a separate Hermes provider does not navigate the browser or replace a running turn.
-  const addHermes = async () => {
+  const addHermes = async (runtime: "codex_responses" | "codex_app_server" = "codex_app_server") => {
     if (localBusy) return;
     setLocalBusy(true);
     setError(null);
-    try { await api!.setupHermes(); setHermesAdded(true); }
+    try { await api!.setupHermes({ runtime, makeDefault: runtime === "codex_app_server" }); setHermesAdded(true); }
     catch (cause) { setError(messageOf(cause)); }
     finally { setLocalBusy(false); }
   };
@@ -1321,6 +1321,11 @@ function SetupSurface({
           <p>{copy.hermesBody}</p>
           <PrimaryButton disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes()}>{hermesAdded ? copy.hermesUpdate : copy.hermesAdd}</PrimaryButton>
           <p role="status">{hermesAdded ? copy.hermesAdded : !snapshot.state.mcpSetupComplete ? copy.hermesPending : copy.hermesChoose}</p>
+          <details>
+            <summary>{copy.hermesDirectTitle}</summary>
+            <p>{copy.hermesDirectBody}</p>
+            <button className="secondary-button" disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes("codex_responses")} type="button">{copy.hermesDirectAdd}</button>
+          </details>
         </div>
       </> : null}
     </ContentSurface>

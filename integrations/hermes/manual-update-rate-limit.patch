@@ -1,0 +1,126 @@
+diff --git a/apps/desktop/electron/main.ts b/apps/desktop/electron/main.ts
+index 288c97e00d..3711c66677 100644
+--- a/apps/desktop/electron/main.ts
++++ b/apps/desktop/electron/main.ts
+@@ -395,7 +395,7 @@ import {
+   windowOpacityFor,
+   windowOpacityOptions
+ } from './translucency'
+-import { branchTipApiUrl, cacheIsFresh, compareApiUrl, githubRepoSlug, parseCompare } from './update-api-check'
++import { branchTipApiUrl, cacheIsFresh, checkWithManualRateLimitFallback, compareApiUrl, githubRepoSlug, parseCompare } from './update-api-check'
+ import { waitForUpdateClearance } from './update-gate'
+ import { readLiveUpdateMarker, updateHandoffConflict, writeUpdateMarker } from './update-marker'
+ import { isOfficialSshRemote, OFFICIAL_REPO_HTTPS_URL } from './update-remote'
+@@ -3126,6 +3126,7 @@ function runGit(args, options: any = {}): Promise<{ code: number; stdout: string
+       IS_WINDOWS ? ['-c', 'windows.appendAtomically=false', ...args] : args,
+       hiddenWindowsChildOptions({
+         cwd: options.cwd,
++        timeout: options.timeout,
+         env: { ...process.env, ...((options.env || {}) as any), GIT_TERMINAL_PROMPT: '0' },
+         stdio: ['ignore', 'pipe', 'pipe']
+       })
+@@ -3240,7 +3241,11 @@ async function checkUpdates({ force = false }: { force?: boolean } = {}) {
+   const slug = githubRepoSlug(originUrl)
+ 
+   const status = slug
+-    ? await checkUpdatesViaApi({ slug, branch, currentSha })
++    ? await checkWithManualRateLimitFallback(
++        force,
++        () => checkUpdatesViaApi({ slug, branch, currentSha }),
++        () => checkUpdatesViaLsRemote({ updateRoot, branch, currentSha })
++      )
+     : await checkUpdatesViaLsRemote({ updateRoot, branch, currentSha })
+ 
+   const result = {
+@@ -3288,7 +3293,7 @@ async function checkUpdatesViaApi({ slug, branch, currentSha }) {
+   try {
+     targetSha = String(await fetchGitHubApi(branchTipApiUrl(slug, branch), 'application/vnd.github.sha')).trim()
+   } catch (error) {
+-    return { error: 'fetch-failed', message: describeUpdateCheckFailure(error) }
++    return { error: 'fetch-failed', message: describeUpdateCheckFailure(error), apiStatus: error?.statusCode }
+   }
+ 
+   if (!/^[0-9a-f]{40}$/i.test(targetSha)) {
+@@ -3323,10 +3328,10 @@ async function checkUpdatesViaApi({ slug, branch, currentSha }) {
+ // Non-GitHub origins: one ls-remote for the tip SHA (still no pack transfer),
+ // counting via the local graph only when the tip is already known locally.
+ async function checkUpdatesViaLsRemote({ updateRoot, branch, currentSha }) {
+-  const target = await runGit(['ls-remote', 'origin', `refs/heads/${branch}`], { cwd: updateRoot })
++  const target = await runGit(['ls-remote', '--exit-code', 'origin', `refs/heads/${branch}`], { cwd: updateRoot, timeout: 60_000 })
+   const targetSha = firstLine(target.stdout).split(/\s+/)[0] || ''
+ 
+-  if (target.code !== 0 || !targetSha) {
++  if (target.code !== 0 || !/^[0-9a-f]{40}$/i.test(targetSha)) {
+     return { error: 'fetch-failed', message: firstLine(target.stderr) || 'git ls-remote failed.' }
+   }
+ 
+diff --git a/apps/desktop/electron/update-api-check.test.ts b/apps/desktop/electron/update-api-check.test.ts
+index 9da6e47eba..7892f5e361 100644
+--- a/apps/desktop/electron/update-api-check.test.ts
++++ b/apps/desktop/electron/update-api-check.test.ts
+@@ -16,6 +16,7 @@ import { test } from 'vitest'
+ import {
+   branchTipApiUrl,
+   cacheIsFresh,
++  checkWithManualRateLimitFallback,
+   githubRepoSlug,
+   parseCompare,
+   UPDATE_CHECK_FAILURE_TTL_MS,
+@@ -26,6 +27,22 @@ const SHA_A = 'a'.repeat(40)
+ const SHA_B = 'b'.repeat(40)
+ const HOUR = 60 * 60 * 1000
+ 
++test('manual rate-limited checks can recover by ref without enabling passive Git polling', async () => {
++  const limited = { error: 'fetch-failed', apiStatus: 403, message: 'API quota exhausted' }
++  let refCalls = 0
++  const refCheck = async () => { refCalls++; return { behind: null, updateAvailable: true, targetSha: SHA_B } }
++  assert.deepEqual(await checkWithManualRateLimitFallback(false, async () => limited, refCheck), limited)
++  assert.equal(refCalls, 0)
++  assert.deepEqual(await checkWithManualRateLimitFallback(true, async () => limited, refCheck), {
++    behind: null, updateAvailable: true, targetSha: SHA_B
++  })
++  assert.equal(refCalls, 1)
++  const failed = await checkWithManualRateLimitFallback(true, async () => limited,
++    async () => ({ error: 'fetch-failed', message: 'Git offline' }))
++  assert.equal(failed.error, 'fetch-failed')
++  assert.match(failed.message ?? '', /API quota exhausted.*Git offline/)
++})
++
+ test('cache serves a passive check for 24h, but not once HEAD or the branch changes', () => {
+   const cached = { fetchedAt: 0, currentSha: SHA_A, branch: 'main', status: { behind: 0 } }
+ 
+diff --git a/apps/desktop/electron/update-api-check.ts b/apps/desktop/electron/update-api-check.ts
+index 10aa82b948..afbf6a9eec 100644
+--- a/apps/desktop/electron/update-api-check.ts
++++ b/apps/desktop/electron/update-api-check.ts
+@@ -21,6 +21,30 @@ export const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000
+ // but never on every poller tick.
+ export const UPDATE_CHECK_FAILURE_TTL_MS = 60 * 60 * 1000
+ 
++interface UpdateProbeResult {
++  error?: string
++  message?: string
++  apiStatus?: number
++  [key: string]: unknown
++}
++
++// Keep passive traffic API-only. An explicit check may recover from the public
++// API quota through a single ref query; it must never fetch a pack or invent a count.
++export async function checkWithManualRateLimitFallback(
++  force: boolean,
++  apiCheck: () => Promise<UpdateProbeResult>,
++  refCheck: () => Promise<UpdateProbeResult>
++): Promise<UpdateProbeResult> {
++  const api = await apiCheck()
++  if (!force || !api.error || ![403, 429].includes(api.apiStatus ?? 0)) {
++    return api
++  }
++  const fallback = await refCheck()
++  return fallback.error
++    ? { ...fallback, message: `${api.message} Git ref check: ${fallback.message}` }
++    : fallback
++}
++
+ export interface CachedUpdateCheck {
+   fetchedAt: number
+   currentSha: string

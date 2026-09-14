@@ -52,7 +52,8 @@ Git publication. Keep account data and raw diagnostics out of commits and this s
 ## Hermes
 
 Read [Hermes integration](references/hermes.md) when the user wants Hermes to use Web models
-with its own tools. Preserve Hermes' normal tool loop and approvals. A provider entry or an
+with tools. Respect the selected runtime: direct mode preserves Hermes' loop, while the Codex
+runtime uses Codex tools and has documented Hermes limitations. Preserve approvals. A provider entry or an
 ordinary reply is not proof of tool execution; require the original function call, Hermes'
 actual result and the continued model response before claiming full integration works.
 

@@ -1,35 +1,56 @@
 # Hermes through Codex Web GPT
 
-Use the maintained fork's `docs/hermes-integration.md` as the implementation runbook. Inspect
-the installed Hermes Responses transport before assuming compatibility with a newer release.
+The user may choose between two non-equivalent runtimes. Explain the capability difference and
+honor an explicit choice. The public runbook is `docs/hermes-integration.md` in the fork.
 
-The intended path is Hermes' normal loop → `/hermes/v1/responses` → owned ChatGPT browser →
-ChatGPT MCP connector → structured Responses function call → Hermes execution/approval → tool
-result → continued ChatGPT answer. The Codex-specific app-server runtime has a narrower Hermes
-callback toolset and must not silently replace this path.
+## Codex runtime
 
-In the app, finish Automatic-mode login and tools setup, then **Setup → Hermes → Add Hermes
-provider**. This creates one named `codex-web` provider and a private local token, backs up settings,
-and preserves the existing default. Restart Hermes and choose ChatGPT Web · FroRaut in a new
-session. The transport is `codex_responses`; copying `/v1` into a Chat Completions provider is
-insufficient. No paid API fallback, auxiliary provider or scheduler change is implied.
+After the user selects this route, use **Setup → Hermes → Use Codex runtime in Hermes**. It adds
+`codex-web-native`, selects Web High for new sessions, and preserves other providers/settings
+with a backup. Restart Hermes to load compatibility code and use a new session.
 
-Keep local token/config files out of tool output, Git, screenshots and this skill. Do not reuse
-OpenAI keys or the daemon admin token. Reinstallation must not overwrite unrelated providers,
-manual edits, profile data or active sessions. Use the effective Hermes home and current paths.
+The inspected Hermes implementation did not forward its selected model to `turn/start`. The
+fork's checked compatibility patch forwards `agent.model`; never assume the model shown by the
+Hermes picker was used without this boundary. The installer checks patch compatibility, saves
+source backups and refuses mismatching versions. After a Hermes update, review/reapply through
+setup. Keep unrelated local source edits. The patch is versioned in this fork, not merged upstream.
 
-First prove one actual response, then a single scoped harmless tool round trip using a disposable
-fixture. Observe the tool call, its execution in Hermes and the model's answer based on the result.
-An authenticated endpoint/catalog and mocked protocol case are separate checks, not that proof.
+Commands, files, patches and permissions are owned by Codex. Hermes' in-loop memory, delegation,
+session-search and todo tools are not available in the same form. This installer does not migrate
+all Hermes MCP servers or change global Codex permissions. Auxiliary providers, scheduled jobs
+and other profiles retain their configuration. Avoid requiring a tool literally named `read_file`:
+use the file or command tool actually supplied by this runtime.
 
-If the tunnel list is empty, compare the currently signed-in Platform, ChatGPT and embedded-app
-accounts before creating a duplicate. Developer mode and connector creation may require user
-action. Reuse existing explicit authorization. Do not weaken global plugin action controls.
+A dated real test completed the native runtime's file read, emitted tool callbacks in Hermes,
+and returned the independently prepared marker. Markdown escaped the marker's underscores;
+distinguish rendered equality from byte equality. This is a scoped pass, not every model/tool.
 
-An unknown/expired pending tool result requires a new user turn after daemon restart or idle
-expiry. Native compaction and Codex lifecycle metadata are unsupported on the Hermes route;
-Hermes supplies its own full history and session-scoped prompt cache key. Hermes enforces a 64k minimum. Use the live per-mode catalog and omit smaller browser modes;
-never inflate their advertised window just to pass Hermes initialization. Model, tool and platform capabilities
-not exercised remain unverified.
+## Experimental direct runtime
 
-As of the dated pre9 live investigation, model transport reached Hermes but native file execution did not: inventory replied successfully, then ChatGPT returned a safety-block message. This is mutable evidence, not a permanent capability claim. Review `docs/reviews/2026-09-14-live-blocks.md`; do not advertise fully verified Hermes tools until a real result supports it.
+The secondary setup action adds `codex-web` with `codex_responses` and preserves the selected
+model. Its path is Hermes → `/hermes/v1/responses` → ChatGPT → MCP → structured function call →
+Hermes tool/approval → result → final reply. It keeps Hermes' own loop.
+
+A local contract probe using real Hermes and a synthetic model completed a deferred arithmetic
+tool cycle. Follow the tools actually advertised: Hermes can expose `tool_search`, `tool_describe`
+and `tool_call` instead of a deferred tool directly. Live direct-mode file-read attempts in pre9
+still stopped after successful inventory; do not claim that local contract proof repaired them.
+
+## Shared boundaries
+
+Require actual tool execution and a returned answer before claiming complete integration. Keep
+account tokens, private config, request handles and raw logs out of Git, screenshots and this
+skill. Do not reuse an OpenAI/admin key as the local provider token. Use the effective Hermes
+home and preserve source, settings, profiles and existing sessions.
+
+Hermes requires at least 64k context. Use the live per-mode catalog and omit smaller browser
+modes; never inflate their advertised window to pass initialization. A model's final refusal is
+not completion of a requested file operation. Do not relabel or reroute denied actions to bypass
+safeguards. Refresh dated evidence and retain all previous explicit setup/permission decisions.
+
+Hermes Desktop updates can park local compatibility changes using `--keep-stash`. After an
+update, inspect the source and use the checked provider setup again; never restore unrelated
+stashes wholesale. API 403 during Hermes update discovery is a separate failure from model
+routing. The fork's `integrations/hermes/README.md` documents the scoped manual-check repair.
+Do not claim local patches survive arbitrary future upstream updates or call a successful
+version check proof that another update has installed.

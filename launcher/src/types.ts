@@ -170,7 +170,7 @@ export interface RouteDiagnosticsReport {
 }
 
 export interface LauncherApi {
-  setupHermes(): Promise<{ provider: string; configPath: string; backupPath: string; baseUrl: string; defaultChanged: boolean }>;
+  setupHermes(input?: { runtime: "codex_responses" | "codex_app_server"; makeDefault?: boolean }): Promise<{ provider: string; configPath: string; backupPath: string; baseUrl: string; defaultChanged: boolean }>;
   snapshot(): Promise<LauncherSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;
   openSocial(target: "github" | "x"): Promise<LauncherState>;
