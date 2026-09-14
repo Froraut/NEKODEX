@@ -12,6 +12,7 @@ const MESSAGES = Object.freeze({
   "chrome-disconnected": "Chrome disconnected before the sign-in could be imported",
   "invalid-response": "Chrome returned an unsupported session response",
   "session-missing": "The current Chrome profile has no usable ChatGPT sign-in",
+  "session-verification-failed": "Chrome connected, but ChatGPT did not accept the imported session. Open sign in in this app to complete verification, or select the intended signed-in Chrome profile and retry.",
   "cancelled": "Existing Chrome sign-in cancelled",
   "capture-write-failed": "The private Chrome sign-in capture could not be saved",
   "launcher-authorization-failed": "The launcher could not authorize its private import helper; restart the launcher and retry",

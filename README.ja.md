@@ -63,6 +63,10 @@ Codex はネイティブのタスク、コンテキストライフサイクル�
 ローカル Responses ブリッジは、選択されたモデルのタスクだけをタスクに紐付いた ChatGPT 一時チャットへルーティングします。
 Full モードでは、次のコンパクション境界まで、MCP が ChatGPT を同じ Codex タスクのツールへ接続します。
 
+フォークの設定手順、アカウントとコネクタの境界、代替案については以下を参照してください： [ワークフロー、設定と代替案](docs/workflow-and-alternatives.md).
+
+[Hermes integration: Web models with Hermes tools](docs/hermes-integration.md)
+
 ## 主な特長
 
 - **Codex のネイティブモデル。** ChatGPT Web は Codex のモデル選択画面から実行され、元のタスク UI、

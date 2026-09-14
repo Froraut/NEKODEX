@@ -14,6 +14,7 @@ export function existingChromeFailureText(code: string | null, copy: Copy): stri
     case "chrome-disconnected": return copy.existingChromeDisconnected;
     case "invalid-response": return copy.existingChromeInvalidResponse;
     case "session-missing": return copy.existingChromeNoSession;
+    case "session-verification-failed": return copy.existingChromeVerificationFailed;
     case "capture-write-failed": return copy.existingChromeCaptureFailed;
     case "launcher-authorization-failed": return copy.existingChromeAuthorizationFailed;
     case "consent-required": return copy.existingChromeConsent;
@@ -55,7 +56,8 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: 
     : progress.phase === "completed" ? copy.existingChromeDone
     : progress.phase === "timed-out" && progress.error === "existing-chrome-handoff-timeout" ? copy.existingChromePreparing
     : progress.phase === "timed-out" ? copy.existingChromeTimeout : copy.passkeyFailed;
-  const settings = progress.error !== "existing-chrome-handoff-timeout"
+  const verificationFailed = progress.error === "session-verification-failed";
+  const settings = !["existing-chrome-handoff-timeout", "session-verification-failed"].includes(progress.error ?? "")
     && ["discovering", "waiting-for-chrome", "failed", "timed-out", "cancelled"].includes(progress.phase);
   const act = async (action: () => Promise<unknown>) => {
     if (inFlight.current) return;
@@ -68,7 +70,7 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: 
     <div role="status" aria-live="polite">
       <strong>{title}</strong>
       {settings ? <p>{copy.existingChromeSteps}</p>
-        : progress.phase !== "completed" ? <p>{progress.phase === "consent" ? copy.existingChromeBody
+        : !verificationFailed && progress.phase !== "completed" ? <p>{progress.phase === "consent" ? copy.existingChromeBody
           : progress.phase === "file-access" ? copy.existingChromeFileBody
           : progress.phase === "preparing" || progress.error === "existing-chrome-handoff-timeout" ? copy.existingChromePreparingBody : copy.existingChromeDuringImport}</p> : null}
     </div>
@@ -86,6 +88,8 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: 
         onClick={() => void act(() => window.codexWebLauncher!.cancelExistingChromeLogin())}>{copy.passkeyCancel}</button> : null}
       {terminal ? <button className="toolbar-text-button" type="button" disabled={pending}
         onClick={() => void onRetry()}>{copy.retry}</button> : null}
+      {verificationFailed ? <button className="toolbar-text-button" type="button" disabled={pending}
+        onClick={() => void act(() => window.codexWebLauncher!.openLogin())}>{copy.signIn}</button> : null}
     </div>
   </div>;
 }

@@ -60,6 +60,10 @@ Codex 会保留原生任务、上下文生命周期、界面和工具 harness。
 所选模型的任务转发到与该任务绑定的 ChatGPT 临时聊天；在完整模式下，MCP 会把 ChatGPT 连接回
 同一个 Codex 任务的工具，直到下一次上下文压缩边界。
 
+完整的分支工作流程、账号与连接器边界及替代方案请参阅 [工作流程、设置和替代方案](docs/workflow-and-alternatives.md).
+
+[Hermes integration: Web models with Hermes tools](docs/hermes-integration.md)
+
 ## 亮点
 
 - **Codex 原生模型。** ChatGPT Web 直接出现在 Codex 模型选择器中，同时保留原有任务界面、

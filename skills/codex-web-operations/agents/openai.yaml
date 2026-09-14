@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Web GPT Operations"
+  short_description: "Set up and troubleshoot the Codex Web GPT bridge"
+  default_prompt: "Use $codex-web-operations to inspect and complete my Codex Web GPT setup, verifying login, model routing and a real tool call."

@@ -329,6 +329,8 @@ class RuntimeSupervisor {
     launcherProfile = "production",
     publishOperation,
     runtimeInvocationFactory = runtimeInvocation,
+    nativeProxyEnvironmentProvider = async () => ({}),
+    tunnelProxyEnvironmentProvider = async () => ({}),
   }) {
     this.app = app;
     this.logger = logger;
@@ -343,6 +345,8 @@ class RuntimeSupervisor {
     this.launcherProfile = launcherProfile;
     this.publishOperation = publishOperation;
     this.runtimeInvocationFactory = runtimeInvocationFactory;
+    this.nativeProxyEnvironmentProvider = nativeProxyEnvironmentProvider;
+    this.tunnelProxyEnvironmentProvider = tunnelProxyEnvironmentProvider;
     this.configPath = path.join(coreHome, "config.json");
     this.statePath = path.join(coreHome, "runtime", "launcher-supervisor.json");
     this.daemon = null;
@@ -489,6 +493,7 @@ class RuntimeSupervisor {
       detached: DETACH_OWNED_CHILD,
       env: {
         ...process.env,
+        ...invocation.env,
         CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -1143,7 +1148,9 @@ class RuntimeSupervisor {
     }
     let child;
     try {
-      child = this.spawnChild("daemon", this.runtimeCommand(["serve"]));
+      const env = await this.nativeProxyEnvironmentProvider();
+      if (this.stopping) throw new Error("Responses startup was cancelled while resolving the system proxy");
+      child = this.spawnChild("daemon", { ...this.runtimeCommand(["serve"]), env });
       await this.waitForProxy(config);
       if (this.daemon !== child) throw new Error("Responses proxy exited immediately after becoming healthy");
       this.restartableChildren.add(child);
@@ -1592,10 +1599,12 @@ class RuntimeSupervisor {
   async runTunnelCommand(config, args, timeoutMs, label) {
     const tunnel = config.tunnel;
     if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
+    const proxyEnvironment = await this.tunnelProxyEnvironmentProvider();
     return await new Promise((resolve, reject) => {
       const child = spawn(tunnel.binaryPath, args, {
         cwd: tunnel.profileDir,
         detached: DETACH_OWNED_CHILD,
+        env: { ...process.env, ...proxyEnvironment },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });

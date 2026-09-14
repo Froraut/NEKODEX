@@ -1348,6 +1348,7 @@ class BrowserHost {
     this.state = {
       ...this.state,
       ...patch,
+      ...(patch.authenticated === false ? { accountLabel: null } : {}),
       visible: this.visible,
       surfaceActive: this.surfaceActive,
     };
@@ -2842,6 +2843,7 @@ class BrowserHost {
       };
       const initialSurface = readSurface();
       let sessionAuthenticated = false;
+      let accountLabel = null;
       if (new URL(initialSurface.url).origin === expectedUrl.origin) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), ${CHATGPT_AUTH_SESSION_TIMEOUT_MS});
@@ -2872,10 +2874,14 @@ class BrowserHost {
           sessionAuthenticated = sessionHasUser
             && sessionHasNoError
             && sessionExpiryIsValid;
+          if (sessionAuthenticated) {
+            const label = typeof user.email === "string" ? user.email : typeof user.name === "string" ? user.name : null;
+            accountLabel = label ? label.replace(/[\\u0000-\\u001f\\u007f]/g, "").slice(0, 160) : null;
+          }
         } catch {}
         finally { clearTimeout(timeout); }
       }
-      return { ...readSurface(), sessionAuthenticated };
+      return { ...readSurface(), sessionAuthenticated, accountLabel };
     })()`, true).catch(() => ({
       url: "",
       composer: false,
@@ -2916,7 +2922,7 @@ class BrowserHost {
         : this.manualOperation
           ? {}
           : { status: "ready", message: "ChatGPT is ready" };
-      this.setState({ ...availability, authenticated: true, url: result.url });
+      this.setState({ ...availability, authenticated: true, accountLabel: result.accountLabel ?? null, url: result.url });
       if (!wasAuthenticated) this.logger.info("browser.authenticated", { url: result.url });
     } else {
       const loaded = result.readyState === "complete";

@@ -38,7 +38,7 @@ function publicExistingChromeProgress(progress, platform = process.platform) {
     error: progress.error, active: ACTIVE_PHASES.has(progress.phase),
     canCancel: ACTIVE_PHASES.has(progress.phase) && !["consent", "cancelling"].includes(progress.phase),
     canAllowFileAccess: platform === "darwin" && progress.phase === "failed" && progress.error === "chrome-profile-access-denied",
-    canCopySettings: progress.error !== "existing-chrome-handoff-timeout"
+    canCopySettings: !["existing-chrome-handoff-timeout", "session-verification-failed"].includes(progress.error)
       && ["discovering", "waiting-for-chrome", "failed", "timed-out", "cancelled"].includes(progress.phase),
   };
 }
@@ -60,15 +60,16 @@ function updateExistingChromeProgress(host, patch) {
   host.publishState?.(host.snapshot());
 }
 
-function safeImportError(error, cleanupFailed = false) {
+function safeImportError(error, cleanupFailed = false, verifying = false) {
   if (error?.code === "existing_chrome_handoff_timeout") {
     const failure = new Error("The previous launcher sign-in is still stopping; retry after it finishes or restart the launcher");
     failure.code = "existing_chrome_handoff_timeout";
     return failure;
   }
-  const timeout = error?.code === "existing_chrome_timeout" || /timed out/i.test(error?.message ?? "");
+  const timeout = error?.code === "existing_chrome_timeout" || /timed out|before the timeout/i.test(error?.message ?? "");
   const cleanup = cleanupFailed || error?.code === "existing_chrome_cleanup_failed"
     || /(clearing the partial|partial passkey session cleanup|removing temporary passkey state)/i.test(error?.message ?? "");
+  if (verifying && !cleanup) return existingChromeError("session-verification-failed");
   if (!cleanup && isExistingChromeErrorCode(error?.code)) return existingChromeError(error.code);
   const failure = new Error(cleanup ? "Existing Chrome import cleanup failed; retry before using the launcher session"
     : timeout ? "Existing Chrome sign-in timed out" : "Existing Chrome sign-in could not be imported");
@@ -149,7 +150,7 @@ function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } =
         return result;
       } catch (error) {
         // withManualOperation publishes the thrown message; sanitize before crossing that boundary.
-        throw safeImportError(error, cleanupFailed);
+        throw safeImportError(error, cleanupFailed, importStarted && !controller.signal.aborted);
       }
     });
   })();

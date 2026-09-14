@@ -685,11 +685,17 @@ class RuntimeHost {
       const invocation = options.embedded
         ? embeddedRuntimeInvocation({ app: this.app, sourceRoot: this.sourceRoot, args })
         : this.command(args);
+      // Setup/doctor invoke tunnel-client before or outside the supervised runtime too.
+      // A GUI launch does not inherit the shell's proxy exports or Electron's PAC decision.
+      const tunnelEnvironment = !options.embedded && ["setup", "doctor", "tunnel", "uninstall"].includes(args[0])
+        ? await this.supervisor?.tunnelProxyEnvironmentProvider?.() ?? {}
+        : {};
       const result = await new Promise((resolve, reject) => {
         const environment = options.environment
           ? { ...options.environment }
           : { ...process.env };
         Object.assign(environment, {
+          ...tunnelEnvironment,
           CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
           ...(options.env || {}),
         });

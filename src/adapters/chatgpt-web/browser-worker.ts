@@ -232,23 +232,29 @@ async function assertChatGptSelectedModelVersion(
   slider: Locator,
   version: ChatGptWebProModelVersion,
   requirePro = false,
+  expectedEffort?: ChatGptWebModelMode["effort"],
+  settleMs = 0,
 ): Promise<void> {
   // The numeric slider is aria-hidden. Its keyboard menuitem owns the live spoken
   // version/effort through aria-describedby, not aria-valuetext on the slider.
-  const keyboardControl = slider.locator("xpath=ancestor::*[@role='menuitem'][1]");
-  const descriptionIds = (await keyboardControl.getAttribute("aria-describedby"))?.trim().split(/\s+/).filter(Boolean) ?? [];
-  const descriptions = await page.evaluate(
-    ids => ids
-      .map(id => document.getElementById(id)?.textContent?.trim() ?? "")
-      .filter(Boolean),
-    descriptionIds,
-  );
-  // "Latest" is not a version. Its slider must still prove 6; a future 7 fails closed.
-  // Version and Pro must come from the same described state node: unrelated instructions
-  // mentioning Pro are not proof that the selected effort is actually Pro.
-  if (!chatGptModelStateMatches(descriptions, version, requirePro)) {
-    throw chatGptPinnedModelError(version);
+  const deadline = Date.now() + settleMs;
+  for (;;) {
+    const keyboardControl = slider.locator("xpath=ancestor::*[@role='menuitem'][1]");
+    const descriptionIds = (await keyboardControl.getAttribute("aria-describedby"))?.trim().split(/\s+/).filter(Boolean) ?? [];
+    const descriptions = await page.evaluate(
+      ids => ids
+        .map(id => document.getElementById(id)?.textContent?.trim() ?? "")
+        .filter(Boolean),
+      descriptionIds,
+    );
+    // "Latest" is not a version. Its slider must still prove 6; a future 7 fails closed.
+    // Version and Pro must come from the same described state node: unrelated instructions
+    // mentioning Pro are not proof that the selected effort is actually Pro.
+    if (chatGptModelStateMatches(descriptions, version, requirePro, expectedEffort)) return;
+    if (Date.now() >= deadline) break;
+    await new Promise(resolveSettle => setTimeout(resolveSettle, 50));
   }
+  throw chatGptPinnedModelError(version);
 }
 
 export type ChatGptPersonalizationPreflight = "already-personalized" | "enabled";
@@ -2423,14 +2429,30 @@ export class ChatGptBrowserWorker {
     const modelVersion = stageModelVersion ?? mode.modelVersion;
     if (modelVersion) {
       try {
-        await activation.menu.getByLabel(/^(?:Select model|Choose model|选择模型|モデルを選択)$/).click({ timeout: 5_000 });
         const modelName = chatGptProModelOptionName(modelVersion);
-        const option = activation.menu.getByRole("menuitemradio", { name: modelName, exact: true });
-        await option.waitFor({ state: "visible", timeout: 5_000 });
-        await option.click({ timeout: 5_000 });
-        await page.keyboard.press("Escape");
-        activation = await activateChatGptEffortMenu(page, currentEffort);
-        await assertChatGptSelectedModelVersion(page, activation.slider, modelVersion);
+        let option = activation.menu.getByRole("menuitemradio", { name: modelName, exact: true, includeHidden: true });
+        const optionCount = await option.count();
+        if (optionCount > 1) throw chatGptPinnedModelError(modelVersion);
+        const familyPinned = optionCount === 1 && await option.getAttribute("aria-checked") === "true";
+        if (!familyPinned) {
+          const modelTrigger = activation.menu.getByLabel(/^(?:Select model|Choose model|选择模型|モデルを選択)$/);
+          // Advanced rows can retain geometry while their owning submenu is collapsed/inert.
+          const collapsed = await modelTrigger.count() === 1 && await modelTrigger.getAttribute("aria-expanded") === "false";
+          if (collapsed || !await option.isVisible().catch(() => false)) await modelTrigger.click({ timeout: 5_000 });
+          await option.waitFor({ state: "visible", timeout: 5_000 });
+          await option.click({ timeout: 5_000 });
+          await page.keyboard.press("Escape");
+          activation = await activateChatGptEffortMenu(page, currentEffort);
+          option = activation.menu.getByRole("menuitemradio", { name: modelName, exact: true, includeHidden: true });
+          const deadline = Date.now() + 1_000;
+          for (;;) {
+            const count = await option.count();
+            if (count > 1) throw chatGptPinnedModelError(modelVersion);
+            if (count === 1 && await option.getAttribute("aria-checked") === "true") break;
+            if (Date.now() >= deadline) throw chatGptPinnedModelError(modelVersion);
+            await new Promise(resolveSettle => setTimeout(resolveSettle, 50));
+          }
+        }
       } catch (error) {
         throw chatGptPinnedModelError(modelVersion, error);
       }
@@ -2516,7 +2538,7 @@ export class ChatGptBrowserWorker {
         );
       }
     }
-    if (modelVersion) await assertChatGptSelectedModelVersion(page, effortSlider, modelVersion, mode.effort === "max");
+    if (modelVersion) await assertChatGptSelectedModelVersion(page, effortSlider, modelVersion, mode.effort === "max", mode.effort, 1_000);
     await captureDiagnostic?.("effort-selected");
     await page.keyboard.press("Escape");
     return mode;
@@ -3455,7 +3477,7 @@ export class ChatGptBrowserWorker {
       let verificationError: ChatGptWebAdapterError | undefined;
       try {
         const { slider } = await activateChatGptEffortMenu(page, control);
-        await assertChatGptSelectedModelVersion(page, slider, expectedMode.modelVersion, expectedMode.effort === "max");
+        await assertChatGptSelectedModelVersion(page, slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort);
         const state = parseChatGptEffortSliderState(
           await slider.getAttribute("aria-valuemin"), await slider.getAttribute("aria-valuemax"),
           await slider.getAttribute("aria-valuenow"),
@@ -4224,9 +4246,9 @@ export class ChatGptBrowserWorker {
         };
         // Exact labels observed in the English and Simplified Chinese ChatGPT UI. A generic
         // "stopped" match could turn ordinary answer text into a false upstream failure.
-        const stoppedLabels = new Set(["Stopped thinking", "已停止思考"]);
+        const stoppedLabels = new Set(["Stopped thinking", "已停止思考", "Réflexion interrompue"]);
         const ariaMatch = [...root.querySelectorAll<HTMLElement>(
-          '[aria-label="Stopped thinking"], [aria-label="已停止思考"]',
+          '[aria-label="Stopped thinking"], [aria-label="已停止思考"], [aria-label="Réflexion interrompue"]',
         )]
           .some(isStatus);
         if (ariaMatch) return true;

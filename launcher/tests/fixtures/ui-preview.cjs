@@ -40,6 +40,12 @@ function installMockLauncher() {
       { id: "fixture-help", traceId: null, title: "Fixture tab", status: "idle", loading: false, active: false, closable: false },
     ],
   };
+  if (scenario === "models-ready" || scenario === "tools-pending") {
+    Object.assign(state, { coreSetupComplete: true, codexCatalogVerified: true, browserSmokePassed: true,
+      browserSmokeVersion: "fixture", mcpRuntimeInstalled: scenario === "tools-pending", mcpSetupComplete: false });
+    Object.assign(browser, { authenticated: true, accountLabel: "fixture@example.test", status: "ready",
+      navigationLocked: false, loginInProgress: false, loginKind: null, visible: false });
+  }
   let operation = scenario === "passkey" ? { name: "passkey-login", status: "running", message: "Waiting in Chrome" } : null;
   if (scenario === "existing-chrome-failed") {
     Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: null, visible: false,
@@ -48,11 +54,11 @@ function installMockLauncher() {
     operation = { name: "existing-chrome-login", status: "failed", message: "Fixture Chrome access was denied" };
   }
   const snapshot = () => ({
-    profile: "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
+    profile: scenario === "models-ready" || scenario === "tools-pending" ? "production" : "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
-    connectorNames: { automatic: "Fixture connector", manual: "Fixture manual" }, mcpCredentialsConfigured: false,
-    logs: [], urls: { github: "https://github.com/Froraut/codex-chatgpt-web", x: "", connectors: "", tunnels: "", keys: "" },
-    platform: "darwin", packaged: false, version: "fixture", smokePassed: false, operation, update: { status: "disabled" },
+    connectorNames: { automatic: "Fixture connector", manual: "Fixture manual" }, mcpCredentialsConfigured: scenario === "tools-pending",
+    logs: [], urls: { github: "https://github.com/Froraut/codex-chatgpt-web", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
+    platform: "darwin", packaged: false, version: "fixture", smokePassed: state.browserSmokePassed, operation, update: { status: "disabled" },
   });
   let startupAttempts = 0;
   const calls = [];
@@ -68,6 +74,7 @@ function installMockLauncher() {
     showBrowser: async () => { browser.visible = true; emit("browser", { ...browser }); return { ...browser }; },
     hideBrowser: async () => { browser.visible = false; emit("browser", { ...browser }); return { ...browser }; },
     navigateBrowser: async (action) => { calls.push(["navigate", action]); return { ...browser }; },
+    setupHermes: async () => { calls.push(["hermes"]); return { provider: "codex-web", defaultChanged: false }; },
     openPasskeyLogin: async () => {
       calls.push(["passkey"]); browser.loginKind = "passkey";
       operation = { name: "passkey-login", status: "running", message: "Waiting in Chrome" };

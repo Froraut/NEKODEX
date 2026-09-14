@@ -7,6 +7,8 @@ export interface CodexParsedRequest {
   stream: boolean;
   options: CodexRequestOptions;
   _rawBody?: unknown;
+  /** In-process only, set by the authenticated Hermes endpoint; never parsed from HTTP JSON. */
+  _hermesContext?: { threadId: string; turnId: string; root: string };
   /** Number of leading raw input items restored from local previous_response_id state. */
   _replayPrefixLen?: number;
   /**

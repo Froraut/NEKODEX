@@ -156,16 +156,20 @@ export function chatGptModelStateMatches(
   descriptions: readonly string[],
   version: ChatGptWebProModelVersion,
   requirePro: boolean,
+  expectedEffort?: "low" | "medium" | "high" | "xhigh" | "max",
 ): boolean {
-  const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const versionPrefix = new RegExp(
-    `^(?:GPT[-\\s]?)?${escapedVersion}(?=$|\\s|[,，:：;；()（）·•—–-])`,
-    "i",
-  );
-  return descriptions.some(description => {
-    const normalized = description.replace(/\s+/g, " ").trim();
-    return versionPrefix.test(normalized)
-      && (!requirePro || /\bPro\b/i.test(normalized));
+  // Parse all owned state descriptions before checking the requested family. Selecting just
+  // one matching description would conceal a contradictory live model/effort description.
+  const prefix = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+(Instant|Medium|Extra High|High|即时|中|极高|高|Pro)(?=\s*(?:[,，]|$))/i;
+  const states = descriptions.flatMap(description => {
+    const match = prefix.exec(description.replace(/\s+/g, " ").trim());
+    return match ? [{ version: match[1]!, family: match[2]?.toLowerCase(), effort: match[3]!.toLowerCase() }] : [];
+  });
+  const efforts = { low: ["instant", "即时"], medium: ["medium", "中"], high: ["high", "高"], xhigh: ["extra high", "极高"], max: ["pro"] };
+  return states.length > 0 && states.every(state => {
+    if (state.version !== version) return false;
+    if (state.family && state.family !== (version === "5.6" ? "sol" : version === "6" ? "astra" : undefined)) return false;
+    return expectedEffort ? efforts[expectedEffort].includes(state.effort) : !requirePro || state.effort === "pro";
   });
 }
 

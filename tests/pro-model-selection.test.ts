@@ -16,6 +16,7 @@ function picker(options: {
   modelOptions?: Array<{ role: string; name: string; version: string }>;
 } = {}) {
   let version = "6", value = 0, submenu = false;
+  let pinnedVersion: string | undefined;
   let keyboardFailure: string | undefined;
   const actions: string[] = [];
   const hidden = {
@@ -50,18 +51,21 @@ function picker(options: {
   };
   const versionTrigger = {
     count: async () => 1, waitFor: async () => {},
+    getAttribute: async (name: string) => name === "aria-expanded" ? String(submenu) : null,
     click: async () => { submenu = true; actions.push("open-versions"); },
   };
   const modelOptions = options.modelOptions ?? observedPicker.options;
   const radio = (name: string | RegExp) => {
     const option = modelOptions.find(option => typeof name === "string" ? option.name === name : name.test(option.name));
     return {
-    count: async () => options.unavailable ? 0 : 1,
+    count: async () => options.unavailable || !option ? 0 : 1,
+    isVisible: async () => submenu && !options.unavailable && Boolean(option),
     waitFor: async () => { if (options.unavailable || !option) throw new Error("missing version"); },
-    getAttribute: async (attribute: string) => attribute === "aria-checked" ? "false" : null,
+    getAttribute: async (attribute: string) => attribute === "aria-checked" ? String(pinnedVersion === option?.version) : null,
     click: async () => {
       if (options.unavailable || !submenu || !option) throw new Error("unavailable version");
       version = option.version;
+      pinnedVersion = version;
       value = 0; submenu = false; actions.push(`selected:${version}`);
     },
     };
@@ -82,7 +86,7 @@ function picker(options: {
     evaluate: async (fn: unknown, ids: string[]) => {
       expect(ids).toEqual(["picker-value", "picker-instructions"]);
       const descriptions = options.descriptionTexts ?? [
-        `${options.actualVersion ?? version} ${value === 4 ? "Pro" : "Instant"}，第 ${value + 1} 项，共 5 项。`,
+        `${options.actualVersion ?? version} ${["Instant", "Medium", "High", "Extra High", "Pro"][value]}，第 ${value + 1} 项，共 5 项。`,
         observedPicker.descriptions["picker-instructions"],
       ];
       const previousDocument = (globalThis as any).document;
@@ -225,6 +229,8 @@ test("menu cleanup failure still blocks a send after successful verification", a
 test("a verified 5.6 Pro selection permits one send", async () => {
   const fixture = picker();
   await fixture.select("5.6");
+  await fixture.select("5.6");
+  expect(fixture.actions.filter(action => action === "open-versions")).toHaveLength(1);
   await fixture.send("5.6");
   expect(fixture.actions.filter(action => action === "SEND")).toHaveLength(1);
 });

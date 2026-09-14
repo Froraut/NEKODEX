@@ -27,6 +27,18 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 export type NativeFetch = (request: Request) => Promise<Response>;
+
+function fetchNativeCodex(request: Request): Promise<Response> {
+  const proxy = process.env.CODEX_CHATGPT_WEB_NATIVE_PROXY;
+  if (!proxy) return fetch(request);
+  let parsed: URL;
+  try { parsed = new URL(proxy); } catch { throw new Error("Native Codex proxy configuration is invalid"); }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password
+    || parsed.pathname !== "/" || parsed.search || parsed.hash) throw new Error("Native Codex proxy configuration is invalid");
+  // This override is consumed only for the fixed first-party passthrough endpoint. It must
+  // not become a global proxy for browser sessions, the tunnel control plane or local IPC.
+  return fetch(request, { proxy: parsed.origin });
+}
 export type NativeImageEndpoint = "images/generations" | "images/edits";
 export type NativeCodexEndpoint = "models" | "responses" | "responses/compact" | "alpha/search" | NativeImageEndpoint;
 
@@ -207,7 +219,7 @@ function withUncleanCloseTolerance(
 export async function forwardNativeCodexRequest(
   request: Request,
   endpoint: NativeCodexEndpoint,
-  fetchUpstream: NativeFetch = fetch,
+  fetchUpstream: NativeFetch = fetchNativeCodex,
   decodedBody?: unknown,
 ): Promise<Response> {
   const authorization = request.headers.get("authorization") ?? "";

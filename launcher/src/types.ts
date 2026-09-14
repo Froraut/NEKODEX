@@ -35,6 +35,7 @@ export interface BrowserState {
   url: string;
   title: string;
   authenticated: boolean;
+  accountLabel?: string | null;
   visible: boolean;
   surfaceActive: boolean;
   loading: boolean;
@@ -138,6 +139,7 @@ export interface LauncherSnapshot {
     github: string;
     x: string;
     connectors: string;
+    developerMode?: string;
     tunnels: string;
     keys: string;
   };
@@ -168,6 +170,7 @@ export interface RouteDiagnosticsReport {
 }
 
 export interface LauncherApi {
+  setupHermes(): Promise<{ provider: string; configPath: string; backupPath: string; baseUrl: string; defaultChanged: boolean }>;
   snapshot(): Promise<LauncherSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;
   openSocial(target: "github" | "x"): Promise<LauncherState>;

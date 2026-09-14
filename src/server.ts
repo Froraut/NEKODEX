@@ -15,8 +15,10 @@ import {
   extractChatGptTurnIdentity,
   extractCodexTurnIdentityFromBody,
   extractChatGptCompactionSourceRevision,
+  chatGptTurnUserRevisionHistory,
 } from "./adapters/chatgpt-web/environment";
 import { rememberCompactionContinuation } from "./adapters/chatgpt-web/compaction-continuation";
+import { rememberRetryableTurnFailure } from "./adapters/chatgpt-web/retry-continuation";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
@@ -50,6 +52,7 @@ import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "
 import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
 import { VERSION } from "./version";
+import { HermesIntegration, type HermesContext } from "./hermes-integration";
 
 type HttpTrackedEndpoint = "models" | "responses" | "compact" | "search" | "unspecified" | NativeImageEndpoint;
 
@@ -355,6 +358,8 @@ export class HttpTurnCounter {
 type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 
 export interface ResponseRequestOptions {
+  hermesContext?: HermesContext;
+  onCompletedResponse?: (response: Record<string, unknown>) => void;
   /** DEV and other in-process harnesses can keep continuation state in their own canonical store. */
   rememberState?: boolean;
   /** Observe the exact production adapter stream when invoking the handler in-process. */
@@ -494,6 +499,7 @@ export async function responseRequest(
   let route: ChatGptWebModelRoute;
   try {
     parsed = parseRequest(expanded);
+    if (options.hermesContext) parsed._hermesContext = options.hermesContext;
     route = routeChatGptWebRequest(parsed, config);
     const identity = extractChatGptTurnIdentity(parsed);
     if (identity.threadId && identity.turnId) {
@@ -532,6 +538,7 @@ export async function responseRequest(
 
   const compaction = parsed._compactionRequest === true;
   const rememberCompletedResponse = (response: Record<string, unknown>): void => {
+    options.onCompletedResponse?.(response);
     if (!compaction) {
       if (options.rememberState !== false) rememberResponseState(parsed._rawBody, response, { force: true });
       return;
@@ -571,6 +578,9 @@ export async function responseRequest(
   }
 
   const provider = providerConfig(requestConfig);
+  if (options.hermesContext && !parsed.context.tools?.length && provider.chatgptWeb) {
+    provider.chatgptWeb.localToolsEnabled = false;
+  }
   // A Pro pin is part of retained-chat identity only for turns whose UI selection it changes.
   // Keeping it on High/Light would abandon otherwise compatible retained conversations.
   if (!(route.interactionMode === "automatic" && route.adapterEffort === "max")) {
@@ -623,6 +633,13 @@ export async function responseRequest(
     try {
       options.onAdapterEvent?.(event);
       queue.push(event);
+      // Only an explicitly retryable 503 actually delivered by this daemon can authorize
+      // Codex's next native turn to resume the identical failed instruction. Submitted
+      // terminal failures, cancellation and arbitrary stale history do not create a handoff.
+      if (event.type === "error" && event.retryable === true && event.status === 503 && !abort.signal.aborted) {
+        const source = chatGptTurnUserRevisionHistory(parsed).at(-1);
+        if (source) rememberRetryableTurnFailure(parsed, extractChatGptTurnIdentity(parsed), source);
+      }
     } catch (error) {
       // Producers also emit from timer/process callbacks outside runTurn's promise. Never
       // throw from that boundary, or try to enqueue an error into an already-full buffer.
@@ -819,6 +836,7 @@ export async function compactRequest(
 
 const JSON_REQUEST_PATHS = new Set([
   "/v1/responses",
+  "/hermes/v1/responses",
   "/v1/responses/compact",
   "/v1/alpha/search",
 ]);
@@ -884,6 +902,7 @@ export function startServer(
   let successfulModelCatalogRequests = 0;
   let lastSuccessfulModelCatalogRequestAt: string | null = null;
   const httpTurns = new HttpTurnCounter();
+  const hermes = new HermesIntegration();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
     active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0),
@@ -903,6 +922,19 @@ export function startServer(
       const url = new URL(req.url);
       const rejection = localHttpRequestRejection(req, url, server.port!);
       if (rejection) return rejection;
+      if (url.pathname.startsWith("/hermes/")) {
+        if (!hermes.authorized(req)) return formatErrorResponse(401, "authentication_error", "Add the Hermes provider from Setup to authorize this local connection.");
+        if (req.method === "GET" && url.pathname === "/hermes/v1/models") return hermes.models(config);
+        if (req.method === "POST" && url.pathname === "/hermes/v1/responses") {
+          if (draining) return formatErrorResponse(503, "server_error", "Codex Web GPT is restarting; retry after it is ready.");
+          return httpTurns.track(signal => hermes.respond(new Request(req, { signal }), config,
+            (request, hermesContext, onCompletedResponse) => responseRequest(request, config, dependencies.adapterFactory, {
+              hermesContext, onCompletedResponse, rememberState: false,
+              ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
+            })), req.signal, process.platform, "responses");
+        }
+        return formatErrorResponse(404, "invalid_request_error", "Hermes uses /hermes/v1/responses with transport codex_responses.");
+      }
       if (req.method === "GET" && url.pathname === "/healthz") {
         return Response.json({
           status: "ok",

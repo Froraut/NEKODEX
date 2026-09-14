@@ -13,9 +13,12 @@ const {
   nativeImage,
   nativeTheme,
   screen,
+  session,
   shell,
   Tray,
 } = require("electron");
+const { resolveNativeProxyEnvironment, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
+const { installHermesProvider } = require("./hermes-integration.cjs");
 const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
@@ -60,10 +63,11 @@ const BROWSER_HELPER_PATH = app.isPackaged
   : path.join(SOURCE_ROOT, ".launcher-runtime", "browser-helper.cjs");
 const GITHUB_URL = "https://github.com/Froraut/codex-chatgpt-web";
 const X_URL = "";
-const CONNECTORS_URL = "https://chatgpt.com/#settings/Plugins";
+const CONNECTORS_URL = "https://chatgpt.com/plugins";
+const DEVELOPER_MODE_URL = "https://chatgpt.com/#settings/Security?section=developer-mode";
 const TUNNELS_URL = "https://platform.openai.com/settings/organization/tunnels";
 const KEYS_URL = "https://platform.openai.com/settings/organization/api-keys";
-const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL, CONNECTORS_URL, TUNNELS_URL, KEYS_URL].filter(Boolean));
+const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL, CONNECTORS_URL, DEVELOPER_MODE_URL, TUNNELS_URL, KEYS_URL].filter(Boolean));
 const PACKAGED_RENDERER_URL = pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).href;
 const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
@@ -459,7 +463,7 @@ function registerIpc({ logger, stateStore }) {
     },
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
     logs: logger.recent(),
-    urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
+    urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, developerMode: DEVELOPER_MODE_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
     platform: process.platform,
     packaged: app.isPackaged,
     version: app.getVersion(),
@@ -760,6 +764,10 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return { ok: true, stdout: result.stdout, restartRequired: !IS_DEV_PROFILE };
   });
+  handle("launcher:setup-hermes", async () => {
+    if (IS_DEV_PROFILE) throw new Error("Add Hermes from the production app profile.");
+    return installHermesProvider({ coreHome: CORE_HOME, config: runtimeHost.runtimeConfigSnapshot().config });
+  });
   handle("launcher:setup-mcp", async (_event, input) => {
     const currentMode = stateStore.read().browserInteractionMode;
     const interactionMode = input?.interactionMode === undefined
@@ -1052,6 +1060,8 @@ async function start() {
     browserDescriptorPath: BROWSER_DESCRIPTOR_PATH,
     launcherProfile: LAUNCHER_PROFILE.kind,
     publishOperation,
+    nativeProxyEnvironmentProvider: () => resolveNativeProxyEnvironment(session.fromPartition(LAUNCHER_PROFILE.browserPartition)),
+    tunnelProxyEnvironmentProvider: () => resolveTunnelProxyEnvironment(session.fromPartition(LAUNCHER_PROFILE.browserPartition)),
   });
   runtimeHost = new RuntimeHost({
     app,

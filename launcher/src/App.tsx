@@ -368,11 +368,7 @@ function LauncherShell({
   const [sessionReminderBusy, setSessionReminderBusy] = useState(false);
   const [sessionReminderDue, setSessionReminderDue] = useState(false);
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
-  const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(
-    snapshot.state.browserInteractionMode === "automatic"
-      && snapshot.state.coreSetupComplete === true
-      && !snapshot.state.experimentalBiggerContext,
-  );
+  const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(false);
   const [biggerContextRecommendationBusy, setBiggerContextRecommendationBusy] = useState(false);
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
   const browserSurfaceActive = surface === "browser"
@@ -613,7 +609,7 @@ function LauncherShell({
                   active={surface === "mcp"}
                   badge={mcpOptional ? <ActionDot tone="optional" /> : null}
                   icon="mcp"
-                  label="MCP"
+                  label={copy.localTools}
                   onClick={() => {
                     setMcpTargetMode(null);
                     navigateSurface("mcp");
@@ -712,6 +708,7 @@ function LauncherShell({
                 setError={setError}
                 snapshot={snapshot}
                 updateProModelVersion={updateProModelVersion}
+                showBiggerContextInfo={() => setBiggerContextRecommendationOpen(true)}
                 updateState={updateState}
               />
             ) : null}
@@ -999,7 +996,7 @@ function BrowserSurface({
           />
           <IconButton disabled={navigationLocked || !visible} icon="reload" label={copy.reload} onClick={() => void navigate("reload")} />
         </div>
-        <div className="browser-address" title={browser?.url || copy.browserAddress}>
+        <div className="browser-address" title={formatBrowserAddress(browser?.url, copy)}>
           <Icon name="globe" />
           <span>{formatBrowserAddress(browser?.url, copy)}</span>
         </div>
@@ -1164,6 +1161,7 @@ function SetupSurface({
   updateState: (state: LauncherState) => void;
 }) {
   const [localBusy, setLocalBusy] = useState(false);
+  const [hermesAdded, setHermesAdded] = useState(false);
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
   const catalogPending = !devProfile && snapshot.state.coreSetupComplete === true
     && snapshot.state.codexCatalogVerified !== true;
@@ -1210,6 +1208,15 @@ function SetupSurface({
   const setZeroRiskPro = (enabled: boolean) => run(async () => {
     updateState(await api!.setZeroRiskPro(enabled));
   });
+  // Saving a separate Hermes provider does not navigate the browser or replace a running turn.
+  const addHermes = async () => {
+    if (localBusy) return;
+    setLocalBusy(true);
+    setError(null);
+    try { await api!.setupHermes(); setHermesAdded(true); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setLocalBusy(false); }
+  };
 
   return (
     <ContentSurface
@@ -1219,6 +1226,14 @@ function SetupSurface({
         : manualInteraction ? copy.manualInteractionBody : copy.setupSubtitle}
       title={devProfile ? copy.devSetupTitle : copy.setupTitle}
     >
+      {!devProfile ? <div className="setup-overview" role="status">
+        <strong>{snapshot.state.codexCatalogVerified
+          ? snapshot.state.mcpSetupComplete ? copy.setupReadyFull : snapshot.state.mcpRuntimeInstalled ? copy.setupPendingConnector : copy.setupReadyModels
+          : copy.setupOverviewTitle}</strong>
+        <p>{copy.setupArchitecture}</p>
+        {snapshot.state.codexCatalogVerified ? <p>{snapshot.state.mcpSetupComplete ? copy.setupUseCodex : copy.setupToolsNext}</p> : null}
+        {snapshot.state.codexCatalogVerified && !snapshot.state.mcpSetupComplete ? <PrimaryButton onClick={showMcp}>{copy.configureMcp}</PrimaryButton> : null}
+      </div> : null}
       <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} />
       <div className="setup-list">
         {!manualInteraction ? <>
@@ -1227,7 +1242,9 @@ function SetupSurface({
               ? copy.signedIn
               : browser?.status === "loading" ? copy.checkingSignIn : useExistingChrome ? copy.existingChromeSignIn : copy.signIn}
             complete={browser?.authenticated === true}
-            description={useExistingChrome ? copy.existingChromeBody : copy.stepAccountBody}
+            description={browser?.authenticated && browser.accountLabel
+              ? `${copy.signedIn}: ${browser.accountLabel}`
+              : useExistingChrome ? copy.existingChromeBody : copy.stepAccountBody}
             disabled={busy}
             index={1}
             onAction={useExistingChrome ? openExistingChromeLogin : openLogin}
@@ -1247,12 +1264,12 @@ function SetupSurface({
           />
         </> : null}
         <SetupRow
-          action={snapshot.state.coreSetupComplete
+          action={catalogPending ? copy.awaitingCodex : snapshot.state.coreSetupComplete
             ? devProfile ? copy.devReinstall : copy.reinstall
             : devProfile ? copy.devInstall : copy.install}
           complete={snapshot.state.codexCatalogVerified === true}
           description={catalogPending ? copy.stepInstallWaitingBody : devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
-          disabled={busy || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
+          disabled={busy || catalogPending || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
           index={manualInteraction ? 1 : 3}
           onAction={install}
           repeatable
@@ -1282,7 +1299,7 @@ function SetupSurface({
         />
       ) : null}
 
-      <SectionHeading label="MCP" meta={manualInteraction ? copy.required : copy.optional} spaced />
+      <SectionHeading label={copy.localTools} meta={manualInteraction ? copy.required : copy.optional} spaced />
       <button
         className="next-surface-row"
         disabled={!manualInteraction && !snapshot.state.codexCatalogVerified}
@@ -1297,6 +1314,15 @@ function SetupSurface({
         <em>{snapshot.state.mcpSetupComplete ? copy.mcpReady : copy.configureMcp}</em>
         <Icon name="chevron" />
       </button>
+      {!devProfile && !manualInteraction ? <>
+        <SectionHeading label="Hermes" meta={copy.optional} spaced />
+        <div className="setup-overview">
+          <strong>{copy.hermesTitle}</strong>
+          <p>{copy.hermesBody}</p>
+          <PrimaryButton disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes()}>{hermesAdded ? copy.hermesUpdate : copy.hermesAdd}</PrimaryButton>
+          <p role="status">{hermesAdded ? copy.hermesAdded : !snapshot.state.mcpSetupComplete ? copy.hermesPending : copy.hermesChoose}</p>
+        </div>
+      </> : null}
     </ContentSurface>
   );
 }
@@ -1324,7 +1350,9 @@ function McpSurface({
 }) {
   const configuringInactiveMode = interactionMode !== snapshot.state.browserInteractionMode;
   const [step, setStep] = useState(
-    configuringInactiveMode ? 1 : Math.min(2, Math.max(0, snapshot.state.mcpGuideStep || 0)),
+    configuringInactiveMode ? 1
+      : snapshot.state.mcpRuntimeInstalled && snapshot.mcpCredentialsConfigured ? 2
+      : Math.min(2, Math.max(0, snapshot.state.mcpGuideStep || 0)),
   );
   const [tunnelId, setTunnelId] = useState("");
   const [runtimeKey, setRuntimeKey] = useState("");
@@ -1412,7 +1440,7 @@ function McpSurface({
     <ContentSurface
       fit
       subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
-      title={devProfile ? copy.devMcpTitle : "MCP"}
+      title={devProfile ? copy.devMcpTitle : copy.localTools}
     >
       {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
         <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
@@ -1434,13 +1462,13 @@ function McpSurface({
       </div>
 
       <div className="mcp-stage">
-        {guideMedia ? (
+        {guideMedia ? <details className="setup-video-help"><summary>{copy.guideVideo}</summary>
           <TutorialVideo
             copy={copy}
             label={`${copy.guideVideo}: ${steps[step]!.title}`}
             src={guideMedia}
           />
-        ) : null}
+        </details> : null}
 
           <section
             className="wizard-content"
@@ -1531,16 +1559,18 @@ function McpSurface({
             ) : null}
             {step === 2 ? (
               <div className="connector-actions">
-                <NoticeRow icon="alert" tone="warning">
+                <details className="connector-upgrade-help"><summary>{copy.connectorUpgradeHelp}</summary><NoticeRow icon="alert" tone="warning">
                   {manualInteraction
                     ? copy.manualConnectorNotice
                     : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
-                </NoticeRow>
+                </NoticeRow></details>
                 <div className="connector-name">
                   <span>{copy.connectorName}</span>
                   <code>{snapshot.connectorNames[interactionMode]}</code>
                 </div>
                 <div className="inline-actions">
+                  {snapshot.urls.developerMode ? <SecondaryButton icon="external"
+                    onClick={() => void openExternal(snapshot.urls.developerMode!)}>{copy.openDeveloperMode}</SecondaryButton> : null}
                   <SecondaryButton
                     icon="external"
                     onClick={() => void (async () => {
@@ -1656,6 +1686,7 @@ function SettingsSurface({
   setError,
   snapshot,
   updateProModelVersion,
+  showBiggerContextInfo,
   updateState,
 }: {
   browser: BrowserState | null;
@@ -1667,6 +1698,7 @@ function SettingsSurface({
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
   updateProModelVersion: (value: ProModelVersion | null) => void;
+  showBiggerContextInfo: () => void;
   updateState: (state: LauncherState) => void;
 }) {
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
@@ -1807,6 +1839,9 @@ function SettingsSurface({
             : copy.biggerContextBody}
           label={copy.biggerContext}
         >
+          <button className="text-button" type="button" onClick={showBiggerContextInfo} disabled={busy || snapshot.state.browserInteractionMode === "manual"}>
+            {copy.setupDetails}
+          </button>
           <Switch
             checked={snapshot.state.experimentalBiggerContext}
             disabled={busy
@@ -1836,7 +1871,7 @@ function SettingsSurface({
         <Icon name="activity" />
         <span>
           <strong>{copy.runDoctor}</strong>
-          <small>{doctor ? (doctor.ok ? copy.healthy : copy.needsAttention) : copy.status}</small>
+          <small>{doctor ? (doctor.ok && doctor.checks.every(check => check.status === "ok") ? copy.healthy : copy.needsAttention) : copy.status}</small>
         </span>
         <Icon name="chevron" />
       </button>
@@ -2237,14 +2272,15 @@ function FieldRow({ children, label }: { children: ReactNode; label: string }) {
 }
 
 function DoctorSummary({ copy, language, report }: { copy: Copy; language: Language; report: DoctorReport }) {
-  const visibleChecks = report.ok
+  const healthy = report.ok && report.checks.every(check => check.status === "ok");
+  const visibleChecks = healthy
     ? report.checks.slice(-6)
     : report.checks.filter((check) => check.status !== "ok");
   return (
-    <div className={`doctor-summary${report.ok ? " is-healthy" : ""}`}>
+    <div className={`doctor-summary${healthy ? " is-healthy" : ""}`}>
       <header>
-        <Icon name={report.ok ? "check" : "activity"} />
-        <strong>{report.ok ? copy.healthy : copy.needsAttention}</strong>
+        <Icon name={healthy ? "check" : "activity"} />
+        <strong>{healthy ? copy.healthy : copy.needsAttention}</strong>
       </header>
       <div>
         {visibleChecks.map((check) => (
@@ -2646,6 +2682,7 @@ function formatBrowserAddress(url: string | undefined, copy: Copy): string {
   if (!url || url.startsWith("about:blank")) return copy.browserAddress;
   try {
     const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) return copy.browserAddress;
     if (parsed.hostname === "chatgpt.com" && parsed.searchParams.get("temporary-chat") === "true") {
       return `chatgpt.com  /  ${copy.temporaryChat}`;
     }

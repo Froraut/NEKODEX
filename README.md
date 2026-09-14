@@ -130,7 +130,11 @@ cd codex-chatgpt-web && \
 bun run app
 ```
 
-This source path requires Bun 1.4.0. The command installs locked dependencies and opens the app.
+This source path requires Bun 1.4.0. The command installs locked dependencies in both the repository root and launcher/ before opening the app.
+
+For the complete fork workflow, account/connector boundaries and alternatives, see [Workflow, setup and alternatives](docs/workflow-and-alternatives.md).
+
+[Hermes integration: Web models with Hermes tools](docs/hermes-integration.md)
 
 ## Modes
 

@@ -95,8 +95,10 @@ test("an import failure is sanitized before withManualOperation can publish any 
   host.logger = { info() {}, error() {} };
   let called = false;
   host.installPasskeyLogin = async () => { called = true; throw new Error("SECRET cookie https://sensitive.test"); };
-  await assert.rejects(openExistingChromeLogin(host, async () => true), /could not be imported/);
+  await assert.rejects(openExistingChromeLogin(host, async () => true), { code: "session-verification-failed" });
   assert.equal(called, true);
+  assert.equal(host.snapshot().existingChromeLogin.error, "session-verification-failed");
+  assert.equal(host.snapshot().existingChromeLogin.canCopySettings, false);
   assert.doesNotMatch(JSON.stringify(snapshots), /SECRET|sensitive/);
   assert.doesNotMatch(host.state.message, /SECRET|sensitive/);
 });

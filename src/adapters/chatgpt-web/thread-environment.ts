@@ -147,6 +147,12 @@ export class ChatGptThreadEnvironmentStore {
   ) {}
 
   resolve(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
+    // Hermes owns execution and approvals. The bridge itself receives no filesystem authority,
+    // and its producer scope never enters the persistent native Codex environment cache.
+    if (parsed._hermesContext) return {
+      cwd: parsed._hermesContext.root, roots: [parsed._hermesContext.root], writableRoots: [],
+      sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: parsed.context.tools ?? [],
+    };
     const identity = extractChatGptTurnIdentity(parsed);
     try {
       const environment = extractChatGptTurnEnvironment(parsed);
