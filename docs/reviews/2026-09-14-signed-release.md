@@ -1,8 +1,8 @@
 # Signed macOS release receipt — 2026-09-14
 
-[Release v5.1.0-froraut.13](https://github.com/Froraut/codex-chatgpt-web/releases/tag/v5.1.0-froraut.13)
+[Release v5.1.0-froraut.14](https://github.com/Froraut/codex-chatgpt-web/releases/tag/v5.1.0-froraut.14)
 is public and marked as a prerelease. Its source is
-`d323e7e53143c7a092972bc0b52d72171df83dc0`; [GitHub Actions run 34870870117](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34870870117)
+`a015fe8d698650fd6a710ceeedc93400dd4665df`; [GitHub Actions run 34872918318](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34872918318)
 completed successfully, including ARM64, Intel and publication jobs.
 
 ## Distribution evidence
@@ -13,36 +13,40 @@ completed successfully, including ARM64, Intel and publication jobs.
   build attestations. The draft became public only after its uploaded asset digests matched.
 - The release has 15 assets, including ARM64 and Intel DMG/ZIP packages, both runtime archives,
   signed metadata, checksums, installers and license notices. Windows/Linux packages are absent.
-- The public ARM64 ZIP is 169,482,840 bytes and has SHA-256
-  `c6deb6a7fa1f924d6b29904129c162a1a64754215ea9391ae7d6268115ff8952`.
+- The public ARM64 ZIP is 169,482,872 bytes and has SHA-256
+  `61b324d33b1eb03d41e93d41e998870a527f8eb515fcce98197f086cf65f64a6`.
   The downloaded file matched the authenticated metadata, expected source commit and run ID.
   `gh attestation verify` for this asset and this repository's release workflow exited 0.
 - Gatekeeper accepted the extracted public package with `source=Notarized Developer ID`.
 
 Before the hosted release, local pre11 was also signed and notarized. Apple submission
 `e34514ee-ced8-4441-b0cf-798ce8d1ee62` returned Accepted, and stapling/Gatekeeper passed. That
-local archive was an intermediate delivery; it is not mislabeled as a GitHub-built pre13 asset.
+local archive was an intermediate delivery; it is not mislabeled as a GitHub-built pre14 asset.
 
 ## Installed application
 
 The published ARM64 ZIP replaced `/Applications/Codex Web GPT.app` through a staged copy and
-graceful launcher shutdown. Info.plist reports **5.1.0-froraut.13**, bundle identifier
+graceful launcher shutdown. Info.plist reports **5.1.0-froraut.14**, bundle identifier
 `dev.codexwebgpt.launcher`. The restarted service reports the same version, Full mode,
-`status=ok` and `accepting_turns=true`; the initial completion observation had no active HTTP,
-browser or compaction requests. The saved ChatGPT account is still visibly signed in and
+`status=ok` and `accepting_turns=true`. The saved ChatGPT account is still visibly signed in and
 Bigger Context remains enabled.
 
 The actual Codex model picker showed Web Instant, Medium, High, Extra High and Pro alongside
 native models after the first signed upgrade. The current native Astra selection was preserved.
-The launcher's version-specific reply/connector acceptance badges were not manually marked as
-passed: they still request setup verification, and the picker-confirmation button was disabled
-in the observed initial setup screen. A served catalog and a saved account are not substituted
-for fresh Web-model or connector execution evidence.
+Pre13 initially left the picker-confirmation button disabled after a successful capability
+inspection: the browser state remained loading with a stale connector-catalog refresh message,
+even though no login or navigation lock remained. Pre14 restores readiness after the validated
+inspection. The targeted regression passed, and the installed pre14 button was visibly enabled
+and worked. The normal Verify runtime action completed in the observed 10.5-second interval,
+showing Healthy and the existing Codex Native3 connector available. Done returned to the normal
+browser workspace. Saved state now has core setup, catalog, picker and MCP setup complete,
+with no Codex restart required. This connector-selection check submits no model turn and is
+not presented as a new native tool execution or large-context response.
 
-The previous pre11 application is retained under
-`~/Library/Application Support/Codex Web GPT Backups/20260914-pre13-release/`. The earlier pre10
-backup is retained under `20260914-pre11-notarized/`. Private account/profile data stayed in its
-existing location and is absent from release assets.
+The previous pre13 application is retained under
+`~/Library/Application Support/Codex Web GPT Backups/20260914-pre14-release/`. Earlier pre11 and
+pre10 backups remain under `20260914-pre13-release/` and `20260914-pre11-notarized/`. Private
+account/profile data stayed in its existing location and is absent from release assets.
 
 ## Release corrections
 
@@ -59,8 +63,9 @@ existing location and is absent from release assets.
 
 ## Verification limits and skill
 
-The six focused behavior regressions from the previous task were reused. No full test suite,
-large-context replay, exhaustive tool sweep or new image generation was launched. The original
+The six focused behavior regressions from the previous task were reused, and one new readiness
+regression passed. No full test suite, large-context replay, exhaustive tool sweep or new image
+generation was launched. The original
 large Pro task completing after compaction remains unverified; Bigger Context is experimental.
 The release notes name this limitation and its normal-context recovery path.
 

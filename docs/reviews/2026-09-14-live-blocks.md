@@ -2,15 +2,18 @@
 
 Initial evidence: **5.1.0-froraut.9**, macOS arm64. The later native-runtime resolution is installed in **5.1.0-froraut.10**. This continues the [issue/PR investigation](2026-09-14-investigation.md).
 
-## Current distribution checkpoint: signed pre13 published and installed
+## Current distribution checkpoint: signed pre14 published and installed
 
-The [macOS pre13 release](https://github.com/Froraut/codex-chatgpt-web/releases/tag/v5.1.0-froraut.13)
+The [macOS pre14 release](https://github.com/Froraut/codex-chatgpt-web/releases/tag/v5.1.0-froraut.14)
 is published for ARM64 and Intel. Both native builds and the signed-metadata/attestation publication
-job succeeded in [run 34870870117](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34870870117).
+job succeeded in [run 34872918318](https://github.com/Froraut/codex-chatgpt-web/actions/runs/34872918318).
 The ARM64 ZIP was downloaded from that release, matched to its authenticated metadata and source
 commit, verified with `gh attestation verify`, and accepted by Gatekeeper as Notarized Developer ID.
-That exact package is installed on the Mac; the restarted Full-mode bridge reports pre13 and
-accepts requests. Login and Bigger Context persisted. See the [release receipt](2026-09-14-signed-release.md).
+That exact package is installed on the Mac; the restarted Full-mode bridge reports pre14 and
+accepts requests. Login and Bigger Context persisted. A final UI check found a stale post-inspection loading
+status in pre13; pre14 fixes it. The installed button now works, the normal connector verification
+reports Healthy, and setup is complete without a pending Codex restart. See the
+[release receipt](2026-09-14-signed-release.md).
 
 This supersedes the earlier distribution blockers below. It does not turn the earlier native High,
 image-generation or source-regression evidence into a completed large Pro compaction run.
@@ -122,7 +125,7 @@ a valid local code-signing identity. The user subsequently authorized a dedicate
 notarization API key. It was downloaded with the supported download flow, stored privately and
 registered in both ASC CLI and a notarytool Keychain profile; Apple accepted its credentials.
 Notarization and the publisher-signed GitHub release were pending at that checkpoint; both are
-resolved by the pre13 distribution checkpoint above.
+resolved by the pre14 distribution checkpoint above.
 
 | Path | Observed result | Boundary |
 | --- | --- | --- |
@@ -131,7 +134,7 @@ resolved by the pre13 distribution checkpoint above.
 | Direct Hermes → ChatGPT Web → Hermes final response | **Transport completed.** A real Hermes AIAgent received the model's final response. | The response was a refusal, not the requested file contents. |
 | Hermes Instant → MCP inventory | Receipt observed; a successful reply was written after SDK processing. | No subsequent read_file invocation reached Hermes. Full cycle ended in 17.34 seconds. |
 | Hermes High → MCP inventory | Receipt observed; a successful reply was written in 3 ms. | No subsequent read_file invocation reached Hermes. Full cycle ended in 36.19 seconds. |
-| Publisher signing | Pre13 ARM64 and Intel packages are Developer ID signed, notarized and published with signed metadata and GitHub attestations. The public ARM64 ZIP is installed locally. | Windows publisher signing and a live Intel account workflow remain outside this macOS release's evidence. |
+| Publisher signing | Pre14 ARM64 and Intel packages are Developer ID signed, notarized and published with signed metadata and GitHub attestations. The public ARM64 ZIP is installed locally. | Windows publisher signing and a live Intel account workflow remain outside this macOS release's evidence. |
 
 The native task executed an actual `sed` read in a disposable directory and returned its contents. The MCP observer recorded successful replies for inventory, a generic tool call and native command execution. The CLI also printed nonfatal warnings from other installed MCP resources/hooks; it exited successfully with the exact answer. Those unrelated integrations were not modified.
 

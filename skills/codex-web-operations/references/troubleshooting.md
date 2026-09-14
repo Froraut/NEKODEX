@@ -18,6 +18,7 @@
 | Download says an organization blocked it | This wording does not identify an organization. Browser Use may return BlockedByClient when a file response was not awaited. Start the supported download wait before the final Download click, then inspect the saved file; do not change browser policies from this message alone. |
 | Bigger Context fails with extra conversation turns | Inspect the bounded multipart trace and exact transaction acknowledgements. Pre11 introduced preservation of verified staging acknowledgements when ChatGPT remounts turns; the original large Pro continuation remained unverified. Do not accept arbitrary extra responses to make the request pass. |
 | Context setting is queued | Inspect the active profile and request counts. The saved choice is not active until applied. Native forwarded HTTP requests also keep the runtime busy even with zero browser turns. |
+| Setup buttons stay disabled after startup | Distinguish a live login/turn/operation from a stale browser status. A confirmed pre13 failure left status=loading and the connector-catalog refresh message after successful capability inspection, with no navigation lock. Pre14 restores ready only after the helper's authenticated evidence passes validation. |
 | Signing succeeded but runtime integrity failed | Confirm Bun was signed before its manifest size/hash and aggregate bundle ID were recorded. Re-signing Bun afterward changes those bytes. Repair the artifact, then sign its containing app; do not disable integrity checks. |
 
 ## Operator observations
