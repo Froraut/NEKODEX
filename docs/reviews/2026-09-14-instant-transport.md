@@ -3,6 +3,24 @@
 Installed bridge: **5.1.0-froraut.14**. The operator chose Instant for faster model-independent
 checks. This note supplements the [signed release receipt](2026-09-14-signed-release.md).
 
+## Final installation checkpoint
+
+Pre15 is now [published](https://github.com/Froraut/codex-chatgpt-web/releases/tag/v5.1.0-froraut.15)
+and installed from its public ARM64 ZIP. Release run 34881095572 succeeded on both macOS
+architectures and publication. The downloaded archive matched its signed metadata and expected
+source 79dd077c816352118cbacd089a3db0f155335dae. Gatekeeper accepted the extracted application
+as Notarized Developer ID. The running Full-mode bridge reports 5.1.0-froraut.15 and accepts turns.
+
+The normal installed Verify runtime action reported Healthy, an owned healthy/ready tunnel and
+the Codex Native3 connector available. Setup was completed using the normal UI; the saved account
+and Bigger Context were preserved. The previous app is backed up under
+`~/Library/Application Support/Codex Web GPT Backups/20260914-pre15-release/`.
+
+The new retained-viewport repair passed its focused regression. A new full large-history replay
+on pre15 was not run: the real native compaction acceptance below belongs to pre14's recovery
+path. Pro-specific final-answer completion and the cross-task delegation envelope limitation
+remain unconfirmed/unresolved. Publication and connector health do not prove all model paths.
+
 ## Confirmed small Instant round trip
 
 One private generated marker file was used for two bounded attempts. Its random contents were
