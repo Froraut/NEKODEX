@@ -111,3 +111,34 @@ On 2026-09-14, the provider was added through the installed macOS app. The authe
 The first real Hermes invocation exposed its 64k minimum: pre7's conservative 32k entry was rejected before inference. Pre8 corrects the catalog to use the bridge's canonical per-mode budgets rather than inflating an unsupported mode.
 
 With pre8 installed, the real Hermes agent passed initialization and reached the owned ChatGPT browser, selected Instant, attached Codex Native3 and submitted the task. The 20-second bounded local probe stopped before a completed Hermes result was collected. The browser subsequently displayed a safety-block response. No successful `read_file` result or full Hermes turn is claimed. The exact origin of that refusal was not established from the available structured evidence; it is not treated as a proven local permission bug or bypassed by relabeling tools.
+
+## Isolating the client contract
+
+A subsequent local contract probe used the installed Hermes agent, an empty disposable Hermes
+home, the production Responses parser/serializer and a synthetic model adapter. Hermes executed
+an arithmetic tool with inputs 20 and 22, returned its result through the provider, and received
+`42` as the final answer. The test also exercised Hermes' deferred-tool `tool_call` wrapper.
+This confirms a complete local client/tool/continuation cycle; it does not prove acceptance by
+ChatGPT or repair the observed live refusal. An initial fixture incorrectly requested an
+unadvertised deferred tool directly; correcting the fixture to invoke the actually advertised
+wrapper made the contract probe pass. That was not a production adapter fix.
+
+## Practical implementation choices
+
+The built-in Hermes `codex_app_server` runtime is a separate integration path. It hands execution
+to native Codex and has a curated Hermes MCP callback. Its own memory, delegation, session-search
+and todo tools are not available in the same way as in Hermes' normal loop. Enabling it therefore
+requires an explicit user choice; it is not a silent fallback for a rejected tool call.
+
+The installed implementation must also be checked for model forwarding: the inspected
+`agent/codex_runtime.py` creates `CodexAppServerSession` without a model and calls `run_turn`
+without one; `thread/start` carries only cwd. Merely enabling this runtime can therefore use
+Codex's default model instead of the Web model selected in Hermes. A correct integration must
+forward and verify the selected model at the app-server boundary, preserve the user's other
+Codex settings and permissions, and pass a real turn before being advertised as working.
+
+Keeping the current direct Hermes loop preserves its native tools, but the observed ChatGPT
+stop after inventory is unresolved. More permissive local settings are not a demonstrated fix:
+connector-specific Allow all actions is already enabled. A different tool contract should be
+considered only with truthful capabilities and unchanged approval enforcement; it must not
+mislabel a generic mutating action as read-only or bypass a refused operation.
