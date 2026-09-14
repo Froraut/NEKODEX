@@ -2345,6 +2345,9 @@ class BrowserHost {
           evidence: "previous helper exited",
         });
       }
+      // A departing CDP helper can clear Chromium's emulation while Electron
+      // still caches its dimensions. Restore it for the new owner before use.
+      existing.deviceEmulationDirty ||= reused || existing.helperPid !== helperPid;
       existing.helperPid = helperPid;
       existing.traceId = traceId;
       existing.status = "running";

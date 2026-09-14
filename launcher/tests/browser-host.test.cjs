@@ -2104,6 +2104,7 @@ test("a failed runtime cancellation keeps the running DOM attached", async () =>
 
 test("a later provider round reuses only its exact connector-bound conversation", async () => {
   const throttling = [];
+  let rendererViewport = { width: 0, height: 0 };
   const conversationKey = "a".repeat(64);
   const tab = {
     id: "tab-reused",
@@ -2118,10 +2119,16 @@ test("a later provider round reuses only its exact connector-bound conversation"
     loading: false,
     message: "Task completed",
     bootstrapReady: true,
+    rendererReady: true,
+    deviceEmulationDirty: false,
+    deviceEmulationViewport: { width: 1280, height: 800 },
     view: {
+      setBounds() {},
+      setVisible() {},
       webContents: {
         isDestroyed: () => false,
         setBackgroundThrottling: (enabled) => throttling.push(enabled),
+        enableDeviceEmulation: options => { rendererViewport = options.viewSize; },
       },
     },
   };
@@ -2131,7 +2138,11 @@ test("a later provider round reuses only its exact connector-bound conversation"
     turnTabs: new Map([[tab.id, tab]]),
     userCancelledTurnOwners: new Map(),
     selectedTabId: "home",
-    syncViewVisibility: () => events.push("visible"),
+    hiddenTurnBounds: () => ({ x: 1281, y: 801, width: 1280, height: 800 }),
+    syncViewVisibility: () => {
+      events.push("visible");
+      BrowserHost.prototype.presentTurnView.call(fixture, tab, false);
+    },
     snapshot: () => ({ tabs: [] }),
     publishState: () => events.push("published"),
     writeDescriptor: () => events.push("descriptor"),
@@ -2161,6 +2172,7 @@ test("a later provider round reuses only its exact connector-bound conversation"
   assert.equal(tab.bootstrapReady, true);
   assert.equal(fixture.selectedTabId, tab.id);
   assert.deepEqual(throttling, [false]);
+  assert.deepEqual(rendererViewport, { width: 1280, height: 800 });
   assert.deepEqual(events, ["visible", "published", "descriptor", "browser.tab_reused"]);
 });
 

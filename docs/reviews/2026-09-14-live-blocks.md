@@ -18,6 +18,12 @@ reports Healthy, and setup is complete without a pending Codex restart. See the
 This supersedes the earlier distribution blockers below. It does not turn the earlier native High,
 image-generation or source-regression evidence into a completed large Pro compaction run.
 
+The [later Instant/Pro observations](2026-09-14-instant-transport.md) record successful small and
+large Instant native read/final-answer cycles, followed by a native compaction that Codex accepted
+after a retained-viewport failure and fresh-tab fallback. The initial viewport failure is repaired
+in pre15. A resumed Pro turn executed tools but ended with Stopped thinking; Pro-specific completion
+remains unconfirmed.
+
 ## Latest desktop verification: resolved after the approved restart
 
 After the user paused Hermes work and selected the main Codex/Web route, a new ephemeral
