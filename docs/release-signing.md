@@ -205,6 +205,13 @@ The owner can dispatch `release.yml` against an **existing matching prerelease t
 native assets and their matching runtime archives, and generates notices on the macOS runner.
 No Windows certificate is requested and no unsigned Windows/Linux artifact is substituted.
 All normal metadata, notarization, attestation and draft-verification gates still apply.
-A stable tag cannot use this reduced scope. Ordinary tag pushes retain the full-platform matrix;
-selecting the reduced scope is an explicit workflow-dispatch operation. It does not bypass
+A stable tag cannot use this reduced scope. Stable tag pushes retain the full-platform matrix;
+prerelease tags wait for an explicit workflow dispatch with the intended platform scope. It does not bypass
 protection of the signing or publishing environments and does not create a tag.
+
+Release packaging reuses the focused behavior evidence recorded for the reviewed source commit.
+It builds the renderer and runtime directly instead of repeating the typecheck, behavior tests
+and launcher smoke run on every release architecture. The package step still verifies the final
+macOS ZIP's Developer ID signature, expected team, notarization ticket, Gatekeeper assessment
+and runtime integrity. Metadata signatures, uploaded asset digests and GitHub attestations remain
+required. Full source verification is not launched by a prerelease dispatch.

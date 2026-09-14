@@ -105,8 +105,10 @@ blocked by the operator's Browser Use download interception: a download event mu
 before clicking its link. Using that supported flow saved the certificate in the same Chrome
 profile without changing browser policies or security settings. The certificate's public key
 matched the newly generated local private key, and importing both made Developer ID Application
-a valid local code-signing identity. CLI authentication and notarization remain pending. No
-publisher-signed GitHub release is claimed by this report.
+a valid local code-signing identity. The user subsequently authorized a dedicated Developer-role
+notarization API key. It was downloaded with the supported download flow, stored privately and
+registered in both ASC CLI and a notarytool Keychain profile; Apple accepted its credentials.
+Notarization and the publisher-signed GitHub release remain pending at this checkpoint.
 
 | Path | Observed result | Boundary |
 | --- | --- | --- |
@@ -115,7 +117,7 @@ publisher-signed GitHub release is claimed by this report.
 | Direct Hermes → ChatGPT Web → Hermes final response | **Transport completed.** A real Hermes AIAgent received the model's final response. | The response was a refusal, not the requested file contents. |
 | Hermes Instant → MCP inventory | Receipt observed; a successful reply was written after SDK processing. | No subsequent read_file invocation reached Hermes. Full cycle ended in 17.34 seconds. |
 | Hermes High → MCP inventory | Receipt observed; a successful reply was written in 3 ms. | No subsequent read_file invocation reached Hermes. Full cycle ended in 36.19 seconds. |
-| Publisher signing | Only Apple Development identity is usable in the local keychain. | Developer ID/notarization and Windows publisher signing remain unavailable. |
+| Publisher signing | Developer ID Application is now usable locally; the dedicated notarization API key was authorized, created and stored in Keychain. | A signed/notarized public release is still pending; Windows publisher signing remains unavailable. |
 
 The native task executed an actual `sed` read in a disposable directory and returned its contents. The MCP observer recorded successful replies for inventory, a generic tool call and native command execution. The CLI also printed nonfatal warnings from other installed MCP resources/hooks; it exited successfully with the exact answer. Those unrelated integrations were not modified.
 
