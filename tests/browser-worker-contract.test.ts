@@ -131,8 +131,8 @@ test("a retained MCP conversation reuses its proven connector binding", () => {
   expect(chatGptConnectorAttachmentMode(false, false)).toBe("none");
 });
 
-test("browser turns run concurrently up to the five-tab limit", async () => {
-  expect(MAX_CHATGPT_BROWSER_TABS).toBe(5);
+test("browser turns run concurrently up to the sixteen-tab limit", async () => {
+  expect(MAX_CHATGPT_BROWSER_TABS).toBe(16);
   const releases = new Map<string, () => void>();
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { browserHost: "managed-chrome" },
@@ -149,19 +149,17 @@ test("browser turns run concurrently up to the five-tab limit", async () => {
     onTextDelta() {},
   });
 
-  const active = Array.from({ length: 5 }, (_unused, index) => worker.run(browserTurn(`trace_${index + 1}`)));
+  const active = Array.from({ length: 16 }, (_unused, index) => worker.run(browserTurn(`trace_${index + 1}`)));
   await Promise.resolve();
-  expect(releases.size).toBe(5);
-  await expect(worker.run(browserTurn("trace_6"))).rejects.toThrow("at most 5 simultaneous browser turns");
+  expect(releases.size).toBe(16);
+  await expect(worker.run(browserTurn("trace_17"))).rejects.toThrow("at most 16 simultaneous browser turns");
 
   releases.get("trace_1")?.();
   await active[0];
-  const sixth = worker.run(browserTurn("trace_6"));
+  const sixth = worker.run(browserTurn("trace_17"));
   await Promise.resolve();
-  expect(releases.has("trace_6")).toBeTrue();
-  for (const traceId of ["trace_2", "trace_3", "trace_4", "trace_5", "trace_6"]) {
-    releases.get(traceId)?.();
-  }
+  expect(releases.has("trace_17")).toBeTrue();
+  for (const release of releases.values()) release();
   await Promise.all([...active.slice(1), sixth]);
 });
 

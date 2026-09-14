@@ -130,7 +130,7 @@ context isolation or browser web security.
 
 ### Cross-turn data leakage
 
-Browser turns use at most five independent task-bound tabs in one private login partition. Every
+Browser turns use at most sixteen independent task-bound tabs in one private login partition. Every
 outer Codex task owns an exact launcher surface lease and retains its Temporary Chat only across
 sequential messages in the same model/effort/compaction epoch; chats are never reused across tasks.
 Closing a running tab destroys its page and terminates that turn. The five-tab limit bounds parallel
