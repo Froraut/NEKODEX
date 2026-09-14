@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { observeMcpTransport } from "./mcp-diagnostics";
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
 import { VERSION } from "../../version";
@@ -982,5 +983,5 @@ export async function runChatGptMcpServer(options: {
     );
   }
 
-  await server.connect(new StdioServerTransport());
+  await server.connect(observeMcpTransport(new StdioServerTransport(), BRIDGE_TOOL_NAMES));
 }

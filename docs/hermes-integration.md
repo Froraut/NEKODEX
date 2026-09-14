@@ -1,5 +1,7 @@
 # Hermes integration
 
+**Experimental tool integration:** the model transport is implemented, but the observed live Hermes file-tool runs stopped after inventory and did not execute the file read. See the [complete live investigation](reviews/2026-09-14-live-blocks.md). Native Codex full-harness execution passed separately.
+
 The fork exposes a separate, authenticated **Responses API** provider for Hermes. Hermes keeps
 its own conversation loop and executes its own tools. The local application supplies ChatGPT
 Web responses and relays structured tool requests through the ChatGPT connector.

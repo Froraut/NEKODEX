@@ -109,3 +109,5 @@ Live connector creation exposed an account/organization mismatch. The intended C
 A first live Hermes invocation rejected the initial 32k provider entry before inference because Hermes requires 64k. Pre8 derives per-mode limits from the existing message/compaction budgets and omits unsupported smaller modes. No context window was enlarged to bypass this requirement.
 
 Pre8 was installed and its provider updated from the live catalog. The real Hermes agent then reached ChatGPT and submitted an Instant turn with Codex Native3. The bounded 20-second probe ended without a Hermes tool result; ChatGPT later displayed a safety-block response. Connector-specific Allow all actions had been explicitly approved and selected, while other plugins and native/Hermes permissions were preserved. Full tool execution is not confirmed, and no safeguards were bypassed.
+
+The [complete live follow-up](2026-09-14-live-blocks.md) now records a successful native Codex file-tool task and the separately unresolved Hermes stop before execution, with pre9 transport diagnostics.

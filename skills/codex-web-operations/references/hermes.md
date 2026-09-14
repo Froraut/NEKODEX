@@ -31,3 +31,5 @@ expiry. Native compaction and Codex lifecycle metadata are unsupported on the He
 Hermes supplies its own full history and session-scoped prompt cache key. Hermes enforces a 64k minimum. Use the live per-mode catalog and omit smaller browser modes;
 never inflate their advertised window just to pass Hermes initialization. Model, tool and platform capabilities
 not exercised remain unverified.
+
+As of the dated pre9 live investigation, model transport reached Hermes but native file execution did not: inventory replied successfully, then ChatGPT returned a safety-block message. This is mutable evidence, not a permanent capability claim. Review `docs/reviews/2026-09-14-live-blocks.md`; do not advertise fully verified Hermes tools until a real result supports it.

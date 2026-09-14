@@ -32,3 +32,7 @@ Inspect credential permissions/existence without values. Keep raw captures out o
 
 For completed fixes, preserve source provenance and state what was actually exercised. Every
 installed/account observation can change; dated reports are pointers, not current proof.
+
+## Distinguish MCP failure layers
+
+In builds with transport evidence, locate the tunnel log using its runtime status and inspect only `[chatgpt-web-mcp] transport` records. `received` precedes SDK argument validation; `reply_sent` distinguishes success, tool_error and protocol_error. A successful local send does not prove cloud receipt. A model saying “blocked by safety checks” without a structured error is not a proven diagnosis of the cloud component. Do not relabel or reroute a denied action to bypass safeguards. Keep native Codex success separate from Hermes success and do not treat a final refusal as completion of a requested tool operation.
