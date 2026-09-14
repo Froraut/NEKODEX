@@ -1805,6 +1805,7 @@ class RuntimeSupervisor {
 
   async acquireDrain(config, timeoutMs = DRAIN_IDLE_TIMEOUT_MS) {
     let attempted = false;
+    let busyAtDeadline = false;
     try {
       attempted = true;
       const deadline = Date.now() + timeoutMs;
@@ -1817,6 +1818,7 @@ class RuntimeSupervisor {
         }
         if (health.active_http_turns === 0 && health.active_browser_turns === 0) return true;
         if (Date.now() >= deadline) {
+          busyAtDeadline = true;
           throw new Error(
             `daemon has ${health.active_http_turns} active HTTP turn(s) and ${health.active_browser_turns} active browser turn(s)`,
           );
@@ -1835,7 +1837,9 @@ class RuntimeSupervisor {
       const message = resumeError
         ? appendFailure(errorMessage(error), "compensating resume failed", resumeError)
         : errorMessage(error);
-      throw new Error(`Refusing to stop launcher-owned runtime because atomic idleness could not be proven: ${message}`);
+      const failure = new Error(`Refusing to stop launcher-owned runtime because atomic idleness could not be proven: ${message}`);
+      failure.code = resumeError ? "RUNTIME_RESUME_FAILED" : busyAtDeadline ? "RUNTIME_NOT_IDLE" : "RUNTIME_DRAIN_FAILED";
+      throw failure;
     }
   }
 

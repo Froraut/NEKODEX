@@ -14,6 +14,7 @@ import { browserControls } from "./browser-controls";
 import { RouteDiagnostics } from "./RouteDiagnostics";
 import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
 import { ExistingChromeLoginGuide } from "./ExistingChromeLoginGuide";
+import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits, resolveChatGptWebTransportLimits } from "../../src/chatgpt-web-models";
 import type {
   BrowserInteractionMode,
   BrowserState,
@@ -78,6 +79,9 @@ export function App() {
     const unsubscribeOperation = api.onOperation((next) => {
       setOperation(next);
       if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
+      if (next.status === "completed") void api.snapshot().then(fresh => {
+        if (!cancelled) setSnapshot(current => current ? { ...current, contextCapabilities: fresh.contextCapabilities } : fresh);
+      }).catch(() => {});
     });
     const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-299), record]));
     const unsubscribeUpdate = api.onUpdateState((update) => {
@@ -354,7 +358,8 @@ function LauncherShell({
 }) {
   const interactionSetupComplete = snapshot.state.coreSetupComplete === true
     && (snapshot.state.browserInteractionMode === "manual"
-      || snapshot.state.codexCatalogVerified === true);
+      || snapshot.profile === "development"
+      || (snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true));
   const firstRunZeroRiskSetup = snapshot.state.browserInteractionMode === "manual"
     && snapshot.state.coreSetupComplete !== true;
   const [surface, setSurface] = useState<Surface>(
@@ -1165,6 +1170,7 @@ function SetupSurface({
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
   const catalogPending = !devProfile && snapshot.state.coreSetupComplete === true
     && snapshot.state.codexCatalogVerified !== true;
+  const pickerReady = devProfile || (snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true);
   const busy = localBusy
     || operation?.status === "running"
     || (!manualInteraction && (
@@ -1227,7 +1233,7 @@ function SetupSurface({
       title={devProfile ? copy.devSetupTitle : copy.setupTitle}
     >
       {!devProfile ? <div className="setup-overview" role="status">
-        <strong>{snapshot.state.codexCatalogVerified
+        <strong>{pickerReady
           ? snapshot.state.mcpSetupComplete ? copy.setupReadyFull : snapshot.state.mcpRuntimeInstalled ? copy.setupPendingConnector : copy.setupReadyModels
           : copy.setupOverviewTitle}</strong>
         <p>{copy.setupArchitecture}</p>
@@ -1267,7 +1273,7 @@ function SetupSurface({
           action={catalogPending ? copy.awaitingCodex : snapshot.state.coreSetupComplete
             ? devProfile ? copy.devReinstall : copy.reinstall
             : devProfile ? copy.devInstall : copy.install}
-          complete={snapshot.state.codexCatalogVerified === true}
+          complete={pickerReady}
           description={catalogPending ? copy.stepInstallWaitingBody : devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
           disabled={busy || catalogPending || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
           index={manualInteraction ? 1 : 3}
@@ -1288,6 +1294,8 @@ function SetupSurface({
       {!devProfile && snapshot.state.codexRestartRequired ? (
         <NoticeRow icon="alert" tone="warning">
           {copy.restartCodex}
+          <button className="secondary-button" type="button" disabled={busy || !snapshot.state.codexCatalogVerified || typeof snapshot.state.pendingBiggerContext === "boolean"}
+            onClick={() => void run(async () => { updateState(await api!.confirmCodexModels()); })}>{copy.confirmPicker}</button>
         </NoticeRow>
       ) : null}
 
@@ -1848,13 +1856,23 @@ function SettingsSurface({
             {copy.setupDetails}
           </button>
           <Switch
-            checked={snapshot.state.experimentalBiggerContext}
+            checked={snapshot.state.pendingBiggerContext ?? snapshot.state.experimentalBiggerContext}
             disabled={busy
               || snapshot.state.browserInteractionMode === "manual"
               || snapshot.state.coreSetupComplete !== true}
             onChange={(checked) => void setBiggerContext(checked)}
           />
         </SettingRow>
+        <p role="status">{snapshot.state.experimentalBiggerContext ? copy.contextActiveBigger : copy.contextActiveStandard}</p>
+        <ContextBudgetTable snapshot={snapshot} copy={copy} />
+        {typeof snapshot.state.pendingBiggerContext === "boolean" ? <div role="status">
+          <p>{snapshot.state.contextChangeApplying ? copy.contextApplying : snapshot.state.contextChangeError ? copy.contextFailed : copy.contextWaiting}</p>
+          {snapshot.state.contextChangeError ? <p>{snapshot.state.contextChangeError}</p> : null}
+          <button className="secondary-button" type="button" disabled={busy || snapshot.state.contextChangeApplying}
+            onClick={() => void api!.cancelContextChange().then(updateState).catch(cause => setError(messageOf(cause)))}>{copy.cancelContextChange}</button>
+          {snapshot.state.contextChangeError ? <button className="secondary-button" type="button" disabled={busy}
+            onClick={() => void setBiggerContext(snapshot.state.pendingBiggerContext!)}>{copy.retryContextChange}</button> : null}
+        </div> : null}
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
           <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
@@ -2243,6 +2261,30 @@ function InteractionModePicker({
       </button>
     </div>
   );
+}
+
+function ContextBudgetTable({ snapshot, copy }: { snapshot: LauncherSnapshot; copy: Copy }) {
+  if (!snapshot.state.coreSetupComplete || !snapshot.contextCapabilities) return null;
+  const capabilities = { ...snapshot.contextCapabilities, browserInteractionMode: snapshot.state.browserInteractionMode,
+    experimentalBiggerContext: snapshot.state.experimentalBiggerContext, zeroRiskProEnabled: snapshot.state.zeroRiskProEnabled };
+  const routes = availableChatGptWebModelRoutes(capabilities);
+  return <div className="context-budget-table">
+    <table>
+      <caption>{copy.contextBudgetCaption}</caption>
+      <thead><tr><th scope="col">{copy.contextBudgetModel}</th><th scope="col">{copy.contextBudgetHistory}</th><th scope="col">{copy.contextBudgetMessage}</th></tr></thead>
+      <tbody>{routes.map(route => {
+        const effort = route.interactionMode === "manual" ? "low" : route.adapterEffort;
+        const limits = resolveChatGptWebContextLimits(route.backendModel, effort, capabilities);
+        const transport = resolveChatGptWebTransportLimits(route.backendModel, effort, capabilities);
+        const number = (value: number) => value.toLocaleString(snapshot.state.language || "en");
+        const oneMessage = transport.browserMessageTokenLimit !== undefined
+          ? `${number(transport.browserMessageTokenLimit)} ${copy.contextTokenUnit}`
+          : transport.browserComposerCharLimit !== undefined ? `${number(transport.browserComposerCharLimit)} ${copy.contextCharUnit}` : "—";
+        return <tr key={route.slug}><th scope="row">{route.displayName}</th><td>{number(limits.autoCompactTokenLimit)} {copy.contextTokenUnit}</td><td>{oneMessage}</td></tr>;
+      })}</tbody>
+    </table>
+    <p>{copy.contextBudgetEvidence}</p>
+  </div>;
 }
 
 function SettingRow({

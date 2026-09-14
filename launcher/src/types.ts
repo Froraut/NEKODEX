@@ -15,6 +15,9 @@ export interface LauncherState {
   showBrowserDuringTurns: boolean;
   browserInteractionMode: BrowserInteractionMode;
   experimentalBiggerContext: boolean;
+  pendingBiggerContext?: boolean | null;
+  contextChangeApplying?: boolean;
+  contextChangeError?: string | null;
   zeroRiskProEnabled: boolean;
   sidebarOpen: boolean;
   sidebarWidth: number;
@@ -22,6 +25,7 @@ export interface LauncherState {
   browserSmokeVersion?: string | null;
   coreSetupComplete?: boolean;
   codexCatalogVerified?: boolean;
+  codexPickerConfirmed?: boolean;
   mcpSetupComplete?: boolean;
   mcpRuntimeInstalled?: boolean;
   codexRestartRequired?: boolean;
@@ -130,6 +134,7 @@ export interface LauncherSnapshot {
   };
   state: LauncherState;
   proModelVersion: ProModelVersion | null;
+  contextCapabilities?: { solAvailable: boolean; proAvailable: boolean; extraHighAvailable?: boolean } | null;
   browser: BrowserState | null;
   connectorName: string;
   connectorNames: Record<BrowserInteractionMode, string>;
@@ -170,6 +175,8 @@ export interface RouteDiagnosticsReport {
 }
 
 export interface LauncherApi {
+  cancelContextChange(): Promise<LauncherState>;
+  confirmCodexModels(): Promise<LauncherState>;
   setupHermes(input?: { runtime: "codex_responses" | "codex_app_server"; makeDefault?: boolean }): Promise<{ provider: string; configPath: string; backupPath: string; baseUrl: string; defaultChanged: boolean }>;
   snapshot(): Promise<LauncherSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;

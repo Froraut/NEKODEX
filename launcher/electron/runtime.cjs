@@ -1482,7 +1482,11 @@ class RuntimeHost {
   }
 
   async runSetup(name, args, options) {
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
+    if (this.currentOperation()) {
+      const failure = new Error(`Another launcher operation is active: ${this.currentOperation()}`);
+      failure.code = "RUNTIME_BUSY";
+      throw failure;
+    }
     const previousRuntime = this.runtimeConfigSnapshot();
     const checkpoint = this.captureSetupCheckpoint(previousRuntime);
     this.lifecycleOperation = name;
@@ -1557,8 +1561,13 @@ class RuntimeHost {
         ...(rolledBack ? ["incomplete first-time setup was rolled back"] : []),
         ...failures,
       ].join("; ");
-      this.publishOperation?.({ name, status: "failed", message });
-      throw new Error(message);
+      const failure = new Error(message);
+      if (!failures.length && error?.code) failure.code = error.code;
+      const deferred = name === "bigger-context" && this.launcherProfile === "production"
+        && ["RUNTIME_NOT_IDLE", "RUNTIME_BUSY"].includes(failure.code);
+      this.publishOperation?.({ name, status: deferred ? "completed" : "failed",
+        message: deferred ? "Context change remains queued until active requests finish" : message });
+      throw failure;
     } finally {
       this.lifecycleOperation = null;
     }

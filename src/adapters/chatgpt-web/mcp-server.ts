@@ -120,8 +120,8 @@ function exactTool(environment: ChatGptTurnEnvironment, name: string): CodexTool
   return environment.tools.find(tool => !tool.namespace && tool.name === name);
 }
 
-function exactCodexAppTool(environment: ChatGptTurnEnvironment, name: string): CodexTool | undefined {
-  const candidates = environment.tools.filter(tool => tool.namespace === "mcp__codex_app" && tool.name === name);
+export function exactCodexAppTool(environment: ChatGptTurnEnvironment, name: string): CodexTool | undefined {
+  const candidates = environment.tools.filter(tool => wireName(tool) === `mcp__codex_app__${name}`);
   if (candidates.length > 1 || candidates.some(tool => tool.freeform)) {
     throw new Error(`The current outer Codex turn must advertise exactly one structured mcp__codex_app__${name} tool`);
   }

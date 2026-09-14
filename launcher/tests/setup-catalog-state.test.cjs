@@ -26,6 +26,7 @@ const { SetupSurface } = compile(declarations.map(node => node.getText(app)).joi
   api: new Proxy({}, { get() { throw new Error("Rendering setup must not call IPC"); } }),
   SectionHeading: ({ label }) => React.createElement("h2", null, label),
   NoticeRow: ({ children }) => React.createElement("aside", null, children),
+  PrimaryButton: ({ children, ...props }) => React.createElement("button", props, children),
   RouteDiagnostics: () => React.createElement("div", { "data-routing-check": "true" }, "routing check"),
   Icon: () => null, McpMark: () => null, ZeroRiskModelMenu: () => null,
 });
@@ -63,11 +64,19 @@ test("fresh setup does not claim installed and observed catalog completes the ge
   assert.ok(!fresh.includes(escaped(copy.stepInstallWaiting)));
   assert.ok(!fresh.includes('data-routing-check="true"'));
   assert.match(fresh, /class="next-surface-row" disabled=""/);
-  const complete = render("en", { coreSetupComplete: true, codexCatalogVerified: true });
+  const complete = render("en", { coreSetupComplete: true, codexCatalogVerified: true, codexPickerConfirmed: true });
   assert.ok(!complete.includes(escaped(copy.stepInstallWaiting)));
   assert.ok(!complete.includes('data-routing-check="true"'));
   assert.match(complete, /class="next-surface-row" type="button"/);
   assert.match(complete, /class="setup-row is-complete"/);
+});
+test("observed catalog still asks for actual picker confirmation", () => {
+  const copy = copyFor("en");
+  const html = render("en", { coreSetupComplete: true, codexCatalogVerified: true,
+    codexPickerConfirmed: false, codexRestartRequired: true, mcpSetupComplete: true });
+  assert.ok(html.includes(escaped(copy.confirmPicker)));
+  assert.ok(html.includes(escaped(copy.restartCodex)));
+  assert.ok(!html.includes(escaped(copy.setupReadyFull)));
 });
 test("DEV setup never waits for a production Codex catalog request", () => {
   const copy = copyFor("en");

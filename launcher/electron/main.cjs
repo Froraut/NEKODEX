@@ -31,6 +31,7 @@ const {
   registerLoggedIpcEvent,
 } = require("./logging.cjs");
 const { RuntimeHost } = require("./runtime.cjs");
+const { createContextChangeQueue } = require("./context-change-queue.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { DEVELOPMENT_PROFILE, resolveLauncherProfile } = require("./profile.cjs");
@@ -103,6 +104,7 @@ let lastOperation = null;
 let catalogVerificationTimer = null;
 let catalogVerificationInFlight = false;
 let updateController = null;
+let contextChangeQueue = null;
 let startupPhase = "runtime-files";
 
 function findFreePort() {
@@ -151,9 +153,8 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
         || health.successful_model_catalog_requests < 1) return;
       const state = stateStore.update({
         codexCatalogVerified: true,
-        codexRestartRequired: false,
       });
-      logger.info("codex.model_catalog_verified", {
+      logger.info("codex.model_catalog_served", {
         requests: health.successful_model_catalog_requests,
         at: health.last_successful_model_catalog_request_at,
       });
@@ -455,6 +456,11 @@ function registerIpc({ logger, stateStore }) {
     },
     state: stateStore.read(),
     proModelVersion: runtimeHost.proModelVersion(),
+    contextCapabilities: (() => {
+      const config = runtimeHost.runtimeConfigSnapshot().config;
+      return config ? { solAvailable: config.solAvailable === true, proAvailable: config.proAvailable === true,
+        ...(typeof config.extraHighAvailable === "boolean" ? { extraHighAvailable: config.extraHighAvailable } : {}) } : null;
+    })(),
     browser: browserHost?.snapshot() ?? null,
     connectorName: runtimeHost.browserConnectorName(),
     connectorNames: {
@@ -820,6 +826,14 @@ function registerIpc({ logger, stateStore }) {
     };
   });
   handle("launcher:bigger-context", async (_event, enabled) => {
+    if (typeof enabled !== "boolean") throw new Error("Context mode must be a boolean");
+    if (!IS_DEV_PROFILE) {
+      const current = runtimeHost.runtimeConfigSnapshot();
+      if (!current.configured || current.config?.browserInteractionMode === "manual") {
+        throw new Error("Install the automatic model route before changing Bigger Context");
+      }
+      return contextChangeQueue.request(enabled);
+    }
     const result = await runtimeHost.setBiggerContext(enabled === true);
     const state = stateStore.update({
       experimentalBiggerContext: result.enabled,
@@ -828,6 +842,16 @@ function registerIpc({ logger, stateStore }) {
     });
     send("launcher:state-changed", state);
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
+    return state;
+  });
+  handle("launcher:cancel-context-change", async () => contextChangeQueue.cancel());
+  handle("launcher:confirm-codex-models", async () => {
+    const current = stateStore.read();
+    if (!current.coreSetupComplete || !current.codexCatalogVerified || typeof current.pendingBiggerContext === "boolean") {
+      throw new Error("Wait for the configured model catalog before confirming the Codex picker");
+    }
+    const state = stateStore.update({ codexPickerConfirmed: true, codexRestartRequired: false });
+    send("launcher:state-changed", state);
     return state;
   });
   handle("launcher:zero-risk-pro", async (_event, enabled) => {
@@ -958,6 +982,7 @@ async function requestQuit() {
     browserHost?.destroy();
     await browserControl?.close();
     exitCommitted = true;
+    contextChangeQueue?.stop();
     app.quit();
     return { ok: true };
   } catch (error) {
@@ -1080,6 +1105,29 @@ async function start() {
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
   });
   const configuredInteractionMode = runtimeHost.runtimeConfigSnapshot().config?.browserInteractionMode;
+  contextChangeQueue?.stop();
+  contextChangeQueue = createContextChangeQueue({
+    read: () => stateStore.read(),
+    write: patch => { const state = stateStore.update(patch); send("launcher:state-changed", state); },
+    ready: async () => {
+      if (quitting || shutdownInProgress || runtimeHost.currentOperation()) return false;
+      const current = runtimeHost.runtimeConfigSnapshot();
+      if (!current.configured || current.config?.browserInteractionMode === "manual") {
+        throw new Error("Pending context change requires an installed automatic model route");
+      }
+      const health = await runtimeSupervisor.proxyHealthPayload(current.config).catch(() => null);
+      return health?.status === "ok" && health.accepting_turns === true
+        && health.active_http_turns === 0 && health.active_browser_turns === 0
+        && health.active_compaction_runs === 0;
+    },
+    apply: enabled => runtimeHost.setBiggerContext(enabled),
+    onApplied: enabled => {
+      const state = stateStore.update({ experimentalBiggerContext: enabled, codexCatalogVerified: false,
+        codexPickerConfirmed: false, codexRestartRequired: true, contextChangeError: null });
+      send("launcher:state-changed", state);
+      startCatalogVerificationMonitor({ logger, stateStore });
+    },
+  });
   if ((configuredInteractionMode === "automatic" || configuredInteractionMode === "manual")
     && stateStore.read().browserInteractionMode !== configuredInteractionMode) {
     stateStore.update({ browserInteractionMode: configuredInteractionMode });
@@ -1103,6 +1151,7 @@ async function start() {
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
   });
   await browserHost.ready();
+  if (!IS_DEV_PROFILE) contextChangeQueue.start();
   const updaterRuntimeRoot = runtimeRootProvider();
   updateController = createUpdateController({
     currentVersion: app.getVersion(),

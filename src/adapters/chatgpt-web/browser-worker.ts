@@ -769,6 +769,15 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
   );
 }
 
+export async function throwIfChatGptSubmissionDialog(page: Page): Promise<void> {
+  const dialogs = page.locator('[role="dialog"], [role="alertdialog"]').filter({ visible: true });
+  if (await dialogs.count() === 0) return;
+  throw new ChatGptWebAdapterError(
+    "ChatGPT is showing a dialog that blocks submission. Review it in Codex Web GPT, then retry the task.",
+    { status: 409, errorType: "invalid_request_error", code: "chatgpt_submission_dialog", retryable: false },
+  );
+}
+
 const chatGptTemporaryChatOnboardingDialog = (page: Page): Locator => page
   .locator('[role="dialog"]')
   .filter({ hasText: "Not in history" })
@@ -1234,6 +1243,7 @@ interface ChatGptSubmissionBaseline {
   userTurns: Locator;
   responseTurns: Locator;
   initialTurnIdentities: readonly string[];
+  acknowledgedStages?: readonly string[];
   domCache: ChatGptSubmissionDomCache;
 }
 
@@ -1262,6 +1272,7 @@ interface ChatGptSubmissionDomState {
   turnIdentities: string[];
   userIdentities: string[];
   responseIdentities: string[];
+  acknowledgementTurns?: Array<{ identity: string; text: string }>;
 }
 
 interface ChatGptSubmissionDomCache {
@@ -1400,6 +1411,21 @@ export async function setChatGptThinkMode(
     }
   }
   await captureDiagnostic?.(enabled ? "think-enabled" : "think-disabled");
+}
+
+export function chatGptStagedBaselineIdentities(
+  initial: readonly string[],
+  acknowledgedStages: readonly string[] = [],
+  observed: readonly { identity: string; text: string }[] = [],
+): readonly string[] {
+  if (!acknowledgedStages.length) return initial;
+  const identities = new Set(initial);
+  for (const acknowledgement of acknowledgedStages) {
+    const matching = observed.filter(turn => turn.text === acknowledgement);
+    if (matching.length > 1) throw new Error("ChatGPT exposed duplicate acknowledged context stages");
+    if (matching[0]) identities.add(matching[0].identity);
+  }
+  return [...identities];
 }
 
 export function chatGptNewTurnIdentity(
@@ -2704,6 +2730,9 @@ export class ChatGptBrowserWorker {
         evidence = await this.currentSubmissionEvidence(page, baseline, signal);
       }
       if (evidence) return evidence;
+      // A tool approval can appear after acceptance. Only report a blocking dialog
+      // when neither the DOM nor the native tool broker has accepted this submission.
+      await throwIfChatGptSubmissionDialog(page);
       await this.waitForTurnDomOrExternalProgress(
         page,
         progress?.revision ?? 0,
@@ -2771,6 +2800,13 @@ export class ChatGptBrowserWorker {
       const turnIdentities = identities(containers, "data-turn-id-container");
       const userIdentities = identities([...document.querySelectorAll(options.userTurnSelector)], "data-turn-id");
       const responseIdentities = identities([...document.querySelectorAll(options.assistantTurnSelector)], "data-turn-id");
+      // Retained staging acknowledgements can receive new DOM IDs when ChatGPT switches
+      // to Pro. Only the exact transaction-bound, already-validated ACK is historical proof.
+      const acknowledgementTurns = [...document.querySelectorAll(options.assistantTurnSelector)].flatMap(element => {
+        const text = [...(element.querySelectorAll?.(".markdown") ?? [])].map(node => node.textContent ?? "").join("\n").trim();
+        const identity = element.getAttribute("data-turn-id");
+        return identity && text.length <= 180 && text.startsWith("CODEX_MULTIPART_ACK ") ? [{ identity, text }] : [];
+      });
       const knownTurns = new Set(turnIdentities);
       if ([...userIdentities, ...responseIdentities].some(identity => !knownTurns.has(identity))) {
         throw new Error("ChatGPT conversation turn has no matching identity container");
@@ -2784,6 +2820,7 @@ export class ChatGptBrowserWorker {
           turnIdentities,
           userIdentities,
           responseIdentities,
+          acknowledgementTurns,
         },
       };
     }, {
@@ -2811,6 +2848,7 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
   ): Promise<ChatGptSubmissionEvidence | undefined> {
     const state = await this.submissionDomState(page, baseline.domCache, signal);
+    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
     return chatGptSubmissionEvidence({
       initialTurnIdentities: baseline.initialTurnIdentities,
       userIdentities: state.userIdentities,
@@ -2825,6 +2863,7 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
   ): Promise<string> {
     const state = await this.submissionDomState(page, baseline.domCache, signal);
+    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
     const identity = chatGptNewTurnIdentity(
       baseline.initialTurnIdentities,
       state.responseIdentities,
@@ -2916,6 +2955,7 @@ export class ChatGptBrowserWorker {
         continue;
       }
       recoveryAttempts = 0;
+      observationBaseline.initialTurnIdentities = chatGptStagedBaselineIdentities(observationBaseline.initialTurnIdentities, observationBaseline.acknowledgedStages, state.acknowledgementTurns);
       // A tool batch can arrive while the DOM probe is in flight. Read progress again before
       // acknowledging its boundary; the pre-probe snapshot can otherwise leave the broker waiting
       // despite this exact iteration having successfully observed the page.
@@ -2970,6 +3010,7 @@ export class ChatGptBrowserWorker {
       throw new Error(`ChatGPT exposed ${boundCount} DOM nodes for the bound assistant turn`);
     }
     const state = await this.submissionDomState(page, baseline.domCache, signal);
+    baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
     const acceptedTurns = new Set(binding.acceptedTurnIdentities);
     if (state.userIdentities.some(identity => !acceptedTurns.has(identity))) {
       throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
@@ -3469,6 +3510,7 @@ export class ChatGptBrowserWorker {
       }
       await settleChatGptUi();
     }
+    await throwIfChatGptSubmissionDialog(page);
     await captureDiagnostic?.("send-ready");
     if (expectedMode?.modelVersion) {
       // Connector attachment, file handling or a user action can reset the picker after selection.
@@ -4809,6 +4851,7 @@ export class ChatGptBrowserWorker {
       }
 
       let submissionBaseline = await this.captureSubmissionBaseline(page);
+      submissionBaseline.acknowledgedStages = multipartStages?.map(stage => stage.acknowledgement);
       let catalogRefreshAvailable = mode.localTools && !reuseConversation && !prepared.multipart;
       const connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
       for (;;) {

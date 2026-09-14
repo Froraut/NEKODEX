@@ -61,6 +61,49 @@ configuration was parsed and inspected; a million-token workload was not sent.
 
 ## Outcomes
 
+### Later Bigger Context incident and pre11 recovery work
+
+The user subsequently enabled Bigger Context. The running pre10 bridge then used its larger
+profile (285,000-token automatic compaction budget). This supersedes the earlier 95,000-token
+configuration observation above; it does not establish that a 285,000-token round trip passed.
+
+An actual desktop Web Pro task first completed native task reads and commands. A later turn
+made no native tool calls and answered that tools were unavailable. That sentence alone does
+not identify a transport failure or a cloud-side policy decision. The next compaction failed
+after about 813 seconds. The server continued answering health requests throughout.
+
+The compaction trace showed a multipart send waiting for its three-minute stage deadline,
+followed by another attempt that received both staging acknowledgements and switched to Pro.
+The final observation failed with `ChatGPT exposed 3 new conversation turns for one submitted
+message`. Sanitized snapshots showed two retained acknowledgements and one new response.
+Rekeying of the retained acknowledgements during the model switch is a plausible explanation;
+the diagnostic did not record their logical IDs, so it is not claimed as a directly captured fact.
+
+Pre11 now recognizes a remounted staging acknowledgement only by the exact transaction-bound
+text that was already verified for this request. Unrecognized or duplicated turns still fail
+closed. It also reports a visible blocking submission dialog immediately instead of silently
+waiting through the send deadline; accepted requests and subsequent tool approvals retain
+their existing handling. Native app-tool lookup accepts either canonical flat names or the
+equivalent namespace/name pair, while still rejecting ambiguous and freeform exports. This
+compatibility change does not prove the reason for the separate no-tools model answer.
+
+The same release preparation queues context changes until the runtime is idle, exposes the
+active context profile separately from a queued choice, and requires an explicit confirmation
+that Web models appeared in the desktop picker. Serving a model catalog cannot satisfy that
+confirmation. Local developer packaging can reuse the exact installed Electron version;
+publisher builds retain their normal signed release acquisition path.
+
+Three focused multipart/dialog/tool-name regressions passed, in addition to the three focused
+queue/readiness cases already run for these changes. No full suite, new image generation,
+exhaustive tool sweep or large-context workload was run. **The original large Pro task has not
+yet been shown completing on pre11.** These are source-level fixes and bounded evidence, not
+a claim that every bridge path is now reliable.
+
+Apple confirmed the existing individual developer account is Account Holder; no new team was
+needed. A new Developer ID Application certificate was issued. Its browser download was
+blocked locally before a certificate file was saved, and the separate CLI authentication and
+notarization remain pending. No publisher-signed GitHub release is claimed by this report.
+
 | Path | Observed result | Boundary |
 | --- | --- | --- |
 | Native Codex → ChatGPT Web High → MCP → native file read → final answer | **Passed** in 51.25 seconds, CLI exit 0. The file contained a random marker withheld from the prompt; the received answer matched it exactly. | One real read-only task, not all models, tools or operating systems. |

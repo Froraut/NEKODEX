@@ -2809,3 +2809,9 @@ code {
     transition-duration: 0.01ms !important;
   }
 }
+
+.context-budget-table { overflow-x: auto; margin: 16px 0 24px; }
+.context-budget-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.context-budget-table caption { text-align: left; font-weight: 600; padding: 8px 0; }
+.context-budget-table th, .context-budget-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--color-border-light); }
+.context-budget-table p { color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }

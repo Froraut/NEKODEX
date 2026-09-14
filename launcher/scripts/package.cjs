@@ -44,6 +44,15 @@ const builderArgs = [
   "--publish",
   "never",
 ];
+// Developer builds can reuse the exact Electron package already installed by
+// the lockfile instead of requiring a second network download during packaging.
+// Publisher builds retain the release pipeline's normal artifact acquisition.
+const installedElectronDist = path.join(root, "node_modules", "electron", "dist");
+const installedElectronVersion = path.join(installedElectronDist, "version");
+if (!signing.release && fs.existsSync(installedElectronVersion)
+  && fs.readFileSync(installedElectronVersion, "utf8").trim() === launcherManifest.devDependencies.electron) {
+  builderArgs.push(`--config.electronDist=${installedElectronDist}`);
+}
 if (signing.release && process.platform !== "linux") {
   builderArgs.push("--config.forceCodeSigning=true");
   if (target === "--mac") builderArgs.push("--config.mac.notarize=true", `--config.mac.identity=${env.CSC_NAME.replace(/^Developer ID Application:\s*/, "")}`);

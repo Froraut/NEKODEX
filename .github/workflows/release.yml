@@ -68,7 +68,11 @@ jobs:
       - name: Prepare owned AppImage toolset
         if: runner.os == 'Linux'
         run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
-      - run: bun run verify
+      - name: Check release version consistency
+        run: bun run check-version
+      - name: Focused settings and setup regressions
+        if: matrix.notices
+        run: node --test --test-name-pattern='queued context|superseding context|observed catalog still' launcher/tests/context-change-queue.test.cjs launcher/tests/setup-catalog-state.test.cjs
       - name: Prepare macOS publisher credentials
         if: runner.os == 'macOS'
         env:

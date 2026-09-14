@@ -15,6 +15,9 @@ const DEFAULT_STATE = Object.freeze({
   showBrowserDuringTurns: true,
   browserInteractionMode: "automatic",
   experimentalBiggerContext: false,
+  pendingBiggerContext: null,
+  contextChangeApplying: false,
+  contextChangeError: null,
   zeroRiskProEnabled: false,
   browserSmokePassed: false,
   browserSmokeVersion: null,
@@ -34,6 +37,10 @@ function readState(filePath) {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
     const state = { ...DEFAULT_STATE, ...parsed };
+    state.contextChangeApplying = false;
+    if (typeof state.pendingBiggerContext !== "boolean") state.pendingBiggerContext = null;
+    if (typeof state.contextChangeError !== "string") state.contextChangeError = null;
+    if (state.coreSetupComplete === true && state.codexPickerConfirmed !== true) state.codexRestartRequired = true;
     delete state.bridgeEnabled;
     if (state.language !== null && state.language !== "en" && state.language !== "zh-CN" && state.language !== "ja") {
       state.language = DEFAULT_STATE.language;
@@ -79,6 +86,7 @@ function readState(filePath) {
     for (const key of [
       "coreSetupComplete",
       "codexCatalogVerified",
+      "codexPickerConfirmed",
       "mcpSetupComplete",
       "mcpRuntimeInstalled",
       "codexRestartRequired",
@@ -113,6 +121,7 @@ function createStateStore(filePath) {
     },
     update(patch) {
       const next = { ...state, ...patch, version: 1 };
+      if (patch.codexCatalogVerified === false) next.codexPickerConfirmed = false;
       writeState(filePath, next);
       state = next;
       return structuredClone(next);
