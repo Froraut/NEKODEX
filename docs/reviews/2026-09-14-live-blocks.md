@@ -2,7 +2,7 @@
 
 Initial evidence: **5.1.0-froraut.9**, macOS arm64. The later native-runtime resolution is installed in **5.1.0-froraut.10**. This continues the [issue/PR investigation](2026-09-14-investigation.md).
 
-## Latest desktop verification: restart still required
+## Latest desktop verification: resolved after the approved restart
 
 After the user paused Hermes work and selected the main Codex/Web route, a new ephemeral
 Codex CLI request using `chatgpt-web/high` completed in **23.26 seconds**, exit 0. Its final
@@ -15,15 +15,20 @@ metadata. After backing up that cache and asking Codex's normal resolver to fetc
 resolver returned all thirteen entries: the eight native entries plus Web Instant, Medium,
 High, Extra High and Pro. The shared cache subsequently reverted to the native-only catalog.
 This is consistent with an already-running client retaining its earlier model route; the
-individual cache writer was not instrumented. A clean desktop restart is the next required
-verification step, followed by inspecting its actual picker. Other active desktop tasks were
-left running, so this restart was not performed without the user's decision.
+individual cache writer was not instrumented. The user first deferred the full desktop restart,
+then explicitly approved it despite the active tasks. The old desktop process exited and the
+application reopened successfully. Its catalog then contained all thirteen entries, and the
+actual desktop UI displayed the selected **ChatGPT Web — Instant** model. This resolves the
+observed missing-picker problem for the installed client without changing its binary or using
+a static replacement catalog.
 
 The launcher's catalog-request indicator proves the bridge served a catalog to a client. It
 does **not** prove the current desktop picker consumed it; a CLI or another process can satisfy
 that indicator. The earlier setup-complete state below must not be read as proof that the
-desktop's Web model selection is already working. Core model responses and the earlier native
-file/tool/final-answer cycle passed; desktop picker completion is still pending.
+desktop's Web model selection was already working before the restart. Core model responses,
+the earlier native file/tool/final-answer cycle and the subsequent desktop Web selection are
+now separate observed passes. Image generation, every model tier and every native tool were
+not re-exercised as part of this narrow restart check.
 
 ## Outcomes
 
