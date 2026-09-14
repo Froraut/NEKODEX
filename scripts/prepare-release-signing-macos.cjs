@@ -19,12 +19,19 @@ function security(args) {
   const result = spawnSync("security", args, { stdio: "pipe" });
   // Never echo commands or keychain/import output containing credential context.
   if (result.error || result.status !== 0) throw new Error(`Temporary release keychain ${args[0]} failed (exit ${result.status ?? "unavailable"})`);
+  return result.stdout.toString("utf8");
 }
 security(["create-keychain", "-p", password, keychain]);
 security(["set-keychain-settings", "-lut", "21600", keychain]);
 security(["unlock-keychain", "-p", password, keychain]);
 security(["import", certificate, "-P", env.CSC_KEY_PASSWORD, "-k", keychain, "-T", "/usr/bin/codesign"]);
 security(["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychain]);
+// codesign can resolve the identity from --keychain but still needs its private
+// key in the user's search list. Preserve the runner's existing keychains.
+const existingKeychains = [...security(["list-keychains", "-d", "user"]).matchAll(/"([^"\r\n]+)"/g)].map(match => match[1]);
+security(["list-keychains", "-d", "user", "-s", keychain, ...existingKeychains.filter(item => item !== keychain)]);
+const identities = security(["find-identity", "-v", "-p", "codesigning", keychain]);
+if (!identities.includes(`"${env.CSC_NAME}"`)) throw new Error("Imported keychain has no valid expected Developer ID identity; include its certificate chain in the PKCS12 export");
 fs.rmSync(certificate);
 for (const [name, value] of Object.entries({ CODEX_WEB_GPT_SIGNING_KEYCHAIN: keychain, CSC_KEYCHAIN: keychain, APPLE_API_KEY: apiKey })) {
   if (/[\r\n]/.test(value)) throw new Error("Invalid release credential file path");

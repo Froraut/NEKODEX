@@ -137,6 +137,10 @@ default protection failed at `security import` on both macOS runners. Exporting 
 through a private password file, and the same certificate/key succeeded in a temporary local
 keychain. Store only the encrypted container and password in the designated GitHub secrets;
 never put either in command output or tracked files.
+Include the public Developer ID intermediate certificate chain in that export, so a clean
+runner does not depend on a previously cached issuer certificate. Preparation adds the
+temporary keychain to the runner's user search list and checks for the exact valid identity
+before packaging. The cleanup step deletes that temporary keychain.
 
 CI prepares a temporary keychain,
 imports the approved certificate, and deletes it and the temporary API key even when later steps
