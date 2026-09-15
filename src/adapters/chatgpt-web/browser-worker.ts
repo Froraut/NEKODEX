@@ -1,3 +1,4 @@
+import { stabilizeEffortSlider } from "./effort-stabilization";
 import { CHATGPT_TRACE_BUFFER_BYTES, assertByteLimit, retainedRecordBytes } from "./resource-budgets";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
@@ -2421,6 +2422,7 @@ export class ChatGptBrowserWorker {
     capabilities: ChatGptWebCapabilities,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     stageModelVersion?: ChatGptWebProModelVersion,
+    abortSignal?: AbortSignal,
   ): Promise<ChatGptWebModelMode> {
     const mode = resolveChatGptWebModelMode(modelId, reasoning, capabilities);
     const composer = await this.activeComposer(page);
@@ -2522,10 +2524,11 @@ export class ChatGptBrowserWorker {
     } finally {
       waitAbort.abort();
     }
-    let sliderState = parseChatGptEffortSliderState(
-      await effortSlider.getAttribute("aria-valuemin"),
-      await effortSlider.getAttribute("aria-valuemax"),
-      await effortSlider.getAttribute("aria-valuenow"),
+    const readOptions = { timeout: 1_000, signal: abortSignal };
+    const sliderState = parseChatGptEffortSliderState(
+      await effortSlider.getAttribute("aria-valuemin", readOptions),
+      await effortSlider.getAttribute("aria-valuemax", readOptions),
+      await effortSlider.getAttribute("aria-valuenow", readOptions),
     );
     if (!sliderState) {
       throw chatGptModelControlUnavailableAdapterError(
@@ -2547,33 +2550,25 @@ export class ChatGptBrowserWorker {
       );
     }
     const sliderControl = effortSlider.locator("xpath=ancestor::*[@role='menuitem'][1]");
-    while (sliderState.value !== targetValue) {
-      await throwIfChatGptRateLimitDialog(page);
-      const direction = targetValue > sliderState.value ? 1 : -1;
-      const key = direction > 0 ? "ArrowRight" : "ArrowLeft";
-      const previousValue = sliderState.value;
-      await sliderControl.press(key);
-      const changeDeadline = Date.now() + 5_000;
-      do {
-        sliderState = parseChatGptEffortSliderState(
-          await effortSlider.getAttribute("aria-valuemin"),
-          await effortSlider.getAttribute("aria-valuemax"),
-          await effortSlider.getAttribute("aria-valuenow"),
-        );
-        if (!sliderState) {
-          throw chatGptModelControlUnavailableError(
-            "ChatGPT effort slider lost its semantic ARIA state",
+    try {
+      await stabilizeEffortSlider({
+        target: targetValue,
+        signal: abortSignal,
+        read: async options => {
+          await throwIfChatGptRateLimitDialog(page);
+          return parseChatGptEffortSliderState(
+            await effortSlider.getAttribute("aria-valuemin", options),
+            await effortSlider.getAttribute("aria-valuemax", options),
+            await effortSlider.getAttribute("aria-valuenow", options),
           );
-        }
-        if (sliderState.value !== previousValue) break;
-        await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
-      } while (Date.now() < changeDeadline);
-      if (sliderState.value !== previousValue + direction) {
-        throw chatGptModelControlUnavailableError(
-          `ChatGPT effort slider did not move exactly one step with ${key}`
-          + ` (before=${previousValue}; after=${sliderState.value})`,
-        );
-      }
+        },
+        press: (key, options) => sliderControl.press(key, options),
+      });
+    } catch (error) {
+      if (abortSignal?.aborted || error instanceof ChatGptWebAdapterError) throw error;
+      throw chatGptModelControlUnavailableError(
+        error instanceof Error ? error.message : "ChatGPT effort selection failed",
+      );
     }
     if (modelVersion) await assertChatGptSelectedModelVersion(page, effortSlider, modelVersion, mode.effort === "max", mode.effort, 1_000);
     await captureDiagnostic?.("effort-selected");
@@ -4753,6 +4748,7 @@ export class ChatGptBrowserWorker {
           browserCapabilities,
           checkpoint => diagnostics.capture(page, checkpoint),
           requestedMode.modelVersion,
+          abortSignal,
         )
       ));
       await diagnostics.capture(page, "effort-selection-complete");
@@ -4855,6 +4851,7 @@ export class ChatGptBrowserWorker {
               browserCapabilities,
               checkpoint => diagnostics.capture(page, `final-part-${checkpoint}`),
               requestedMode.modelVersion,
+              abortSignal,
             ),
           );
           await diagnostics.capture(page, "final-part-effort-selected");
@@ -4915,6 +4912,7 @@ export class ChatGptBrowserWorker {
                 turn.capabilities,
                 checkpoint => diagnostics.capture(page, checkpoint),
                 requestedMode.modelVersion,
+                abortSignal,
               );
               submissionBaseline = await this.captureSubmissionBaseline(page);
             },

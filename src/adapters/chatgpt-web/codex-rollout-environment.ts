@@ -27,9 +27,10 @@ type RolloutIdentity = ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
 /** Authenticate a cross-task delivery against the native current-turn journal.
  * HTTP input is only a claim; neither a matching tool name nor XML is authority. */
 export function verifyNativeDelegation(codexHome: string, threadId: string, turnId: string,
-  claimed: Record<string, unknown>): boolean {
+  claimed: Record<string, unknown>, lineage?: ChatGptThreadSpawnLineage): boolean {
   if (!CODEX_ID.test(threadId) || !CODEX_ID.test(turnId)) return false;
-  const owner: ChatGptRootThreadMetadata = { threadId, sandboxType: "platform", workspaceRoots: [] };
+  if (lineage && lineage.threadId !== threadId) return false;
+  const owner: RolloutIdentity = lineage ?? { threadId, sandboxType: "platform", workspaceRoots: [] };
   const indexed = indexedRollout(configuredSqliteHome(codexHome), owner);
   if (indexed.kind !== "found") return false;
   const filename = validateRolloutPath(codexHome, indexed.path, threadId);
@@ -51,7 +52,7 @@ export function verifyNativeDelegation(codexHome: string, threadId: string, turn
       const payload = record(event?.payload);
       if (event?.type === "turn_context") break;
       if (event?.type !== "response_item" || !payload || payload.id !== claimed.id) continue;
-      return ["type", "id", "name", "namespace", "output", "internal_chat_message_metadata_passthrough"]
+      return ["type", "id", "call_id", "name", "namespace", "output", "internal_chat_message_metadata_passthrough"]
         .every(key => isDeepStrictEqual(payload[key], claimed[key]));
     }
     return false;

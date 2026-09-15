@@ -1,3 +1,4 @@
+import { isVerifiedParentMessage } from "./verified-parent-message";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
@@ -160,7 +161,7 @@ export function unattributedChatGptEnvironmentMessages(
   return messages.length > 0 ? messages : undefined;
 }
 
-function contextualUserMessage(value: Record<string, unknown>): boolean {
+export function contextualUserMessage(value: Record<string, unknown>): boolean {
   const text = rawMessageText(value).trim();
   return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text)
     || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/.test(text)
@@ -173,6 +174,11 @@ function isUserOrParentInstruction(
   item: Record<string, unknown> | undefined,
   metadata?: Record<string, unknown>,
 ): item is Record<string, unknown> {
+  if (item && isVerifiedParentMessage(item)) {
+    return metadata?.subagent_kind === "thread_spawn" && metadata.request_kind === "turn"
+      && item.recipient === metadata.thread_id && item.author === metadata.parent_thread_id
+      && itemTurnId(item) === metadata.turn_id;
+  }
   if (item?.type === "message" && item.role === "user") return !contextualUserMessage(item);
   if (item?.type !== "agent_message" || typeof item.id !== "string" || !item.id
     || metadata?.subagent_kind !== "thread_spawn"

@@ -120,6 +120,21 @@ function conciseTunnelLog(value) {
   return redacted.length > 800 ? `…${redacted.slice(-800)}` : redacted;
 }
 
+// A successful-looking control response only permits the independent readiness probes.
+function tunnelConnectCanContinue(result) {
+  try {
+    const value = JSON.parse(result.stdout);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const states = [value.runtime_state, value.state, value.status].filter(state => state != null);
+    if (!states.length || states.some(state => state !== states[0])) return false;
+    const hasError = [value.error, value.remote_error, value.stop_error].some(error =>
+      error != null && error !== false && !(typeof error === "string" && !error.trim()));
+    if (hasError || value.process_running !== true) return false;
+    return states[0] === "ready" ? value.healthy === true && value.ready === true
+      : states[0] === "starting" && value.ready === false;
+  } catch { return false; }
+}
+
 function tunnelControlDiagnostic(result) {
   const stdout = typeof result?.stdout === "string" ? result.stdout.trim() : "";
   const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
@@ -1006,7 +1021,7 @@ class RuntimeSupervisor {
       if (stopped.code === 0) await this.waitForTunnelStopped(config);
       this.tunnelHealthBaseUrl = null;
       const connected = await this.runTunnelConnectCommand(config);
-      if (connected.code !== 0) {
+      if (connected.code !== 0 && !tunnelConnectCanContinue(connected)) {
         throw new Error(
           `tunnel runtime refused managed startup: ${tunnelControlDiagnostic(connected)}`,
         );
