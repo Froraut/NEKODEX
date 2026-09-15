@@ -185,7 +185,7 @@ function publishStagedArtifacts() {
       fs.mkdirSync(prepared);
     }
     for (const entry of fs.readdirSync(prepared, { withFileTypes: true })) {
-      if (entry.isFile() && artifactExtension.test(entry.name)) {
+      if ((entry.isFile() || entry.isSymbolicLink()) && artifactExtension.test(entry.name)) {
         fs.rmSync(path.join(prepared, entry.name));
       }
     }

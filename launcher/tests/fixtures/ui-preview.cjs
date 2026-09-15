@@ -53,12 +53,14 @@ function installMockLauncher() {
         active: false, canCancel: false, canCopySettings: true, canAllowFileAccess: true, error: "chrome-profile-access-denied" } });
     operation = { name: "existing-chrome-login", status: "failed", message: "Fixture Chrome access was denied" };
   }
+  let update = scenario === "update-recheck" ? { status: "error", message: "Fixture offline" } : { status: "disabled" };
   const snapshot = () => ({
     profile: scenario === "models-ready" || scenario === "tools-pending" ? "production" : "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
     connectorNames: { automatic: "Fixture connector", manual: "Fixture manual" }, mcpCredentialsConfigured: scenario === "tools-pending",
     logs: [], urls: { github: "https://github.com/Froraut/NEKODEX", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
-    platform: "darwin", packaged: false, version: "fixture", smokePassed: state.browserSmokePassed, operation, update: { status: "disabled" },
+    browserCapacity: { configured: 16, active: 16, maximum: 1000, restartRequired: false },
+    platform: "darwin", packaged: false, version: "fixture", smokePassed: state.browserSmokePassed, operation, update,
   });
   let startupAttempts = 0;
   const calls = [];
@@ -68,6 +70,7 @@ function installMockLauncher() {
       if (scenario === "startup-error" && startupAttempts++ === 0) throw new Error("Error invoking remote method 'launcher:snapshot': Error: Fixture runtime unavailable");
       return snapshot();
     },
+    recheckUpdate: async () => { calls.push(["update-recheck"]); update = { status: "up-to-date" }; emit("update", update); return update; },
     onStateChanged: listen("state"), onBrowserState: listen("browser"), onOperation: listen("operation"), onLog: listen("log"), onUpdateState: listen("update"),
     setBrowserBounds: async () => true,
     setBrowserSurfaceActive: async (active) => { browser.surfaceActive = active; return { ...browser }; },

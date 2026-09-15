@@ -798,6 +798,21 @@ export class ChatGptTurnSessions {
   ): Promise<number> {
     const inFlight = this.conversationRetirements.get(conversationKey);
     if (inFlight) {
+      const pendingObligation = this.retainedReleases.get(conversationKey);
+      if (preserved && pendingObligation) {
+        if (pendingObligation.preserved && (pendingObligation.preserved.session !== preserved.session
+          || pendingObligation.preserved.executionKey !== preserved.executionKey)) {
+          throw new Error("ChatGPT retained-conversation preservation changed during release retry");
+        }
+        if (!pendingObligation.matches.some(([, session]) => session === preserved.session)) {
+          throw new Error("The final ChatGPT response does not own the retained conversation being retired");
+        }
+        const target = this.entries.get(preserved.executionKey);
+        if (target && target !== preserved.session) {
+          throw new Error("The compacted ChatGPT response execution key is already owned by another session");
+        }
+        pendingObligation.preserved = preserved;
+      }
       await inFlight;
       const obligation = this.retainedReleases.get(conversationKey);
       if (obligation) return this.closeConversationAndWait(conversationKey, obligation.preserved);

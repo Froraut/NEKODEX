@@ -961,6 +961,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     saveConfig(config);
   } catch (error) {
     const rollbackFailures: string[] = [];
+    let configRestored = true;
     const attempt = (label: string, action: () => void): void => {
       try { action(); } catch (caught) {
         rollbackFailures.push(`${label}: ${caught instanceof Error ? caught.message : String(caught)}`);
@@ -974,11 +975,16 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
       }
       restoreFileSnapshot(configBefore);
     });
+    if (configPlanned && rollbackFailures.length > 0) configRestored = false;
+    if (!configPlanned && !sameSnapshot(snapshotFile(getConfigPath()), configBefore)) {
+      configRestored = false;
+      rollbackFailures.push("DEV config changed during setup; preserving the concurrent edit");
+    }
     if (validationTunnelRunning) attempt("DEV validation tunnel", () => {
       stopTunnel(config);
       validationTunnelRunning = false;
     });
-    if (!validationTunnelRunning && profileBefore && profileOwned && !sameSnapshot(profileBefore, profileOwned)) {
+    if (configRestored && !validationTunnelRunning && profileBefore && profileOwned && !sameSnapshot(profileBefore, profileOwned)) {
       attempt("DEV tunnel profile", () => {
         if (!sameSnapshot(snapshotFile(profileOwned!.path), profileOwned!)) {
           throw new Error("changed after setup; preserving the concurrent edit");
@@ -992,13 +998,17 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     if (validationTunnelRunning) {
       rollbackFailures.push("DEV validation tunnel may still be running; preserving its profile for manual recovery");
     }
-    attempt("DEV tunnel client", () => restoreTunnelClientInstallation(clientBefore, clientOwned));
-    if (!sameSnapshot(keyBefore, keyOwned)) attempt("DEV runtime key", () => {
-      if (!sameSnapshot(snapshotFile(keyPath), keyOwned)) {
-        throw new Error("changed after setup; preserving the concurrent edit");
-      }
-      restoreFileSnapshot(keyBefore);
-    });
+    if (configRestored && !validationTunnelRunning) {
+      attempt("DEV tunnel client", () => restoreTunnelClientInstallation(clientBefore, clientOwned));
+      if (!sameSnapshot(keyBefore, keyOwned)) attempt("DEV runtime key", () => {
+        if (!sameSnapshot(snapshotFile(keyPath), keyOwned)) {
+          throw new Error("changed after setup; preserving the concurrent edit");
+        }
+        restoreFileSnapshot(keyBefore);
+      });
+    } else {
+      rollbackFailures.push("DEV config or validation tunnel remains active; preserving tunnel client and runtime key for manual recovery");
+    }
     const primary = error instanceof Error ? error.message : String(error);
     throw new Error(rollbackFailures.length
       ? `${primary}; DEV setup rollback also failed: ${rollbackFailures.join("; ")}` : primary);

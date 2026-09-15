@@ -201,12 +201,15 @@ class AccountBrowserPool {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
     for (const account of this.registry.snapshot().accounts.filter(account => account.enabled)) {
       const host = this.getHost(account.id);
+      this.capabilities.delete(account.id);
+      this.connectors.delete(account.id);
       try {
         await host.refreshAuthentication();
         if (host.state.authenticated) this.capabilities.set(account.id, await host.inspectSession(true));
       }
       catch (error) { this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message }); }
     }
+    this.publish();
     return this.snapshot();
   }
   async inspectSession(detectCapabilities, accountId) {
