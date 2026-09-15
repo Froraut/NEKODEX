@@ -19,6 +19,7 @@ const MAX_CONTROL_OUTPUT_BYTES = 1024 * 1024;
 const DRAIN_IDLE_TIMEOUT_MS = 15_000;
 const DRAIN_POLL_INTERVAL_MS = 100;
 const TUNNEL_START_TIMEOUT_MS = 120_000;
+const RECOVERY_SHUTDOWN_SETTLEMENT_MS = 3_000;
 const TUNNEL_HEALTH_POLL_INTERVAL_MS = 1_000;
 const TUNNEL_MONITOR_INTERVAL_MS = 10_000;
 const TUNNEL_MONITOR_FAILURE_THRESHOLD = 3;
@@ -378,6 +379,10 @@ class RuntimeSupervisor {
     this.tunnelMonitorGeneration = 0;
     this.tunnelHealthBaseUrl = null;
     this.recoveryTasks = new Set();
+    this.recoveryControllers = new Set();
+    this.shutdownRequested = false;
+    this.shutdownResumeAllowed = false;
+    this.recoveryAliasMayBeLive = false;
     this.expectedExits = new WeakSet();
     this.restartableChildren = new WeakSet();
     this.lastChildFailure = { daemon: null, tunnel: null };
@@ -502,7 +507,8 @@ class RuntimeSupervisor {
     if (!preservesLiveOwnership) this.writeState("external", detail);
   }
 
-  spawnChild(name, invocation) {
+  spawnChild(name, invocation, recoverySignal) {
+    this.assertCanStart(recoverySignal);
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
       detached: DETACH_OWNED_CHILD,
@@ -607,9 +613,10 @@ class RuntimeSupervisor {
       && (!requireAccepting || body?.accepting_turns === true);
   }
 
-  async waitForProxy(config, timeoutMs = 20_000) {
+  async waitForProxy(config, timeoutMs = 20_000, recoverySignal) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      this.assertRecoveryActive(recoverySignal);
       const daemon = this.daemon;
       if (!daemon) {
         throw new Error(this.lastChildFailure.daemon || "Responses proxy exited before becoming healthy");
@@ -618,13 +625,16 @@ class RuntimeSupervisor {
         await sleep(50);
         continue;
       }
-      if (await this.proxyHealth(config, 2_000, daemon.pid, true)) return;
+      if (await this.proxyHealth(config, 2_000, daemon.pid, true)) {
+        this.assertRecoveryActive(recoverySignal);
+        return;
+      }
       await sleep(200);
     }
     throw new Error(`Responses proxy did not become healthy on 127.0.0.1:${config.port} within ${timeoutMs}ms`);
   }
 
-  async readTunnelHealth(config) {
+  async readTunnelHealth(config, recoverySignal) {
     const tunnel = config.tunnel;
     // `runtimes status` performs an optional control-plane lookup when the saved runtime key is
     // available. The cleanup dry run is the official local-only inventory and never removes
@@ -634,6 +644,7 @@ class RuntimeSupervisor {
       ["runtimes", "cleanup", "--json"],
       5_000,
       "Local tunnel inventory probe",
+      recoverySignal,
     );
     if (result.code !== 0) {
       return {
@@ -649,6 +660,7 @@ class RuntimeSupervisor {
     }
     try {
       const parsed = JSON.parse(result.output);
+      this.assertRecoveryActive(recoverySignal);
       if (!Array.isArray(parsed.entries)) throw new Error("local inventory has no entries array");
       const entry = parsed.entries.find(candidate => candidate?.alias === tunnel.alias);
       if (!entry) {
@@ -802,7 +814,7 @@ class RuntimeSupervisor {
     }
   }
 
-  async discoverTunnelHealthBaseUrl(config) {
+  async discoverTunnelHealthBaseUrl(config, recoverySignal) {
     const tunnel = config.tunnel;
     if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
     const result = await this.runTunnelCommand(
@@ -810,7 +822,9 @@ class RuntimeSupervisor {
       ["runtimes", "status", tunnel.alias, "--json"],
       5_000,
       "Local tunnel health discovery",
+      recoverySignal,
     );
+    this.assertRecoveryActive(recoverySignal);
     if (result.code !== 0) {
       throw new Error(`Local tunnel health discovery failed: ${tunnelControlDiagnostic(result)}`);
     }
@@ -834,12 +848,15 @@ class RuntimeSupervisor {
     return baseUrl;
   }
 
-  async waitForTunnelMcpTransport(config, timeoutMs = 10_000) {
-    if (!this.tunnelHealthBaseUrl) await this.discoverTunnelHealthBaseUrl(config);
+  async waitForTunnelMcpTransport(config, timeoutMs = 10_000, recoverySignal) {
+    this.assertRecoveryActive(recoverySignal);
+    if (!this.tunnelHealthBaseUrl) await this.discoverTunnelHealthBaseUrl(config, recoverySignal);
     const deadline = Date.now() + timeoutMs;
     let health;
     do {
+      this.assertRecoveryActive(recoverySignal);
       health = await this.probeTunnelMcpTransport();
+      this.assertRecoveryActive(recoverySignal);
       if (health.observed && health.ok) return health;
       if (health.fatal) {
         throw new Error(`Tunnel MCP transport is unhealthy: ${health.detail}`);
@@ -928,11 +945,13 @@ class RuntimeSupervisor {
     return (await this.observeTunnelForMonitor(config)).ready;
   }
 
-  async waitForKnownTunnelStatus(config, timeoutMs = 10_000) {
+  async waitForKnownTunnelStatus(config, timeoutMs = 10_000, recoverySignal) {
     const deadline = Date.now() + timeoutMs;
     let health;
     do {
-      health = await this.readTunnelHealth(config);
+      this.assertRecoveryActive(recoverySignal);
+      health = await this.readTunnelHealth(config, recoverySignal);
+      this.assertRecoveryActive(recoverySignal);
       if (health.statusKnown) return health;
       await sleep(TUNNEL_HEALTH_POLL_INTERVAL_MS);
     } while (Date.now() < deadline);
@@ -946,12 +965,15 @@ class RuntimeSupervisor {
     config,
     timeoutMs = TUNNEL_START_TIMEOUT_MS,
     operationName = "runtime-start",
+    recoverySignal,
   ) {
     const deadline = Date.now() + timeoutMs;
     let lastDetail = "tunnel status has not been observed";
     let lastPublishedDetail;
     while (Date.now() < deadline) {
-      const health = await this.readTunnelHealth(config);
+      this.assertCanStart(recoverySignal);
+      const health = await this.readTunnelHealth(config, recoverySignal);
+      this.assertCanStart(recoverySignal);
       if (health.pid) {
         this.tunnel = {
           pid: health.pid,
@@ -991,13 +1013,16 @@ class RuntimeSupervisor {
     );
   }
 
-  async startTunnel(config, operationName = "runtime-start", { forceRestart = false } = {}) {
+  async startTunnel(config, operationName = "runtime-start", { forceRestart = false, recoverySignal } = {}) {
     if (config.mode !== "full") return;
+    this.assertCanStart(recoverySignal);
+    if (recoverySignal) this.recoveryAliasMayBeLive = true;
     this.assertTunnelClientReady(config);
     // Every acquisition binds diagnostics to this runtime, including adoption of an existing alias.
     this.tunnelHealthBaseUrl = null;
     try {
-      const existing = await this.waitForKnownTunnelStatus(config);
+      const existing = await this.waitForKnownTunnelStatus(config, 10_000, recoverySignal);
+      this.assertCanStart(recoverySignal);
       if (existing.ready && !forceRestart) {
         this.tunnel = {
           pid: existing.pid,
@@ -1005,32 +1030,41 @@ class RuntimeSupervisor {
           signalCode: null,
           managed: true,
         };
-        await this.waitForTunnelMcpTransport(config);
+        await this.waitForTunnelMcpTransport(config, 10_000, recoverySignal);
+        this.assertCanStart(recoverySignal);
         this.startTunnelMonitor(config);
         this.logger.info("runtime.tunnel_adopted", { pid: existing.pid });
         return;
       }
       this.tunnel = null;
-      const stopped = await this.runTunnelStopCommand(config);
+      const stopped = await this.runTunnelStopCommand(config, recoverySignal);
+      this.assertCanStart(recoverySignal);
       if (stopped.code !== 0
         && !tunnelRuntimeAbsent(stopped.output)) {
         throw new Error(
           `tunnel runtime refused pre-start cleanup: ${tunnelControlDiagnostic(stopped)}`,
         );
       }
-      if (stopped.code === 0) await this.waitForTunnelStopped(config);
+      if (stopped.code === 0) await this.waitForTunnelStopped(config, 10_000, recoverySignal);
+      this.assertCanStart(recoverySignal);
+      this.recoveryAliasMayBeLive = false;
       this.tunnelHealthBaseUrl = null;
-      const connected = await this.runTunnelConnectCommand(config);
+      if (recoverySignal) this.recoveryAliasMayBeLive = true;
+      const connected = await this.runTunnelConnectCommand(config, recoverySignal);
+      this.assertCanStart(recoverySignal);
       if (connected.code !== 0 && !tunnelConnectCanContinue(connected)) {
         throw new Error(
           `tunnel runtime refused managed startup: ${tunnelControlDiagnostic(connected)}`,
         );
       }
-      await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, operationName);
+      await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, operationName, recoverySignal);
       if (!this.tunnel) throw new Error("Tunnel runtime became ready without a managed process identity");
-      await this.waitForTunnelMcpTransport(config);
+      await this.waitForTunnelMcpTransport(config, 10_000, recoverySignal);
+      this.assertCanStart(recoverySignal);
       this.startTunnelMonitor(config);
     } catch (error) {
+      // Shutdown owns cleanup after cancellation. Recovery must not race its stop command.
+      if (recoverySignal?.aborted) throw error;
       let cleanupError;
       try {
         this.stopTunnelMonitor();
@@ -1043,6 +1077,7 @@ class RuntimeSupervisor {
         }
         if (stopped.code === 0) await this.waitForTunnelStopped(config);
         this.tunnel = null;
+        this.recoveryAliasMayBeLive = false;
       } catch (caught) {
         cleanupError = caught;
       }
@@ -1053,7 +1088,7 @@ class RuntimeSupervisor {
     }
   }
 
-  async runTunnelConnectCommand(config) {
+  async runTunnelConnectCommand(config, recoverySignal) {
     const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
     const invocation = this.runtimeCommand([
       "mcp",
@@ -1067,6 +1102,7 @@ class RuntimeSupervisor {
       managedTunnelConnectArgs(config, invocation),
       TUNNEL_START_TIMEOUT_MS,
       "Tunnel managed startup",
+      recoverySignal,
     );
   }
 
@@ -1145,18 +1181,23 @@ class RuntimeSupervisor {
     this.tunnelMonitorGeneration += 1;
   }
 
-  async startDaemon(config) {
+  async startDaemon(config, recoverySignal) {
+    this.assertCanStart(recoverySignal);
     if (this.daemon) {
       const child = this.daemon;
       const identity = Number.isInteger(child.pid)
         && await this.proxyHealth(config, 2_000, child.pid);
+      this.assertCanStart(recoverySignal);
       if (identity && !await this.proxyHealth(config, 2_000, child.pid, true)) {
+        this.assertCanStart(recoverySignal);
         const resumed = await this.control(config, "resume");
+        this.assertCanStart(recoverySignal);
         if (resumed.status !== "ok" || resumed.accepting_turns !== true) {
           throw new Error("Responses proxy did not acknowledge readiness after resume");
         }
       }
-      await this.waitForProxy(config);
+      await this.waitForProxy(config, 20_000, recoverySignal);
+      this.assertCanStart(recoverySignal);
       if (this.daemon !== child) throw new Error("Responses proxy exited while readiness was being confirmed");
       this.restartableChildren.add(child);
       return;
@@ -1165,11 +1206,14 @@ class RuntimeSupervisor {
     try {
       const env = await this.nativeProxyEnvironmentProvider();
       if (this.stopping) throw new Error("Responses startup was cancelled while resolving the system proxy");
-      child = this.spawnChild("daemon", { ...this.runtimeCommand(["serve"]), env });
-      await this.waitForProxy(config);
+      this.assertCanStart(recoverySignal);
+      child = this.spawnChild("daemon", { ...this.runtimeCommand(["serve"]), env }, recoverySignal);
+      await this.waitForProxy(config, 20_000, recoverySignal);
+      this.assertCanStart(recoverySignal);
       if (this.daemon !== child) throw new Error("Responses proxy exited immediately after becoming healthy");
       this.restartableChildren.add(child);
     } catch (error) {
+      if (recoverySignal?.aborted) throw error;
       let cleanupError;
       try {
         await this.stopChild("daemon");
@@ -1185,6 +1229,19 @@ class RuntimeSupervisor {
 
   async startIfConfigured() {
     if (this.stopPromise) await this.stopPromise;
+    if (this.shutdownRequested) {
+      if (!this.shutdownResumeAllowed) {
+        throw new Error("Runtime shutdown is committed; a new start requires a failed-Quit recovery");
+      }
+      if (this.startPromise) {
+        throw new Error("Previous runtime startup is still settling; runtime restart is deferred");
+      }
+      if (!await this.settleRecoveryTasks()) {
+        throw new Error("Cancelled runtime recovery is still unsettled; runtime restart is deferred");
+      }
+      this.shutdownRequested = false;
+      this.shutdownResumeAllowed = false;
+    }
     if (this.startPromise) return this.startPromise;
     this.startPromise = this.startConfigured();
     try {
@@ -1280,8 +1337,10 @@ class RuntimeSupervisor {
       message: tunnelOnly ? "Starting isolated DEV MCP runtime" : "Starting local runtime",
     });
     try {
+      this.assertCanStart();
       await this.startTunnel(config, "runtime-start");
       if (!tunnelOnly) await this.startDaemon(config);
+      this.assertCanStart();
       this.restartHistory.daemon = [];
       this.restartHistory.tunnel = [];
       this.writeState("ready");
@@ -1319,8 +1378,48 @@ class RuntimeSupervisor {
     return recent.length;
   }
 
+  assertRecoveryActive(signal) {
+    if (signal && (signal.aborted || this.stopping || this.shutdownRequested)) {
+      throw new Error("Runtime recovery was cancelled for shutdown");
+    }
+  }
+
+  assertCanStart(signal) {
+    if (this.shutdownRequested) throw new Error("Runtime startup was cancelled for shutdown");
+    this.assertRecoveryActive(signal);
+  }
+
+  cancelRecoveries() {
+    for (const name of ["daemon", "tunnel"]) {
+      if (this.restartTimers[name]) {
+        clearTimeout(this.restartTimers[name]);
+        this.restartTimers[name] = null;
+      }
+    }
+    for (const controller of this.recoveryControllers) controller.abort();
+  }
+
+  allowRestartAfterQuitFailure() {
+    if (this.shutdownRequested) this.shutdownResumeAllowed = true;
+  }
+
+  async settleRecoveryTasks() {
+    if (this.recoveryTasks.size === 0) return true;
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.allSettled([...this.recoveryTasks]).then(() => true),
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(false), RECOVERY_SHUTDOWN_SETTLEMENT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   scheduleRecovery(name) {
-    if (this.stopping) return;
+    if (this.stopping || this.shutdownRequested) return;
     if (this.restartTimers[name]) return;
     const attempts = this.recordRestart(name);
     if (attempts > MAX_RESTARTS_PER_WINDOW) {
@@ -1334,35 +1433,45 @@ class RuntimeSupervisor {
     const delay = Math.min(attempts * 1_000, 5_000);
     this.restartTimers[name] = setTimeout(() => {
       this.restartTimers[name] = null;
-      const recovery = this.recover(name).catch((error) => {
+      if (this.stopping || this.shutdownRequested) return;
+      const controller = new AbortController();
+      this.recoveryControllers.add(controller);
+      const recovery = this.recover(name, controller.signal).catch((error) => {
+        if (controller.signal.aborted || this.stopping || this.shutdownRequested) return;
         const message = errorMessage(error);
         this.logger.error(`runtime.${name}_recovery_failed`, { message });
         if (this.tryWriteState("failed", message)) this.scheduleRecovery(name);
       });
       this.recoveryTasks.add(recovery);
-      void recovery.finally(() => this.recoveryTasks.delete(recovery));
+      void recovery.finally(() => {
+        this.recoveryTasks.delete(recovery);
+        this.recoveryControllers.delete(controller);
+      });
     }, delay);
   }
 
-  async recover(name) {
-    if (this.stopping) return;
+  async recover(name, recoverySignal) {
+    this.assertRecoveryActive(recoverySignal);
     const config = this.readConfig();
+    this.assertRecoveryActive(recoverySignal);
     if (!config) return;
     this.publishOperation?.({ name: "runtime-recovery", status: "running", message: `Restarting ${name}` });
     const tunnelOnly = this.launcherProfile === "development";
     if (name === "tunnel") {
-      await this.startTunnel(config, "runtime-recovery", { forceRestart: true });
+      await this.startTunnel(config, "runtime-recovery", { forceRestart: true, recoverySignal });
     }
     else if (tunnelOnly) throw new Error("DEV runtime cannot recover a Responses daemon");
-    else await this.startDaemon(config);
+    else await this.startDaemon(config, recoverySignal);
+    this.assertRecoveryActive(recoverySignal);
     if (!tunnelOnly && !this.daemon) throw new Error("Responses proxy is unavailable after runtime recovery");
     if (config.mode === "full" && !this.tunnel) {
       throw new Error("Tunnel runtime is unavailable after runtime recovery");
     }
-    if (!tunnelOnly) await this.waitForProxy(config);
+    if (!tunnelOnly) await this.waitForProxy(config, 20_000, recoverySignal);
     if (config.mode === "full") {
-      await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, "runtime-recovery");
+      await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, "runtime-recovery", recoverySignal);
     }
+    this.assertRecoveryActive(recoverySignal);
     if (!this.tryWriteState("ready")) {
       let cleanupError;
       try {
@@ -1494,11 +1603,13 @@ class RuntimeSupervisor {
     if (processRunning(pid)) throw new Error(`${name} process ${pid} did not stop within ${timeoutMs}ms`);
   }
 
-  async waitForTunnelStopped(config, timeoutMs = 10_000) {
+  async waitForTunnelStopped(config, timeoutMs = 10_000, recoverySignal) {
     const deadline = Date.now() + timeoutMs;
     let lastDetail = "tunnel stop status has not been observed";
     while (Date.now() < deadline) {
-      const health = await this.readTunnelHealth(config);
+      this.assertRecoveryActive(recoverySignal);
+      const health = await this.readTunnelHealth(config, recoverySignal);
+      this.assertRecoveryActive(recoverySignal);
       if (tunnelRuntimeStopped(health)) {
         return health;
       }
@@ -1575,12 +1686,14 @@ class RuntimeSupervisor {
       throw error;
     }
     this.tunnel = null;
+    this.recoveryAliasMayBeLive = false;
   }
 
   async adoptConfiguredTunnelForStop(config) {
     if (config.mode !== "full" || this.tunnel) return;
     const health = await this.waitForKnownTunnelStatus(config);
     if (tunnelRuntimeStopped(health)) {
+      this.recoveryAliasMayBeLive = false;
       return;
     }
     if (health.state === undefined
@@ -1600,7 +1713,7 @@ class RuntimeSupervisor {
     });
   }
 
-  async runTunnelStopCommand(config) {
+  async runTunnelStopCommand(config, recoverySignal) {
     const tunnel = config.tunnel;
     if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
     return await this.runTunnelCommand(
@@ -1608,14 +1721,18 @@ class RuntimeSupervisor {
       ["runtimes", "stop", tunnel.alias, "--json"],
       10_000,
       "Tunnel shutdown",
+      recoverySignal,
     );
   }
 
-  async runTunnelCommand(config, args, timeoutMs, label) {
+  async runTunnelCommand(config, args, timeoutMs, label, recoverySignal) {
     const tunnel = config.tunnel;
     if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
+    this.assertRecoveryActive(recoverySignal);
     const proxyEnvironment = await this.tunnelProxyEnvironmentProvider();
+    this.assertRecoveryActive(recoverySignal);
     return await new Promise((resolve, reject) => {
+      this.assertRecoveryActive(recoverySignal);
       const child = spawn(tunnel.binaryPath, args, {
         cwd: tunnel.profileDir,
         detached: DETACH_OWNED_CHILD,
@@ -1644,6 +1761,37 @@ class RuntimeSupervisor {
         clearTimeout(timeout);
         if (terminationTimeout) clearTimeout(terminationTimeout);
         if (forceTimeout) clearTimeout(forceTimeout);
+        recoverySignal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        if (settled) return;
+        timeoutError = new Error(`${label} cancelled for runtime shutdown`);
+        clearTimeout(timeout);
+        try {
+          terminateOwnedProcessTree(child);
+        } catch (error) {
+          settled = true;
+          clearTimers();
+          reject(new Error(`${timeoutError.message}; control process tree termination failed: ${errorMessage(error)}`));
+          return;
+        }
+        terminationTimeout = setTimeout(() => {
+          if (settled) return;
+          try {
+            terminateOwnedProcessTree(child, "SIGKILL");
+          } catch (error) {
+            settled = true;
+            clearTimers();
+            reject(new Error(`${timeoutError.message}; forced control process tree termination failed: ${errorMessage(error)}`));
+            return;
+          }
+          forceTimeout = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            clearTimers();
+            reject(new Error(`${timeoutError.message}; the control process did not exit after forced termination`));
+          }, 1_000);
+        }, 1_000);
       };
       const timeout = setTimeout(() => {
         if (settled) return;
@@ -1678,6 +1826,8 @@ class RuntimeSupervisor {
           }, 2_000);
         }, 5_000);
       }, timeoutMs);
+      recoverySignal?.addEventListener("abort", onAbort, { once: true });
+      if (recoverySignal?.aborted) onAbort();
       child.stdout.on("data", (chunk) => capture(stdout, chunk, "stdout"));
       child.stderr.on("data", (chunk) => capture(stderr, chunk, "stderr"));
       const onOutputError = (stream) => (error) => {
@@ -1951,6 +2101,7 @@ class RuntimeSupervisor {
 
   async stopForSetup() {
     if (this.stopPromise) return this.stopPromise;
+    this.cancelRecoveries();
     this.stopPromise = this.performStopForSetup();
     try {
       return await this.stopPromise;
@@ -1960,28 +2111,23 @@ class RuntimeSupervisor {
   }
 
   async performStopForSetup() {
-    if (this.startPromise) {
-      try {
-        await this.startPromise;
-      } catch (error) {
-        this.logger.warn("runtime.start_failed_before_stop", { message: errorMessage(error) });
-      }
-    }
-    const config = this.readConfig();
     this.stopping = true;
-    this.stopTunnelMonitor();
-    for (const name of ["daemon", "tunnel"]) {
-      if (this.restartTimers[name]) {
-        clearTimeout(this.restartTimers[name]);
-        this.restartTimers[name] = null;
-      }
-    }
-    if (this.recoveryTasks.size > 0) {
-      await Promise.allSettled([...this.recoveryTasks]);
-    }
+    let config;
     let drained = false;
     let tunnelStopped = false;
     try {
+      if (this.startPromise) {
+        try {
+          await this.startPromise;
+        } catch (error) {
+          this.logger.warn("runtime.start_failed_before_stop", { message: errorMessage(error) });
+        }
+      }
+      this.stopTunnelMonitor();
+      if (!await this.settleRecoveryTasks()) {
+        throw new Error("Cancelled runtime recovery did not settle within the shutdown bound");
+      }
+      config = this.readConfig();
       const ownershipState = this.readState();
       const healthyRuntime = config && this.launcherProfile !== "development"
         ? await this.proxyHealth(config)
@@ -1989,7 +2135,7 @@ class RuntimeSupervisor {
       const runtimeMayBeLive = healthyRuntime || runtimeOwnershipMayBeLive(ownershipState);
       if (config?.mode === "full"
         && !this.tunnel
-        && (runtimeMayBeLive || !ownershipState)) {
+        && (runtimeMayBeLive || !ownershipState || this.recoveryAliasMayBeLive)) {
         await this.adoptConfiguredTunnelForStop(config);
       }
       if (!this.daemon && !this.tunnel) {
@@ -2074,15 +2220,12 @@ class RuntimeSupervisor {
     this.logger.warn("runtime.forced_shutdown_started", { message: errorMessage(reason) });
     this.stopping = true;
     this.stopTunnelMonitor();
-    for (const name of ["daemon", "tunnel"]) {
-      if (this.restartTimers[name]) {
-        clearTimeout(this.restartTimers[name]);
-        this.restartTimers[name] = null;
-      }
-    }
+    this.cancelRecoveries();
     try {
-      if (this.recoveryTasks.size > 0) await Promise.allSettled([...this.recoveryTasks]);
       const failures = [];
+      if (!await this.settleRecoveryTasks()) {
+        failures.push("cancelled runtime recovery did not settle within the shutdown bound");
+      }
       let priorState;
       let ownershipStateUnreadable = false;
       try {
@@ -2091,14 +2234,18 @@ class RuntimeSupervisor {
         ownershipStateUnreadable = true;
         failures.push(`ownership: ${errorMessage(error)}`);
       }
-      if (this.tunnel) {
+      if (this.tunnel || this.recoveryAliasMayBeLive) {
         try {
           const config = this.readConfig();
           if (!config) throw new Error("runtime configuration is unavailable");
           const stopped = await this.runTunnelStopCommand(config);
-          if (stopped.code !== 0) throw new Error(tunnelControlDiagnostic(stopped));
-          await this.waitForTunnelStopped(config, 5_000);
+          if (stopped.code !== 0 && !tunnelRuntimeAbsent(stopped.output)) {
+            throw new Error(tunnelControlDiagnostic(stopped));
+          }
+          const health = await this.waitForTunnelStopped(config, 5_000);
+          if (!tunnelRuntimeStopped(health)) throw new Error("tunnel stop did not prove absence");
           this.tunnel = null;
+          this.recoveryAliasMayBeLive = false;
         } catch (error) {
           failures.push(`tunnel: ${errorMessage(error)}`);
         }
@@ -2144,6 +2291,9 @@ class RuntimeSupervisor {
   }
 
   async shutdown({ cancelActiveTurns = false, force = false } = {}) {
+    this.shutdownRequested = true;
+    this.shutdownResumeAllowed = false;
+    this.cancelRecoveries();
     try {
       if (cancelActiveTurns) await this.cancelActiveTurns();
       return await this.stopForSetup();

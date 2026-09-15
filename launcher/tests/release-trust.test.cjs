@@ -8,7 +8,7 @@ const { DOMAIN, keyIdFor, validateTrust, verifyReleaseMetadata, verifyReleaseAss
 const now = Date.parse("2026-09-11T12:00:00.000Z");
 function fixture() {
   const keys = [crypto.generateKeyPairSync("ed25519"), crypto.generateKeyPairSync("ed25519")];
-  const trust = { schemaVersion: 1, repository: "Froraut/codex-chatgpt-web", threshold: 1, keys: keys.map(({ publicKey }) => {
+  const trust = { schemaVersion: 1, repository: "Froraut/NEKODEX", threshold: 1, keys: keys.map(({ publicKey }) => {
     const pem = publicKey.export({ type: "spki", format: "pem" });
     return { keyId: keyIdFor(pem), publicKey: pem, notBefore: "2026-01-01T00:00:00.000Z", notAfter: "2027-01-01T00:00:00.000Z" };
   }) };

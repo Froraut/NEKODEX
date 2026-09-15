@@ -137,7 +137,7 @@ function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironme
  */
 export class ChatGptThreadEnvironmentStore {
   private loaded = false;
-  private readonly threads = new Map<string, StoredThreadEnvironment>();
+  private threads = new Map<string, StoredThreadEnvironment>();
 
   constructor(
     private readonly path?: string,
@@ -254,8 +254,10 @@ export class ChatGptThreadEnvironmentStore {
 
   private load(): void {
     if (this.loaded) return;
-    this.loaded = true;
-    if (!this.path || !existsSync(this.path)) return;
+    if (!this.path || !existsSync(this.path)) {
+      this.loaded = true;
+      return;
+    }
     const parsed = JSON.parse(readFileSync(this.path, "utf8")) as Partial<StoredThreadEnvironmentFile>;
     const rawThreads = record(parsed.threads);
     if (parsed.version !== 1 || !rawThreads) {
@@ -267,7 +269,9 @@ export class ChatGptThreadEnvironmentStore {
       .filter(([, environment]) => environment.updatedAt >= cutoff)
       .sort((left, right) => left[1].updatedAt - right[1].updatedAt)
       .slice(-MAX_THREAD_ENVIRONMENTS);
-    for (const [threadId, environment] of entries) this.threads.set(threadId, environment);
+    const loadedThreads = new Map<string, StoredThreadEnvironment>(entries);
+    this.threads = loadedThreads;
+    this.loaded = true;
   }
 
   private persist(): void {

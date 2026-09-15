@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPOSITORY="${CODEX_WEB_GPT_REPOSITORY:-Froraut/codex-chatgpt-web}"
+REPOSITORY="${CODEX_WEB_GPT_REPOSITORY:-Froraut/NEKODEX}"
 VERSION="${CODEX_WEB_GPT_VERSION:-}"
 OS="$(uname -s)"
 MACHINE="$(uname -m)"
@@ -32,15 +32,16 @@ case "$OS" in
   *) echo "Use install-launcher.ps1 on Windows; unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
+# NEKODEX distributes prereleases: select the newest published release, including prereleases.
 if [ -z "$VERSION" ]; then
   VERSION="$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
-    "https://api.github.com/repos/$REPOSITORY/releases/latest" \
+    "https://api.github.com/repos/$REPOSITORY/releases?per_page=1" \
     | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' \
     | head -n 1)"
 fi
 VERSION="${VERSION#v}"
 if [ -z "$VERSION" ]; then
-  echo "Could not resolve the latest NEKODEX release" >&2
+  echo "Could not resolve a published NEKODEX release; set CODEX_WEB_GPT_VERSION explicitly" >&2
   exit 1
 fi
 case "$VERSION" in

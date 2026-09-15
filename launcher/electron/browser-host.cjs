@@ -2304,6 +2304,30 @@ class BrowserHost {
     return { cancelledByUser: true };
   }
 
+  exactRetainedTurnTab(conversationKey, connectorIdentity) {
+    const matches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
+      tab.interactionMode === "automatic"
+      && tab.status === "ready"
+      && tab.conversationKey === conversationKey
+      && tab.connectorIdentity === connectorIdentity
+      && (!connectorIdentity || tab.connectorBound === true)
+    )) : [];
+    if (matches.length > 1) {
+      throw new Error(`ChatGPT retained conversation ${conversationKey} owns multiple browser tabs`);
+    }
+    return matches[0] ?? null;
+  }
+
+  precheckRetainedTurn(traceId, conversationKey, connectorIdentity) {
+    // An already running turn with this trace owns a tab, so the pool will not
+    // reclaim capacity for it. beginTurn still validates its final metadata.
+    if ([...this.turnTabs.values()].some(tab => tab.traceId === traceId && tab.status === "running")) return;
+    if (this.exactRetainedTurnTab(conversationKey, connectorIdentity)) return;
+    const error = new Error("The retained ChatGPT conversation is no longer available");
+    error.code = "retained_conversation_unavailable";
+    throw error;
+  }
+
   async beginTurn(
     traceId,
     reveal,
@@ -2326,17 +2350,7 @@ class BrowserHost {
       || sameTrace.connectorIdentity !== connectorIdentity)) {
       throw new Error(`ChatGPT browser turn ${traceId} conversation metadata does not match its owned tab`);
     }
-    const retainedMatches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
-      tab.interactionMode === "automatic"
-      && tab.status === "ready"
-      && tab.conversationKey === conversationKey
-      && tab.connectorIdentity === connectorIdentity
-      && (!connectorIdentity || tab.connectorBound === true)
-    )) : [];
-    if (retainedMatches.length > 1) {
-      throw new Error(`ChatGPT retained conversation ${conversationKey} owns multiple browser tabs`);
-    }
-    const exactRetained = retainedMatches[0];
+    const exactRetained = this.exactRetainedTurnTab(conversationKey, connectorIdentity);
     if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {
       throw new Error(`ChatGPT browser turn ${traceId} is retained under different conversation metadata`);
     }

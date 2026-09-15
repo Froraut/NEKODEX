@@ -59,12 +59,12 @@ jobs:
             throw "The Windows CI runner must be 64-bit"
           }
       - run: bun install --frozen-lockfile
-        if: github.event_name == 'workflow_dispatch' || (runner.os == 'Linux' && (steps.scope.outputs.mode == 'capacity' || steps.scope.outputs.mode == 'backend-review'))
+        if: github.event_name == 'workflow_dispatch' || (runner.os == 'Linux' && (steps.scope.outputs.mode == 'capacity' || steps.scope.outputs.mode == 'backend-review' || steps.scope.outputs.mode == 'mixed-review'))
       - run: bun install --frozen-lockfile
         if: github.event_name == 'workflow_dispatch'
         working-directory: launcher
       - name: Run selected named cases once on Linux
-        if: runner.os == 'Linux' && (steps.scope.outputs.mode == 'capacity' || steps.scope.outputs.mode == 'backend-review')
+        if: runner.os == 'Linux' && (steps.scope.outputs.mode == 'capacity' || steps.scope.outputs.mode == 'backend-review' || steps.scope.outputs.mode == 'mixed-review')
         env:
           FOCUSED_MODE: ${{ steps.scope.outputs.mode }}
           FOCUSED_TEST_PATTERN: ${{ steps.scope.outputs.pattern }}
@@ -73,6 +73,7 @@ jobs:
           case "$FOCUSED_MODE" in
             backend-review) timeout --signal=TERM --kill-after=1s 29s bun test --test-name-pattern "$FOCUSED_TEST_PATTERN" ./tests/backend-review-regressions.test.ts ;;
             capacity) timeout --signal=TERM --kill-after=1s 29s bun test --test-name-pattern "$FOCUSED_TEST_PATTERN" ./tests/browser-capacity-16.test.ts ;;
+            mixed-review) timeout --signal=TERM --kill-after=1s 29s bun test --test-name-pattern "$FOCUSED_TEST_PATTERN" ./tests/backend-review-regressions.test.ts ./tests/browser-capacity-16.test.ts ;;
             *) exit 1 ;;
           esac
       - name: Prepare AVX2-independent Windows runtime

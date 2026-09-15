@@ -1,10 +1,10 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "5.2.0-nekodex.1",
+  "version": "5.2.0-nekodex.2",
   "private": true,
   "description": "NEKODEX \u2014 a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
-  "updateRepository": "Froraut/codex-chatgpt-web",
+  "updateRepository": "Froraut/NEKODEX",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -124,7 +124,7 @@
   },
   "forkIdentity": {
     "publisher": "FroRaut",
-    "repository": "Froraut/codex-chatgpt-web",
+    "repository": "Froraut/NEKODEX",
     "upstream": "miuuyy/codex-chatgpt-web",
     "installationMode": "replace-upstream",
     "profileCompatibility": "dev.codexwebgpt.launcher",

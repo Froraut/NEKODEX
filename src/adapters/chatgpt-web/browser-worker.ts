@@ -5262,8 +5262,18 @@ export class ChatGptBrowserWorker {
       }
 
       if (this.context && this.config.browserHost === "managed-chrome") {
-        const state = sanitizeBrowserLoginStorageState(await this.context.storageState());
-        atomicWriteFile(this.config.storageStatePath, `${JSON.stringify(state)}\n`);
+        try {
+          const state = sanitizeBrowserLoginStorageState(await this.context.storageState());
+          atomicWriteFile(this.config.storageStatePath, `${JSON.stringify(state)}\n`);
+        } catch (error) {
+          // The answer is already complete. A failed disk snapshot must not discard it or the
+          // live context, which can still serve this session until the worker is closed.
+          console.warn(
+            `[chatgpt-web] browser turn ${turn.traceId} completed, but managed-Chrome session state could not be saved`
+            + ` to ${this.config.storageStatePath}: ${error instanceof Error ? error.message : String(error)}`
+            + "; the current browser context remains usable, but a new worker may reload older login state",
+          );
+        }
       }
       await diagnostics.capture(page, "turn-completed");
       console.info(

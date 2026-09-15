@@ -1,4 +1,4 @@
-import { expandPreviousResponseInput } from "./responses/state";
+import { expandPreviousResponseInput, previousResponseReplayPrefixLength } from "./responses/state";
 import { readJsonRequestBody, readRequestBodyBytes } from "./http-body";
 import {
   BRIDGE_COMPACTION_PREFIX,
@@ -172,15 +172,26 @@ function withUncleanCloseTolerance(
   const decoder = new TextDecoder();
   let lineBuffer = "";
   let completed = false;
+  let oversizedLine = false;
   let bytes = 0;
   const inspectLines = (text: string): void => {
-    lineBuffer += text;
-    let newline = lineBuffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = lineBuffer.slice(0, newline).replace(/\r$/, "");
-      lineBuffer = lineBuffer.slice(newline + 1);
-      if (line === SSE_TERMINATOR) completed = true;
-      newline = lineBuffer.indexOf("\n");
+    if (completed) return;
+    let offset = 0;
+    while (offset < text.length) {
+      const newline = text.indexOf("\n", offset);
+      const end = newline < 0 ? text.length : newline;
+      if (!oversizedLine) {
+        if (lineBuffer.length + end - offset > SSE_TERMINATOR.length + 1) {
+          lineBuffer = "";
+          oversizedLine = true;
+        } else lineBuffer += text.slice(offset, end);
+      }
+      if (newline < 0) break;
+      if (!oversizedLine && lineBuffer.replace(/\r$/, "") === SSE_TERMINATOR) completed = true;
+      lineBuffer = "";
+      oversizedLine = false;
+      offset = newline + 1;
+      if (completed) break;
     }
   };
   const inspectTrailingLine = (): void => {
@@ -268,7 +279,16 @@ export async function forwardNativeCodexRequest(
       ? expandPreviousResponseInput(parsedBody) : parsedBody;
     const localContinuation = expanded !== parsedBody;
     const replayBody = localContinuation && isObject(expanded) ? { ...expanded } : expanded;
-    if (localContinuation && isObject(replayBody)) delete replayBody.previous_response_id;
+    if (localContinuation && isObject(replayBody)) {
+      delete replayBody.previous_response_id;
+      const prefixLength = previousResponseReplayPrefixLength(expanded);
+      if (Array.isArray(replayBody.input)) replayBody.input = replayBody.input.map((item, index) => {
+        if (index >= prefixLength || !isObject(item)) return item;
+        const clean = { ...item };
+        delete clean.id; // Locally restored Web output ids cannot be resolved by the native backend.
+        return clean;
+      });
+    }
     const scrubbed = scrubBridgeArtifactsForNative(replayBody);
     if (scrubbed.changed || localContinuation) {
       headers.delete("content-encoding");

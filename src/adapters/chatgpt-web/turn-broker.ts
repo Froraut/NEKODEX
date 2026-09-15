@@ -141,6 +141,10 @@ interface BrokerResponse {
 const brokers = new Map<string, TurnBroker>();
 const MAX_BROKER_LINE_CHARS = 67_108_864;
 const MAX_RETIRED_TURN_HANDLES = 64;
+// These bounds cover live work, which cannot be reclaimed until its MCP handler or native
+// invocation settles. Overflow retires the capability so outstanding work fails explicitly.
+const MAX_ACTIVE_ACTIVITIES_PER_TURN = 64;
+const MAX_PENDING_INVOCATIONS_PER_TURN = 64;
 // A live turn cannot discard completed IDs: an ambiguously delivered claim could arrive later
 // and reopen activity past the completion fence. Retire the entire capability at this limit.
 const MAX_COMPLETED_ACTIVITIES_PER_TURN = 4_096;
@@ -1045,6 +1049,13 @@ export class TurnBroker implements TurnBrokerOwner {
         throw new Error("turn activity was already completed before this claim settled");
       }
       if (!activeChannel.activities.has(activityId)) {
+        if (activeChannel.activities.size >= MAX_ACTIVE_ACTIVITIES_PER_TURN) {
+          const error = new Error(
+            `Codex turn exceeded its ${MAX_ACTIVE_ACTIVITIES_PER_TURN} active MCP request limit; turn binding retired`,
+          );
+          this.revoke(token, error);
+          throw error;
+        }
         activeChannel.activities.add(activityId);
         activeChannel.activityRevision += 1;
       }
@@ -1113,6 +1124,9 @@ export class TurnBroker implements TurnBrokerOwner {
       return { released: true };
     }
     if (request.method === "resolve") return { environment: binding.channel.environment };
+    if (binding.channel.completionCommitted) {
+      throw new Error(`${retiredTurnLabel(binding.channel.traceId)} has already finished; this Codex Native action can no longer run.`);
+    }
     this.assertSafeHarnessRunning(binding.channel);
     if (binding.channel.compactionRequested) {
       const result = binding.channel.compactionResult;
@@ -1126,6 +1140,13 @@ export class TurnBroker implements TurnBrokerOwner {
 
     const wireName = request.wireName?.trim();
     if (!wireName) throw new Error("wire tool name is required");
+    if (binding.channel.invocations.size >= MAX_PENDING_INVOCATIONS_PER_TURN) {
+      const error = new Error(
+        `Codex turn exceeded its ${MAX_PENDING_INVOCATIONS_PER_TURN} pending native tool invocation limit; turn binding retired`,
+      );
+      this.revoke(binding.token, error);
+      throw error;
+    }
     const callId = opaqueId("call");
     const toolRequest: BrokerToolRequest = {
       callId,

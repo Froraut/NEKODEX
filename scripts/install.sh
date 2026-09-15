@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-REPOSITORY="${CODEX_CHATGPT_WEB_REPOSITORY:-Froraut/codex-chatgpt-web}"
-VERSION="${CODEX_CHATGPT_WEB_VERSION:-5.2.0-nekodex.1}"
+REPOSITORY="${CODEX_CHATGPT_WEB_REPOSITORY:-Froraut/NEKODEX}"
+VERSION="${CODEX_CHATGPT_WEB_VERSION:-5.2.0-nekodex.2}"
 BIN_DIR="${CODEX_CHATGPT_WEB_BIN_DIR:-$HOME/.local/bin}"
 LIB_DIR="${CODEX_CHATGPT_WEB_LIB_DIR:-$HOME/.local/lib/codex-chatgpt-web}"
 DOC_DIR="${CODEX_CHATGPT_WEB_DOC_DIR:-$HOME/.local/share/doc/codex-chatgpt-web}"

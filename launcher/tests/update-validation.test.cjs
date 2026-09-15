@@ -12,7 +12,7 @@ const expected = {
   arch: "arm64",
   identity: "dev.codexwebgpt.launcher",
   productName: "Codex Web GPT",
-  repository: "Froraut/codex-chatgpt-web",
+  repository: "Froraut/NEKODEX",
 };
 
 function binary(platform, arch) {

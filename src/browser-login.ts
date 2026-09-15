@@ -250,10 +250,12 @@ export async function captureSystemBrowserLogin(
   );
 
   let capture: SystemBrowserLoginCapture | undefined;
+  let loginBrowser: ChildProcess | undefined;
   let context: BrowserContext | undefined;
+  let offlineContextLaunchAttempted = false;
   let primaryError: unknown;
   try {
-    const loginBrowser = spawn(config.chromeExecutablePath, [
+    const browser = spawn(config.chromeExecutablePath, [
       `--user-data-dir=${profileDir}`,
       "--new-window",
       "--disable-background-mode",
@@ -261,6 +263,7 @@ export async function captureSystemBrowserLogin(
       "--no-default-browser-check",
       CHATGPT_TEMPORARY_CHAT_URL,
     ], { env: process.env, stdio: "ignore" });
+    loginBrowser = browser;
     let continuationRequested = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let abort: (() => void) | undefined;
@@ -269,20 +272,20 @@ export async function captureSystemBrowserLogin(
         abort = () => reject(options.signal?.reason ?? new Error("Passkey sign-in cancelled"));
         options.signal?.addEventListener("abort", abort, { once: true });
         timeout = setTimeout(() => reject(new Error("Timed out waiting for passkey sign-in")), remainingTime());
-        loginBrowser.once("spawn", () => {
+        browser.once("spawn", () => {
           options.onBrowserReady?.(
-            () => revealOwnedLoginBrowser(loginBrowser, config.chromeExecutablePath, profileDir),
+            () => revealOwnedLoginBrowser(browser, config.chromeExecutablePath, profileDir),
             new Date(deadline).toISOString(),
           );
         });
         void options.continuation.then(() => {
           continuationRequested = true;
-          if (!loginBrowser.kill() && !browserProcessExited(loginBrowser)) {
+          if (!browser.kill() && !browserProcessExited(browser)) {
             reject(new Error("The dedicated Chrome login process refused the Continue request"));
           }
         }, reject);
-        loginBrowser.once("error", reject);
-        loginBrowser.once("exit", (code, signal) => {
+        browser.once("error", reject);
+        browser.once("exit", (code, signal) => {
           if (continuationRequested) resolve();
           else if (signal) reject(new Error(`Dedicated Chrome login exited from signal ${signal}`));
           else if (code === 0) reject(new Error("Dedicated Chrome closed before Continue was selected"));
@@ -291,7 +294,7 @@ export async function captureSystemBrowserLogin(
       });
     } catch (error) {
       try {
-        await stopOwnedLoginBrowser(loginBrowser);
+        await stopOwnedLoginBrowser(browser);
       } catch (cleanupError) {
         const primary = error instanceof Error ? error.message : String(error);
         const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
@@ -309,6 +312,7 @@ export async function captureSystemBrowserLogin(
     // authenticated or identity-provider pages during the offline capture.
     removeTemporaryChromeTabSessions(profileDir);
     remainingTime();
+    offlineContextLaunchAttempted = true;
     context = await chromium.launchPersistentContext(profileDir, {
       executablePath: config.chromeExecutablePath,
       headless: true,
@@ -364,15 +368,30 @@ export async function captureSystemBrowserLogin(
   }
 
   let cleanupError: unknown;
-  try {
-    if (context && !context.isClosed()) await context.close();
-  } catch (error) {
-    cleanupError = error;
+  if (context && !context.isClosed()) {
+    try { await context.close(); } catch (error) { cleanupError = error; }
   }
-  try {
-    rmSync(profileDir, { recursive: true, force: true });
-  } catch (error) {
-    cleanupError ??= error;
+  if (loginBrowser && !browserProcessExited(loginBrowser)) {
+    try { await stopOwnedLoginBrowser(loginBrowser); } catch (error) { cleanupError ??= error; }
+  }
+  // An unsuccessful persistent-context launch may have started Chrome without returning a
+  // context handle. Keep the profile until its owner can be checked and closed separately.
+  if (!cleanupError && (
+    (context && !context.isClosed())
+    || (offlineContextLaunchAttempted && !context)
+    || (loginBrowser && !browserProcessExited(loginBrowser))
+  )) {
+    cleanupError = new Error("Dedicated Chrome or offline capture closure could not be confirmed");
+  }
+  if (!cleanupError) {
+    try { rmSync(profileDir, { recursive: true, force: true }); } catch (error) { cleanupError = error; }
+  }
+  if (cleanupError) {
+    const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+    const evidence = existsSync(profileDir)
+      ? `temporary login profile retained at ${profileDir}; close any dedicated Chrome process using it, then remove this owned profile once no process owns it`
+      : `temporary login profile cleanup was incomplete at ${profileDir}; the directory is now absent`;
+    cleanupError = new Error(`${cleanup}; ${evidence}`);
   }
   if (primaryError) {
     if (cleanupError) {

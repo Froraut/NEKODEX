@@ -49,6 +49,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [startupAttempt, setStartupAttempt] = useState(0);
+  const stateRevision = useRef(0);
+  const snapshotRefresh = useRef(0);
   const documentLanguage = snapshot?.state.language ?? "en";
 
   useEffect(() => {
@@ -58,19 +60,28 @@ export function App() {
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
-    void api.snapshot().then((next) => {
-      if (cancelled) return;
-      setSnapshot(next);
-      setBrowser(next.browser);
-      setLogs(next.logs);
-      setOperation(next.operation);
-      if (next.operation?.status === "failed" && next.operation.name !== "mcp-verification") {
-        setError(next.operation.message);
-      }
-    }).catch((cause) => {
-      if (!cancelled) setStartupError(messageOf(cause));
-    });
+    let initialized = false;
+    let pendingState: LauncherState | null = null;
+    let pendingBrowser: BrowserState | null = null;
+    let pendingOperation: OperationState | null = null;
+    let pendingUpdate: LauncherSnapshot["update"] | null = null;
+    const pendingLogs: LogRecord[] = [];
+    const refreshCompletedOperation = () => {
+      const request = ++snapshotRefresh.current;
+      const revision = stateRevision.current;
+      void api.snapshot().then(fresh => {
+        if (cancelled || request !== snapshotRefresh.current) return;
+        setSnapshot(current => current ? {
+          ...current,
+          ...(revision === stateRevision.current ? { state: fresh.state } : {}),
+          mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
+          contextCapabilities: fresh.contextCapabilities,
+        } : current);
+      }).catch(() => {});
+    };
     const unsubscribeState = api.onStateChanged((state) => {
+      stateRevision.current += 1;
+      if (!initialized) pendingState = state;
       setSnapshot((current) => current
         ? {
             ...current,
@@ -80,17 +91,50 @@ export function App() {
           }
         : current);
     });
-    const unsubscribeBrowser = api.onBrowserState(setBrowser);
-    const unsubscribeOperation = api.onOperation((next) => {
-      setOperation(next);
-      if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
-      if (next.status === "completed") void api.snapshot().then(fresh => {
-        if (!cancelled) setSnapshot(current => current ? { ...current, contextCapabilities: fresh.contextCapabilities } : fresh);
-      }).catch(() => {});
+    const unsubscribeBrowser = api.onBrowserState(next => {
+      if (!initialized) pendingBrowser = next;
+      else setBrowser(next);
     });
-    const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-299), record]));
+    const unsubscribeOperation = api.onOperation((next) => {
+      if (!initialized) pendingOperation = next;
+      else setOperation(next);
+      if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
+      if (next.status === "completed" && initialized) refreshCompletedOperation();
+    });
+    const unsubscribeLog = api.onLog((record) => {
+      if (!initialized) {
+        pendingLogs.push(record);
+        if (pendingLogs.length > 300) pendingLogs.shift();
+      }
+      else setLogs((current) => [...current.slice(-299), record]);
+    });
     const unsubscribeUpdate = api.onUpdateState((update) => {
+      if (!initialized) pendingUpdate = update;
       setSnapshot((current) => current ? { ...current, update } : current);
+    });
+    void api.snapshot().then((next) => {
+      if (cancelled) return;
+      const latestState = (pendingState as LauncherState | null) ?? next.state;
+      const latestOperation = (pendingOperation as OperationState | null) ?? next.operation;
+      setSnapshot({
+        ...next,
+        state: latestState,
+        update: pendingUpdate ?? next.update,
+        smokePassed: next.smokePassed || (latestState.browserSmokePassed === true && latestState.browserSmokeVersion === next.version),
+      });
+      setBrowser(pendingBrowser ?? next.browser);
+      const unseenLogs = pendingLogs.filter(record => !next.logs.some(existing =>
+        existing.at === record.at && existing.level === record.level && existing.event === record.event
+          && JSON.stringify(existing.detail) === JSON.stringify(record.detail)));
+      setLogs([...next.logs, ...unseenLogs].slice(-300));
+      setOperation(latestOperation);
+      if (latestOperation?.status === "failed" && latestOperation.name !== "mcp-verification") {
+        setError(latestOperation.message);
+      }
+      initialized = true;
+      if ((pendingOperation as OperationState | null)?.status === "completed") refreshCompletedOperation();
+    }).catch((cause) => {
+      if (!cancelled) setStartupError(messageOf(cause));
     });
     return () => {
       cancelled = true;
@@ -103,6 +147,7 @@ export function App() {
   }, [startupAttempt]);
 
   const updateState = useCallback((state: LauncherState) => {
+    stateRevision.current += 1;
     setSnapshot((current) => current
       ? {
           ...current,
@@ -111,6 +156,19 @@ export function App() {
             || (state.browserSmokePassed === true && state.browserSmokeVersion === current.version),
         }
       : current);
+  }, []);
+
+  const updateSnapshot = useCallback(async () => {
+    const request = ++snapshotRefresh.current;
+    const revision = stateRevision.current;
+    const fresh = await api!.snapshot();
+    if (request !== snapshotRefresh.current) return;
+    setSnapshot(current => current ? {
+      ...current,
+      ...(revision === stateRevision.current ? { state: fresh.state } : {}),
+      mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
+      contextCapabilities: fresh.contextCapabilities,
+    } : current);
   }, []);
 
   const updateBrowserCapacity = useCallback((browserCapacity: BrowserCapacitySettings) => {
@@ -166,6 +224,7 @@ export function App() {
             updateBrowserCapacity={updateBrowserCapacity}
             updateProModelVersion={updateProModelVersion}
             updateState={updateState}
+            updateSnapshot={updateSnapshot}
           />
         )}
         {error ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
@@ -336,6 +395,7 @@ function LauncherShell({
   updateBrowserCapacity,
   updateProModelVersion,
   updateState,
+  updateSnapshot,
 }: {
   browser: BrowserState | null;
   copy: Copy;
@@ -347,6 +407,7 @@ function LauncherShell({
   updateBrowserCapacity: (value: BrowserCapacitySettings) => void;
   updateProModelVersion: (value: ProModelVersion | null) => void;
   updateState: (state: LauncherState) => void;
+  updateSnapshot: () => Promise<void>;
 }) {
   const interactionSetupComplete = snapshot.state.coreSetupComplete === true
     && (snapshot.state.browserInteractionMode === "manual"
@@ -689,6 +750,7 @@ function LauncherShell({
                 setError={setError}
                 snapshot={snapshot}
                 updateState={updateState}
+                updateSnapshot={updateSnapshot}
               />
             ) : null}
             {surface === "activity" ? (
@@ -1387,6 +1449,7 @@ function McpSurface({
   setError,
   snapshot,
   updateState,
+  updateSnapshot,
 }: {
   copy: Copy;
   devProfile: boolean;
@@ -1397,6 +1460,7 @@ function McpSurface({
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
   updateState: (state: LauncherState) => void;
+  updateSnapshot: () => Promise<void>;
 }) {
   const configuringInactiveMode = interactionMode !== snapshot.state.browserInteractionMode;
   const [step, setStep] = useState(
@@ -1412,6 +1476,11 @@ function McpSurface({
       : false,
   );
   const [replacingCredentials, setReplacingCredentials] = useState(false);
+  useEffect(() => {
+    if (!replacingCredentials && interactionMode === snapshot.state.browserInteractionMode) {
+      setCredentialsConfigured(snapshot.mcpCredentialsConfigured);
+    }
+  }, [interactionMode, replacingCredentials, snapshot.mcpCredentialsConfigured, snapshot.state.browserInteractionMode]);
   const [localBusy, setLocalBusy] = useState(false);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
@@ -1463,7 +1532,7 @@ function McpSurface({
       setTunnelId("");
       setCredentialsConfigured(true);
       setReplacingCredentials(false);
-      updateState((await api!.snapshot()).state);
+      await updateSnapshot();
       await move(2);
     } catch (cause) {
       setError(messageOf(cause));
@@ -1478,7 +1547,7 @@ function McpSurface({
     setDoctor(null);
     try {
       setDoctor(await api!.verifyMcp());
-      updateState((await api!.snapshot()).state);
+      await updateSnapshot();
     } catch (cause) {
       setError(messageOf(cause));
     } finally {

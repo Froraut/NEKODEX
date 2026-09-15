@@ -25,7 +25,7 @@ jobs:
   plan:
     # Prereleases require an explicit platform selection; stable tags keep the
     # all-platform automatic release path.
-    if: github.repository == 'Froraut/codex-chatgpt-web' && (github.event_name == 'workflow_dispatch' || !contains(github.ref_name, '-'))
+    if: github.repository == 'Froraut/NEKODEX' && (github.event_name == 'workflow_dispatch' || !contains(github.ref_name, '-'))
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}

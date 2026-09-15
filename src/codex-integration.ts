@@ -44,7 +44,7 @@ import type {
   SetCodexIntegrationActiveResult,
   UninstallCodexIntegrationResult,
 } from "./codex-integration-shared";
-import { assertJournalTargetsConfig, readJournal } from "./codex-integration-journal";
+import { assertJournalTargetsConfig, readJournal, restoredInactiveJsonHook } from "./codex-integration-journal";
 import {
   findTopLevelAssignment,
   installCompatibilityV1Features,
@@ -658,7 +658,10 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     }
     restored = restoreManagedRoute(current, journal);
   }
-  const restoredHooks = journal.version === 11 && journal.active ? restoreManagedJsonHook(journal) : undefined;
+  const inactiveJsonHook = restoredInactiveJsonHook(journal);
+  const restoredHooks = journal.version === 11 && journal.active
+    ? restoreManagedJsonHook(journal)
+    : inactiveJsonHook && { path: inactiveJsonHook.path, text: inactiveJsonHook.restored };
   const configSnapshot = snapshotFile(journal.configPath, { followSymlink: true });
   const hooksSnapshot = restoredHooks ? snapshotFile(restoredHooks.path, { followSymlink: true }) : undefined;
   const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath) : undefined;
@@ -670,6 +673,13 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     expected.set(configSnapshot.path, Buffer.from(restored));
     writeFileSnapshot(configSnapshot, restored);
     if (restoredHooks && hooksSnapshot) {
+      if (inactiveJsonHook) {
+        const latest = snapshotFile(restoredHooks.path, { followSymlink: true });
+        if (!hooksSnapshot.data?.equals(Buffer.from(inactiveJsonHook.current))
+          || !latest.data?.equals(Buffer.from(inactiveJsonHook.current))) {
+          throw new Error(`Codex hooks JSON changed before uninstall removed the managed hook; preserving the external edit: ${restoredHooks.path}`);
+        }
+      }
       expected.set(hooksSnapshot.path, Buffer.from(restoredHooks.text));
       writeFileSnapshot(hooksSnapshot, restoredHooks.text);
     }
@@ -679,6 +689,9 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     }
     expected.set(modelsCacheSnapshot.path, undefined);
     rmSync(modelsCacheSnapshot.path, { force: true });
+    if (journal.version === 11 && !journal.active && restoredInactiveJsonHook(journal)) {
+      throw new Error("Codex JSON interrupt hook reappeared during uninstall; preserving the integration journal");
+    }
     expected.set(recoverySnapshot.path, undefined);
     rmSync(getCodexJournalRecoveryPath(), { force: true });
     expected.set(journalSnapshot.path, undefined);

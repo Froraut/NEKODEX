@@ -13,7 +13,7 @@ test('signed partial resumes exact range and publishes progress', async () => {
   const dest = path.join(dir, 'asset.zip');
   const payload = Buffer.from('authenticated release bytes');
   const expectedSha256 = crypto.createHash('sha256').update(payload).digest('hex');
-  const url = 'https://github.com/Froraut/codex-chatgpt-web/releases/download/v1/a.zip';
+  const url = 'https://github.com/Froraut/NEKODEX/releases/download/v1/a.zip';
   const expectedBytes = payload.length;
   fs.writeFileSync(dest + '.part', payload.subarray(0, 7));
   fs.writeFileSync(dest + '.identity.json', JSON.stringify({ url, expectedBytes, expectedSha256 }));

@@ -8,15 +8,14 @@ const inputImageBlockSchema = z.object({
   detail: z.enum(["auto", "low", "high", "original"]).optional(),
   image_url: z.string().optional(),
   file_id: z.string().optional(),
-}).refine(v => typeof v.image_url === "string" || typeof v.file_id === "string", {
+}).refine(v => Boolean(v.image_url) || Boolean(v.file_id), {
   message: "input_image requires at least one of image_url or file_id",
 });
 const inputFileBlockSchema = z.object({
   type: z.literal("input_file"),
   file_id: z.string().optional(),
   filename: z.string().optional(),
-  // Retain this field during parsing so the request-level check can reject it even when
-  // the permissive input-item fallback accepts a message with an unsupported block.
+  // Retain this field so the request-level check can reject unsupported inline content.
   file_data: z.unknown().optional(),
 });
 const outputTextSchema = z.object({ type: z.literal("output_text"), text: z.string() });
@@ -98,6 +97,17 @@ const customToolCallOutputItemSchema = z.object({
   output: toolOutputSchema,
 });
 
+// The fallback is only for item extensions we do not yet model. A known type that fails its
+// schema must not fall through and turn malformed content into a placeholder or drop a block.
+const knownInputItemTypes = new Set([
+  "message", "agent_message", "reasoning", "function_call", "function_call_output",
+  "custom_tool_call", "custom_tool_call_output",
+]);
+const unknownInputItemSchema = z.object({ type: z.string() }).loose().refine(
+  item => !knownInputItemTypes.has(item.type),
+  { message: "known input item must satisfy its schema" },
+);
+
 export const inputItemSchema = z.union([
   userMessageItemSchema,
   systemMessageItemSchema,
@@ -108,7 +118,7 @@ export const inputItemSchema = z.union([
   functionCallOutputItemSchema,
   customToolCallItemSchema,
   customToolCallOutputItemSchema,
-  z.object({ type: z.string() }).loose(),
+  unknownInputItemSchema,
 ]);
 
 export const toolSchema = z.object({
@@ -187,6 +197,14 @@ export const responsesRequestSchema = z.object({
     if (!Array.isArray(blocks)) continue;
     for (const [blockIndex, block] of blocks.entries()) {
       if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+      if ((item as { role?: unknown }).role === "system"
+        && (block as { type?: unknown }).type === "input_image") {
+        ctx.addIssue({
+          code: "custom",
+          message: "input_image in a system message is unsupported; system image content was not sent",
+          path: ["input", itemIndex, "content", blockIndex],
+        });
+      }
       if ((block as { type?: unknown }).type !== "input_file"
         || !Object.prototype.hasOwnProperty.call(block, "file_data")) continue;
       ctx.addIssue({

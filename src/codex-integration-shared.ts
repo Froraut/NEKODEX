@@ -359,20 +359,42 @@ export function restoreFileSnapshot(snapshot: FileSnapshot): void {
 }
 
 export function writeFilesWithCompensation(
-  writes: Array<{ path: string; data: string | Uint8Array; followSymlink?: boolean }>,
+  writes: Array<{ path: string; data: string | Uint8Array; followSymlink?: boolean; expectedData?: Uint8Array }>,
   removals: string[] = [],
 ): void {
   const paths = [...new Set([...writes.map(write => write.path), ...removals])];
   const snapshots = new Map(paths.map(path => [path, snapshotFile(path, {
     followSymlink: writes.some(write => write.path === path && write.followSymlink === true),
   })]));
+  const startedWrites = new Set<string>();
   try {
-    for (const write of writes) writeFileSnapshot(snapshots.get(write.path)!, write.data);
+    for (const write of writes) {
+      if (write.expectedData) {
+        const snapshot = snapshots.get(write.path)!;
+        const current = snapshotFile(write.path, { followSymlink: write.followSymlink });
+        if (!snapshot.exists || !snapshot.data?.equals(write.expectedData)
+          || !current.exists || !current.data?.equals(write.expectedData)) {
+          throw new Error(`Codex integration file changed before the managed write; preserving the external edit: ${write.path}`);
+        }
+      }
+      startedWrites.add(write.path);
+      writeFileSnapshot(snapshots.get(write.path)!, write.data);
+    }
     for (const removal of removals) rmSync(removal, { force: true });
   } catch (error) {
     const rollbackFailures: string[] = [];
     for (const snapshot of [...snapshots.values()].reverse()) {
       try {
+        const guardedWrite = writes.find(write => write.path === snapshot.path && write.expectedData);
+        if (guardedWrite) {
+          const current = snapshotFile(snapshot.path, { followSymlink: guardedWrite.followSymlink });
+          if (current.exists === snapshot.exists
+            && (current.data?.equals(snapshot.data ?? Buffer.alloc(0)) ?? !snapshot.data)) continue;
+          if (!startedWrites.has(snapshot.path)
+            || !current.exists || !current.data?.equals(Buffer.from(guardedWrite.data))) {
+            throw new Error("changed after the managed write; preserving the external edit");
+          }
+        }
         restoreFileSnapshot(snapshot);
       } catch (rollbackError) {
         rollbackFailures.push(`${snapshot.path}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);

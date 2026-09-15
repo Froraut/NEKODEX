@@ -234,3 +234,12 @@ Publisher packaging now signs the final DMG, submits that disk image separately 
 staples and validates its ticket, and checks its primary signature with Gatekeeper before
 metadata signing. The application inside the ZIP is independently signed and notarized as before.
 The first transition from the old executable name requires manual DMG installation.
+
+## Repository identity after rename
+
+Current source and future `.2` builds use `Froraut/NEKODEX` consistently for the workflow guard,
+update origin and signed-metadata repository field. The publisher public key and certificate do
+not change. The published `5.2.0-nekodex.1` assets and their metadata retain the original repository
+identity and remain immutable. Existing `.1` installations require a manual signed-DMG transition
+to the first release with the renamed identity; redirects alone cannot satisfy their exact pins.
+No legacy-repository alias or unsigned trust-root update is accepted by the new verifier.

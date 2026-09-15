@@ -259,7 +259,7 @@ export class LauncherBrowserHelperClient {
               );
               return;
             }
-            void this.send({
+            void this.sendAbort(pending, {
               type: "abort",
               id: turn.traceId,
               ...(turn.abortSignal?.reason instanceof ChatGptCompactionHandoffAccepted
@@ -611,7 +611,7 @@ export class LauncherBrowserHelperClient {
   private abortWithLocalFailure(id: string, error: Error, pending: PendingTurn): void {
     if (this.pending.get(id) !== pending || pending.localFailure) return;
     pending.localFailure = error;
-    void this.send({ type: "abort", id }).catch(sendError => {
+    void this.sendAbort(pending, { type: "abort", id }).catch(sendError => {
       if (this.pending.get(id) !== pending) return;
       this.finishWithError(
         id,
@@ -754,24 +754,95 @@ export class LauncherBrowserHelperClient {
     return this.sendTo(child, message);
   }
 
-  private async sendTo(child: ChildProcessWithoutNullStreams, message: unknown): Promise<void> {
+  private sendAbort(pending: PendingTurn, message: unknown): Promise<void> {
+    const child = this.child;
+    if (!child || child.killed || child.exitCode !== null || child.signalCode !== null) {
+      return Promise.reject(new Error("Launcher browser helper is not running"));
+    }
+    // An abort is a small control frame. Give a congested pipe a bounded chance to drain instead
+    // of failing a locally rejected prompt and leaving its helper-side selection waiting.
+    return this.sendTo(child, message, {
+      waitForCapacityMs: 5_000,
+      cancellation: pending.progressForwarding?.signal,
+      currentTurn: pending,
+    });
+  }
+
+  private waitForInputDrain(child: ChildProcessWithoutNullStreams, timeoutMs: number,
+    cancellation?: AbortSignal): Promise<void> {
+    return new Promise<void>((resolveDrain, rejectDrain) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        child.stdin.off("drain", onDrain);
+        child.stdin.off("error", onError);
+        child.stdin.off("close", onClose);
+        child.off("exit", onExit);
+        cancellation?.removeEventListener("abort", onAbort);
+      };
+      const onDrain = () => { cleanup(); resolveDrain(); };
+      const onError = (error: Error) => { cleanup(); rejectDrain(error); };
+      const onClose = () => {
+        cleanup();
+        const error = new Error("Launcher browser helper input closed while congested");
+        this.failChild(child, error);
+        rejectDrain(error);
+      };
+      const onExit = () => { cleanup(); rejectDrain(new Error("Launcher browser helper exited while input was congested")); };
+      const onAbort = () => { cleanup(); rejectDrain(new DOMException("Browser helper turn ended before abort delivery", "AbortError")); };
+      const timer = setTimeout(() => {
+        cleanup();
+        rejectDrain(new Error("Launcher browser helper input queue did not drain before abort deadline"));
+      }, timeoutMs);
+      child.stdin.once("drain", onDrain);
+      child.stdin.once("error", onError);
+      child.stdin.once("close", onClose);
+      child.once("exit", onExit);
+      cancellation?.addEventListener("abort", onAbort, { once: true });
+      if (cancellation?.aborted) onAbort();
+    });
+  }
+
+  private async sendTo(child: ChildProcessWithoutNullStreams, message: unknown, options?: {
+    waitForCapacityMs: number;
+    cancellation?: AbortSignal;
+    currentTurn: PendingTurn;
+  }): Promise<void> {
     const encoded = `${JSON.stringify(message)}\n`;
-    try {
-      const bytes = Buffer.byteLength(encoded, "utf8");
-      assertByteLimit(bytes - 1, CHATGPT_HELPER_FRAME_BYTES, "Browser helper IPC frame");
-      assertByteLimit(child.stdin.writableLength + bytes, CHATGPT_HELPER_PENDING_BYTES, "Browser helper IPC input queue");
-    } catch (error) {
-      this.failChild(child, error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    const bytes = Buffer.byteLength(encoded, "utf8");
+    assertByteLimit(bytes - 1, CHATGPT_HELPER_FRAME_BYTES, "Browser helper IPC frame");
+    const deadline = options ? Date.now() + options.waitForCapacityMs : 0;
+    while (child.stdin.writableLength + bytes > CHATGPT_HELPER_PENDING_BYTES && options) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await this.waitForInputDrain(child, remaining, options.cancellation);
+    }
+    // Both limits are checked immediately before write. A local size/queue rejection has sent no
+    // bytes and belongs to this caller; only a broken pipe or failed write corrupts the transport.
+    assertByteLimit(child.stdin.writableLength + bytes, CHATGPT_HELPER_PENDING_BYTES, "Browser helper IPC input queue");
+    if (options && (this.child !== child
+      || this.pending.get(options.currentTurn.turn.traceId) !== options.currentTurn
+      || options.cancellation?.aborted)) {
+      throw new DOMException("Browser helper turn ended before abort delivery", "AbortError");
     }
     if (child.stdin.destroyed || child.stdin.writableEnded) {
-      throw new Error("Launcher browser helper input is closed");
+      const error = new Error("Launcher browser helper input is closed");
+      this.failChild(child, error);
+      throw error;
     }
     await new Promise<void>((resolveWrite, rejectWrite) => {
-      child.stdin.write(encoded, error => {
-        if (error) rejectWrite(error);
-        else resolveWrite();
-      });
+      try {
+        child.stdin.write(encoded, error => {
+          if (error) {
+            this.failChild(child, error);
+            rejectWrite(error);
+          }
+          else resolveWrite();
+        });
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        this.failChild(child, failure);
+        rejectWrite(failure);
+      }
     });
   }
 }

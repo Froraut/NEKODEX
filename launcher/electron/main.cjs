@@ -72,7 +72,7 @@ const BROWSER_DESCRIPTOR_PATH = path.join(CORE_HOME, "runtime", "launcher-browse
 const BROWSER_HELPER_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "runtime", "app", "browser-helper.cjs")
   : path.join(SOURCE_ROOT, ".launcher-runtime", "browser-helper.cjs");
-const GITHUB_URL = "https://github.com/Froraut/codex-chatgpt-web";
+const GITHUB_URL = "https://github.com/Froraut/NEKODEX";
 const X_URL = "";
 const CONNECTORS_URL = "https://chatgpt.com/plugins";
 const DEVELOPER_MODE_URL = "https://chatgpt.com/#settings/Security?section=developer-mode";
@@ -1030,6 +1030,7 @@ async function requestQuit() {
       ? `${primary}; runtime cleanup was incomplete: ${shutdownResult.failures.join("; ")}`
       : primary;
     quitting = false;
+    runtimeSupervisor?.allowRestartAfterQuitFailure();
     showMainWindow();
     publishOperation({ name: "launcher-quit", status: "failed", message });
     return { ok: false, message };
@@ -1442,8 +1443,28 @@ async function start() {
     event.preventDefault();
     void requestQuit();
   });
-  process.once("SIGINT", () => { void requestQuit(); });
-  process.once("SIGTERM", () => { void requestQuit(); });
+  // Keep ownership cleanup reachable after an operation refuses Quit. Repeated signals
+  // retry once the current attempt settles; they never invoke the platform default exit.
+  let signalQuitPending = false;
+  let signalQuitRunning = false;
+  const requestSignalQuit = () => {
+    if (exitCommitted) return;
+    signalQuitPending = true;
+    if (signalQuitRunning) return;
+    signalQuitRunning = true;
+    void (async () => {
+      try {
+        do {
+          signalQuitPending = false;
+          await requestQuit();
+        } while (signalQuitPending && !exitCommitted);
+      } finally {
+        signalQuitRunning = false;
+      }
+    })();
+  };
+  process.on("SIGINT", requestSignalQuit);
+  process.on("SIGTERM", requestSignalQuit);
 }
 
 void start().catch(error => recoverStartupFailure({

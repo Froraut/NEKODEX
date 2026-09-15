@@ -24,9 +24,11 @@ const backendReviewFiles = new Map<string, ReviewCase[]>([
 const capacityFiles = new Set([
   "launcher/electron/browser-capacity.cjs",
   "src/adapters/chatgpt-web/concurrency.ts",
+  "tests/browser-capacity-16.test.ts",
 ]);
 const capacityCase = "worker admits 16 distinct requests, rejects 17th, and reuses a released slot";
 const maximumChangedFiles = 30;
+const maximumSelectedCases = 5;
 
 function summary(message: string): void {
   console.log(message);
@@ -99,25 +101,38 @@ async function main(): Promise<void> {
   const scope = kind === "pull_request" ? await pullRequestFiles(event) : await pushFiles(event);
   const files = [...new Set(scope.files)];
   const selected = new Set<ReviewCase>();
-  for (const file of files) for (const name of backendReviewFiles.get(file) ?? []) selected.add(name);
+  const direct = new Set<ReviewCase>();
+  for (const file of files) for (const name of backendReviewFiles.get(file) ?? []) {
+    selected.add(name);
+    if (file !== "tests/backend-review-regressions.test.ts") direct.add(name);
+  }
   const capacity = files.some(file => capacityFiles.has(file));
-  const selectedNames = Object.keys(reviewCases).filter(name => selected.has(name as ReviewCase)) as ReviewCase[];
+  const selectedNames = (Object.keys(reviewCases) as ReviewCase[])
+    .filter(name => direct.has(name))
+    .concat((Object.keys(reviewCases) as ReviewCase[]).filter(name => selected.has(name) && !direct.has(name)));
   const mode = scope.manualReason || !files.length ? "manual-review"
+    : selectedNames.length && capacity ? "mixed-review"
     : selectedNames.length ? "backend-review" : capacity ? "capacity"
     : files.every(metadata) ? "metadata" : "manual-review";
   output("mode", mode);
   summary(`### CI scope: ${mode}`);
   summary(`Changed paths: ${files.length ? files.join(", ") : "unavailable"}.`);
 
-  if (mode === "backend-review") {
-    const cases = selectedNames.map(name => reviewCases[name]);
+  if (mode === "backend-review" || mode === "mixed-review") {
+    const mixed = mode === "mixed-review";
+    const backendNames = mixed ? selectedNames.slice(0, maximumSelectedCases - 1) : selectedNames;
+    const overflow = mixed ? selectedNames.slice(maximumSelectedCases - 1) : [];
+    const cases: string[] = backendNames.map(name => reviewCases[name]);
+    if (mixed) cases.push(capacityCase);
     output("pattern", `^(?:${cases.map(regexLiteral).join("|")})$`);
-    summary(`Linux selects ${cases.length} named backend review case(s) in one test execution: ${cases.join("; ")}.`);
-    const manual = files.filter(file => !backendReviewFiles.has(file) && !metadata(file));
+    summary(`Linux selects ${cases.length} named ${mixed ? "backend and capacity" : "backend review"} case(s) in one bounded test execution: ${cases.join("; ")}.`);
+    if (overflow.length) summary(`**Manual review required for backend case(s) beyond the ${maximumSelectedCases}-case shared limit:** ${overflow.map(name => reviewCases[name]).join("; ")}.`);
+    const manual = files.filter(file => !backendReviewFiles.has(file) && !capacityFiles.has(file) && !metadata(file));
     if (manual.length) summary(`Manual review still required for paths without a selected case: ${manual.join(", ")}.`);
     const metadataPaths = files.filter(metadata);
     if (metadataPaths.length) summary(`Manual diff review still required for metadata paths: ${metadataPaths.join(", ")}.`);
     if (files.includes("tests/backend-review-regressions.test.ts")) summary("Changes to the regression file itself require review; newly added cases are not selected automatically.");
+    if (mixed && files.includes("tests/browser-capacity-16.test.ts")) summary("Changes to the capacity test file itself require review; newly added cases are not selected automatically.");
     summary("A passing test covers only the named cases; it does not establish release or live-account behavior.");
   } else if (mode === "capacity") {
     output("pattern", `^${regexLiteral(capacityCase)}$`);
@@ -126,6 +141,7 @@ async function main(): Promise<void> {
     if (manual.length) summary(`Manual review still required for paths without a selected case: ${manual.join(", ")}.`);
     const metadataPaths = files.filter(metadata);
     if (metadataPaths.length) summary(`Manual diff review still required for metadata paths: ${metadataPaths.join(", ")}.`);
+    if (files.includes("tests/browser-capacity-16.test.ts")) summary("Changes to the capacity test file itself require review; newly added cases are not selected automatically.");
   } else if (mode === "manual-review") {
     summary(`**Manual review required; no automated behavior test selected.** ${scope.manualReason ?? "Changed behavior has no safe named-case mapping."}`);
     if (files.length) summary(`Manual review paths: ${files.filter(file => !metadata(file)).join(", ") || "metadata only"}.`);

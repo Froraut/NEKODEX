@@ -4,6 +4,11 @@ import { getCodexHome } from "../../codex-integration-shared";
 import { contextualUserMessage, extractChatGptThreadSpawnLineage, extractChatGptTurnIdentity } from "./environment";
 import { verifyNativeDelegation } from "./codex-rollout-environment";
 
+function decodeDelegationXml(text: string): string {
+  const entities: Record<string, string> = { lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" };
+  return text.replace(/&(lt|gt|quot|apos|amp);/g, (_, entity: string) => entities[entity]!);
+}
+
 export function normalizeNativeDelegation(parsed: CodexParsedRequest,
   verify = verifyNativeDelegation, codexHome = getCodexHome()): unknown | undefined {
   const body = parsed._rawBody as { input?: Array<Record<string, unknown>> } | undefined;
@@ -35,9 +40,8 @@ export function normalizeNativeDelegation(parsed: CodexParsedRequest,
     if (!verify(codexHome, identity.threadId, identity.turnId, item, lineage)) {
       throw new Error("Cross-task instruction does not match the native current-turn delivery");
     }
+    const text = decodeDelegationXml(envelope[2]!);
     if (lineage) {
-      const entities: Record<string, string> = { lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" };
-      const text = envelope[2]!.replace(/&(lt|gt|quot|apos|amp);/g, (_, entity: string) => entities[entity]!);
       const message = markVerifiedParentMessage({
         type: "agent_message", id: item.id,
         author: lineage.parentThreadId, recipient: lineage.threadId,
@@ -48,7 +52,7 @@ export function normalizeNativeDelegation(parsed: CodexParsedRequest,
     }
     return { ...body, input: input.map((value, i) => i === index ? {
       type: "message", role: "user", id: item.id,
-      content: [{ type: "input_text", text: envelope[2] }],
+      content: [{ type: "input_text", text }],
       internal_chat_message_metadata_passthrough: item.internal_chat_message_metadata_passthrough,
     } : value) };
   }

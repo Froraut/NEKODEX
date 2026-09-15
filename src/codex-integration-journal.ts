@@ -209,7 +209,7 @@ function journalExternalHooksMatch(journal: AnyCodexIntegrationJournal): boolean
           return false;
         }
       };
-      return journal.active ? installed() : !installed();
+      return journal.active ? installed() : restoredInactiveJsonHook(journal) === undefined;
     }
     return true;
   } catch {
@@ -219,6 +219,54 @@ function journalExternalHooksMatch(journal: AnyCodexIntegrationJournal): boolean
 
 function journalMatchesConfig(journal: AnyCodexIntegrationJournal): boolean {
   return journalConfigMatches(journal) && journalExternalHooksMatch(journal);
+}
+
+/** Return a removal only when the inactive journal still identifies the exact JSON entry. */
+export function restoredInactiveJsonHook(journal: AnyCodexIntegrationJournal):
+  { path: string; current: string; restored: string } | undefined {
+  if (journal.version !== 11 || journal.active || journal.interruptHook.storage !== "json") return undefined;
+  assertJournalTargetsConfig(journal, getCodexConfigPath());
+  const hook = journal.interruptHook;
+  if (!existsSync(hook.hooksPath)) return undefined;
+  const current = readFileSync(hook.hooksPath, "utf8");
+  try {
+    verifyCodexInterruptHookJson(current, { ...hook, mode: "json" });
+    return {
+      path: hook.hooksPath,
+      current,
+      restored: restoreCodexInterruptHookJson(current, { ...hook, mode: "json" }),
+    };
+  } catch (error) {
+    // Parsing and duplicate-command checks still apply when the recorded slot is gone.
+    // An occupied recorded slot is an external edit, even if its command differs.
+    installCodexInterruptHookJson(current, hook.command);
+    const document = JSON.parse(current) as {
+      hooks?: Record<string, Array<{ hooks: Array<{ type?: string; command?: string }> }>>;
+    };
+    const groups = document.hooks?.Interrupt;
+    if (groups?.[hook.groupIndex]?.hooks[hook.hookIndex]
+      || Object.values(document.hooks ?? {}).some(eventGroups => eventGroups.some(group =>
+        group.hooks.some(entry => entry.type === "command" && entry.command === hook.command)))) {
+      throw new Error(`Codex JSON interrupt lifecycle hook changed after setup; preserving external edits: ${hook.hooksPath}`, { cause: error });
+    }
+    return undefined;
+  }
+}
+
+function reconcileInactiveJsonHook(journal: AnyCodexIntegrationJournal): void {
+  if (journal.version !== 11 || journal.active || journal.interruptHook.storage !== "json") return;
+  if (!journalConfigMatches(journal)) {
+    throw new Error("Inactive Codex integration journal does not match the restored config");
+  }
+  const removal = restoredInactiveJsonHook(journal);
+  if (removal) {
+    writeFilesWithCompensation([{
+      path: removal.path,
+      data: removal.restored,
+      followSymlink: true,
+      expectedData: Buffer.from(removal.current),
+    }]);
+  }
 }
 
 function recoverPendingJsonHookWrite(
@@ -278,7 +326,10 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
     if (recoveryError) throw recoveryError;
     return undefined;
   }
-  if (primary && recovery && serializeJournal(primary) === serializeJournal(recovery)) return primary;
+  if (primary && recovery && serializeJournal(primary) === serializeJournal(recovery)) {
+    reconcileInactiveJsonHook(primary);
+    return primary;
+  }
   // A v2 uninstall marker is intent, while the older copy is the pre-uninstall commit.
   // Their common baseline is enough to select the marker even before config restoration.
   if (primary?.version === 2 && recovery?.version === 2
@@ -298,10 +349,12 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
   }
   if (recovery && !primaryError && recoverPendingJsonHookWrite(recovery, primary)) return recovery;
   if (primary && !recovery && !recoveryError) {
+    reconcileInactiveJsonHook(primary);
     atomicWriteFile(recoveryPath, serializeJournal(primary));
     return primary;
   }
   if (recovery && !primary && !primaryError) {
+    reconcileInactiveJsonHook(recovery);
     if (!journalMatchesConfig(recovery)) {
       throw new Error("Codex integration recovery journal does not match the active config");
     }
@@ -319,6 +372,7 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
     );
   }
   const selected = primaryMatches ? primary! : recovery!;
+  reconcileInactiveJsonHook(selected);
   const data = serializeJournal(selected);
   writeFilesWithCompensation([
     { path: recoveryPath, data },

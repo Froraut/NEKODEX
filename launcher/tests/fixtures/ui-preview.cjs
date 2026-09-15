@@ -57,7 +57,7 @@ function installMockLauncher() {
     profile: scenario === "models-ready" || scenario === "tools-pending" ? "production" : "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
     connectorNames: { automatic: "Fixture connector", manual: "Fixture manual" }, mcpCredentialsConfigured: scenario === "tools-pending",
-    logs: [], urls: { github: "https://github.com/Froraut/codex-chatgpt-web", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
+    logs: [], urls: { github: "https://github.com/Froraut/NEKODEX", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
     platform: "darwin", packaged: false, version: "fixture", smokePassed: state.browserSmokePassed, operation, update: { status: "disabled" },
   });
   let startupAttempts = 0;

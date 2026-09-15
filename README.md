@@ -136,6 +136,19 @@ The [backend fix report](docs/reviews/2026-09-15-sol-backend-fixes.md) records e
 its disposition and the focused verification performed. It does not claim exhaustive testing,
 all-model acceptance or a full Windows runtime validation.
 
+## Repository-name transition for updates
+
+Source development is now **5.2.0-nekodex.2**. This is not yet a published binary release;
+the download links above continue to point to the immutable signed `.1` release.
+Future `.2` builds bind their updater and signed metadata to **Froraut/NEKODEX**. The published
+`.1` build still pins the old repository identity, so its transition requires manually installing
+a new signed DMG when that release is available. Renaming a GitHub repository does not rewrite
+an existing binary's trust policy. Do not replace `.1` assets or disable signature checks.
+
+Installer scripts in the current source select the newest published release, including prereleases.
+Set `CODEX_WEB_GPT_VERSION` to choose an exact version. Only install assets actually provided for
+your platform; the currently published release is macOS-only.
+
 ## Build from source
 
 Development requires Bun 1.4.0. Use a native build host for the platform you are packaging.

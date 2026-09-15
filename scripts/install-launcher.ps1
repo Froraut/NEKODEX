@@ -27,14 +27,16 @@ function Test-IsFullyQualifiedWindowsPath {
   return $Path -match '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$))'
 }
 
-$Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "Froraut/codex-chatgpt-web" }
+$Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "Froraut/NEKODEX" }
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   throw "Invalid GitHub repository: $Repository"
 }
 $Version = $env:CODEX_WEB_GPT_VERSION
 if (-not $Version) {
   $Release = Invoke-WithRetry -Label "Resolving the latest release" -Operation {
-    Invoke-RestMethod "https://api.github.com/repos/$Repository/releases/latest" -TimeoutSec 60
+    $Published = @(Invoke-RestMethod "https://api.github.com/repos/$Repository/releases?per_page=1" -TimeoutSec 60)
+    if ($Published.Count -eq 0) { throw "No published NEKODEX release; set CODEX_WEB_GPT_VERSION explicitly" }
+    $Published[0]
   }
   $Version = [string]$Release.tag_name
 }

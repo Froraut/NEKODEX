@@ -24,7 +24,7 @@ afterAll(() => {
 test("review: native continuation expands a locally owned Web response only", async () => {
   const id = "resp_review_local_123";
   rememberResponseState({ input: [{ role: "user", content: "original question" }] }, {
-    id, status: "completed", output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "original answer" }] }],
+    id, status: "completed", output: [{ id: "msg_local_web_only", type: "message", role: "assistant", content: [{ type: "output_text", text: "original answer" }] }],
   });
   let forwarded: any;
   const body = { model: "gpt-5.6-sol", previous_response_id: id, input: [{ role: "user", content: "continue" }] };
@@ -34,6 +34,7 @@ test("review: native continuation expands a locally owned Web response only", as
   expect(forwarded.previous_response_id).toBeUndefined();
   expect(forwarded.input).toHaveLength(3);
   expect(forwarded.input[0].content).toBe("original question");
+  expect(forwarded.input[1].id).toBeUndefined();
   expect(forwarded.input[2].content).toBe("continue");
 });
 

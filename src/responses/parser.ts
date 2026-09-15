@@ -42,7 +42,8 @@ function inputContentParts(blocks: unknown[] | string | undefined): string | Cod
         // NEVER inline the (often base64 data-URL) image_url as text: that explodes the token count.
         parts.push({ type: "image", imageUrl: b.image_url, ...(b.detail ? { detail: normalizeImageDetail(b.detail) } : {}) });
       } else {
-        parts.push({ type: "text", text: `[image: ${b.file_id ?? "?"}]` }); // file_id ref → no inline data
+        if (!b.file_id) throw new Error("input_image requires image_url or file_id");
+        parts.push({ type: "text", text: `[image: ${b.file_id}]` }); // file_id ref → no inline data
       }
     } else if (block.type === "input_file") {
       // The schema rejects inline data before projection. Keep the same explicit failure
@@ -52,6 +53,8 @@ function inputContentParts(blocks: unknown[] | string | undefined): string | Cod
       }
       const ref = (block as { file_id?: string; filename?: string }).file_id ?? (block as { filename?: string }).filename ?? "?";
       parts.push({ type: "text", text: `[file: ${ref}]` });
+    } else {
+      throw new Error(`unsupported input content block type: ${String((block as { type?: unknown }).type)}`);
     }
   }
   // Collapse to a plain string only for a single TEXT part; images must stay structured.
@@ -391,6 +394,9 @@ export function parseRequest(body: unknown): CodexParsedRequest {
           case "system": {
             pendingReasoning.length = 0;
             const text = inputContentParts(msg.content as unknown[] | string | undefined);
+            if (typeof text !== "string" && text.some(p => p.type === "image")) {
+              throw new Error("input_image in a system message is unsupported; system image content was not sent");
+            }
             const flat = typeof text === "string" ? text : text.map(p => (p.type === "text" ? p.text : "")).join("");
             if (flat.length > 0) systemPrompt.push(flat);
             break;

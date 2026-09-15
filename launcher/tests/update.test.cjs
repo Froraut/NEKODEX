@@ -34,7 +34,7 @@ function updateController(dependencies) {
 }
 
 test("fork update checks stay on their packaged repository, including before the first release", async () => {
-  assert.equal(releaseApiUrl(), "https://api.github.com/repos/Froraut/codex-chatgpt-web/releases?per_page=20");
+  assert.equal(releaseApiUrl(), "https://api.github.com/repos/Froraut/NEKODEX/releases?per_page=20");
   assert.equal(validateRepository("another-owner/a-fork"), "another-owner/a-fork");
   for (const invalid of [undefined, "../upstream", "owner/repo/extra", "https://github.com/owner/repo", "owner/repo?x=1"]) {
     assert.throws(() => validateRepository(invalid), /owner\/repository/);
@@ -57,7 +57,7 @@ test("fork update checks stay on their packaged repository, including before the
 
 test("fork updates reject upstream assets, credentials and altered download URLs", () => {
   const asset = "launcher.zip";
-  const allowed = "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip";
+  const allowed = "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/launcher.zip";
   for (const url of [
     allowed.replace("Froraut", "miuuyy"),
     allowed.replace("github.com", "username:password@github.com"),
@@ -87,7 +87,7 @@ function scopedRelease(version, platforms = ["darwin", "win32", "linux"]) {
   return { tag_name: `v${version}`, prerelease: true, assets: [
     ...platforms.map(platform => releaseAssetName(version, platform, "x64")), "checksums.txt", "release-metadata.json",
   ].map(name => ({ name, size: 10,
-    browser_download_url: `https://github.com/Froraut/codex-chatgpt-web/releases/download/v${version}/${name}` })) };
+    browser_download_url: `https://github.com/Froraut/NEKODEX/releases/download/v${version}/${name}` })) };
 }
 
 test("Apple-only prereleases are skipped only for platforms whose archive is absent", async () => {
@@ -145,14 +145,14 @@ test("updates reject invalid or excessive asset sizes before offering installati
           {
             name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
             size,
-            browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+            browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
           },
           {
             name: "checksums.txt",
-            browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+            browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/checksums.txt",
             },
             { name: "release-metadata.json",
-              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/release-metadata.json",
+              browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/release-metadata.json",
           },
         ],
       }),
@@ -269,11 +269,11 @@ test("checksums and release URLs bind the exact expected asset", () => {
   assert.throws(() => expectedChecksum(`${hash}  other.zip\n`, "launcher.zip"), /no entry/);
   assert.equal(
     validateReleaseAssetUrl(
-      "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+      "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/launcher.zip",
       "1.2.0",
       "launcher.zip",
     ),
-    "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+    "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/launcher.zip",
   );
   assert.throws(
     () => validateReleaseAssetUrl("https://example.com/launcher.zip", "1.2.0", "launcher.zip"),
@@ -310,14 +310,14 @@ test("startup check runs once and exposes only a newer complete release", async 
             {
               name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
               size: 1024,
-              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
-              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/checksums.txt",
             },
             { name: "release-metadata.json",
-              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/release-metadata.json",
+              browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/release-metadata.json",
             },
           ],
         };
@@ -361,14 +361,14 @@ test("verified update is handed to one detached worker", async () => {
             {
               name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
               size: assetBody.length,
-              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
-              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/checksums.txt",
             },
             { name: "release-metadata.json",
-              browser_download_url: "https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/release-metadata.json",
+              browser_download_url: "https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/release-metadata.json",
             },
           ],
         }),
@@ -429,7 +429,7 @@ test("every authentication, staging and worker-start failure preserves the exist
         executablePath: "/tmp/launcher", runtimeExecutable: process.execPath, logsDirectory: path.join(root, "logs"),
         dependencies: {
           fetchRelease: async () => ({ tag_name: "v1.2.0", assets: [assetName, "checksums.txt", "release-metadata.json"].map(name => ({
-            name, size: body.length, browser_download_url: `https://github.com/Froraut/codex-chatgpt-web/releases/download/v1.2.0/${name}`,
+            name, size: body.length, browser_download_url: `https://github.com/Froraut/NEKODEX/releases/download/v1.2.0/${name}`,
           })) }),
           downloadText: async url => { calls.push(url.endsWith("release-metadata.json") ? "metadata" : "checksums"); return `${digest}  ${assetName}\n`; },
           verifyReleaseMetadata() {

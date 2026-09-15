@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Troubleshooting guide
-    url: https://github.com/Froraut/codex-chatgpt-web/blob/main/TROUBLESHOOTING.md
+    url: https://github.com/Froraut/NEKODEX/blob/main/TROUBLESHOOTING.md
     about: Resolve common setup, routing, sign-in, model, MCP, rate-limit, image, and streaming failures first.
   - name: Questions and support
-    url: https://github.com/Froraut/codex-chatgpt-web/issues
+    url: https://github.com/Froraut/NEKODEX/issues
     about: Review existing support issues in the FroRaut fork before opening a new report.
   - name: Security reporting guidance
-    url: https://github.com/Froraut/codex-chatgpt-web/blob/main/SECURITY.md
+    url: https://github.com/Froraut/NEKODEX/blob/main/SECURITY.md
     about: Read the security policy before reporting a vulnerability. Do not post credentials or sensitive exploit details in public issues.

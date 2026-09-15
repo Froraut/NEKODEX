@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import type { AccountPoolSnapshot } from "./types";
 import type { Copy } from "./i18n";
@@ -12,18 +12,55 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
   const [busy, setBusy] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const refreshRef = useRef<() => void>(() => {});
   useEffect(() => {
     let disposed = false;
-    setLoadFailed(false);
-    api.accounts().then(value => { if (!disposed) setState(value); }).catch(error => {
-      if (!disposed) { setLoadFailed(true); setError(String(error)); }
+    let timer: number | undefined;
+    let inFlight = false;
+    let revision = 0;
+    const load = () => {
+      timer = undefined;
+      if (disposed || inFlight) return;
+      inFlight = true;
+      const requestedRevision = revision;
+      void api.accounts().then(value => {
+        if (disposed || requestedRevision !== revision) return;
+        setState(value);
+        setLoadFailed(false);
+      }).catch(error => {
+        if (disposed || requestedRevision !== revision) return;
+        setLoadFailed(true);
+        setError(String(error));
+      }).finally(() => {
+        inFlight = false;
+        if (!disposed && requestedRevision !== revision) schedule(false);
+      });
+    };
+    const schedule = (changed = true) => {
+      if (disposed) return;
+      if (changed && (inFlight || timer === undefined)) revision += 1;
+      if (timer === undefined && !inFlight) timer = window.setTimeout(load, 150);
+    };
+    refreshRef.current = () => schedule();
+    // The host publishes the selected browser view even when another account changes.
+    const unsubscribeBrowser = api.onBrowserState(() => schedule());
+    const unsubscribeOperation = api.onOperation(operation => {
+      if (operation.status !== "running") schedule();
     });
-    return () => { disposed = true; };
+    setLoadFailed(false);
+    schedule();
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      unsubscribeBrowser();
+      unsubscribeOperation();
+      refreshRef.current = () => {};
+    };
   }, [api, setError, attempt]);
   const run = async (action: () => Promise<AccountPoolSnapshot>) => {
     if (busy) return;
     setBusy(true); setError(null);
-    try { setState(await action()); }
+    try { await action(); refreshRef.current(); }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   };

@@ -577,6 +577,11 @@ export class ChatGptTurnSessions {
   private readonly retirements = new Map<string, Promise<void>>();
   private readonly ownerRetirements = new Map<string, Promise<void>>();
   private readonly conversationRetirements = new Map<string, Promise<void>>();
+  private readonly retainedReleases = new Map<string, {
+    matches: [string, ChatGptTurnSession][];
+    preserved?: { session: ChatGptTurnSession; executionKey: string };
+    release?: () => Promise<void>;
+  }>();
 
   constructor(
     private readonly ttlMs = 30 * 60_000,
@@ -596,6 +601,13 @@ export class ChatGptTurnSessions {
     instruction?: string,
   ): ChatGptTurnSession {
     this.prune();
+    if ([...this.retainedReleases.values()].some(obligation => (
+      obligation.preserved?.executionKey === key || obligation.matches.some(([ownedKey, session]) => (
+        ownedKey === key || (ownerKey !== undefined && session.ownerKey === ownerKey)
+      ))
+    ))) {
+      throw new Error("ChatGPT retained conversation release must be acknowledged before replacing its owner");
+    }
     const existing = this.entries.get(key);
     if (existing) {
       if (existing.supersededError) throw existing.supersededError;
@@ -635,6 +647,16 @@ export class ChatGptTurnSessions {
   ): Promise<ChatGptTurnSession> {
     for (;;) {
       if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+      const outstanding = [...this.retainedReleases].find(([conversationKey, obligation]) => (
+        conversationKey === retainedConversationKey || obligation.preserved?.executionKey === key
+        || obligation.matches.some(([ownedKey, session]) => (
+          ownedKey === key || session.ownerKey === ownerKey
+        ))
+      ));
+      if (outstanding) {
+        await awaitWithAbort(this.closeConversationAndWait(outstanding[0], outstanding[1].preserved), signal);
+        continue;
+      }
       const existing = this.entries.get(key);
       if (existing) {
         if (existing.supersededError) throw existing.supersededError;
@@ -733,8 +755,13 @@ export class ChatGptTurnSessions {
     return session;
   }
 
-  /** Wait for a retained conversation epoch that has been detached but not physically released. */
+  /** Wait for acknowledgement, retrying any retained release obligation from an earlier failure. */
   async waitForConversationRetirement(conversationKey: string, signal?: AbortSignal): Promise<void> {
+    const obligation = this.retainedReleases.get(conversationKey);
+    if (obligation) {
+      await awaitWithAbort(this.closeConversationAndWait(conversationKey, obligation.preserved), signal);
+      return;
+    }
     const pending = this.conversationRetirements.get(conversationKey);
     if (pending) await awaitWithAbort(pending, signal);
   }
@@ -769,39 +796,67 @@ export class ChatGptTurnSessions {
     conversationKey: string,
     preserved?: { session: ChatGptTurnSession; executionKey: string },
   ): Promise<number> {
-    const pending = this.conversationRetirements.get(conversationKey);
-    if (pending) {
-      await pending;
+    const inFlight = this.conversationRetirements.get(conversationKey);
+    if (inFlight) {
+      await inFlight;
+      const obligation = this.retainedReleases.get(conversationKey);
+      if (obligation) return this.closeConversationAndWait(conversationKey, obligation.preserved);
       return 0;
     }
-    const matches = [...this.entries].filter(([, session]) => (
-      session.conversationKey() === conversationKey
-    ));
-    if (matches.length === 0) return 0;
-    if (preserved && !matches.some(([, session]) => session === preserved.session)) {
-      throw new Error("The final ChatGPT response does not own the retained conversation being retired");
-    }
-    const target = preserved ? this.entries.get(preserved.executionKey) : undefined;
-    if (target && target !== preserved?.session) {
-      throw new Error("The compacted ChatGPT response execution key is already owned by another session");
-    }
-    this.conversationHeads.delete(conversationKey);
-    for (const [key, session] of matches) {
-      if (this.entries.get(key) === session
-        && (session !== preserved?.session || key !== preserved.executionKey)) {
-        this.entries.delete(key);
+    let obligation = this.retainedReleases.get(conversationKey);
+    if (obligation) {
+      if (preserved && (obligation.preserved?.session !== preserved.session
+        || obligation.preserved.executionKey !== preserved.executionKey)) {
+        throw new Error("ChatGPT retained-conversation preservation changed during release retry");
       }
-      if (session.isActive()) session.cancel();
-      if (!session.detachConversation(conversationKey)) {
-        throw new Error("ChatGPT retained-conversation ownership changed during retirement");
+    } else {
+      const matches = [...this.entries].filter(([, session]) => session.conversationKey() === conversationKey);
+      if (matches.length === 0) return 0;
+      if (preserved && !matches.some(([, session]) => session === preserved.session)) {
+        throw new Error("The final ChatGPT response does not own the retained conversation being retired");
       }
+      const target = preserved ? this.entries.get(preserved.executionKey) : undefined;
+      if (target && target !== preserved?.session) {
+        throw new Error("The compacted ChatGPT response execution key is already owned by another session");
+      }
+      const release = matches.findLast(([, session]) => (
+        session.runtime.releaseRetainedConversation !== undefined
+      ))?.[1].runtime.releaseRetainedConversation;
+      obligation = {
+        matches,
+        ...(preserved ? { preserved } : {}),
+        ...(release ? { release } : {}),
+      };
+      // Keep entries and conversation keys attached until Launcher acknowledges release. A failed
+      // close remains discoverable by compaction cleanup and by the next owner turn.
+      this.retainedReleases.set(conversationKey, obligation);
+      for (const [, session] of matches) if (session.isActive()) session.cancel();
     }
-    if (preserved) this.entries.set(preserved.executionKey, preserved.session);
-    const release = matches.findLast(([, session]) => (
-      session.runtime.releaseRetainedConversation !== undefined
-    ))?.[1].runtime.releaseRetainedConversation;
-    const retirement = Promise.all(matches.map(([, session]) => session.physicalSettlement))
-      .then(async () => { await release?.(); });
+    const releaseObligation = obligation;
+    const retirement = Promise.all(releaseObligation.matches.map(([, session]) => session.physicalSettlement))
+      .then(async () => {
+        await releaseObligation.release?.();
+        if (releaseObligation.matches.some(([, session]) => session.conversationKey() !== conversationKey)) {
+          throw new Error("ChatGPT retained-conversation ownership changed during retirement");
+        }
+        const preservedTarget = releaseObligation.preserved
+          ? this.entries.get(releaseObligation.preserved.executionKey) : undefined;
+        if (preservedTarget && preservedTarget !== releaseObligation.preserved?.session) {
+          throw new Error("The compacted ChatGPT response execution key was replaced during retirement");
+        }
+        for (const [key, session] of releaseObligation.matches) {
+          session.detachConversation(conversationKey);
+          if (this.entries.get(key) === session) this.entries.delete(key);
+        }
+        const head = this.conversationHeads.get(conversationKey);
+        if (head && releaseObligation.matches.some(([, session]) => session === head)) {
+          this.conversationHeads.delete(conversationKey);
+        }
+        if (releaseObligation.preserved) {
+          this.entries.set(releaseObligation.preserved.executionKey, releaseObligation.preserved.session);
+        }
+        this.retainedReleases.delete(conversationKey);
+      });
     this.conversationRetirements.set(conversationKey, retirement);
     try {
       await retirement;
@@ -810,7 +865,7 @@ export class ChatGptTurnSessions {
         this.conversationRetirements.delete(conversationKey);
       }
     }
-    return matches.length;
+    return releaseObligation.matches.length;
   }
 
   async waitForRetirement(key: string): Promise<void> {
@@ -863,9 +918,20 @@ export class ChatGptTurnSessions {
 
   clear(): number {
     const cancelled = this.entries.size;
-    for (const [key, session] of this.entries) this.beginRetirement(key, session);
-    this.entries.clear();
-    this.conversationHeads.clear();
+    // A failed retained release still needs its exact owner and retry handle after registry clear.
+    const obligated = new Set([...this.retainedReleases.values()].flatMap(release => (
+      release.matches.map(([, session]) => session)
+    )));
+    for (const [key, session] of this.entries) {
+      if (obligated.has(session)) session.cancel();
+      else {
+        this.beginRetirement(key, session);
+        this.entries.delete(key);
+      }
+    }
+    for (const [conversationKey, session] of this.conversationHeads) {
+      if (!obligated.has(session)) this.conversationHeads.delete(conversationKey);
+    }
     return cancelled;
   }
 
@@ -928,7 +994,8 @@ export class ChatGptTurnSessions {
     for (const [key, session] of this.entries) {
       // A browser result can be terminal while its helper still owns the physical surface.
       // Keep that entry addressable so the next owner turn waits for actual cleanup.
-      if (session.isActive() || !session.isPhysicallySettled() || session.lastUsedAt() >= cutoff) continue;
+      if (session.isActive() || !session.isPhysicallySettled() || session.lastUsedAt() >= cutoff
+        || [...this.retainedReleases.values()].some(obligation => obligation.matches.some(([, owned]) => owned === session))) continue;
       session.cancel();
       this.entries.delete(key);
       this.forgetConversationHead(session);

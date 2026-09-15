@@ -305,6 +305,7 @@ class AccountBrowserPool {
       const newKeys = [...new Set(keys)].filter(binding => !this.affinity.has(binding));
       if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
       await host.ready();
+      if (retained) host.precheckRetainedTurn(traceId, key, connector);
       this.ensureTabCapacity(traceId, key);
       if (reveal && !this.currentOperation()) { this.registry.select(id); this.syncVisibility(); }
       const lease = await host.beginTurn(traceId, reveal, helperPid, key, connector, retained);
