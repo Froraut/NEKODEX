@@ -1,3 +1,4 @@
+import { CatTail } from "./CatTail";
 import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
 import { useId, type CSSProperties } from "react";
 import { Icon, type IconName } from "./icons";
@@ -86,8 +87,7 @@ function WorkspaceIllustration() {
       {/* The scene and paws retain the original pixels; the head shares the main cat rig. */}
       <image href={workspaceBase} width="1536" height="1024" mask={`url(#${id}-stationary)`} />
       <g clipPath={`url(#${id}-tail-behind)`}>
-        <path className="coding-cat-tail" d="M514 687 C493 646 449 636 429 598 C405 555 420 504 445 466"
-          fill="none" stroke="#49455d" strokeWidth="49" strokeLinecap="round" />
+        <CatTail reaction={reaction} art={workspaceArt} id={id} />
       </g>
       {/* Restore the stationary laptop edge behind lifted paws using its own pixels. */}
       <svg x="590" y="511" width="356" height="16" viewBox="540 511 50 16" preserveAspectRatio="none" overflow="hidden">
