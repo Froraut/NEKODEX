@@ -759,7 +759,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     const sameSnapshot = (left: FileSnapshot, right: FileSnapshot): boolean =>
       left.exists === right.exists
       && (!left.exists || Boolean(left.data && right.data && left.data.equals(right.data)));
-    let configRestored = true;
+    let configRestored = savedConfigBytes ? true : configUnchanged();
     if (savedConfigBytes) {
       try {
         const current = snapshotFile(getConfigPath());
@@ -797,6 +797,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     // Setup may have stopped the old tunnel or bootstrapped a new profile before the
     // final route commit. Restore only the definitions and profile still owned by this
     // attempt, then re-establish the previous full-mode runtime.
+    let tunnelClientRestored = false;
+    let runtimeKeyRestored = false;
     if (tunnelRuntimeTouched || existing?.mode === "full" || config.mode === "full") {
       try {
         if (!configRestored) throw new Error("config rollback was not safe; leaving tunnel state for manual recovery");
@@ -814,8 +816,12 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         if (!sameSnapshot(snapshotFile(runtimeKeyPath), runtimeKeyAfterRoute)) {
           throw new Error("tunnel runtime key changed after setup; preserving the concurrent edit");
         }
-        if (config.mode === "full" && validationTunnelRunning) stopTunnel(config);
+        if (config.mode === "full" && validationTunnelRunning) {
+          stopTunnel(config);
+          validationTunnelRunning = false;
+        }
         restoreTunnelClientInstallation(tunnelClientBeforeRoute, tunnelClientAfterRoute);
+        tunnelClientRestored = true;
         if (tunnelProfilePath && tunnelProfileBeforeRoute && tunnelProfileAfterRoute
           && !sameSnapshot(tunnelProfileBeforeRoute, tunnelProfileAfterRoute)) {
           restoreFileSnapshot(tunnelProfileBeforeRoute);
@@ -823,6 +829,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         if (!sameSnapshot(runtimeKeyBeforeRoute, runtimeKeyAfterRoute)) {
           restoreFileSnapshot(runtimeKeyBeforeRoute);
         }
+        runtimeKeyRestored = true;
         const tunnelServiceChanged = Boolean(tunnelServicePath && tunnelDefinitionBeforeRoute
           && tunnelDefinitionAfterRoute
           && (!sameSnapshot(tunnelDefinitionBeforeRoute, tunnelDefinitionAfterRoute)
@@ -841,6 +848,28 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         }
       } catch (caught) {
         rollbackFailures.push(`tunnel: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    }
+    // A profile/service recovery failure must not strand independent setup-owned writes.
+    // Keep them while the validation runtime may still be using this client or key.
+    if (configRestored && !validationTunnelRunning
+      && (!tunnelRuntimeTouched || !getTunnelServiceStatus().loaded)) {
+      if (!tunnelClientRestored) {
+        try {
+          restoreTunnelClientInstallation(tunnelClientBeforeRoute, tunnelClientAfterRoute);
+        } catch (caught) {
+          rollbackFailures.push(`tunnel client: ${caught instanceof Error ? caught.message : String(caught)}`);
+        }
+      }
+      if (!runtimeKeyRestored && !sameSnapshot(runtimeKeyBeforeRoute, runtimeKeyAfterRoute)) {
+        try {
+          if (!sameSnapshot(snapshotFile(runtimeKeyPath), runtimeKeyAfterRoute)) {
+            throw new Error("changed after setup; preserving the concurrent edit");
+          }
+          restoreFileSnapshot(runtimeKeyBeforeRoute);
+        } catch (caught) {
+          rollbackFailures.push(`tunnel runtime key: ${caught instanceof Error ? caught.message : String(caught)}`);
+        }
       }
     }
     const primary = error instanceof Error ? error.message : String(error);

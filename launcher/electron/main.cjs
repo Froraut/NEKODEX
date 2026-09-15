@@ -1313,7 +1313,11 @@ async function start() {
       userData: launcherUserData,
     });
     if (config?.mode === "full") {
-      void startupAuthenticationRefresh.then(() => runtimeSupervisor.startIfConfigured()).catch((error) => {
+      void startupAuthenticationRefresh.then(() => {
+        if (shutdownInProgress || quitting || exitCommitted) return;
+        return runtimeSupervisor.startIfConfigured();
+      }).catch((error) => {
+        if (shutdownInProgress || quitting || exitCommitted) return;
         const message = error instanceof Error ? error.message : String(error);
         logger.error("dev_profile.runtime_start_failed", { message });
         const failed = stateStore.update({ mcpSetupComplete: false });
@@ -1323,7 +1327,9 @@ async function start() {
   } else void (async () => {
     const previousSetupIdentity = stateStore.read().setupIdentityHash ?? null;
     await startupAuthenticationRefresh;
+    if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
     const upgrade = await runtimeHost.upgradeManagedRuntime();
+    if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
     if (upgrade.updated) {
       const preserve = preserveSetup(previousSetupIdentity,
         setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
@@ -1361,12 +1367,15 @@ async function start() {
         send("launcher:state-changed", state);
       }
     }
+    if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
     const runtime = await runtimeSupervisor.startIfConfigured();
     if (runtime.status !== "ready") return runtime;
+    if (shutdownInProgress || quitting || exitCommitted) return runtime;
     const route = await runtimeHost.connectBridgeRoute();
     return { ...runtime, bridgeRouteChanged: route.changed === true };
   })().then(async (runtime) => {
     if (shutdownInProgress || quitting || exitCommitted) return;
+    if (runtime.status === "cancelled") return;
     if (runtime.status === "ready") {
       const config = runtimeSupervisor.readConfig();
       const current = stateStore.read();

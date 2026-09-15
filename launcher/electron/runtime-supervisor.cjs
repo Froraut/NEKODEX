@@ -1256,6 +1256,7 @@ class RuntimeSupervisor {
   }
 
   async startConfigured(startSignal) {
+    this.assertCanStart(startSignal);
     let config;
     try {
       config = this.readConfig();
@@ -1265,6 +1266,7 @@ class RuntimeSupervisor {
       return { status: "needs-setup", detail };
     }
     if (!config) {
+      this.assertCanStart(startSignal);
       const ownershipState = this.readState();
       if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState) && (
         processRunning(ownershipState.daemonPid)
@@ -1279,6 +1281,7 @@ class RuntimeSupervisor {
     }
     const tunnelOnly = this.launcherProfile === "development";
     if (tunnelOnly && config.mode !== "full") {
+      this.assertCanStart(startSignal);
       const ownershipState = this.readState();
       if (runtimeOwnershipMayBeLive(ownershipState)) {
         const detail = "A DEV MCP runtime is still owned while the profile is configured as browser-only";
@@ -1290,9 +1293,12 @@ class RuntimeSupervisor {
     }
     if (!tunnelOnly && config.releaseVersion !== this.app.getVersion()) {
       const ownershipState = this.readState();
-      if ((!tunnelOnly && await this.proxyHealth(config)) || runtimeOwnershipMayBeLive(ownershipState)) {
+      const healthyRuntime = await this.proxyHealth(config);
+      this.assertCanStart(startSignal);
+      if (healthyRuntime || runtimeOwnershipMayBeLive(ownershipState)) {
         try {
-          const recovered = await this.stopStaleOwnedRuntime(config);
+          const recovered = await this.stopStaleOwnedRuntime(config, startSignal);
+          this.assertCanStart(startSignal);
           if (!recovered) {
             const detail = "A runtime for another launcher version could not be safely recovered";
             this.writeExternalState(detail);
@@ -1300,6 +1306,7 @@ class RuntimeSupervisor {
             return { status: "external", detail };
           }
         } catch (error) {
+          this.assertCanStart(startSignal);
           const detail = errorMessage(error);
           this.writeExternalState(detail);
           this.logger.warn("runtime.external_owner_detected", { port: config.port, detail });
@@ -1313,10 +1320,12 @@ class RuntimeSupervisor {
     }
     if (!this.daemon && !this.tunnel) {
       const healthyRuntime = tunnelOnly ? false : await this.proxyHealth(config);
+      this.assertCanStart(startSignal);
       const ownershipState = this.readState();
       if (healthyRuntime || runtimeOwnershipMayBeLive(ownershipState)) {
         try {
-          const recovered = await this.stopStaleOwnedRuntime(config);
+          const recovered = await this.stopStaleOwnedRuntime(config, startSignal);
+          this.assertCanStart(startSignal);
           if (!recovered) {
             const detail = healthyRuntime
               ? "An external runtime already owns the configured port"
@@ -1326,6 +1335,7 @@ class RuntimeSupervisor {
             return { status: "external", detail };
           }
         } catch (error) {
+          this.assertCanStart(startSignal);
           const detail = errorMessage(error);
           this.writeExternalState(detail);
           this.logger.warn("runtime.external_owner_detected", { port: config.port, detail });
@@ -1902,7 +1912,8 @@ class RuntimeSupervisor {
     });
   }
 
-  async stopStaleOwnedRuntime(config) {
+  async stopStaleOwnedRuntime(config, startSignal) {
+    if (startSignal) this.assertCanStart(startSignal);
     const state = this.readState();
     if (!state) return false;
     if (runtimeOwnershipPredatesCurrentBoot(state)) {
@@ -1914,6 +1925,7 @@ class RuntimeSupervisor {
       throw new Error("DEV launcher ownership unexpectedly contains a Responses daemon");
     }
     const health = tunnelOnly ? null : await this.proxyHealthPayload(config);
+    if (startSignal) this.assertCanStart(startSignal);
     const daemonRunning = health?.service === "codex-chatgpt-web"
       && health?.mode === config.mode
       && health?.version === config.releaseVersion;
@@ -1928,6 +1940,7 @@ class RuntimeSupervisor {
     let managedTunnelRunning = false;
     if (config.mode === "full") {
       const tunnelHealth = await this.waitForKnownTunnelStatus(config);
+      if (startSignal) this.assertCanStart(startSignal);
       managedTunnelRunning = !tunnelRuntimeStopped(tunnelHealth);
       if (managedTunnelRunning
         && tunnelHealth.processRunning !== true
@@ -1964,6 +1977,7 @@ class RuntimeSupervisor {
       let drained = false;
       try {
         drained = await this.acquireDrain(config);
+        if (startSignal) this.assertCanStart(startSignal);
         const shutdown = await this.control(config, "shutdown");
         if (shutdown.status !== "ok") throw new Error("stale daemon did not acknowledge graceful shutdown");
         await this.waitForProcessExit("stale daemon", state.daemonPid);
@@ -1980,12 +1994,14 @@ class RuntimeSupervisor {
       }
     }
     if (managedTunnelRunning) {
+      if (startSignal) this.assertCanStart(startSignal);
       const stopped = await this.runTunnelStopCommand(config);
       if (stopped.code !== 0) {
         throw new Error(`stale tunnel refused graceful shutdown: ${tunnelControlDiagnostic(stopped)}`);
       }
       await this.waitForTunnelStopped(config, 10_000);
     }
+    if (startSignal) this.assertCanStart(startSignal);
     this.clearState();
     this.logger.info("runtime.stale_owner_recovered");
     return true;

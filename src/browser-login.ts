@@ -432,6 +432,7 @@ export async function loginToChatGpt(
   try { chmodSync(profileDir, 0o700); } catch {}
   let loginBrowser: ChildProcess | undefined;
   let context: BrowserContext | undefined;
+  let persistentContextLaunchAttempted = false;
   let result: BrowserLoginResult | undefined;
   let primaryError: unknown;
   try {
@@ -456,6 +457,7 @@ export async function loginToChatGpt(
     });
     if (loginExit !== 0) throw new Error(`Normal Chrome login window exited with status ${loginExit}`);
 
+    persistentContextLaunchAttempted = true;
     context = await chromium.launchPersistentContext(profileDir, {
       executablePath: config.chromeExecutablePath,
       headless: false,
@@ -500,6 +502,15 @@ export async function loginToChatGpt(
   }
   if (loginBrowser && !browserProcessExited(loginBrowser)) {
     try { await stopOwnedLoginBrowser(loginBrowser); } catch (error) { cleanupError ??= error; }
+  }
+  if (!cleanupError && (
+    (context && !context.isClosed())
+    || (persistentContextLaunchAttempted && !context)
+    || (loginBrowser && !browserProcessExited(loginBrowser))
+  )) {
+    cleanupError = new Error(
+      `Dedicated Chrome or persistent login closure could not be confirmed; temporary login profile retained at ${profileDir}`,
+    );
   }
   if (!cleanupError) {
     try { rmSync(profileDir, { recursive: true, force: true }); } catch (error) { cleanupError = error; }

@@ -474,6 +474,17 @@ export function existingStructuredCompactionRun(
   return existing.promise;
 }
 
+/** Recheck after an awaited summary resolves, before publishing it to the native turn. */
+export function assertStructuredCompactionNotInterrupted(
+  key: string,
+  owner: StructuredCompactionOwner,
+): void {
+  const interrupted = structuredCompactionInterruption(owner);
+  if (interrupted) throw interrupted;
+  const run = structuredCompactionRuns.get(key);
+  if (run?.abort.signal.aborted) throw abortReason(run.abort.signal);
+}
+
 export function runStructuredCompactionOnce(
   key: string,
   owner: StructuredCompactionOwner,

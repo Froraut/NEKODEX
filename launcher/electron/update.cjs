@@ -481,8 +481,9 @@ function createUpdateController({
     const available = candidate;
     pending = (async () => {
       transition({ status: "downloading", version: available.version });
-      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-update-"));
+      let tempRoot;
       try {
+        tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-update-"));
         const metadataText = await deps.downloadText(available.metadataUrl, 512 * 1024);
         const metadata = deps.verifyReleaseMetadata(metadataText, { repository, tag: `v${available.version}`, version: available.version });
         const authenticatedAsset = metadata.assets.find(asset => asset.name === available.assetName);
@@ -547,7 +548,10 @@ function createUpdateController({
         transition({ status: "installing", version: available.version });
         return { child, tempRoot, version: available.version };
       } catch (error) {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        if (tempRoot) {
+          try { fs.rmSync(tempRoot, { recursive: true, force: true }); }
+          catch (cleanupError) { logger?.warn("launcher.update_cleanup_failed", { message: String(cleanupError) }); }
+        }
         transition({ status: "available", version: available.version });
         throw error;
       }
@@ -561,7 +565,10 @@ function createUpdateController({
 
   function cancelInstall(launch) {
     try { launch?.child?.kill(); } catch {}
-    if (launch?.tempRoot) fs.rmSync(launch.tempRoot, { recursive: true, force: true });
+    if (launch?.tempRoot) {
+      try { fs.rmSync(launch.tempRoot, { recursive: true, force: true }); }
+      catch (error) { logger?.warn("launcher.update_cleanup_failed", { message: String(error) }); }
+    }
     if (candidate) transition({ status: "available", version: candidate.version });
   }
 

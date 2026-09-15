@@ -2348,6 +2348,20 @@ export class ChatGptBrowserWorker {
 
   private async ensurePage(): Promise<Page> {
     if (this.page && !this.page.isClosed()) return this.page;
+    if (!this.page && this.config.browserHost === "managed-chrome" && this.context) {
+      const page = await this.context.newPage();
+      this.page = page;
+      return page;
+    }
+    if (this.browser) {
+      // A closed maintenance page can outlive its browser connection. Release that owner before
+      // replacing the handle; if close fails, keep it reachable for a later close() retry.
+      await this.browser.close();
+      this.browser = undefined;
+      this.context = undefined;
+      this.page = undefined;
+      this.managedBrowserReady = undefined;
+    }
     if (this.config.browserHost === "launcher") {
       const connection = await connectLauncherBrowserHost(this.config.browserHostDescriptorPath!);
       this.browser = connection.browser;

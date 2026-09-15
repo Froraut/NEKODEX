@@ -56,6 +56,7 @@ export function App() {
   const refreshOperationRevision = useRef(0);
   const operationRevision = useRef(0);
   const lastOperationStatus = useRef<OperationState["status"] | null>(null);
+  const lastOperationName = useRef<string | null>(null);
   const completionRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const documentLanguage = snapshot?.state.language ?? "en";
 
@@ -64,15 +65,18 @@ export function App() {
     // A later operation, including a failed verification, needs its own fresh read.
     if (reuseCompletedOperation && refreshInFlight.current
       && lastOperationStatus.current === "completed"
+      && lastOperationName.current === "mcp-verification"
       && refreshOperationRevision.current === operationRevision.current) {
       return refreshInFlight.current;
     }
     const request = ++snapshotRefresh.current;
     const owner = refreshOwner.current;
     const revision = stateRevision.current;
-    refreshOperationRevision.current = operationRevision.current;
+    const operation = operationRevision.current;
+    refreshOperationRevision.current = operation;
     const pending = api!.snapshot().then(fresh => {
-      if (owner !== refreshOwner.current || request !== snapshotRefresh.current) return;
+      if (owner !== refreshOwner.current || request !== snapshotRefresh.current
+        || operation !== operationRevision.current) return;
       setSnapshot(current => current ? {
         ...current,
         ...(revision === stateRevision.current ? { state: fresh.state } : {}),
@@ -128,10 +132,16 @@ export function App() {
     const unsubscribeOperation = api.onOperation((next) => {
       operationRevision.current += 1;
       lastOperationStatus.current = next.status;
+      lastOperationName.current = next.name;
       if (!initialized) pendingOperation = next;
       else setOperation(next);
       if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
       if (next.status === "completed" && initialized) refreshCompletedOperation();
+      if (next.status === "failed" && next.name === "mcp-setup" && initialized) {
+        // Setup may report an earlier command completion before rollback finishes.
+        // Its final failure needs the credentials and capabilities after recovery.
+        refreshCompletedOperation();
+      }
     });
     const unsubscribeLog = api.onLog((record) => {
       if (!initialized) {
@@ -164,7 +174,9 @@ export function App() {
         setError(latestOperation.message);
       }
       initialized = true;
-      if ((pendingOperation as OperationState | null)?.status === "completed") refreshCompletedOperation();
+      if ((pendingOperation as OperationState | null)?.status === "completed"
+        || ((pendingOperation as OperationState | null)?.status === "failed"
+          && (pendingOperation as OperationState | null)?.name === "mcp-setup")) refreshCompletedOperation();
     }).catch((cause) => {
       if (!cancelled) setStartupError(messageOf(cause));
     });
@@ -202,7 +214,12 @@ export function App() {
       clearTimeout(completionRefreshTimer.current);
       completionRefreshTimer.current = null;
     }
-    await refreshMetadata(true);
+    try {
+      await refreshMetadata(true);
+    } catch {
+      // An explicit read can recover when a shared completion snapshot failed.
+      await refreshMetadata(false);
+    }
   }, [refreshMetadata]);
 
   const updateBrowserCapacity = useCallback((browserCapacity: BrowserCapacitySettings) => {
@@ -473,16 +490,31 @@ function LauncherShell({
     && snapshot.state.codexCatalogVerified === true
     && snapshot.state.mcpSetupComplete !== true;
   const [updateCheckCooldown, setUpdateCheckCooldown] = useState(false);
+  const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const updateCheckTimer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(updateCheckTimer.current), []);
+  const updateCheckMounted = useRef(false);
+  useEffect(() => {
+    updateCheckMounted.current = true;
+    return () => {
+      updateCheckMounted.current = false;
+      window.clearTimeout(updateCheckTimer.current);
+    };
+  }, []);
   const recheckUpdate = async () => {
-    if (updateCheckCooldown) return;
-    setUpdateCheckCooldown(true);
-    updateCheckTimer.current = window.setTimeout(() => setUpdateCheckCooldown(false), 60_000);
+    if (updateCheckCooldown || updateCheckBusy) return;
+    setUpdateCheckBusy(true);
     try {
       const next = await api!.recheckUpdate();
+      if (!updateCheckMounted.current) return;
       if (next.status === "error") setError(next.message);
-    } catch (error) { setError(messageOf(error)); }
+      setUpdateCheckCooldown(true);
+      window.clearTimeout(updateCheckTimer.current);
+      updateCheckTimer.current = window.setTimeout(() => setUpdateCheckCooldown(false), 60_000);
+    } catch (error) {
+      if (updateCheckMounted.current) setError(messageOf(error));
+    } finally {
+      if (updateCheckMounted.current) setUpdateCheckBusy(false);
+    }
   };
   const updateVisible = ["available", "downloading", "installing"].includes(snapshot.update.status);
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
@@ -736,8 +768,8 @@ function LauncherShell({
               ) : null}
               {!updateVisible && snapshot.update.status !== "disabled" ? (
                 <SidebarItem active={false} icon="update"
-                  disabled={updateCheckCooldown || snapshot.update.status === "checking"}
-                  label={snapshot.update.status === "checking" ? copy.loading : updateCheckCooldown ? copy.updateCheckCooldown : copy.checkUpdates}
+                  disabled={updateCheckBusy || updateCheckCooldown || snapshot.update.status === "checking"}
+                  label={updateCheckBusy || snapshot.update.status === "checking" ? copy.loading : updateCheckCooldown ? copy.updateCheckCooldown : copy.checkUpdates}
                   onClick={() => void recheckUpdate()} />
               ) : null}
               <SidebarItem

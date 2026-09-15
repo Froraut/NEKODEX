@@ -2041,6 +2041,7 @@ class BrowserHost {
       throw error;
     }
     const sameTrace = [...this.turnTabs.values()].find(tab => tab.traceId === traceId);
+    this.assertLiveConversationOwner(traceId, conversationKey);
     if (sameTrace) {
       if (sameTrace.interactionMode !== "manual") {
         throw new Error(`Browser turn ${traceId} already belongs to automatic interaction`);

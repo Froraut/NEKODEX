@@ -37,6 +37,7 @@ import {
 } from "./rolling-checkpoint";
 import { ChatGptExternalTurnProgress } from "./turn-progress";
 import {
+  assertStructuredCompactionNotInterrupted,
   canonicalizeCompactionHandoff,
   existingStructuredCompactionRun,
   MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
@@ -1105,6 +1106,7 @@ export function createChatGptWebAdapter(
             let summary: string;
             try {
               summary = await withAbort(sharedSummary, incoming.abortSignal);
+              assertStructuredCompactionNotInterrupted(compactionExecutionKey, compactionOwner);
             } catch (error) {
               if (incoming.abortSignal?.aborted
                 && error instanceof DOMException

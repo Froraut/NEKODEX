@@ -711,18 +711,18 @@ export class ChatGptTurnSessions {
       && session.conversationKey() !== nextConversationKey
     ));
     if (previous.length === 0) return undefined;
-    const releases = new Map<string, (() => Promise<void>) | undefined>();
+    const releases = new Map<string, () => Promise<void>>();
     for (const session of previous) {
       if (session.isActive() || !session.isPhysicallySettled()) {
         throw new Error("Cannot switch a retained ChatGPT model before its prior turn settles");
       }
       const conversationKey = session.conversationKey()!;
-      if (session.runtime.releaseRetainedConversation) {
-        releases.set(conversationKey, session.runtime.releaseRetainedConversation);
-      }
+      const release = session.runtime.releaseRetainedConversation;
+      if (!release) throw new Error("ChatGPT retained conversation has no Launcher release callback");
+      releases.set(conversationKey, release);
     }
     const retirement = Promise.resolve().then(async () => {
-      for (const release of releases.values()) await release?.();
+      for (const release of releases.values()) await release();
       // Detach only after release succeeds, so a failed close is retried before
       // a future A -> B -> A selection can reuse an obsolete browser history.
       for (const session of previous) {
@@ -834,14 +834,11 @@ export class ChatGptTurnSessions {
     }
     const releaseObligation = obligation;
     const retirement = Promise.allSettled(releaseObligation.matches.map(([, session]) => session.physicalSettlement))
-      .then(async settlements => {
+      .then(async () => {
         // A failed turn-level settlement must not prevent the separate Launcher release attempt.
-        // When no release callback exists, retain the obligation rather than claiming cleanup.
-        if (!releaseObligation.release) {
-          const failure = settlements.find(result => result.status === "rejected");
-          if (failure?.status === "rejected") throw failure.reason;
-        }
-        await releaseObligation.release?.();
+        // Without its callback, turn settlement cannot acknowledge retained-conversation release.
+        if (!releaseObligation.release) throw new Error("ChatGPT retained conversation has no Launcher release callback");
+        await releaseObligation.release();
         if (releaseObligation.matches.some(([, session]) => session.conversationKey() !== conversationKey)) {
           throw new Error("ChatGPT retained-conversation ownership changed during retirement");
         }

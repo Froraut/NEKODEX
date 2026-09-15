@@ -131,7 +131,9 @@ class AccountBrowserPool {
     } catch (error) {
       if (id) {
         let rolledBack = false;
-        try { rolledBack = this.registry.removeFailedAdd(id, previous); }
+        const liveOwner = (this.hosts.get(id)?.turnTabs.size ?? 0) > 0
+          || [...this.reservations.values()].some(owner => owner === id);
+        try { if (!liveOwner) rolledBack = this.registry.removeFailedAdd(id, previous); }
         catch (rollbackError) {
           this.logger.warn('browser.account_add_rollback_failed', { accountId: id, message: rollbackError.message });
         }
@@ -391,7 +393,9 @@ class AccountBrowserPool {
     if (pendingOwner && pendingOwner !== id) throw new Error('Conversation and task account ownership conflict');
     if (key && this.affinity.has(key) && this.affinity.get(key) !== id) throw new Error('Conversation and task account ownership conflict');
     if (key && !this.affinity.has(key) && this.affinity.size >= 100000) throw new Error('Account affinity registry is full');
-    this.ensureTabCapacity(this.getHost(id), traceId, key, null, true);
+    const host = this.getHost(id);
+    host.assertLiveConversationOwner(traceId, key);
+    this.ensureTabCapacity(host, traceId, key, null, true);
     let lease;
     try {
       lease = this.getHost(id).beginManualTurn(...args);

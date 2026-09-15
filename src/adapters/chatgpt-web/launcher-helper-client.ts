@@ -538,7 +538,11 @@ export class LauncherBrowserHelperClient {
           ));
         }
         else if (message.event === "send_activated") {
-          void Promise.resolve().then(() => pending.turn.onSendActivated?.()).then(() => {
+          void Promise.resolve().then(() => {
+            if (this.pending.get(message.id) !== pending || pending.localFailure
+              || pending.turn.abortSignal?.aborted) return;
+            return pending.turn.onSendActivated?.();
+          }).then(() => {
             if (this.pending.get(message.id) !== pending || pending.localFailure
               || pending.turn.abortSignal?.aborted) return;
             return this.send({ type: "send_activation_ack", id: message.id,
@@ -718,15 +722,22 @@ export class LauncherBrowserHelperClient {
   }
 
   private handleExit(child: ChildProcessWithoutNullStreams, error: Error): void {
+    // Transport failure can detach a child before it exits. Keep its unresolved IDs reserved
+    // until this exact process has actually stopped, even if a replacement helper starts.
+    if (child.exitCode !== null || child.signalCode !== null) {
+      for (const [id, owner] of this.unresolved) {
+        if (owner === child) this.unresolved.delete(id);
+      }
+    }
     if (this.child !== child) return;
+    if (child.exitCode === null && child.signalCode === null) {
+      for (const id of this.pending.keys()) this.unresolved.set(id, child);
+    }
     this.readyReject?.(error);
     this.readyReject = undefined;
     this.readyResolve = undefined;
     this.ready = undefined;
     this.child = undefined;
-    for (const [id, owner] of this.unresolved) {
-      if (owner === child) this.unresolved.delete(id);
-    }
     for (const id of [...this.pending.keys()]) {
       const pending = this.pending.get(id);
       if (!pending) continue;

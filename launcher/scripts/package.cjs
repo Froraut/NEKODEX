@@ -71,6 +71,18 @@ const requiredExtensions = {
   "--linux": [".AppImage"],
 };
 
+function restoreInterruptedArtifacts() {
+  if (fs.existsSync(artifactsDirectory)) return;
+  const backups = fs.readdirSync(root, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && entry.name.startsWith(".artifacts-swap-"))
+    .map(entry => path.join(root, entry.name, "previous"))
+    .filter(candidate => fs.existsSync(candidate));
+  if (backups.length > 1) {
+    throw new Error(`Cannot choose a previous artifact set to restore: ${backups.join(", ")}`);
+  }
+  if (backups.length === 1) fs.renameSync(backups[0], artifactsDirectory);
+}
+
 function runChecked(command, args) {
   const result = spawnSync(command, args, {
     cwd: root,
@@ -165,6 +177,9 @@ function publishStagedArtifacts() {
   let retainPrevious = false;
   try {
     if (fs.existsSync(artifactsDirectory)) {
+      if (!fs.lstatSync(artifactsDirectory).isDirectory()) {
+        throw new Error(`Artifact output must be a real directory: ${artifactsDirectory}`);
+      }
       fs.cpSync(artifactsDirectory, prepared, { recursive: true });
     } else {
       fs.mkdirSync(prepared);
@@ -206,6 +221,7 @@ function publishStagedArtifacts() {
 }
 
 try {
+  restoreInterruptedArtifacts();
   const result = spawnSync(executable, [
     ...builderArgs,
     `--config.directories.output=${staging}`,
