@@ -87,7 +87,7 @@ function WorkspaceIllustration() {
       {/* The scene and paws retain the original pixels; the head shares the main cat rig. */}
       <image href={workspaceBase} width="1536" height="1024" mask={`url(#${id}-stationary)`} />
       <g clipPath={`url(#${id}-tail-behind)`}>
-        <CatTail reaction={reaction} art={workspaceArt} id={id} />
+        <CatTail reaction={reaction} id={id} />
       </g>
       {/* Restore the stationary laptop edge behind lifted paws using its own pixels. */}
       <svg x="590" y="511" width="356" height="16" viewBox="540 511 50 16" preserveAspectRatio="none" overflow="hidden">

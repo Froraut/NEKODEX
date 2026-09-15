@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import type { CatReaction } from "./BrandMark";
 
 // Animate the approved original pixels without changing the silhouette.
-export function CatTail({ reaction, art, id }: { reaction: CatReaction | null; art: string; id: string }) {
+const tailArt = new URL("./assets/cat-tail.png", import.meta.url).href;
+
+export function CatTail({ reaction, id }: { reaction: CatReaction | null; id: string }) {
   const group = useRef<SVGGElement>(null);
   const tip = useRef<SVGGElement>(null);
   const tipAngle = useRef(0), tipSpeed = useRef(0);
@@ -50,13 +52,13 @@ export function CatTail({ reaction, art, id }: { reaction: CatReaction | null; a
   }, [reaction]);
   return <>
     <defs>
-      <clipPath id={`${id}-tail-lower`}><rect x="390" y="530" width="125" height="219" /></clipPath>
-      <clipPath id={`${id}-tail-tip`}><rect x="390" y="430" width="125" height="108" /></clipPath>
+      <clipPath id={`${id}-tail-lower`}><rect x="380" y="530" width="160" height="219" /></clipPath>
+      <clipPath id={`${id}-tail-tip`}><rect x="380" y="420" width="160" height="118" /></clipPath>
     </defs>
     <g ref={group} className="coding-cat-tail">
-      <image href={art} width="1536" height="1024" clipPath={`url(#${id}-tail-lower)`} />
+      <image href={tailArt} x="380" y="420" width="160" height="330" clipPath={`url(#${id}-tail-lower)`} />
       <g ref={tip}>
-        <image href={art} width="1536" height="1024" clipPath={`url(#${id}-tail-tip)`} />
+        <image href={tailArt} x="380" y="420" width="160" height="330" clipPath={`url(#${id}-tail-tip)`} />
       </g>
     </g>
   </>;
