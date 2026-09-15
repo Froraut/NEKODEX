@@ -9,7 +9,7 @@ and source-preservation principles inform this pass; no replacement imagery or
 creative board is needed for form consistency.
 
 Use tokens.css as the palette/typography/shape source. Form fields share the
-36px control minimum, 9px radius, 14px type, and visible lavender focus ring.
+36px control minimum, 9px radius, 15px body type, and visible lavender focus ring.
 Errors use pink plus explanatory text; status never depends on color alone.
 Allow long text and account names to wrap. Keep one obvious next action.
 Motion belongs only to the cat head, ears, eyes, mouth and paws.
@@ -46,3 +46,11 @@ failure paths were reviewed directly in source. This is a focused final review,
 not a full accessibility certification, memory leak benchmark or backend retest.
 Previous setup progression and responsive-workspace changes remain in place.
 No network route, production credentials, model choice or active account changed.
+
+## Typography follow-up
+
+Shared scale: 15px body/connection/event text, 14px status/actions, 13px
+secondary metadata, 17px section titles. Legacy 9–12px labels now use shared
+tokens across launcher styles. Overview rows have 52px minimum height; narrow
+connection cards place status below the label instead of shrinking text.
+Development build passed and Connections was visually inspected at 900×650.
