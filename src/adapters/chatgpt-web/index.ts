@@ -575,7 +575,7 @@ export function createChatGptWebAdapter(
           if (!parsed._compactionRequest) {
             trace.push({
               kind: "commentary",
-              text: "> **Action required in Manual mode**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Manual mode cannot transfer them, select the `Codex Zero Risk2` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
+              text: "> **Action required in Manual mode**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Manual mode cannot transfer them, select the `Codex Zero Risk4` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
             });
           }
           await zeroRiskManualControl.start(retainedLauncherDescriptor, {
@@ -593,7 +593,7 @@ export function createChatGptWebAdapter(
           submission.phase = "accepted";
           if (!parsed._compactionRequest) trace.push({
             kind: "commentary",
-            text: "> **Waiting for ChatGPT**\n>\n> The prompt is marked `Sent`. Waiting for `Codex Zero Risk2` to bind this turn through the selected ChatGPT connector.",
+            text: "> **Waiting for ChatGPT**\n>\n> The prompt is marked `Sent`. Waiting for `Codex Zero Risk4` to bind this turn through the selected ChatGPT connector.",
           });
           const terminalAbort = new AbortController();
           const abortTerminal = () => terminalAbort.abort();
@@ -615,7 +615,7 @@ export function createChatGptWebAdapter(
             await zeroRiskManualControl.markStarted(retainedLauncherDescriptor, owner);
             if (!parsed._compactionRequest) trace.push({
               kind: "commentary",
-              text: "> **Manual mode connected**\n>\n> `Codex Zero Risk2` is connected. ChatGPT is now working through the native Codex harness; progress remains visible in the launcher.",
+              text: "> **Manual mode connected**\n>\n> `Codex Zero Risk4` is connected. ChatGPT is now working through the native Codex harness; progress remains visible in the launcher.",
             });
             answer = await Promise.race([
               broker.waitForSafeCompletion(activeToken, browserAbort.signal),

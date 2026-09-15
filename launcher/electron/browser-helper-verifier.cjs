@@ -1,6 +1,10 @@
 const { spawn } = require("node:child_process");
 const { randomBytes } = require("node:crypto");
 const { createInterface } = require("node:readline");
+const {
+  isLegacyConnectorName,
+  requireCurrentRuntimeConnectorName,
+} = require("./connector-identity.cjs");
 
 const BROWSER_HELPER_OPERATION_TIMEOUT_MS = 90_000;
 
@@ -57,6 +61,9 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
   if (!["verify", "inspect", "smoke"].includes(operation)) {
     throw new Error(`Unsupported browser helper operation: ${String(operation)}`);
   }
+  // The helper proves the connector requested by the caller. A stale caller must not turn
+  // a successful proof of a retired connector into acceptance of the current MCP schema.
+  if (operation === "verify") requireCurrentRuntimeConnectorName(appName);
   const id = `${operation}-${randomBytes(12).toString("hex")}`;
   const child = spawn(helper.executable, [helper.script], {
     env: {
@@ -170,7 +177,18 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
 async function verifyConnectorWithBrowserHelper(options) {
   const message = await runBrowserHelperOperation({ ...options, operation: "verify" });
   if (message.text !== options.appName) {
-    throw new Error("Browser helper verified a different ChatGPT connector");
+    let error;
+    if (isLegacyConnectorName(message.text)) {
+      error = new Error(
+        `Browser helper verified legacy ChatGPT connector ${JSON.stringify(message.text)};`
+        + ` this verification requires ${JSON.stringify(options.appName)}. Create the new connector`
+        + ` against the current tunnel and leave the legacy connector unchanged.`,
+      );
+    } else {
+      error = new Error(`Browser helper did not verify required ChatGPT connector ${JSON.stringify(options.appName)}`);
+    }
+    error.operationId = message.id;
+    throw error;
   }
   return { ok: true, appName: options.appName };
 }

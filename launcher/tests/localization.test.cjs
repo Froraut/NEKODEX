@@ -91,8 +91,8 @@ test("Japanese launcher runtime messages localize connector verification and doc
     "トンネルランタイムは正常で、使用可能です",
   );
   assert.equal(
-    localizeRuntimeMessage(copy, 'ChatGPT connector "Codex Native3" is available', "connector", "ja"),
-    "ChatGPT コネクタ「Codex Native3」を利用できます",
+    localizeRuntimeMessage(copy, 'ChatGPT connector "Codex Native4" is available', "connector", "ja"),
+    "ChatGPT コネクタ「Codex Native4」を利用できます",
   );
 });
 
@@ -100,7 +100,7 @@ for (const language of ["ja", "zh-CN"]) test(`${language} runtime localization p
   const { copyFor, localizeRuntimeMessage } = loadI18nModule();
   const copy = copyFor(language);
   const connectorNames = [
-    "Codex Native3",
+    "Codex Native4",
     "Native $&",
     "Native $'",
     "Native $`",
@@ -127,7 +127,7 @@ for (const language of ["ja", "zh-CN"]) test(`${language} runtime localization p
 
 test("runtime message localization preserves other languages and unknown backend messages", () => {
   const { copyFor, localizeRuntimeMessage } = loadI18nModule();
-  const connectorNames = ["Codex Native3", "Native $&", "Native $'", "Native $`", 'Native "quoted"', "Native \\path"];
+  const connectorNames = ["Codex Native4", "Native $&", "Native $'", "Native $`", 'Native "quoted"', "Native \\path"];
 
   for (const language of ["en"]) {
     for (const connectorName of connectorNames) {
@@ -152,16 +152,16 @@ test("runtime message localization preserves other languages and unknown backend
     'ChatGPT connector "unterminated is available',
   );
   assert.equal(
-    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native3" is available', "wrong-id", "ja"),
-    'ChatGPT connector "Codex Native3" is available',
+    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native4" is available', "wrong-id", "ja"),
+    'ChatGPT connector "Codex Native4" is available',
   );
   assert.equal(
     localizeRuntimeMessage(copyFor("ja"), "Checking ChatGPT connector", "unknown-check", "ja"),
     "Checking ChatGPT connector",
   );
   assert.equal(
-    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native3" is available (warning)', "connector", "ja"),
-    'ChatGPT connector "Codex Native3" is available (warning)',
+    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native4" is available (warning)', "connector", "ja"),
+    'ChatGPT connector "Codex Native4" is available (warning)',
   );
 });
 

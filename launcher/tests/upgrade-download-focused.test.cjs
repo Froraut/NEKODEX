@@ -45,7 +45,7 @@ test('wrong signed download bytes never become an installable asset', async () =
 });
 
 test('compatible upgrade keeps evidence only for matching account contract and route', () => {
-  const before = { mode: 'full', port: 17841, appName: 'Codex Native3', releaseVersion: 'old' };
+  const before = { mode: 'full', port: 17841, appName: 'Codex Native4', releaseVersion: 'old' };
   const id = setupIdentity(before, 'account');
   const state = { setupContract: SETUP_CONTRACT, coreSetupComplete: true };
   assert.equal(preserveSetup(id, setupIdentity({ ...before, releaseVersion: 'new' }, 'account'), state, false), true);

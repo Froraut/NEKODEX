@@ -496,13 +496,27 @@ class RuntimeHost {
       };
     }
     const launcherOwned = setupConfig.browserHost === "launcher";
-    const config = launcherOwned ? this.supervisor.readConfig() : setupConfig;
+    // readSetupConfig retains persisted names even when strict runtime loading
+    // rejects a retired identity. Keep them visible to same-version migration.
+    const persistedLegacyConnectorNames = [];
+    if (launcherOwned) {
+      for (const key of ["appName", "automaticAppName", "manualAppName"]) {
+        const name = setupConfig[key];
+        if (typeof name === "string" && isLegacyConnectorName(name.trim())) {
+          persistedLegacyConnectorNames.push(name.trim());
+        }
+      }
+    }
+    const config = launcherOwned && persistedLegacyConnectorNames.length === 0
+      ? this.supervisor.readConfig()
+      : setupConfig;
     return {
       configured: true,
       owner: launcherOwned ? "launcher" : "external",
       mode: config.mode === "full" ? "full" : "browser-only",
       serialized: JSON.stringify(config),
       config: structuredClone(config),
+      persistedLegacyConnectorNames,
     };
   }
 
@@ -1011,6 +1025,10 @@ class RuntimeHost {
     if (!current.configured || current.mode !== "full") {
       throw new Error("The native MCP runtime is not configured");
     }
+    // A retired local name cannot be verified as the newly created connector.
+    if (current.persistedLegacyConnectorNames?.length) {
+      requireCurrentRuntimeConnectorName(current.persistedLegacyConnectorNames[0]);
+    }
     const runtimeName = requireCurrentRuntimeConnectorName(current.config?.appName);
     return this.launcherProfile === "development"
       ? connectorNameForDevSetup(runtimeName)
@@ -1281,8 +1299,7 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const existing = this.runtimeConfigSnapshot();
     const currentVersion = this.app.getVersion();
-    const connectorMigrationRequired = existing.mode === "full"
-      && isLegacyConnectorName(validateConnectorName(existing.config?.appName));
+    const connectorMigrationRequired = Boolean(existing.persistedLegacyConnectorNames?.length);
     const interactionMode = existing.config?.browserInteractionMode ?? "automatic";
     const expectedTunnelProfile = interactionMode === "manual"
       ? "codex-chatgpt-web-zero-risk"

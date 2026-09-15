@@ -183,6 +183,8 @@ test.each([
   ["Codex Native", CHATGPT_CONNECTOR_NAME],
   ["Codex Native2", CHATGPT_CONNECTOR_NAME],
   ["Codex Native2 DEV", DEV_CHATGPT_CONNECTOR_NAME],
+  ["Codex Native3", CHATGPT_CONNECTOR_NAME],
+  ["Codex Native3 DEV", DEV_CHATGPT_CONNECTOR_NAME],
 ] as const)("runtime rejects cached %s while setup targets a fresh identity", (legacyName, currentName) => {
   const root = join(tmpdir(), `codex-chatgpt-web-abi-migration-${process.pid}-${Date.now()}`);
   roots.push(root);
@@ -216,11 +218,11 @@ test("manual ABI migration preserves its distinct tunnel and requires a new conn
   const saved = {
     ...defaultConfig("full"), runtimeCommand: [process.execPath],
     browserInteractionMode: "manual", browserHost: "launcher", browserHostDescriptorPath: join(root, "browser.json"),
-    appName: "Codex Zero Risk", manualAppName: "Codex Zero Risk", automaticAppName: "Codex Native2 DEV",
+    appName: "Codex Zero Risk2", manualAppName: "Codex Zero Risk2", automaticAppName: "Codex Native3 DEV",
     tunnel: manualTunnel, manualTunnel, automaticTunnel,
   };
   writeFileSync(join(root, "config.json"), JSON.stringify(saved));
-  expect(() => loadConfig()).toThrow('newly created connector named "Codex Zero Risk2"');
+  expect(() => loadConfig()).toThrow('newly created connector named "Codex Zero Risk4"');
   expect(loadConfigForSetup()).toMatchObject({
     appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME, manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
     automaticAppName: DEV_CHATGPT_CONNECTOR_NAME, tunnel: manualTunnel, manualTunnel, automaticTunnel,

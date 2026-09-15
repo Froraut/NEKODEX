@@ -5,7 +5,7 @@ const { BrowserHost } = require('../electron/browser-host.cjs');
 test('retained viewport survives visible to background transfer and subsequent reuse', async () => {
   let viewport = { width: 0, height: 0 }, bounds, enabled = 0;
   const tab = { id: 'retained', surfaceId: 'surface', traceId: 'previous', helperPid: 1,
-    conversationKey: 'a'.repeat(64), connectorIdentity: 'Codex Native3', connectorBound: true,
+    conversationKey: 'a'.repeat(64), connectorIdentity: 'Codex Native4', connectorBound: true,
     interactionMode: 'automatic', status: 'ready', rendererReady: true, bootstrapReady: true,
     deviceEmulationViewport: { width: 1280, height: 800 }, deviceEmulationDirty: false,
     view: { setBounds: value => { bounds = value; viewport = { width: value.width, height: value.height }; },
@@ -19,13 +19,13 @@ test('retained viewport survives visible to background transfer and subsequent r
     show: () => host.presentTurnView(tab, true), syncViewVisibility: () => host.presentTurnView(tab, false),
     snapshot: () => ({}), writeDescriptor() {}, logger: { info() {} },
   });
-  await host.beginTurn('compact', true, 2, tab.conversationKey, 'Codex Native3');
+  await host.beginTurn('compact', true, 2, tab.conversationKey, 'Codex Native4');
   assert.deepEqual(viewport, { width: 900, height: 650 });
   host.presentTurnView(tab, false);
   assert.equal(enabled, 1);
   // Completed compact helper disconnects; the next task must restore real dimensions.
   tab.status = 'ready'; viewport = { width: 0, height: 0 };
-  await host.beginTurn('continued', false, 3, tab.conversationKey, 'Codex Native3');
+  await host.beginTurn('continued', false, 3, tab.conversationKey, 'Codex Native4');
   assert.equal(enabled, 2);
   assert.deepEqual(viewport, { width: 1280, height: 800 });
   assert.equal(tab.traceId, 'continued');

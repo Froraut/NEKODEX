@@ -18,14 +18,15 @@ export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
 
 /**
- * ChatGPT caches the complete public MCP schema by connector identity. Adding the read-only
- * task action changes both native and manual contracts, so neither may reuse a cached identity.
+ * ChatGPT caches the complete public MCP schema by connector identity. Native command approval
+ * request fields change both contracts, so neither may reuse a cached connector identity.
  */
-export const CHATGPT_CONNECTOR_NAME = "Codex Native3";
+export const CHATGPT_CONNECTOR_NAME = "Codex Native4";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
-export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk2";
+export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk4";
 export const LEGACY_CHATGPT_CONNECTOR_NAMES = [
   "Codex Native", "Codex Native DEV", "Codex Native2", "Codex Native2 DEV", "Codex Zero Risk",
+  "Codex Native3", "Codex Native3 DEV", "Codex Zero Risk2", "Codex Zero Risk3",
 ] as const;
 
 export function isLegacyChatGptConnectorName(value: string): boolean {
@@ -33,7 +34,7 @@ export function isLegacyChatGptConnectorName(value: string): boolean {
 }
 
 export function currentChatGptConnectorName(legacyName: string): string {
-  if (legacyName === "Codex Zero Risk") return ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  if (legacyName === "Codex Zero Risk" || legacyName === "Codex Zero Risk2" || legacyName === "Codex Zero Risk3") return ZERO_RISK_CHATGPT_CONNECTOR_NAME;
   return legacyName.endsWith(" DEV") ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
 }
 
@@ -42,7 +43,8 @@ export function legacyChatGptConnectorMigrationMessage(legacyName: string): stri
   return `Legacy ChatGPT connector ${JSON.stringify(legacyName)} was found, but this release requires`
     + ` a newly created connector named ${JSON.stringify(currentName)}. Reconnect the harness in setup, then create`
     + ` ${JSON.stringify(currentName)} against that mode's tunnel with Authentication set to None;`
-    + ` do not rename or refresh ${JSON.stringify(legacyName)}. Verify the new codex_read_thread action in a real Codex task.`;
+    + ` do not rename or refresh ${JSON.stringify(legacyName)}. Verify the new codex_exec argument schema;`
+    + ` command approval remains controlled by the outer Codex runtime.`;
 }
 
 export interface InteractionConnectorIdentities {
@@ -374,12 +376,14 @@ export function loadConfigForSetup(): AppConfig {
   // Only setup migrates persisted names. Runtime loading rejects an active retired identity;
   // targeting a fresh identity never claims that ChatGPT has created or verified its connector.
   if (typeof automaticName === "string" && isLegacyChatGptConnectorName(automaticName)) {
-    raw.automaticAppName = automaticName === "Codex Zero Risk"
+    raw.automaticAppName = automaticName === "Codex Zero Risk" || automaticName === "Codex Zero Risk2" || automaticName === "Codex Zero Risk3"
       ? CHATGPT_CONNECTOR_NAME : currentChatGptConnectorName(automaticName);
   } else if (automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
     raw.automaticAppName = CHATGPT_CONNECTOR_NAME;
   }
-  if (raw.manualAppName === "Codex Zero Risk") raw.manualAppName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  if (raw.manualAppName === "Codex Zero Risk" || raw.manualAppName === "Codex Zero Risk2" || raw.manualAppName === "Codex Zero Risk3") {
+    raw.manualAppName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  }
   if (typeof raw.appName === "string" && (
     isLegacyChatGptConnectorName(raw.appName) || automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME
   )) {
@@ -445,6 +449,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   const manualAppName = parsed.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
   if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
     throw new Error(`Invalid automaticAppName in ${path}`);
+  }
+  if (isLegacyChatGptConnectorName(automaticAppName)) {
+    throw new Error(legacyChatGptConnectorMigrationMessage(automaticAppName));
   }
   if (typeof manualAppName === "string" && isLegacyChatGptConnectorName(manualAppName)) {
     throw new Error(legacyChatGptConnectorMigrationMessage(manualAppName));

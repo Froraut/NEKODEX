@@ -7,6 +7,7 @@ import { namespacedToolName, type CodexTool } from "../../types";
 import { VERSION } from "../../version";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
+import { assertCommandEscalationSchema, hasCommandEscalation } from "./command-escalation";
 import { callTurnBroker, TurnBrokerTimeoutError, type BrokerToolResult } from "./turn-broker";
 
 interface ClaimedTurn {
@@ -634,6 +635,9 @@ export async function runChatGptMcpServer(options: {
         yield_time_ms: z.number().int().min(250).max(30_000).optional(),
         max_output_tokens: z.number().int().min(1).max(1_000_000).optional(),
         tty: z.boolean().optional(),
+        sandbox_permissions: z.enum(["use_default", "require_escalated"]).optional(),
+        justification: z.string().min(1).max(16_384).optional(),
+        prefix_rule: z.array(z.string().min(1).max(16_384)).min(1).max(100).optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
@@ -642,28 +646,47 @@ export async function runChatGptMcpServer(options: {
       turnReference(contract, input),
       extra,
       async claimed => {
-        const { cmd, workdir, yield_time_ms, max_output_tokens, tty } = input;
+        const { cmd, workdir, yield_time_ms, max_output_tokens, tty,
+          sandbox_permissions, justification, prefix_rule } = input;
         const bound = claimed.environment;
+        const escalation = { sandbox_permissions, justification, prefix_rule };
         const execCommandArguments = {
           cmd,
           ...(workdir ? { workdir } : {}),
           ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
           ...(max_output_tokens !== undefined ? { max_output_tokens } : {}),
           ...(tty !== undefined ? { tty } : {}),
+          ...(sandbox_permissions !== undefined ? { sandbox_permissions } : {}),
+          ...(justification !== undefined ? { justification } : {}),
+          ...(prefix_rule !== undefined ? { prefix_rule } : {}),
         };
         const shellCommandArguments = {
           command: cmd,
           ...(workdir ? { workdir } : {}),
           ...(yield_time_ms !== undefined ? { timeout_ms: yield_time_ms } : {}),
+          ...(sandbox_permissions !== undefined ? { sandbox_permissions } : {}),
+          ...(justification !== undefined ? { justification } : {}),
+          ...(prefix_rule !== undefined ? { prefix_rule } : {}),
         };
         const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
         if (tool) {
+          if (hasCommandEscalation(escalation)
+            && bound.tools.filter(candidate => !candidate.namespace && candidate.name === tool.name).length !== 1) {
+            throw new Error(`Native ${tool.name} has an ambiguous command schema for approval arguments`);
+          }
+          assertCommandEscalationSchema(tool, escalation);
+          if (tool.name === "shell_command" && (max_output_tokens !== undefined || tty !== undefined)) {
+            throw new Error("Native shell_command does not support codex_exec max_output_tokens or tty");
+          }
           const args = tool.name === "exec_command" ? execCommandArguments : shellCommandArguments;
           return invoke(claimed.bindingId, bound, tool, { arguments: args }, extra.signal);
         }
         const gateway = execGateway(bound);
         if (!gateway) {
           throw new Error("This Codex turn did not advertise a native command tool or the native exec gateway");
+        }
+        if (hasCommandEscalation(escalation)) {
+          throw new Error("Native exec gateway has no exact command JSON schema for approval arguments; use codex_tool_inventory and codex_tool_call with an advertised structured command tool");
         }
         return invoke(claimed.bindingId, bound, gateway, {
           input: execCommandGatewayProgram(execCommandArguments, shellCommandArguments),

@@ -295,9 +295,10 @@ describe("Manual mode public MCP ABI", () => {
         name: tool.name, title: tool.title ?? null, description: tool.description ?? null,
         inputSchema: tool.inputSchema, outputSchema: tool.outputSchema ?? null, annotations: tool.annotations ?? null,
       }));
-      // This complete public tools/list schema belongs to the new Codex Zero Risk2 identity.
+      // This complete public tools/list schema belongs to the Codex Zero Risk4 identity.
+      // Captured from the generation-4 stdio server with the optional command approval fields.
       expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
-        .toBe("e05351002a367d8891dbeb9f314779378a0a59853a62b1fc3f7115b2e6496911");
+        .toBe("d06f09a5bb8805ac445e0d23a3fe912cfd5bb1103fa6f2de36ff544fc1f7ab25");
       expect(listed.tools.map(tool => tool.name).sort()).toEqual([
         "codex_apply_patch",
         "codex_exec",

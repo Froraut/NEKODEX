@@ -304,7 +304,11 @@ async function setupCommand(args: string[]): Promise<void> {
   stdout.write(`Setup complete: ${result.mode}\n`);
   stdout.write(`Config: ${result.configPath}\n`);
   if (result.connectorSetupRequired) {
-    stdout.write("One account-level step remains: attach the tunnel to the ChatGPT connector named in config.\n");
+    const connectorName = loadConfig().appName;
+    stdout.write(
+      `Attach the tunnel to a newly created ChatGPT connector named ${JSON.stringify(connectorName)}. `
+      + "Keep the previous connector available for rollback; do not rename or refresh it.\n",
+    );
     stdout.write("Open: https://chatgpt.com/#settings/Plugins\n");
   }
   stdout.write("Restart the Codex app once so its native model catalog refreshes through the installed route.\n");

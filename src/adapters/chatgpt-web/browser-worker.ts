@@ -11,6 +11,7 @@ import {
   DEV_CHATGPT_CONNECTOR_NAME,
   expandUserPath,
   getConfigDir,
+  currentChatGptConnectorName,
   isLegacyChatGptConnectorName,
   legacyChatGptConnectorMigrationMessage,
   LEGACY_CHATGPT_CONNECTOR_NAMES,
@@ -3152,18 +3153,22 @@ export class ChatGptBrowserWorker {
     if (titles.length === 0) {
       return `ChatGPT connector menu did not open after ${triggerAttempts} complete mention trigger attempt(s)`;
     }
+    const legacyName = this.legacyConnectorInMenu(titles);
+    if (legacyName) return legacyChatGptConnectorMigrationMessage(legacyName);
     if (this.config.appName === CHATGPT_CONNECTOR_NAME && titles.includes(DEV_CHATGPT_CONNECTOR_NAME)) {
       return `ChatGPT exposes the isolated DEV connector ${JSON.stringify(DEV_CHATGPT_CONNECTOR_NAME)},`
         + ` but production requires a separate connector named ${JSON.stringify(CHATGPT_CONNECTOR_NAME)};`
         + ` create ${JSON.stringify(CHATGPT_CONNECTOR_NAME)} against the production tunnel and leave the DEV connector unchanged`;
     }
-    if (this.config.appName === CHATGPT_CONNECTOR_NAME && !titles.includes(CHATGPT_CONNECTOR_NAME)) {
-      const legacyName = LEGACY_CHATGPT_CONNECTOR_NAMES.find(name => titles.includes(name));
-      if (legacyName) return legacyChatGptConnectorMigrationMessage(legacyName);
-    }
     return `ChatGPT connector menu opened but exposed no row named ${JSON.stringify(this.config.appName)}`
       + ` after ${triggerAttempts} complete mention trigger attempt(s)`
       + `; create a connector with that exact name before retrying`;
+  }
+
+  private legacyConnectorInMenu(titles: readonly string[]): string | undefined {
+    return LEGACY_CHATGPT_CONNECTOR_NAMES.find(name => (
+      titles.includes(name) && currentChatGptConnectorName(name) === this.config.appName
+    ));
   }
 
   private async clearChatGptComposerState(page: Page): Promise<void> {
@@ -3311,11 +3316,9 @@ export class ChatGptBrowserWorker {
         } catch (error) {
           if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
           const visibleRows = await this.connectorMentionRowTitles(menuRows, abortSignal);
-          const knownIdentityMismatch = this.config.appName === CHATGPT_CONNECTOR_NAME
-            && (
-              visibleRows.includes(DEV_CHATGPT_CONNECTOR_NAME)
-              || LEGACY_CHATGPT_CONNECTOR_NAMES.some(name => visibleRows.includes(name))
-            );
+          const knownIdentityMismatch = this.legacyConnectorInMenu(visibleRows) !== undefined
+            || (this.config.appName === CHATGPT_CONNECTOR_NAME
+              && visibleRows.includes(DEV_CHATGPT_CONNECTOR_NAME));
           if (knownIdentityMismatch) {
             await capture("connector-menu-missing");
             throw chatGptConnectorUnavailableError(

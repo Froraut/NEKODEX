@@ -1,0 +1,9 @@
+# Connector migration lane 6 — launcher browser helper verifier
+
+Changed `launcher/electron/browser-helper-verifier.cjs` only. The verifier previously accepted any exact `appName` echoed by the helper, including an older connector when a stale caller supplied that name. `verify` now calls the shared launcher identity guard before spawning the helper. The parent's current map requires `Codex Native4`, `Codex Native4 DEV`, or Manual `Codex Zero Risk4` as appropriate. It rejects `Codex Native3`, `Codex Native3 DEV`, and `Codex Zero Risk2`; older aliases and `Codex Zero Risk3` are covered defensively. `Codex Zero Risk3` was never published here. `inspect` and `smoke` keep their existing behavior.
+
+The helper result still must match the requested name exactly. If it reports a legacy connector while the caller requires the new one, the error names both the observed legacy identity and the required identity, tells the operator to create the new connector against the current tunnel, and retains the helper operation ID for the browser-host failure log. Other mismatches name the required identity and retain the same operation ID. No legacy fallback, connector rename, account mutation, or new browser inspection was introduced.
+
+Manual review: inspected the helper's `verify` protocol/result, the browser worker's exact row and selected-pill checks, `browser-host.cjs` failure logging, and the parent's current `connector-identity.cjs` exports. The browser helper verifies exact connector selection, not the public `codex_exec` schema, tunnel attachment, or a native approval outcome. This lane ran no tests, typechecks, suites, or benchmarks under the shared verification budget.
+
+Outside lane scope: `launcher/tests/browser-helper-verifier.test.cjs` still pins `Codex Native3` in direct verifier calls; those named cases will need migration to `Codex Native4` by the parent/test owner. Historical reviews and release records were left untouched.

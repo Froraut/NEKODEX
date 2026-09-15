@@ -2735,9 +2735,15 @@ describe("ChatGPT outer-native harness v4", () => {
         annotations: tool.annotations ?? null,
       }));
       // ChatGPT caches the complete tools/list contract under a connector identity.
-      // This ABI belongs to Codex Native3; changes require another explicit identity migration.
+      // Codex Native3's legacy ABI was pinned at
+      // 1cb13b0e64755256391e91c109f35917bd6dbc9c48f8668ff803f91af4d6ecd8.
+      // Complete Codex Native4 tools/list ABI captured from the generation-4 stdio server.
       expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
-        .toBe("1cb13b0e64755256391e91c109f35917bd6dbc9c48f8668ff803f91af4d6ecd8");
+        .toBe("ce27b6bc87879360e67d534121f83aca3b6a131be2eb40ae978e1fd5600f22da");
+      const execSchema = listed.tools.find(tool => tool.name === "codex_exec")?.inputSchema;
+      expect(Object.keys(execSchema?.properties ?? {})).toEqual(expect.arrayContaining([
+        "sandbox_permissions", "justification", "prefix_rule",
+      ]));
       for (const tool of listed.tools) {
         const properties = tool.inputSchema.properties as Record<string, unknown>;
         expect(properties.turn_token).toEqual({ type: "string", minLength: 20, maxLength: 256 });
@@ -3242,6 +3248,84 @@ describe("ChatGPT outer-native harness v4", () => {
     } finally {
       await client.close().catch(() => {});
       broker.revoke(token);
+      await broker.close();
+    }
+  }, 30_000);
+
+  test("Codex Native4 forwards supported approval arguments and rejects an unsupported native schema", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-native4-approval-${process.pid}-${Date.now()}`);
+    const broker = TurnBroker.forSocket(socketPath);
+    const supportedEnvironment = extractChatGptTurnEnvironment(parsed(environmentXml));
+    supportedEnvironment.tools = [{
+      name: "exec_command",
+      description: "Synthetic structured command tool",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          cmd: { type: "string" },
+          sandbox_permissions: { type: "string", enum: ["use_default", "require_escalated"] },
+          justification: { type: "string" },
+          prefix_rule: { type: "array", items: { type: "string" } },
+        },
+        required: ["cmd"],
+      },
+    }];
+    const unsupportedEnvironment = extractChatGptTurnEnvironment(parsed(environmentXml));
+    unsupportedEnvironment.tools = [{
+      name: "exec_command",
+      description: "Synthetic older command tool",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: { cmd: { type: "string" } },
+        required: ["cmd"],
+      },
+    }];
+    const supportedToken = await broker.register(supportedEnvironment, 60_000);
+    const unsupportedToken = await broker.register(unsupportedEnvironment, 60_000);
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      cwd: process.cwd(),
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "codex-native4-approval-fixture", version: "1.0.0" });
+    const approvalArguments = {
+      cmd: "synthetic approval request",
+      sandbox_permissions: "require_escalated",
+      justification: "Synthetic approval fixture",
+      prefix_rule: ["synthetic", "approval"],
+    };
+
+    try {
+      await client.connect(transport);
+
+      const supportedCall = client.callTool({
+        name: "codex_exec",
+        arguments: { turn_token: supportedToken, ...approvalArguments },
+      });
+      const [supportedRequest] = await broker.nextToolBatch(supportedToken);
+      expect(supportedRequest).toMatchObject({
+        wireName: "exec_command",
+        freeform: false,
+        arguments: approvalArguments,
+      });
+      expect(supportedRequest?.input).toBeUndefined();
+      broker.completeTool(supportedToken, supportedRequest!.callId, toolResult({ output: "synthetic approval result" }));
+      expect((await supportedCall).structuredContent).toEqual({ output: "synthetic approval result" });
+
+      const rejected = await client.callTool({
+        name: "codex_exec",
+        arguments: { turn_token: unsupportedToken, ...approvalArguments },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected.content)).toContain("JSON schema does not support sandbox_permissions");
+      expect(typeof broker.beginCompletionFence(unsupportedToken)).toBe("number");
+    } finally {
+      await client.close().catch(() => {});
+      broker.revoke(supportedToken);
+      broker.revoke(unsupportedToken);
       await broker.close();
     }
   }, 30_000);

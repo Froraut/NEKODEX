@@ -52,9 +52,9 @@ DEV launchers can therefore run at the same time with different ChatGPT accounts
 
 The working-tree adapter attaches to a tab leased only from that DEV launcher. In Full mode the DEV
 launcher owns one persistent, isolated tunnel runtime; a named CLI chat owns only the private turn
-broker attached to that tunnel for the command's lifetime. The distinct `Codex Native3 DEV`
+broker attached to that tunnel for the command's lifetime. The distinct `Codex Native4 DEV`
 connector reaches the same MCP server and turn-token contract without requiring any Responses
-daemon or colliding with the production `Codex Native3` connector.
+daemon or colliding with the production `Codex Native4` connector.
 
 Only the responsibilities normally owned by native Codex are synthetic: named history storage,
 turn metadata, tool-result execution, context-threshold scheduling, and installation of compacted
@@ -70,16 +70,24 @@ probe. The DEV launcher supervisor owns only the isolated MCP tunnel. Browser di
 state, thread authority, checkpoints, and named chat state live
 under `~/.codex-chatgpt-web-dev` by default.
 
-The ChatGPT connector name is also the public MCP ABI identity. The direct turn-token contract uses
-`Codex Native3`; the retired `Codex Native` and `Codex Native2` identities are never selected or
-refreshed in place. Setup migrates known legacy local configuration to the new name, clears prior verification state, and
-requires the user to create the new connector. Browser verification accepts the exact new identity,
-reports a specific migration error when only the legacy identity is visible, and never falls back to
-the legacy connector. Future public schema changes require another explicit connector identity.
-The Manual contract uses the separate `Codex Zero Risk2` identity; the retired `Codex Zero Risk`
-is not reused. See [MCP task access migration](mcp-task-access-migration.md).
-Repository DEV mode uses `Codex Native3 DEV` so the same ChatGPT account can keep both production
-and development connectors installed without renaming, refreshing, or deleting either one.
+The ChatGPT connector name is also the public MCP ABI identity. The #487 command-field contract
+uses `Codex Native4` for Automatic Full mode, `Codex Zero Risk4` for Manual mode, and
+`Codex Native4 DEV` for the isolated repository driver. `Codex Native3`, `Codex Native3 DEV`,
+and `Codex Zero Risk2` are legacy identities, alongside their older aliases. The unpublished
+`Codex Zero Risk3` name is recognized defensively as a local legacy alias. The new
+`codex_exec` contract specifies optional native sandbox-escalation fields; forwarding depends on the
+exact command tool advertised by the current outer Codex turn. The outer Codex runtime still owns
+the sandbox, approval or auto-review decision, and resulting command lifecycle. A connector name,
+local setup state, or cached `tools/list` response does not grant approval.
+
+Setup migrates known legacy local configuration to the mode's new target, clears prior connector
+verification state, and requires the user to **create a distinct ChatGPT plugin App ID** with the
+exact new name and that mode's tunnel. Renaming or refreshing a legacy connector does not replace
+its cached public schema. Browser verification accepts the exact new identity, reports a migration
+error when only a legacy identity is visible, and never falls back to it. The normal and DEV
+identities remain separate even when both are installed in one ChatGPT account. Future public
+schema changes require another deliberate connector identity. See [connector identity migration](connector-identity-migration.md)
+and the earlier [MCP task access migration](mcp-task-access-migration.md).
 
 ## Browser lifecycle
 

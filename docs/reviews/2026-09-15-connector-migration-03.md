@@ -1,0 +1,11 @@
+# Connector migration lane 3 — launcher runtime
+
+Baseline `d880b12`. Owned code: `launcher/electron/runtime.cjs`. Manual source review only; no tests, typechecks, builds, account actions, or release work.
+
+`runtimeConfigSnapshot()` now reads persisted `appName`, `automaticAppName`, and `manualAppName` through the existing setup loader before strict runtime validation. A retired name can therefore be seen by the upgrade path even when strict loading rejects it. `upgradeManagedRuntime()` treats any of those retired names in a Full launcher-owned harness as a connector migration even when `releaseVersion` already equals the app version. Its existing `connectorMigrated` result then makes the production startup path clear `mcpSetupComplete` and require a fresh MCP guide/verification pass. `mcpConnectorName()` also refuses connector verification while any retired name remains on disk, using the shared identity module's reconnect message. This prevents a projected or old local runtime from claiming the new connector was verified.
+
+The new targets come from `connector-identity.cjs`: `Codex Native4`, `Codex Native4 DEV`, and `Codex Zero Risk4`. Older aliases, including `Codex Zero Risk3` as a defensive alias, are classified by the parent-owned module. This report does not imply that Zero Risk3 was published here. Local setup/reconnect is separate from creating a fresh ChatGPT connector against the new tunnel and verifying it in a real task.
+
+Parent follow-up outside this lane: `launcher/electron/main.cjs` retains `browserSmokePassed` and `browserSmokeVersion` after `upgrade.connectorMigrated`; at the same app version a previous smoke success can still satisfy `smokePassedForCurrentVersion()`. Clear that cached smoke evidence when migration occurs. The DEV startup path does not call `upgradeManagedRuntime()`; its existing explicit DEV setup path must reconnect a retired DEV identity, and the changed `mcpConnectorName()` blocks pre-reconnect verification.
+
+Manual review: inspected the direct startup consumer of `connectorMigrated`, the verification caller of `mcpConnectorName()`, the supervisor's `readSetupConfig()`/`readConfig()` distinction, and the focused diff. `git diff --check` passed for the owned code. End-to-end connector creation and verification were not performed by this lane.

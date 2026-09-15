@@ -106,9 +106,28 @@ Manual mode does not read or manipulate the ChatGPT page or press Send. Its rout
 images must be attached manually in ChatGPT. The historical `zero-risk` model IDs remain for
 compatibility; the UI calls this mode **Manual**.
 
-For Full mode, follow the app's MCP setup guide. The automatic connector identity is **Codex Native3**;
-Manual uses **Codex Zero Risk2**. DEV profiles use separate connector identities. The outbound tunnel
-uses [OpenAI tunnel-client](https://github.com/openai/tunnel-client).
+For Full mode, follow the app's MCP setup guide. The current `.2` source contract uses
+**Codex Native4** for Automatic Full, **Codex Native4 DEV** for isolated DEV Full, and
+**Codex Zero Risk4** for Manual. The published `.1` binary still uses **Codex Native3**,
+**Codex Native3 DEV**, and **Codex Zero Risk2**; use those older names only with that binary.
+The outbound tunnel uses [OpenAI tunnel-client](https://github.com/openai/tunnel-client).
+
+When moving to a runtime built from the `.2` source contract:
+
+1. Start that runtime and use **MCP → Connect harness** for each mode you use. Keep Automatic,
+   Manual, and DEV tunnels and credentials associated with their own profiles.
+2. In ChatGPT settings on the same OpenAI account, enable Developer Mode and create a **new**
+   connector for the relevant mode with its exact `.2` name above. Choose the tunnel shown by that
+   mode's setup and **Authentication: None**. For Full harness tools, choose **Allow all actions**;
+   outer Codex sandbox and approvals still apply.
+3. Run **Verify runtime** for Automatic Full. For Manual, select **Codex Zero Risk4** in ChatGPT
+   before pasting and sending the prepared prompt. DEV Full uses **Codex Native4 DEV** and its
+   isolated tunnel.
+
+ChatGPT caches the public tool schema under the connector name. Leave older connectors unchanged;
+renaming or refreshing one does not load the new contract. Local setup and connector visibility
+alone do not prove a live tool call. See [troubleshooting](TROUBLESHOOTING.md#full-harness-or-mcp-verification-fails)
+for account and runtime checks.
 
 Tool access remains tied to the originating Codex turn. A cancelled or timed-out MCP invocation
 retires that turn's binding, including sibling calls, so abandoned responses cannot keep invoking

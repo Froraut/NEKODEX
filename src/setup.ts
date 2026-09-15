@@ -8,11 +8,13 @@ import {
   defaultBrokerEndpoint,
   defaultConfig,
   getConfigPath,
+  isLegacyChatGptConnectorName,
   loadConfigForSetup,
   preserveUtf8Bom,
   resolveInteractionConnectorIdentities,
   saveConfig,
   tunnelConfigForInteractionMode,
+  ZERO_RISK_CHATGPT_CONNECTOR_NAME,
 } from "./config";
 import {
   browserLoginStateExists,
@@ -124,6 +126,17 @@ export function existingFullSetupCredentials(
 function loadExistingConfig(): AppConfig | undefined {
   if (!existsSync(getConfigPath())) return undefined;
   return loadConfigForSetup();
+}
+
+/** Setup loads a migrated copy, so compare the persisted active name before deciding whether
+ * the existing tunnel profile can be reused. Inactive mode identities do not touch this tunnel. */
+function activeConnectorIdentityMigrationRequired(config: AppConfig): boolean {
+  const path = getConfigPath();
+  if (!existsSync(path)) return false;
+  const raw = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, "")) as Record<string, unknown>;
+  return typeof raw.appName === "string"
+    && isLegacyChatGptConnectorName(raw.appName)
+    && raw.appName !== config.appName;
 }
 
 function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
@@ -291,7 +304,7 @@ function baseConfig(
       throw new Error("Manual mode does not support Bigger Context");
     }
     if (config.mode !== "full") {
-      throw new Error("Manual mode requires --full so Codex Zero Risk2 can signal start, tools, and completion");
+      throw new Error(`Manual mode requires --full so ${ZERO_RISK_CHATGPT_CONNECTOR_NAME} can signal start, tools, and completion`);
     }
     if (config.browserHost !== "launcher") {
       throw new Error("Manual mode requires the Launcher; pass --browser-host-descriptor from the running Launcher");
@@ -515,7 +528,10 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   preflightCodexIntegration(config, {
     replaceExistingRoute: options.replaceCodexRoute,
   });
-  const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config);
+  const connectorIdentityMigrating = config.mode === "full"
+    && activeConnectorIdentityMigrationRequired(config);
+  const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config)
+    || connectorIdentityMigrating;
   if (existing && options.restartService) config.controlToken = randomBytes(32).toString("base64url");
   const beforeService = getServiceStatus();
   if (launcherOwned && (beforeService.installed || beforeService.loaded)) {
@@ -587,7 +603,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
-  const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || explicitTunnelChange || options.forceLogin));
+  const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config)
+    || connectorIdentityMigrating || explicitTunnelChange || options.forceLogin));
   if (beforeService.loaded && preliminaryChange && !options.restartService) {
     throw new Error(
       "The daemon is currently serving a Codex task and setup would change its runtime. "
@@ -657,7 +674,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       owned => { tunnelClientAfterRoute = owned; },
       bytes => { runtimeKeyAfterRoute = { path: runtimeKeyPath, exists: true, data: Buffer.from(bytes) }; },
       runtimeKeyBeforeRoute);
-    changedWhileLoaded = Boolean(existing && beforeService.loaded && meaningfulRuntimeChange(existing, config));
+    changedWhileLoaded = Boolean(existing && beforeService.loaded
+      && (meaningfulRuntimeChange(existing, config) || connectorIdentityMigrating));
     tunnelProfilePath = config.mode === "full" && config.tunnel
       ? join(config.tunnel.profileDir, `${config.tunnel.profileName}.yaml`) : undefined;
     tunnelProfileBeforeRoute = tunnelProfilePath ? snapshotFile(tunnelProfilePath) : undefined;
@@ -945,7 +963,8 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
       const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
       profileBefore = snapshotFile(profilePath);
       profileOwned = profileBefore;
-      if (!profileBefore.exists || tunnelWorkerRuntimeChanged(existing, config) || explicitTunnelChange) {
+      if (!profileBefore.exists || tunnelWorkerRuntimeChanged(existing, config)
+        || activeConnectorIdentityMigrationRequired(config) || explicitTunnelChange) {
         await bootstrapTunnelProfile(config,
           () => { validationTunnelRunning = true; profileOwned = snapshotFile(profilePath); },
           () => { validationTunnelRunning = false; },

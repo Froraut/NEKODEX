@@ -1,12 +1,13 @@
-const CURRENT_CONNECTOR_NAME = "Codex Native3";
-const MANUAL_CONNECTOR_NAME = "Codex Zero Risk2";
+const CURRENT_CONNECTOR_NAME = "Codex Native4";
+const MANUAL_CONNECTOR_NAME = "Codex Zero Risk4";
 const DEV_CONNECTOR_NAME = `${CURRENT_CONNECTOR_NAME} DEV`;
 const LEGACY_CONNECTOR_NAMES = Object.freeze([
   "Codex Native", "Codex Native DEV", "Codex Native2", "Codex Native2 DEV", "Codex Zero Risk",
+  "Codex Native3", "Codex Native3 DEV", "Codex Zero Risk2", "Codex Zero Risk3",
 ]);
 
 function currentConnectorName(legacyName) {
-  if (legacyName === "Codex Zero Risk") return MANUAL_CONNECTOR_NAME;
+  if (legacyName === "Codex Zero Risk" || legacyName === "Codex Zero Risk2" || legacyName === "Codex Zero Risk3") return MANUAL_CONNECTOR_NAME;
   return legacyName.endsWith(" DEV") ? DEV_CONNECTOR_NAME : CURRENT_CONNECTOR_NAME;
 }
 
@@ -29,7 +30,7 @@ function connectorNameForSetup(value) {
 function connectorNameForDevSetup(value) {
   if (value === undefined || value === null) return DEV_CONNECTOR_NAME;
   const configured = validateConnectorName(value);
-  if (configured === MANUAL_CONNECTOR_NAME || configured === "Codex Zero Risk") return MANUAL_CONNECTOR_NAME;
+  if (configured === MANUAL_CONNECTOR_NAME || configured === "Codex Zero Risk" || configured === "Codex Zero Risk2" || configured === "Codex Zero Risk3") return MANUAL_CONNECTOR_NAME;
   if (configured === CURRENT_CONNECTOR_NAME || isLegacyConnectorName(configured)) {
     return DEV_CONNECTOR_NAME;
   }

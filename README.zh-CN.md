@@ -4,7 +4,8 @@ ChatGPT 账户、编程智能体与本地工具的桌面工作空间。
 NEKODEX 提供原创猫咪图标、概览、独立账户管理页和石墨紫色界面。
 参见[设计与兼容性说明](docs/design/nekodex.md)。
 
-**开发源码：** NEKODEX 界面已进入源码，目前尚未发布新的签名发行版。
+**当前已发布版本：** `5.2.0-nekodex.1` 是 macOS 签名预发行版；本仓库的 `.2` 是开发源码，
+尚未发布为新的二进制安装包。`.1` 的连接器契约和安装包保持不变。
 首次安装 NEKODEX 需要手动过渡，因为旧更新器会验证原来的可执行文件名。
 已有浏览器配置及数据标识保持不变，以保留账户状态。
 
@@ -139,13 +140,13 @@ bun run app
 | --- | --- | --- | --- |
 | **仅浏览器** | Free/Go：Luna；Plus：Instant–High；Pro：增加 Extra High 和 Pro | 不可用；Codex 会显示警告 | 无 |
 | **完整 harness** | Free/Go：Luna；Plus：Instant–High；Pro：增加 Extra High 和 Pro | 每个列出的 effort 均支持，包括 Pro | OpenAI 隧道 + ChatGPT 连接器 |
-| **手动模式（Manual）** | 在 ChatGPT 中自行选择模型和 effort；启动器不会验证手动选择 | 通过独立连接器使用与当前回合绑定的 Codex 工具；Codex 路由仅支持文本 | 独立的 OpenAI 隧道 + `Codex Zero Risk2` 连接器；自行粘贴并发送提示 |
+| **手动模式（Manual）** | 在 ChatGPT 中自行选择模型和 effort；启动器不会验证手动选择 | 通过独立连接器使用与当前回合绑定的 Codex 工具；Codex 路由仅支持文本 | 独立的 OpenAI 隧道 + `.2` 源码中的 `Codex Zero Risk4` 连接器；自行粘贴并发送提示 |
 
 自动模式的模型选择器条目各自对应一个固定的 ChatGPT 模式。Codex 仍会显示内置的 Effort 和 Speed
 选项，但更改它们不会在后台静默切换所选的浏览器模型。在自动完整模式下，每一个可用 effort 都会
 获得同一个与当前回合绑定的 MCP 能力；Pro 没有单独限制，也没有缩减后的工具契约。
 
-旧版 **Zero Risk** 模式现改名为**手动模式**。现有 `chatgpt-web/zero-risk` 和 `chatgpt-web/zero-risk-pro` 模型 ID、命令行选项及已保存设置保持兼容。连接器的准确名称仍为 `Codex Zero Risk2`。手动模式不自动读写 ChatGPT 页面或发送提示，但账户限制及 MCP/本地工具的实际影响仍然存在。操作步骤和故障排查见[手动流程指南](TROUBLESHOOTING.md#manual-workflow-stops)。
+旧版 **Zero Risk** 模式现改名为**手动模式**。现有 `chatgpt-web/zero-risk` 和 `chatgpt-web/zero-risk-pro` 模型 ID、命令行选项及已保存设置保持兼容。`.2` 源码中连接器的准确名称为 `Codex Zero Risk4`；已发布 `.1` 二进制仍使用 `Codex Zero Risk2`。手动模式不自动读写 ChatGPT 页面或发送提示，但账户限制及 MCP/本地工具的实际影响仍然存在。操作步骤和故障排查见[手动流程指南](TROUBLESHOOTING.md#manual-workflow-stops)。
 
 手动模式的 Codex 路由**仅支持文本**，不会自动接收 Computer Use 截图或其他图片输入。
 图片必须在 ChatGPT 中手动添加；这样做也不会启用此路由的自动截图传递。进行视觉检查时，
@@ -171,10 +172,19 @@ bun run app
    和普通 API 密钥；创建密钥本身免费，也不会消耗模型 API 额度。
 3. 粘贴 Tunnel ID 和 API 密钥，然后点击 **连接 Harness**。
 4. 在 ChatGPT 设置中启用 **开发者模式**。新建连接器时选择 **Tunnel**，选择刚创建的
-   Tunnel，将 **身份验证** 设为 **无**，并将名称准确设置为 **Codex Native3**。
-5. 在 **Codex Native3** 的 **权限** 中选择 **允许所有操作**；**允许低风险操作** 会在命令和
+   Tunnel，将 **身份验证** 设为 **无**，并将名称准确设置为 **Codex Native4**（`.2` 源码）。
+5. 在 **Codex Native4** 的 **权限** 中选择 **允许所有操作**；**允许低风险操作** 会在命令和
    补丁到达本地运行时前将其拦截。外层 Codex harness 仍会执行沙箱和审批规则。
-6. 运行 **验证运行时**，确认 **Codex Native3** 已连接并可用。
+6. 运行 **验证运行时**，检查 **Codex Native4** 的连接和运行时状态。
+
+从已发布的 `.1` 二进制切换到按 `.2` 源码构建的运行时时，先启动新运行时，并按所用模式分别执行
+**MCP → 连接 Harness**。然后在同一 OpenAI 账户的 ChatGPT 设置中，为该模式显示的 Tunnel
+**新建**准确命名的连接器：自动完整模式使用 `Codex Native4`，隔离 DEV 完整模式使用
+`Codex Native4 DEV`，手动模式使用 `Codex Zero Risk4`；身份验证选择**无**。自动完整模式运行
+**验证运行时**；手动模式在粘贴并发送准备好的提示词前自行选择 `Codex Zero Risk4`。DEV 使用
+独立 Tunnel 和账户配置。不要重命名或刷新旧连接器：ChatGPT 会按名称缓存公开工具契约。
+`.1` 二进制仍对应 `Codex Native3`、`Codex Native3 DEV` 和 `Codex Zero Risk2`。保存本地设置或
+看到连接器，并不证明实际 ChatGPT 工具调用已经成功；需要在当前任务中检查真实调用结果。
 
 写入/修改操作还需要 ChatGPT 工作区及其管理员政策允许。请参阅
 [开发者模式和 MCP 应用](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)。
@@ -241,7 +251,7 @@ bun run app:package
 浏览器 Cookie/登录、ChatGPT 账户、配置、沙箱化 `CODEX_HOME`、聊天、诊断、broker 和 tunnel
 配置均与正式启动器隔离。它可以与正式启动器同时运行，绝不会启动 Responses daemon 或修改
 Codex。可选的完整模式只会启动并监管隔离的 DEV MCP tunnel，并使用独立连接器名称
-`Codex Native3 DEV`。
+`Codex Native4 DEV`（`.2` 源码；已发布 `.1` 仍使用 `Codex Native3 DEV`）。
 
 `dev:chat` 是一个具名、持久的合成外层 Codex harness。它通过隔离的启动器浏览器、临时聊天、
 prompt compiler、Responses parser 和压缩处理器执行当前工作树。可选的完整模式也会测试 MCP
@@ -249,7 +259,7 @@ prompt compiler、Responses parser 和压缩处理器执行当前工作树。可
 打开 Responses listener、修改 `openai_base_url`、停止正式 daemon，也不会占用 17841 端口。
 不带消息运行时，可使用 `/status`、`/fill 30000`、`/compact`、`/model` 和 `/reset`。首次使用时，
 请在标有 **DEV** 的窗口中登录并初始化一次配置。完整模式仅用于模拟工具轮次；DEV 启动器会保持
-DEV tunnel 就绪，具名聊天按需连接 broker。正式凭据和 `Codex Native3` 连接器绝不会被隐式复用。
+DEV tunnel 就绪，具名聊天按需连接 broker。正式凭据和 `Codex Native4` 连接器绝不会被隐式复用。
 详见 [DEV chat harness](docs/dev-chat.md)。
 
 - [架构说明](docs/architecture.md)

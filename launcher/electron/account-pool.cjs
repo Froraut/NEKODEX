@@ -91,7 +91,8 @@ class AccountBrowserPool {
       return { ...account, authenticated: host?.state.authenticated === true,
         accountLabel: host?.state.accountLabel ?? null,
         activeTurns: host ? [...host.turnTabs.values()].filter(tab => tab.status === 'running').length : 0,
-        checked: this.capabilities.has(account.id), connectorReady: this.connectors.has(account.id) };
+        checked: this.capabilities.has(account.id),
+        connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()) };
     }) };
   }
   snapshot() {

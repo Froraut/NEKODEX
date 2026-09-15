@@ -1,4 +1,5 @@
 const { AccountBrowserPool } = require("./account-pool.cjs");
+const { MANUAL_CONNECTOR_NAME, isLegacyConnectorName } = require("./connector-identity.cjs");
 const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapacity } = require("./browser-capacity.cjs");
 const fs = require("node:fs");
 const net = require("node:net");
@@ -480,7 +481,7 @@ function registerIpc({ logger, stateStore }) {
     connectorName: runtimeHost.browserConnectorName(),
     connectorNames: {
       automatic: runtimeHost.setupConnectorName(),
-      manual: "Codex Zero Risk2",
+      manual: MANUAL_CONNECTOR_NAME,
     },
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
     logs: logger.recent(),
@@ -1295,9 +1296,13 @@ async function start() {
       logger.error("dev_profile.config_invalid", { message });
       publishOperation({ name: "dev-profile", status: "failed", message });
     }
+    const legacyConnector = config && [config.appName, config.automaticAppName, config.manualAppName]
+      .some(name => typeof name === "string" && isLegacyConnectorName(name));
     const state = stateStore.update({
-      coreSetupComplete: Boolean(config),
-      codexCatalogVerified: Boolean(config),
+      coreSetupComplete: Boolean(config) && !legacyConnector,
+      codexCatalogVerified: Boolean(config) && !legacyConnector,
+      ...(legacyConnector ? { mcpSetupComplete: false, mcpGuideStep: 0,
+        browserSmokePassed: false, browserSmokeVersion: null } : {}),
       mcpRuntimeInstalled: config?.mode === "full",
       ...(config?.mode !== "full" ? { mcpSetupComplete: false, mcpGuideStep: 0 } : {}),
       codexRestartRequired: false,
@@ -1312,7 +1317,7 @@ async function start() {
       coreHome: CORE_HOME,
       userData: launcherUserData,
     });
-    if (config?.mode === "full") {
+    if (config?.mode === "full" && !legacyConnector) {
       void startupAuthenticationRefresh.then(() => {
         if (shutdownInProgress || quitting || exitCommitted) return;
         return runtimeSupervisor.startIfConfigured();
@@ -1336,6 +1341,7 @@ async function start() {
         stateStore.read(), upgrade.connectorMigrated || upgrade.tunnelProfileMigrated);
       const state = stateStore.update({
         coreSetupComplete: true,
+        ...(upgrade.connectorMigrated ? { browserSmokePassed: false, browserSmokeVersion: null } : {}),
         ...(!preserve ? { codexCatalogVerified: false, codexRestartRequired: true } : {}),
         experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
         zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
