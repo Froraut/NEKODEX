@@ -77,6 +77,18 @@ test("launcher descriptor is owner-only, loopback-only, and process-bound", () =
   }
 });
 
+test("NEKODEX native idle surface is accepted by the runtime descriptor", () => {
+  const nativeSource = readFileSync(join(import.meta.dir, "../launcher/electron/browser-host.cjs"), "utf8");
+  const nativeIdle = JSON.parse(nativeSource.match(/const IDLE_BROWSER_URL = ("[^"\n]+");/)![1]);
+  const path = descriptorFile();
+  const descriptor = JSON.parse(readFileSync(path, "utf8"));
+  descriptor.idleUrl = nativeIdle;
+  descriptor.surfaceId = "N".repeat(32);
+  descriptor.surfaceTargets = { [descriptor.surfaceId]: "native-owned-target" };
+  writeFileSync(path, JSON.stringify(descriptor), { mode: 0o600 });
+  expect(readLauncherBrowserHostDescriptor(path).idleUrl).toBe(nativeIdle);
+});
+
 test("launcher turn control sends authenticated lifecycle events", async () => {
   let received: { authorization?: string; body?: unknown } = {};
   const server = createServer(async (request, response) => {

@@ -1658,6 +1658,10 @@ function ActivitySurface({
   logs: LogRecord[];
   setError: (error: string | null) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [level, setLevel] = useState("all");
+  const visibleLogs = logs.filter(record => (level === "all" || record.level === level)
+    && `${humanEvent(record.event)} ${logDetail(record.detail)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return (
     <ContentSurface subtitle={copy.activitySubtitle} title={copy.activityTitle}>
       <div className="section-heading activity-heading">
@@ -1669,14 +1673,20 @@ function ActivitySurface({
           {copy.exportSafeLog}
         </SecondaryButton>
       </div>
+      <div className="activity-filters">
+        <input type="search" aria-label={copy.searchActivity} placeholder={copy.searchActivity} value={query} onChange={event => setQuery(event.target.value)} />
+        <select className="settings-select" aria-label={copy.eventLevel} value={level} onChange={event => setLevel(event.target.value)}>
+          <option value="all">{copy.allEvents}</option><option value="error">{copy.errorEvents}</option><option value="warning">{copy.warningEvents}</option><option value="info">{copy.infoEvents}</option><option value="debug">{copy.debugEvents}</option>
+        </select>
+      </div>
       <div className="activity-table">
-        {logs.length === 0 ? (
+        {visibleLogs.length === 0 ? (
           <div className="surface-empty">
             <Icon name="logs" />
-            <span>{copy.noLogs}</span>
+            <span>{logs.length ? copy.noMatchingEvents : copy.noLogs}</span>
           </div>
         ) : null}
-        {[...logs].reverse().map((record, index) => (
+        {[...visibleLogs].reverse().map((record, index) => (
           <div className="activity-row" key={`${record.at}-${record.event}-${index}`}>
             <StateDot state={record.level === "error" ? "error" : record.level === "warning" ? "busy" : "ready"} />
             <div>
@@ -1861,6 +1871,7 @@ function SettingsSurface({
             value={snapshot.proModelVersion}
           />
         </SettingRow>
+        <SectionHeading label={copy.appearanceLabel} spaced />
         <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
           <Switch
             checked={snapshot.state.keepRunningOnClose}
@@ -1878,6 +1889,8 @@ function SettingsSurface({
               .catch((cause) => setError(messageOf(cause)))}
           />
         </SettingRow>
+        <details className="advanced-settings" open={typeof snapshot.state.pendingBiggerContext === "boolean" ? true : undefined}>
+        <summary>{copy.advancedContext}<Icon name="chevron" /></summary>
         <SettingRow
           body={snapshot.state.browserInteractionMode === "manual"
             ? copy.manualBiggerContextUnavailable
@@ -1905,6 +1918,7 @@ function SettingsSurface({
           {snapshot.state.contextChangeError ? <button className="secondary-button" type="button" disabled={busy}
             onClick={() => void setBiggerContext(snapshot.state.pendingBiggerContext!)}>{copy.retryContextChange}</button> : null}
         </div> : null}
+        </details>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
           <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
@@ -1978,7 +1992,7 @@ function ContentSurface({
   title: string;
 }) {
   return (
-    <section className="content-surface">
+    <section className={`content-surface${fit ? " is-fit-surface" : " is-page-scroll"}`}>
       <div className={`content-scroll${narrow ? " is-narrow" : ""}${fit ? " is-fit" : ""}`}>
         <header className="surface-header">
           {eyebrow ? <span>{eyebrow}</span> : null}

@@ -59,16 +59,43 @@ with `node launcher/scripts/generate-brand-icons.cjs` on macOS.
   reaction was observed in the development UI after the expanded animation set.
 - The packaged macOS arm64 `NEKODEX.app` opened from its own bundle with the
   NEKODEX native application/menu name. It uses the isolated preview profile.
-- The current local bundle is ad-hoc signed for local use, not notarized or
+- The installed local bundle is ad-hoc signed for local use, not notarized or
   published as a GitHub release. Real multi-account ChatGPT requests and
   Windows/Linux execution were not part of this UI verification.
 - Superseded source Electron instances and the task-owned Vite server were
   closed. Only the final packaged preview is intentionally retained for review.
 
-Local app: `launcher/release/nekodex-preview/mac-arm64/NEKODEX.app`.
+Installed app: `/Applications/NEKODEX.app`.
 Use `launcher/release/nekodex-preview/NEKODEX Preview.command` to reopen it with
 `--dev-profile`; review data stays under `~/Library/Application Support/NEKODEX Preview`.
 The ordinary production launch retains the previous profile paths. The local
 preview bundle is a generated artifact and is not committed.
 
 ![Packaged NEKODEX preview](screenshots/overview.png)
+
+
+## Final follow-up: responsive UI, illustration and cleanup
+
+The user rejected the orbital glass artwork. The final asset is the generated
+flat coding cat in `launcher/src/assets/cat-workspace.png`, with three alternating
+hover/focus reactions. The original twelve main-cat reactions remain unchanged.
+Overview now uses workspace-width container queries for 3/2/1 columns, fluid
+margins and content-based card heights. Settings and other content pages scroll
+at the workspace edge with a reserved gutter. Activity has search and level
+filters; advanced context controls can be collapsed.
+
+The native idle-surface URL and runtime validator now agree on NEKODEX. Its one
+focused acceptance test passed. The existing disabled Codex bridge route remains
+protected; a route ownership conflict still prevents runtime setup from being
+called operational. ChatGPT sign-in was retained in the installed application.
+
+17 old Codex Web GPT bundles were moved to Trash and their registrations removed.
+The previous local NEKODEX build was also retired during final replacement.
+Only `/Applications/NEKODEX.app` is retained as the current runnable deliverable.
+User account data and source repositories were preserved. Trash was not emptied.
+The global `app-build-artifact-cleanup` skill is installed and was returned as
+user-scoped and enabled by Codex's skills/list.
+
+See `completion-plan.md` and the repository-root `design-qa.md` for completion
+and bounded verification. The current source changes are separate from a public
+notarized release.
