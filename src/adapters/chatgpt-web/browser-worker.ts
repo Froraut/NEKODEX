@@ -2136,17 +2136,9 @@ export function insertPlainTextIntoComposer(element: HTMLElement, value: string)
   ) {
     return false;
   }
-  // Adapted from Enhanced's escaped-fragment approach. Creating thousands of
-  // paragraphs through insertText is expensive. Text nodes must stay literal;
-  // CR/NUL are excluded because HTML parsing normalizes them. The caller's
-  // complete readback check remains mandatory before a prompt can be sent.
-  if (value.length >= 16_384 && value.includes("\n") && !value.endsWith("\n") && !/[\r\u0000]/u.test(value)) {
-    // Inline pre-wrapped text avoids Chromium adding a trailing empty paragraph
-    // when block fragments are inserted after the connector inside a paragraph.
-    const escaped = value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-    const fragment = `<span style="white-space:pre-wrap">${escaped}</span>`;
-    return document.execCommand("insertHTML", false, fragment);
-  }
+  // Keep transport text literal. Rich HTML insertion may normalize newlines or
+  // whitespace while ChatGPT imports the fragment into its editor. Equal length
+  // is not sufficient: the caller still requires complete exact readback.
   return document.execCommand("insertText", false, value);
 }
 
@@ -3070,7 +3062,7 @@ export class ChatGptBrowserWorker {
     throwIfPromptAttachmentAborted(abortSignal);
     const commonPrefix = this.promptEquivalentPrefixLength(prompt, observed);
     throw new ChatGptPromptAttachmentIntegrityError(
-      `ChatGPT composer did not preserve the complete prompt (expectedChars=${prompt.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix})`,
+      `ChatGPT composer did not preserve the complete prompt (expectedChars=${prompt.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix}, expectedUnit=${prompt.charCodeAt(commonPrefix)}, actualUnit=${observed.charCodeAt(commonPrefix)})`,
     );
   }
 
@@ -4743,7 +4735,7 @@ export class ChatGptBrowserWorker {
       }
       // A retained lease proves the connector binding, not the current model selection.
       // Reconcile the live control before every submission, including retained continuations.
-      let mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, () => (
+      let mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, (abortSignal) => (
         this.selectModelAndEffort(
           page,
           turn.modelId,
@@ -4847,7 +4839,7 @@ export class ChatGptBrowserWorker {
             turn.traceId,
             "final_part_effort_selection",
             browserStageTimeouts.effortSelection,
-            () => this.selectModelAndEffort(
+            (abortSignal) => this.selectModelAndEffort(
               page,
               turn.modelId,
               requestedMode.effort,
@@ -4902,7 +4894,7 @@ export class ChatGptBrowserWorker {
             turn.traceId,
             "connector_catalog_refresh",
             browserStageTimeouts.temporaryChatPreparation,
-            async () => {
+            async (abortSignal) => {
               await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
               await this.prepareTemporaryChatSurface(
                 page,

@@ -22,7 +22,7 @@ test('localized ProseMirror composer is found without matching other editors', a
   expect(await page.locator(CHATGPT_COMPOSER_SELECTOR).getAttribute('aria-label')).toBe('Сообщение');
 });
 
-test('large multiline fragment preserves exact literal text and connector state', async () => {
+test('large multiline insertion preserves exact literal text and connector state', async () => {
   const text = ' '+ ('JSON {"text":"<&> `code`"}\n\n<script>window.untrusted=1</script>\n  отступ\n').repeat(260) + 'END';
   expect(text.length).toBeGreaterThanOrEqual(16_384);
   const old = execFileSync('git',['show','v5.1.0-froraut.18:src/adapters/chatgpt-web/browser-worker.ts'],{encoding:'utf8'});

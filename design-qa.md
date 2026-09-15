@@ -64,7 +64,7 @@ animation/viewport matrix was run.
 ## Remaining limits
 
 Public notarized distribution and end-to-end model execution are separate from
-this UI check. The pre-existing disabled Codex bridge route remains protected.
+this UI check. The route was subsequently replaced at the user's explicit request after a successful real reply; see docs/design/route-recovery.md.
 Fine visual preferences may be refined after use; there are no outstanding
 P0/P1/P2 UI findings from this bounded pass.
 

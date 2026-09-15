@@ -99,3 +99,12 @@ user-scoped and enabled by Codex's skills/list.
 See `completion-plan.md` and the repository-root `design-qa.md` for completion
 and bounded verification. The current source changes are separate from a public
 notarized release.
+
+
+## Subsequent authorized route replacement
+
+The user then explicitly requested rewriting the disabled route with NEKODEX.
+That replacement completed after a real `NEKODEX READY` reply through the native
+Codex client. The installed app now owns the healthy listener and its catalog
+exposes five Web modes. See [route recovery](route-recovery.md) for exact evidence,
+configuration backups, the optional profile and remaining distribution limits.
