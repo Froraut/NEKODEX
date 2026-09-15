@@ -23,9 +23,9 @@ NEKODEX brings separate account profiles, an embedded browser, model setup, MCP 
 
 The interface uses a quiet graphite-and-lavender palette, responsive layouts and an interactive coding cat.
 
-![NEKODEX development interface showing the overview, connections and coding cat](docs/design/screenshots/overview.png)
+![Illustrative NEKODEX interface preview showing the overview, connections and coding cat](docs/design/screenshots/overview.png)
 
-*Interface preview from a development build. Version labels and connection states in the image are illustrative; download the release below for the published build.*
+*AI-edited interface preview based on a development screenshot. Visual details, version labels and connection states are illustrative; download the release below for the published build.*
 
 ## Download
 
