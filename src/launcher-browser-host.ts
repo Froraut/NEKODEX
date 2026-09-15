@@ -51,6 +51,7 @@ export interface LauncherBrowserHostDescriptor {
     script: string;
   };
   partition: string;
+  accountId?: string;
   idleUrl: string;
   surfaceId: string;
   surfaceTargets: Record<string, string>;
@@ -111,9 +112,14 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (!helperScript || !existsSync(helperScript)) {
     throw new Error("Launcher browser descriptor helper script does not exist");
   }
-  const expectedPartition = descriptor.profile === "development"
+  const accountId = descriptor.accountId ?? "default";
+  if (accountId !== "default" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(accountId)) {
+    throw new Error("Invalid launcher account identity");
+  }
+  const basePartition = descriptor.profile === "development"
     ? "persist:codex-web-gpt-dev-chatgpt"
     : "persist:codex-web-gpt-chatgpt";
+  const expectedPartition = accountId === "default" ? basePartition : `${basePartition}-account-${accountId}`;
   if (descriptor.partition !== expectedPartition) {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
   }
@@ -142,6 +148,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     control: { endpoint: controlEndpoint, token: descriptor.control.token },
     helper: { executable: helperExecutable, script: helperScript },
     partition: descriptor.partition,
+    accountId,
     idleUrl: descriptor.idleUrl,
     surfaceId: descriptor.surfaceId,
     surfaceTargets: targets,
@@ -388,7 +395,7 @@ export async function inspectLauncherBrowserHost(
         authorization: `Bearer ${descriptor.control.token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ detectCapabilities: options.detectCapabilities === true }),
+      body: JSON.stringify({ detectCapabilities: options.detectCapabilities === true, accountId: descriptor.accountId }),
       signal: controller.signal,
     });
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -437,6 +444,8 @@ export type LauncherTurnActivity =
       conversationKey?: string;
       connectorIdentity?: string;
       requireRetainedConversation?: boolean;
+      requestedEffort?: string;
+      accountRoutingKey?: string;
     }
   | {
       phase: "heartbeat";

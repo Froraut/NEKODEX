@@ -2824,3 +2824,12 @@ code {
   color: var(--color-text-primary); font: inherit;
 }
 .capacity-setting p { margin-top: 6px; }
+
+.account-settings { padding: 16px 0; border-bottom: 1px solid var(--color-border-light); }
+.account-settings h2 { font-size: 14px; margin-bottom: 8px; }
+.account-settings > p, .account-row p { color: var(--color-text-secondary); margin: 6px 0 12px; }
+.account-row { padding: 12px 0; border-bottom: 1px solid var(--color-border-light); margin-bottom: 12px; }
+.account-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.account-settings .capacity-controls input { width: 180px; }
+
+.browser-account-label { padding: 5px 12px; color: var(--color-text-secondary); font-size: 12px; }

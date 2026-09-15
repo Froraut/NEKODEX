@@ -1,3 +1,4 @@
+const { validateAccountId } = require("./account-registry.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash, randomBytes } = require("node:crypto");
@@ -345,6 +346,8 @@ class BrowserHost {
     dialogApi = dialog,
     getBrowserInteractionMode = () => "automatic",
     maxTabs = DEFAULT_BROWSER_CAPACITY,
+    accountId = "default",
+    isAccountVisible = () => true,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -366,9 +369,12 @@ class BrowserHost {
     if (profile !== "production" && profile !== "development") {
       throw new Error("Browser host profile is invalid");
     }
-    const expectedPartition = profile === "development"
+    this.accountId = validateAccountId(accountId);
+    this.isAccountVisible = isAccountVisible;
+    const basePartition = profile === "development"
       ? "persist:codex-web-gpt-dev-chatgpt"
       : "persist:codex-web-gpt-chatgpt";
+    const expectedPartition = accountId === "default" ? basePartition : `${basePartition}-account-${accountId}`;
     if (partition !== expectedPartition) throw new Error("Browser host partition does not match its profile");
     this.partition = partition;
     this.profile = profile;
@@ -444,7 +450,7 @@ class BrowserHost {
       isAllowedPage: (url, kind) => httpsOrigin(url) === CHATGPT_ORIGIN
         || (kind === "auth" && httpsOrigin(url) !== null && allowedAuthUrl(url)),
       isVisible: contents => this.window.isVisible() && !this.window.isMinimized()
-        && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady)
+        && this.isAccountVisible() && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady)
         && this.activeView().webContents === contents,
       requestConsent: async ({ permission, origin, signal }) => {
         const reading = permission === "clipboard-read";
@@ -1559,7 +1565,7 @@ class BrowserHost {
 
   syncViewVisibility() {
     const windowVisible = this.window.isVisible() && !this.window.isMinimized();
-    const visible = windowVisible
+    const visible = windowVisible && (this.isAccountVisible?.() ?? true)
       && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady);
     const selected = this.selectedTurnTab();
     this.presentPrimaryView(visible && !this.authView && !selected);
@@ -3116,6 +3122,7 @@ class BrowserHost {
       control: this.control,
       helper: this.helper,
       partition: this.partition,
+      accountId: this.accountId,
       idleUrl: IDLE_BROWSER_URL,
       surfaceId: this.surfaceId,
       surfaceTargets,

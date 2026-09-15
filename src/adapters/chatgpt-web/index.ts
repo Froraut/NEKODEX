@@ -687,6 +687,7 @@ export function createChatGptWebAdapter(
     }
     if (!mode.localTools) {
       const browserTurn = cancellableBrowserTurn(finalizeCheckpoint(worker.run({
+        ...(identity.threadId ? { accountRoutingKey: createHash("sha256").update("account-thread:" + identity.threadId).digest("hex") } : {}),
         traceId,
         modelId: parsed.modelId,
         reasoning: parsed.options.reasoning,
@@ -757,6 +758,7 @@ export function createChatGptWebAdapter(
       }
     };
     const browserTurn = cancellableBrowserTurn(trackBrowserOwner(finalizeCheckpoint(worker.run({
+      ...(identity.threadId ? { accountRoutingKey: createHash("sha256").update("account-thread:" + identity.threadId).digest("hex") } : {}),
       traceId,
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,

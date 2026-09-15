@@ -1,3 +1,4 @@
+const { AccountBrowserPool } = require("./account-pool.cjs");
 const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapacity } = require("./browser-capacity.cjs");
 const fs = require("node:fs");
 const net = require("node:net");
@@ -921,6 +922,13 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE && result.configured) startCatalogVerificationMonitor({ logger, stateStore });
     return { state, credentialsRequired: false, targetMode: mode };
   });
+  handle("launcher:accounts", () => browserHost.accountSnapshot());
+  handle("launcher:account-add", (_event, label) => browserHost.addAccount(label));
+  handle("launcher:account-select", (_event, id) => browserHost.selectAccount(id));
+  handle("launcher:account-enabled", (_event, id, enabled) => browserHost.setAccountEnabled(id, enabled));
+  handle("launcher:account-mode", (_event, mode) => browserHost.setAccountMode(mode));
+  handle("launcher:account-login", (_event, id) => browserHost.openAccountLogin(id));
+  handle("launcher:account-check", (_event, id, connector) => browserHost.checkAccount(id, connector === true));
   handle("launcher:browser-capacity", async (_event, value) => {
     saveBrowserCapacity(CORE_HOME, value);
     return browserCapacitySnapshot();
@@ -1151,7 +1159,8 @@ async function start() {
     stateStore.update({ browserInteractionMode: configuredInteractionMode });
   }
   startupPhase = "browser";
-  browserHost = new BrowserHost({
+  browserHost = new AccountBrowserPool({
+    coreHome: CORE_HOME,
     maxTabs: ACTIVE_BROWSER_CAPACITY,
     window: mainWindow,
     descriptorPath: BROWSER_DESCRIPTOR_PATH,

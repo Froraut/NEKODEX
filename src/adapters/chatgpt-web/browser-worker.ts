@@ -1200,6 +1200,7 @@ function withBrowserTurnAbort<T>(promise: Promise<T>, signal?: AbortSignal): Pro
 }
 
 export interface BrowserTurn {
+  accountRoutingKey?: string;
   traceId: string;
   modelId: string;
   reasoning?: string;
@@ -4399,6 +4400,8 @@ export class ChatGptBrowserWorker {
 
     const lease = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
       phase: "start",
+      requestedEffort: turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? "luna" : resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities).effort,
+      ...(turn.accountRoutingKey ? { accountRoutingKey: turn.accountRoutingKey } : {}),
       traceId: turn.traceId,
       helperPid: process.pid,
       ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),

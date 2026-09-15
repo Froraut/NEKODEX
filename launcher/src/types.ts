@@ -38,6 +38,8 @@ export interface LauncherState {
 }
 
 export interface BrowserState {
+  accountId?: string;
+  accountName?: string;
   status: "idle" | "loading" | "signed-out" | "ready" | "testing" | "running" | "error";
   message: string;
   url: string;
@@ -129,6 +131,13 @@ export type UpdateState =
   | { status: "available" | "downloading" | "installing"; version: string;
       downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null }
   | { status: "error"; message: string };
+
+export interface AccountPoolSnapshot {
+  selectedId: string;
+  mode: "selected" | "balanced";
+  accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
+    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean }>;
+}
 
 export interface BrowserCapacitySettings {
   configured: number;
@@ -234,6 +243,13 @@ export interface LauncherApi {
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
+  accounts(): Promise<AccountPoolSnapshot>;
+  addAccount(label: string): Promise<AccountPoolSnapshot>;
+  selectAccount(id: string): Promise<AccountPoolSnapshot>;
+  setAccountEnabled(id: string, enabled: boolean): Promise<AccountPoolSnapshot>;
+  setAccountMode(mode: "selected" | "balanced"): Promise<AccountPoolSnapshot>;
+  openAccountLogin(id: string): Promise<BrowserState>;
+  checkAccount(id: string, connector: boolean): Promise<AccountPoolSnapshot>;
   setBrowserCapacity(value: number): Promise<BrowserCapacitySettings>;
   setProModelVersion(version: ProModelVersion | null): Promise<{ proModelVersion: ProModelVersion | null }>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{

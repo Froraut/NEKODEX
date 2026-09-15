@@ -126,7 +126,7 @@ class BrowserControlServer {
           error.code = "manual_browser_inspection_disabled";
           throw error;
         }
-        const result = await host.inspectSession(body?.detectCapabilities === true);
+        const result = await host.inspectSession(body?.detectCapabilities === true, body?.accountId);
         writeJson(response, 200, result);
         return;
       }
@@ -276,6 +276,8 @@ class BrowserControlServer {
         writeJson(response, 200, { ok: true, ...release });
         return;
       }
+      if (body.accountRoutingKey !== undefined && !/^[a-f0-9]{64}$/.test(body.accountRoutingKey)) throw new Error("Invalid account routing key");
+      if (body.requestedEffort !== undefined && !["luna", "low", "medium", "high", "xhigh", "max"].includes(body.requestedEffort)) throw new Error("Invalid requested effort");
       if (request.url === "/v1/turn/start") {
         if (host.browserInteractionMode() === "manual") {
           throw new Error("Automatic browser interaction is disabled");
@@ -287,6 +289,7 @@ class BrowserControlServer {
           body.conversationKey,
           body.connectorIdentity,
           body.requireRetainedConversation === true,
+          { effort: body.requestedEffort, routingKey: body.accountRoutingKey },
         );
         this.logger.info("browser.turn_started", { traceId: body.traceId });
         writeJson(response, 200, { ok: true, ...lease });

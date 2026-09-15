@@ -1,3 +1,4 @@
+import { AccountSettings } from "./AccountSettings";
 import {
   useCallback,
   useEffect,
@@ -714,6 +715,7 @@ function LauncherShell({
             ) : null}
             {surface === "settings" ? (
               <SettingsSurface
+                openBrowser={() => setSurface("browser")}
                 browser={browser}
                 configureInteractionMode={(mode) => {
                   setMcpTargetMode(mode);
@@ -948,6 +950,7 @@ function BrowserSurface({
 
   return (
     <section className="browser-surface">
+      {browser?.accountName ? <div className="browser-account-label">{copy.accountsCurrent}: {browser.accountName}</div> : null}
       <div className="browser-tab-strip" role="tablist" aria-label={copy.browser} title={copy.browserTabLimit}>
         {(browser?.tabs ?? []).map((tab) => (
           <div
@@ -1707,6 +1710,7 @@ function ActivitySurface({
 }
 
 function SettingsSurface({
+  openBrowser,
   browser,
   configureInteractionMode,
   copy,
@@ -1720,6 +1724,7 @@ function SettingsSurface({
   showBiggerContextInfo,
   updateState,
 }: {
+  openBrowser: () => void;
   browser: BrowserState | null;
   configureInteractionMode: (mode: BrowserInteractionMode) => void;
   copy: Copy;
@@ -1856,6 +1861,7 @@ function SettingsSurface({
           mode={snapshot.state.browserInteractionMode}
           onChange={(mode) => void setInteractionMode(mode)}
         />
+        <AccountSettings copy={copy} openBrowser={openBrowser} setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} />
         <SettingRow body={copy.browserCapacityBody} label={copy.browserCapacity}>
           <div className="capacity-setting">
             <div className="capacity-controls">
