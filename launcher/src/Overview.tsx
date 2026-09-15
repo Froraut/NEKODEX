@@ -4,6 +4,7 @@ import { Icon, type IconName } from "./icons";
 import type { Copy } from "./i18n";
 import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types";
 
+const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
 const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
 
 export function Overview({ copy, browser, snapshot, logs, navigate }: {
@@ -80,9 +81,16 @@ function WorkspaceIllustration() {
         </mask>
         <clipPath id={`${id}-left-paw`}><ellipse cx="644" cy="514" rx="43" ry="33" /></clipPath>
         <clipPath id={`${id}-right-paw`}><ellipse cx="894" cy="514" rx="43" ry="33" /></clipPath>
+        <clipPath id={`${id}-tail`}><path d="M515 711 C503 671 484 654 452 634 C403 605 386 563 401 510 C408 480 424 442 445 441 C464 440 476 460 467 480 C447 519 440 544 452 572 C465 599 488 608 515 631 Z" /></clipPath>
+        <clipPath id={`${id}-tail-behind`}><rect x="280" y="350" width="235" height="400" /></clipPath>
       </defs>
       {/* The scene and paws retain the original pixels; the head shares the main cat rig. */}
-      <image href={workspaceArt} width="1536" height="1024" mask={`url(#${id}-stationary)`} />
+      <image href={workspaceBase} width="1536" height="1024" mask={`url(#${id}-stationary)`} />
+      <g clipPath={`url(#${id}-tail-behind)`}>
+        <g className="coding-cat-tail">
+          <image href={workspaceArt} width="1536" height="1024" clipPath={`url(#${id}-tail)`} />
+        </g>
+      </g>
       {/* Restore the stationary laptop edge behind lifted paws using its own pixels. */}
       <svg x="590" y="511" width="356" height="16" viewBox="540 511 50 16" preserveAspectRatio="none" overflow="hidden">
         <image href={workspaceArt} width="1536" height="1024" />
