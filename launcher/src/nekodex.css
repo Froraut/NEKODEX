@@ -390,3 +390,30 @@
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .brand-mark .neko-tracking, .brand-mark .neko-face { transform: none; }
 }
+
+/* NEKODEX form language: shared surfaces, clear focus and readable feedback. */
+.account-add input,
+.field-row input,
+.activity-filters input,
+.settings-select,
+.capacity-controls input {
+  min-height: var(--height-control);
+  border: 1px solid var(--color-border-heavy);
+  border-radius: var(--radius-sm);
+  background: var(--color-background-control);
+  color: var(--color-text-primary);
+  font-size: var(--text-base);
+}
+:is(input, select, textarea):disabled { color: var(--color-text-disabled); cursor: not-allowed; }
+:is(input, select, textarea)[aria-invalid="true"] { border-color: var(--color-text-error); }
+:is(input, select, textarea, button, summary):focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 3px; }
+.capacity-setting .field-error { color: var(--color-text-error); }
+.capacity-setting .field-hint { color: var(--color-text-secondary); }
+.capacity-controls { margin: 0; gap: 8px; }
+.capacity-controls .button-secondary { min-height: var(--height-control); }
+.field-row input::placeholder, .account-add input::placeholder { color: var(--color-text-tertiary); }
+.account-add > div { flex-wrap: wrap; gap: 8px; }
+.account-add input { flex: 1 1 180px; }
+.account-add button { flex: 0 0 auto; }
+.setting-row p { max-width: 66ch; }
+.diagnostic-row small, .notice-row { overflow-wrap: anywhere; }

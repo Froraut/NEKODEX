@@ -1113,8 +1113,20 @@ function ManualTurnGuide({
   useEffect(() => {
     if (tab.manualState !== "awaiting-user" || !tab.manualDeadlineAt) return;
     setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(timer);
+    let timer: number | undefined;
+    const refresh = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+      if (document.hidden) return;
+      setNow(Date.now());
+      timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    };
+    refresh();
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [tab.manualDeadlineAt, tab.manualState]);
   const deadline = tab.manualDeadlineAt ? Date.parse(tab.manualDeadlineAt) : Number.NaN;
   const seconds = Number.isFinite(deadline) ? Math.max(0, Math.ceil((deadline - now) / 1_000)) : 0;
@@ -1758,6 +1770,7 @@ function SettingsSurface({
   const capacityValid = capacityInput.trim() !== "" && Number.isSafeInteger(capacityValue)
     && capacityValue >= 1 && capacityValue <= capacity.maximum;
   const saveCapacity = async () => {
+    if (busy || !capacityValid || capacityValue === capacity.configured) return;
     setBusy(true);
     setError(null);
     try {
@@ -1776,12 +1789,22 @@ function SettingsSurface({
     || operation?.status === "running"
     || browser?.tabs.some((tab) => tab.status === "running") === true;
 
+  const savePreference = async (action: () => Promise<LauncherState>) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try { updateState(await action()); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
   const updateLanguage = async (next: Language) => {
+    if (busy) return;
+    setBusy(true);
     try {
       updateState(await api!.setLanguage(next));
     } catch (cause) {
       setError(messageOf(cause));
-    }
+    } finally { setBusy(false); }
   };
   const runDoctor = async () => {
     setBusy(true);
@@ -1863,10 +1886,10 @@ function SettingsSurface({
       <div className="settings-list">
         {!devProfile ? <SettingRow body={copy.launchAtLoginBody} flushAfter label={copy.launchAtLogin}>
           <Switch
+            label={copy.launchAtLogin}
             checked={snapshot.state.autoStart}
-            onChange={(checked) => void api!.setAutostart(checked)
-              .then((result) => updateState(result.state))
-              .catch((cause) => setError(messageOf(cause)))}
+            disabled={busy}
+            onChange={(checked) => void savePreference(async () => (await api!.setAutostart(checked)).state)}
           />
         </SettingRow> : null}
         <InteractionModePicker
@@ -1877,12 +1900,13 @@ function SettingsSurface({
         />
         <SettingRow body={copy.browserCapacityBody} label={copy.browserCapacity}>
           <div className="capacity-setting">
-            <div className="capacity-controls">
+            <form className="capacity-controls" noValidate onSubmit={event => { event.preventDefault(); void saveCapacity(); }}>
               <input aria-label={copy.browserCapacity} type="number" min={1} max={capacity.maximum} step={1}
+                aria-invalid={!capacityValid} aria-describedby="capacity-feedback"
                 value={capacityInput} disabled={busy} onChange={event => setCapacityInput(event.target.value)} />
-              <button className="text-button" type="button" disabled={busy || !capacityValid || capacityValue === capacity.configured}
-                onClick={() => void saveCapacity()}>{copy.browserCapacitySave}</button>
-            </div>
+              <button className="button-secondary" type="submit" disabled={busy || !capacityValid || capacityValue === capacity.configured}>{busy ? copy.loading : copy.browserCapacitySave}</button>
+            </form>
+            <p id="capacity-feedback" className={!capacityValid ? "field-error" : "field-hint"} role="status">{!capacityValid ? copy.capacityInvalid.replace("{max}", String(capacity.maximum)) : capacityValue !== capacity.configured ? copy.unsavedChanges : copy.capacitySaved}</p>
             <p role="status">{copy.browserCapacityStatus.replace("{active}", String(capacity.active)).replace("{saved}", String(capacity.configured))}</p>
             {capacity.restartRequired ? <p role="status">{copy.browserCapacityRestart}</p> : null}
           </div>
@@ -1898,19 +1922,18 @@ function SettingsSurface({
         <SectionHeading label={copy.appearanceLabel} spaced />
         <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
           <Switch
+            label={copy.keepRunningOnClose}
             checked={snapshot.state.keepRunningOnClose}
-            onChange={(checked) => void api!.setPreference("keepRunningOnClose", checked)
-              .then(updateState)
-              .catch((cause) => setError(messageOf(cause)))}
+            disabled={busy}
+            onChange={(checked) => void savePreference(() => api!.setPreference("keepRunningOnClose", checked))}
           />
         </SettingRow>
         <SettingRow body={copy.showDuringTurnsBody} label={copy.showDuringTurns}>
           <Switch
+            label={copy.showDuringTurns}
             checked={snapshot.state.showBrowserDuringTurns}
-            disabled={snapshot.state.browserInteractionMode === "manual"}
-            onChange={(checked) => void api!.setPreference("showBrowserDuringTurns", checked)
-              .then(updateState)
-              .catch((cause) => setError(messageOf(cause)))}
+            disabled={busy || snapshot.state.browserInteractionMode === "manual"}
+            onChange={(checked) => void savePreference(() => api!.setPreference("showBrowserDuringTurns", checked))}
           />
         </SettingRow>
         <details className="advanced-settings" open={typeof snapshot.state.pendingBiggerContext === "boolean" ? true : undefined}>
@@ -1925,6 +1948,7 @@ function SettingsSurface({
             {copy.setupDetails}
           </button>
           <Switch
+            label={copy.biggerContext}
             checked={snapshot.state.pendingBiggerContext ?? snapshot.state.experimentalBiggerContext}
             disabled={busy
               || snapshot.state.browserInteractionMode === "manual"
@@ -2505,16 +2529,19 @@ function IconButton({
 }
 
 function Switch({
+  label,
   checked,
   disabled = false,
   onChange,
 }: {
+  label: string;
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
     <button
+      aria-label={label}
       aria-checked={checked}
       className={`switch${checked ? " is-on" : ""}`}
       disabled={disabled}
@@ -2705,7 +2732,7 @@ function BiggerContextRecommendation({
             <strong>{copy.biggerContext}</strong>
             <p>{copy.biggerContextRecommendationToggleBody}</p>
           </div>
-          <Switch checked={checked} disabled={busy} onChange={onChange} />
+          <Switch label={copy.biggerContext} checked={checked} disabled={busy} onChange={onChange} />
         </div>
         {checked ? <p className="bigger-context-recommendation-restart">{copy.restartCodex}</p> : null}
         <footer>
