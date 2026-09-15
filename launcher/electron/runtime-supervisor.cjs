@@ -1828,14 +1828,20 @@ class RuntimeSupervisor {
         const health = await this.control(config, "drain");
         if (health.accepting_turns !== false
           || !Number.isInteger(health.active_http_turns)
-          || !Number.isInteger(health.active_browser_turns)) {
+          || health.active_http_turns < 0
+          || !Number.isInteger(health.active_browser_turns)
+          || health.active_browser_turns < 0
+          || !Number.isInteger(health.active_compaction_runs)
+          || health.active_compaction_runs < 0) {
           throw new Error("daemon did not acknowledge the drain contract");
         }
-        if (health.active_http_turns === 0 && health.active_browser_turns === 0) return true;
+        if (health.active_http_turns === 0
+          && health.active_browser_turns === 0
+          && health.active_compaction_runs === 0) return true;
         if (Date.now() >= deadline) {
           busyAtDeadline = true;
           throw new Error(
-            `daemon has ${health.active_http_turns} active HTTP turn(s) and ${health.active_browser_turns} active browser turn(s)`,
+            `daemon has ${health.active_http_turns} active HTTP turn(s), ${health.active_browser_turns} active browser turn(s), and ${health.active_compaction_runs} active compaction run(s)`,
           );
         }
         await sleep(Math.min(DRAIN_POLL_INTERVAL_MS, Math.max(1, deadline - Date.now())));
@@ -2077,6 +2083,14 @@ class RuntimeSupervisor {
     try {
       if (this.recoveryTasks.size > 0) await Promise.allSettled([...this.recoveryTasks]);
       const failures = [];
+      let priorState;
+      let ownershipStateUnreadable = false;
+      try {
+        priorState = this.readState();
+      } catch (error) {
+        ownershipStateUnreadable = true;
+        failures.push(`ownership: ${errorMessage(error)}`);
+      }
       if (this.tunnel) {
         try {
           const config = this.readConfig();
@@ -2094,11 +2108,30 @@ class RuntimeSupervisor {
       } catch (error) {
         failures.push(`daemon: ${errorMessage(error)}`);
       }
-      if (failures.length === 0) this.clearState();
-      else this.tryWriteState("failed", failures.join("; "));
+      const unadoptedPids = ["daemon", "tunnel"].flatMap(name => {
+        const pid = priorState?.[`${name}Pid`];
+        return pid && pid !== this[name]?.pid && processRunning(pid) ? [`${name}: ${pid}`] : [];
+      });
+      if (unadoptedPids.length > 0) {
+        failures.push(`unadopted owned process(es) may still be live (${unadoptedPids.join(", ")})`);
+      }
+      if (failures.length === 0) {
+        try {
+          this.clearState();
+        } catch (error) {
+          failures.push(`ownership cleanup: ${errorMessage(error)}`);
+        }
+      }
+      if (failures.length > 0 && !ownershipStateUnreadable && unadoptedPids.length === 0
+        && !this.tryWriteState("failed", failures.join("; "))) {
+        failures.push("ownership: could not persist the partial-cleanup state");
+      }
       this.logger.warn("runtime.forced_shutdown_completed", {
         message: errorMessage(reason),
         failures,
+        remainingDaemonPid: this.daemon?.pid ?? null,
+        remainingTunnelPid: this.tunnel?.pid ?? null,
+        ownershipStatePath: this.statePath,
       });
       return {
         status: failures.length === 0 ? "forced" : "forced-partial",

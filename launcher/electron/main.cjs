@@ -104,6 +104,7 @@ let browserHost = null;
 let runtimeHost = null;
 let browserControl = null;
 let runtimeSupervisor = null;
+let logger = null;
 let tray = null;
 let quitting = false;
 let shutdownInProgress = false;
@@ -995,12 +996,23 @@ async function requestQuit() {
     return { ok: false, message: "Launcher shutdown is already in progress" };
   }
   shutdownInProgress = true;
+  let shutdownResult;
   try {
     const activeOperation = runtimeHost?.currentOperation() || browserHost?.currentOperation();
     if (activeOperation) {
       throw new Error(`Wait for ${activeOperation} to finish before quitting NEKODEX`);
     }
-    await runtimeSupervisor?.shutdown({ cancelActiveTurns: true, force: true });
+    shutdownResult = await runtimeSupervisor?.shutdown({ cancelActiveTurns: true, force: true });
+    if (shutdownResult?.status === "forced-partial") {
+      const message = `Runtime cleanup was incomplete: ${shutdownResult.failures.join("; ")}. Check launcher diagnostics and the runtime ownership state before restarting.`;
+      logger?.error("launcher.quit_cleanup_incomplete", {
+        message,
+        shutdownDetail: shutdownResult.detail,
+        failures: shutdownResult.failures,
+        ownershipStatePath: runtimeSupervisor.statePath,
+      });
+      publishOperation({ name: "launcher-quit", status: "failed", message });
+    }
     stopCatalogVerificationMonitor();
     quitting = true;
     await browserHost?.persistSession();
@@ -1009,9 +1021,14 @@ async function requestQuit() {
     exitCommitted = true;
     contextChangeQueue?.stop();
     app.quit();
-    return { ok: true };
+    return shutdownResult?.status === "forced-partial"
+      ? { ok: true, status: "forced-partial", failures: shutdownResult.failures }
+      : { ok: true };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const primary = error instanceof Error ? error.message : String(error);
+    const message = shutdownResult?.status === "forced-partial"
+      ? `${primary}; runtime cleanup was incomplete: ${shutdownResult.failures.join("; ")}`
+      : primary;
     quitting = false;
     showMainWindow();
     publishOperation({ name: "launcher-quit", status: "failed", message });
@@ -1092,7 +1109,7 @@ async function start() {
     && stateStore.read().autoStart !== autostart.enabled) {
     setAutostart(app, stateStore.read().autoStart);
   }
-  const logger = createLogger({
+  logger = createLogger({
     filePath: path.join(app.getPath("logs"), "launcher.jsonl"),
     publish: (record) => send("launcher:log", record),
   });

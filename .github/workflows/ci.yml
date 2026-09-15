@@ -4,9 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      broad_verification_authorized:
+        description: "I explicitly authorize the full three-platform verify, packaging, and smoke checks for this run after focused development verification"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   verify:
@@ -19,8 +27,24 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
+      - name: Require explicit broad-run authorization
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          BROAD_VERIFICATION_AUTHORIZED: ${{ inputs.broad_verification_authorized }}
+        run: test "$BROAD_VERIFICATION_AUTHORIZED" = "true"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - name: Select bounded PR or push scope
+        if: github.event_name != 'workflow_dispatch'
+        id: scope
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun scripts/focused-pr-check.ts
       - name: Validate launcher installer with Windows PowerShell 5.1
-        if: runner.os == 'Windows'
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: powershell
         run: |
           if ($PSVersionTable.PSVersion.Major -ne 5) {
@@ -34,38 +58,52 @@ jobs:
           if (-not [Environment]::Is64BitOperatingSystem) {
             throw "The Windows CI runner must be 64-bit"
           }
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.4.0
       - run: bun install --frozen-lockfile
+        if: github.event_name == 'workflow_dispatch' || (runner.os == 'Linux' && (steps.scope.outputs.mode == 'capacity' || steps.scope.outputs.mode == 'backend-review'))
       - run: bun install --frozen-lockfile
+        if: github.event_name == 'workflow_dispatch'
         working-directory: launcher
+      - name: Run selected named cases once on Linux
+        if: runner.os == 'Linux' && (steps.scope.outputs.mode == 'capacity' || steps.scope.outputs.mode == 'backend-review')
+        env:
+          FOCUSED_MODE: ${{ steps.scope.outputs.mode }}
+          FOCUSED_TEST_PATTERN: ${{ steps.scope.outputs.pattern }}
+        run: |
+          test -n "$FOCUSED_TEST_PATTERN"
+          case "$FOCUSED_MODE" in
+            backend-review) timeout --signal=TERM --kill-after=1s 29s bun test --test-name-pattern "$FOCUSED_TEST_PATTERN" ./tests/backend-review-regressions.test.ts ;;
+            capacity) timeout --signal=TERM --kill-after=1s 29s bun test --test-name-pattern "$FOCUSED_TEST_PATTERN" ./tests/browser-capacity-16.test.ts ;;
+            *) exit 1 ;;
+          esac
       - name: Prepare AVX2-independent Windows runtime
-        if: runner.os == 'Windows'
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
       - name: Prepare compatible Linux libnotify
-        if: runner.os == 'Linux'
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y meson ninja-build pkg-config libglib2.0-dev libgdk-pixbuf-2.0-dev binutils
           ./scripts/prepare-linux-libnotify.sh
       - name: Prepare owned AppImage toolset
-        if: runner.os == 'Linux'
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Linux'
         run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
       - run: bun run verify
+        if: github.event_name == 'workflow_dispatch'
       - run: bun run app:package
+        if: github.event_name == 'workflow_dispatch'
       - name: Verify Linux AppImage ABI on current Arch
-        if: runner.os == 'Linux'
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Linux'
         run: |
           artifact="$(find launcher/artifacts -maxdepth 1 -name '*-linux-x64.AppImage' -print -quit)"
           test -n "$artifact"
           docker run --rm -v "$PWD:/work:ro" -e APPIMAGE_PATH="/work/$artifact" archlinux:base \
             sh -lc 'pacman -Sy --noconfirm binutils file glibc alsa-lib at-spi2-core cairo cups gtk3 libx11 libxcb libxcomposite libxdamage libxext libxfixes libxkbcommon libxrandr mesa nspr nss pango >/dev/null && /work/launcher/scripts/smoke-linux-appimage-symbols.sh "$APPIMAGE_PATH"'
       - name: Ensure virtual display is available
-        if: runner.os == 'Linux'
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Linux'
         run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
       - run: bun run app:smoke
+        if: github.event_name == 'workflow_dispatch'
 
   actionlint:
     runs-on: ubuntu-latest

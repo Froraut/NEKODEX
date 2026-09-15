@@ -141,6 +141,9 @@ interface BrokerResponse {
 const brokers = new Map<string, TurnBroker>();
 const MAX_BROKER_LINE_CHARS = 67_108_864;
 const MAX_RETIRED_TURN_HANDLES = 64;
+// A live turn cannot discard completed IDs: an ambiguously delivered claim could arrive later
+// and reopen activity past the completion fence. Retire the entire capability at this limit.
+const MAX_COMPLETED_ACTIVITIES_PER_TURN = 4_096;
 
 export async function closeTurnBrokers(): Promise<void> {
   const active = [...brokers.values()];
@@ -1078,6 +1081,15 @@ export class TurnBroker implements TurnBrokerOwner {
       // A cleanup that overtakes an ambiguously delivered claim is still a causal event. Its
       // tombstone makes the delayed claim fail instead of resurrecting activity after a fence.
       channel.activityRevision += 1;
+      if (channel.completedActivities.size >= MAX_COMPLETED_ACTIVITIES_PER_TURN) {
+        console.error(
+          `[chatgpt-web] broker trace=${channel.traceId} reached the completed activity limit; retiring turn capability`,
+        );
+        // Revoke before yielding to another dispatch. All delayed claims now fail on the retired
+        // token, so dropping the channel also drops its tombstones without permitting replay.
+        this.revoke(token, new Error("Codex turn reached its completed MCP activity limit"));
+        return { completed: wasActive, retired: true };
+      }
       return { completed: wasActive };
     }
 

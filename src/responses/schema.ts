@@ -15,7 +15,9 @@ const inputFileBlockSchema = z.object({
   type: z.literal("input_file"),
   file_id: z.string().optional(),
   filename: z.string().optional(),
-  file_data: z.string().optional(),
+  // Retain this field during parsing so the request-level check can reject it even when
+  // the permissive input-item fallback accepts a message with an unsupported block.
+  file_data: z.unknown().optional(),
 });
 const outputTextSchema = z.object({ type: z.literal("output_text"), text: z.string() });
 const outputRefusalSchema = z.object({ type: z.literal("refusal"), refusal: z.string() });
@@ -169,4 +171,29 @@ export const responsesRequestSchema = z.object({
   prompt: z.unknown().optional(),
   text: z.unknown().optional(),
   truncation: z.unknown().optional(),
+}).superRefine((request, ctx) => {
+  if (!Array.isArray(request.input)) return;
+  for (const [itemIndex, item] of request.input.entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    if ((item as { type?: unknown }).type === "input_file"
+      && Object.prototype.hasOwnProperty.call(item, "file_data")) {
+      ctx.addIssue({
+        code: "custom",
+        message: "input_file.file_data is unsupported; inline file content was not sent",
+        path: ["input", itemIndex, "file_data"],
+      });
+    }
+    const blocks = (item as { content?: unknown }).content;
+    if (!Array.isArray(blocks)) continue;
+    for (const [blockIndex, block] of blocks.entries()) {
+      if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+      if ((block as { type?: unknown }).type !== "input_file"
+        || !Object.prototype.hasOwnProperty.call(block, "file_data")) continue;
+      ctx.addIssue({
+        code: "custom",
+        message: "input_file.file_data is unsupported; inline file content was not sent",
+        path: ["input", itemIndex, "content", blockIndex, "file_data"],
+      });
+    }
+  }
 });

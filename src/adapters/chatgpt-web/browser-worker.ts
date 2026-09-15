@@ -62,7 +62,7 @@ import {
   parseChatGptEffortSliderState,
   chatGptModelStateMatches,
 } from "../../chatgpt-session";
-import { loginVerificationMarkerPath } from "../../browser-login";
+import { loginVerificationMarkerPath, sanitizeBrowserLoginStorageState } from "../../browser-login";
 import {
   connectLauncherBrowserHost,
   LauncherBrowserTurnCancelledError,
@@ -2229,7 +2229,9 @@ export class ChatGptBrowserWorker {
     if (useHelper) {
       this.launcherHelper ??= new LauncherBrowserHelperClient(this.config);
     }
-    const run = Promise.resolve().then(() => useHelper ? this.launcherHelper!.run(turn) : this.runExclusive(turn));
+    // Capture the owner before deferring: close() may clear the field before this microtask.
+    const helper = this.launcherHelper;
+    const run = Promise.resolve().then(() => useHelper ? helper!.run(turn) : this.runExclusive(turn));
     this.activeRuns.set(turn.traceId, run);
     void run.finally(() => {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);
@@ -5260,7 +5262,7 @@ export class ChatGptBrowserWorker {
       }
 
       if (this.context && this.config.browserHost === "managed-chrome") {
-        const state = await this.context.storageState();
+        const state = sanitizeBrowserLoginStorageState(await this.context.storageState());
         atomicWriteFile(this.config.storageStatePath, `${JSON.stringify(state)}\n`);
       }
       await diagnostics.capture(page, "turn-completed");

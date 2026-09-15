@@ -231,6 +231,7 @@ export interface LegacyCodexIntegrationJournalV3 {
 
 export interface LegacyCodexIntegrationJournal {
   version: 2;
+  uninstalling?: { restoredConfigSha256: string };
   configPath: string;
   catalogPath: string;
   catalogSha256: string;

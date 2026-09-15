@@ -1,3 +1,4 @@
+import { expandPreviousResponseInput } from "./responses/state";
 import { readJsonRequestBody, readRequestBodyBytes } from "./http-body";
 import {
   BRIDGE_COMPACTION_PREFIX,
@@ -261,8 +262,15 @@ export async function forwardNativeCodexRequest(
       const tail = Array.isArray(parsedBody.input) ? parsedBody.input.at(-1) : undefined;
       compactionRequest ||= endpoint === "responses" && isObject(tail) && tail.type === "compaction_trigger";
     }
-    const scrubbed = scrubBridgeArtifactsForNative(parsedBody);
-    if (scrubbed.changed) {
+    // The local cache contains Web-owned responses only. Native-owned IDs that are not
+    // present retain their original upstream continuation and byte-for-byte request.
+    const expanded = endpoint === "responses" || endpoint === "responses/compact"
+      ? expandPreviousResponseInput(parsedBody) : parsedBody;
+    const localContinuation = expanded !== parsedBody;
+    const replayBody = localContinuation && isObject(expanded) ? { ...expanded } : expanded;
+    if (localContinuation && isObject(replayBody)) delete replayBody.previous_response_id;
+    const scrubbed = scrubBridgeArtifactsForNative(replayBody);
+    if (scrubbed.changed || localContinuation) {
       headers.delete("content-encoding");
       body = JSON.stringify(scrubbed.value);
     } else {

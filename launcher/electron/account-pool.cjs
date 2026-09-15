@@ -13,6 +13,7 @@ class AccountBrowserPool {
     this.hosts = new Map();
     this.creatingHosts = new Set();
     this.reservations = new Map();
+    this.pendingAffinity = new Map();
     this.traceOwners = new Map();
     this.capabilities = new Map();
     this.connectors = new Map();
@@ -229,10 +230,15 @@ class AccountBrowserPool {
     const config = this.registry.snapshot();
     const existingTrace = this.traceOwners.get(traceId);
     const existingTab = [...this.hosts].find(([, host]) => [...host.turnTabs.values()].some(tab => tab.traceId === traceId || (key && tab.conversationKey === key)));
-    const threadOwner = requirement?.routingKey ? this.affinity.get(requirement.routingKey) : undefined;
-    const conversationOwner = key ? this.affinity.get(key) : undefined;
+    const ownerForBinding = binding => this.affinity.get(binding)
+      ?? [...this.pendingAffinity.values()].find(pending => pending.keys.includes(binding))?.id;
+    const threadOwner = requirement?.routingKey ? ownerForBinding(requirement.routingKey) : undefined;
+    const conversationOwner = key ? ownerForBinding(key) : undefined;
     if (threadOwner && conversationOwner && threadOwner !== conversationOwner) throw new Error('Conversation and task account ownership conflict');
     const pinned = existingTrace ?? threadOwner ?? conversationOwner ?? existingTab?.[0];
+    if (pinned && ((threadOwner && threadOwner !== pinned) || (conversationOwner && conversationOwner !== pinned))) {
+      throw new Error('Conversation and task account ownership conflict');
+    }
     if (retained && !pinned) { const error = new Error('Retained conversation has no account owner'); error.code = 'retained_conversation_unavailable'; throw error; }
     const eligible = account => {
       const host = this.hosts.get(account.id);
@@ -268,36 +274,51 @@ class AccountBrowserPool {
       throw new Error('Global browser tab capacity is full');
     }
   }
+  persistAffinity(keys, id) {
+    if (keys.some(binding => this.affinity.has(binding) && this.affinity.get(binding) !== id)) {
+      throw new Error('Conversation and task account ownership conflict');
+    }
+    const newKeys = [...new Set(keys)].filter(binding => !this.affinity.has(binding));
+    if (!newKeys.length) return;
+    if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
+    const next = new Map(this.affinity);
+    for (const binding of newKeys) next.set(binding, id);
+    writePrivateFileAtomic(this.affinityPath, JSON.stringify(Object.fromEntries(next)) + '\n');
+    this.affinity = next;
+  }
   async beginTurn(traceId, reveal, helperPid, key, connector, retained, requirement) {
     if (this.reservations.has(traceId)) throw new Error('Browser turn is already acquiring its account');
     const active = [...this.turnTabs.values()].filter(tab => tab.status === 'running');
     const activeTraces = new Set([...active.map(tab => tab.traceId), ...this.reservations.keys()]);
     if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw new Error('Global browser capacity is full');
     const id = this.chooseAccount(traceId, key, retained, { ...requirement, connector });
+    const keys = [key, requirement?.routingKey].filter(Boolean);
     this.reservations.set(traceId, id);
+    this.pendingAffinity.set(traceId, { id, keys });
     this.traceOwners.set(traceId, id);
     this.lastAssigned.set(id, ++this.sequence);
     try {
       const host = this.getHost(id);
-      const keys = [key, requirement?.routingKey].filter(Boolean);
-      if (keys.some(binding => !this.affinity.has(binding))) {
-        if (this.affinity.size >= 100000) throw new Error('Account affinity registry is full');
-        const next = new Map(this.affinity);
-        for (const binding of keys) next.set(binding, id);
-        writePrivateFileAtomic(this.affinityPath, JSON.stringify(Object.fromEntries(next)) + '\n');
-        this.affinity = next;
+      if (keys.some(binding => this.affinity.has(binding) && this.affinity.get(binding) !== id)) {
+        throw new Error('Conversation and task account ownership conflict');
       }
-      this.ensureTabCapacity(traceId, key);
+      const newKeys = [...new Set(keys)].filter(binding => !this.affinity.has(binding));
+      if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
       await host.ready();
+      this.ensureTabCapacity(traceId, key);
       if (reveal && !this.currentOperation()) { this.registry.select(id); this.syncVisibility(); }
       const lease = await host.beginTurn(traceId, reveal, helperPid, key, connector, retained);
+      this.persistAffinity(keys, id);
       this.writeDescriptor(); this.publish();
       return { ...lease, accountId: id };
     } catch (error) {
       // No other account is tried here: even a failed acquisition can own a live tab.
-      if (![...this.getHost(id).turnTabs.values()].some(tab => tab.traceId === traceId)) this.traceOwners.delete(traceId);
+      if ([...this.getHost(id).turnTabs.values()].some(tab => tab.traceId === traceId)) {
+        try { this.persistAffinity(keys, id); }
+        catch (affinityError) { this.logger.warn('browser.account_affinity_write_failed', { accountId: id, message: affinityError.message }); }
+      } else this.traceOwners.delete(traceId);
       throw error;
-    } finally { this.reservations.delete(traceId); }
+    } finally { this.reservations.delete(traceId); this.pendingAffinity.delete(traceId); }
   }
   heartbeatTurn(...args) { return this.ownerForTrace(args[0]).heartbeatTurn(...args); }
   async endTurn(...args) {
@@ -311,20 +332,28 @@ class AccountBrowserPool {
       [...host.turnTabs.values()].some(tab => tab.traceId === traceId)
       || host.manualCompletionSignals.has(traceId) || host.manualTerminalSignals.has(traceId))?.[0];
     const retainedOwner = [...this.hosts].find(([, host]) => [...host.turnTabs.values()].some(tab => key && tab.conversationKey === key))?.[0];
-    const id = traceOwner || (key && this.affinity.get(key)) || retainedOwner || this.registry.snapshot().selectedId;
+    const pendingOwner = key && [...this.pendingAffinity.values()].find(pending => pending.keys.includes(key))?.id;
+    const id = traceOwner || (key && this.affinity.get(key)) || pendingOwner || retainedOwner || this.registry.snapshot().selectedId;
     const activeTraces = new Set([...this.turnTabs.values()].filter(tab => tab.status === 'running').map(tab => tab.traceId));
     for (const trace of this.reservations.keys()) activeTraces.add(trace);
     if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw new Error('Global browser capacity is full');
     if (!traceOwner && id !== this.registry.snapshot().selectedId) throw new Error('Select the account that owns this conversation before continuing in Manual mode');
     if (!this.registry.snapshot().accounts.find(account => account.id === id)?.enabled && !retainedOwner && !traceOwner) throw new Error('Selected account is disabled for new tasks');
+    if (pendingOwner && pendingOwner !== id) throw new Error('Conversation and task account ownership conflict');
+    if (key && this.affinity.has(key) && this.affinity.get(key) !== id) throw new Error('Conversation and task account ownership conflict');
+    if (key && !this.affinity.has(key) && this.affinity.size >= 100000) throw new Error('Account affinity registry is full');
     this.ensureTabCapacity(traceId, key);
-    if (key && !this.affinity.has(key)) {
-      if (this.affinity.size >= 100000) throw new Error('Account affinity registry is full');
-      const next = new Map(this.affinity).set(key, id);
-      writePrivateFileAtomic(this.affinityPath, JSON.stringify(Object.fromEntries(next)) + '\n');
-      this.affinity = next;
+    let lease;
+    try {
+      lease = this.getHost(id).beginManualTurn(...args);
+      if (key) this.persistAffinity([key], id);
+    } catch (error) {
+      if (key && [...this.getHost(id).turnTabs.values()].some(tab => tab.traceId === traceId)) {
+        try { this.persistAffinity([key], id); }
+        catch (affinityError) { this.logger.warn('browser.account_affinity_write_failed', { accountId: id, message: affinityError.message }); }
+      }
+      throw error;
     }
-    const lease = this.getHost(id).beginManualTurn(...args);
     this.traceOwners.set(traceId, id); this.writeDescriptor(); this.publish(); return lease;
   }
   waitManualSent(...args) { return this.ownerForTrace(args[0]).waitManualSent(...args); }

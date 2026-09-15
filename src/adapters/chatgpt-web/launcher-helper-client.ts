@@ -188,6 +188,8 @@ export class LauncherBrowserHelperClient {
   private ready?: Promise<void>;
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
+  private closed = false;
+  private closing?: Promise<void>;
   private readonly pending = new Map<string, PendingTurn>();
   private helperFeatures = new Set<string>();
 
@@ -213,9 +215,19 @@ export class LauncherBrowserHelperClient {
   }
 
   async run(turn: BrowserTurn): Promise<string> {
+    if (this.closed) throw new DOMException("Launcher browser helper is closing", "AbortError");
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     await this.ensureChild();
+    if (this.closed) throw new DOMException("Launcher browser helper is closing", "AbortError");
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+    if (turn.accountRoutingKey !== undefined) {
+      if (!/^[a-f0-9]{64}$/.test(turn.accountRoutingKey)) {
+        throw new Error("Launcher browser helper account routing key is invalid");
+      }
+      if (!this.helperFeatures.has("account-routing-key")) {
+        throw new Error("Launcher browser helper does not support account routing; update or restart the launcher");
+      }
+    }
     if (turn.onMultipartStageAcknowledged && !this.helperFeatures.has("multipart-stage-ack")) {
       throw new Error(
         "Launcher browser helper does not support multipart acknowledgement forwarding; update or restart the launcher",
@@ -292,6 +304,7 @@ export class LauncherBrowserHelperClient {
             ...(turn.retainConversation ? { retainConversation: true } : {}),
             ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
             ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
+            ...(turn.accountRoutingKey !== undefined ? { accountRoutingKey: turn.accountRoutingKey } : {}),
             ...(turn.compaction ? { compaction: true } : {}),
             ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
             ...(turn.externalProgress ? { externalProgress: true } : {}),
@@ -307,20 +320,30 @@ export class LauncherBrowserHelperClient {
   }
 
   async close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
     const child = this.child;
+    // Settle startup before detaching its child: exit and timeout handlers only own the current child.
+    this.readyReject?.(new DOMException("Launcher browser helper is closing", "AbortError"));
     this.child = undefined;
     this.ready = undefined;
     this.readyResolve = undefined;
     this.readyReject = undefined;
+    this.helperFeatures.clear();
     for (const id of [...this.pending.keys()]) {
       this.finishWithError(id, new DOMException("Launcher browser helper is closing", "AbortError"));
     }
-    if (!child) return;
-    await this.sendTo(child, { type: "shutdown" }).catch(() => {});
-    await this.terminateChild(child, 2_000);
+    this.closing = child
+      ? (async () => {
+          await this.sendTo(child, { type: "shutdown" }).catch(() => {});
+          await this.terminateChild(child, 2_000);
+        })()
+      : Promise.resolve();
+    return this.closing;
   }
 
   private async ensureChild(): Promise<void> {
+    if (this.closed) throw new DOMException("Launcher browser helper is closing", "AbortError");
     if (this.child
       && !this.child.killed
       && this.child.exitCode === null
@@ -361,11 +384,13 @@ export class LauncherBrowserHelperClient {
       `Launcher browser helper exited ${signal ? `from signal ${signal}` : `with status ${code ?? 1}`}`,
     )));
     const timer = setTimeout(() => {
-      if (this.child === child) this.readyReject?.(new Error("Launcher browser helper did not become ready"));
+      if (this.child === child && !this.closed) this.readyReject?.(new Error("Launcher browser helper did not become ready"));
     }, 15_000);
     try {
       await this.ready;
     } catch (error) {
+      // close() owns termination after it detaches the child and rejects startup.
+      if (this.closed) throw error;
       if (this.child === child) {
         this.child = undefined;
         this.ready = undefined;

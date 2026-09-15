@@ -304,47 +304,26 @@ export class HttpTurnCounter {
         });
       }
 
-      // Windows-safe Bun#32111 shape: the client gets a native tee branch,
-      // never a JS ReadableStream with async pull(). The second branch is consumed only
-      // to observe completion. The request signal releases lifecycle ownership immediately
-      // when the client disconnects and cancels the observer branch.
-      const [clientBody, lifecycleBody] = response.body.tee();
-      const reader = lifecycleBody.getReader();
+      // Keep Bun's Windows response free of a custom async pull callback. A TransformStream
+      // supplies a demand-driven native readable instead of teeing into an eager observer.
+      // With zero readable high-water mark, upstream delivery waits for client demand.
       let chunks = 0;
       let bytes = 0;
-      streamAbortListener = () => {
-        void Promise.allSettled([
-          reader.cancel(abort.signal.reason),
-          clientBody.cancel(abort.signal.reason),
-        ]).finally(release);
-      };
-      abort.signal.addEventListener("abort", streamAbortListener, { once: true });
-      void (async () => {
-        try {
-          for (;;) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            chunks += 1;
-            bytes += chunk.value.byteLength;
-            // Consume eagerly so the lifecycle branch never backpressures the client branch.
-          }
-        } catch (error) {
-          if (!abort.signal.aborted) {
-            emitHttpStreamFailure(this.reportStreamFailure, streamFailureEvidence(
-              error,
-              id,
-              endpoint,
-              "windows_lifecycle",
-              platform,
-              chunks,
-              bytes,
-            ));
-          }
-          // Stream failure is delivered to the client branch; lifecycle cleanup stays best-effort.
-        } finally {
-          release();
+      const delivery = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          chunks += 1;
+          bytes += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      }, { highWaterMark: 64 * 1024, size: chunk => chunk?.byteLength ?? 0 }, { highWaterMark: 0 });
+      void response.body.pipeTo(delivery.writable, { signal: abort.signal }).catch(error => {
+        if (!abort.signal.aborted) {
+          emitHttpStreamFailure(this.reportStreamFailure, streamFailureEvidence(
+            error, id, endpoint, "windows_lifecycle", platform, chunks, bytes,
+          ));
         }
-      })();
+      }).finally(release);
+      const clientBody = delivery.readable;
       return new Response(clientBody, {
         status: response.status,
         statusText: response.statusText,
@@ -632,9 +611,19 @@ export async function responseRequest(
   if (req.signal.aborted) onRequestAbort();
   else req.signal.addEventListener("abort", onRequestAbort, { once: true });
   let eventDeliveryFailed = false;
+  let collectedEventBytes = 0;
+  let collectedEventCount = 0;
   const deliverEvent = (event: AdapterEvent): void => {
     if (eventDeliveryFailed) return;
     try {
+      if (!parsed.stream) {
+        // Queue depth alone does not bound an already-drained non-streaming response.
+        collectedEventBytes += Buffer.byteLength(JSON.stringify(event), "utf8");
+        collectedEventCount += 1;
+        if (collectedEventBytes > 32 * 1024 * 1024 || collectedEventCount > 100_000) {
+          throw new Error("Non-streaming response event budget exceeded; use streaming for long turns");
+        }
+      }
       options.onAdapterEvent?.(event);
       queue.push(event);
       // Only an explicitly retryable 503 actually delivered by this daemon can authorize
@@ -703,6 +692,7 @@ export async function responseRequest(
     try {
       for await (const event of queue) events.push(event);
     } catch (error) {
+      events.length = 0;
       events.push({ type: "error", message: error instanceof Error ? error.message : String(error) });
     }
   })();
@@ -965,7 +955,7 @@ export function startServer(
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let traceId: string;
         try {
-          const body = await req.json() as { traceId?: unknown };
+          const body = await readJsonRequestBody(req, 4_096, 4_096) as { traceId?: unknown };
           traceId = typeof body?.traceId === "string" ? body.traceId : "";
           if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) throw new Error("traceId is invalid");
         } catch (error) {
@@ -997,7 +987,7 @@ export function startServer(
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let identity: NativeCodexTurnIdentity;
         try {
-          const body = await req.json() as { threadId?: unknown; turnId?: unknown };
+          const body = await readJsonRequestBody(req, 4_096, 4_096) as { threadId?: unknown; turnId?: unknown };
           const threadId = typeof body?.threadId === "string" ? body.threadId.trim() : "";
           const turnId = typeof body?.turnId === "string" ? body.turnId.trim() : "";
           if (!/^[A-Za-z0-9_-]{6,128}$/.test(threadId) || !/^[A-Za-z0-9_-]{6,128}$/.test(turnId)) {

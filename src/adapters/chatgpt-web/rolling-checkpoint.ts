@@ -261,7 +261,7 @@ function validateStoredCheckpoint(value: unknown): StoredChatGptLunaCheckpoint {
 /** Exact-parent, per-thread checkpoint store. Full Codex history remains canonical on mismatch. */
 export class ChatGptLunaCheckpointStore {
   private loaded = false;
-  private readonly checkpoints = new Map<string, StoredChatGptLunaCheckpoint>();
+  private checkpoints = new Map<string, StoredChatGptLunaCheckpoint>();
 
   constructor(
     private readonly path?: string,
@@ -356,19 +356,24 @@ export class ChatGptLunaCheckpointStore {
 
   private load(): void {
     if (this.loaded) return;
-    this.loaded = true;
-    if (!this.path || !existsSync(this.path)) return;
+    if (!this.path || !existsSync(this.path)) {
+      this.loaded = true;
+      return;
+    }
     const payload = JSON.parse(readFileSync(this.path, "utf8")) as Partial<StoredChatGptLunaCheckpointFile>;
-    if (payload.version !== 1 || !Array.isArray(payload.checkpoints)) {
+    if (!payload || payload.version !== 1 || !Array.isArray(payload.checkpoints)) {
       throw new Error(`Invalid ChatGPT Luna checkpoint store: ${this.path}`);
     }
     const checkpoints = payload.checkpoints
       .map(validateStoredCheckpoint)
       .sort((left, right) => left.updatedAt - right.updatedAt)
       .slice(-MAX_STORED_CHECKPOINTS);
+    const loadedCheckpoints = new Map<string, StoredChatGptLunaCheckpoint>();
     for (const checkpoint of checkpoints) {
-      this.checkpoints.set(checkpointKey(checkpoint.threadId, checkpoint.answerHash), checkpoint);
+      loadedCheckpoints.set(checkpointKey(checkpoint.threadId, checkpoint.answerHash), checkpoint);
     }
+    this.checkpoints = loadedCheckpoints;
+    this.loaded = true;
     this.prune();
   }
 

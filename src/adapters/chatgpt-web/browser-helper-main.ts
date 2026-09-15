@@ -31,6 +31,7 @@ interface RunMessage {
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
     conversationKey?: string;
+    accountRoutingKey?: string;
     compaction?: boolean;
     captureLunaCheckpoint?: boolean;
     externalProgress?: boolean;
@@ -172,6 +173,9 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(message.turn.conversationKey)) {
     throw new Error("Browser helper conversation key is invalid");
   }
+  if (message.turn.accountRoutingKey !== undefined && !/^[a-f0-9]{64}$/.test(message.turn.accountRoutingKey)) {
+    throw new Error("Browser helper account routing key is invalid");
+  }
   if (message.turn.compaction !== undefined && typeof message.turn.compaction !== "boolean") {
     throw new Error("Browser helper compaction flag is invalid");
   }
@@ -221,6 +225,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
     ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
+    ...(message.turn.accountRoutingKey !== undefined ? { accountRoutingKey: message.turn.accountRoutingKey } : {}),
     abortSignal: abortController.signal,
     ...(message.turn.compaction ? { compaction: true } : {}),
     ...(progress ? {
@@ -520,4 +525,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "account-routing-key"] });

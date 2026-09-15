@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import {
   defaultConfig,
   getConfigPath,
   loadConfigForSetup,
+  preserveUtf8Bom,
   resolveInteractionConnectorIdentities,
   saveConfig,
   tunnelConfigForInteractionMode,
@@ -24,6 +25,8 @@ import {
   preflightCodexIntegration,
   readCodexSubagentProtocol,
 } from "./codex-integration";
+import { restoreFileSnapshot, snapshotFile } from "./codex-integration-shared";
+import type { FileSnapshot } from "./codex-integration-shared";
 import { inspectLauncherBrowserHost } from "./launcher-browser-host";
 import {
   DEV_CONFIG_PURPOSE,
@@ -558,7 +561,37 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     );
   }
   if (beforeService.loaded && preliminaryChange && existing) await assertServiceIdle(existing);
+  const runtimeKeyPath = managedRuntimeKeyPath(config.browserInteractionMode);
+  const runtimeKeyBeforeRoute = snapshotFile(runtimeKeyPath);
   await configureTunnel(config, existing, options);
+  const runtimeKeyAfterRoute = snapshotFile(runtimeKeyPath);
+  // The final Codex route write can still lose a race with edits made after preflight.
+  // Keep the setup-owned files' original bytes so that a failed commit can compensate
+  // without replacing a concurrent user edit.
+  const configBeforeRoute = snapshotFile(getConfigPath());
+  const servicePath = beforeService.definitionPath;
+  const serviceBeforeRoute = servicePath ? snapshotFile(servicePath) : undefined;
+  const tunnelServiceBeforeRoute = getTunnelServiceStatus();
+  const tunnelServicePath = tunnelServiceBeforeRoute.definitionPath;
+  const tunnelDefinitionBeforeRoute = tunnelServicePath ? snapshotFile(tunnelServicePath) : undefined;
+  const tunnelProfilePath = config.mode === "full" && config.tunnel
+    ? join(config.tunnel.profileDir, `${config.tunnel.profileName}.yaml`) : undefined;
+  const tunnelProfileBeforeRoute = tunnelProfilePath ? snapshotFile(tunnelProfilePath) : undefined;
+  let savedConfigBytes: Buffer | undefined;
+  const configUnchanged = (): boolean => {
+    const current = snapshotFile(getConfigPath());
+    return current.exists === configBeforeRoute.exists
+      && (!current.exists || Boolean(current.data && configBeforeRoute.data
+        && current.data.equals(configBeforeRoute.data)));
+  };
+  const serviceUnchanged = (): boolean => {
+    if (!servicePath || !serviceBeforeRoute) return true;
+    const current = snapshotFile(servicePath);
+    return current.exists === serviceBeforeRoute.exists
+      && (!current.exists || Boolean(current.data && serviceBeforeRoute.data
+        && current.data.equals(serviceBeforeRoute.data)))
+      && getServiceStatus().loaded === beforeService.loaded;
+  };
 
   const changedWhileLoaded = Boolean(existing && beforeService.loaded && meaningfulRuntimeChange(existing, config));
   if (changedWhileLoaded && !options.restartService) {
@@ -571,6 +604,12 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   if (!beforeService.loaded) await assertPortAvailable(config.host, config.port);
 
   if (!launcherOwned) {
+    if (!configUnchanged()) throw new Error("Setup config changed during setup; refusing to overwrite the concurrent edit");
+    if (!serviceUnchanged()) throw new Error("Background service changed during setup; refusing to overwrite the concurrent edit");
+    savedConfigBytes = Buffer.from(preserveUtf8Bom(
+      `${JSON.stringify(config, null, 2)}\n`,
+      configBeforeRoute.data?.toString("utf8") ?? "",
+    ));
     saveConfig(config);
     installService(config);
     if (changedWhileLoaded && options.restartService && existing) await restartService(existing);
@@ -578,8 +617,10 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   }
 
   let tunnelReady: boolean | null = null;
+  let tunnelRuntimeTouched = false;
   if (config.mode === "browser-only" && existing?.mode === "full") {
     const previousTunnelService = getTunnelServiceStatus();
+    tunnelRuntimeTouched = true;
     if (previousTunnelService.installed || previousTunnelService.loaded) await uninstallTunnelService();
     stopTunnel(existing);
   }
@@ -590,16 +631,19 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     if (launcherOwned) {
       if (tunnelService.installed || tunnelService.loaded) await uninstallTunnelService();
       if (needsProfile || refreshTunnelWorker || explicitTunnelChange) {
+        tunnelRuntimeTouched = true;
         await bootstrapTunnelProfile(config);
       }
     } else {
       const needsOwnershipMigration = !tunnelService.installed || !tunnelService.loaded || !tunnelServiceDefinitionMatches(config);
       if (needsOwnershipMigration || needsProfile) {
+        tunnelRuntimeTouched = true;
         await assertServiceIdle(config);
         if (tunnelService.loaded) await stopTunnelService();
         await bootstrapTunnelProfile(config);
         installTunnelService(config);
       } else if (refreshTunnelWorker) {
+        tunnelRuntimeTouched = true;
         await assertServiceIdle(config);
         await restartTunnelService();
       }
@@ -609,18 +653,116 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     }
   }
   if (launcherOwned && (beforeService.installed || beforeService.loaded)) {
+    if (!serviceUnchanged()) throw new Error("Background service changed during setup; refusing to remove the concurrent edit");
     await uninstallService(existing!);
   }
-  if (launcherOwned) saveConfig(config);
+  if (launcherOwned) {
+    if (!configUnchanged()) throw new Error("Setup config changed during setup; refusing to overwrite the concurrent edit");
+    savedConfigBytes = Buffer.from(preserveUtf8Bom(
+      `${JSON.stringify(config, null, 2)}\n`,
+      configBeforeRoute.data?.toString("utf8") ?? "",
+    ));
+    saveConfig(config);
+  }
   // Keep the previous terminal runtime intact through the ownership handoff. A later launcher
   // setup removes it once the launcher-owned configuration is already the established baseline.
   const migratingTerminalRuntime = Boolean(
     launcherOwned && existing && existing.browserHost !== "launcher",
   );
+  const serviceAfterRoute = servicePath ? snapshotFile(servicePath) : undefined;
+  const serviceLoadedAfterRoute = getServiceStatus().loaded;
+  const tunnelDefinitionAfterRoute = tunnelServicePath ? snapshotFile(tunnelServicePath) : undefined;
+  const tunnelServiceLoadedAfterRoute = getTunnelServiceStatus().loaded;
+  const tunnelProfileAfterRoute = tunnelProfilePath ? snapshotFile(tunnelProfilePath) : undefined;
+  try {
+    installCodexIntegration(config, {
+      replaceExistingRoute: options.replaceCodexRoute,
+    });
+  } catch (error) {
+    const rollbackFailures: string[] = [];
+    const sameSnapshot = (left: FileSnapshot, right: FileSnapshot): boolean =>
+      left.exists === right.exists
+      && (!left.exists || Boolean(left.data && right.data && left.data.equals(right.data)));
+    let configRestored = true;
+    if (savedConfigBytes) {
+      try {
+        if (!existsSync(getConfigPath()) || !readFileSync(getConfigPath()).equals(savedConfigBytes)) {
+          throw new Error("changed after setup wrote it; preserving the concurrent edit");
+        }
+        restoreFileSnapshot(configBeforeRoute);
+      } catch (caught) {
+        configRestored = false;
+        rollbackFailures.push(`${getConfigPath()}: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    }
+    if (servicePath && serviceBeforeRoute && serviceAfterRoute
+      && (!sameSnapshot(serviceBeforeRoute, serviceAfterRoute)
+        || beforeService.loaded !== serviceLoadedAfterRoute
+        || (changedWhileLoaded && options.restartService))) {
+      try {
+        if (!configRestored) throw new Error("config rollback was not safe; leaving service state for manual recovery");
+        if (!sameSnapshot(snapshotFile(servicePath), serviceAfterRoute)
+          || getServiceStatus().loaded !== serviceLoadedAfterRoute) {
+          throw new Error("changed after setup wrote it; preserving the concurrent service edit");
+        }
+        if (getServiceStatus().loaded) await uninstallService(config);
+        restoreFileSnapshot(serviceBeforeRoute);
+        if (beforeService.loaded && existing) installService(existing);
+      } catch (caught) {
+        rollbackFailures.push(`${servicePath}: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    }
+    // Setup may have stopped the old tunnel or bootstrapped a new profile before the
+    // final route commit. Restore only the definitions and profile still owned by this
+    // attempt, then re-establish the previous full-mode runtime.
+    if (tunnelRuntimeTouched || existing?.mode === "full" || config.mode === "full") {
+      try {
+        if (!configRestored) throw new Error("config rollback was not safe; leaving tunnel state for manual recovery");
+        if (tunnelServicePath && tunnelDefinitionBeforeRoute && tunnelDefinitionAfterRoute
+          && (!sameSnapshot(snapshotFile(tunnelServicePath), tunnelDefinitionAfterRoute)
+            || getTunnelServiceStatus().loaded !== tunnelServiceLoadedAfterRoute)) {
+          throw new Error("tunnel service changed after setup; preserving the concurrent edit");
+        }
+        if (tunnelProfilePath && tunnelProfileBeforeRoute && tunnelProfileAfterRoute
+          && !sameSnapshot(snapshotFile(tunnelProfilePath), tunnelProfileAfterRoute)) {
+          throw new Error("tunnel profile changed after setup; preserving the concurrent edit");
+        }
+        if (!sameSnapshot(snapshotFile(runtimeKeyPath), runtimeKeyAfterRoute)) {
+          throw new Error("tunnel runtime key changed after setup; preserving the concurrent edit");
+        }
+        if (config.mode === "full" && tunnelRuntimeTouched) stopTunnel(config);
+        if (tunnelProfilePath && tunnelProfileBeforeRoute && tunnelProfileAfterRoute
+          && !sameSnapshot(tunnelProfileBeforeRoute, tunnelProfileAfterRoute)) {
+          restoreFileSnapshot(tunnelProfileBeforeRoute);
+        }
+        if (!sameSnapshot(runtimeKeyBeforeRoute, runtimeKeyAfterRoute)) {
+          restoreFileSnapshot(runtimeKeyBeforeRoute);
+        }
+        const tunnelServiceChanged = Boolean(tunnelServicePath && tunnelDefinitionBeforeRoute
+          && tunnelDefinitionAfterRoute
+          && (!sameSnapshot(tunnelDefinitionBeforeRoute, tunnelDefinitionAfterRoute)
+            || tunnelServiceBeforeRoute.loaded !== tunnelServiceLoadedAfterRoute));
+        if (tunnelServiceChanged && tunnelDefinitionBeforeRoute) {
+          if (getTunnelServiceStatus().loaded) await uninstallTunnelService();
+          restoreFileSnapshot(tunnelDefinitionBeforeRoute);
+          if (tunnelServiceBeforeRoute.loaded && existing?.mode === "full") installTunnelService(existing);
+        } else if (tunnelRuntimeTouched && tunnelServiceBeforeRoute.loaded
+          && existing?.mode === "full") {
+          await restartTunnelService();
+        }
+        if (existing?.mode === "full" && !tunnelServiceBeforeRoute.loaded && tunnelRuntimeTouched) {
+          connectTunnel(existing);
+        }
+      } catch (caught) {
+        rollbackFailures.push(`tunnel: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    }
+    const primary = error instanceof Error ? error.message : String(error);
+    throw new Error(rollbackFailures.length
+      ? `${primary}; setup rollback also failed: ${rollbackFailures.join("; ")}`
+      : primary);
+  }
   if (!migratingTerminalRuntime) removeLegacyRuntimeArtifacts(config);
-  installCodexIntegration(config, {
-    replaceExistingRoute: options.replaceCodexRoute,
-  });
 
   return {
     mode: config.mode,

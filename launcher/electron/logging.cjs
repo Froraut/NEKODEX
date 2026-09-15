@@ -3,6 +3,7 @@ const path = require("node:path");
 const { renameAtomicFile } = require("./atomic-file.cjs");
 
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
+const MAX_STREAM_ERROR_LOG_BYTES = 256 * 1024;
 const MAX_MEMORY_RECORDS = 300;
 const MAX_LOG_STRING_CHARS = 16 * 1024;
 const SENSITIVE_LOG_KEY_PATTERN = /(?:authorization|cookie|runtimeKey|controlToken)/i;
@@ -185,9 +186,31 @@ function installProcessDiagnosticGuards({ filePath, streams = [process.stdout, p
     stream.on("error", (error) => {
       try {
         fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+        const detail = error instanceof Error ? error.stack || error.message : String(error);
+        const entry = `${new Date().toISOString()} ${redactText(detail)}\n`;
+        const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+        if (stat && stat.size + Buffer.byteLength(entry) > MAX_STREAM_ERROR_LOG_BYTES) {
+          const previousPath = `${filePath}.1`;
+          if (stat.size > MAX_STREAM_ERROR_LOG_BYTES) {
+            // An older unbounded log may already be large. Keep only its latest bytes.
+            const tailBytes = Math.min(stat.size, MAX_STREAM_ERROR_LOG_BYTES);
+            const tail = Buffer.alloc(tailBytes);
+            const fd = fs.openSync(filePath, "r");
+            try {
+              fs.readSync(fd, tail, 0, tailBytes, stat.size - tailBytes);
+            } finally {
+              fs.closeSync(fd);
+            }
+            fs.writeFileSync(previousPath, tail, { mode: 0o600 });
+            fs.rmSync(filePath);
+          } else {
+            fs.rmSync(previousPath, { force: true });
+            renameAtomicFile(filePath, previousPath);
+          }
+        }
         fs.appendFileSync(
           filePath,
-          `${new Date().toISOString()} ${error instanceof Error ? error.stack || error.message : String(error)}\n`,
+          entry,
           { mode: 0o600 },
         );
       } catch {

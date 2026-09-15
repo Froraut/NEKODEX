@@ -41,7 +41,7 @@ function fixture() {
     },
   }]));
   const pool = Object.assign(Object.create(AccountBrowserPool.prototype), { registry, hosts,
-    options: { maxTabs: 2 }, reservations: new Map(), traceOwners: new Map(), affinity: new Map(),
+    options: { maxTabs: 2 }, reservations: new Map(), pendingAffinity: new Map(), traceOwners: new Map(), affinity: new Map(),
     affinityPath: path.join(home, 'affinity.json'), lastAssigned: new Map(), sequence: 0,
     capabilities: new Map([...hosts.keys()].map(id => [id, { solAvailable: true }])), connectors: new Map(),
     writeDescriptor() {}, publish() {}, syncVisibility() {} });
@@ -81,5 +81,27 @@ test('manual retries and completion remain routed to their original account', ()
     pool.endManualTurn('manual_trace', 42, 'completed');
     assert.equal(pool.ownerForTrace('manual_trace').accountId, 'default');
     pool.endManualTurn('manual_trace', 42, 'completed');
+  } finally { cleanup(); }
+});
+
+test('review: failed account readiness preserves retained tabs and releases tentative affinity', async () => {
+  const { pool, home, second, cleanup } = fixture();
+  try {
+    pool.options.maxTabs = 1;
+    pool.registry.setMode('selected');
+    pool.registry.select('default');
+    const first = pool.hosts.get('default');
+    first.turnTabs.set('retained', { id: 'retained', traceId: 'previous_trace', status: 'ready' });
+    first.ready = async () => { throw new Error('fixture host not ready'); };
+    const key = 'd'.repeat(64);
+    await assert.rejects(pool.beginTurn('new_trace', false, 1, key, undefined, false, { effort: 'medium' }), /fixture host not ready/);
+    assert.equal(first.turnTabs.has('retained'), true);
+    assert.equal(pool.affinity.size, 0);
+    assert.equal(pool.pendingAffinity.size, 0);
+    assert.equal(fs.existsSync(path.join(home, 'affinity.json')), false);
+    pool.registry.select(second);
+    const lease = await pool.beginTurn('retry_trace', false, 1, key, undefined, false, { effort: 'medium' });
+    assert.equal(lease.accountId, second);
+    assert.equal(pool.affinity.get(key), second);
   } finally { cleanup(); }
 });

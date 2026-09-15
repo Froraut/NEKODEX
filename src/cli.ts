@@ -423,8 +423,9 @@ async function tunnelCommand(args: string[]): Promise<void> {
   if (action === "key-import") {
     const key = await secretPrompt("Runtime key (hidden): ");
     if (!key) throw new Error("A non-empty runtime key is required");
-    installRuntimeKeyBytes(key);
-    stdout.write(`Runtime key stored privately at ${managedRuntimeKeyPath()}\n`);
+    const config = loadConfig();
+    installRuntimeKeyBytes(key, config.browserInteractionMode);
+    stdout.write(`Runtime key stored privately at ${managedRuntimeKeyPath(config.browserInteractionMode)}\n`);
     return;
   }
   const config = loadConfig();

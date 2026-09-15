@@ -285,6 +285,9 @@ export function preflightCodexIntegration(
   const existing = readJournal();
   const installedUrl = routeUrl(config);
   let hooksJson = currentHooksJson();
+  if (existing?.version === 2 && existing.uninstalling) {
+    throw new Error("Legacy Codex integration uninstall is pending; retry uninstall before setup");
+  }
   if (existing) assertJournalTargetsConfig(existing, configPath);
   if (existing && existing.version !== 2) {
     if (!configExists) {
@@ -322,18 +325,24 @@ export function preflightCodexIntegration(
       );
       return;
     }
-    if ((existing.version === 10 || existing.version === 11) && existing.active) return;
     const baseline = managedJournalIsActive(existing)
       ? restoreManagedRoute(currentText, existing)
       : currentText;
-    installConfiguredRoute(
+    const proposed = installConfiguredRoute(
       baseline,
       installedUrl,
       config,
       true,
-      options.replaceExistingRoute === true,
+      existing.version === 9 || existing.version === 10 || existing.version === 11 || options.replaceExistingRoute === true,
       hooksJson,
     );
+    assertPreservedPreviousAssignments(proposed.previous, existing.previous);
+    if (existing.version === 9 || existing.version === 10 || existing.version === 11) {
+      assertPreservedPreviousRealtimeAssignment(
+        proposed.previousRealtimeWebrtcCallBaseUrl,
+        existing.previousRealtimeWebrtcCallBaseUrl,
+      );
+    }
     return;
   }
   let baseline = currentText;
@@ -363,6 +372,9 @@ export function installCodexIntegration(
   const existing = readJournal();
   const installedUrl = routeUrl(config);
   let hooksJson = currentHooksJson();
+  if (existing?.version === 2 && existing.uninstalling) {
+    throw new Error("Legacy Codex integration uninstall is pending; retry uninstall before setup");
+  }
   if (existing) assertJournalTargetsConfig(existing, configPath);
 
   const hasManagedJournal = Boolean(existing && existing.version !== 2);
@@ -615,7 +627,9 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
 export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   const journal = readJournal();
   if (!journal) return { changed: false };
-  if (journal.version === 11 && journal.active) {
+  // A disconnected journal must be durable before the two copies are removed. If a crash
+  // leaves only the recovery copy, its state still matches the restored user config.
+  if (journal.version === 3 || (journal.version !== 2 && journal.active)) {
     deactivateCodexIntegration();
     return uninstallCodexIntegration();
   }
@@ -626,7 +640,15 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     if (existsSync(journal.catalogPath) && sha256(readFileSync(journal.catalogPath)) !== journal.catalogSha256) {
       throw new Error(`Managed legacy catalog changed after setup: ${journal.catalogPath}`);
     }
-    restored = restoreLegacyV2(current, journal);
+    restored = journal.uninstalling && sha256(current) === journal.uninstalling.restoredConfigSha256
+      ? current
+      : restoreLegacyV2(current, journal);
+    if (!journal.uninstalling) {
+      writeIntegrationState({
+        ...journal,
+        uninstalling: { restoredConfigSha256: sha256(restored) },
+      });
+    }
   } else if ((journal.version === 4 || journal.version === 5 || journal.version === 6 || journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10 || journal.version === 11) && !journal.active) {
     verifyRestoredRoute(current, journal);
     restored = current;
@@ -643,18 +665,40 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath());
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());
+  const expected = new Map<string, Buffer | undefined>();
   try {
+    expected.set(configSnapshot.path, Buffer.from(restored));
     writeFileSnapshot(configSnapshot, restored);
-    if (restoredHooks && hooksSnapshot) writeFileSnapshot(hooksSnapshot, restoredHooks.text);
-    if (catalogSnapshot?.exists) rmSync(catalogSnapshot.path);
+    if (restoredHooks && hooksSnapshot) {
+      expected.set(hooksSnapshot.path, Buffer.from(restoredHooks.text));
+      writeFileSnapshot(hooksSnapshot, restoredHooks.text);
+    }
+    if (catalogSnapshot?.exists) {
+      expected.set(catalogSnapshot.path, undefined);
+      rmSync(catalogSnapshot.path);
+    }
+    expected.set(modelsCacheSnapshot.path, undefined);
     rmSync(modelsCacheSnapshot.path, { force: true });
-    rmSync(getCodexJournalPath(), { force: true });
+    expected.set(recoverySnapshot.path, undefined);
     rmSync(getCodexJournalRecoveryPath(), { force: true });
+    expected.set(journalSnapshot.path, undefined);
+    rmSync(getCodexJournalPath(), { force: true });
   } catch (error) {
     const rollbackFailures: string[] = [];
     for (const snapshot of [recoverySnapshot, journalSnapshot, modelsCacheSnapshot, catalogSnapshot, hooksSnapshot, configSnapshot]) {
       if (!snapshot) continue;
       try {
+        if (!expected.has(snapshot.path)) continue;
+        const current = snapshotFile(snapshot.path, {
+          followSymlink: snapshot.path === configSnapshot.path || snapshot.path === hooksSnapshot?.path,
+        });
+        const intended = expected.get(snapshot.path);
+        if (current.exists === snapshot.exists
+          && (current.data?.equals(snapshot.data ?? Buffer.alloc(0)) ?? !snapshot.data)) continue;
+        if (current.exists !== (intended !== undefined)
+          || (intended !== undefined && !current.data?.equals(intended))) {
+          throw new Error("changed after uninstall wrote it; preserving the concurrent edit");
+        }
         restoreFileSnapshot(snapshot);
       } catch (caught) {
         rollbackFailures.push(`${snapshot.path}: ${caught instanceof Error ? caught.message : String(caught)}`);
@@ -682,6 +726,9 @@ export function inspectCodexIntegration(): {
     try {
       assertJournalTargetsConfig(journal, getCodexConfigPath());
       const text = readFileSync(journal.configPath, "utf8");
+      if (journal.version === 2 && journal.uninstalling) {
+        errors.push("Legacy Codex integration uninstall is pending; retry uninstall");
+      }
       if ((journal.version === 4 || journal.version === 5 || journal.version === 6 || journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10 || journal.version === 11) && !journal.active) {
         verifyRestoredRoute(text, journal);
       }
@@ -706,7 +753,8 @@ export function inspectCodexIntegration(): {
   }
   return {
     installed: Boolean(journal),
-    active: journal?.version === 4 || journal?.version === 5 || journal?.version === 6 || journal?.version === 7 || journal?.version === 8 || journal?.version === 9 || journal?.version === 10 || journal?.version === 11
+    active: journal?.version === 2 && journal.uninstalling ? false
+      : journal?.version === 4 || journal?.version === 5 || journal?.version === 6 || journal?.version === 7 || journal?.version === 8 || journal?.version === 9 || journal?.version === 10 || journal?.version === 11
       ? journal.active
       : Boolean(journal),
     configPath: getCodexConfigPath(),

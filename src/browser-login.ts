@@ -406,35 +406,43 @@ export async function loginToChatGpt(
   if (!existsSync(config.chromeExecutablePath)) {
     throw new Error(`Google Chrome was not found at ${config.chromeExecutablePath}. Pass --chrome with its executable path.`);
   }
-  const profileDir = join(dirname(config.storageStatePath), "login-profile");
-  mkdirSync(profileDir, { recursive: true, mode: 0o700 });
-  process.stdout.write(
-    "A normal Chrome window is open. Sign in to ChatGPT, confirm that the composer is visible, then quit this dedicated Chrome instance completely.\n",
-  );
-  const loginBrowser = spawn(config.chromeExecutablePath, [
-    `--user-data-dir=${profileDir}`,
-    "--new-window",
-    "--disable-background-mode",
-    "--no-first-run",
-    "--no-default-browser-check",
-    CHATGPT_TEMPORARY_CHAT_URL,
-  ], { env: process.env, stdio: "ignore" });
-  const loginExit = await new Promise<number>((resolveExit, rejectExit) => {
-    loginBrowser.once("error", rejectExit);
-    loginBrowser.once("exit", (code, signal) => {
-      if (signal) rejectExit(new Error(`Normal Chrome login window exited from signal ${signal}`));
-      else resolveExit(code ?? 1);
-    });
-  });
-  if (loginExit !== 0) throw new Error(`Normal Chrome login window exited with status ${loginExit}`);
-
-  const context = await chromium.launchPersistentContext(profileDir, {
-    executablePath: config.chromeExecutablePath,
-    headless: false,
-    ignoreDefaultArgs: ["--password-store=basic", "--use-mock-keychain"],
-    args: ["--no-first-run", "--no-default-browser-check"],
-  });
+  const profileParent = dirname(config.storageStatePath);
+  mkdirSync(profileParent, { recursive: true, mode: 0o700 });
+  try { chmodSync(profileParent, 0o700); } catch {}
+  const profileDir = mkdtempSync(join(profileParent, "login-profile-"));
+  try { chmodSync(profileDir, 0o700); } catch {}
+  let loginBrowser: ChildProcess | undefined;
+  let context: BrowserContext | undefined;
+  let result: BrowserLoginResult | undefined;
+  let primaryError: unknown;
   try {
+    process.stdout.write(
+      "A normal Chrome window is open. Sign in to ChatGPT, confirm that the composer is visible, then quit this dedicated Chrome instance completely.\n",
+    );
+    const browser = spawn(config.chromeExecutablePath, [
+      `--user-data-dir=${profileDir}`,
+      "--new-window",
+      "--disable-background-mode",
+      "--no-first-run",
+      "--no-default-browser-check",
+      CHATGPT_TEMPORARY_CHAT_URL,
+    ], { env: process.env, stdio: "ignore" });
+    loginBrowser = browser;
+    const loginExit = await new Promise<number>((resolveExit, rejectExit) => {
+      browser.once("error", rejectExit);
+      browser.once("exit", (code, signal) => {
+        if (signal) rejectExit(new Error(`Normal Chrome login window exited from signal ${signal}`));
+        else resolveExit(code ?? 1);
+      });
+    });
+    if (loginExit !== 0) throw new Error(`Normal Chrome login window exited with status ${loginExit}`);
+
+    context = await chromium.launchPersistentContext(profileDir, {
+      executablePath: config.chromeExecutablePath,
+      headless: false,
+      ignoreDefaultArgs: ["--password-store=basic", "--use-mock-keychain"],
+      args: ["--no-first-run", "--no-default-browser-check"],
+    });
     const page = context.pages()[0] ?? await context.newPage();
     await page.goto(CHATGPT_TEMPORARY_CHAT_URL, {
       waitUntil: "domcontentloaded",
@@ -448,22 +456,42 @@ export async function loginToChatGpt(
     }
     await assertAuthenticatedChatGptPage(page);
     await assertTemporaryChatPage(page);
-    const state = await context.storageState();
+    const state = sanitizeBrowserLoginStorageState(await context.storageState());
 
     const inspected = await inspectStoredState(config, state);
     atomicWriteFile(config.storageStatePath, `${JSON.stringify(state)}\n`);
     writeVerificationMarker(config.storageStatePath, inspected);
-    return {
+    result = {
       storageStatePath: config.storageStatePath,
       accountSurfaceUrl: page.url(),
       solAvailable: inspected.solAvailable,
       extraHighAvailable: inspected.extraHighAvailable === true,
       proAvailable: inspected.proAvailable,
     };
-  } finally {
-    await context.close();
-    if (browserLoginStateExists(config)) rmSync(profileDir, { recursive: true, force: true });
+  } catch (error) {
+    primaryError = error;
   }
+
+  let cleanupError: unknown;
+  if (context && !context.isClosed()) {
+    try { await context.close(); } catch (error) { cleanupError = error; }
+  }
+  if (loginBrowser && !browserProcessExited(loginBrowser)) {
+    try { await stopOwnedLoginBrowser(loginBrowser); } catch (error) { cleanupError ??= error; }
+  }
+  if (!cleanupError) {
+    try { rmSync(profileDir, { recursive: true, force: true }); } catch (error) { cleanupError = error; }
+  }
+  if (primaryError && cleanupError) {
+    throw new Error(
+      `${primaryError instanceof Error ? primaryError.message : String(primaryError)}; temporary-profile cleanup also failed:`
+      + ` ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+    );
+  }
+  if (primaryError) throw primaryError;
+  if (cleanupError) throw cleanupError;
+  if (!result) throw new Error("ChatGPT login completed without a verified result");
+  return result;
 }
 
 export function browserLoginStateExists(config: AppConfig): boolean {

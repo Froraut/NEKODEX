@@ -926,7 +926,9 @@ export class ChatGptTurnSessions {
   private prune(): void {
     const cutoff = Date.now() - this.ttlMs;
     for (const [key, session] of this.entries) {
-      if (session.isActive() || session.lastUsedAt() >= cutoff) continue;
+      // A browser result can be terminal while its helper still owns the physical surface.
+      // Keep that entry addressable so the next owner turn waits for actual cleanup.
+      if (session.isActive() || !session.isPhysicallySettled() || session.lastUsedAt() >= cutoff) continue;
       session.cancel();
       this.entries.delete(key);
       this.forgetConversationHead(session);

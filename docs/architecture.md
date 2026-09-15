@@ -8,7 +8,7 @@ launcher-owned codex-chatgpt-web daemon
   ├─ official /models passthrough + fixed ChatGPT Web models
   ├─ native Responses passthrough or ChatGPT Responses/SSE bridge
   ├─ authenticated native Search and Image Gen request forwarding
-  ├─ ChatGPT browser worker (up to sixteen task-bound Electron tabs)
+  ├─ ChatGPT browser worker (configured task-bound Electron tab ceiling)
   ├─ capability broker (full mode only)
   └─ stdio MCP server
             ▲
@@ -83,16 +83,20 @@ and development connectors installed without renaming, refreshing, or deleting e
 
 ## Browser lifecycle
 
-The desktop launcher owns one persistent Electron partition and up to sixteen task-bound browser
-tabs. Each task/model/effort/compaction epoch owns one exact `WebContentsView` lease; sequential
-native messages reuse that surface, while each message receives a fresh turn-bound MCP token and
-keeps all of its MCP tool rounds inside one ChatGPT response. Compaction asks the same retained Web
-agent for a one-shot structured checkpoint, waits for the response and physical helper cleanup,
+The desktop launcher owns one persistent Electron partition and a configured ceiling for task-bound
+browser tabs and simultaneous browser turns. The default ceiling is sixteen; the launcher pins the
+saved limit at startup so its tab allocator, browser worker, and session registry agree. This is an
+admission limit, not a measured claim that sixteen simultaneous ChatGPT sessions will remain stable
+under live browser and model load. Each task/model/effort/compaction epoch owns one exact
+`WebContentsView` lease; sequential native messages reuse that surface, while each message receives
+a fresh turn-bound MCP token and keeps all of its MCP tool rounds inside one ChatGPT response.
+Compaction asks the same retained Web agent for a one-shot structured checkpoint, waits for the
+response and physical helper cleanup,
 then closes the old surface. The next epoch gets a new Temporary Chat. Model messages never copy
 state between tabs. Tabs share only the local login
 partition and keep independent documents and lifecycles. Closing a running tab destroys its page
-and terminates that browser turn. A sixth concurrent turn fails explicitly; the cap avoids excessive
-parallel traffic that could trigger account abuse controls.
+and terminates that browser turn. A new turn fails explicitly when the configured ceiling is full;
+the limit bounds local allocation and does not guarantee account-side capacity or usage allowance.
 
 Browser submission and response binding use ChatGPT's logical `data-turn-id`, not the
 `conversation-turn-N` display index, which can change during rendering. The submission baseline
@@ -233,8 +237,24 @@ launcher error.
 - Store browser state and tunnel credentials under the application home with mode `0600`.
 - Protect lifecycle control endpoints with a random application-owned bearer token.
 - Never place secret values in command-line arguments, logs, generated profiles, or Git.
-- Limit browser turns to sixteen independent task-bound tabs and reject unsupported models explicitly.
+- Enforce the configured browser-turn and tab ceiling for independent task-bound sessions, and reject unsupported models explicitly.
   The selected routed model fixes the adapter effort; a conflicting request effort cannot change it.
 - Do not retry or switch modes to evade product usage limits.
 
 See the complete [security model](security-model.md).
+
+## Repository checks
+
+Pull requests and pushes to `main` keep the existing `verify` check names on macOS, Linux, and
+Windows, plus `actionlint`. The selector records whether Linux exercises named cases from the
+backend review regression file or one browser admission case. At most one Linux test command runs;
+the other matrix runners do not execute PR behavior tests. Documentation and CI metadata require
+manual diff review, with workflow linting in `actionlint`. Changes to the selector itself, unknown
+runtime paths, dependency updates, and complex scopes produce an explicit **manual review required**
+outcome in each `verify` summary. A green classifier-only check does not claim that a reviewer has
+completed that review or that changed behavior passed a test.
+
+The three-platform `verify`, packaging, AppImage ABI, and package smoke sequence is an optional
+manually dispatched CI run with explicit authorization for that broad run, after focused development
+verification. Manual-review scope on a PR does not require that broad run. The separate tag release
+workflow packages reviewed source; it does not replace the development behavior check.

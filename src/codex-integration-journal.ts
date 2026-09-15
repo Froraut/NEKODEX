@@ -9,6 +9,7 @@ import {
   getCodexJournalPath,
   getCodexJournalRecoveryPath,
   serializeJournal,
+  sha256,
   writeFilesWithCompensation,
 } from "./codex-integration-shared";
 import type {
@@ -170,7 +171,10 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
   if (value.version === 3 && value.installed && value.previous && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV3;
   }
-  if (value.version === 2 && value.installed && value.previous && typeof value.providerBlock === "string") {
+  if (value.version === 2 && value.installed && value.previous && typeof value.providerBlock === "string"
+    && (value.uninstalling === undefined || (value.uninstalling
+      && typeof (value.uninstalling as Record<string, unknown>).restoredConfigSha256 === "string"
+      && /^[a-f0-9]{64}$/.test((value.uninstalling as Record<string, unknown>).restoredConfigSha256 as string)))) {
     return value as unknown as LegacyCodexIntegrationJournal;
   }
   throw new Error(`Invalid Codex integration journal: ${path}`);
@@ -180,7 +184,8 @@ function journalConfigMatches(journal: AnyCodexIntegrationJournal): boolean {
     assertJournalTargetsConfig(journal, getCodexConfigPath());
     if (!existsSync(journal.configPath)) return false;
     const text = readFileSync(journal.configPath, "utf8");
-    if (journal.version === 2) return text.includes(journal.providerBlock);
+    if (journal.version === 2) return text.includes(journal.providerBlock)
+      || Boolean(journal.uninstalling && sha256(text) === journal.uninstalling.restoredConfigSha256);
     verifyManagedJournalState(text, journal);
     return true;
   } catch {
@@ -274,6 +279,23 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
     return undefined;
   }
   if (primary && recovery && serializeJournal(primary) === serializeJournal(recovery)) return primary;
+  // A v2 uninstall marker is intent, while the older copy is the pre-uninstall commit.
+  // Their common baseline is enough to select the marker even before config restoration.
+  if (primary?.version === 2 && recovery?.version === 2
+    && Boolean(primary.uninstalling) !== Boolean(recovery.uninstalling)) {
+    const marked = primary.uninstalling ? primary : recovery;
+    const unmarked = primary.uninstalling ? recovery : primary;
+    const { uninstalling: _marker, ...baseline } = marked;
+    if (serializeJournal(baseline as AnyCodexIntegrationJournal) === serializeJournal(unmarked)
+      && journalMatchesConfig(marked)) {
+      const data = serializeJournal(marked);
+      writeFilesWithCompensation([
+        { path: recoveryPath, data },
+        { path: primaryPath, data },
+      ]);
+      return marked;
+    }
+  }
   if (recovery && !primaryError && recoverPendingJsonHookWrite(recovery, primary)) return recovery;
   if (primary && !recovery && !recoveryError) {
     atomicWriteFile(recoveryPath, serializeJournal(primary));

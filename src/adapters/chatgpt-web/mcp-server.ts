@@ -50,6 +50,7 @@ const ZERO_RISK_MCP_INSTRUCTIONS = [
   "Use that request_id with the Codex tools needed for the task.",
   "When the task is finished, send the complete answer with codex_turn_complete.",
   "If a tool returns an error, report that error instead of changing the request_id.",
+  "A cancelled or timed-out Codex Native tool call retires this entire request_id; do not retry it or use it for sibling calls.",
 ].join(" ");
 
 function turnReferenceInput(contract: ChatGptMcpContract): Record<string, z.ZodString> {
@@ -570,9 +571,12 @@ export async function runChatGptMcpServer(options: {
       }, timeoutMs, signal);
       return asMcpResult(response);
     } catch (error) {
-      // A cancelled/timed-out MCP request no longer has a consumer for the native result. Revoke
-      // the whole turn capability so the broker drops the pending invocation and every later call
-      // from that abandoned ChatGPT response fails explicitly against its retired binding.
+      // Whole-turn cancellation is the deliberate transport contract. This MCP request does not
+      // receive the broker's native callId, and a native tool already delivered to Codex can
+      // still finish (or cause side effects) after the MCP request aborts. Retiring only this
+      // pending promise would let late native results escape their consumer while siblings reuse
+      // the same binding. Revoke the shared turn on any invocation transport failure; siblings
+      // fail explicitly and the native result cannot be presented as a successful MCP response.
       try {
         await callTurnBroker(options.brokerSocketPath, {
           method: "release",

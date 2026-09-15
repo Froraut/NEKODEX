@@ -1322,3 +1322,18 @@ describe("reversible native Codex route integration", () => {
   });
 
 });
+
+test('review: interrupted disconnected journal cleanup permits uninstall retry', () => {
+  const { codexHome } = fixture();
+  const configPath = join(codexHome, 'config.toml');
+  const original = 'model = "gpt-5.6-sol"\n';
+  writeFileSync(configPath, original);
+  installCodexIntegration(nativeConfig('browser-only'));
+  deactivateCodexIntegration();
+  // A crash after removing one disconnected copy leaves a recoverable survivor.
+  rmSync(getCodexJournalRecoveryPath());
+  expect(uninstallCodexIntegration().changed).toBe(true);
+  expect(readFileSync(configPath, 'utf8')).toBe(original);
+  expect(existsSync(getCodexJournalPath())).toBe(false);
+  expect(existsSync(getCodexJournalRecoveryPath())).toBe(false);
+});

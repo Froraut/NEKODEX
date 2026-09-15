@@ -25,7 +25,7 @@ type InputBlock =
   | { type: "input_text"; text: string }
   | { type: "text"; text: string }
   | { type: "input_image"; image_url?: string; file_id?: string; detail?: string }
-  | { type: "input_file"; file_id?: string; filename?: string };
+  | { type: "input_file"; file_id?: string; filename?: string; file_data?: unknown };
 
 function inputContentParts(blocks: unknown[] | string | undefined): string | CodexContentPart[] {
   if (typeof blocks === "string") return blocks;
@@ -45,6 +45,11 @@ function inputContentParts(blocks: unknown[] | string | undefined): string | Cod
         parts.push({ type: "text", text: `[image: ${b.file_id ?? "?"}]` }); // file_id ref → no inline data
       }
     } else if (block.type === "input_file") {
+      // The schema rejects inline data before projection. Keep the same explicit failure
+      // here if this helper is ever reached with an unchecked content block.
+      if (Object.prototype.hasOwnProperty.call(block, "file_data")) {
+        throw new Error("input_file.file_data is unsupported; inline file content was not sent");
+      }
       const ref = (block as { file_id?: string; filename?: string }).file_id ?? (block as { filename?: string }).filename ?? "?";
       parts.push({ type: "text", text: `[file: ${ref}]` });
     }
@@ -426,15 +431,18 @@ export function parseRequest(body: unknown): CodexParsedRequest {
 
         // Native/non-ocxr1 encrypted-only reasoning is opaque here. Do not create a detached
         // assistant turn or invent replayable plaintext/signatures from the encrypted payload.
-        if (thinkingText.length > 0) {
+        // Bridge-owned redacted blocks carry replay metadata even when the readable summary
+        // is empty. Keep an empty thinking part with the opaque blocks; native encrypted-only
+        // items remain unprojected because their payload cannot be decoded here.
+        if (thinkingText.length > 0 || (envelope?.red?.length ?? 0) > 0) {
           const part: CodexThinkingContent = {
             type: "thinking",
             thinking: thinkingText,
-            signature: envelope?.sig ?? JSON.stringify(reasoning),
+            ...(envelope?.sig ? { signature: envelope.sig } : thinkingText ? { signature: JSON.stringify(reasoning) } : {}),
             ...(envelope?.red ? { redacted: envelope.red } : {}),
             ...(reasoning.id ? { itemId: reasoning.id } : {}),
           };
-          const envelopeSigned = typeof envelope?.sig === "string";
+          const envelopeSigned = typeof envelope?.sig === "string" || thinkingText.length === 0;
           const previous = pendingReasoning[pendingReasoning.length - 1];
 
           if (!envelopeSigned && previous && !previous.envelopeSigned) {
