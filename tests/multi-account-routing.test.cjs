@@ -23,6 +23,7 @@ function fixture() {
     closedTurnOwners: new Map(), userCancelledTurnOwners: new Map(),
     manualCompletionSignals: new Map(), manualTerminalSignals: new Map(),
     currentOperation: () => null, ready: async () => {},
+    exactRetainedTurnTab: () => null,
     evictOldestReclaimableTurnTab() {
       const tab = [...this.turnTabs.values()].find(tab => tab.status === 'ready');
       if (!tab) return false; this.turnTabs.delete(tab.id); return true;
@@ -48,6 +49,19 @@ function fixture() {
   return { pool, home, second, cleanup: () => fs.rmSync(home, { recursive: true, force: true }) };
 }
 
+test('pinned fresh turns reject stale connector evidence without moving affinity', () => {
+  const { pool, second, cleanup } = fixture();
+  try {
+    const key = 'f'.repeat(64);
+    pool.affinity.set(key, second);
+    pool.connectors.set(second, 'Codex Native3');
+    assert.throws(() => pool.chooseAccount('fresh-trace', undefined, false,
+      { effort: 'medium', routingKey: key, connector: 'Codex Native4' }), /ready|connector/i);
+    assert.equal(pool.affinity.get(key), second);
+    assert.equal(pool.hosts.get(second).turnTabs.size, 0);
+  } finally { cleanup(); }
+});
+
 test('parallel starts count once, respect total capacity, and pin the task account', async () => {
   const { pool, second, home, cleanup } = fixture();
   let release;
@@ -64,7 +78,8 @@ test('parallel starts count once, respect total capacity, and pin the task accou
     await assert.rejects(pool.beginTurn('third_trace', false, 3), /capacity is full/);
     release(); await first;
     pool.registry.setEnabled('default', false);
-    assert.equal(pool.chooseAccount('followup_trace', undefined, false, { effort: 'medium', routingKey: taskKey }), 'default');
+    assert.throws(() => pool.chooseAccount('followup_trace', undefined, false,
+      { effort: 'medium', routingKey: taskKey }), /ready|connector/i);
     assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'affinity.json'), 'utf8'))[taskKey], 'default');
   } finally { release(); cleanup(); }
 });

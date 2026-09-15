@@ -331,9 +331,15 @@ function gatewayToolCatalogPage(response: {
   return { tools, total: catalog.total as number };
 }
 
-function execGatewayResultProgram(invocation: string[]): string {
+function execGatewayResultProgram(invocation: string[], toolName: string): string {
   return [
     ...invocation,
+    "if (result && typeof result === \"object\" && result.isError === true) {",
+    "  const errorText = Array.isArray(result.content) ? result.content.filter(item => item?.type === \"text\" && typeof item.text === \"string\").map(item => item.text).join(\"\\n\").slice(0, 8192) : \"\";",
+    "  let structuredError = \"\";",
+    "  try { if (result.structuredContent !== undefined) structuredError = JSON.stringify(result.structuredContent)?.slice(0, 8192) ?? \"\"; } catch { structuredError = \"[unserializable structured error]\"; }",
+    `  throw new Error("Native nested tool " + ${toolName} + " returned isError=true: " + (errorText || "no text content") + (structuredError ? "\\nstructuredContent: " + structuredError : ""));`,
+    "}",
     "const emit = value => {",
     "  if (Array.isArray(value)) { for (const item of value) emit(item); return; }",
     "  if (value && typeof value === \"object\") {",
@@ -374,7 +380,7 @@ function execGatewayProgram(
     "const nestedTool = tools[nestedToolName];",
     "if (typeof nestedTool !== \"function\") throw new Error(\"Native nested tool is listed but unavailable\");",
     `const result = await nestedTool(${JSON.stringify(nestedInput)});`,
-  ]);
+  ], "nestedToolName");
 }
 
 /**
@@ -434,23 +440,27 @@ function transportBoundRawExecProgram(input: string, blockedExecName: string): s
   ].join("\n");
 }
 
-function execCommandGatewayProgram(
+export function execCommandGatewayProgram(
   execCommandArguments: Record<string, unknown>,
   shellCommandArguments: Record<string, unknown>,
 ): string {
   const execCommandName = gatewayNestedToolName("exec_command");
   const shellCommandName = gatewayNestedToolName("shell_command");
+  const unmappableShellOptions = ["tty", "max_output_tokens"]
+    .filter(option => execCommandArguments[option] !== undefined);
   return execGatewayResultProgram([
     "if (typeof ALL_TOOLS === \"undefined\" || !Array.isArray(ALL_TOOLS)) throw new Error(\"Native command tool registry is unavailable\");",
     "const nativeCommandNames = new Set(ALL_TOOLS.map(tool => tool?.name));",
     `const nativeCommandCandidates = ${JSON.stringify([execCommandName, shellCommandName])}.filter(name => nativeCommandNames.has(name));`,
     "if (nativeCommandCandidates.length !== 1) throw new Error(\"Expected exactly one native command tool; found \" + (nativeCommandCandidates.join(\", \") || \"none\"));",
     "const nativeCommandName = nativeCommandCandidates[0];",
+    `const unmappableShellOptions = ${JSON.stringify(unmappableShellOptions)};`,
+    `if (nativeCommandName === ${JSON.stringify(shellCommandName)} && unmappableShellOptions.length) throw new Error("Native shell_command does not support codex_exec " + unmappableShellOptions.join(", "));`,
     "const nativeCommand = tools[nativeCommandName];",
     "if (typeof nativeCommand !== \"function\") throw new Error(\"Native command tool \" + nativeCommandName + \" is listed but unavailable\");",
     `const nativeCommandInput = nativeCommandName === ${JSON.stringify(execCommandName)} ? ${JSON.stringify(execCommandArguments)} : ${JSON.stringify(shellCommandArguments)};`,
     "const result = await nativeCommand(nativeCommandInput);",
-  ]);
+  ], "nativeCommandName");
 }
 
 export async function runChatGptMcpServer(options: {

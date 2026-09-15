@@ -109,7 +109,10 @@ export function tunnelServiceDefinitionMatches(config: AppConfig): boolean {
   return existsSync(path) && readFileSync(path, "utf8") === tunnelServiceDefinition(config);
 }
 
-export function installTunnelService(config: AppConfig): TunnelServiceStatus {
+export function installTunnelService(
+  config: AppConfig,
+  onDefinitionWritten?: (definition: { path: string; data: string }) => void,
+): TunnelServiceStatus {
   assertMacOs();
   const tunnel = settings(config);
   const profile = join(tunnel.profileDir, `${tunnel.profileName}.yaml`);
@@ -122,7 +125,10 @@ export function installTunnelService(config: AppConfig): TunnelServiceStatus {
   }
   mkdirSync(dirname(plistPath()), { recursive: true, mode: 0o700 });
   mkdirSync(join(getConfigDir(), "logs"), { recursive: true, mode: 0o700 });
-  if (!current.installed || readFileSync(plistPath(), "utf8") !== next) atomicWriteFile(plistPath(), next);
+  if (!current.installed || readFileSync(plistPath(), "utf8") !== next) {
+    atomicWriteFile(plistPath(), next);
+    onDefinitionWritten?.({ path: plistPath(), data: next });
+  }
   if (!current.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()]);
   return getTunnelServiceStatus();
 }

@@ -18,6 +18,7 @@ import {
   uninstallCodexIntegration,
 } from "../src/codex-integration";
 import { defaultConfig, loadConfig, saveConfig } from "../src/config";
+import { readJournal } from "../src/codex-integration-journal";
 import {
   CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
   MANAGED_COMMENT,
@@ -69,6 +70,19 @@ afterEach(() => {
 });
 
 describe("reversible native Codex route integration", () => {
+  test("ordinary journal inspection preserves a hook reintroduced after completed disconnect", () => {
+    const { codexHome } = fixture();
+    writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.6-sol"\n');
+    const hooksPath = join(codexHome, "hooks.json");
+    writeFileSync(hooksPath, JSON.stringify({ hooks: {} }));
+    installCodexIntegration(nativeConfig("browser-only"));
+    const installedHook = readFileSync(hooksPath, "utf8");
+    deactivateCodexIntegration();
+    writeFileSync(hooksPath, installedHook);
+    const journal = readJournal();
+    expect(journal && "active" in journal && journal.active).toBe(false);
+    expect(readFileSync(hooksPath, "utf8")).toBe(installedHook);
+  });
   test("uses an existing hooks.json without adding an inline hook definition", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");

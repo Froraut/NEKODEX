@@ -169,6 +169,13 @@ function restoreManagedJsonHook(journal: CodexIntegrationJournal): { path: strin
   };
 }
 
+function assertInactiveJsonHookAbsent(journal: AnyCodexIntegrationJournal): void {
+  if (journal.version !== 11 || journal.active || journal.interruptHook.storage !== "json") return;
+  if (restoredInactiveJsonHook(journal)) {
+    throw new Error("Inactive Codex JSON interrupt hook reappeared; preserving the external hook and integration journal");
+  }
+}
+
 function tomlInterruptHookIsFullyAbsent(text: string, stateKey: string): boolean {
   try {
     assertValidCodexToml(text);
@@ -223,7 +230,7 @@ export type {
 export function readCodexSubagentProtocol(
   fallback: AppConfig["subagentProtocol"] = "compatibility-v1",
 ): AppConfig["subagentProtocol"] {
-  const journal = readJournal();
+  const journal = readJournal({ reconcileInactiveHook: false });
   return journal?.version === 8 || journal?.version === 9 || journal?.version === 10 || journal?.version === 11
     ? journal.installed.subagent_protocol
     : fallback;
@@ -282,13 +289,14 @@ export function preflightCodexIntegration(
   const configSnapshot = snapshotFile(configPath, { followSymlink: true });
   const configExists = configSnapshot.exists;
   const currentText = configSnapshot.data?.toString("utf8") ?? "";
-  const existing = readJournal();
+  const existing = readJournal({ reconcileInactiveHook: false });
   const installedUrl = routeUrl(config);
   let hooksJson = currentHooksJson();
   if (existing?.version === 2 && existing.uninstalling) {
     throw new Error("Legacy Codex integration uninstall is pending; retry uninstall before setup");
   }
   if (existing) assertJournalTargetsConfig(existing, configPath);
+  if (existing) assertInactiveJsonHookAbsent(existing);
   if (existing && existing.version !== 2) {
     if (!configExists) {
       if (options.replaceExistingRoute !== true) {
@@ -369,13 +377,14 @@ export function installCodexIntegration(
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
   const configExists = existsSync(configPath);
   const currentText = configExists ? readFileSync(configPath, "utf8") : "";
-  const existing = readJournal();
+  const existing = readJournal({ reconcileInactiveHook: false });
   const installedUrl = routeUrl(config);
   let hooksJson = currentHooksJson();
   if (existing?.version === 2 && existing.uninstalling) {
     throw new Error("Legacy Codex integration uninstall is pending; retry uninstall before setup");
   }
   if (existing) assertJournalTargetsConfig(existing, configPath);
+  if (existing) assertInactiveJsonHookAbsent(existing);
 
   const hasManagedJournal = Boolean(existing && existing.version !== 2);
   if (hasManagedJournal && !configExists && options.replaceExistingRoute !== true) {
@@ -509,9 +518,10 @@ export function installCodexIntegration(
 }
 
 export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
-  // A repeated disconnect must inspect the inactive journal before any recovery path
-  // removes a JSON hook that appeared after the original disconnect.
-  const existing = readJournal({ reconcileInactiveHook: false });
+  // Explicit disconnect may recover only a pending inactive transition proven by
+  // the old active primary and new inactive recovery copy. Equal inactive copies
+  // cannot prove ownership of a later identical hook.
+  const existing = readJournal({ reconcileInactiveHook: true });
   if (!existing) return { changed: false, active: false };
   if (existing.version === 2) {
     throw new Error("Legacy Codex integration must be upgraded by Setup before the bridge can be disconnected");
@@ -560,12 +570,13 @@ export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
 }
 
 export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
-  const existing = readJournal();
+  const existing = readJournal({ reconcileInactiveHook: false });
   if (!existing) throw new Error("Codex integration is not installed");
   if (existing.version === 2) {
     throw new Error("Legacy Codex integration must be upgraded by Setup before the bridge can be reconnected");
   }
   assertJournalTargetsConfig(existing, getCodexConfigPath());
+  assertInactiveJsonHookAbsent(existing);
   if (!existsSync(existing.configPath)) throw new Error(`Codex config is missing: ${existing.configPath}`);
   const current = readFileSync(existing.configPath, "utf8");
   if ((existing.version === 10 || existing.version === 11) && existing.active) {
@@ -637,8 +648,12 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
 }
 
 export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
-  const journal = readJournal();
+  // An interrupted disconnect can be recovered here only with the journal's
+  // active-primary/inactive-recovery intent; an ordinary inactive hook is foreign.
+  const journal = readJournal({ reconcileInactiveHook: true });
   if (!journal) return { changed: false };
+  assertJournalTargetsConfig(journal, getCodexConfigPath());
+  assertInactiveJsonHookAbsent(journal);
   // A disconnected journal must be durable before the two copies are removed. If a crash
   // leaves only the recovery copy, its state still matches the restored user config.
   if (journal.version === 3 || (journal.version !== 2 && journal.active)) {
@@ -670,10 +685,9 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     }
     restored = restoreManagedRoute(current, journal);
   }
-  const inactiveJsonHook = restoredInactiveJsonHook(journal);
   const restoredHooks = journal.version === 11 && journal.active
     ? restoreManagedJsonHook(journal)
-    : inactiveJsonHook && { path: inactiveJsonHook.path, text: inactiveJsonHook.restored };
+    : undefined;
   const configSnapshot = snapshotFile(journal.configPath, { followSymlink: true });
   const hooksSnapshot = restoredHooks ? snapshotFile(restoredHooks.path, { followSymlink: true }) : undefined;
   const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath) : undefined;
@@ -681,17 +695,18 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());
   const expected = new Map<string, Buffer | undefined>();
+  const removeJournalCopy = (snapshot: ReturnType<typeof snapshotFile>): void => {
+    const latest = snapshotFile(snapshot.path);
+    if (!snapshot.exists || !latest.exists || !snapshot.data || !latest.data?.equals(snapshot.data)) {
+      throw new Error(`Codex integration journal changed before uninstall removed it; preserving recovery evidence: ${snapshot.path}`);
+    }
+    expected.set(snapshot.path, undefined);
+    rmSync(snapshot.path);
+  };
   try {
     expected.set(configSnapshot.path, Buffer.from(restored));
     writeFileSnapshot(configSnapshot, restored);
     if (restoredHooks && hooksSnapshot) {
-      if (inactiveJsonHook) {
-        const latest = snapshotFile(restoredHooks.path, { followSymlink: true });
-        if (!hooksSnapshot.data?.equals(Buffer.from(inactiveJsonHook.current))
-          || !latest.data?.equals(Buffer.from(inactiveJsonHook.current))) {
-          throw new Error(`Codex hooks JSON changed before uninstall removed the managed hook; preserving the external edit: ${restoredHooks.path}`);
-        }
-      }
       expected.set(hooksSnapshot.path, Buffer.from(restoredHooks.text));
       writeFileSnapshot(hooksSnapshot, restoredHooks.text);
     }
@@ -701,13 +716,12 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     }
     expected.set(modelsCacheSnapshot.path, undefined);
     rmSync(modelsCacheSnapshot.path, { force: true });
-    if (journal.version === 11 && !journal.active && restoredInactiveJsonHook(journal)) {
-      throw new Error("Codex JSON interrupt hook reappeared during uninstall; preserving the integration journal");
-    }
-    expected.set(recoverySnapshot.path, undefined);
-    rmSync(getCodexJournalRecoveryPath(), { force: true });
-    expected.set(journalSnapshot.path, undefined);
-    rmSync(getCodexJournalPath(), { force: true });
+    // Keep the recovery copy until last. If the inactive hook reappears after
+    // primary removal, the next guard aborts while recovery evidence still exists.
+    assertInactiveJsonHookAbsent(journal);
+    removeJournalCopy(journalSnapshot);
+    assertInactiveJsonHookAbsent(journal);
+    removeJournalCopy(recoverySnapshot);
   } catch (error) {
     const rollbackFailures: string[] = [];
     for (const snapshot of [recoverySnapshot, journalSnapshot, modelsCacheSnapshot, catalogSnapshot, hooksSnapshot, configSnapshot]) {
@@ -745,7 +759,7 @@ export function inspectCodexIntegration(): {
   journal?: AnyCodexIntegrationJournal;
   errors: string[];
 } {
-  const journal = readJournal();
+  const journal = readJournal({ reconcileInactiveHook: false });
   const errors: string[] = [];
   if (journal) {
     try {
@@ -756,6 +770,7 @@ export function inspectCodexIntegration(): {
       }
       if ((journal.version === 4 || journal.version === 5 || journal.version === 6 || journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10 || journal.version === 11) && !journal.active) {
         verifyRestoredRoute(text, journal);
+        assertInactiveJsonHookAbsent(journal);
       }
       else if (journal.version === 3 || journal.version === 4 || journal.version === 5 || journal.version === 6 || journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10 || journal.version === 11) {
         verifyInstalledRoute(text, journal);

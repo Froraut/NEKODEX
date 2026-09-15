@@ -409,6 +409,8 @@ export async function runDevCommand(args: string[]): Promise<void> {
     ? await startDevChatTransport(config, paths.runtimePath)
     : undefined;
   let driver: DevChatDriver | undefined;
+  let primaryFailure: unknown;
+  let operationFailed = false;
   try {
     const runtimeConfig = transport?.config ?? config;
     const runtime = createLauncherDevAdapter(
@@ -426,14 +428,21 @@ export async function runDevCommand(args: string[]): Promise<void> {
     printHeader(opened.state, opened.created, driver.status(opened.state), runtimeConfig.mode, features.biggerContext);
     if (message) await executeMessage(driver, opened.state, message);
     else await interactive(driver, opened.state);
+  } catch (error) {
+    operationFailed = true;
+    primaryFailure = error;
+    throw error;
   } finally {
     const results = await Promise.allSettled([
-      driver?.close() ?? Promise.resolve(),
-      transport?.close() ?? Promise.resolve(),
+      Promise.resolve().then(() => driver?.close()),
+      Promise.resolve().then(() => transport?.close()),
     ]);
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failures.length > 0) {
-      throw new AggregateError(failures.map(result => result.reason), "DEV chat cleanup failed");
+      throw new AggregateError(
+        [...(operationFailed ? [primaryFailure] : []), ...failures.map(result => result.reason)],
+        operationFailed ? "DEV chat failed and cleanup also failed" : "DEV chat cleanup failed",
+      );
     }
   }
 }

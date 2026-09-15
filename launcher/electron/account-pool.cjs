@@ -19,6 +19,7 @@ class AccountBrowserPool {
     this.connectors = new Map();
     this.lastAssigned = new Map();
     this.sequence = 0;
+    this.selectionRevision = 0;
     this.surfaceActive = true;
     this.destroyed = false;
     this.addingAccount = false;
@@ -175,6 +176,7 @@ class AccountBrowserPool {
       throw error;
     } finally { this.addingAccount = false; }
     this.writeDescriptor();
+    this.selectionRevision++;
     this.syncVisibility(); this.publish();
     return this.accountSnapshot();
   }
@@ -182,7 +184,10 @@ class AccountBrowserPool {
     if (this.addingAccount) throw new Error('Finish adding the ChatGPT account before switching accounts');
     if (this.currentOperation()) throw new Error('Finish the current browser operation before switching accounts');
     const host = this.getHost(id);
+    const revision = ++this.selectionRevision;
     await host.ready();
+    if (this.selectionRevision !== revision) throw new Error('Account selection changed while opening the browser account');
+    if (this.addingAccount || this.currentOperation()) throw new Error('Finish the current browser operation before switching accounts');
     const previous = this.registry.snapshot().selectedId;
     this.registry.select(id);
     try { this.writeDescriptor(); }
@@ -191,6 +196,7 @@ class AccountBrowserPool {
       this.writeDescriptor();
       throw error;
     }
+    this.selectionRevision++;
     this.syncVisibility(); this.publish();
     return this.accountSnapshot();
   }
@@ -286,8 +292,44 @@ class AccountBrowserPool {
   }
   async selectTab(tabId) {
     const host = this.ownerForTab(tabId);
-    await this.selectAccount(host.accountId);
-    host.selectTab(tabId); return this.snapshot();
+    if (this.addingAccount) throw new Error('Finish adding the ChatGPT account before switching accounts');
+    if (this.currentOperation()) throw new Error('Finish the current browser operation before switching accounts');
+    const tab = tabId === 'home' ? null : host.turnTabs.get(tabId);
+    const revision = ++this.selectionRevision;
+    await host.ready();
+    if (this.addingAccount || this.currentOperation()) throw new Error('Finish the current browser operation before switching accounts');
+    if (tab && host.turnTabs.get(tabId) !== tab) throw new Error('Browser tab does not exist');
+    if (this.selectionRevision !== revision) throw new Error('Account selection changed while opening the browser tab');
+    const previous = this.registry.snapshot().selectedId;
+    const previousTabId = host.selectedTabId;
+    let ownedRevision = revision;
+    let selected = false;
+    try {
+      this.registry.select(host.accountId);
+      selected = true;
+      ownedRevision = ++this.selectionRevision;
+      this.writeDescriptor();
+      host.selectTab(tabId);
+      this.syncVisibility(); this.publish();
+      return this.snapshot();
+    } catch (error) {
+      // A later user choice owns the selection; compensate only our own publication.
+      if (selected && this.selectionRevision === ownedRevision && this.registry.snapshot().selectedId === host.accountId) {
+        if (host.selectedTabId !== previousTabId) {
+          try { host.selectTab(previousTabId === 'home' || host.turnTabs.has(previousTabId) ? previousTabId : 'home'); }
+          catch (rollbackError) { this.logger.warn('browser.tab_activation_rollback_failed', { message: rollbackError.message }); }
+        }
+        if (this.selectionRevision === ownedRevision && this.registry.snapshot().selectedId === host.accountId) {
+          try {
+            this.registry.select(previous);
+            this.selectionRevision++;
+            this.writeDescriptor(); this.syncVisibility(); this.publish();
+          }
+          catch (rollbackError) { this.logger.warn('browser.tab_selection_rollback_failed', { message: rollbackError.message }); }
+        }
+      }
+      throw error;
+    }
   }
   closeTab(tabId) { const result = this.ownerForTab(tabId).closeTab(tabId); this.publish(); return result; }
   removeTurnTab(tab, abortRunning) { this.ownerForTab(tab.id).removeTurnTab(tab, abortRunning); }
@@ -324,8 +366,20 @@ class AccountBrowserPool {
       if (requirement?.connector && account.id !== 'default' && this.connectors.get(account.id) !== requirement.connector) return false;
       return true;
     };
-    // Pinned continuations may finish on a disabled account, but never migrate.
-    if (pinned) return pinned;
+    // Exact retained/running continuations can finish on a disabled account.
+    // A fresh pinned turn must pass the same readiness filter without moving affinity.
+    if (pinned) {
+      const host = this.getHost(pinned);
+      const runningTrace = [...host.turnTabs.values()].some(tab => tab.traceId === traceId
+        && tab.status === 'running' && tab.interactionMode === 'automatic'
+        && tab.conversationKey === key && tab.connectorIdentity === requirement?.connector);
+      const exactTab = host.exactRetainedTurnTab(key, requirement?.connector);
+      if (!retained && !runningTrace && !exactTab
+        && !eligible(config.accounts.find(account => account.id === pinned))) {
+        throw new Error('Pinned ChatGPT account is not ready for this model and connector. Sign in and check the account in Settings.');
+      }
+      return pinned;
+    }
     const candidates = config.mode === 'selected'
       ? config.accounts.filter(account => account.id === config.selectedId && eligible(account))
       : config.accounts.filter(eligible);
@@ -389,7 +443,7 @@ class AccountBrowserPool {
       if (retained) host.precheckRetainedTurn(traceId, key, connector);
       host.assertLiveConversationOwner(traceId, key);
       this.ensureTabCapacity(host, traceId, key, connector);
-      if (reveal && !this.currentOperation()) { this.registry.select(id); this.syncVisibility(); }
+      if (reveal && !this.currentOperation()) { this.registry.select(id); this.selectionRevision++; this.syncVisibility(); }
       const lease = await host.beginTurn(traceId, reveal, helperPid, key, connector, retained);
       this.persistAffinity(keys, id);
       this.writeDescriptor(); this.publish();

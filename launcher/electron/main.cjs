@@ -110,11 +110,10 @@ let tray = null;
 let quitting = false;
 let shutdownInProgress = false;
 let exitCommitted = false;
-let smokePassedThisSession = false;
 let cdpPort = 0;
 let lastOperation = null;
 let catalogVerificationTimer = null;
-let catalogVerificationInFlight = false;
+let catalogVerificationEpoch = 0;
 let updateController = null;
 let contextChangeQueue = null;
 let startupPhase = "runtime-files";
@@ -144,25 +143,37 @@ function publishOperation(operation) {
 }
 
 function stopCatalogVerificationMonitor() {
+  catalogVerificationEpoch += 1;
   if (catalogVerificationTimer) clearInterval(catalogVerificationTimer);
   catalogVerificationTimer = null;
 }
 
 function startCatalogVerificationMonitor({ logger, stateStore }) {
   stopCatalogVerificationMonitor();
+  const epoch = catalogVerificationEpoch;
+  const supervisor = runtimeSupervisor;
+  let inFlight = false;
   const check = async () => {
+    if (epoch !== catalogVerificationEpoch || supervisor !== runtimeSupervisor) return;
     const current = stateStore.read();
     if (current.coreSetupComplete !== true || current.codexCatalogVerified === true) {
       stopCatalogVerificationMonitor();
       return;
     }
-    if (catalogVerificationInFlight || !runtimeSupervisor) return;
-    catalogVerificationInFlight = true;
+    if (inFlight || !supervisor) return;
+    inFlight = true;
     try {
-      const config = runtimeSupervisor.readConfig();
-      const health = await runtimeSupervisor.proxyHealthPayload(config);
+      const config = supervisor.readConfig();
+      const configSnapshot = JSON.stringify(config);
+      const health = await supervisor.proxyHealthPayload(config);
+      if (epoch !== catalogVerificationEpoch || supervisor !== runtimeSupervisor) return;
+      const latest = stateStore.read();
+      if (latest.coreSetupComplete !== true || latest.codexCatalogVerified === true
+        || typeof latest.pendingBiggerContext === "boolean"
+        || JSON.stringify(supervisor.readConfig()) !== configSnapshot) return;
       if (!Number.isInteger(health?.successful_model_catalog_requests)
-        || health.successful_model_catalog_requests < 1) return;
+        || health.successful_model_catalog_requests < 1
+        || supervisor.catalogHealthIsCurrent(config, health) !== true) return;
       const state = stateStore.update({
         codexCatalogVerified: true,
       });
@@ -173,11 +184,13 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
       send("launcher:state-changed", state);
       stopCatalogVerificationMonitor();
     } catch (error) {
-      logger.debug("codex.model_catalog_verification_pending", {
-        message: error instanceof Error ? error.message : String(error),
-      });
+      if (epoch === catalogVerificationEpoch) {
+        logger.debug("codex.model_catalog_verification_pending", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     } finally {
-      catalogVerificationInFlight = false;
+      inFlight = false;
     }
   };
   catalogVerificationTimer = setInterval(() => { void check(); }, 2_000);
@@ -489,7 +502,7 @@ function registerIpc({ logger, stateStore }) {
     platform: process.platform,
     packaged: app.isPackaged,
     version: app.getVersion(),
-    smokePassed: smokePassedThisSession || smokePassedForCurrentVersion(stateStore.read()),
+    smokePassed: smokePassedForCurrentVersion(stateStore.read()),
     operation: lastOperation,
     update: updateController?.getState() ?? { status: "disabled" },
   }));
@@ -610,7 +623,6 @@ function registerIpc({ logger, stateStore }) {
     }
     const result = await browserHost.smokeTest();
     stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
-    smokePassedThisSession = true;
     return result;
   });
   handle("launcher:mcp-verify", async (event) => {
@@ -757,7 +769,7 @@ function registerIpc({ logger, stateStore }) {
     }
     if (setupState.browserInteractionMode === "automatic"
       && !setupState.coreSetupComplete
-      && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
+      && !smokePassedForCurrentVersion(setupState)) {
       throw new Error(
         IS_DEV_PROFILE
           ? "Run the browser smoke test before configuring the DEV harness"
@@ -1407,19 +1419,17 @@ async function start() {
       return;
     }
     if (runtime.status === "not-configured") {
+      stopCatalogVerificationMonitor();
+      const state = stateStore.update({
+        coreSetupComplete: false,
+        codexCatalogVerified: false,
+        mcpRuntimeInstalled: false,
+        mcpSetupComplete: false,
+        mcpGuideStep: 0,
+      });
+      send("launcher:state-changed", state);
       const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
       if (routeRecovery.skipped || shutdownInProgress || quitting || exitCommitted) return;
-      const current = stateStore.read();
-      if (current.coreSetupComplete || current.mcpRuntimeInstalled || current.mcpSetupComplete) {
-        const state = stateStore.update({
-          coreSetupComplete: false,
-          codexCatalogVerified: false,
-          mcpRuntimeInstalled: false,
-          mcpSetupComplete: false,
-          mcpGuideStep: 0,
-        });
-        send("launcher:state-changed", state);
-      }
       if (routeRecovery.error) {
         publishOperation({
           name: "runtime-start",
@@ -1429,10 +1439,12 @@ async function start() {
       }
       return;
     }
+    stopCatalogVerificationMonitor();
+    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
+      mcpSetupComplete: false });
+    send("launcher:state-changed", state);
     const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
     if (routeRecovery.skipped || shutdownInProgress || quitting || exitCommitted) return;
-    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false });
-    send("launcher:state-changed", state);
     if (runtime.status === "external" || runtime.status === "needs-setup") {
       const detail = runtime.detail || (
         runtime.status === "external"
@@ -1452,6 +1464,10 @@ async function start() {
   }).catch(async (error) => {
     if (shutdownInProgress || quitting || exitCommitted) return;
     const primary = error instanceof Error ? error.message : String(error);
+    stopCatalogVerificationMonitor();
+    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
+      mcpSetupComplete: false });
+    send("launcher:state-changed", state);
     const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
     if (routeRecovery.skipped || shutdownInProgress || quitting || exitCommitted) return;
     const message = routeRecovery.error
@@ -1460,8 +1476,6 @@ async function start() {
         ? `${primary}; the previous Codex route was restored, restart Codex once`
         : primary;
     logger.error("runtime.startup_failed", { message });
-    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false });
-    send("launcher:state-changed", state);
     publishOperation({ name: "runtime-start", status: "failed", message });
   });
 

@@ -46,6 +46,7 @@ import {
 import { connectTunnel, createTunnelConfig, installRuntimeKey, installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, restoreTunnelClientInstallation, snapshotTunnelClientInstallation, stopTunnel, waitForTunnelReady } from "./tunnel";
 import type { TunnelClientInstallSnapshot } from "./tunnel";
 import { getTunnelServiceStatus, installTunnelService, restartTunnelService, stopTunnelService, tunnelServiceDefinitionMatches, uninstallTunnelService } from "./tunnel-service";
+import { runCommand } from "./process";
 import { VERSION } from "./version";
 
 export interface SetupOptions {
@@ -76,6 +77,7 @@ export interface SetupResult {
   tunnelReady: boolean | null;
   codexRestartRequired: true;
   connectorSetupRequired: boolean;
+  warnings?: string[];
 }
 
 interface PreparedSetup {
@@ -633,14 +635,62 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   let serviceLoadedAfterRoute = beforeService.loaded;
   let tunnelDefinitionAfterRoute = tunnelDefinitionBeforeRoute;
   let tunnelServiceLoadedAfterRoute = tunnelServiceBeforeRoute.loaded;
-  const checkpointService = (): void => {
-    serviceAfterRoute = servicePath ? snapshotFile(servicePath) : undefined;
-    serviceLoadedAfterRoute = getServiceStatus().loaded;
+  const statusProbeFailures: string[] = [];
+  let serviceStatusUnknown = false;
+  let tunnelStatusUnknown = false;
+  const observeServiceState = (): void => {
+    try { serviceLoadedAfterRoute = getServiceStatus().loaded; }
+    catch (error) {
+      serviceStatusUnknown = true;
+      statusProbeFailures.push(`background service status: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
-  const checkpointTunnel = (): void => {
-    tunnelDefinitionAfterRoute = tunnelServicePath ? snapshotFile(tunnelServicePath) : undefined;
-    tunnelServiceLoadedAfterRoute = getTunnelServiceStatus().loaded;
+  const observeTunnelState = (): void => {
+    try { tunnelServiceLoadedAfterRoute = getTunnelServiceStatus().loaded; }
+    catch (error) {
+      tunnelStatusUnknown = true;
+      statusProbeFailures.push(`tunnel service status: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const assertKnownServiceState = (): void => {
+    if (serviceStatusUnknown) throw new Error("Background service status is unknown after setup transition");
+  };
+  const assertKnownTunnelState = (): void => {
+    if (tunnelStatusUnknown) throw new Error("Tunnel service status is unknown after setup transition");
+  };
+  const onServiceDefinitionWritten = ({ path, data }: { path: string; data: string }): void => {
+    if (path !== servicePath) throw new Error("Service definition path changed during setup");
+    serviceAfterRoute = { path, exists: true, data: Buffer.from(data) };
+  };
+  const onTunnelDefinitionWritten = ({ path, data }: { path: string; data: string }): void => {
+    if (path !== tunnelServicePath) throw new Error("Tunnel service definition path changed during setup");
+    tunnelDefinitionAfterRoute = { path, exists: true, data: Buffer.from(data) };
+  };
+  const checkpointServiceRemoval = (): void => {
+    if (servicePath && !existsSync(servicePath)) {
+      serviceAfterRoute = { path: servicePath, exists: false };
+    }
+    observeServiceState();
+  };
+  const checkpointOwnedTunnelProfile = (): void => {
     tunnelProfileAfterRoute = tunnelProfilePath ? snapshotFile(tunnelProfilePath) : undefined;
+  };
+  const checkpointTunnelState = (): void => {
+    observeTunnelState();
+  };
+  const checkpointTunnelRemoval = (): void => {
+    if (tunnelServicePath && !existsSync(tunnelServicePath)) {
+      tunnelDefinitionAfterRoute = { path: tunnelServicePath, exists: false };
+    }
+    checkpointTunnelState();
+  };
+  const tunnelServiceUnchanged = (): boolean => {
+    if (!tunnelServicePath || !tunnelDefinitionBeforeRoute) return true;
+    const current = snapshotFile(tunnelServicePath);
+    return current.exists === tunnelDefinitionBeforeRoute.exists
+      && (!current.exists || Boolean(current.data && tunnelDefinitionBeforeRoute.data
+        && current.data.equals(tunnelDefinitionBeforeRoute.data)))
+      && getTunnelServiceStatus().loaded === tunnelServiceBeforeRoute.loaded;
   };
   let changedWhileLoaded = false;
   const migratingTerminalRuntime = Boolean(
@@ -697,18 +747,25 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         configBeforeRoute.data?.toString("utf8") ?? "",
       ));
       saveConfig(config);
-      installService(config);
-      checkpointService();
-      if (changedWhileLoaded && options.restartService && existing) await restartService(existing);
-      checkpointService();
+      try { installService(config, onServiceDefinitionWritten); } finally {
+        observeServiceState();
+      }
+      assertKnownServiceState();
+      if (changedWhileLoaded && options.restartService && existing) {
+        try { await restartService(existing); } finally { observeServiceState(); }
+        assertKnownServiceState();
+      }
       await waitForProxy(config);
     }
 
     if (config.mode === "browser-only" && existing?.mode === "full") {
       const previousTunnelService = getTunnelServiceStatus();
       tunnelRuntimeTouched = true;
-      if (previousTunnelService.installed || previousTunnelService.loaded) await uninstallTunnelService();
-      checkpointTunnel();
+      if (previousTunnelService.installed || previousTunnelService.loaded) {
+        if (!tunnelServiceUnchanged()) throw new Error("Tunnel service changed during setup; refusing to remove the concurrent edit");
+        try { await uninstallTunnelService(); } finally { checkpointTunnelRemoval(); }
+        assertKnownTunnelState();
+      }
       stopTunnel(existing);
       previousTunnelStopped = true;
     }
@@ -717,35 +774,48 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       const tunnelService = getTunnelServiceStatus();
       const needsProfile = !existsSync(profilePath);
       if (launcherOwned) {
-        if (tunnelService.installed || tunnelService.loaded) await uninstallTunnelService();
-        checkpointTunnel();
+        if (tunnelService.installed || tunnelService.loaded) {
+          if (!tunnelServiceUnchanged()) throw new Error("Tunnel service changed during setup; refusing to remove the concurrent edit");
+          try { await uninstallTunnelService(); } finally { checkpointTunnelRemoval(); }
+          assertKnownTunnelState();
+        }
         if (needsProfile || refreshTunnelWorker || explicitTunnelChange) {
           tunnelRuntimeTouched = true;
           await bootstrapTunnelProfile(config,
-            () => { validationTunnelStarted = validationTunnelRunning = true; checkpointTunnel(); },
+            () => { validationTunnelStarted = validationTunnelRunning = true; checkpointOwnedTunnelProfile(); },
             () => { validationTunnelRunning = false; },
             () => { failedConnectMayHaveWrittenProfile = true; });
-          checkpointTunnel();
         }
       } else {
         const needsOwnershipMigration = !tunnelService.installed || !tunnelService.loaded || !tunnelServiceDefinitionMatches(config);
         if (needsOwnershipMigration || needsProfile) {
           tunnelRuntimeTouched = true;
           await assertServiceIdle(config);
-          if (tunnelService.loaded) await stopTunnelService();
-          checkpointTunnel();
+          if (tunnelService.loaded) {
+            if (!tunnelServiceUnchanged()) throw new Error("Tunnel service changed during setup; refusing to stop the concurrent edit");
+            try { await stopTunnelService(); } finally { checkpointTunnelState(); }
+            assertKnownTunnelState();
+          }
           await bootstrapTunnelProfile(config,
-            () => { validationTunnelStarted = validationTunnelRunning = true; checkpointTunnel(); },
+            () => { validationTunnelStarted = validationTunnelRunning = true; checkpointOwnedTunnelProfile(); },
             () => { validationTunnelRunning = false; },
             () => { failedConnectMayHaveWrittenProfile = true; });
-          checkpointTunnel();
-          installTunnelService(config);
-          checkpointTunnel();
+          if (tunnelServicePath && tunnelDefinitionAfterRoute) {
+            const current = snapshotFile(tunnelServicePath);
+            if (current.exists !== tunnelDefinitionAfterRoute.exists
+              || (current.exists && !current.data?.equals(tunnelDefinitionAfterRoute.data!))) {
+              throw new Error("Tunnel service changed during setup; refusing to overwrite the concurrent edit");
+            }
+          }
+          try { installTunnelService(config, onTunnelDefinitionWritten); } finally {
+            checkpointTunnelState();
+          }
+          assertKnownTunnelState();
         } else if (refreshTunnelWorker) {
           tunnelRuntimeTouched = true;
           await assertServiceIdle(config);
-          await restartTunnelService();
-          checkpointTunnel();
+          try { await restartTunnelService(); } finally { checkpointTunnelState(); }
+          assertKnownTunnelState();
         }
         const status = await waitForTunnelReady(config);
         if (!status.ok) throw new Error(`Tunnel runtime did not become healthy and ready: ${status.detail}`);
@@ -754,8 +824,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     }
     if (launcherOwned && (beforeService.installed || beforeService.loaded)) {
       if (!serviceUnchanged()) throw new Error("Background service changed during setup; refusing to remove the concurrent edit");
-      await uninstallService(existing!);
-      checkpointService();
+      try { await uninstallService(existing!); } finally { checkpointServiceRemoval(); }
+      assertKnownServiceState();
     }
     if (launcherOwned) {
       if (!configUnchanged()) throw new Error("Setup config changed during setup; refusing to overwrite the concurrent edit");
@@ -767,17 +837,24 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     }
     // Keep the previous terminal runtime intact through the ownership handoff. A later launcher
     // setup removes it once the launcher-owned configuration is already the established baseline.
-    checkpointService();
-    checkpointTunnel();
+    assertKnownServiceState();
+    assertKnownTunnelState();
     installCodexIntegration(config, {
       replaceExistingRoute: options.replaceCodexRoute,
     });
   } catch (error) {
-    const rollbackFailures: string[] = [];
+    const rollbackFailures: string[] = [...statusProbeFailures];
     const sameSnapshot = (left: FileSnapshot, right: FileSnapshot): boolean =>
       left.exists === right.exists
       && (!left.exists || Boolean(left.data && right.data && left.data.equals(right.data)));
-    let configRestored = savedConfigBytes ? true : configUnchanged();
+    let configRestored = true;
+    if (!savedConfigBytes) {
+      try { configRestored = configUnchanged(); }
+      catch (caught) {
+        configRestored = false;
+        rollbackFailures.push(`config status during rollback: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    }
     if (savedConfigBytes) {
       try {
         const current = snapshotFile(getConfigPath());
@@ -794,12 +871,11 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       }
     }
     if (servicePath && serviceBeforeRoute && serviceAfterRoute
-      && (!sameSnapshot(serviceBeforeRoute, serviceAfterRoute)
+      && (serviceStatusUnknown || !sameSnapshot(serviceBeforeRoute, serviceAfterRoute)
         || beforeService.loaded !== serviceLoadedAfterRoute
-        || (changedWhileLoaded && options.restartService)
-        || !sameSnapshot(snapshotFile(servicePath), serviceAfterRoute)
-        || getServiceStatus().loaded !== serviceLoadedAfterRoute)) {
+        || (changedWhileLoaded && options.restartService))) {
       try {
+        if (serviceStatusUnknown) throw new Error("loaded state unknown; leaving service for manual recovery");
         if (!configRestored) throw new Error("config rollback was not safe; leaving service state for manual recovery");
         if (!sameSnapshot(snapshotFile(servicePath), serviceAfterRoute)
           || getServiceStatus().loaded !== serviceLoadedAfterRoute) {
@@ -819,6 +895,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     let runtimeKeyRestored = false;
     if (tunnelRuntimeTouched || existing?.mode === "full" || config.mode === "full") {
       try {
+        if (tunnelStatusUnknown) throw new Error("loaded state unknown; leaving tunnel and dependent files for manual recovery");
         if (!configRestored) throw new Error("config rollback was not safe; leaving tunnel state for manual recovery");
         if (tunnelServicePath && tunnelDefinitionBeforeRoute && tunnelDefinitionAfterRoute
           && (!sameSnapshot(snapshotFile(tunnelServicePath), tunnelDefinitionAfterRoute)
@@ -870,8 +947,16 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     }
     // A profile/service recovery failure must not strand independent setup-owned writes.
     // Keep them while the validation runtime may still be using this client or key.
-    if (configRestored && !validationTunnelRunning
-      && (!tunnelRuntimeTouched || !getTunnelServiceStatus().loaded)) {
+    let tunnelLoadedForFallback = true;
+    if (!tunnelStatusUnknown && tunnelRuntimeTouched && configRestored && !validationTunnelRunning) {
+      try { tunnelLoadedForFallback = getTunnelServiceStatus().loaded; }
+      catch (caught) {
+        tunnelStatusUnknown = true;
+        rollbackFailures.push(`tunnel service status during rollback: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    }
+    if (configRestored && !validationTunnelRunning && !tunnelStatusUnknown
+      && (!tunnelRuntimeTouched || !tunnelLoadedForFallback)) {
       if (!tunnelClientRestored) {
         try {
           restoreTunnelClientInstallation(tunnelClientBeforeRoute, tunnelClientAfterRoute);
@@ -895,16 +980,22 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       ? `${primary}; setup rollback also failed: ${rollbackFailures.join("; ")}`
       : primary);
   }
-  if (!migratingTerminalRuntime) removeLegacyRuntimeArtifacts(config);
+  const warnings: string[] = [];
+  if (!migratingTerminalRuntime) {
+    try { removeLegacyRuntimeArtifacts(config); } catch (error) {
+      warnings.push(`Legacy runtime cleanup needs a retry: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   return {
     mode: config.mode,
     configPath: getConfigPath(),
     loginCreated,
-    serviceLoaded: launcherOwned ? false : getServiceStatus().loaded,
+    serviceLoaded: launcherOwned ? false : serviceLoadedAfterRoute,
     tunnelReady,
     codexRestartRequired: true,
     connectorSetupRequired: config.mode === "full",
+    ...(warnings.length ? { warnings } : {}),
   };
 }
 
@@ -939,6 +1030,32 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   }
 
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
+  // Direct DEV setup has no verified launcher owner/idle-drain handshake. Require an
+  // explicitly stopped old alias before any key, client, profile, or config mutation.
+  // Even a nominally unchanged Full setup can reinstall the tunnel client or
+  // regenerate a missing profile during configureTunnel/bootstrapTunnelProfile.
+  if (existing?.mode === "full") {
+    if (!existing.tunnel || !existsSync(existing.tunnel.binaryPath)) {
+      throw new Error("DEV setup cannot verify the existing Full tunnel is stopped; use the launcher owner/idle-drain setup path");
+    }
+    const observed = runCommand(existing.tunnel.binaryPath,
+      ["runtimes", "status", existing.tunnel.alias, "--json"], { timeout: 10_000 });
+    let stopped = false;
+    if (observed.status === 0) {
+      try {
+        const status = JSON.parse(observed.stdout.trim() || observed.stderr.trim()) as Record<string, unknown>;
+        stopped = status.process_running === false
+          && (status.runtime_state === "stopped" || status.status === "stopped")
+          && status.error === undefined;
+      } catch { /* An unreadable status is uncertain ownership. */ }
+    }
+    if (!stopped) {
+      throw new Error(
+        "DEV setup requires an explicitly stopped existing Full tunnel before changing its profile. "
+        + "Finish active turns and use the launcher owner/idle-drain setup path; direct CLI setup cannot stop or recover an unknown owner.",
+      );
+    }
+  }
   const keyPath = managedRuntimeKeyPath(config.browserInteractionMode);
   const keyBefore = snapshotFile(keyPath);
   let keyOwned = keyBefore;

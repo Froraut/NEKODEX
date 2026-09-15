@@ -113,14 +113,20 @@ export function getServiceStatus(): ServiceStatus {
   };
 }
 
-export function installService(config: AppConfig): ServiceStatus {
+export function installService(
+  config: AppConfig,
+  onDefinitionWritten?: (definition: { path: string; data: string }) => void,
+): ServiceStatus {
   assertMacOs();
   assertDurableRuntimeCommand(config.runtimeCommand);
   const path = plistPath();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   mkdirSync(join(getConfigDir(), "logs"), { recursive: true, mode: 0o700 });
   const next = plist(config);
-  if (!existsSync(path) || readFileSync(path, "utf8") !== next) atomicWriteFile(path, next);
+  if (!existsSync(path) || readFileSync(path, "utf8") !== next) {
+    atomicWriteFile(path, next);
+    onDefinitionWritten?.({ path, data: next });
+  }
   const status = getServiceStatus();
   if (!status.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), path]);
   return getServiceStatus();

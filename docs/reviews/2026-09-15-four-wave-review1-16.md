@@ -1,0 +1,21 @@
+# Four-wave review, wave 1 lane 16: public schema and UI contract
+
+Baseline: `3a66157`. Manual source review only; no tests, typechecks, scripts, runtime/account inspection, or code changes. Scope: `launcher/src/App.tsx`, `launcher/src/i18n.ts`, the two public ABI pin cases, `docs/connector-identity-migration.md`, and the direct launcher IPC callers needed to assess the failure path. Findings: **1 potential UI defect**, **0 public ABI/identity defects**. IDs in this report are candidate findings for parent adjudication.
+
+## Potential finding
+
+### R1-16-1 — Migration invalidates smoke evidence in backend but leaves the setup UI checked
+
+**Trigger:** An already open production launcher has a saved passing smoke test for the current application version. Its asynchronous same-version managed-runtime upgrade migrates a legacy connector to generation 4. The backend emits a state update with `browserSmokePassed: false` and `browserSmokeVersion: null` (`launcher/electron/main.cjs:1332-1357`). The renderer's `onStateChanged` merge uses `current.smokePassed || ...` (`launcher/src/App.tsx:116-125`); its explicit `updateState` path repeats the same monotonic merge (`:200-209`). Neither its completion refresh (`:63-85`) nor `updateSnapshot` (`:212-223`) writes the fresh `smokePassed` field. Thus an already true `snapshot.smokePassed` remains true until the renderer remounts, and Setup displays “Smoke test passed” with a complete check (`:1452-1460`) despite the cleared backend evidence. Initial hydration can similarly OR an earlier snapshot with a later invalidating state event (`:157-165`).
+
+**Consequence:** The UI claims a browser test survived the connector migration when the persisted evidence was deliberately invalidated. This is a readiness display defect, not evidence of an unauthorized native command or a changed connector ABI.
+
+**Counterevidence/limit:** The backend reads its own state for the smoke requirement and checks it only while `coreSetupComplete` is false (`launcher/electron/main.cjs:758-765`); the migration sets core setup complete. This trace does not prove the setup API skips a required backend gate. It depends on event/snapshot ordering and an already open renderer with `smokePassed === true`; there was no live reproduction in this read-only lane. A new renderer snapshot after migration reports the cleared persisted value unless a new smoke test passed in that same process. The generation-4 results explicitly say saved smoke evidence is invalidated.
+
+## Reviewed boundaries without an independent defect
+
+- **ABI pins and names:** Native4/Native4 DEV are the seven-tool `ce27b6bc...` contract (`tests/chatgpt-web-harness.test.ts:2718-2745`); Zero Risk4 is the nine-tool `d06f09a5...` contract (`tests/zero-risk-mcp-lifecycle.test.ts:289-303`). The complete hashes match `docs/reviews/2026-09-15-connector-generation4-results.md:31-38`. `docs/connector-identity-migration.md:12-23` and current English/Chinese/Japanese UI strings (`launcher/src/i18n.ts:164,337-339,566,739-741,968,1141-1143`) consistently name the three generation-4 identities. Zero Risk3 is only a recognized intermediate alias.
+- **Inactive-mode verification path:** Settings can open the wizard for a target mode (`launcher/src/App.tsx:1995-2006,823-848`). The wizard passes that mode into `setupMcp` (`:1604-1619`), and the IPC setup commits it as active before the mode-less `verifyMcp` call (`launcher/electron/main.cjs:797-828`; `launcher/src/App.tsx:1627-1635`). This is not a wrong-mode verification defect.
+- **Known limitations:** Manual local verification deliberately warns that connector selection must happen on each turn (`launcher/electron/main.cjs:652-668`). A local tools/list pin, healthy tunnel, or visible connector name does not establish a live ChatGPT schema or approved command execution; the migration guide (`docs/connector-identity-migration.md:41-58`) and generation-4 results (`docs/reviews/2026-09-15-connector-generation4-results.md:52-56`) say so. Custom cached connector names need a distinct new App ID; this known choice is not counted as a new canonical identity/schema defect here.
+
+No code or connector identity/schema change proposed by this lane.

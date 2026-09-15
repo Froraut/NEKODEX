@@ -7,6 +7,7 @@ const {
 } = require("./connector-identity.cjs");
 
 const BROWSER_HELPER_OPERATION_TIMEOUT_MS = 90_000;
+const unsettledHelperChildren = new Set();
 
 function waitForExit(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
@@ -41,14 +42,27 @@ function writeMessage(child, message) {
 
 async function stopChild(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  await writeMessage(child, { type: "shutdown" }).catch(() => {});
+  // The input write itself may remain pending; the grace period starts when shutdown is requested.
+  void writeMessage(child, { type: "shutdown" }).catch(() => {});
   if (await waitForExit(child, 5_000)) return;
-  if (!child.kill("SIGTERM") && child.exitCode === null && child.signalCode === null) {
-    throw new Error("Browser helper verification process refused termination");
-  }
-  if (!await waitForExit(child, 2_000)) {
-    throw new Error("Browser helper verification process did not exit after termination");
-  }
+  let signalError;
+  try {
+    if (!child.kill("SIGTERM")) signalError = new Error("Browser helper verification process refused SIGTERM");
+  } catch (error) { signalError = error; }
+  if (await waitForExit(child, 2_000)) return;
+  try {
+    if (!child.kill("SIGKILL")) signalError = new Error("Browser helper verification process refused SIGKILL");
+  } catch (error) { signalError = error; }
+  if (await waitForExit(child, 2_000)) return;
+  // Keep the exact spawned handle reachable until its eventual exit; never target a PID by name.
+  unsettledHelperChildren.add(child);
+  const release = () => unsettledHelperChildren.delete(child);
+  child.once("exit", release);
+  child.once("close", release);
+  if (child.exitCode !== null || child.signalCode !== null) release();
+  const error = new Error("Browser helper verification process exit was not observed after SIGKILL");
+  if (signalError) error.cause = signalError;
+  throw error;
 }
 
 async function runBrowserHelperOperation({ helper, descriptorPath, appName, operation, payload = {}, logger }) {
@@ -160,8 +174,12 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
   try {
     await stopChild(child);
   } catch (cleanupError) {
-    const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-    if (primaryError) throw new Error(`${primaryError.message}; browser helper cleanup failed: ${cleanup}`);
+    if (primaryError) {
+      primaryError.cleanupError = cleanupError;
+      primaryError.operationId = id;
+      throw primaryError;
+    }
+    if (cleanupError instanceof Error) cleanupError.operationId = id;
     throw cleanupError;
   } finally {
     output.close();

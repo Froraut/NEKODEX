@@ -253,29 +253,14 @@ export function restoredInactiveJsonHook(journal: AnyCodexIntegrationJournal):
   }
 }
 
-function reconcileInactiveJsonHook(journal: AnyCodexIntegrationJournal): void {
-  if (journal.version !== 11 || journal.active || journal.interruptHook.storage !== "json") return;
-  if (!journalConfigMatches(journal)) {
-    throw new Error("Inactive Codex integration journal does not match the restored config");
-  }
-  const removal = restoredInactiveJsonHook(journal);
-  if (removal) {
-    writeFilesWithCompensation([{
-      path: removal.path,
-      data: removal.restored,
-      followSymlink: true,
-      expectedData: Buffer.from(removal.current),
-    }]);
-  }
-}
-
 function recoverPendingJsonHookWrite(
   recovery: AnyCodexIntegrationJournal,
   primary?: AnyCodexIntegrationJournal,
 ): boolean {
   if (recovery.version !== 11 || recovery.interruptHook.storage !== "json") return false;
   if (!journalConfigMatches(recovery) || journalExternalHooksMatch(recovery)) return false;
-  let current = readFileSync(recovery.interruptHook.hooksPath, "utf8");
+  const hookBytes = readFileSync(recovery.interruptHook.hooksPath);
+  let current = hookBytes.toString("utf8");
   if (recovery.active && primary?.version === 11 && primary.active
     && primary.interruptHook.storage === "json") {
     assertJournalTargetsConfig(primary, getCodexConfigPath());
@@ -288,7 +273,8 @@ function recoverPendingJsonHookWrite(
     verifyCodexInterruptHookJson(next, { ...recovery.interruptHook, mode: "json" });
   }
   writeFilesWithCompensation([
-    { path: recovery.interruptHook.hooksPath, data: next, followSymlink: true },
+    { path: recovery.interruptHook.hooksPath, data: next, followSymlink: true,
+      expectedData: hookBytes },
     { path: getCodexJournalPath(), data: serializeJournal(recovery) },
   ]);
   return true;
@@ -308,6 +294,7 @@ export function readJournalSnapshot(options: { primaryPath?: string; recoveryPat
   return { journal: primary ?? recovery, recoveryPending: !identical };
 }
 
+/** Repair journal copies on read. Hook removal requires explicit recovery intent and a pending transition. */
 export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): AnyCodexIntegrationJournal | undefined {
   const primaryPath = getCodexJournalPath();
   const recoveryPath = getCodexJournalRecoveryPath();
@@ -327,7 +314,6 @@ export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): 
     return undefined;
   }
   if (primary && recovery && serializeJournal(primary) === serializeJournal(recovery)) {
-    if (options.reconcileInactiveHook !== false) reconcileInactiveJsonHook(primary);
     return primary;
   }
   // A v2 uninstall marker is intent, while the older copy is the pre-uninstall commit.
@@ -347,17 +333,22 @@ export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): 
       return marked;
     }
   }
+  // Only the recovery copy's inactive intent paired with the old active primary
+  // proves an interrupted disconnect. Equal inactive copies cannot identify who
+  // later restored an identical hook, so they never authorize removal.
+  const pendingInactiveDisconnect = recovery?.version === 11 && !recovery.active
+    && recovery.interruptHook.storage === "json"
+    && primary?.version === 11 && primary.active
+    && serializeJournal({ ...primary, active: false }) === serializeJournal(recovery);
   if (recovery && !primaryError
-    && (options.reconcileInactiveHook !== false || recovery.version !== 11 || recovery.active
-      || recovery.interruptHook.storage !== "json")
+    && (recovery.version !== 11 || recovery.active || recovery.interruptHook.storage !== "json"
+      || (options.reconcileInactiveHook === true && pendingInactiveDisconnect))
     && recoverPendingJsonHookWrite(recovery, primary)) return recovery;
   if (primary && !recovery && !recoveryError) {
-    if (options.reconcileInactiveHook !== false) reconcileInactiveJsonHook(primary);
     atomicWriteFile(recoveryPath, serializeJournal(primary));
     return primary;
   }
   if (recovery && !primary && !primaryError) {
-    if (options.reconcileInactiveHook !== false) reconcileInactiveJsonHook(recovery);
     if (!journalMatchesConfig(recovery)) {
       throw new Error("Codex integration recovery journal does not match the active config");
     }
@@ -375,7 +366,6 @@ export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): 
     );
   }
   const selected = primaryMatches ? primary! : recovery!;
-  if (options.reconcileInactiveHook !== false) reconcileInactiveJsonHook(selected);
   const data = serializeJournal(selected);
   writeFilesWithCompensation([
     { path: recoveryPath, data },

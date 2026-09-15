@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const { isDeepStrictEqual } = require("node:util");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { redactText } = require("./logging.cjs");
@@ -601,6 +602,38 @@ class RuntimeSupervisor {
       return null;
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  catalogHealthIsCurrent(config, payload) {
+    try {
+      const currentConfig = this.readConfig();
+      const state = this.readState();
+      const daemon = this.daemon;
+      const pid = daemon?.pid;
+      return Boolean(currentConfig
+        && config
+        && isDeepStrictEqual(config, currentConfig)
+        && !this.stopping
+        && !this.shutdownRequested
+        && state
+        && !runtimeOwnershipPredatesCurrentBoot(state)
+        && state.ownerPid === process.pid
+        && state.daemonPid === pid
+        && state.status === "ready"
+        && Number.isSafeInteger(pid)
+        && pid > 0
+        && daemon.exitCode === null
+        && daemon.signalCode === null
+        && processRunning(pid)
+        && payload?.service === "codex-chatgpt-web"
+        && payload?.status === "ok"
+        && payload?.version === config.releaseVersion
+        && payload?.mode === config.mode
+        && payload?.accepting_turns === true
+        && payload?.pid === pid);
+    } catch {
+      return false;
     }
   }
 

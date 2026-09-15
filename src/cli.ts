@@ -303,6 +303,7 @@ async function setupCommand(args: string[]): Promise<void> {
   const result = await setup(options);
   stdout.write(`Setup complete: ${result.mode}\n`);
   stdout.write(`Config: ${result.configPath}\n`);
+  for (const warning of result.warnings ?? []) stdout.write(`Setup warning: ${warning}\n`);
   if (result.connectorSetupRequired) {
     const connectorName = loadConfig().appName;
     stdout.write(
@@ -449,7 +450,9 @@ async function tunnelCommand(args: string[]): Promise<void> {
     : tunnelStatus(config);
   const service = getTunnelServiceStatus();
   stdout.write(`${JSON.stringify({ service, runtime: status }, null, 2)}\n`);
-  if (action !== "stop" && (!service.running || !status.ok)) process.exitCode = 1;
+  if (action === "status") {
+    if (!status.ok || (config.browserHost !== "launcher" && !service.running)) process.exitCode = 1;
+  } else if (action !== "stop" && (!service.running || !status.ok)) process.exitCode = 1;
 }
 
 async function openCommand(args: string[]): Promise<void> {

@@ -3132,12 +3132,12 @@ export class ChatGptBrowserWorker {
     let texts: string[];
     try {
       texts = await withBrowserTurnAbort(
-        withChatGptBrowserObservationTimeout(menuRows.filter({ visible: true }).allInnerTexts()),
+        withChatGptBrowserObservationTimeout(menuRows.allInnerTexts()),
         abortSignal,
       );
     } catch (error) {
       if (abortSignal?.aborted) throw error;
-      texts = [];
+      throw new Error("ChatGPT connector mention popup DOM title observation failed", { cause: error });
     }
     return texts
       .map(text => (text.split("\n")[0] ?? "").replace(/\s+/g, " ").trim())
@@ -3219,10 +3219,41 @@ export class ChatGptBrowserWorker {
       throwIfPromptAttachmentAborted(abortSignal);
     };
     let composer: Locator;
-    const menuRows = page.locator('.__menu-item[tabindex="0"]');
+    // The same menu-item class also appears in sidebar history. The nearby Think
+    // slash path observes ChatGPT's visible .popover; never use a page-wide row
+    // as evidence of the mention popup.
+    const popup = page.locator('.popover').filter({ visible: true });
+    const menuRows = popup.locator('.__menu-item[tabindex="0"]').filter({ visible: true });
     const appResult = menuRows.filter({
       has: page.getByText(this.config.appName, { exact: true }),
     });
+    const popupCount = async (signal?: AbortSignal): Promise<number> => {
+      const count = await withBrowserTurnAbort(
+        withChatGptBrowserObservationTimeout(popup.count()),
+        signal,
+      );
+      if (count > 1) {
+        throw new Error(`ChatGPT connector mention popup observation is ambiguous (${count} visible popovers)`);
+      }
+      return count;
+    };
+    const assertMentionAttached = async (editor: Locator, signal?: AbortSignal): Promise<void> => {
+      const mention = await withBrowserTurnAbort(editor.evaluate(element => ({
+        text: element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+          ? element.value : element.textContent ?? "",
+        focused: element === document.activeElement,
+      }), undefined, { timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS, signal }), signal);
+      if (mention.text !== CHATGPT_CONNECTOR_MENTION_QUERY) {
+        throw new ChatGptPromptAttachmentIntegrityError(
+          `ChatGPT did not preserve the connector mention (expectedChars=${CHATGPT_CONNECTOR_MENTION_QUERY.length}, actualChars=${mention.text.length}, focused=${mention.focused})`,
+        );
+      }
+    };
+    const assertNoPriorPopup = async (signal?: AbortSignal): Promise<void> => {
+      if (await popupCount(signal) !== 0) {
+        throw new Error("ChatGPT connector mention popup was already visible before its trigger");
+      }
+    };
     await ensureChatGptPersonalizedConnectorAccess(
       page,
       capture,
@@ -3240,6 +3271,7 @@ export class ChatGptBrowserWorker {
             timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS,
           });
           await withBrowserTurnAbort(settleChatGptUi(), personalizationSignal);
+          await assertNoPriorPopup(personalizationSignal);
           await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, {
             delay: 25,
             signal: personalizationSignal,
@@ -3248,22 +3280,18 @@ export class ChatGptBrowserWorker {
           await capture("personalization-proof-mention-triggered");
           try {
             await appResult.waitFor({ state: "visible", timeout: 2_500, signal: personalizationSignal });
-            proofResult = true;
-            await capture("personalization-proof-menu-visible");
           } catch (error) {
             if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
             proofResult = false;
             await capture("personalization-proof-menu-missing");
-            const mention = await composer.evaluate(element => ({
-              text: element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
-                ? element.value : element.textContent ?? "",
-              focused: element === document.activeElement,
-            }), undefined, { timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS, signal: personalizationSignal });
-            if (mention.text !== CHATGPT_CONNECTOR_MENTION_QUERY) {
-              throw new ChatGptPromptAttachmentIntegrityError(
-                `ChatGPT did not preserve the connector mention (expectedChars=${CHATGPT_CONNECTOR_MENTION_QUERY.length}, actualChars=${mention.text.length}, focused=${mention.focused})`,
-              );
+          }
+          await assertMentionAttached(composer, personalizationSignal);
+          if (proofResult !== false) {
+            if (await popupCount(personalizationSignal) !== 1) {
+              throw new Error("ChatGPT connector mention row lost its visible popup during personalization proof");
             }
+            proofResult = true;
+            await capture("personalization-proof-menu-visible");
           }
         } catch (error) {
           proofError = error;
@@ -3296,6 +3324,7 @@ export class ChatGptBrowserWorker {
         await composer.fill("", { signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS });
         await composer.focus({ signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS });
         await withBrowserTurnAbort(settleChatGptUi(), abortSignal);
+        await assertNoPriorPopup(abortSignal);
         await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, {
           delay: 25,
           signal: abortSignal,
@@ -3305,16 +3334,18 @@ export class ChatGptBrowserWorker {
           firstMenuCaptured = true;
           await capture("connector-mention-triggered");
         }
+        await assertMentionAttached(composer, abortSignal);
+        let exactRowVisible = false;
         try {
           await appResult.waitFor({
             state: "visible",
             timeout: 2_500,
             signal: abortSignal,
           });
-          await capture("connector-menu-visible");
-          break;
+          exactRowVisible = true;
         } catch (error) {
           if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
+          await popupCount(abortSignal);
           const visibleRows = await this.connectorMentionRowTitles(menuRows, abortSignal);
           const knownIdentityMismatch = this.legacyConnectorInMenu(visibleRows) !== undefined
             || (this.config.appName === CHATGPT_CONNECTOR_NAME
@@ -3343,6 +3374,16 @@ export class ChatGptBrowserWorker {
             );
           }
         }
+        if (exactRowVisible) {
+          if (await popupCount(abortSignal) !== 1) {
+            throw new Error("ChatGPT connector mention row lost its visible popup before selection");
+          }
+          await capture("connector-menu-visible");
+          break;
+        }
+      }
+      if (await popupCount(abortSignal) !== 1) {
+        throw chatGptConnectorUnavailableError("ChatGPT connector mention popup was not visible for exact-row selection");
       }
       const exactResultCount = await withBrowserTurnAbort(
         withChatGptBrowserObservationTimeout(appResult.count()),
@@ -3365,7 +3406,7 @@ export class ChatGptBrowserWorker {
       }) !== null;
       if (!await rowHighlighted()) {
         const visibleRowCount = await withBrowserTurnAbort(
-          withChatGptBrowserObservationTimeout(menuRows.filter({ visible: true }).count()),
+          withChatGptBrowserObservationTimeout(menuRows.count()),
           abortSignal,
         );
         for (let step = 0; step < visibleRowCount && !await rowHighlighted(); step += 1) {

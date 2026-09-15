@@ -93,6 +93,11 @@ function readState(filePath) {
     ]) {
       if (state[key] !== undefined && typeof state[key] !== "boolean") delete state[key];
     }
+    if (state.coreSetupComplete === false) {
+      state.codexCatalogVerified = false;
+      state.codexPickerConfirmed = false;
+      state.mcpSetupComplete = false;
+    }
     if (!Number.isSafeInteger(state.setupContract) || state.setupContract < 1) delete state.setupContract;
     if (typeof state.setupIdentityHash !== "string" || !/^[a-f0-9]{64}$/.test(state.setupIdentityHash)) delete state.setupIdentityHash;
     for (const key of ["setupVerifiedAt", "pickerVerifiedAt"]) {
@@ -126,7 +131,13 @@ function createStateStore(filePath) {
     },
     update(patch) {
       const next = { ...state, ...patch, version: 1 };
-      if (patch.codexCatalogVerified === false) next.codexPickerConfirmed = false;
+      if (next.coreSetupComplete === false) {
+        next.codexCatalogVerified = false;
+        next.codexPickerConfirmed = false;
+        next.mcpSetupComplete = false;
+      } else if (patch.codexCatalogVerified === false) {
+        next.codexPickerConfirmed = false;
+      }
       writeState(filePath, next);
       state = next;
       return structuredClone(next);

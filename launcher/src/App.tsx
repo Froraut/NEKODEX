@@ -41,6 +41,17 @@ const MCP_GUIDE_MEDIA = [
   new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
 ] as const;
 
+function smokePassedForState(state: LauncherState, version: string): boolean {
+  return state.browserSmokePassed === true && state.browserSmokeVersion === version;
+}
+
+function currentToolProof(snapshot: LauncherSnapshot, operation: OperationState | null): boolean {
+  return snapshot.state.mcpSetupComplete === true
+    && !(snapshot.profile === "production"
+      && snapshot.state.browserInteractionMode === "automatic"
+      && operation?.name === "runtime-start" && operation.status === "failed");
+}
+
 export function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
   const [browser, setBrowser] = useState<BrowserState | null>(null);
@@ -77,12 +88,17 @@ export function App() {
     const pending = api!.snapshot().then(fresh => {
       if (owner !== refreshOwner.current || request !== snapshotRefresh.current
         || operation !== operationRevision.current) return;
-      setSnapshot(current => current ? {
-        ...current,
-        ...(revision === stateRevision.current ? { state: fresh.state } : {}),
-        mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
-        contextCapabilities: fresh.contextCapabilities,
-      } : current);
+      setSnapshot(current => {
+        if (!current) return current;
+        const state = revision === stateRevision.current ? fresh.state : current.state;
+        return {
+          ...current,
+          state,
+          smokePassed: smokePassedForState(state, current.version),
+          mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
+          contextCapabilities: fresh.contextCapabilities,
+        };
+      });
     });
     refreshInFlight.current = pending;
     void pending.finally(() => {
@@ -120,8 +136,7 @@ export function App() {
         ? {
             ...current,
             state,
-            smokePassed: current.smokePassed
-              || (state.browserSmokePassed === true && state.browserSmokeVersion === current.version),
+            smokePassed: smokePassedForState(state, current.version),
           }
         : current);
     });
@@ -162,7 +177,7 @@ export function App() {
         ...next,
         state: latestState,
         update: pendingUpdate ?? next.update,
-        smokePassed: next.smokePassed || (latestState.browserSmokePassed === true && latestState.browserSmokeVersion === next.version),
+        smokePassed: smokePassedForState(latestState, next.version),
       });
       setBrowser(pendingBrowser ?? next.browser);
       const unseenLogs = pendingLogs.filter(record => !next.logs.some(existing =>
@@ -203,8 +218,7 @@ export function App() {
       ? {
           ...current,
           state,
-          smokePassed: current.smokePassed
-            || (state.browserSmokePassed === true && state.browserSmokeVersion === current.version),
+          smokePassed: smokePassedForState(state, current.version),
         }
       : current);
   }, []);
@@ -1332,11 +1346,12 @@ function SetupSurface({
   const confirmPending = !devProfile && snapshot.state.coreSetupComplete === true && snapshot.state.codexCatalogVerified === true && !snapshot.state.codexPickerConfirmed;
   const pendingContext = typeof snapshot.state.pendingBiggerContext === "boolean";
   const troubleshooting = useRef<HTMLDetailsElement>(null);
+  const toolsVerified = currentToolProof(snapshot, operation);
   const nextStep = setupNextStep({ manual: manualInteraction, signedIn: browser?.authenticated === true,
     smokePassed: snapshot.smokePassed, installed: snapshot.state.coreSetupComplete === true,
     catalogVerified: snapshot.state.codexCatalogVerified === true, pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
     toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
-    toolsVerified: snapshot.state.mcpSetupComplete === true, development: devProfile });
+    toolsVerified, development: devProfile });
   const busy = localBusy
     || operation?.status === "running"
     || (!manualInteraction && (
@@ -1399,7 +1414,7 @@ function SetupSurface({
   };
   const nextTitle = { "sign-in": copy.stepAccount, test: copy.stepSmoke, install: copy.stepInstall,
     catalog: copy.setupCatalogTitle, confirm: copy.setupConfirmTitle, tools: copy.localTools,
-    ready: snapshot.state.mcpSetupComplete ? copy.setupReadyFull : copy.setupReadyModels }[nextStep];
+    ready: toolsVerified ? copy.setupReadyFull : copy.setupReadyModels }[nextStep];
   const nextBody = { "sign-in": copy.stepAccountBody, test: copy.stepSmokeBody, install: copy.stepInstallBody,
     catalog: copy.setupCatalogBody, confirm: copy.setupConfirmBody, tools: copy.mcpBody,
     ready: copy.setupUseCodex }[nextStep];
@@ -1487,7 +1502,7 @@ function SetupSurface({
       </details>
 
       <SectionHeading label={copy.localTools} meta={manualInteraction ? copy.required : copy.optional} spaced />
-      {snapshot.state.mcpSetupComplete && snapshot.state.setupVerifiedAt ? (
+      {snapshot.state.setupVerifiedAt ? (
         <p>{`Last connector verification: ${new Date(snapshot.state.setupVerifiedAt).toLocaleString()}`}</p>
       ) : null}
       <button
@@ -1501,7 +1516,7 @@ function SetupSurface({
           <strong>{devProfile ? copy.devMcpTitle : copy.mcpTitle}</strong>
           <small>{devProfile ? copy.devMcpBody : copy.mcpBody}</small>
         </span>
-        <em>{snapshot.state.mcpSetupComplete ? copy.mcpReady : copy.configureMcp}</em>
+        <em>{toolsVerified ? copy.mcpReady : copy.configureMcp}</em>
         <Icon name="chevron" />
       </button>
       {!devProfile && !manualInteraction ? <>
@@ -1510,7 +1525,7 @@ function SetupSurface({
           <strong>{copy.hermesTitle}</strong>
           <p>{copy.hermesBody}</p>
           <PrimaryButton disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes()}>{hermesAdded ? copy.hermesUpdate : copy.hermesAdd}</PrimaryButton>
-          <p role="status">{hermesAdded ? copy.hermesAdded : !snapshot.state.mcpSetupComplete ? copy.hermesPending : copy.hermesChoose}</p>
+          <p role="status">{hermesAdded ? copy.hermesAdded : !toolsVerified ? copy.hermesPending : copy.hermesChoose}</p>
           <details>
             <summary>{copy.hermesDirectTitle}</summary>
             <p>{copy.hermesDirectBody}</p>
@@ -1568,7 +1583,7 @@ function McpSurface({
   const [localBusy, setLocalBusy] = useState(false);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
-  const verified = !configuringInactiveMode && snapshot.state.mcpSetupComplete === true;
+  const verified = !configuringInactiveMode && currentToolProof(snapshot, operation);
   const manualInteraction = interactionMode === "manual";
   const steps = useMemo(() => [
     { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
