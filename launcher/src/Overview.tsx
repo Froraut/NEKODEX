@@ -47,7 +47,7 @@ export function Overview({ copy, browser, snapshot, logs, navigate }: {
           </section>
           <section className="overview-activity">
             <div className="overview-section-heading"><h2>{copy.recentActivity}</h2><button className="text-button" type="button" onClick={() => navigate("activity")}>{copy.viewAllShort}<Icon name="chevron" /></button></div>
-            {logs.length ? <ul>{logs.slice(-3).reverse().map((log, index) => <li key={`${log.at}-${index}`}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{log.event.replaceAll(/[._-]+/g, " ")}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
+            {logs.length ? <ul>{logs.slice(-8).reverse().map((log, index) => <li key={`${log.at}-${index}`}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{log.event.replaceAll(/[._-]+/g, " ")}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
               : <div className="overview-empty"><Icon name="logs" /><div><strong>{copy.activityEmpty}</strong><p>{copy.activityEmptyBody}</p></div></div>}
           </section>
         </div>
