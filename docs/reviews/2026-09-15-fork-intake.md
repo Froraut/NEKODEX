@@ -149,7 +149,7 @@ exhaustive review of every fork or branch. The previously selected five adaptati
 remain the implementation set; the three candidates above remain unimplemented.
 
 The user's separate gateway setting is now implemented as Settings → Parallel
-agents, accepting integers 1–64, default 16. The canonical profile-local file is
+agents, accepting integers 1–1000, default 16. The canonical profile-local file is
 `browser-capacity.json` with `maxParallelTurns`; writes use a private temporary
 file and atomic rename. IPC validates values independently of the renderer.
 The launcher captures the limit at boot and passes it to the Electron allocator
@@ -177,3 +177,11 @@ renderer state after saving, and package module inclusion. The historical
 capacity-16 fixture was adjusted for the new configurable default without
 rerunning the earlier suites. No release archive, signing or installation was
 performed for this feature; production settings were not changed.
+
+
+The user subsequently requested a configurable ceiling of 1000. The shared
+maximum and all three settings translations now identify this as an unverified
+concurrency ceiling. The default remains 16; no saved or active production setting
+was raised. The renderer receives the maximum from the same shared setting used
+by IPC validation and runtime loading. This small adjustment received manual diff
+review; no 1000-session test or new release build was performed.

@@ -3,7 +3,8 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
 const DEFAULT_BROWSER_CAPACITY = 16;
-const MAX_BROWSER_CAPACITY = 64;
+// Configurable ceiling, not a verified simultaneous-session capacity.
+const MAX_BROWSER_CAPACITY = 1000;
 const CAPACITY_ENV = "CODEX_CHATGPT_WEB_BROWSER_CAPACITY";
 
 function validateBrowserCapacity(value) {
