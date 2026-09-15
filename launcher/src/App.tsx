@@ -1151,7 +1151,7 @@ function BrowserSurface({
             tabIndex={tab.active ? 0 : -1}
           >
             <BrandMark small />
-            <span title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
+            <span className="browser-tab-title" title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
               {browserTabTitleFromTitle(tab.title, copy)}
             </span>
             {tab.loading ? <i className="tab-spinner" /> : <StateDot state={browserTabTone(tab.status)} />}

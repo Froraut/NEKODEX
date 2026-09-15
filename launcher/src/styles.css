@@ -594,18 +594,32 @@ code {
 }
 
 .browser-tab > .brand-mark {
+  display: grid;
+  place-items: center;
   width: 15px;
   height: 15px;
   flex: none;
   color: var(--color-icon-tertiary);
 }
 
-.browser-tab > span {
+.browser-tab > .browser-tab-title {
   min-width: 0;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.browser-tab > .state-dot,
+.browser-tab > .tab-spinner {
+  flex: none;
+  align-self: center;
+}
+
+.browser-tab > .brand-mark > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .browser-tab > button {
