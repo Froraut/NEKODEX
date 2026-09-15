@@ -207,5 +207,19 @@
       "seconds": 0.030358750000000045,
       "output": ""
     }
-  ]
+  ],
+  "initialTargetedFailure": {
+    "name": "focused-account",
+    "reason": "fixture omitted the current account-pool evidenceEpochs map",
+    "corrected": "added the current fixture field",
+    "rerun": "focused-account-retry",
+    "result": "passed"
+  },
+  "hostReadOnlyObservation": {
+    "status": 113,
+    "format": "Bad request plus complete Could not find service ... user gui: UID",
+    "mutation": false,
+    "seconds": 0.007
+  },
+  "limits": "No full suite, broad audit, installed app, live account, tunnel or launchd mutation was run."
 }
