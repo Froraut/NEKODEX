@@ -108,3 +108,13 @@ That replacement completed after a real `NEKODEX READY` reply through the native
 Codex client. The installed app now owns the healthy listener and its catalog
 exposes five Web modes. See [route recovery](route-recovery.md) for exact evidence,
 configuration backups, the optional profile and remaining distribution limits.
+
+## Cat-only motion refinement
+
+Motion is limited to cat anatomy. The coding illustration now has a stationary
+raster scene, independent paw layers, and the same reusable head/face rig as the
+main brand cat. It shares the twelve non-repeating expressions, including blinking,
+winking and mouth shapes. Laptop, document, buttons and panels do not animate.
+Non-cat transitions and animations are disabled; reduced-motion preferences also
+suppress the cat effects. Renderer type-check/build and a focused DEV hover/focus
+observation passed before updating the installed app. Backend runtime is unchanged.

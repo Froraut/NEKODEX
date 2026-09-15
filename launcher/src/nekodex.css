@@ -135,8 +135,6 @@
 .content-surface.is-page-scroll::-webkit-scrollbar { width: 10px; }
 .content-surface.is-page-scroll::-webkit-scrollbar-thumb { border: 3px solid transparent; background: #ffffff28; background-clip: padding-box; border-radius: 999px; }
 .surface-header { margin-bottom: 30px; }
-.surface-transition { animation: nekodex-page-enter 160ms ease-out; }
-@keyframes nekodex-page-enter { from { opacity: .72; } to { opacity: 1; } }
 .surface-header p { max-width: 620px; font-size: 13px; }
 .section-heading { font-size: 13px; font-weight: 600; color: var(--color-text-secondary); padding-bottom: 10px; }
 .setup-overview { background: var(--color-background-brand); border-color: #c6bdff24; padding: 22px; border-radius: 14px; }
@@ -229,17 +227,20 @@
 .workspace-illustration-stage { height: 184px; min-height: 0; display: grid; place-items: center; overflow: hidden; border-radius: 10px; }
 .workspace-illustration { width: 100%; height: 100%; min-height: 0; object-fit: contain; object-position: center; }
 .workspace-illustration-stage:focus-visible { outline: 2px solid var(--brand-accent); outline-offset: -3px; }
-.illustration-reaction-0 .workspace-illustration { animation: coding-cat-type 1.4s ease-in-out 2; }
-.illustration-reaction-1 .workspace-illustration { animation: coding-cat-nod 1.1s ease-in-out 2; }
-.illustration-reaction-2 .workspace-illustration { animation: coding-cat-celebrate 1.2s ease-in-out 2; }
-@keyframes coding-cat-type { 0%, 100% { transform: rotate(0) translateY(0); } 25%, 65% { transform: rotate(-1deg) translateY(-2px); } 45%, 85% { transform: rotate(1deg) translateY(1px); } }
-@keyframes coding-cat-nod { 0%, 100% { transform: rotate(0) scale(1); } 35% { transform: rotate(-3deg) scale(1.04); } 65% { transform: rotate(2deg) scale(1.015); } }
-@keyframes coding-cat-celebrate { 0%, 100% { transform: translateY(0) scale(1); } 25%, 65% { transform: translateY(-7px) scale(1.04); } 45%, 85% { transform: translateY(0) scale(.99); } }
+.coding-cat-paw-left { transform-origin: 644px 542px; }
+.coding-cat-paw-right { transform-origin: 894px 542px; }
+.illustration-reaction-0 .coding-cat-paw-left { animation: coding-paw-type 420ms ease-in-out 5; }
+.illustration-reaction-0 .coding-cat-paw-right { animation: coding-paw-type 420ms ease-in-out 210ms 5; }
+.illustration-reaction-1 .coding-cat-paw-left { animation: coding-paw-wave 1.1s ease-in-out 2; }
+.illustration-reaction-1 .coding-cat-paw-right { animation: coding-paw-type 550ms ease-in-out 300ms 2; }
+.illustration-reaction-2 .coding-cat-paw { animation: coding-paw-cheer 1.2s ease-in-out 2; }
+@keyframes coding-paw-type { 0%, 100% { transform: translateY(0); } 45% { transform: translateY(-12px); } }
+@keyframes coding-paw-wave { 0%, 100% { transform: rotate(0); } 30% { transform: translateY(-10px) rotate(-12deg); } 65% { transform: translateY(-10px) rotate(10deg); } }
+@keyframes coding-paw-cheer { 0%, 100% { transform: translateY(0); } 30%, 65% { transform: translateY(-18px); } }
 .art-card-actions { display: flex; gap: 8px; margin-top: 4px; }
 .art-card-actions > button { min-height: 34px; padding: 6px 8px; font-size: 10px; line-height: 1.3; border: 1px solid #c6bdff2b; color: #d4cdef; border-radius: 8px; flex: 1; }
 .art-card-actions > button svg { width: 14px; height: 14px; flex-shrink: 0; }
 .workspace-illustration { mix-blend-mode: lighten; }
-.workspace-illustration { transition: filter 240ms ease; }
 
 /* Dedicated account workspace. */
 .account-settings { padding: 0; border: 0; }
@@ -322,6 +323,14 @@
   .account-card { padding: 15px; }
   .account-add > div { flex-wrap: wrap; }
 }
+/* Motion is limited to cat anatomy; controls and scene props stay stationary. */
+.app-root *:not(.neko-tracking):not(.neko-head):not(.neko-ear):not(.neko-face):not(.neko-eye):not(.neko-mouth):not(.neko-tongue):not(.coding-cat-head):not(.coding-cat-paw),
+.app-root *::before, .app-root *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+.app-root .button-primary:active:not(:disabled) { transform: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .brand-mark .neko-tracking, .brand-mark .neko-face { transform: none; }

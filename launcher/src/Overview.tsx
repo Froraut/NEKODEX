@@ -1,5 +1,5 @@
-import { BrandMark } from "./BrandMark";
-import { useRef, useState } from "react";
+import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
+import { useId, type CSSProperties } from "react";
 import { Icon, type IconName } from "./icons";
 import type { Copy } from "./i18n";
 import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types";
@@ -63,18 +63,40 @@ export function Overview({ copy, browser, snapshot, logs, navigate }: {
 }
 
 function WorkspaceIllustration() {
-  const next = useRef(0);
-  const active = useRef(false);
-  const [reaction, setReaction] = useState<number | null>(null);
-  const play = () => {
-    if (active.current) return;
-    active.current = true;
-    setReaction(next.current++ % 3);
-  };
-  const stop = () => { active.current = false; setReaction(null); };
-  return <div className={`workspace-illustration-stage${reaction === null ? "" : ` is-playing illustration-reaction-${reaction}`}`}
+  const id = `coding-cat-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const { reaction, play, follow, reset } = useCatReaction();
+  const pawReaction = reaction === "happy" || reaction === "surprised" || reaction === "stretch" ? 2
+    : reaction === "wink" || reaction === "playful" || reaction === "peek" ? 1 : 0;
+  return <div className={`workspace-illustration-stage${reaction === null ? "" : ` is-playing reaction-${reaction} illustration-reaction-${pawReaction}`}`}
     role="img" aria-label="NEKODEX coding cat" tabIndex={0}
-    onPointerEnter={play} onPointerLeave={stop} onPointerCancel={stop} onFocus={play} onBlur={stop}>
-    <img className="workspace-illustration" src={workspaceArt} alt="" width="1536" height="1024" decoding="async" />
+    onPointerEnter={play} onPointerMove={follow} onPointerLeave={event => reset(event.currentTarget)} onPointerCancel={event => reset(event.currentTarget)} onFocus={play} onBlur={event => reset(event.currentTarget)}>
+    <svg className="workspace-illustration" viewBox="0 0 1536 1024" aria-hidden="true">
+      <defs>
+        <mask id={`${id}-stationary`} maskUnits="userSpaceOnUse" x="0" y="0" width="1536" height="1024">
+          <rect width="1536" height="1024" fill="white" />
+          <rect x="590" y="260" width="356" height="267" fill="black" />
+          <ellipse cx="644" cy="514" rx="43" ry="33" fill="black" />
+          <ellipse cx="894" cy="514" rx="43" ry="33" fill="black" />
+        </mask>
+        <clipPath id={`${id}-left-paw`}><ellipse cx="644" cy="514" rx="43" ry="33" /></clipPath>
+        <clipPath id={`${id}-right-paw`}><ellipse cx="894" cy="514" rx="43" ry="33" /></clipPath>
+      </defs>
+      {/* The scene and paws retain the original pixels; the head shares the main cat rig. */}
+      <image href={workspaceArt} width="1536" height="1024" mask={`url(#${id}-stationary)`} />
+      {/* Restore the stationary laptop edge behind lifted paws using its own pixels. */}
+      <svg x="590" y="511" width="356" height="16" viewBox="540 511 50 16" preserveAspectRatio="none" overflow="hidden">
+        <image href={workspaceArt} width="1536" height="1024" />
+      </svg>
+      <g className="coding-cat-head" transform="translate(548 207) scale(6.8 5.3)"
+        style={{ color: "#343245", "--brand-ink": "#c6bdff" } as CSSProperties}>
+        <CatHead reaction={reaction} />
+      </g>
+      <g className="coding-cat-paw coding-cat-paw-left">
+        <image href={workspaceArt} width="1536" height="1024" clipPath={`url(#${id}-left-paw)`} />
+      </g>
+      <g className="coding-cat-paw coding-cat-paw-right">
+        <image href={workspaceArt} width="1536" height="1024" clipPath={`url(#${id}-right-paw)`} />
+      </g>
+    </svg>
   </div>;
 }
