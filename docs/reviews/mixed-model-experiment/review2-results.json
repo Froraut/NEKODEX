@@ -1,0 +1,168 @@
+{
+  "name": "review2",
+  "model": "gpt-5.6-luna",
+  "start": "2026-09-15T20:34:38.564Z",
+  "agents": [
+    {
+      "agent_id": "01a0a6c7-5d82-7371-aa3e-e3d66bf38d11",
+      "nickname": "Rawls the 4th",
+      "lane": 1,
+      "dispatchAt": "2026-09-15T20:34:38.702Z",
+      "result": {
+        "completed": "Review completed and written only to:\n\n[review2-01.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-01.md)\n\nI read the exact requested skill path:\n\n`/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md`\n\nI also read:\n\n`/Users/alex/.codex/skills/right-size-test-runs/SKILL.md`\n\nFindings: 2 high-confidence reachable defects.\n\n1. `src/service.ts:103-114` and `src/tunnel-service.ts:94-115` treat every ordinary nonzero `launchctl print` result as `loaded: false`, collapsing permission, malformed-state, and transport failures into “unloaded.” Lifecycle callers can then bootstrap, overwrite, skip bootout, or remove a plist while launchd state is unknown.\n\n2. `src/service.ts:51-57`, `103-114`, and lifecycle calls at `134`, `143`, `287`, `311`, and `325` use synchronous `launchctl` probes without effective per-probe deadlines. A blocked probe prevents `waitForServiceUnloaded` from reaching its 20-second deadline and can hang service status or lifecycle commands indefinitely. Tunnel status polling is bounded, but tunnel bootstrap/bootout calls remain unbounded.\n\nNo source edits, tests, typechecks, scripts, runtime checks, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:38:31.983Z"
+    },
+    {
+      "agent_id": "01a0a6c7-5e0a-7670-99e7-6bda5f1eb221",
+      "nickname": "Goodall the 4th",
+      "lane": 2,
+      "dispatchAt": "2026-09-15T20:34:38.840Z",
+      "result": {
+        "completed": "Completed the independent blind review for baseline `9925453`.\n\n- Reviewed `src/setup.ts` source first, then traced direct callers in `src/cli.ts` and `src/dev-chat/cli.ts`.\n- Read and applied:\n  - [repository-local `nekodex-regression-prevention/SKILL.md`](/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md)\n  - [`right-size-test-runs/SKILL.md`](/Users/alex/.codex/skills/right-size-test-runs/SKILL.md)\n- Followed setup ownership, rollback, migration, partial-state, error, cancellation, launcher, managed-Chrome, manual, browser-only, Full, and DEV paths.\n- Result: **zero concrete reachable current defects**.\n- No source edits, tests, typechecks, scripts, runtime actions, commits, or delegation were performed.\n- The only created file is [review2-02.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-02.md).\n- UTC review window recorded in the document: `2026-09-15T20:37:42Z`–`2026-09-15T20:38:22Z`.\n- `git diff --check` passed for the review document."
+      },
+      "collectedAt": "2026-09-15T20:39:29.133Z"
+    },
+    {
+      "agent_id": "01a0a6c7-5e95-7bd3-8bd6-d31ee1cd0b20",
+      "nickname": "Planck the 4th",
+      "lane": 3,
+      "dispatchAt": "2026-09-15T20:34:39.005Z",
+      "result": {
+        "completed": "Completed the independent blind review and wrote only:\n\n[review2-03.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-03.md)\n\nResult: **zero concrete reachable current defects**.\n\nThe review covered:\n\n- Compare and selection of primary/recovery journal copies.\n- JSON hook deletion and exact ownership checks.\n- Interrupted hook writes and interrupted disconnect recovery.\n- Explicit disconnect, reconnect, uninstall, rollback, and concurrent-byte guards.\n- Malformed, divergent, missing, and config-mismatched journal states.\n- Direct CLI callers, diagnostics, and cancellation before uninstall mutation.\n- Source-level evidence for the separation between observational reads and repair/reconciliation.\n\nNo source edits, tests, typechecks, scripts, runtime actions, commits, delegation, or release actions were performed. The report records the UTC start/end times and states the source-only evidence boundary."
+      },
+      "collectedAt": "2026-09-15T20:39:01.245Z"
+    },
+    {
+      "agent_id": "01a0a6c7-5f40-7c92-8d7c-95b267852946",
+      "nickname": "McClintock the 4th",
+      "lane": 4,
+      "dispatchAt": "2026-09-15T20:34:39.162Z",
+      "result": {
+        "completed": "Wrote [review2-04.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-04.md).\n\nFinding:\n\n- `runDoctor()` does not isolate `inspectCodexIntegration()` at [src/doctor.ts:155](/Users/alex/Dev/nekodex/src/doctor.ts:155). If that individual probe throws, the aggregate report aborts before service, proxy, and tunnel diagnostics run. [doctorCommand()](/Users/alex/Dev/nekodex/src/cli.ts:318) receives no report, so `--json` is not produced and the top-level handler emits only a generic error. Confidence: high. Smallest fix: catch that probe exception, append a `codex` error check, and continue.\n\nNo additional supported defects were found in the requested alternate, error, cancellation, or direct-caller paths. Source files were unchanged; no tests, typechecks, scripts, runtime probes, commits, or delegation were used.\n\nThe requested `nekodex-regression-prevention` skill file was absent at the specified path. The `right-size-test-runs` skill was read and applied."
+      },
+      "collectedAt": "2026-09-15T20:37:40.558Z"
+    },
+    {
+      "agent_id": "01a0a6c7-5fd7-7e61-bab6-2c62e560b11d",
+      "nickname": "Peirce the 4th",
+      "lane": 5,
+      "dispatchAt": "2026-09-15T20:34:39.302Z",
+      "result": {
+        "completed": "Completed the independent blind review for baseline `9925453`.\n\nWritten only:\n\n[review2-05.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-05.md)\n\nFound three concrete, reachable defects:\n\n1. **Bigger Context invalidation gap**  \n   Changing `experimentalBiggerContext` changes the runtime identity hash, but leaves `mcpSetupComplete`, `setupIdentityHash`, and proof timestamps intact. Relevant paths: `main.cjs:913-931` and `main.cjs:1260-1280`; identity definition: `upgrade-readiness.cjs:8-12`.\n\n2. **Zero Risk Pro invalidation gap**  \n   Changing `zeroRiskProEnabled` also changes the runtime identity, but `main.cjs:944-961` updates only the setting and catalog state. The previous MCP/account proof remains marked valid.\n\n3. **Startup accepts stale or schema-incomplete persisted proof**  \n   `state.cjs:116-119` removes malformed identity fields without clearing `mcpSetupComplete`. Normal startup synchronizes configuration flags but does not compare the current account/runtime identity with the stored proof unless a runtime upgrade occurs. Relevant paths: `main.cjs:1424-1466`, `upgrade-readiness.cjs:14-16`.\n\nThe report includes exact triggers, consequences, counterevidence, smallest fixes, confidence, inspected scope, and UTC start/end. Review was manual source inspection only; no tests, scripts, typechecks, runtime, commits, delegation, or source edits were performed."
+      },
+      "collectedAt": "2026-09-15T20:39:38.619Z"
+    },
+    {
+      "agent_id": "01a0a6c7-6063-7ee2-b7d1-8b451e1c6399",
+      "nickname": "Hume the 4th",
+      "lane": 6,
+      "dispatchAt": "2026-09-15T20:34:39.437Z",
+      "result": {
+        "completed": "Completed the independent blind review and wrote only:\n\n[review2-06.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-06.md)\n\nFindings recorded:\n\n1. `checkAccount()` invalidates capability evidence only after awaiting `host.ready()`, leaving stale evidence usable during the wait. High confidence.\n\n2. `beginTurn()` chooses an account before an async readiness wait and does not revalidate enablement, capability epoch, or connector proof before creating or reusing the turn tab. High confidence.\n\n3. Balanced routing can select an authenticated but unchecked secondary account when the request omits optional effort and connector requirements. Medium-high confidence.\n\nThe report includes exact functions and lines, triggers, consequences, counterevidence, smallest fixes, confidence, inspected scope, and UTC timestamps. No source edits, tests, typechecks, scripts, runtime actions, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:40:13.699Z"
+    },
+    {
+      "agent_id": "01a0a6c7-60ed-7d30-ac6c-fcf005ffa992",
+      "nickname": "Darwin the 4th",
+      "lane": 7,
+      "dispatchAt": "2026-09-15T20:34:39.583Z",
+      "result": {
+        "completed": "Completed the independent blind review for wave 2, lane 7.\n\n- Repository: `/Users/alex/Dev/nekodex`\n- Baseline inspected: `9925453bd51e61c7b398abec12ec0da3aca3d3af`\n- Source reviewed: `launcher/electron/runtime-supervisor.cjs`\n- Direct callers reviewed: `launcher/electron/runtime.cjs` and `launcher/electron/main.cjs`\n- Required skills read:\n  - [`/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md`](/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md)\n  - [`/Users/alex/.codex/skills/right-size-test-runs/SKILL.md`](/Users/alex/.codex/skills/right-size-test-runs/SKILL.md)\n- Findings: **zero qualifying current defects**\n- No source edits, tests, typechecks, scripts, runtime actions, commits, or delegation were performed.\n\nThe review is recorded in [`review2-07.md`](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-07.md)."
+      },
+      "collectedAt": "2026-09-15T20:38:43.358Z"
+    },
+    {
+      "agent_id": "01a0a6c7-6183-7ad2-9bcc-8d9c8ece9e6e",
+      "nickname": "Banach the 4th",
+      "lane": 8,
+      "dispatchAt": "2026-09-15T20:34:39.752Z",
+      "result": {
+        "completed": "Completed the independent blind review and wrote only:\n\n[review2-08.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-08.md)\n\nFindings recorded:\n\n1. **High confidence:** `startup-recovery.cjs:settleWithin()` times out without cancelling the underlying cleanup. Recovery can relaunch or call `app.exit()` while cleanup is still running, allowing the new process to race old ownership release.\n\n2. **High confidence:** `main.cjs` suppresses `browserHost.destroy()` errors during startup recovery. If browser-host teardown fails but `browserControl.close()` succeeds, recovery can report `cleaned: true` and restart after partial cleanup.\n\n3. **Medium confidence:** `browser-helper-verifier.cjs:waitForExit()` treats the first `exit` or `close` event as complete. The helper scope can be released after `exit` while stdout/stderr close events are still pending.\n\nThe document includes exact locations, triggers, consequences, counterevidence, smallest fixes, confidence, inspected scope, and UTC start/end times. No tests, scripts, typechecks, runtime checks, commits, delegation, or source edits were performed."
+      },
+      "collectedAt": "2026-09-15T20:40:25.535Z"
+    },
+    {
+      "agent_id": "01a0a6c7-622b-7d40-a5b8-3c9f4ca0d4ad",
+      "nickname": "Lorentz the 4th",
+      "lane": 9,
+      "dispatchAt": "2026-09-15T20:34:39.908Z",
+      "result": {
+        "completed": "Completed the blind review and wrote only:\n\n[review2-09.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-09.md)\n\nReviewed:\n\n- `/Users/alex/Dev/nekodex/src/adapters/chatgpt-web/mcp-server.ts`\n- `/Users/alex/Dev/nekodex/src/adapters/chatgpt-web/index.ts`\n- `/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md`\n- `/Users/alex/.codex/skills/right-size-test-runs/SKILL.md`\n\nThe review records three high-confidence reachable defects:\n\n1. `withClaimedTurn` allows activity cleanup failure to replace the primary MCP action error.\n2. `finishBrowserOutcome` allows broker revoke failure to hide a browser/ChatGPT outcome error.\n3. Gateway nested results with `structuredContent` or `_meta` are serialized into text and lose their top-level MCP fields.\n\nNo source edits, tests, typechecks, scripts, runtime actions, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:38:21.633Z"
+    },
+    {
+      "agent_id": "01a0a6c7-62c1-7273-acaf-3d1cb806fbe1",
+      "nickname": "Harvey the 4th",
+      "lane": 10,
+      "dispatchAt": "2026-09-15T20:34:40.047Z",
+      "result": {
+        "completed": "Completed the independent blind review without restarting it.\n\nRead and applied:\n\n- [`/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md`](/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md)\n- [`/Users/alex/.codex/skills/right-size-test-runs/SKILL.md`](/Users/alex/.codex/skills/right-size-test-runs/SKILL.md)\n\nWrote only:\n\n- [`/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-10.md`](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-10.md)\n\nThe review records three concrete reachable defects:\n\n1. Malformed call-shaped Responses output can be silently filtered and accepted as a successful final answer, losing the required call and receipt linkage. High confidence.\n2. Broker startup can leak a partially initialized broker when `listen()` rejects before the cleanup closure exists. High confidence for the missing cleanup path; medium confidence for an actual OS resource leak because the broker implementation was outside scope.\n3. Ctrl-C closes readline but does not cancel an in-flight `driver.send()` request, despite the CLI stating that Ctrl-C exits. High confidence.\n\nNo tests, typechecks, scripts, runtime checks, commits, delegation, or source edits were performed."
+      },
+      "collectedAt": "2026-09-15T20:38:21.687Z"
+    },
+    {
+      "agent_id": "01a0a6c7-634c-75a0-8f08-93d3e182ca0d",
+      "nickname": "Archimedes the 4th",
+      "lane": 11,
+      "dispatchAt": "2026-09-15T20:34:40.194Z",
+      "result": {
+        "completed": "Completed the blind review and wrote only:\n\n[review2-11.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-11.md)\n\nI read the required skills from:\n\n- [/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md](/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md)\n- [/Users/alex/.codex/skills/right-size-test-runs/SKILL.md](/Users/alex/.codex/skills/right-size-test-runs/SKILL.md)\n\nThe report contains one high-confidence current defect:\n\n- `responseDomSnapshot` catches all evaluation failures and falls back to a cached snapshot. After submitted work, this can make stale DOM state look like a successful observation, bypassing the intended observation-fault retry and launcher rebind paths, and potentially allow stale completion state to be returned as the current response.\n\nI found no additional concrete defect meeting the requested threshold in DOM selector scope, retry-after-submission identity handling, cancellation, alternate launcher recovery, or direct caller routing. No source edits, tests, typechecks, scripts, runtime actions, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:38:43.417Z"
+    },
+    {
+      "agent_id": "01a0a6c7-63e3-71f1-a4c6-422582075dd2",
+      "nickname": "Hegel the 4th",
+      "lane": 12,
+      "dispatchAt": "2026-09-15T20:34:40.342Z",
+      "result": {
+        "completed": "Completed the blind review and wrote only:\n\n[review2-12.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-12.md)\n\nResult: **one high-confidence concrete defect**.\n\n- After HTTP stream cancellation, `responseRequest`’s `deliverEvent` can continue enqueueing late adapter events into the unbounded streaming `AsyncEventQueue`.\n- Trigger: a delayed, timer-backed, or otherwise non-cooperative adapter continues invoking `deliverEvent` after cancellation.\n- Location: `src/server.ts:635-647`, with cancellation entering through `src/server.ts:680-688` and `src/bridge.ts:808-816`.\n- Consequence: post-cancellation queue growth and possible memory exhaustion while the client stream is already closed.\n- Smallest fix: return immediately from `deliverEvent` when `abort.signal.aborted`.\n- Confidence: **high**.\n\nNo other defects met the requested standard. No tests, typechecks, scripts, runtime checks, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:39:01.301Z"
+    },
+    {
+      "agent_id": "01a0a6c7-6475-7372-afa2-8c17a397288f",
+      "nickname": "Sartre the 4th",
+      "lane": 13,
+      "dispatchAt": "2026-09-15T20:34:40.483Z",
+      "result": {
+        "completed": "Read the exact repository-local skill:\n\n[/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md](/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md)\n\nIt confirms the existing findings, particularly the requirement to use one current proof predicate for renderer readiness. I updated the review’s skill note accordingly:\n\n[review2-13.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-13.md)\n\nNo source review was restarted, and no additional reports, tests, scripts, runtime checks, or source edits were performed."
+      },
+      "collectedAt": "2026-09-15T20:38:21.742Z"
+    },
+    {
+      "agent_id": "01a0a6c7-6504-71e2-ba5e-31fa6eba6ade",
+      "nickname": "Bohr the 4th",
+      "lane": 14,
+      "dispatchAt": "2026-09-15T20:34:40.647Z",
+      "result": {
+        "completed": "Read the exact absolute skill file:\n\n`/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md`\n\nThe review was not restarted, expanded, or modified. The existing zero-finding document remains unchanged."
+      },
+      "collectedAt": "2026-09-15T20:38:09.778Z"
+    },
+    {
+      "agent_id": "01a0a6c7-65ad-7630-a826-5a5af244364c",
+      "nickname": "Kierkegaard the 4th",
+      "lane": 15,
+      "dispatchAt": "2026-09-15T20:34:40.812Z",
+      "result": {
+        "completed": "Completed the blind review and wrote only:\n\n[review2-15.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-15.md)\n\nThe review reports two concrete reachable defects:\n\n1. `downloadFile()` drops caller supplied `maxBytes` and `timeoutMs` when `expectedSha256` selects the authenticated resumable download path (`launcher/electron/update.cjs:186–196`). The helper falls back to its larger 1 GiB and 60 minute limits.\n\n2. `cancelInstall()` sends `kill()` to the detached updater worker and immediately recursively deletes its temporary root without waiting for process exit (`launcher/electron/update.cjs:566–570`). A worker still waiting, copying, or preparing can race with deletion of `job.json`, modules, archives, or staging files.\n\nNo third issue met the requested standard. No tests, typechecks, scripts, runtime checks, commits, edits to source, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:40:25.592Z"
+    },
+    {
+      "agent_id": "01a0a6c7-664e-7391-aeab-551a0dded5af",
+      "nickname": "Newton the 4th",
+      "lane": 16,
+      "dispatchAt": "2026-09-15T20:34:40.975Z",
+      "result": {
+        "completed": "Review complete and unchanged.\n\n- Read the exact skill file at [/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md](/Users/alex/Dev/nekodex/skills/nekodex-regression-prevention/SKILL.md).\n- Kept the existing source review; did not restart or broaden it.\n- The review remains zero findings.\n- The only written file is [review2-16.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review2-16.md)."
+      },
+      "collectedAt": "2026-09-15T20:38:32.043Z"
+    }
+  ],
+  "end": "2026-09-15T20:40:48.720Z"
+}

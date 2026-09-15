@@ -1,0 +1,24 @@
+{
+  "lane": 7,
+  "fixedRoots": [
+    "L07-queue-reservation",
+    "L07-post-settlement-kill",
+    "L07-force-control-cancel"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "launcher/electron/runtime-supervisor.cjs"
+  ],
+  "notes": [
+    "UTC start: 2026-09-15T20:48:55Z",
+    "UTC end: 2026-09-15T20:51:43Z",
+    "Queue reservation now occurs before proxy-environment resolution; a cancelled waiter retains its slot until the predecessor releases it, and provider/cancellation failure releases an owned slot.",
+    "Each tunnel control child now has a supervisor-owned AbortController; forced shutdown aborts all tracked children, waits within the existing bounded settlement policy, avoids enqueueing a replacement stop while a prior control child is unsettled, and reports remaining children as partial cleanup.",
+    "Removed only stopChild's unconditional SIGKILL after exit/close settlement. Forced termination before settlement and the tunnel-control exit-path descendant cleanup remain intact.",
+    "Public schemas, connector names Native4/Native4 DEV/ZeroRisk4, and external authorization behavior were not changed.",
+    "Manual diff and direct-caller review only; no tests, typechecks, scripts, benchmarks, runtime starts, commits, push, or delegation were performed.",
+    "Required cross-lane integration: review the shared working-tree diff and reconcile this supervisor change with other lanes before parent-owned focused verification; preserve the bounded force-shutdown and queue-ownership semantics when integrating."
+  ]
+}

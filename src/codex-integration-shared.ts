@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { AppConfig, SubagentProtocol } from "./config";
@@ -262,7 +262,8 @@ export interface FileSnapshot {
   path: string;
   exists: boolean;
   data?: Buffer;
-  symlink?: { link: string; target: string; mode: number };
+  identity?: { dev: number; ino: number };
+  symlink?: { link: string; target: string; mode: number; identity: { dev: number; ino: number } };
 }
 
 export interface InstallCodexIntegrationOptions {
@@ -326,16 +327,72 @@ export function snapshotFile(path: string, options?: { followSymlink?: boolean }
       const target = realpathSync(path);
       const targetStat = lstatSync(target);
       if (!targetStat.isFile()) throw new Error(`Codex config symlink target is not a regular file: ${path}`);
-      return { path, exists: true, data: readFileSync(target), symlink: { link, target, mode: targetStat.mode & 0o777 } };
+      return {
+        path,
+        exists: true,
+        data: readFileSync(target),
+        symlink: {
+          link,
+          target,
+          mode: targetStat.mode & 0o777,
+          identity: { dev: targetStat.dev, ino: targetStat.ino },
+        },
+      };
     }
   }
-  return existsSync(path)
-    ? { path, exists: true, data: readFileSync(path) }
-    : { path, exists: false };
+  if (!existsSync(path)) return { path, exists: false };
+  const stat = lstatSync(path);
+  return { path, exists: true, data: readFileSync(path), identity: { dev: stat.dev, ino: stat.ino } };
 }
 
 /** Write the snapshotted config target, never replace its symbolic link or follow a new target. */
-export function writeFileSnapshot(snapshot: FileSnapshot, data: string | Uint8Array): void {
+export function assertFileSnapshotCurrent(snapshot: FileSnapshot): void {
+  const current = snapshotFile(snapshot.path, { followSymlink: Boolean(snapshot.symlink) });
+  if (current.exists !== snapshot.exists
+    || (snapshot.exists && (!current.data?.equals(snapshot.data ?? Buffer.alloc(0)) ||
+      (snapshot.symlink && (!current.symlink || current.symlink.link !== snapshot.symlink.link
+        || current.symlink.target !== snapshot.symlink.target
+        || current.symlink.identity.dev !== snapshot.symlink.identity.dev
+        || current.symlink.identity.ino !== snapshot.symlink.identity.ino))
+      || (!snapshot.symlink && (!current.identity || current.identity.dev !== snapshot.identity?.dev
+        || current.identity.ino !== snapshot.identity?.ino))))) {
+    throw new Error(`Codex integration file changed before the managed mutation; preserving the external edit: ${snapshot.path}`);
+  }
+}
+
+function fileSnapshotsMatch(current: FileSnapshot, expected: FileSnapshot): boolean {
+  if (current.exists !== expected.exists) return false;
+  if (!expected.exists) return true;
+  if (!current.data?.equals(expected.data ?? Buffer.alloc(0))) return false;
+  if (expected.symlink) {
+    return Boolean(current.symlink)
+      && current.symlink!.link === expected.symlink.link
+      && current.symlink!.target === expected.symlink.target
+      && current.symlink!.identity.dev === expected.symlink.identity.dev
+      && current.symlink!.identity.ino === expected.symlink.identity.ino;
+  }
+  return Boolean(current.identity)
+    && current.identity!.dev === expected.identity?.dev
+    && current.identity!.ino === expected.identity?.ino;
+}
+
+export function writeFileSnapshot(
+  snapshot: FileSnapshot,
+  data: string | Uint8Array,
+  options?: { expectedData?: Uint8Array; expectedSnapshot?: FileSnapshot },
+): void {
+  const expectedSnapshot = options?.expectedSnapshot;
+  if (expectedSnapshot || options?.expectedData !== undefined) {
+    const current = snapshotFile(snapshot.path, {
+      followSymlink: Boolean(expectedSnapshot?.symlink ?? snapshot.symlink),
+    });
+    if (expectedSnapshot
+      ? !fileSnapshotsMatch(current, expectedSnapshot)
+      : (!snapshot.exists || !current.exists || !current.data?.equals(options!.expectedData!)
+        || !fileSnapshotsMatch(current, snapshot))) {
+      throw new Error(`Codex integration file changed before the managed write; preserving the external edit: ${snapshot.path}`);
+    }
+  }
   const symlink = snapshot.symlink;
   if (!symlink) {
     atomicWriteFile(snapshot.path, data);
@@ -343,33 +400,65 @@ export function writeFileSnapshot(snapshot: FileSnapshot, data: string | Uint8Ar
   }
   if (!lstatSync(snapshot.path).isSymbolicLink()
     || readlinkSync(snapshot.path) !== symlink.link
-    || realpathSync(snapshot.path) !== symlink.target) {
+    || realpathSync(snapshot.path) !== symlink.target
+    || (() => {
+      const targetStat = lstatSync(realpathSync(snapshot.path));
+      const expectedIdentity = options?.expectedSnapshot?.symlink?.identity ?? symlink.identity;
+      return targetStat.dev !== expectedIdentity.dev || targetStat.ino !== expectedIdentity.ino;
+    })()) {
     throw new Error(`Codex config symlink changed during the operation: ${snapshot.path}`);
   }
   atomicWriteFile(symlink.target, data, { mode: symlink.mode, protectDirectory: false });
 }
 
-export function restoreFileSnapshot(snapshot: FileSnapshot): void {
+export function restoreFileSnapshot(snapshot: FileSnapshot, options?: { expectedCurrent?: FileSnapshot }): void {
   if (snapshot.exists) {
     if (!snapshot.data) throw new Error(`File snapshot is missing data: ${snapshot.path}`);
-    writeFileSnapshot(snapshot, snapshot.data);
+    if (snapshot.symlink && !existsSync(snapshot.path)) {
+      const targetStat = lstatSync(snapshot.symlink.target);
+      if (targetStat.dev !== snapshot.symlink.identity.dev || targetStat.ino !== snapshot.symlink.identity.ino) {
+        throw new Error(`Codex integration symlink target changed before rollback; preserving the external edit: ${snapshot.path}`);
+      }
+      symlinkSync(snapshot.symlink.link, snapshot.path);
+      return;
+    }
+    writeFileSnapshot(snapshot, snapshot.data, { expectedSnapshot: options?.expectedCurrent });
   } else {
+    if (options?.expectedCurrent) {
+      const current = snapshotFile(snapshot.path, { followSymlink: Boolean(options.expectedCurrent.symlink) });
+      if (!fileSnapshotsMatch(current, options.expectedCurrent)) {
+        throw new Error(`Codex integration file changed before rollback removal; preserving the external edit: ${snapshot.path}`);
+      }
+    }
     rmSync(snapshot.path, { force: true });
   }
 }
 
 export function writeFilesWithCompensation(
-  writes: Array<{ path: string; data: string | Uint8Array; followSymlink?: boolean; expectedData?: Uint8Array }>,
+  writes: Array<{
+    path: string;
+    data: string | Uint8Array;
+    followSymlink?: boolean;
+    expectedData?: Uint8Array;
+    managed?: boolean;
+  }>,
   removals: string[] = [],
 ): void {
   const paths = [...new Set([...writes.map(write => write.path), ...removals])];
   const snapshots = new Map(paths.map(path => [path, snapshotFile(path, {
-    followSymlink: writes.some(write => write.path === path && write.followSymlink === true),
+    followSymlink: writes.some(write => write.path === path && write.followSymlink === true)
+      || removals.includes(path),
   })]));
+  const guardedWrites = writes.map(write => ({
+    ...write,
+    expectedSnapshot: write.managed ? snapshots.get(write.path) : undefined,
+  }));
   const startedWrites = new Set<string>();
+  const startedRemovals = new Set<string>();
+  const ownedAfterWrite = new Map<string, FileSnapshot>();
   try {
-    for (const write of writes) {
-      if (write.expectedData) {
+    for (const write of guardedWrites) {
+      if (write.expectedData !== undefined) {
         const snapshot = snapshots.get(write.path)!;
         const current = snapshotFile(write.path, { followSymlink: write.followSymlink });
         if (!snapshot.exists || !snapshot.data?.equals(write.expectedData)
@@ -378,24 +467,36 @@ export function writeFilesWithCompensation(
         }
       }
       startedWrites.add(write.path);
-      writeFileSnapshot(snapshots.get(write.path)!, write.data);
+      writeFileSnapshot(snapshots.get(write.path)!, write.data, {
+        expectedData: write.expectedData,
+        expectedSnapshot: write.expectedSnapshot,
+      });
+      ownedAfterWrite.set(write.path, snapshotFile(write.path, { followSymlink: write.followSymlink }));
     }
-    for (const removal of removals) rmSync(removal, { force: true });
+    for (const removal of removals) {
+      const snapshot = snapshots.get(removal)!;
+      assertFileSnapshotCurrent(snapshot);
+      rmSync(removal, { force: true });
+      startedRemovals.add(removal);
+    }
   } catch (error) {
     const rollbackFailures: string[] = [];
     for (const snapshot of [...snapshots.values()].reverse()) {
       try {
-        const guardedWrite = writes.find(write => write.path === snapshot.path && write.expectedData);
-        if (guardedWrite) {
-          const current = snapshotFile(snapshot.path, { followSymlink: guardedWrite.followSymlink });
-          if (current.exists === snapshot.exists
-            && (current.data?.equals(snapshot.data ?? Buffer.alloc(0)) ?? !snapshot.data)) continue;
-          if (!startedWrites.has(snapshot.path)
-            || !current.exists || !current.data?.equals(Buffer.from(guardedWrite.data))) {
+        if (!startedWrites.has(snapshot.path) && !startedRemovals.has(snapshot.path)) continue;
+        const write = guardedWrites.find(candidate => candidate.path === snapshot.path);
+        const current = snapshotFile(snapshot.path, { followSymlink: Boolean(write?.followSymlink || snapshot.symlink) });
+        if (fileSnapshotsMatch(current, snapshot)) continue;
+        if (startedWrites.has(snapshot.path)) {
+          const owned = ownedAfterWrite.get(snapshot.path);
+          if (!owned || !fileSnapshotsMatch(current, owned)) {
             throw new Error("changed after the managed write; preserving the external edit");
           }
+          restoreFileSnapshot(snapshot, { expectedCurrent: owned });
+        } else if (startedRemovals.has(snapshot.path)) {
+          if (current.exists) throw new Error("changed after the managed removal; preserving the external edit");
+          restoreFileSnapshot(snapshot);
         }
-        restoreFileSnapshot(snapshot);
       } catch (rollbackError) {
         rollbackFailures.push(`${snapshot.path}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
       }
@@ -424,8 +525,8 @@ export function writeIntegrationState(
   // between those writes, the physical config unambiguously selects the completed state.
   writeFilesWithCompensation([
     { path: getCodexJournalRecoveryPath(), data },
-    ...(configWrite ? [{ ...configWrite, followSymlink: true }] : []),
-    ...additionalWrites.map(write => ({ ...write, followSymlink: write.followSymlink ?? true })),
+    ...(configWrite ? [{ ...configWrite, followSymlink: true, managed: true }] : []),
+    ...additionalWrites.map(write => ({ ...write, followSymlink: write.followSymlink ?? true, managed: true })),
     { path: getCodexJournalPath(), data },
   ], removals);
 }

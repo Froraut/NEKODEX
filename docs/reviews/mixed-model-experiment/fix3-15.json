@@ -1,0 +1,29 @@
+{
+  "lane": 15,
+  "fixedRoots": [
+    "L15-tunnel-install-CAS"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L15-connect-stranding"
+  ],
+  "changedFiles": [
+    "src/tunnel.ts",
+    "docs/reviews/mixed-model-experiment/fix3-15.md",
+    "docs/reviews/mixed-model-experiment/fix3-15.json"
+  ],
+  "corrections": [
+    {
+      "root": "L15-tunnel-install-CAS",
+      "trigger": "fix1 released the install lock from finally with a throwing cleanup path, so a lock read/unlink failure could mask a primary write or rollback error or turn a successful install into failure.",
+      "change": "Make owner-token lock release return a bounded cleanup error; preserve primary install/rollback failure, warn without failing after successful installation, and preserve a lock whose ownership token changed.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "This wave records only the new residual correction; fix1 and fix2 changes were retained.",
+    "The lock coordinates cooperating installers only. Arbitrary external editors may ignore it, and executable plus manifest replacement is not one pairwise filesystem transaction.",
+    "No tests, typechecks, scripts, runtime actions, app starts, commits, pushes, or delegation were performed."
+  ]
+}

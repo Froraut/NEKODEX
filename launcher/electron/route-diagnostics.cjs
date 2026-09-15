@@ -1,6 +1,6 @@
 const ISSUE_CODES = new Set([
   "integration-unreadable", "integration-drift", "config-missing", "config-invalid",
-  "config-unreadable", "profile-unavailable", "provider-invalid", "custom-provider",
+  "config-unreadable", "profile-unavailable", "profile-invalid", "profile-unreadable", "provider-invalid", "custom-provider",
   "catalog-override", "route-mismatch", "integration-recovery-pending",
 ]);
 const path = require("node:path");

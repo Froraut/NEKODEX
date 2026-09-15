@@ -33,6 +33,7 @@ async function recoverStartupFailure({
   args = process.argv.slice(1), interactive = true, timeoutMs = 3_000,
 }) {
   let exitCode = 1;
+  let cleaned = false;
   const details = startupFailureDetails(error, phase);
   // Electron otherwise quits when the last window is destroyed. Hold the application
   // only while this native recovery dialog is visible, then unconditionally exit below.
@@ -42,7 +43,7 @@ async function recoverStartupFailure({
     try { recordFailure(details); } catch {}
     // Cleanup cannot hold the single-instance lock indefinitely. A fresh process is the
     // retry boundary; we never rerun start() against partially initialized Electron state.
-    const cleaned = await settleWithin(cleanup, timeoutMs);
+    cleaned = await settleWithin(cleanup, timeoutMs);
     if (!interactive) return { action: "quit", ...details, cleaned };
     const ready = app.isReady() || await settleWithin(() => app.whenReady(), timeoutMs);
     if (!ready) {
@@ -71,7 +72,7 @@ async function recoverStartupFailure({
     return { action: "quit", ...details, cleaned };
   } catch {
     // Native UI failures must not leave an invisible, locked launcher process behind.
-    return { action: "quit", ...details };
+    return { action: "quit", ...details, cleaned };
   } finally {
     app.removeListener("window-all-closed", keepRecoveryAlive);
     app.exit(exitCode);

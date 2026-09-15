@@ -1,0 +1,25 @@
+{
+  "lane": 8,
+  "fixedRoots": [
+    "L08-helper-stdio",
+    "L08-helper-response"
+  ],
+  "partialRoots": [
+    "L08-recovery-error"
+  ],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L08-startup-timeout"
+  ],
+  "changedFiles": [
+    "launcher/electron/browser-helper-verifier.cjs"
+  ],
+  "notes": [
+    "UTC start 2026-09-15T20:50:51Z; UTC end 2026-09-15T20:51:19Z.",
+    "Helper ownership now requires both process exit and stdio close settlement, including the retained forced-termination path.",
+    "Exit failure is deferred until close so a buffered identified final response or helper error can decide the operation first.",
+    "No connector names, public schemas, authorization behavior, or Native4/Native4 DEV/ZeroRisk4 identity checks were changed.",
+    "L08-recovery-error requires lane 5 to change main.cjs; main.cjs was not edited. startup-recovery.cjs was not changed because it cannot observe an error discarded by its caller.",
+    "No tests, typechecks, scripts, benchmarks, runtime/app starts, commits, push, or delegation were performed; parent reserves shared fast verification."
+  ]
+}

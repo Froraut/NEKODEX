@@ -1,0 +1,25 @@
+{
+  "lane": 12,
+  "fixedRoots": [
+    "L12-retry-handoff-cancel",
+    "L12-stream-queue-budget"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/server.ts",
+    "src/bridge.ts",
+    "src/event-queue.ts"
+  ],
+  "notes": [
+    "UTC start 2026-09-15T20:45:00Z; UTC end 2026-09-15T20:52:19Z.",
+    "Streaming retry handoff is created only after bridge translation of response.failed; non-streaming retains the same guarded handoff after collection, and request or client cancellation revokes it.",
+    "Streaming queue enforces the 10000-event count limit and 32 MiB currently queued UTF-8 JSON byte limit; byte accounting is released on dequeue and is not cumulative stream length.",
+    "Late delivery returns after abort and cancellation discards buffered events through the request-owned queue cancellation path.",
+    "Public schemas, connector names Native4/Native4 DEV/ZeroRisk4, and external authorization behavior were not changed.",
+    "Manual source and diff review only; parent reserves focused verification and no tests/typechecks/scripts/benchmarks/runtime/app starts were run.",
+    "Residual limitation: measured JSON bytes exclude runtime object overhead and cannot prevent a callback already executing synchronously from completing.",
+    "Required cross-lane integration: parent must merge these three paths carefully and run the reserved focused cancellation, terminal handoff, byte overflow, and dequeue-release checks."
+  ]
+}

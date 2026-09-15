@@ -276,11 +276,16 @@ async function assertLauncherReady(config: ReturnType<typeof loadConfig>): Promi
   }
 }
 
-async function executeMessage(driver: DevChatDriver, state: DevChatState, message: string): Promise<void> {
+async function executeMessage(
+  driver: DevChatDriver,
+  state: DevChatState,
+  message: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const renderer = new EventRenderer();
   const emit = guardedDevEventEmitter(state, driver.config.mode, event => renderer.write(event));
   try {
-    const result = await driver.send(state, message, emit);
+    const result = await driver.send(state, message, emit, signal);
     renderer.finish();
     stdout.write(`${dim(`usage ${result.usage.inputTokens.toLocaleString("en-US")} input + ${result.usage.outputTokens.toLocaleString("en-US")} output · context ${statusLine(result.status)}`)}\n`);
   } catch (error) {
@@ -292,7 +297,11 @@ async function executeMessage(driver: DevChatDriver, state: DevChatState, messag
 async function interactive(driver: DevChatDriver, state: DevChatState): Promise<void> {
   stdout.write(`${dim("Type a message or /help. Ctrl-C or Ctrl-D exits.")}\n`);
   const reader = createInterface({ input: stdin, output: stdout });
-  reader.on("SIGINT", () => reader.close());
+  let activeAbortController: AbortController | undefined;
+  reader.on("SIGINT", () => {
+    if (activeAbortController) activeAbortController.abort();
+    else reader.close();
+  });
   try {
     for (;;) {
       let line: string;
@@ -302,7 +311,10 @@ async function interactive(driver: DevChatDriver, state: DevChatState): Promise<
       if (!value) continue;
       try {
         if (!value.startsWith("/")) {
-          await executeMessage(driver, state, value);
+          const controller = new AbortController();
+          activeAbortController = controller;
+          try { await executeMessage(driver, state, value, controller.signal); }
+          finally { if (activeAbortController === controller) activeAbortController = undefined; }
           continue;
         }
         const [command, argument, ...rest] = value.slice(1).split(/\s+/);
@@ -322,7 +334,10 @@ async function interactive(driver: DevChatDriver, state: DevChatState): Promise<
           if (rest.length > 0) throw new Error("Usage: /send-fill TOKENS");
           const filler = createDevContextFiller(Number(argument));
           stdout.write(`sending ${filler.tokens.toLocaleString("en-US")} measured synthetic tokens through the live browser\n`);
-          await executeMessage(driver, state, filler.text);
+          const controller = new AbortController();
+          activeAbortController = controller;
+          try { await executeMessage(driver, state, filler.text, controller.signal); }
+          finally { if (activeAbortController === controller) activeAbortController = undefined; }
         } else if (command === "compact") {
           if (argument) throw new Error("Usage: /compact");
           const renderer = new EventRenderer();

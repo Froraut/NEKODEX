@@ -1,0 +1,16 @@
+{
+  "lane": 9,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [],
+  "corrections": [],
+  "notes": [
+    "Final Sol medium correction pass found no new concrete residual error in the owned adapter files.",
+    "Rechecked mcp-server.ts withClaimedTurn, claimTurn, settleTurnActivity, invoke, and all direct registered-tool callers for success, action failure, cancellation, and activity cleanup precedence.",
+    "Rechecked index.ts prepareWith, finishBrowserOutcome, manual cancellation, automatic cancellation, capability retirement, and physicalSettlement ownership for sync/async broker owners and token lifetime.",
+    "Wave1 and wave2 corrections remain correct and were not rewritten; the gateway freeform JSON envelope remains the recorded design limit.",
+    "Parent synchronized route diagnostic codes were left untouched. No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were performed."
+  ]
+}

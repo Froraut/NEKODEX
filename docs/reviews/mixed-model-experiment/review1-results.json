@@ -1,0 +1,168 @@
+{
+  "name": "review1",
+  "model": "gpt-5.6-luna",
+  "start": "2026-09-15T20:28:03.393Z",
+  "agents": [
+    {
+      "agent_id": "01a0a6c1-55dd-7c73-978f-740c6ff104f4",
+      "nickname": "Hubble the 4th",
+      "lane": 1,
+      "dispatchAt": "2026-09-15T20:28:03.596Z",
+      "result": {
+        "completed": "Completed the manual review and wrote only:\n\n[review1-01.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-01.md)\n\nFindings:\n\n1. **P1 — Launchd probe errors are treated as unloaded.**  \n   `getServiceStatus` and `getTunnelServiceStatus` map every nonzero `launchctl print` result to `loaded: false`. Permission, communication, malformed-state, or other unknown failures can therefore make stop, restart, uninstall, and setup skip required lifecycle actions; uninstall may remove a plist while launchd state is unknown.\n\n2. **P1 — Terminal service status probes have no deadline.**  \n   `src/service.ts:getServiceStatus` calls synchronous `spawnSync` through `runCommand` without a timeout. A stalled `launchctl print` bypasses the nominal 20-second unload deadline and can hang status, setup, install, start, restart, stop, uninstall, or drain acquisition indefinitely.\n\n3. **P1 — Service lifecycle mutations are unbounded.**  \n   `launchctl bootstrap` and `bootout` calls in install, start, stop, uninstall, and restart have no subprocess timeout. `bootstrapService` checks its 20-second deadline only between attempts, so one hung invocation blocks forever. During restart, this can prevent the drain lease’s compensating resume path from running.\n\nThe review also records the `loaded` versus process `running` distinction as a design limitation rather than a bug. No source edits, tests, typechecks, scripts, live actions, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:32:03.771Z"
+    },
+    {
+      "agent_id": "01a0a6c1-56bc-72a1-b05b-e27314a8c29b",
+      "nickname": "Russell the 4th",
+      "lane": 2,
+      "dispatchAt": "2026-09-15T20:28:03.785Z",
+      "result": {
+        "completed": "Completed the manual setup transaction review at baseline `9925453bd51e61c7b398abec12ec0da3aca3d3af`.\n\nFindings:\n\n- **Concrete current bugs: 0**\n- **Design limitation:** If `connectTunnel` may have written a profile before failing, setup preserves that profile for manual recovery because ownership cannot be proven. This is deliberate fail-closed behavior, not an established bug.\n- **Confidence:** High for the inspected source path; conclusion is limited to the requested setup transaction, rollback, migration, and direct callers.\n\nReview written to [review1-02.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-02.md).\n\nNo tests, typechecks, scripts, live actions, commits, delegation, or source edits were performed."
+      },
+      "collectedAt": "2026-09-15T20:32:15.618Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5770-7313-9bcd-be255dddae8d",
+      "nickname": "Epicurus the 4th",
+      "lane": 3,
+      "dispatchAt": "2026-09-15T20:28:03.986Z",
+      "result": {
+        "completed": "Completed the manual review and wrote [review1-03.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-03.md).\n\nFindings at baseline `9925453bd51e61c7b398abec12ec0da3aca3d3af`:\n\n1. **High — uninstall can overwrite concurrent config or hooks edits.**  \n   `uninstallCodexIntegration()` snapshots the files, then calls `writeFileSnapshot()` without comparing current bytes to the captured snapshot. A concurrent edit with unchanged symlink identity is silently replaced.\n\n2. **High — uninstall can delete a replacement catalog or models cache.**  \n   The catalog and models cache are removed with unguarded `rmSync()` calls after snapshot capture. A recreated or replaced file can therefore be deleted, and rollback may restore stale bytes over a concurrent replacement.\n\n3. **Medium — normal integration writes do not enforce snapshot ownership.**  \n   `writeFilesWithCompensation()` only performs the current-byte comparison when `expectedData` is supplied, but `writeIntegrationState()` supplies none for its journal, config, or hooks writes. Concurrent edits can be overwritten during setup, activation, deactivation, or protocol replacement.\n\nThe document includes exact locations, executable race triggers, impact, smallest fixes, confidence, inspected scope, non-findings/design limitations, and UTC start/end. No source files were edited; no tests, typechecks, scripts, live actions, commits, or delegation were performed.\n\n"
+      },
+      "collectedAt": "2026-09-15T20:33:42.125Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5834-7d52-aaa3-129183a5f782",
+      "nickname": "Dewey the 4th",
+      "lane": 4,
+      "dispatchAt": "2026-09-15T20:28:04.162Z",
+      "result": {
+        "completed": "Completed the manual diagnostics review and wrote only:\n\n[review1-04.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-04.md)\n\nFindings:\n\n1. **High — `runDoctor()` is not report-total when `inspectCodexIntegration()` throws.** An unreadable or invalid Codex journal aborts the command before it emits the structured report or runs later service, proxy, tunnel, and connector checks.\n\n2. **Medium — malformed selected profiles are misclassified.** `diagnoseCodexConfiguration()` swallows profile TOML parse errors and reports them as generic `profile-unavailable`, losing the distinction between malformed and missing input.\n\n3. **Medium — selected profile read failures are attributed to the root config.** A shared read `try/catch` resets the root configuration and emits `config-unreadable` when only the selected profile is unreadable or non-regular.\n\nThe review includes exact locations, executable triggers, impacts, smallest proposed fixes, confidence, classifications, inspected scope, the report-total design limitation, and UTC start/end timestamps. No source edits, tests, typechecks, scripts, live actions, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:32:29.572Z"
+    },
+    {
+      "agent_id": "01a0a6c1-58e5-7190-8272-da389c400d68",
+      "nickname": "Curie the 4th",
+      "lane": 5,
+      "dispatchAt": "2026-09-15T20:28:04.329Z",
+      "result": {
+        "completed": "Completed the manual review and wrote only [review1-05.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-05.md).\n\nFindings:\n\n1. **High — MCP proof is not bound to the runtime instance.**  \n   `captureAccountProofContext` and `accountProofContextIsCurrent` bind proof to generation, mode, account label, and selected configuration, but omit the managed runtime PID or instance identity. After a runtime restart or replacement with unchanged configuration, the old `mcpSetupComplete` proof can remain positive and the renderer treats it as current tool proof.\n\n2. **High — state loading accepts positive MCP proof without valid schema/account identity.**  \n   `state.cjs:readState` can retain `mcpSetupComplete: true` while deleting or accepting missing `setupContract` and `setupIdentityHash`. The renderer’s `currentToolProof` checks the positive flag without requiring those identity fields, so legacy or malformed persisted state can appear verified.\n\nThe review also records the intentional Manual mode limitation separately: local runtime verification may succeed while connector selection remains an operator step for each turn. It is explicitly represented as a warning and was not counted as a bug.\n\nNo source files were changed. No tests, typechecks, scripts, live actions, commits, or delegation were used."
+      },
+      "collectedAt": "2026-09-15T20:34:15.063Z"
+    },
+    {
+      "agent_id": "01a0a6c1-598c-7a40-acba-2ffd3c16cf4a",
+      "nickname": "Helmholtz the 4th",
+      "lane": 6,
+      "dispatchAt": "2026-09-15T20:28:04.534Z",
+      "result": {
+        "completed": "Completed the manual review at baseline `9925453bd51e61c7b398abec12ec0da3aca3d3af`.\n\nWritten only:\n\n[review1-06.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-06.md)\n\nFindings:\n\n1. **High — capability and connector bypass in selected mode.**  \n   `AccountBrowserPool.chooseAccount()` returns the default account as eligible before checking authentication, requested effort capability, or connector evidence. In selected mode, an unchecked or incapable default account can receive `max`, `xhigh`, `luna`, or connector-bound turns. Smallest fix: remove the default-account early return and apply the same evidence predicates.\n\n2. **High — disabling an account can race with turn acquisition.**  \n   `beginTurn()` chooses an account, awaits `host.ready()`, then starts the turn without rechecking enabled state or capability currentness. Disabling the account during that await still permits a fresh turn to start there. Smallest fix: revalidate account existence, enabled state, and fresh-turn eligibility immediately before `host.beginTurn()`.\n\n3. **Medium — login can start on an account that is no longer selected.**  \n   `openAccountLogin()` awaits selection and then starts login in a later operation; the renderer also performs separate `selectAccount()` and `openAccountLogin()` IPC calls. Another selection can commit between those steps. Smallest fix: make selection plus login pool-owned, or recheck `selectionRevision` and selected account immediately before opening the login surface.\n\nNo tests, typechecks, scripts, live actions, commits, edits outside the requested review file, or delegation were performed.\n\n"
+      },
+      "collectedAt": "2026-09-15T20:33:54.791Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5a7b-7480-a082-27ffbdddd7b1",
+      "nickname": "Pascal the 4th",
+      "lane": 7,
+      "dispatchAt": "2026-09-15T20:28:04.832Z",
+      "result": {
+        "completed": "Completed the manual supervisor review and wrote only:\n\n[review1-07.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-07.md)\n\nFindings:\n\n1. **High — current bug:** `runTunnelCommand` does not preserve invocation order when `tunnelProxyEnvironmentProvider()` calls resolve out of order. Tunnel control commands are queued by provider completion rather than call order, allowing stop/connect/recovery operations to execute in the wrong sequence.\n\n2. **High — current ownership bug on Unix:** `stopChild` unconditionally sends `SIGKILL` to the old process group after the child has already settled. If the PID/process-group ID is reused during that window, shutdown can kill an unrelated process group.\n\n3. **Medium-high — current cancellation bug:** forced shutdown does not cancel or terminate active non-recovery tunnel-control children stored in `tunnelControlChildren`. A force cleanup can remain behind the unresolved queue slot until ordinary command timeout/termination completes.\n\nThe review also distinguishes the external tunnel manager’s inability to prove alias termination from supervisor bugs as a design limitation. No tests, scripts, typechecks, live actions, delegation, commits, or source edits were performed."
+      },
+      "collectedAt": "2026-09-15T20:33:42.186Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5b8c-76a2-b608-ccccafab72cb",
+      "nickname": "Godel the 4th",
+      "lane": 8,
+      "dispatchAt": "2026-09-15T20:28:05.067Z",
+      "result": {
+        "completed": "Completed the manual recovery review and wrote only:\n\n[review1-08.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-08.md)\n\nFindings:\n\n1. **High — helper ownership is released on `exit` before stdio `close`**  \n   `browser-helper-verifier.cjs:waitForExit`, `stopChild`, and `runBrowserHelperOperation` can release the per-descriptor ownership scope while helper pipes remain unsettled. A subsequent helper can start before the previous helper’s stdio has closed.\n\n2. **Medium — a valid final helper response can lose to the child `exit` event**  \n   `runBrowserHelperOperationOnce` immediately converts `exit` into failure. If a valid final result is buffered on stdout and delivered after `exit`, the verification fails even though the helper produced the correct response.\n\nThe startup recovery timeout behavior was documented as a design limitation rather than counted as a bug: cleanup is bounded without cancellation, but the direct caller reports `cleaned: false` and unconditionally exits the failed process.\n\nNo tests, typechecks, scripts, live actions, source edits, commits, or delegation were performed.\n\n"
+      },
+      "collectedAt": "2026-09-15T20:34:15.123Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5c75-72a1-aab5-448399b257d2",
+      "nickname": "Schrodinger the 4th",
+      "lane": 9,
+      "dispatchAt": "2026-09-15T20:28:05.277Z",
+      "result": {
+        "completed": "Completed the manual review and wrote the requested document:\n\n[review1-09.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-09.md)\n\nFindings:\n\n1. **High — primary action errors can be hidden by cleanup errors.**  \n   `withClaimedTurn()` awaits `settleTurnActivity()` in `finally`, so a failed tool action followed by failed activity cleanup returns the cleanup error and discards the original failure. The smallest fix is to retain both errors, keeping the action error primary.\n\n2. **High — nested gateway results with structured content lose their original text shape.**  \n   `execGatewayResultProgram()` emits media separately and serializes the complete MCP envelope into one text block. `brokerResult()` then treats that serialized envelope as the outer `structuredContent`, producing a different schema and replacing ordinary text content with JSON text. The smallest fix is to use a tagged gateway envelope and unwrap it at the broker boundary into the original `content`, `structuredContent`, and `_meta`.\n\nThe review also records the gateway inventory’s generic schema for nested tools as a **design limitation**, separate from the two bugs. No tests, typechecks, scripts, live actions, commits, delegation, or source edits were performed.\n\n"
+      },
+      "collectedAt": "2026-09-15T20:32:57.202Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5d46-75f1-b707-c89e23f42f4f",
+      "nickname": "Mill the 4th",
+      "lane": 10,
+      "dispatchAt": "2026-09-15T20:28:05.503Z",
+      "result": {
+        "completed": "Completed the manual review and wrote only:\n\n[review1-10.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-10.md)\n\nFindings:\n\n1. **High — malformed tool calls are silently accepted.**  \n   `src/dev-chat/driver.ts:229-251` skips call-shaped output with a missing, empty, or non-string `call_id`. `DevChatDriver.send()` can then treat the turn as a successful final response, save malformed history, and generate no receipt. The fix is to fail closed at the parsing boundary and validate bounded IDs, names, arguments, and custom input.\n\n2. **Medium — failed broker startup poisons the broker registry and can bypass cleanup.**  \n   `src/dev-chat/transport.ts:43-44` obtains a broker before `listen()`, while `TurnBroker.start()` leaves rejected instances in the process-wide registry and can retain startup state after failure. Later attempts reuse the rejected promise even after the path is repaired. The fix is transactional startup cleanup with ownership-aware removal and resource cleanup.\n\nThe receipt guard’s FIFO name matching was documented as a design limitation rather than a third bug because the current driver emits each call and result synchronously and preserves the actual `call_id` in the receipt and Responses output.\n\nNo source edits, tests, typechecks, scripts, live actions, commits, delegation, or other wave reports were used."
+      },
+      "collectedAt": "2026-09-15T20:32:46.344Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5e33-7cb1-836d-9dc8a56c2aae",
+      "nickname": "Lovelace the 4th",
+      "lane": 11,
+      "dispatchAt": "2026-09-15T20:28:05.743Z",
+      "result": {
+        "completed": "Completed the manual review for NEKODEX baseline `9925453` and wrote only:\n\n[docs/reviews/mixed-model-experiment/review1-11.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-11.md)\n\nFindings:\n\n1. **High — observation failures are silently treated as an absent response.**  \n   `responseDomSnapshot()` catches every `page.evaluate` failure or timeout and returns `absentResponseDomSnapshot()`. This bypasses the existing observation-fault retry and recovery paths, so an accepted response can be misclassified as missing or stalled.\n\n2. **Medium — hidden descendant Markdown can be emitted as visible answer content.**  \n   `renderedInDom()` checks only the candidate `.markdown` node, not its ancestors. A connected Markdown node inside a hidden, `aria-hidden`, inert, or otherwise suppressed ancestor can enter `visibleText`, `fullHtml`, and `markdownSegments`.\n\nI also recorded the Send activation behavior as a deliberate fail-closed design limitation rather than a bug: automatic replay remains disabled after the submission boundary because replay could duplicate an already accepted prompt or tool action.\n\nNo source edits, tests, typechecks, scripts, live actions, commits, or delegation were performed.\n\n"
+      },
+      "collectedAt": "2026-09-15T20:32:46.403Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5f1a-7370-994b-28273e76d7e1",
+      "nickname": "Descartes the 4th",
+      "lane": 12,
+      "dispatchAt": "2026-09-15T20:28:05.945Z",
+      "result": {
+        "completed": "Completed the manual review and wrote only:\n\n[review1-12.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-12.md)\n\nFindings:\n\n1. **High — retry handoff survives cancellation or non-delivery.**  \n   `src/server.ts:635-654` records a retry continuation immediately after `queue.push(event)`, before `bridgeToResponsesSSE` consumes and delivers the retryable `503`. A client cancellation in that window leaves the handoff available for a later turn, allowing replay of the prior instruction without client-visible retry evidence.\n\n2. **Medium — streaming queue is count-bounded but not byte-bounded.**  \n   `src/server.ts:627` uses the default `AsyncEventQueue` limit of 10,000 events. The 32 MiB event budget at `src/server.ts:638-645` applies only to non-streaming responses. A slow client and large adapter events can therefore retain roughly `10,000 × event payload size` in memory before the queue fails.\n\nAlso documented separately as a design limitation: native passthrough requests have no local operation deadline and may retain HTTP ownership until upstream completion or cancellation settlement.\n\nUTC review window: `2026-09-15T20:28:44Z`–`2026-09-15T20:31:54Z`. No tests, scripts, typechecks, live actions, source edits, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:33:12.582Z"
+    },
+    {
+      "agent_id": "01a0a6c1-5fe1-7c41-9368-3b6a075b61e6",
+      "nickname": "Ohm the 4th",
+      "lane": 13,
+      "dispatchAt": "2026-09-15T20:28:06.199Z",
+      "result": {
+        "completed": "Completed the renderer review and wrote only:\n\n[review1-13.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-13.md)\n\nThe review is anchored to baseline `9925453bd51e61c7b398abec12ec0da3aca3d3af` and includes UTC start/end timestamps.\n\nFindings:\n\n1. **P1 — stale readiness in `Overview()`**  \n   `launcher/src/Overview.tsx:16-18` reports the workspace and tool connection as ready from persisted flags even when the current automatic `runtime-start` operation has failed. `App.tsx` already has a stricter `currentToolProof()` predicate, but Overview does not use it.\n\n2. **P2 — narrow Browser toolbar can clip controls**  \n   `launcher/src/styles.css:661-750` keeps history, zoom, and both text actions in one non-wrapping flex row. The narrow media rules do not adapt this toolbar, so at sufficiently small widths the address field collapses and sign-in actions can be pushed off-screen or become unreachable.\n\nThe review also records the automatic-mode MCP status discrepancy as a design limitation rather than a bug, and states that no third concrete current bug met the requested evidence threshold.\n\nNo source edits, tests, typechecks, scripts, live actions, commits, or delegation were performed.\n\n"
+      },
+      "collectedAt": "2026-09-15T20:33:24.579Z"
+    },
+    {
+      "agent_id": "01a0a6c1-60e2-7a72-9052-512196421c27",
+      "nickname": "Ramanujan the 4th",
+      "lane": 14,
+      "dispatchAt": "2026-09-15T20:28:06.406Z",
+      "result": {
+        "completed": "Completed the manual review and wrote only:\n\n[review1-14.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-14.md)\n\nFindings:\n\n1. **High confidence:** `BrowserHost.closeTab` removes a running Manual mode tab even when `cancelTurn` fails or times out. This destroys the exact browser owner while the runtime may still be active.\n\n2. **High confidence:** authenticated `/v1/manual/cancel` calls `cancelManualTurn`, which marks the turn cancelled and removes its tab without invoking the host’s runtime cancellation callback. It can report successful cancellation while the runtime turn continues.\n\nThe review also records the corrected absent filename, inspected scope, UTC start/end, proposed smallest fixes, and the account/tab selection path as a current non-finding. No source edits, tests, typechecks, scripts, live actions, commits, or delegation were performed.\n\n"
+      },
+      "collectedAt": "2026-09-15T20:33:24.637Z"
+    },
+    {
+      "agent_id": "01a0a6c1-61ae-7181-bace-cb38b053c723",
+      "nickname": "Hooke the 4th",
+      "lane": 15,
+      "dispatchAt": "2026-09-15T20:28:06.631Z",
+      "result": {
+        "completed": "Completed the manual review and wrote only:\n\n[review1-15.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-15.md)\n\nThe review covers baseline `9925453`, `src/tunnel.ts`, the corrected updater files, and the direct lifecycle callers. It records three concrete findings:\n\n1. **High:** `cancelInstall()` kills the detached updater worker without waiting for termination, then deletes its temporary inputs. The update can continue after cancellation or race partially deleted files.\n\n2. **High:** `installTunnelClient()` performs a final installation snapshot and then writes the binary and manifest without an atomic ownership check. A concurrent edit can be overwritten.\n\n3. **Medium:** A tunnel runtime can be left running when `runtimes connect` starts external state but times out or fails before returning, because setup cleanup is gated on `connectReturned`.\n\nUTC review window recorded in the document: `2026-09-15T20:28:45Z`–`2026-09-15T20:32:24Z`. No tests, typechecks, scripts, live actions, source edits, commits, or delegation were performed."
+      },
+      "collectedAt": "2026-09-15T20:32:46.460Z"
+    },
+    {
+      "agent_id": "01a0a6c1-628e-7d30-bfa2-e6d4c12e5dcc",
+      "nickname": "Beauvoir the 4th",
+      "lane": 16,
+      "dispatchAt": "2026-09-15T20:28:06.864Z",
+      "result": {
+        "completed": "Completed the manual review and wrote only:\n\n[review1-16.md](/Users/alex/Dev/nekodex/docs/reviews/mixed-model-experiment/review1-16.md)\n\nFinding:\n\n- **Medium, high confidence:** `src/config.ts` accepts whitespace-padded connector identities such as `\"Codex Native3 \"`. Its exact-string legacy checks and migration logic miss the retired identity, while Electron’s `validateConnectorName()` trims it and then treats it as legacy. This creates inconsistent identity resolution between the TypeScript runtime and launcher paths and can strand or reject the configuration. Smallest fix: canonicalize or reject padded connector fields before migration and equality checks.\n\nNo second independent concrete bug was found within the requested scope. The review document records the inspected files, design boundary, verification limits, and UTC start/end times. No tests, typechecks, scripts, live actions, source edits, commits, or delegation were performed.\n\n"
+      },
+      "collectedAt": "2026-09-15T20:32:15.676Z"
+    }
+  ],
+  "end": "2026-09-15T20:34:38.442Z"
+}

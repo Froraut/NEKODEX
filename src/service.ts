@@ -3,9 +3,11 @@ import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { AppConfig } from "./config";
 import { assertDurableRuntimeCommand, atomicWriteFile, getConfigDir } from "./config";
-import { runCommand, runChecked } from "./process";
+import { isMissingLaunchdService, runCommand, runChecked } from "./process";
 
 const LABEL = "io.github.codex-chatgpt-web.daemon";
+const LAUNCHCTL_STATUS_TIMEOUT_MS = 5_000;
+const LAUNCHCTL_MUTATION_TIMEOUT_MS = 20_000;
 
 export interface ServiceStatus {
   supported: boolean;
@@ -40,9 +42,14 @@ async function bootstrapService(path: string, timeoutMs = 20_000): Promise<void>
   const deadline = Date.now() + timeoutMs;
   let lastError = "unknown launchctl bootstrap failure";
   while (Date.now() < deadline) {
-    const result = runCommand("launchctl", ["bootstrap", launchDomain(), path]);
-    if (result.status === 0) return;
-    lastError = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
+    const remaining = Math.max(1, deadline - Date.now());
+    try {
+      const result = runCommand("launchctl", ["bootstrap", launchDomain(), path], { timeout: remaining });
+      if (result.status === 0) return;
+      lastError = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
     await new Promise(resolveWait => setTimeout(resolveWait, 100));
   }
   throw new Error(`launchctl bootstrap ${launchDomain()} ${path} failed after ${timeoutMs}ms: ${lastError}`);
@@ -50,10 +57,12 @@ async function bootstrapService(path: string, timeoutMs = 20_000): Promise<void>
 
 async function waitForServiceUnloaded(timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (getServiceStatus().loaded && Date.now() < deadline) {
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`launchd did not unload ${LABEL} after ${timeoutMs}ms`);
+    if (!getServiceStatus(Math.min(LAUNCHCTL_STATUS_TIMEOUT_MS, remaining)).loaded) return;
     await new Promise(resolveWait => setTimeout(resolveWait, 50));
   }
-  if (getServiceStatus().loaded) throw new Error(`launchd did not unload ${LABEL} after ${timeoutMs}ms`);
 }
 
 function plist(config: AppConfig): string {
@@ -100,10 +109,14 @@ function assertMacOs(): void {
   }
 }
 
-export function getServiceStatus(): ServiceStatus {
+export function getServiceStatus(printTimeoutMs = LAUNCHCTL_STATUS_TIMEOUT_MS): ServiceStatus {
   if (process.platform !== "darwin") return { supported: false, installed: false, loaded: false, label: LABEL };
   const path = plistPath();
-  const result = runCommand("launchctl", ["print", serviceTarget()]);
+  const result = runCommand("launchctl", ["print", serviceTarget()], { timeout: printTimeoutMs });
+  if (result.status !== 0 && !isMissingLaunchdService(result)) {
+    const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
+    throw new Error(`Unable to determine launchd service status for ${LABEL}: ${detail}`);
+  }
   return {
     supported: true,
     installed: existsSync(path),
@@ -131,7 +144,7 @@ export function installService(
     atomicWriteFile(path, next);
     onDefinitionWritten?.({ path, data: next });
   }
-  if (!current.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), path]);
+  if (!current.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), path], { timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS });
   return getServiceStatus();
 }
 
@@ -140,7 +153,7 @@ export function startService(): ServiceStatus {
   const path = plistPath();
   if (!existsSync(path)) throw new Error(`Service is not installed: ${path}`);
   const status = getServiceStatus();
-  if (!status.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), path]);
+  if (!status.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), path], { timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS });
   return getServiceStatus();
 }
 
@@ -284,7 +297,7 @@ export async function restartService(config: AppConfig): Promise<ServiceStatus> 
   if (!getServiceStatus().loaded) return startService();
   const lease = await acquireDrain(config);
   try {
-    runChecked("launchctl", ["bootout", serviceTarget()]);
+    runChecked("launchctl", ["bootout", serviceTarget()], { timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS });
     await waitForServiceUnloaded();
     await bootstrapService(plistPath());
   } catch (error) {
@@ -308,7 +321,7 @@ export async function stopService(config: AppConfig): Promise<ServiceStatus> {
   if (getServiceStatus().loaded) {
     const lease = await acquireDrain(config);
     try {
-      runChecked("launchctl", ["bootout", serviceTarget()]);
+      runChecked("launchctl", ["bootout", serviceTarget()], { timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS });
       await waitForServiceUnloaded();
     } catch (error) {
       return releaseDrainAfterFailure(lease, error);
@@ -322,7 +335,7 @@ export async function uninstallService(config: AppConfig): Promise<ServiceStatus
   if (getServiceStatus().loaded) {
     const lease = await acquireDrain(config);
     try {
-      runChecked("launchctl", ["bootout", serviceTarget()]);
+      runChecked("launchctl", ["bootout", serviceTarget()], { timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS });
       await waitForServiceUnloaded();
     } catch (error) {
       return releaseDrainAfterFailure(lease, error);

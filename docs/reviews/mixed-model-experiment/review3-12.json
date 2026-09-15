@@ -1,0 +1,60 @@
+{
+  "lane": 12,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L12-retry-handoff-cancel",
+      "reason": "rememberRetryableTurnFailure runs after queue.push but before bridgeToResponsesSSE processes the terminal event; cancellation aborts and closes the iterator without revoking the stored handoff, while later exact source-hash guards can still accept it as a successor."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L12-stream-queue-budget",
+      "reason": "The streaming queue is limited to 10000 objects, but the 32 MiB event-byte budget is skipped for streaming and individual AdapterEvent payloads are not bounded, so retained memory is not byte-bounded."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L12-stream-queue-budget",
+      "reason": "The report's literal unbounded-count wording is narrowed because AsyncEventQueue caps buffered count at 10000; the actionable defect remains: deliverEvent lacks an abort guard and can retain late post-cancel payloads up to that cap without a byte budget."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L12-retry-handoff-cancel",
+      "title": "Retry handoff survives cancellation before streamed terminal delivery",
+      "severity": "P1",
+      "files": [
+        "src/server.ts",
+        "src/bridge.ts",
+        "src/adapters/chatgpt-web/retry-continuation.ts"
+      ],
+      "trigger": "A retryable 503 error is queued, then the HTTP stream is cancelled before bridgeToResponsesSSE processes and emits response.failed; the stored handoff remains available to a later exact-source successor.",
+      "fix": "Create the retry handoff only from the bridge's processed terminal-event boundary and revoke any pending handoff when request cancellation wins before that boundary.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    },
+    {
+      "id": "L12-stream-queue-budget",
+      "title": "Streaming adapter queue lacks cancellation and byte bounds",
+      "severity": "P2",
+      "files": [
+        "src/server.ts",
+        "src/event-queue.ts",
+        "src/bridge.ts"
+      ],
+      "trigger": "A slow or cancelled streaming client leaves a non-cooperating adapter callback delivering large AdapterEvent objects; the callback lacks an abort guard and the streaming queue enforces count only, retaining up to 10000 objects with unrestricted payload bytes.",
+      "fix": "Return immediately from delivery after request abort, close or fail the queue through the cancellation owner, and enforce a streaming byte budget alongside the existing event-count limit.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    }
+  ]
+}

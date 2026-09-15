@@ -1,0 +1,26 @@
+{
+  "lane": 10,
+  "fixedRoots": [
+    "L10-broker-startup-rollback"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/adapters/chatgpt-web/turn-broker.ts"
+  ],
+  "corrections": [
+    {
+      "root": "L10-broker-startup-rollback",
+      "trigger": "After fix1 startup failure or a stale broker instance could reach close() with a socket path that no longer belonged to that broker, while close() removed any existing socket-shaped path.",
+      "change": "Retain the successful startup socket dev/ino identity, unlink only when the current socket still matches it, conditionally remove the registry entry by instance, and bind late startup rollback state clearing to its attempt token.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Fix1 source changes were present before this wave; Terra made no source changes and no source changes from other lanes were claimed.",
+    "src/dev-chat/driver.ts, src/dev-chat/cli.ts, and src/dev-chat/transport.ts were reviewed and left unchanged to preserve the optional AbortSignal and custom/freeform string ABI.",
+    "Manual source review only. No tests, typechecks, scripts, broad audits, runtime starts, app starts, commits, pushes, or delegation were run.",
+    "Parent integration must review concurrent edits and perform the parent-owned focused broker, malformed-call, and Ctrl-C checks."
+  ]
+}

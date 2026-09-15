@@ -1,0 +1,21 @@
+{
+  "lane": 10,
+  "fixedRoots": ["L10-broker-startup-rollback"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": ["src/adapters/chatgpt-web/turn-broker.ts"],
+  "corrections": [
+    {
+      "root": "L10-broker-startup-rollback",
+      "trigger": "The server.listen success callback could throw during socket identity capture or permission setup after creating the listener, leaving startup pending and bypassing transactional rollback.",
+      "change": "Wrap post-listen setup and resolve in a try/catch that rejects the startup attempt with the original setup error, allowing the existing attempt-scoped close and identity-checked cleanup to run.",
+      "introducedBy": "fix2"
+    }
+  ],
+  "notes": [
+    "Manual source review only; no tests, typechecks, scripts, broad audits, runtime or app starts, commits, pushes, or delegation were run.",
+    "Custom/freeform string input ABI, connector identities, optional AbortSignal compatibility, and parent-owned diagnostics/tests were preserved.",
+    "No additional residual correction was evidenced in driver.ts, cli.ts, or transport.ts."
+  ]
+}

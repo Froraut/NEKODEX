@@ -29,13 +29,21 @@ const safeName = (value: unknown): string | null => typeof value === "string" &&
 /** Report configured routing without returning TOML, provider URLs, credentials, or mutating it. */
 export function diagnoseCodexConfiguration(
   text: string | null,
-  { codexHome, profile, profileText, integration }: { codexHome: string; profile?: string; profileText?: string; integration: IntegrationInspection | null },
+  { codexHome, profile, profileText, profileReadError, integration }: {
+    codexHome: string;
+    profile?: string;
+    profileText?: string;
+    profileReadError?: boolean;
+    integration: IntegrationInspection | null;
+  },
 ): CodexRouteDiagnostics {
   const result: CodexRouteDiagnostics = {
     schemaVersion: 1,
     codexHome: resolve(codexHome), configPath: join(resolve(codexHome), "config.toml"),
-    profilePath: profile && profileText !== undefined && safeName(profile) ? join(resolve(codexHome), `${profile}.config.toml`) : null,
-    configStatus: text === null && profileText === undefined ? "missing" : "loaded", profile: null, provider: "openai",
+    profilePath: profile && safeName(profile) && (profileText !== undefined || profileReadError)
+      ? join(resolve(codexHome), `${profile}.config.toml`)
+      : null,
+    configStatus: text === null ? "missing" : "loaded", profile: null, provider: "openai",
     providerSource: "default", customProvider: false, modelCatalogOverride: false,
     installed: integration?.installed ?? null, active: integration?.active ?? null,
     routeMatches: null, issueCodes: [],
@@ -43,7 +51,7 @@ export function diagnoseCodexConfiguration(
   if (!integration) result.issueCodes.push("integration-unreadable");
   else if (integration.errors.length) result.issueCodes.push("integration-drift");
   if (integration?.recoveryPending) result.issueCodes.push("integration-recovery-pending");
-  if (text === null && profileText === undefined && profile === undefined) {
+  if (text === null) {
     result.issueCodes.push("config-missing");
     return result;
   }
@@ -64,12 +72,19 @@ export function diagnoseCodexConfiguration(
   let effective = config;
   if (selected !== undefined) {
     result.profile = safeName(selected);
+    if (profileReadError) {
+      result.provider = null;
+      result.providerSource = "unknown";
+      result.issueCodes.push("profile-unreadable");
+      return result;
+    }
     let overlay: unknown;
-    try { overlay = profileText === undefined ? undefined : Bun.TOML.parse(profileText.replace(/^\uFEFF/, "")); } catch { /* Generic profile error only. */ }
+    let profileInvalid = false;
+    try { overlay = profileText === undefined ? undefined : Bun.TOML.parse(profileText.replace(/^\uFEFF/, "")); } catch { profileInvalid = true; }
     if (!result.profile || !object(overlay)) {
       result.provider = null;
       result.providerSource = "unknown";
-      result.issueCodes.push("profile-unavailable");
+      result.issueCodes.push(profileInvalid || profileText !== undefined ? "profile-invalid" : "profile-unavailable");
       return result;
     }
     effective = { ...config, ...overlay };
@@ -122,13 +137,8 @@ export function readCodexRouteDiagnostics(options: {
     }
   } catch { /* Do not repair journals or include their contents in diagnostics. */ }
   let text: string | null = null;
-  let profileText: string | undefined;
   try {
     if (existsSync(configPath)) text = readBoundedUtf8File(configPath);
-    if (options.profile && safeName(options.profile)) {
-      const profilePath = join(home, `${options.profile}.config.toml`);
-      if (existsSync(profilePath)) profileText = readBoundedUtf8File(profilePath);
-    }
   } catch {
     const result = diagnoseCodexConfiguration(null, { codexHome: home, profile: options.profile, integration });
     result.configStatus = "unreadable";
@@ -137,5 +147,16 @@ export function readCodexRouteDiagnostics(options: {
     result.issueCodes = result.issueCodes.filter(code => code !== "config-missing").concat("config-unreadable");
     return result;
   }
-  return diagnoseCodexConfiguration(text, { codexHome: home, profile: options.profile, profileText, integration });
+
+  let profileText: string | undefined;
+  let profileReadError = false;
+  try {
+    if (options.profile && safeName(options.profile)) {
+      const profilePath = join(home, `${options.profile}.config.toml`);
+      if (existsSync(profilePath)) profileText = readBoundedUtf8File(profilePath);
+    }
+  } catch {
+    profileReadError = true;
+  }
+  return diagnoseCodexConfiguration(text, { codexHome: home, profile: options.profile, profileText, profileReadError, integration });
 }

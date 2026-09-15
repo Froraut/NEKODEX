@@ -1,0 +1,103 @@
+{
+  "name": "review2",
+  "model": "gpt-5.6-luna",
+  "start": "2026-09-15T20:34:38.564Z",
+  "agents": [
+    {
+      "agent_id": "01a0a6c7-5d82-7371-aa3e-e3d66bf38d11",
+      "nickname": "Rawls the 4th",
+      "lane": 1,
+      "dispatchAt": "2026-09-15T20:34:38.702Z"
+    },
+    {
+      "agent_id": "01a0a6c7-5e0a-7670-99e7-6bda5f1eb221",
+      "nickname": "Goodall the 4th",
+      "lane": 2,
+      "dispatchAt": "2026-09-15T20:34:38.840Z"
+    },
+    {
+      "agent_id": "01a0a6c7-5e95-7bd3-8bd6-d31ee1cd0b20",
+      "nickname": "Planck the 4th",
+      "lane": 3,
+      "dispatchAt": "2026-09-15T20:34:39.005Z"
+    },
+    {
+      "agent_id": "01a0a6c7-5f40-7c92-8d7c-95b267852946",
+      "nickname": "McClintock the 4th",
+      "lane": 4,
+      "dispatchAt": "2026-09-15T20:34:39.162Z"
+    },
+    {
+      "agent_id": "01a0a6c7-5fd7-7e61-bab6-2c62e560b11d",
+      "nickname": "Peirce the 4th",
+      "lane": 5,
+      "dispatchAt": "2026-09-15T20:34:39.302Z"
+    },
+    {
+      "agent_id": "01a0a6c7-6063-7ee2-b7d1-8b451e1c6399",
+      "nickname": "Hume the 4th",
+      "lane": 6,
+      "dispatchAt": "2026-09-15T20:34:39.437Z"
+    },
+    {
+      "agent_id": "01a0a6c7-60ed-7d30-ac6c-fcf005ffa992",
+      "nickname": "Darwin the 4th",
+      "lane": 7,
+      "dispatchAt": "2026-09-15T20:34:39.583Z"
+    },
+    {
+      "agent_id": "01a0a6c7-6183-7ad2-9bcc-8d9c8ece9e6e",
+      "nickname": "Banach the 4th",
+      "lane": 8,
+      "dispatchAt": "2026-09-15T20:34:39.752Z"
+    },
+    {
+      "agent_id": "01a0a6c7-622b-7d40-a5b8-3c9f4ca0d4ad",
+      "nickname": "Lorentz the 4th",
+      "lane": 9,
+      "dispatchAt": "2026-09-15T20:34:39.908Z"
+    },
+    {
+      "agent_id": "01a0a6c7-62c1-7273-acaf-3d1cb806fbe1",
+      "nickname": "Harvey the 4th",
+      "lane": 10,
+      "dispatchAt": "2026-09-15T20:34:40.047Z"
+    },
+    {
+      "agent_id": "01a0a6c7-634c-75a0-8f08-93d3e182ca0d",
+      "nickname": "Archimedes the 4th",
+      "lane": 11,
+      "dispatchAt": "2026-09-15T20:34:40.194Z"
+    },
+    {
+      "agent_id": "01a0a6c7-63e3-71f1-a4c6-422582075dd2",
+      "nickname": "Hegel the 4th",
+      "lane": 12,
+      "dispatchAt": "2026-09-15T20:34:40.342Z"
+    },
+    {
+      "agent_id": "01a0a6c7-6475-7372-afa2-8c17a397288f",
+      "nickname": "Sartre the 4th",
+      "lane": 13,
+      "dispatchAt": "2026-09-15T20:34:40.483Z"
+    },
+    {
+      "agent_id": "01a0a6c7-6504-71e2-ba5e-31fa6eba6ade",
+      "nickname": "Bohr the 4th",
+      "lane": 14,
+      "dispatchAt": "2026-09-15T20:34:40.647Z"
+    },
+    {
+      "agent_id": "01a0a6c7-65ad-7630-a826-5a5af244364c",
+      "nickname": "Kierkegaard the 4th",
+      "lane": 15,
+      "dispatchAt": "2026-09-15T20:34:40.812Z"
+    },
+    {
+      "agent_id": "01a0a6c7-664e-7391-aeab-551a0dded5af",
+      "nickname": "Newton the 4th",
+      "lane": 16,
+      "dispatchAt": "2026-09-15T20:34:40.975Z"
+    }
+  ]
+}

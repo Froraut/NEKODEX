@@ -193,6 +193,7 @@ async function downloadFile(url, destination, {
 } = {}) {
   if (expectedSha256) return downloadAuthenticatedAsset(url, destination, {
     expectedBytes, expectedSha256, onProgress, requestDownload,
+    maxBytes, totalTimeoutMs: timeoutMs,
   });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error("Update download exceeded its time limit")), timeoutMs);
@@ -563,11 +564,28 @@ function createUpdateController({
     }
   }
 
-  function cancelInstall(launch) {
-    try { launch?.child?.kill(); } catch {}
-    if (launch?.tempRoot) {
+  async function cancelInstall(launch) {
+    let settled = !launch?.child;
+    const child = launch?.child;
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise(resolve => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        child.once?.("close", finish);
+        child.once?.("exit", finish);
+        setTimeout(finish, 5_000);
+      });
+      try { child.kill(); } catch (error) {
+        if (error?.code !== "ESRCH") logger?.warn("launcher.update_cancel_failed", { message: String(error) });
+      }
+      await exited;
+      settled = child.exitCode !== null || child.signalCode !== null;
+    }
+    if (launch?.tempRoot && settled) {
       try { fs.rmSync(launch.tempRoot, { recursive: true, force: true }); }
       catch (error) { logger?.warn("launcher.update_cleanup_failed", { message: String(error) }); }
+    } else if (launch?.tempRoot) {
+      logger?.warn("launcher.update_cancel_unsettled", { tempRoot: launch.tempRoot, pid: child?.pid });
     }
     if (candidate) transition({ status: "available", version: candidate.version });
   }

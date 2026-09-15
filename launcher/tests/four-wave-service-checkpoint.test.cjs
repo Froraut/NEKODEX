@@ -15,6 +15,10 @@ test('service installers report owned plist bytes before a bootstrap failure', (
   fs.writeFileSync(path.join(profile, 'test.yaml'), 'fixture');
   const config = { runtimeCommand: ['/stable/synthetic-runtime'], mode: 'full',
     tunnel: { binaryPath: binary, profileDir: profile, profileName: 'test' } };
+  const processModule = { exports: {} };
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../../src/process.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 },
+  }).outputText, { module: processModule, exports: processModule.exports, require });
   try {
     for (const [sourceFile, method] of [['service.ts', 'installService'], ['tunnel-service.ts', 'installTunnelService']]) {
       const loaded = { exports: {} };
@@ -22,6 +26,7 @@ test('service installers report owned plist bytes before a bootstrap failure', (
       const code = ts.transpileModule(source, { compilerOptions: {
         module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023,
       } }).outputText;
+      let probe = { status: 1, stdout: '', stderr: 'Permission denied' };
       vm.runInNewContext(code, { module: loaded, exports: loaded.exports,
         process: { platform: 'darwin' },
         require(name) {
@@ -31,13 +36,23 @@ test('service installers report owned plist bytes before a bootstrap failure', (
             atomicWriteFile(file, data) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); },
           };
           if (name === './process') return {
-            runCommand: () => ({ status: 1, stdout: '', stderr: '' }),
-            runChecked() { throw new Error('synthetic bootstrap failure'); },
+            isMissingLaunchdService: processModule.exports.isMissingLaunchdService,
+            runCommand(_command, _args, options) {
+              assert.ok(options.timeout > 0 && options.timeout <= 20_000);
+              return probe;
+            },
+            runChecked(_command, _args, options) {
+              assert.ok(options.timeout > 0 && options.timeout <= 20_000);
+              throw new Error('synthetic bootstrap failure');
+            },
           };
           return require(name);
         },
       });
       let checkpoint;
+      assert.throws(() => loaded.exports[method](config, definition => { checkpoint = definition; }), /Permission denied|determine|unknown/i);
+      assert.equal(checkpoint, undefined);
+      probe = { status: 113, stdout: '', stderr: 'Bad request.\nCould not find service "fixture" in domain for user gui: 501\n' };
       assert.throws(() => loaded.exports[method](config, definition => {
         checkpoint = definition;
         assert.equal(fs.readFileSync(definition.path, 'utf8'), definition.data);

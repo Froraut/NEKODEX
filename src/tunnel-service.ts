@@ -3,10 +3,11 @@ import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { AppConfig } from "./config";
 import { atomicWriteFile, getConfigDir } from "./config";
-import { runCommand, runChecked } from "./process";
+import { isMissingLaunchdService, runCommand, runChecked } from "./process";
 
 const LABEL = "io.github.codex-chatgpt-web.tunnel";
 const LAUNCHCTL_PRINT_TIMEOUT_MS = 5_000;
+const LAUNCHCTL_MUTATION_TIMEOUT_MS = 20_000;
 
 export interface TunnelServiceStatus {
   supported: boolean;
@@ -101,10 +102,13 @@ export function getTunnelServiceStatus(
   }
   const path = plistPath();
   // A stalled probe must not bypass the unload poll's elapsed-time check.
-  // runCommand throws on ETIMEDOUT; an ordinary nonzero print still means unloaded.
   const result = runCommand("launchctl", ["print", serviceTarget()],
     { timeout: printTimeoutMs, signal });
   throwIfAborted(signal);
+  if (result.status !== 0 && !isMissingLaunchdService(result)) {
+    const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
+    throw new Error(`Unable to determine launchd service status for ${LABEL}: ${detail}`);
+  }
   return {
     supported: true,
     installed: existsSync(path),
@@ -146,7 +150,10 @@ export function installTunnelService(
   }
   if (!current.loaded) {
     throwIfAborted(signal);
-    runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()], { signal });
+    runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()], {
+      signal,
+      timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS,
+    });
   }
   return getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
 }
@@ -157,7 +164,10 @@ export function startTunnelService(signal?: AbortSignal): TunnelServiceStatus {
   if (!existsSync(plistPath())) throw new Error("Tunnel service is not installed; rerun full setup");
   if (!getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal).loaded) {
     throwIfAborted(signal);
-    runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()], { signal });
+    runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()], {
+      signal,
+      timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS,
+    });
   }
   return getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
 }
@@ -193,7 +203,10 @@ export async function stopTunnelService(signal?: AbortSignal): Promise<TunnelSer
   assertMacOs();
   throwIfAborted(signal);
   if (getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal).loaded) {
-    runChecked("launchctl", ["bootout", serviceTarget()], { signal });
+    runChecked("launchctl", ["bootout", serviceTarget()], {
+      signal,
+      timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS,
+    });
     await waitForTunnelServiceUnloaded(20_000, signal);
   }
   return getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);

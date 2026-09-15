@@ -753,8 +753,15 @@ export function createChatGptWebAdapter(
         }
         return { ...compiled, release: () => {} };
       } catch (error) {
-        await broker.revoke(turnToken);
-        activeToken = undefined;
+        try {
+          await broker.revoke(turnToken);
+          activeToken = undefined;
+        } catch (revokeError) {
+          throw new AggregateError(
+            [error, revokeError],
+            "ChatGPT browser preparation failed and its broker turn could not be revoked",
+          );
+        }
         throw error;
       }
     };
@@ -1322,8 +1329,26 @@ export function createChatGptWebAdapter(
                 emitNewText(session.runtime.text.drain());
                 session.setFinalReasoning(roundReasoning);
                 session.setFinalEvents(session.roundEvents(roundKey));
-                if (turnToken) await broker.revoke(turnToken);
-                if (completedOutcome.type === "error") throw completedOutcome.error;
+                let revokeFailed = false;
+                let revokeError: unknown;
+                if (turnToken) {
+                  try {
+                    await broker.revoke(turnToken);
+                  } catch (error) {
+                    revokeFailed = true;
+                    revokeError = error;
+                  }
+                }
+                if (completedOutcome.type === "error") {
+                  if (revokeFailed) {
+                    throw new AggregateError(
+                      [completedOutcome.error, revokeError],
+                      "ChatGPT browser outcome failed and its broker turn could not be revoked",
+                    );
+                  }
+                  throw completedOutcome.error;
+                }
+                if (revokeFailed) throw revokeError;
                 if (session.runtime.text.value() !== completedOutcome.answer) {
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
                 }

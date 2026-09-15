@@ -1,0 +1,211 @@
+{
+  "secondsUsed": 4.028166833,
+  "namedCases": 5,
+  "expandedCases": 8,
+  "launchdReadOnlyObservations": 1,
+  "checks": [
+    {
+      "name": "focused-account",
+      "command": [
+        "node",
+        "--test",
+        "--test-name-pattern=^mixed-model: disabling an account during readiness prevents a fresh turn$",
+        "tests/multi-account-routing.test.cjs"
+      ],
+      "exit": 1,
+      "seconds": 0.073738417,
+      "output": "TAP version 13\n# Subtest: mixed-model: disabling an account during readiness prevents a fresh turn\nnot ok 1 - mixed-model: disabling an account during readiness prevents a fresh turn\n  ---\n  duration_ms: 3.221042\n  type: 'test'\n  location: '/Users/alex/Dev/nekodex/tests/multi-account-routing.test.cjs:52:1'\n  failureType: 'unhandledRejection'\n  error: \"Cannot read properties of undefined (reading 'get')\"\n  code: 'ERR_TEST_FAILURE'\n  name: 'TypeError'\n  stack: |-\n    AccountBrowserPool.evidenceEpoch (evalmachine.<anonymous>:102:50)\n    AccountBrowserPool.beginTurn (evalmachine.<anonymous>:486:33)\n    TestContext.<anonymous> (/Users/alex/Dev/nekodex/tests/multi-account-routing.test.cjs:62:24)\n    Test.runInAsyncScope (node:async_hooks:214:14)\n    Test.run (node:internal/test_runner/test:1047:25)\n    Test.start (node:internal/test_runner/test:944:17)\n    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 0\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 44.821334\n"
+    },
+    {
+      "name": "focused-service",
+      "command": [
+        "node",
+        "--test",
+        "--test-name-pattern=^service installers report owned plist bytes before a bootstrap failure$",
+        "launcher/tests/four-wave-service-checkpoint.test.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.216601833,
+      "output": "TAP version 13\n# Subtest: service installers report owned plist bytes before a bootstrap failure\nok 1 - service installers report owned plist bytes before a bootstrap failure\n  ---\n  duration_ms: 64.951167\n  type: 'test'\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 188.20525\n"
+    },
+    {
+      "name": "focused-queue-broker-rollback",
+      "command": [
+        "/Applications/NEKODEX.app/Contents/Resources/runtime/runtime/bun",
+        "test",
+        "tests/mixed-model-queue.test.ts",
+        "tests/mixed-model-broker.test.ts",
+        "tests/mixed-model-rollback.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.076849167,
+      "output": "bun test v1.4.0 (34cbb9a40)\n\ntests/mixed-model-queue.test.ts:\n(pass) mixed-model: streaming backlog releases its byte budget and discards cancelled delivery [5.08ms]\n\ntests/mixed-model-rollback.test.ts:\n(pass) mixed-model: a later write failure restores the owned symlink target [7.05ms]\n\ntests/mixed-model-broker.test.ts:\n(pass) mixed-model: failed broker acquisition preserves a foreign socket and permits retry [10.78ms]\n\n 3 pass\n 0 fail\n 13 expect() calls\nRan 3 tests across 3 files. [63.00ms]\n"
+    },
+    {
+      "name": "backend-typecheck",
+      "command": [
+        "node",
+        "node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ],
+      "exit": 0,
+      "seconds": 2.268975916,
+      "output": ""
+    },
+    {
+      "name": "launcher-typecheck",
+      "command": [
+        "node",
+        "node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ],
+      "exit": 0,
+      "seconds": 0.9995520419999999,
+      "output": ""
+    },
+    {
+      "name": "focused-account-retry",
+      "command": [
+        "node",
+        "--test",
+        "--test-name-pattern=^mixed-model: disabling an account during readiness prevents a fresh turn$",
+        "tests/multi-account-routing.test.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.07496074999999999,
+      "output": "TAP version 13\n# Subtest: mixed-model: disabling an account during readiness prevents a fresh turn\nok 1 - mixed-model: disabling an account during readiness prevents a fresh turn\n  ---\n  duration_ms: 3.207458\n  type: 'test'\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 46.102334\n"
+    },
+    {
+      "name": "syntax-launcher/electron/account-pool.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/account-pool.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.023727458000000007,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/browser-helper-verifier.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/browser-helper-verifier.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.023263375000000003,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/browser-host.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/browser-host.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.025069499999999995,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/connector-identity.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/connector-identity.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.026867417000000005,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/main.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/main.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.02695700000000001,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/resumable-download.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/resumable-download.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.025108042000000025,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/route-diagnostics.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/route-diagnostics.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.02587241699999998,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/runtime-supervisor.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/runtime-supervisor.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.027174958000000027,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/startup-recovery.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/startup-recovery.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.026186000000000043,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/state.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/state.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.024298290999999972,
+      "output": ""
+    },
+    {
+      "name": "syntax-launcher/electron/update.cjs",
+      "command": [
+        "node",
+        "--check",
+        "launcher/electron/update.cjs"
+      ],
+      "exit": 0,
+      "seconds": 0.025605500000000003,
+      "output": ""
+    },
+    {
+      "name": "diff-whitespace",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0,
+      "seconds": 0.030358750000000045,
+      "output": ""
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "lane": 2,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [],
+  "corrections": [],
+  "notes": [
+    "No concrete residual defect was established in src/setup.ts after reviewing the current implementation and its direct callers against the lane 1 lifecycle APIs and lane 3 integration API.",
+    "No setup compatibility adapter is required: service status probes remain synchronous, service mutations retain their existing sync/async shapes, tunnel-service mutations retain their existing async shapes, and optional AbortSignal parameters are additive.",
+    "installCodexIntegration(config, { replaceExistingRoute }) remains the final setup mutation; integration ownership and compensation stay at the integration boundary.",
+    "Normal success, thrown failure, and cancellation paths remain reachable through the current setup transaction and tunnel validation cleanup callbacks. No source edit was justified.",
+    "Manual source review only. No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were performed."
+  ]
+}

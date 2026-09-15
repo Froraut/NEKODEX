@@ -1,0 +1,25 @@
+{
+  "lane": 10,
+  "fixedRoots": [
+    "L10-malformed-call-record",
+    "L10-broker-startup-rollback",
+    "L10-interactive-cancel"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/dev-chat/driver.ts",
+    "src/dev-chat/cli.ts",
+    "src/adapters/chatgpt-web/turn-broker.ts"
+  ],
+  "notes": [
+    "UTC start 2026-09-15T20:40:00Z; UTC end 2026-09-15T20:52:13Z.",
+    "Malformed function_call and custom_tool_call records are detected before filtering; call_id and name are bounded non-empty strings, and custom input remains a required freeform string. Malformed records throw before history is committed.",
+    "Broker startup now clears only the still-mapped failed instance after rollback, closes the startup server, and unlinks only a socket that reached listen ownership and still matches the startup inode identity. A stale socket removed before listen is never claimed by failed-start cleanup.",
+    "Interactive message and send-fill requests each receive an AbortController on Ctrl-C. The optional signal flows through DevChatDriver.send(), automatic compaction, and responseRequest() via Request.signal; existing send callers remain valid.",
+    "Preserved Native4, Native4 DEV, ZeroRisk4 connector names and public schemas, external authorization behavior, and custom tool freeform string ABI.",
+    "Manual source review only. No tests, typechecks, scripts, benchmarks, runtime starts, app starts, commits, pushes, or delegation were run. Parent lane owns shared fast verification.",
+    "Required cross-lane integration: review the three source diffs together with any concurrent edits, then perform the parent-reserved focused verification for malformed-call rejection, failed broker startup ownership cleanup, and Ctrl-C abort propagation."
+  ]
+}

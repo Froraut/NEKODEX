@@ -1,0 +1,39 @@
+{
+  "lane": 14,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L14-manual-cancel-release",
+      "reason": "browser-host.cjs:1656-1674 signals Manual cancellation, swallows cancelTurn rejection, and removes the running exact-owner tab; main.cjs:1294 wires cancelTurn to runtimeSupervisor.cancelBrowserTurn, so runtime cancellation can remain unacknowledged while the local owner is released."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L14-manual-cancel-release",
+      "reason": "control-server.cjs:262-265 dispatches /v1/manual/cancel to browser-host.cjs:2312-2319, where exact trace/helper ownership is checked but cancelTurn is never invoked before signalManualTerminal and removeTurnTab; HTTP success therefore does not prove runtime cancellation."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L14-manual-cancel-release",
+      "title": "Manual cancellation releases the exact browser owner before runtime cancellation is acknowledged",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/control-server.cjs",
+        "launcher/electron/main.cjs",
+        "src/launcher-browser-host.ts",
+        "src/adapters/chatgpt-web/index.ts"
+      ],
+      "trigger": "A running Manual turn is closed while cancelTurn rejects, or an authenticated /v1/manual/cancel request reaches cancelManualTurn; the local terminal record and browser tab are released even though the launcher-owned runtime was not targeted or did not acknowledge cancellation.",
+      "fix": "Use one exact-owner cancellation path for Manual close and /v1/manual/cancel. Target runtime cancellation before releasing a running tab, preserve a pending/failed cancellation state on rejection, and return success only after acknowledgement or an explicit recoverable pending result. Keep the existing public connector ABI and names unchanged.",
+      "sources": [
+        "review1",
+        "review3"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "lane": 16,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L16-padded-identity",
+      "reason": "src/config.ts checks legacy names before canonicalization in loadConfigForSetup and parseConfig, so a padded retired name is accepted and can be returned through providerConfig. Electron trims the same value in validateConnectorName/runtime detection, while browser-worker exact matching consumes the untrimmed provider identity; this is a reachable cross-layer connector identity split."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L16-padded-identity",
+      "reason": "Exact legacy migration remains isolated to loadConfigForSetup and strict runtime parsing rejects exact retired identities. Existing guards close the exact-name case; they do not disprove the separate padded-name gap accepted from review1."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "rejected",
+      "root": "L16-padded-identity",
+      "reason": "Mode/name consistency, distinct automatic/manual names, active tunnel presence, tunnel identity equality, and distinct tunnel IDs are enforced in src/config.ts and repeated by runtime-supervisor.cjs. No additional reachable invalid-state defect remains."
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "rejected",
+      "root": "L16-padded-identity",
+      "reason": "Automatic verification guards the connector before spawning, freshness is checked before positive readiness publication, manual mode reports selection as a warning, and helper cleanup preserves the primary error with cleanup detail. The claimed false-readiness and hidden-primary-error paths are closed."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L16-padded-identity",
+      "title": "Connector names are compared before config canonicalization",
+      "severity": "P2",
+      "files": [
+        "src/config.ts",
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "launcher/electron/connector-identity.cjs",
+        "launcher/electron/runtime.cjs"
+      ],
+      "trigger": "Persist a connector identity with leading or trailing whitespace, especially a retired name such as \"Codex Native3 \".",
+      "fix": "Canonicalize connector fields at the config boundary before migration, legacy detection, equality checks, and provider projection, or reject non-canonical whitespace. Preserve the public connector names and ABI.",
+      "sources": [
+        "review1",
+        "review3"
+      ]
+    }
+  ]
+}

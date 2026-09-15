@@ -1,0 +1,26 @@
+{
+  "lane": 1,
+  "fixedRoots": [
+    "L01-launchd-print-unknown",
+    "L02-status-probe-deadline",
+    "L03-launchd-mutation-deadline"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/process.ts",
+    "src/service.ts",
+    "src/tunnel-service.ts",
+    "docs/reviews/mixed-model-experiment/fix1-01.md",
+    "docs/reviews/mixed-model-experiment/fix1-01.json"
+  ],
+  "notes": [
+    "L01 preserves the public status schemas by failing closed on unknown nonzero launchctl print results rather than adding an unknown field.",
+    "L02 bounds daemon launchctl print with a five-second timeout and uses the remaining unload deadline during polling; tunnel print probes were already bounded and now share the unknown classification.",
+    "L03 bounds daemon and tunnel bootstrap/bootout mutations with synchronous timeouts; existing primary-error and compensation-error handling is preserved.",
+    "Connector names Native4, Native4 DEV, and ZeroRisk4 and external authorization behavior were not changed.",
+    "No tests, typechecks, scripts, benchmarks, runtime/app starts, commits, pushes, or delegation were performed; parent lane owns fast verification and cross-lane integration.",
+    "UTC start 2026-09-15T20:45:00Z; UTC end 2026-09-15T20:52:00Z."
+  ]
+}

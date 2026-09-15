@@ -382,6 +382,7 @@ class RuntimeSupervisor {
     this.tunnelHealthBaseUrl = null;
     this.tunnelControlQueue = Promise.resolve();
     this.tunnelControlChildren = new Set();
+    this.tunnelControlControllers = new Map();
     this.recoveryTasks = new Set();
     this.recoveryControllers = new Set();
     this.shutdownRequested = false;
@@ -1452,6 +1453,16 @@ class RuntimeSupervisor {
     for (const controller of this.recoveryControllers) controller.abort();
   }
 
+  cancelTunnelControls() {
+    for (const controller of this.tunnelControlControllers.values()) controller.abort();
+  }
+
+  async settleTunnelControls(timeoutMs = RECOVERY_SHUTDOWN_SETTLEMENT_MS) {
+    const deadline = Date.now() + timeoutMs;
+    while (this.tunnelControlControllers.size > 0 && Date.now() < deadline) await sleep(25);
+    return this.tunnelControlControllers.size === 0;
+  }
+
   allowRestartAfterQuitFailure() {
     if (this.shutdownRequested) this.shutdownResumeAllowed = true;
   }
@@ -1797,38 +1808,65 @@ class RuntimeSupervisor {
     const tunnel = config.tunnel;
     if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
     this.assertRecoveryActive(recoverySignal);
-    const proxyEnvironment = await this.tunnelProxyEnvironmentProvider();
-    this.assertRecoveryActive(recoverySignal);
+    const controlController = new AbortController();
+    const controlToken = {};
+    this.tunnelControlControllers.set(controlToken, controlController);
     const previousControl = this.tunnelControlQueue;
     let releaseControl;
     this.tunnelControlQueue = new Promise((resolve) => {
       releaseControl = resolve;
     });
     let removeControlWaitAbort;
+    let proxyEnvironment;
+    let controlChild = null;
+    const releaseControlOperation = () => {
+      this.tunnelControlControllers.delete(controlToken);
+    };
     try {
-      if (recoverySignal) {
-        const controlWaitAbort = new Promise((_, reject) => {
-          const onAbort = () => reject(new Error("Runtime recovery was cancelled for shutdown"));
-          removeControlWaitAbort = () => recoverySignal.removeEventListener("abort", onAbort);
-          if (recoverySignal.aborted) onAbort();
-          else recoverySignal.addEventListener("abort", onAbort, { once: true });
-        });
-        try {
-          await Promise.race([previousControl, controlWaitAbort]);
-        } catch (error) {
-          // Keep this queued slot closed until the predecessor releases its control child.
-          // A cancelled waiter must not let a later command overlap that unresolved child.
-          previousControl.then(releaseControl, releaseControl);
-          throw error;
+      const controlWaitAbort = new Promise((_, reject) => {
+        const onAbort = () => reject(new Error(`${label} cancelled for runtime shutdown`));
+        removeControlWaitAbort = () => {
+          controlController.signal.removeEventListener("abort", onAbort);
+          recoverySignal?.removeEventListener("abort", onAbort);
+        };
+        if (controlController.signal.aborted || recoverySignal?.aborted) onAbort();
+        else {
+          controlController.signal.addEventListener("abort", onAbort, { once: true });
+          recoverySignal?.addEventListener("abort", onAbort, { once: true });
         }
-      } else {
-        await previousControl;
+      });
+      try {
+        await Promise.race([previousControl, controlWaitAbort]);
+      } catch (error) {
+        // Keep this queued slot closed until the predecessor releases its control child.
+        // A cancelled waiter must not let a later command overlap that unresolved child.
+        previousControl.then(releaseControl, releaseControl);
+        throw error;
+      }
+      if (controlController.signal.aborted) {
+        throw new Error(`${label} cancelled for runtime shutdown`);
+      }
+      if (recoverySignal?.aborted) {
+        throw new Error("Runtime recovery was cancelled for shutdown");
+      }
+      try {
+        proxyEnvironment = await this.tunnelProxyEnvironmentProvider();
+        this.assertRecoveryActive(recoverySignal);
+        if (controlController.signal.aborted) {
+          throw new Error(`${label} cancelled for runtime shutdown`);
+        }
+      } catch (error) {
+        releaseControl();
+        throw error;
       }
     } finally {
       removeControlWaitAbort?.();
     }
     try {
       this.assertRecoveryActive(recoverySignal);
+      if (controlController.signal.aborted) {
+        throw new Error(`${label} cancelled for runtime shutdown`);
+      }
       return await new Promise((resolve, reject) => {
         let child;
         try {
@@ -1844,12 +1882,14 @@ class RuntimeSupervisor {
           reject(error);
           return;
         }
+        controlChild = child;
         this.tunnelControlChildren.add(child);
         let controlReleased = false;
         const releaseOwnedControl = () => {
           if (controlReleased) return;
           controlReleased = true;
           this.tunnelControlChildren.delete(child);
+          releaseControlOperation();
           releaseControl();
         };
       const stdout = [];
@@ -1874,6 +1914,7 @@ class RuntimeSupervisor {
         if (terminationTimeout) clearTimeout(terminationTimeout);
         if (forceTimeout) clearTimeout(forceTimeout);
         recoverySignal?.removeEventListener("abort", onAbort);
+        controlController.signal.removeEventListener("abort", onAbort);
       };
       const beginTermination = (reason, firstDelayMs, forceDelayMs) => {
         if (settled) return;
@@ -1912,7 +1953,9 @@ class RuntimeSupervisor {
         beginTermination(new Error(`${label} timed out after ${timeoutMs}ms`), 5_000, 2_000);
       }, timeoutMs);
       recoverySignal?.addEventListener("abort", onAbort, { once: true });
+      controlController.signal.addEventListener("abort", onAbort, { once: true });
       if (recoverySignal?.aborted) onAbort();
+      if (controlController.signal.aborted) onAbort();
       child.stdout.on("data", (chunk) => capture(stdout, chunk, "stdout"));
       child.stderr.on("data", (chunk) => capture(stderr, chunk, "stderr"));
       const onOutputError = (stream) => (error) => {
@@ -1959,7 +2002,10 @@ class RuntimeSupervisor {
       });
       });
     } catch (error) {
-      releaseControl();
+      if (!controlChild) {
+        releaseControlOperation();
+        releaseControl();
+      }
       throw error;
     }
   }
@@ -2186,7 +2232,6 @@ class RuntimeSupervisor {
       }
       this.logger.warn(`runtime.${name}_forced_stop`, { message: errorMessage(gracefulError) });
     }
-    terminateOwnedProcessTree(child, "SIGKILL");
     this[name] = null;
   }
 
@@ -2313,6 +2358,7 @@ class RuntimeSupervisor {
     this.stopping = true;
     this.stopTunnelMonitor();
     this.cancelRecoveries();
+    this.cancelTunnelControls();
     try {
       const failures = [];
       if (!await this.settleInitialStart()) {
@@ -2323,6 +2369,10 @@ class RuntimeSupervisor {
       if (!await this.settleRecoveryTasks()) {
         failures.push("cancelled runtime recovery did not settle within the shutdown bound");
       }
+      const controlsSettled = await this.settleTunnelControls();
+      if (!controlsSettled) {
+        failures.push("cancelled tunnel control operation did not settle within the shutdown bound");
+      }
       let priorState;
       let ownershipStateUnreadable = false;
       try {
@@ -2331,7 +2381,7 @@ class RuntimeSupervisor {
         ownershipStateUnreadable = true;
         failures.push(`ownership: ${errorMessage(error)}`);
       }
-      if (this.tunnel || this.recoveryAliasMayBeLive) {
+      if ((this.tunnel || this.recoveryAliasMayBeLive) && controlsSettled) {
         try {
           const config = this.readConfig();
           if (!config) throw new Error("runtime configuration is unavailable");
@@ -2346,6 +2396,9 @@ class RuntimeSupervisor {
         } catch (error) {
           failures.push(`tunnel: ${errorMessage(error)}`);
         }
+      }
+      if (!await this.settleTunnelControls()) {
+        failures.push("tunnel control operation remained unsettled after forced cleanup");
       }
       try {
         await this.stopChild("daemon");

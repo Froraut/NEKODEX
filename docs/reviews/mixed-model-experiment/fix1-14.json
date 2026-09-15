@@ -1,0 +1,17 @@
+{
+  "lane": 14,
+  "fixedRoots": ["L14-manual-cancel-release"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": ["launcher/electron/browser-host.cjs"],
+  "notes": [
+    "Manual close and /v1/manual/cancel share exact-owner runtime cancellation; tab release occurs only after acknowledgement.",
+    "Synchronous /v1/manual/cancel returns a recoverable status=pending result while cancellation is in flight.",
+    "Rejected or unavailable cancellation retains the tab and records a failed state; endManualTurn is blocked during pending or failed cancellation.",
+    "Public schemas, connector names Native4/Native4 DEV/ZeroRisk4, and external authorization behavior were preserved.",
+    "UTC start 2026-09-15T20:45:00Z; UTC end 2026-09-15T20:51:27Z.",
+    "No tests, typechecks, scripts, benchmarks, runtime actions, app starts, commits, pushes, or delegation were run; parent reserves shared fast verification.",
+    "Required cross-lane integration: parent should reconcile the shared browser-host.cjs edit and verify acknowledgement success, rejection retention, and synchronous pending response."
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "lane": 13,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L13-overview-stale-runtime-proof",
+      "reason": "Overview.tsx derives toolsReady only from authenticated browser plus persisted mcpSetupComplete, while App.tsx currentToolProof explicitly rejects a failed production automatic runtime-start operation; App.tsx does not pass operation to Overview."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "rejected",
+      "root": "L13-overview-toolbar-responsive-css",
+      "reason": "The claim searches only styles.css, but main.tsx imports nekodex.css afterward; nekodex.css:373-375 adds wrapped narrow browser-toolbar behavior, so the asserted absence of narrow handling is false."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L13-overview-css-import-boundary",
+      "reason": "Overview is styled by the downstream nekodex.css imported after styles.css: rules exist at nekodex.css:172-232 and responsive container rules at 286-322 and 439-444; searching styles.css alone does not establish an unstyled renderer."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L13-overview-stale-runtime-proof",
+      "reason": "The direct Overview caller omits operation, so Overview can show tools verified and ready after the same failed production automatic runtime-start that currentToolProof rejects; optional MCP navigation does not justify stale positive proof."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L13-overview-stale-runtime-proof",
+      "title": "Overview publishes stale tool readiness after failed automatic runtime start",
+      "severity": "P1",
+      "files": [
+        "launcher/src/App.tsx",
+        "launcher/src/Overview.tsx"
+      ],
+      "trigger": "In production automatic mode, keep authenticated browser, verified catalog and picker, and mcpSetupComplete true; then receive an operation with name runtime-start and status failed.",
+      "fix": "Make Overview consume the shared currentToolProof(snapshot, operation) result, or pass an equivalent current operation-aware tool-proof value from App.tsx; keep the public connector ABI and names unchanged.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    }
+  ]
+}

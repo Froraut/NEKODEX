@@ -2907,7 +2907,7 @@ export class ChatGptBrowserWorker {
     );
     if (!identity) return "";
     const locator = page.locator(`[data-turn-id=${JSON.stringify(identity)}]`);
-    return (await this.responseDomSnapshot(locator, {})).visibleText;
+    return (await this.responseDomSnapshot(locator, {}, signal)).visibleText;
   }
 
   private async captureSubmissionBaseline(page: Page): Promise<ChatGptSubmissionBaseline> {
@@ -3008,6 +3008,7 @@ export class ChatGptBrowserWorker {
           ? (await this.responseDomSnapshot(
             observationPage.locator(`[data-turn-id=${JSON.stringify(identity)}]`),
             {},
+            signal,
           )).visibleText
           : "";
         completionTracker.observeToolBatch(progress.lastToolBatchRevision, boundaryText);
@@ -3682,7 +3683,7 @@ export class ChatGptBrowserWorker {
       }
       await throwIfChatGptSessionFailureAlert(page);
       await throwIfChatGptTerminalErrorAlert(responseTurn.locator);
-      let snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache);
+      let snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache, abortSignal);
       if (!snapshot.responsePresent && await responseTurn.locator.count() !== 1) {
         const rebound = await this.reconcileAssistantTurnBinding(
           page,
@@ -3694,7 +3695,7 @@ export class ChatGptBrowserWorker {
           responseTurn = rebound;
           responseDomCache.key = undefined;
           responseDomCache.snapshot = undefined;
-          snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache);
+          snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache, abortSignal);
         }
       }
       if (snapshot.stoppedThinkingVisible) throw chatGptStoppedThinkingError();
@@ -3969,6 +3970,7 @@ export class ChatGptBrowserWorker {
   private async responseDomSnapshot(
     responseTurn: Locator,
     cache?: ChatGptResponseDomCache,
+    abortSignal?: AbortSignal,
   ): Promise<ChatGptResponseDomSnapshot> {
     const observed = await responseTurn.evaluate((element, options) => {
       const root = element as HTMLElement;
@@ -4407,12 +4409,30 @@ export class ChatGptBrowserWorker {
       completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
       knownKey: cache?.key,
       attributeFilter: [...CHATGPT_DOM_REVISION_ATTRIBUTES],
-    }, { timeout: 2_000 }).catch(() => undefined);
+    }, { timeout: 2_000 }).catch(error => {
+      if (abortSignal?.aborted) {
+        throw new DOMException("ChatGPT web turn aborted", "AbortError");
+      }
+      if (responseTurn.page().isClosed()) {
+        return undefined;
+      }
+      // An open page whose response subtree could not be evaluated is an observation fault, not
+      // evidence that the assistant response is absent. Preserve the original failure so the
+      // main turn loop can spend its bounded internal-observation budget instead of entering
+      // missing-response handling with a fabricated empty snapshot.
+      throw new TypeError(
+        `ChatGPT response DOM observation failed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    });
     if (!observed) {
+      if (abortSignal?.aborted) {
+        throw new DOMException("ChatGPT web turn aborted", "AbortError");
+      }
       if (responseTurn.page().isClosed()) {
         throw chatGptBrowserTabClosedError();
       }
-      return absentResponseDomSnapshot();
+      throw new TypeError("ChatGPT response DOM observation returned no result");
     }
     const snapshot = observed.snapshot ?? cache?.snapshot ?? absentResponseDomSnapshot();
     if (observed.snapshot && cache) {
@@ -5129,7 +5149,7 @@ export class ChatGptBrowserWorker {
           continue;
         }
 
-        let snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache);
+        let snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache, turn.abortSignal);
         if (!snapshot.responsePresent) {
           try {
             const rebound = await withChatGptBrowserObservationTimeout(
@@ -5144,7 +5164,7 @@ export class ChatGptBrowserWorker {
               responseTurn = rebound;
               responseDomCache.key = undefined;
               responseDomCache.snapshot = undefined;
-              snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache);
+              snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache, turn.abortSignal);
             }
           } catch (error) {
             if (!(error instanceof ChatGptBrowserObservationTimeoutError) || !launcherSurfaceId) throw error;

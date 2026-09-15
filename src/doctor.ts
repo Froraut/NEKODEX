@@ -141,24 +141,32 @@ export async function runDoctor(): Promise<DoctorReport> {
     } else {
       checks.push({ id: "chrome", status: "ok", message: `Chrome executable found: ${config.chromeExecutablePath}` });
     }
-    if (!browserLoginStateExists(config)) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login state is missing or unverified; run `codex-chatgpt-web login`" });
-    } else if (!secureFile(config.storageStatePath)) {
-      checks.push({ id: "login", status: "error", message: `ChatGPT login state is readable by other users: ${config.storageStatePath}` });
-    } else if (!secureFile(loginVerificationMarkerPath(config.storageStatePath))) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login verification marker is readable by other users" });
-    } else {
-      checks.push({ id: "login", status: "ok", message: "ChatGPT login state has authenticated browser evidence" });
+    try {
+      if (!browserLoginStateExists(config)) {
+        checks.push({ id: "login", status: "error", message: "ChatGPT login state is missing or unverified; run `codex-chatgpt-web login`" });
+      } else if (!secureFile(config.storageStatePath)) {
+        checks.push({ id: "login", status: "error", message: `ChatGPT login state is readable by other users: ${config.storageStatePath}` });
+      } else if (!secureFile(loginVerificationMarkerPath(config.storageStatePath))) {
+        checks.push({ id: "login", status: "error", message: "ChatGPT login verification marker is readable by other users" });
+      } else {
+        checks.push({ id: "login", status: "ok", message: "ChatGPT login state has authenticated browser evidence" });
+      }
+    } catch (error) {
+      checks.push({ id: "login", status: "error", message: "ChatGPT login state could not be determined", detail: errorDetail(error) });
     }
   }
 
-  const codex = inspectCodexIntegration();
-  if (!codex.installed) {
-    checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
-  } else if (codex.errors.length > 0) {
-    checks.push({ id: "codex", status: "error", message: "Codex integration is inconsistent", detail: codex.errors.join("; ") });
-  } else {
-    checks.push({ id: "codex", status: "ok", message: "Codex native model route is installed" });
+  try {
+    const codex = inspectCodexIntegration();
+    if (!codex.installed) {
+      checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
+    } else if (codex.errors.length > 0) {
+      checks.push({ id: "codex", status: "error", message: "Codex integration is inconsistent", detail: codex.errors.join("; ") });
+    } else {
+      checks.push({ id: "codex", status: "ok", message: "Codex native model route is installed" });
+    }
+  } catch (error) {
+    checks.push({ id: "codex", status: "error", message: "Codex integration could not be determined", detail: errorDetail(error) });
   }
 
   try {
@@ -191,12 +199,16 @@ export async function runDoctor(): Promise<DoctorReport> {
     } else {
       checks.push({ id: "tunnel-binary", status: "ok", message: "Pinned openai/tunnel-client binary is installed" });
     }
-    if (!existsSync(settings.runtimeKeyFile)) {
-      checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key file is missing" });
-    } else if (!secureFile(settings.runtimeKeyFile)) {
-      checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key file has unsafe permissions" });
-    } else {
-      checks.push({ id: "tunnel-key", status: "ok", message: "Tunnel runtime key is stored privately" });
+    try {
+      if (!existsSync(settings.runtimeKeyFile)) {
+        checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key file is missing" });
+      } else if (!secureFile(settings.runtimeKeyFile)) {
+        checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key file has unsafe permissions" });
+      } else {
+        checks.push({ id: "tunnel-key", status: "ok", message: "Tunnel runtime key is stored privately" });
+      }
+    } catch (error) {
+      checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key could not be inspected", detail: errorDetail(error) });
     }
     try {
       const tunnelService = getTunnelServiceStatus();

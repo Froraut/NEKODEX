@@ -21,6 +21,7 @@ class AccountBrowserPool {
     this.lastAssigned = new Map();
     this.sequence = 0;
     this.selectionRevision = 0;
+    this.loginOperation = null;
     this.surfaceActive = true;
     this.destroyed = false;
     this.addingAccount = false;
@@ -84,6 +85,7 @@ class AccountBrowserPool {
   }
   currentOperation() {
     if (this.addingAccount) return 'ChatGPT account addition';
+    if (this.loginOperation) return 'ChatGPT account login';
     return [...this.hosts.values()].map(host => host.currentOperation()).find(Boolean) || null;
   }
   accountSnapshot() {
@@ -232,12 +234,12 @@ class AccountBrowserPool {
   hide() { for (const host of this.hosts.values()) host.hide(); return this.snapshot(); }
   async checkAccount(id, connector = false) {
     const host = this.getHost(id);
-    await host.ready();
-    if (host.activeTraceId || host.currentOperation()) {
-      throw new Error('Finish this account’s active tasks and browser operation before checking it');
-    }
     const epoch = this.invalidateEvidence(id);
     try {
+      await host.ready();
+      if (host.activeTraceId || host.currentOperation()) {
+        throw new Error('Finish this account’s active tasks and browser operation before checking it');
+      }
       const evidence = await host.inspectSession(true);
       if (!this.evidenceIsCurrent(id, epoch)) {
         throw new Error('ChatGPT account readiness changed while checking it');
@@ -296,11 +298,24 @@ class AccountBrowserPool {
   async openAccountLogin(id) {
     await this.selectAccount(id);
     const host = this.getHost(id);
-    if (host.browserInteractionMode() === "manual") {
-      host.activateHomeSurface();
-      await host.reveal(false);
-    } else await host.openLogin();
-    return this.snapshot();
+    const revision = this.selectionRevision;
+    if (this.registry.snapshot().selectedId !== id) {
+      throw new Error('Account selection changed before login started');
+    }
+    const operation = { id, revision };
+    this.loginOperation = operation;
+    try {
+      if (this.selectionRevision !== revision || this.registry.snapshot().selectedId !== id) {
+        throw new Error('Account selection changed before login started');
+      }
+      if (host.browserInteractionMode() === "manual") {
+        host.activateHomeSurface();
+        await host.reveal(false);
+      } else await host.openLogin();
+      return this.snapshot();
+    } finally {
+      if (this.loginOperation === operation) this.loginOperation = null;
+    }
   }
   ensurePrimaryImport() {
     if (this.registry.snapshot().selectedId !== 'default') throw new Error('Use Sign in for additional accounts; Chrome session import is reserved for the primary profile');
@@ -399,6 +414,7 @@ class AccountBrowserPool {
       if (config.mode === 'selected' && account.id === 'default') return true;
       if (host?.state.authenticated !== true) return false;
       const caps = this.capabilities.get(account.id);
+      if (config.mode === 'balanced' && account.id !== 'default' && !caps) return false;
       if (requirement?.effort === 'luna' && caps?.solAvailable !== false) return false;
       if (requirement?.effort === 'max' && caps?.proAvailable !== true) return false;
       if (requirement?.effort === 'xhigh' && caps?.extraHighAvailable !== true) return false;
@@ -467,6 +483,7 @@ class AccountBrowserPool {
     const activeTraces = new Set([...active.map(tab => tab.traceId), ...this.reservations.keys()]);
     if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw new Error('Global browser capacity is full');
     const id = this.chooseAccount(traceId, key, retained, { ...requirement, connector });
+    const admissionEpoch = this.evidenceEpoch(id);
     const revealRevision = this.selectionRevision;
     const keys = [key, requirement?.routingKey].filter(Boolean);
     this.reservations.set(traceId, id);
@@ -481,6 +498,20 @@ class AccountBrowserPool {
       const newKeys = [...new Set(keys)].filter(binding => !this.affinity.has(binding));
       if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
       await host.ready();
+      const account = this.registry.snapshot().accounts.find(candidate => candidate.id === id);
+      const exactContinuation = retained || [...host.turnTabs.values()].some(tab => tab.traceId === traceId
+        && tab.status === 'running' && tab.interactionMode === 'automatic'
+        && tab.conversationKey === key && tab.connectorIdentity === connector)
+        || Boolean(host.exactRetainedTurnTab(key, connector));
+      if (!exactContinuation) {
+        if (!account || !account.enabled) throw new Error('ChatGPT account is no longer enabled for this turn');
+        if (this.evidenceEpoch(id) !== admissionEpoch) {
+          throw new Error('ChatGPT account readiness changed while acquiring this turn');
+        }
+        if (this.chooseAccount(traceId, key, retained, { ...requirement, connector }) !== id) {
+          throw new Error('ChatGPT account selection changed while acquiring this turn');
+        }
+      }
       if (retained) host.precheckRetainedTurn(traceId, key, connector);
       host.assertLiveConversationOwner(traceId, key);
       this.ensureTabCapacity(host, traceId, key, connector);

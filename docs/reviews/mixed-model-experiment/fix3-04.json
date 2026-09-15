@@ -1,0 +1,37 @@
+{
+  "lane": 4,
+  "fixedRoots": [
+    "L04-tunnel-key-probe",
+    "L04-root-config-missing-profile"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/doctor.ts",
+    "src/route-diagnostics.ts",
+    "docs/reviews/mixed-model-experiment/fix3-04.md",
+    "docs/reviews/mixed-model-experiment/fix3-04.json"
+  ],
+  "corrections": [
+    {
+      "root": "L04-tunnel-key-probe",
+      "trigger": "In full mode, tunnel runtime-key permission inspection could throw from secureFile after the existence check and abort runDoctor before later independent checks.",
+      "change": "Wrapped the tunnel-key existence and permission probe in its own error boundary; inspection failures now emit a structured tunnel-key error and later checks continue.",
+      "introducedBy": "baseline"
+    },
+    {
+      "root": "L04-root-config-missing-profile",
+      "trigger": "When a profile was requested but the root config.toml was absent, route diagnostics classified the empty root as config-invalid instead of preserving root absence.",
+      "change": "Make a null root configuration take the missing-config path regardless of profile selection and keep configStatus as missing.",
+      "introducedBy": "baseline"
+    }
+  ],
+  "notes": [
+    "Final requested correction pass; only new corrections from this wave are recorded.",
+    "Manual current-source and direct-caller review only; no tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation.",
+    "src/cli.ts was reviewed and left unchanged because its doctor and route diagnostic caller contracts remain correct.",
+    "Parent-synchronized launcher/electron route diagnostic consumers were not edited.",
+    "Connector identities and ABI remain unchanged."
+  ]
+}

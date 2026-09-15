@@ -1,0 +1,38 @@
+{
+  "lane": 15,
+  "fixedRoots": [
+    "L15-updater-cancel-join",
+    "L15-tunnel-install-CAS",
+    "L15-auth-download-limits"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L15-connect-stranding"
+  ],
+  "changedFiles": [
+    "launcher/electron/update.cjs",
+    "launcher/electron/resumable-download.cjs",
+    "src/tunnel.ts",
+    "docs/reviews/mixed-model-experiment/fix1-15.md",
+    "docs/reviews/mixed-model-experiment/fix1-15.json"
+  ],
+  "notes": {
+    "utcStart": "2026-09-15T20:42:00Z",
+    "utcEnd": "2026-09-15T20:51:26Z",
+    "behavior": [
+      "cancelInstall waits for observable worker close/exit before removing tempRoot and preserves it when settlement is unknown",
+      "tunnel install uses an owner-token exclusive coordination lock across final snapshot and both managed-file writes",
+      "authenticated resumable downloads enforce caller maxBytes and total timeout within the signed 1 GiB cap"
+    ],
+    "residualLimitations": [
+      "The tunnel lock coordinates cooperating installers only; arbitrary external editors can still ignore it",
+      "The tunnel executable and manifest remain separate atomic replacements",
+      "A cancellation timeout preserves tempRoot for recovery rather than proving worker termination"
+    ],
+    "requiredCrossLaneIntegration": [
+      "Lane 5 must await updateController.cancelInstall(launch) in main.cjs"
+    ],
+    "verification": "Manual changed-path and direct-caller review only; no tests, typechecks, scripts, benchmarks, runtime, app starts, commits, pushes, or delegation."
+  }
+}

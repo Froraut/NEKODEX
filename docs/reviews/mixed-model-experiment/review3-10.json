@@ -1,0 +1,87 @@
+{
+  "lane": 10,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L10-malformed-call-record",
+      "reason": "toolCalls() skips call-shaped output when call_id is not a string, then send() accepts calls.length===0 with end_turn=true and persists the output without a receipt; downstream guards only protect records that survive parsing."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L10-malformed-call-record",
+      "reason": "The same pre-guard call_id filter and successful empty-call branch are present; duplicate-ID checking runs only after parsing. Custom/freeform string input remains a valid separate contract."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L10-broker-startup-rollback",
+      "reason": "forSocket() registers the broker before listen(), start() leaves a rejected startPromise in the registry, and transport cleanup is created only after listen succeeds; server is assigned before rejection-capable listen setup."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L10-broker-startup-rollback",
+      "reason": "Transport awaits broker.listen() before owning a cleanup closure, while broker startup can reject after assigning server and has no failed-start rollback. The exact OS leak varies by event sequence, but the missing transactional cleanup is evidenced and actionable."
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L10-interactive-cancel",
+      "reason": "SIGINT only closes readline; an active executeMessage() awaits driver.send(), which creates responseRequest() without an abort signal, so the request and outer cleanup continue until settlement."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L10-malformed-call-record",
+      "title": "Fail-closed parsing of malformed call-shaped DEV Responses records",
+      "severity": "P1",
+      "files": [
+        "src/dev-chat/driver.ts",
+        "src/dev-chat/cli.ts"
+      ],
+      "trigger": "A completed DEV Responses envelope contains a function_call or custom_tool_call without a usable call_id or required identifying fields and end_turn=true.",
+      "fix": "Detect call-shaped records before filtering; require a bounded non-empty call_id and required fields at the parse boundary, reject malformed records, and preserve custom/freeform string input and existing public connector ABI.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    },
+    {
+      "id": "L10-broker-startup-rollback",
+      "title": "Transactional broker startup and failure cleanup",
+      "severity": "P2",
+      "files": [
+        "src/dev-chat/transport.ts",
+        "src/adapters/chatgpt-web/turn-broker.ts",
+        "src/dev-chat/cli.ts"
+      ],
+      "trigger": "TurnBroker.forSocket() registers an instance and start() assigns a server, then startup rejects before startDevChatTransport() returns its cleanup closure.",
+      "fix": "On failed startup, remove only the still-mapped instance, clear rejected start state, close the owned server, and unlink only a socket created by this attempt; preserve ownership checks and the original error.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    },
+    {
+      "id": "L10-interactive-cancel",
+      "title": "Abort active interactive DEV requests on Ctrl-C",
+      "severity": "P2",
+      "files": [
+        "src/dev-chat/cli.ts",
+        "src/dev-chat/driver.ts"
+      ],
+      "trigger": "Ctrl-C arrives while interactive mode is awaiting executeMessage() for an active browser/Responses request.",
+      "fix": "Thread a per-message AbortSignal from interactive SIGINT through executeMessage() and DevChatDriver.send() into responseRequest(), then allow existing finally cleanup after the aborted request settles.",
+      "sources": [
+        "review2"
+      ]
+    }
+  ]
+}

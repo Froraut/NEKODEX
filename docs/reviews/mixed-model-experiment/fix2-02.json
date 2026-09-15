@@ -1,0 +1,17 @@
+{
+  "lane": 2,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [],
+  "corrections": [],
+  "notes": [
+    "No setup.ts source change was made: the lane started and ended with src/setup.ts unchanged.",
+    "Lane 1 lifecycle edits preserve the setup callers' existing sync/async call shapes; optional AbortSignal parameters require no setup adapter.",
+    "Lane 3 integration edits preserve installCodexIntegration(config, { replaceExistingRoute }) as the final setup mutation and keep ownership compensation in the integration writer layer.",
+    "Symlink compensation after owned atomic inode replacement, absent-file guards, and removal compensation were reviewed at their owning integration boundary; no setup compatibility patch was justified.",
+    "Manual cancellation and unknown launchd status remain fail-closed through the lifecycle APIs and setup's existing status checkpoints.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were performed."
+  ]
+}

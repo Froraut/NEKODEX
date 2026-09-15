@@ -1,0 +1,27 @@
+{
+  "lane": 9,
+  "fixedRoots": [
+    "L09-preparation-cleanup"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/adapters/chatgpt-web/index.ts"
+  ],
+  "corrections": [
+    {
+      "root": "L09-preparation-cleanup",
+      "trigger": "ChatGPT browser prompt preparation fails and the compensating broker revoke also rejects.",
+      "change": "Preserve the preparation failure as primary, attach revoke failure with AggregateError, and clear activeToken only after successful revocation.",
+      "introducedBy": "baseline"
+    }
+  ],
+  "notes": [
+    "Wave1 fixes in mcp-server.ts and finishBrowserOutcome in index.ts were rechecked and preserved.",
+    "Manual cancellation feedback loops, runtime proof publication reachability, and direct callers were reviewed; no additional source change met the correction threshold.",
+    "The gateway freeform JSON envelope remains an explicit design limit.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, commits, pushes, or delegation; parent owns verification and integration.",
+    "Terra made no source changes; this wave used the authorized Sol medium replacement lane."
+  ]
+}

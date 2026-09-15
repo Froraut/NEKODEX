@@ -99,6 +99,10 @@ export function bridgeToResponsesSSE(
      * response.completed — codex-rs collect_compaction_output requires exactly one.
      */
     compaction?: boolean;
+    /** Called after a terminal adapter event has been translated into its Responses event. */
+    onProcessedTerminalEvent?: (event: AdapterEvent) => void;
+    /** Called only when the HTTP client cancels the stream before terminal delivery. */
+    onClientCancel?: () => void;
     /** One-shot: first non-empty text/thinking/raw-reasoning delta observed (WP4 TTFT). */
     onFirstOutput?: () => void;
     onTerminal?: (status: ResponsesTerminalStatus) => void;
@@ -170,13 +174,15 @@ export function bridgeToResponsesSSE(
   let emittedFrames = 0;
   let gated = false;
   let stepping = false;
-  const emit = (name: string, data: Record<string, unknown>) => {
-        if (closed) return;
+  const emit = (name: string, data: Record<string, unknown>): boolean => {
+        if (closed) return false;
         try {
           controller.enqueue(encoder.encode(sseEvent(name, { type: name, sequence_number: seq++, ...data })));
           emittedFrames++;
+          return true;
         } catch {
           closed = true;
+          return false;
         }
       };
       const emitDone = () => {
@@ -657,7 +663,7 @@ export function bridgeToResponsesSSE(
               flushHiddenRawReasoning();
               if (currentToolCall) closeCurrentToolCall();
               const failure = adapterFailureFromEvent(event);
-              emit("response.failed", {
+              const failureDelivered = emit("response.failed", {
                 response: {
                   ...responseSnapshot("failed", finishedItems),
                   // Partial consumption from a mid-stream upstream failure: surfaced so the request
@@ -668,6 +674,7 @@ export function bridgeToResponsesSSE(
                   ...(event.retryable !== undefined ? { retryable: event.retryable } : {}),
                 },
               });
+              if (failureDelivered) options?.onProcessedTerminalEvent?.(event);
               reportTerminal("failed");
               terminalEvent = true;
               break;
@@ -812,6 +819,7 @@ export function bridgeToResponsesSSE(
     closed = true;
     if (beat) clearInterval(beat);
     onCancel?.();
+    options?.onClientCancel?.();
     returnIterator();
   };
 

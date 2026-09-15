@@ -1,0 +1,18 @@
+{
+  "lane": 6,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "docs/reviews/mixed-model-experiment/fix3-06.md",
+    "docs/reviews/mixed-model-experiment/fix3-06.json"
+  ],
+  "corrections": [],
+  "notes": [
+    "Final source review found no new concrete residual error in the current launcher/electron/account-pool.cjs implementation.",
+    "The four accepted lane-6 roots and the fix2 failure-publication correction remain reachable through their direct callers and preserve success, failure, cancellation, and ownership cleanup paths.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were performed.",
+    "Public connector identities and ABI remain unchanged; parent-owned tests and route-diagnostics files were not edited."
+  ]
+}

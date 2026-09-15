@@ -12,14 +12,15 @@ function currentConnectorName(legacyName) {
 }
 
 function validateConnectorName(value) {
-  if (typeof value !== "string" || !value.trim() || value.length > 80) {
+  const configured = typeof value === "string" ? value.trim() : "";
+  if (!configured || configured.length > 80) {
     throw new Error("Connector name is invalid");
   }
-  return value.trim();
+  return configured;
 }
 
 function isLegacyConnectorName(value) {
-  return LEGACY_CONNECTOR_NAMES.includes(value);
+  return typeof value === "string" && LEGACY_CONNECTOR_NAMES.includes(value.trim());
 }
 
 function connectorNameForSetup(value) {

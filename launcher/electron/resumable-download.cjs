@@ -6,9 +6,11 @@ const { pipeline } = require('node:stream/promises');
 // The cache key comes from authenticated release metadata, never a redirected URL.
 async function downloadAuthenticatedAsset(url, destination, {
   expectedBytes, expectedSha256, requestDownload, onProgress,
-  idleTimeoutMs = 60_000, totalTimeoutMs = 60 * 60_000,
+  maxBytes = 1024 ** 3, idleTimeoutMs = 60_000, totalTimeoutMs = 60 * 60_000,
 }) {
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || expectedBytes > 1024 ** 3
+    || !Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 1024 ** 3
+    || expectedBytes > maxBytes || !Number.isSafeInteger(totalTimeoutMs) || totalTimeoutMs <= 0
     || !/^[a-f0-9]{64}$/.test(expectedSha256)) throw new Error('Invalid authenticated download identity');
   const partial = `${destination}.part`;
   const identityFile = `${destination}.identity.json`;
@@ -62,7 +64,7 @@ async function downloadAuthenticatedAsset(url, destination, {
       } else throw new Error(`Update download failed with HTTP ${response.statusCode}`);
       const fd = fs.openSync(partial, bytes ? 'a' : 'w', 0o600);
       const limit = new Transform({ transform(chunk, _encoding, callback) {
-        if (bytes + chunk.length > expectedBytes) {
+        if (bytes + chunk.length > maxBytes || bytes + chunk.length > expectedBytes) {
           invalid = true; callback(new Error('Update exceeds signed size')); return;
         }
         bytes += chunk.length; progress(); callback(null, chunk);

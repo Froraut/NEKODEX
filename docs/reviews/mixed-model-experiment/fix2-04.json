@@ -1,0 +1,27 @@
+{
+  "lane": 4,
+  "fixedRoots": ["L04-profile-probe"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/route-diagnostics.ts",
+    "docs/reviews/mixed-model-experiment/fix2-04.md",
+    "docs/reviews/mixed-model-experiment/fix2-04.json"
+  ],
+  "corrections": [
+    {
+      "root": "L04-profile-probe",
+      "trigger": "A safe selected profile exists but its bounded read fails, so fix1 reports profile-unreadable while profilePath is lost.",
+      "change": "Retain the safe selected profile path when profileReadError is true; keep absent and unsafe profiles guarded.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Sol medium replacement lane after Terra capacity failure and bounded same-model retry.",
+    "Terra made no source changes; Luna fix1 edits were preserved.",
+    "Manual source and direct-caller review only; no tests, typechecks, scripts, broad audits, runtime actions, commits, pushes, or delegation.",
+    "src/doctor.ts and src/cli.ts required no wave2 source change.",
+    "Parent must reconcile launcher consumers of profile-invalid/profile-unreadable and the coordinator's cross-lane mutation, cancellation, and runtime-proof integration requirements."
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "lane": 14,
+  "fixedRoots": ["L14-manual-cancel-release"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": ["launcher/electron/browser-host.cjs"],
+  "corrections": [
+    {
+      "root": "L14-manual-cancel-release",
+      "trigger": "The manual orphan reaper could release a tab after helper-process exit while launcher-owned cancellation was pending or had failed, defeating fix1's retained-owner recovery path.",
+      "change": "Skip manual orphan reaping while manualCancellation is pending or failed, preserving the exact browser owner until cancellation settles or an explicit retry can recover it.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Normal success, failed-cancellation retention, explicit retry, and delayed post-acknowledgement idempotence paths remain owned by the existing fix1/fix2 logic.",
+    "Connector identities, public schemas, ABI, parent-owned route diagnostics, and reserved tests were not changed.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were run; parent owns any reserved integration verification."
+  ]
+}

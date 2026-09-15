@@ -1,0 +1,23 @@
+{
+  "lane": 14,
+  "fixedRoots": ["L14-manual-cancel-release"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": ["launcher/electron/browser-host.cjs"],
+  "corrections": [
+    {
+      "root": "L14-manual-cancel-release",
+      "trigger": "fix1 left a rejected cancellation permanently non-retryable, and a delayed retry after acknowledgement could receive an ownership mismatch",
+      "change": "Allow a failed exact-owner cancellation to retry through the existing pending/acknowledgement path; return an idempotent cancelled result for a matching already-recorded terminal cancellation after the tab has been released",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Only launcher/electron/browser-host.cjs changed during this correction wave.",
+    "Successful normal completion and the fix1 retained-owner behavior were preserved.",
+    "No connector ABI, connector name, runtime proof writer, symlink compensation, absent-file guard, or external-edit path was changed.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were run; parent owns integration verification.",
+    "Parent integration requirement: retain fix1 source and verify retry after rejected cancellation plus repeated /v1/manual/cancel after acknowledgement, alongside the existing success, rejection-retention, and pending cases."
+  ]
+}

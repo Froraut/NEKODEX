@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { unzipSync } from "fflate";
 import type { AppConfig, BrowserInteractionMode, TunnelConfig } from "./config";
@@ -35,10 +35,17 @@ export interface TunnelClientInstallSnapshot {
 }
 
 function installFileSnapshot(path: string, executable = false): TunnelInstallFile {
-  if (!existsSync(path)) return {};
+  const entry = lstatSync(path, { throwIfNoEntry: false });
+  if (!entry) return {};
+  if (entry.isSymbolicLink()) {
+    throw new Error(`Refusing to manage symbolic link at ${path}; preserving the existing installation`);
+  }
+  if (!entry.isFile()) {
+    throw new Error(`Refusing to manage non-file installation entry at ${path}; preserving the existing installation`);
+  }
   return {
     bytes: new Uint8Array(readFileSync(path)),
-    ...(executable && process.platform !== "win32" ? { mode: statSync(path).mode & 0o777 } : {}),
+    ...(executable && process.platform !== "win32" ? { mode: entry.mode & 0o777 } : {}),
   };
 }
 
@@ -202,6 +209,35 @@ function manifestPath(): string {
   return join(getConfigDir(), "bin", "tunnel-client-manifest.json");
 }
 
+function acquireTunnelInstallLock(lockPath: string): () => Error | undefined {
+  const token = randomUUID();
+  let fd: number | undefined;
+  try {
+    fd = openSync(lockPath, "wx", 0o600);
+    writeFileSync(fd, `${token}\n`);
+    fsyncSync(fd);
+    closeSync(fd);
+  } catch (error) {
+    if (fd !== undefined) closeSync(fd);
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("Tunnel client installation is already in progress; preserving the existing installation");
+    }
+    throw error;
+  }
+  return () => {
+    try {
+      if (readFileSync(lockPath, "utf8") !== `${token}\n`) {
+        return new Error("Tunnel client installation lock ownership changed; preserving the lock");
+      }
+      unlinkSync(lockPath);
+      return undefined;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      return error instanceof Error ? error : new Error(String(error));
+    }
+  };
+}
+
 export async function installTunnelClient(
   expectedBefore?: TunnelClientInstallSnapshot,
   onInstalled?: (owned: TunnelClientInstallSnapshot) => void,
@@ -275,10 +311,15 @@ export async function installTunnelClient(
     throw new Error("Tunnel client changed while the upgrade was prepared; preserving the concurrent edit");
   }
   const manifestBytes = new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`);
+  const releaseInstallLock = acquireTunnelInstallLock(`${manifestFile}.lock`);
   let binaryWritten = false;
   let manifestWritten = false;
   let ownedBinaryMode = 0o600;
+  let failure: Error | undefined;
   try {
+    if (!sameInstallation(snapshotTunnelClientInstallation(), beforeInstall)) {
+      throw new Error("Tunnel client changed while the upgrade was prepared; preserving the concurrent edit");
+    }
     atomicWriteFile(executable, binary);
     binaryWritten = true;
     if (process.platform !== "win32") {
@@ -296,10 +337,20 @@ export async function installTunnelClient(
         manifest: manifestWritten ? { bytes: manifestBytes } : beforeInstall.manifest,
       });
     } catch (rollbackError) {
-      throw new Error(`${error instanceof Error ? error.message : String(error)}; tunnel-client rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      failure = new Error(`${error instanceof Error ? error.message : String(error)}; tunnel-client rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
     }
-    throw error;
+    if (!failure) failure = error instanceof Error ? error : new Error(String(error));
+  } finally {
+    const releaseError = releaseInstallLock();
+    if (releaseError) {
+      if (failure) {
+        failure = new Error(`${failure.message}; tunnel-client install lock release failed: ${releaseError.message}`);
+      } else {
+        console.warn(`Tunnel client installed, but its coordination lock could not be released: ${releaseError.message}`);
+      }
+    }
   }
+  if (failure) throw failure;
   onInstalled?.({
     binary: { bytes: binary, ...(process.platform !== "win32" ? { mode: 0o700 } : {}) },
     manifest: { bytes: manifestBytes },

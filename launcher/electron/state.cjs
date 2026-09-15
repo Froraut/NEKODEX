@@ -5,6 +5,10 @@ const SIDEBAR_MAX_WIDTH = 420;
 const SESSION_REFRESH_REMINDER_INTERVAL_MS = 48 * 60 * 60 * 1000;
 const MCP_PROOF_INVALIDATION = Object.freeze({
   mcpSetupComplete: false,
+  setupContract: null,
+  setupIdentityHash: null,
+  setupVerifiedAt: null,
+  setupRuntimeIdentity: null,
 });
 const ACCOUNT_PROOF_INVALIDATION = Object.freeze({
   ...MCP_PROOF_INVALIDATION,
@@ -117,6 +121,19 @@ function readState(filePath) {
     if (typeof state.setupIdentityHash !== "string" || !/^[a-f0-9]{64}$/.test(state.setupIdentityHash)) delete state.setupIdentityHash;
     for (const key of ["setupVerifiedAt", "pickerVerifiedAt"]) {
       if (typeof state[key] !== "string" || !Number.isFinite(Date.parse(state[key]))) delete state[key];
+    }
+    if (typeof state.setupRuntimeIdentity !== "string" || !/^\d+:\d+:\d+$/.test(state.setupRuntimeIdentity)) {
+      delete state.setupRuntimeIdentity;
+    }
+    if (state.mcpSetupComplete === true
+      && (!Number.isSafeInteger(state.setupContract)
+        || state.setupContract < 1
+        || typeof state.setupIdentityHash !== "string"
+        || !/^[a-f0-9]{64}$/.test(state.setupIdentityHash)
+        || typeof state.setupVerifiedAt !== "string"
+        || !Number.isFinite(Date.parse(state.setupVerifiedAt))
+        || typeof state.setupRuntimeIdentity !== "string")) {
+      Object.assign(state, MCP_PROOF_INVALIDATION);
     }
     return state;
   } catch {

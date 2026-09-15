@@ -1,0 +1,104 @@
+{
+  "name": "fix2",
+  "model": "gpt-5.6-sol",
+  "replacementFor": "gpt-5.6-terra",
+  "start": "2026-09-15T21:10:08.830Z",
+  "agents": [
+    {
+      "agent_id": "01a0a6e7-dee2-77f3-b80a-64642baa40ae",
+      "nickname": "Chandrasekhar the 5th",
+      "lane": 1,
+      "dispatchAt": "2026-09-15T21:10:09.020Z"
+    },
+    {
+      "agent_id": "01a0a6e7-df98-7770-bc06-b974ec8ffb1b",
+      "nickname": "Jason the 5th",
+      "lane": 2,
+      "dispatchAt": "2026-09-15T21:10:09.168Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e02d-7630-b340-586be414d698",
+      "nickname": "Zeno the 5th",
+      "lane": 3,
+      "dispatchAt": "2026-09-15T21:10:09.314Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e0be-7173-b900-bed52a8d3c2e",
+      "nickname": "Descartes the 5th",
+      "lane": 4,
+      "dispatchAt": "2026-09-15T21:10:09.457Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e14f-7001-b1d9-e25d00407f1b",
+      "nickname": "Mencius the 5th",
+      "lane": 5,
+      "dispatchAt": "2026-09-15T21:10:09.612Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e1f1-72f1-97a5-a3da8e7e728f",
+      "nickname": "Meitner the 5th",
+      "lane": 6,
+      "dispatchAt": "2026-09-15T21:10:09.778Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e292-7ea0-a536-781ae4453561",
+      "nickname": "Pascal the 5th",
+      "lane": 7,
+      "dispatchAt": "2026-09-15T21:10:09.934Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e330-7b91-a6bd-059f6d889e14",
+      "nickname": "Pasteur the 5th",
+      "lane": 8,
+      "dispatchAt": "2026-09-15T21:10:10.084Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e3bf-79e0-9f2a-2800e840a4a3",
+      "nickname": "Parfit the 5th",
+      "lane": 9,
+      "dispatchAt": "2026-09-15T21:10:10.246Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e46a-76f0-bf4e-a6b0a8bccf43",
+      "nickname": "Banach the 5th",
+      "lane": 10,
+      "dispatchAt": "2026-09-15T21:10:10.403Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e504-7c92-9735-fcfeca590e53",
+      "nickname": "Ramanujan the 5th",
+      "lane": 11,
+      "dispatchAt": "2026-09-15T21:10:10.548Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e595-7500-bcd9-90c70103f85d",
+      "nickname": "Bernoulli the 5th",
+      "lane": 12,
+      "dispatchAt": "2026-09-15T21:10:10.691Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e61f-74b1-9165-807a9b51cb53",
+      "nickname": "Herschel the 5th",
+      "lane": 13,
+      "dispatchAt": "2026-09-15T21:10:10.831Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e6b3-7b72-a144-b57e310f41ae",
+      "nickname": "Hilbert the 5th",
+      "lane": 14,
+      "dispatchAt": "2026-09-15T21:10:10.994Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e756-79c2-a945-7c683c191d3b",
+      "nickname": "Kuhn the 5th",
+      "lane": 15,
+      "dispatchAt": "2026-09-15T21:10:11.156Z"
+    },
+    {
+      "agent_id": "01a0a6e7-e7f7-7b32-a9b3-430239dcb4f4",
+      "nickname": "Godel the 5th",
+      "lane": 16,
+      "dispatchAt": "2026-09-15T21:10:11.333Z"
+    }
+  ]
+}

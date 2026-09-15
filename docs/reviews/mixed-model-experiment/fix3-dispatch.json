@@ -1,0 +1,103 @@
+{
+  "name": "fix3",
+  "model": "gpt-5.6-sol",
+  "start": "2026-09-15T21:16:35.509Z",
+  "agents": [
+    {
+      "agent_id": "01a0a6ed-c553-7aa1-bf03-2928eb7d5a00",
+      "nickname": "Curie the 5th",
+      "lane": 1,
+      "dispatchAt": "2026-09-15T21:16:35.649Z"
+    },
+    {
+      "agent_id": "01a0a6ed-c5de-7223-ae5d-a80c7382bb8a",
+      "nickname": "Einstein the 5th",
+      "lane": 2,
+      "dispatchAt": "2026-09-15T21:16:35.794Z"
+    },
+    {
+      "agent_id": "01a0a6ed-c66e-7e80-80ab-cb67777ea18c",
+      "nickname": "Euler the 5th",
+      "lane": 3,
+      "dispatchAt": "2026-09-15T21:16:35.936Z"
+    },
+    {
+      "agent_id": "01a0a6ed-c6fc-70c0-93d3-e8bac0353102",
+      "nickname": "Kepler the 5th",
+      "lane": 4,
+      "dispatchAt": "2026-09-15T21:16:36.077Z"
+    },
+    {
+      "agent_id": "01a0a6ed-c78e-7e42-8b5b-b5b9f155e996",
+      "nickname": "Peirce the 5th",
+      "lane": 5,
+      "dispatchAt": "2026-09-15T21:16:36.228Z"
+    },
+    {
+      "agent_id": "01a0a6ed-c824-7ee3-bf8a-53ec5304c1bd",
+      "nickname": "Hypatia the 5th",
+      "lane": 6,
+      "dispatchAt": "2026-09-15T21:16:36.373Z"
+    },
+    {
+      "agent_id": "01a0a6ed-c8b0-7c91-9b0b-98b77b1920e9",
+      "nickname": "Gibbs the 5th",
+      "lane": 7,
+      "dispatchAt": "2026-09-15T21:16:36.508Z"
+    },
+    {
+      "agent_id": "01a0a6ed-c938-7320-b0d6-2d680933a4e6",
+      "nickname": "Beauvoir the 5th",
+      "lane": 8,
+      "dispatchAt": "2026-09-15T21:16:36.657Z"
+    },
+    {
+      "agent_id": "01a0a6ed-c9d3-7791-8592-f2ba4b8f5d21",
+      "nickname": "Avicenna the 5th",
+      "lane": 9,
+      "dispatchAt": "2026-09-15T21:16:36.821Z"
+    },
+    {
+      "agent_id": "01a0a6ed-ca75-7ec0-bb98-854050173f8c",
+      "nickname": "Socrates the 5th",
+      "lane": 10,
+      "dispatchAt": "2026-09-15T21:16:36.974Z"
+    },
+    {
+      "agent_id": "01a0a6ed-cb09-7e20-91ae-a9afa11a86d3",
+      "nickname": "Leibniz the 5th",
+      "lane": 11,
+      "dispatchAt": "2026-09-15T21:16:37.111Z"
+    },
+    {
+      "agent_id": "01a0a6ed-cb96-7ae1-ae5d-e399c88a8f5f",
+      "nickname": "Bacon the 5th",
+      "lane": 12,
+      "dispatchAt": "2026-09-15T21:16:37.273Z"
+    },
+    {
+      "agent_id": "01a0a6ed-cc39-77a1-9ec5-a2fa62878286",
+      "nickname": "Maxwell the 5th",
+      "lane": 13,
+      "dispatchAt": "2026-09-15T21:16:37.440Z"
+    },
+    {
+      "agent_id": "01a0a6ed-cce5-7661-947f-1042405d9343",
+      "nickname": "Epicurus the 5th",
+      "lane": 14,
+      "dispatchAt": "2026-09-15T21:16:37.604Z"
+    },
+    {
+      "agent_id": "01a0a6ed-cd84-7dd1-be18-62812ba0a220",
+      "nickname": "Hegel the 5th",
+      "lane": 15,
+      "dispatchAt": "2026-09-15T21:16:37.757Z"
+    },
+    {
+      "agent_id": "01a0a6ed-ce1c-7023-adb1-082275bc9a62",
+      "nickname": "Mill the 5th",
+      "lane": 16,
+      "dispatchAt": "2026-09-15T21:16:37.907Z"
+    }
+  ]
+}

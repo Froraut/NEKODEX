@@ -1,0 +1,22 @@
+{
+  "lane": 11,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L11-hidden-descendant-projection"
+  ],
+  "changedFiles": [
+    "docs/reviews/mixed-model-experiment/fix3-11.md",
+    "docs/reviews/mixed-model-experiment/fix3-11.json"
+  ],
+  "corrections": [],
+  "notes": [
+    "No new concrete residual correction was found in the current browser-worker.ts path.",
+    "The earlier response observation correction remains intact: successful snapshots, known-revision cache hits, open-page observation faults, closed-page failures, and cancellation remain distinct.",
+    "Active turn snapshot callers pass cancellation through initial and rebound reads; the normal success, failure, and cancel paths remain reachable.",
+    "L11-hidden-descendant-projection remains rejected as a hypothetical DOM-contract change.",
+    "Manual source review only; no tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were run.",
+    "Live ChatGPT DOM behavior, account authorization, and runtime reachability remain unverified."
+  ]
+}

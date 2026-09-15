@@ -719,6 +719,7 @@ class BrowserHost {
       manualWaiters: new Set(),
       manualTerminalWaiters: new Set(),
       manualTerminalResolutionSuppressed: false,
+      manualCancellation: null,
       prompt,
       promptDigest: manualPromptDigest(prompt),
       manualConversationReused: false,
@@ -1446,6 +1447,10 @@ class BrowserHost {
           this.removeTurnTab(tab, false);
           continue;
         }
+        // A runtime cancellation owns this exact tab until it settles. The helper may exit while
+        // the launcher control request is still pending (or after a failed request); reaping here
+        // would discard the recovery surface and let the runtime outlive its browser owner.
+        if (["pending", "failed"].includes(tab.manualCancellation?.status)) continue;
         if (tab.status === "running" && !processRunning(tab.helperPid)) {
           this.logger.warn("browser.manual_orphan_turn_reaped", {
             tabId: tab.id,
@@ -1658,19 +1663,11 @@ class BrowserHost {
     if (!tab) throw new Error("Browser tab does not exist");
     const running = tab.status === "running";
     if (tab.interactionMode === "manual") {
-      this.signalManualTerminal(tab, "cancelled");
-      if (running && this.cancelTurn) {
-        try {
-          await this.cancelTurn(tab.traceId);
-        } catch (error) {
-          this.logger.warn("browser.manual_turn_cancel_failed", {
-            tabId: tab.id,
-            traceId: tab.traceId,
-            errorType: error?.name || "Error",
-          });
-        }
+      if (running) await this.cancelManualTab(tab, "tab-close");
+      else {
+        this.signalManualTerminal(tab, "cancelled");
+        if (this.turnTabs.get(tabId) === tab) this.removeTurnTab(tab, true);
       }
-      if (this.turnTabs.get(tabId) === tab) this.removeTurnTab(tab, true);
       this.logger.info("browser.tab_closed", { tabId, traceId: tab.traceId, status: tab.status });
       return this.snapshot();
     }
@@ -2274,6 +2271,16 @@ class BrowserHost {
       this.rememberManualCompletion(traceId, helperPid);
       return { cancelledByUser: false };
     }
+    if (tab.manualCancellation?.status === "pending") {
+      const error = new Error(`Manual mode turn ${traceId} cancellation is still pending`);
+      error.code = "manual_cancel_pending";
+      throw error;
+    }
+    if (tab.manualCancellation?.status === "failed") {
+      const error = new Error(`Manual mode turn ${traceId} cancellation was not acknowledged`);
+      error.code = "manual_cancel_failed";
+      throw error;
+    }
     if (status === "completed" && tab.manualState !== "sent" && tab.manualState !== "running") {
       throw new Error(`Manual mode turn ${traceId} cannot complete before Sent confirmation`);
     }
@@ -2311,12 +2318,67 @@ class BrowserHost {
 
   cancelManualTurn(traceId, helperPid) {
     const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
+    if (!tab) {
+      const terminal = this.manualTerminalSignals.get(traceId);
+      if (terminal?.helperPid === helperPid && terminal.status === "cancelled") {
+        return { cancelledByUser: true, status: "cancelled" };
+      }
+    }
     if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
       throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
     }
+    if (tab.status === "running") return this.startManualCancellation(tab, "control");
     this.signalManualTerminal(tab, "cancelled");
     this.removeTurnTab(tab, true);
-    return { cancelledByUser: true };
+    return { cancelledByUser: true, status: "cancelled" };
+  }
+
+  startManualCancellation(tab, source) {
+    if (tab.manualCancellation?.status === "pending") {
+      return { cancelledByUser: true, status: "pending" };
+    }
+    if (typeof this.cancelTurn !== "function") {
+      tab.manualCancellation = { status: "failed", source };
+      tab.message = "Cancellation could not reach the launcher-owned runtime; the browser tab remains open";
+      this.publishState?.(this.snapshot());
+      const error = new Error(`Manual mode turn ${tab.traceId} has no launcher cancellation handler`);
+      error.code = "manual_cancel_unavailable";
+      throw error;
+    }
+    tab.manualCancellation = { status: "pending", source };
+    const cancellation = Promise.resolve()
+      .then(() => this.cancelTurn(tab.traceId))
+      .then(() => {
+        if (this.turnTabs.get(tab.id) !== tab) return;
+        tab.manualCancellation = { status: "acknowledged", source };
+        this.signalManualTerminal(tab, "cancelled");
+        this.removeTurnTab(tab, true);
+      })
+      .catch((error) => {
+        if (this.turnTabs.get(tab.id) === tab) {
+          tab.manualCancellation = { status: "failed", source };
+          tab.message = "Runtime cancellation was not acknowledged; the browser tab remains open";
+          this.publishState?.(this.snapshot());
+        }
+        this.logger.warn("browser.manual_turn_cancel_failed", {
+          tabId: tab.id,
+          traceId: tab.traceId,
+          errorType: error?.name || "Error",
+        });
+        throw error;
+      });
+    tab.manualCancellation.promise = cancellation;
+    // The synchronous control endpoint returns a recoverable pending result. Keep the rejection
+    // observed here so a failed runtime cancellation cannot become an unhandled rejection.
+    cancellation.catch(() => {});
+    return { cancelledByUser: true, status: "pending" };
+  }
+
+  async cancelManualTab(tab, source) {
+    const result = this.startManualCancellation(tab, source);
+    if (result.status !== "pending") return result;
+    await tab.manualCancellation.promise;
+    return { cancelledByUser: true, status: "cancelled" };
   }
 
   exactRetainedTurnTab(conversationKey, connectorIdentity) {

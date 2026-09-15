@@ -1,0 +1,62 @@
+{
+  "lane": 3,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L03-write-ownership",
+      "reason": "uninstall snapshots config/hooks and writes through writeFileSnapshot without expected-byte comparison; same-identity intervening edits can be overwritten, and rollback runs too late to prevent that loss."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L03-delete-ownership",
+      "reason": "uninstall removes the legacy catalog and models cache after snapshots but without an immediate byte/identity ownership check, so a recreated or replaced file can be deleted."
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L03-write-ownership",
+      "reason": "writeIntegrationState supplies no expectedData to writeFilesWithCompensation, so normal install/reconnect/disconnect writes can overwrite edits made after the initial snapshot; merged with claim 1."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L03-write-ownership",
+      "reason": "the zero-defect conclusion overgeneralizes recovery and journal-copy guards; those guards do not cover uninstall config/hooks writes, catalog/cache deletion, or ordinary writeIntegrationState writes."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L03-write-ownership",
+      "title": "Managed config and hook writes lack a pre-write ownership comparison",
+      "severity": "P1",
+      "files": [
+        "src/codex-integration.ts",
+        "src/codex-integration-shared.ts"
+      ],
+      "trigger": "An external process edits a managed config or hooks file after the operation snapshots it but before uninstall or writeIntegrationState commits the next managed write; symlink identity can remain unchanged.",
+      "fix": "Require expected snapshot bytes for uninstall config/hooks writes and for every writeIntegrationState managed write, while retaining symlink identity checks and preserving external edits on mismatch.",
+      "sources": [
+        "review1"
+      ]
+    },
+    {
+      "id": "L03-delete-ownership",
+      "title": "Uninstall deletes replacement catalog or model cache without ownership comparison",
+      "severity": "P1",
+      "files": [
+        "src/codex-integration.ts"
+      ],
+      "trigger": "The legacy catalog or models cache is recreated or replaced after uninstall snapshots it and before the unconditional rmSync call.",
+      "fix": "Immediately compare live existence, bytes, and relevant identity with the uninstall snapshot before deletion; preserve the changed file and report an ownership conflict.",
+      "sources": [
+        "review1"
+      ]
+    }
+  ]
+}

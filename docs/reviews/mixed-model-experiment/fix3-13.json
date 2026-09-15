@@ -1,0 +1,23 @@
+{
+  "lane": 13,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L13-overview-toolbar-responsive-css",
+    "L13-overview-css-import-boundary"
+  ],
+  "changedFiles": [
+    "docs/reviews/mixed-model-experiment/fix3-13.md",
+    "docs/reviews/mixed-model-experiment/fix3-13.json"
+  ],
+  "corrections": [],
+  "notes": [
+    "Final wave3 manual review found no new renderer UI-readiness correction after fix1 and fix2.",
+    "The sole App.tsx Overview caller still passes authenticated currentToolProof(snapshot, operation), and Overview uses it for tool status and overall readiness.",
+    "Successful runtime-start, failed runtime-start, and MCP verification failure paths remain reachable through the existing operation and state contracts; OperationState has no cancelled status.",
+    "launcher/src/styles.css was intentionally unchanged because both CSS findings were rejected by adjudication.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were performed; parent owns reserved focused verification.",
+    "Evidence is limited to source contracts and direct caller relationships; connector identities, public schemas, and ABI were preserved."
+  ]
+}

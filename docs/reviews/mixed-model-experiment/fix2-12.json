@@ -1,0 +1,28 @@
+{
+  "lane": 12,
+  "fixedRoots": [],
+  "partialRoots": ["L12-retry-handoff-cancel"],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/server.ts",
+    "src/bridge.ts",
+    "docs/reviews/mixed-model-experiment/fix2-12.md",
+    "docs/reviews/mixed-model-experiment/fix2-12.json"
+  ],
+  "corrections": [
+    {
+      "root": "L12-retry-handoff-cancel",
+      "trigger": "fix1 published the retry handoff after response.failed translation, but normal terminal cleanup aborted the request and the abort handler immediately cleared that newly published handoff.",
+      "change": "Commit the retryable terminal before cleanup, revoke only uncommitted handoffs on request abort, and invoke the publication callback immediately after response.failed delivery.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Sol medium lane 12 replacement after Terra capacity failure; Terra made no source changes.",
+    "Queue behavior from fix1 was manually reviewed and left unchanged: current buffered bytes only, release on dequeue, reset on cancellation, 10000-event cap, and streaming 32 MiB cap.",
+    "Optional bridge callbacks preserve compatibility for existing direct callers.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, commits, push, or delegation were performed.",
+    "Parent integration must preserve concurrent changes and inspect coordinator-notes atomic-write/symlink and absent-target safeguards outside this lane's owned files."
+  ]
+}

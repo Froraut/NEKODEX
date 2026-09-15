@@ -231,8 +231,15 @@ function toolCalls(output: unknown[]): DevToolCall[] {
   for (const value of output) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const item = value as Record<string, unknown>;
-    if (typeof item.call_id !== "string") continue;
-    if (item.type === "function_call" && typeof item.name === "string") {
+    const callShaped = item.type === "function_call" || item.type === "custom_tool_call";
+    if (!callShaped) continue;
+    if (typeof item.call_id !== "string" || item.call_id.trim().length === 0 || item.call_id.length > 256) {
+      throw new Error("DEV Responses returned a malformed tool call: call_id must be a non-empty string of at most 256 characters");
+    }
+    if (typeof item.name !== "string" || item.name.trim().length === 0 || item.name.length > 256) {
+      throw new Error("DEV Responses returned a malformed tool call: name must be a non-empty string of at most 256 characters");
+    }
+    if (item.type === "function_call") {
       let input: unknown = {};
       if (typeof item.arguments === "string" && item.arguments.trim()) {
         try { input = JSON.parse(item.arguments); }
@@ -244,8 +251,11 @@ function toolCalls(output: unknown[]): DevToolCall[] {
         name: namespacedToolName(typeof item.namespace === "string" ? item.namespace : undefined, item.name),
         input,
       });
-    } else if (item.type === "custom_tool_call" && typeof item.name === "string") {
-      calls.push({ kind: "custom", callId: item.call_id, name: item.name, input: item.input ?? "" });
+    } else {
+      if (typeof item.input !== "string") {
+        throw new Error("DEV Responses returned a malformed custom tool call: input must be a string");
+      }
+      calls.push({ kind: "custom", callId: item.call_id, name: item.name, input: item.input });
     }
   }
   return calls;
@@ -505,6 +515,7 @@ export class DevChatDriver {
     state: DevChatState,
     message: string,
     emit: (event: DevChatEvent) => void = () => {},
+    signal?: AbortSignal,
   ): Promise<DevChatTurnResult> {
     const prompt = message.trim();
     if (!prompt) throw new Error("DEV chat message must not be empty");
@@ -515,7 +526,7 @@ export class DevChatDriver {
     let context = this.statusForInput(state, turnId, workingInput);
 
     if (this.shouldAutoCompact(state, context) && state.input.length > 0) {
-      state.input = await this.compactInput(state, state.input, "automatic", emit);
+      state.input = await this.compactInput(state, state.input, "automatic", emit, signal);
       state.compactions += 1;
       compactions += 1;
       this.store.save(state);
@@ -538,6 +549,7 @@ export class DevChatDriver {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal,
       }), this.config, this.adapterFactory, {
         rememberState: false,
         onAdapterEvent: event => observeAdapterEvent(event, emit),
@@ -582,7 +594,7 @@ export class DevChatDriver {
 
       context = this.statusForInput(state, turnId, workingInput);
       if (this.shouldAutoCompact(state, context)) {
-        workingInput = await this.compactInput(state, workingInput, "automatic", emit);
+        workingInput = await this.compactInput(state, workingInput, "automatic", emit, signal);
         pendingCompactions += 1;
         compactions += 1;
       }
@@ -643,6 +655,7 @@ export class DevChatDriver {
     input: unknown[],
     reason: "automatic" | "manual",
     emit: (event: DevChatEvent) => void,
+    signal?: AbortSignal,
   ): Promise<unknown[]> {
     if (isLunaDevChatModel(state.model)) {
       throw new Error("ChatGPT Web Luna uses its production rolling checkpoint and does not support a separate compact command");
@@ -663,6 +676,7 @@ export class DevChatDriver {
           : DEV_CHAT_BROWSER_ONLY_INSTRUCTIONS,
         store: false,
       }),
+      signal,
     }), this.config, this.adapterFactory);
     if (!response.ok) {
       let message = `DEV compaction failed with HTTP ${response.status}`;

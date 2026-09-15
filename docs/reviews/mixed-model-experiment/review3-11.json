@@ -1,0 +1,42 @@
+{
+  "lane": 11,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L11-response-observation-failure",
+      "reason": "responseDomSnapshot catches every non-closed-page evaluate failure and returns an ordinary absent snapshot, bypassing the main loop's bounded observation-fault recovery and potentially triggering missing-response handling after an accepted submission."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "rejected",
+      "root": "L11-hidden-descendant-projection",
+      "reason": "The claim provides no current source evidence of a valid ChatGPT assistant response containing a usable markdown root under an ancestor-only hidden state; requiring an ancestor walk would be hypothetical hardening and could conflict with the deliberate hidden-view DOM contract."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "design-limit",
+      "root": "L11-response-observation-failure",
+      "reason": "The observation-failure portion duplicates the accepted root, but the stale-cache assertion is false as written: the undefined-observation branch returns absentResponseDomSnapshot at line 4415 before the cache fallback at line 4417."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L11-response-observation-failure",
+      "title": "Response DOM observation failure is downgraded to ordinary absence",
+      "severity": "P1",
+      "files": [
+        "src/adapters/chatgpt-web/browser-worker.ts"
+      ],
+      "trigger": "An accepted assistant turn is bound, then responseTurn.evaluate in responseDomSnapshot times out, rejects, or fails while the page remains open.",
+      "fix": "Preserve the observation error and route it through bounded observation recovery, or return an explicit non-observed result that cannot enter missing-response handling; keep cache fallback limited to a known-valid observation and retain the original cause.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "lane": 16,
+  "fixedRoots": ["L16-canonical-length-boundary"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": ["src/config.ts", "launcher/electron/connector-identity.cjs"],
+  "corrections": [
+    {
+      "root": "L16-canonical-length-boundary",
+      "trigger": "A connector name within the 80-character canonical limit but padded beyond that limit was measured before trimming in the automatic config field and Electron validator.",
+      "change": "Trim connector names before length validation and return the canonical value in both boundaries.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Wave1 canonicalization remains intact; this pass fixes only the residual length-order inconsistency.",
+    "Codex Native4, Codex Native4 DEV, Codex Zero Risk4, public schemas, and ABI remain unchanged.",
+    "Manual source review only. No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were performed.",
+    "Live ChatGPT connector approval, DOM state, installed-app behavior, and production behavior remain unverified."
+  ]
+}

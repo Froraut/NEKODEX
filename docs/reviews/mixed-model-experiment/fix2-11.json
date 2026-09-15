@@ -1,0 +1,33 @@
+{
+  "lane": 11,
+  "fixedRoots": [
+    "L11-response-observation-failure"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L11-hidden-descendant-projection"
+  ],
+  "changedFiles": [
+    "src/adapters/chatgpt-web/browser-worker.ts",
+    "docs/reviews/mixed-model-experiment/fix2-11.md",
+    "docs/reviews/mixed-model-experiment/fix2-11.json"
+  ],
+  "corrections": [
+    {
+      "root": "L11-response-observation-failure",
+      "trigger": "fix1 preserved open-page responseDomSnapshot failures as TypeError, but an evaluate rejection racing with manual cancellation could enter the bounded observation retry before the loop noticed AbortSignal.aborted; direct multipart and submission-boundary callers also lacked signal context.",
+      "change": "Added an optional AbortSignal to responseDomSnapshot and passed the active signal through the submission-answer reader, assistant-turn boundary observation, multipart acknowledgement reads, and normal turn reads including rebinds. Cancellation now throws AbortError before TypeError or closed-page classification in both rejection and no-result paths.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Normal successful evaluate results and known-revision cache fallback are unchanged.",
+    "Open-page non-cancellation evaluation failures remain TypeError observation faults for the existing bounded recovery path.",
+    "Closed-page classification remains chatGptBrowserTabClosedError().",
+    "L11-hidden-descendant-projection remains rejected; no ancestor visibility walk was added.",
+    "Terra made no source changes; this was the authorized bounded Sol medium replacement lane.",
+    "Parent owns tests and runtime checks. No tests, typechecks, scripts, broad audits, runtime actions, commits, pushes, or delegation were run in this lane.",
+    "Source-level integration evidence only; live ChatGPT DOM state, account authorization, and runtime proof publication remain unverified here."
+  ]
+}

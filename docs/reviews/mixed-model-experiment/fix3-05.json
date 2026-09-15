@@ -1,0 +1,28 @@
+{
+  "lane": 5,
+  "fixedRoots": [
+    "L08-recovery-error"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "launcher/electron/main.cjs",
+    "docs/reviews/mixed-model-experiment/fix3-05.md",
+    "docs/reviews/mixed-model-experiment/fix3-05.json"
+  ],
+  "corrections": [
+    {
+      "root": "L08-recovery-error",
+      "trigger": "fix1 corrected startup recovery cleanup but ordinary requestQuit and packaged smoke still let browserHost.destroy failure skip browserControl.close.",
+      "change": "Route ordinary quit, packaged smoke, and startup recovery through one independent cleanup helper that always attempts browser control closure and preserves the first cleanup error as primary.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "No new correction was required in state.cjs or upgrade-readiness.cjs.",
+    "The existing awaited cancelInstall caller and original requestQuit error preservation were retained after direct contract review.",
+    "Runtime proof invalidation remains based on existing supervisor ownerPid, daemonPid, and tunnelPid fields; supervisor.cjs was not edited.",
+    "Verification was manual only. No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, push, or delegation were performed."
+  ]
+}

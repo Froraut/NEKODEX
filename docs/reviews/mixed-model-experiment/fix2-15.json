@@ -1,0 +1,30 @@
+{
+  "lane": 15,
+  "fixedRoots": [
+    "L15-tunnel-install-CAS"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L15-connect-stranding"
+  ],
+  "changedFiles": [
+    "src/tunnel.ts",
+    "docs/reviews/mixed-model-experiment/fix2-15.md",
+    "docs/reviews/mixed-model-experiment/fix2-15.json"
+  ],
+  "corrections": [
+    {
+      "root": "L15-tunnel-install-CAS",
+      "trigger": "fix1 snapshots followed symbolic links, so an atomic replacement could remove an originally linked managed entry and rollback could not preserve the original inode or target ownership; absent-file and non-file states were not distinguished by lstat.",
+      "change": "Use lstatSync for managed tunnel installation snapshots, reject symbolic links and non-regular entries, and preserve the existing empty snapshot for genuinely absent paths so external creation remains detectable during rollback.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Fix1 changes in launcher/electron/update.cjs and launcher/electron/resumable-download.cjs were retained after direct-caller review; no additional correction was source-backed.",
+    "The shared main.cjs lane 5 caller currently awaits async cancelInstall; lane 5 remains responsible for preserving that integration.",
+    "The install lock coordinates cooperating installers only; arbitrary external editors can still race by ignoring the lock, and executable plus manifest replacement is not one pairwise filesystem transaction.",
+    "No tests, typechecks, scripts, runtime actions, commits, pushes, or delegation were performed."
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "lane": 5,
+  "fixedRoots": [
+    "L05-runtime-instance-proof",
+    "L05-persisted-proof-schema",
+    "L05-runtime-config-invalidation",
+    "L08-recovery-error"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "launcher/electron/main.cjs",
+    "launcher/electron/state.cjs",
+    "docs/reviews/mixed-model-experiment/fix1-05.md",
+    "docs/reviews/mixed-model-experiment/fix1-05.json"
+  ],
+  "notes": [
+    "UTC start: 2026-09-15T20:48:00Z",
+    "UTC end: 2026-09-15T20:54:55Z",
+    "Behavior: MCP proof is bound to the existing supervisor process identity, incomplete persisted proof is cleared, runtime profile mutations invalidate proof, startup recovery preserves browser-host cleanup failure, and update cancellation is awaited with the requestQuit error kept primary.",
+    "Residual limitation: no supervisor file was edited; runtime identity uses ownerPid, daemonPid, and tunnelPid already exposed by the supervisor.",
+    "Residual limitation: backend snapshot reconciliation is the renderer readiness boundary.",
+    "Residual limitation: update controller implementation remains owned by another lane.",
+    "Required cross-lane integration: preserve the main.cjs and state.cjs hunks, retain the Promise-returning cancelInstall contract, and review the combined proof state schema once.",
+    "Verification: manual diff and direct-caller review only; no tests, typechecks, scripts, benchmarks, runtime actions, app starts, commits, push, or delegation."
+  ]
+}

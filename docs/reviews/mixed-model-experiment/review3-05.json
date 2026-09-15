@@ -1,0 +1,69 @@
+{
+  "lane": 5,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L05-runtime-instance-proof",
+      "reason": "captureAccountProofContext/accountProofContextIsCurrent bind in-flight writes to generation, mode, account and setupIdentity(config, account), but setupIdentity has no runtime PID/boot instance. Startup can replace/start the runtime while retaining mcpSetupComplete, and App.currentToolProof consumes that flag."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L05-persisted-proof-schema",
+      "reason": "readState deletes missing or malformed setupIdentityHash without clearing mcpSetupComplete; it does not require setupContract or verification metadata, while currentToolProof checks the positive boolean directly."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L05-runtime-config-invalidation",
+      "reason": "The production contextChangeQueue onApplied path and DEV direct Bigger Context caller change an input to setupIdentity but do not invalidate MCP proof fields or retire accountProofGeneration."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L05-runtime-config-invalidation",
+      "reason": "launcher:zero-risk-pro changes zeroRiskProEnabled, which is hashed by setupIdentity, but only resets catalog/restart state and leaves mcpSetupComplete, setupIdentityHash and proof generation usable."
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L05-persisted-proof-schema",
+      "reason": "Startup reuses persisted positive MCP proof without a general setupContract/hash/current account-config comparison; preserveSetup identity checking is limited to the upgrade.updated branch. Existing logout/account/mode/runtime-failure invalidators do not cover this load-time gap."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L05-runtime-instance-proof",
+      "title": "Positive MCP proof is not bound to the current runtime instance",
+      "severity": "P1",
+      "files": ["launcher/electron/main.cjs", "launcher/electron/upgrade-readiness.cjs", "launcher/src/App.tsx"],
+      "trigger": "A verified runtime is replaced or restarted while account and runtime configuration remain unchanged; the persisted mcpSetupComplete flag survives and setupIdentity produces the same hash for the new instance.",
+      "fix": "Add a boot/supervisor instance identity to the proof record and currentness predicate, or clear the complete MCP proof whenever the managed runtime starts or is replaced and require fresh verification.",
+      "sources": ["review1"]
+    },
+    {
+      "id": "L05-persisted-proof-schema",
+      "title": "Persisted MCP proof can survive incomplete schema or startup identity drift",
+      "severity": "P1",
+      "files": ["launcher/electron/state.cjs", "launcher/electron/main.cjs", "launcher/electron/upgrade-readiness.cjs", "launcher/src/App.tsx"],
+      "trigger": "A version-1 state record has mcpSetupComplete true with missing or malformed setup identity/contract, or a saved proof no longer matches the current account/configuration at startup.",
+      "fix": "Fail closed during state normalization/startup unless the contract, identity hash, verification metadata, and current account/config identity are valid and matching; otherwise clear every dependent proof field before publishing readiness.",
+      "sources": ["review1", "review2"]
+    },
+    {
+      "id": "L05-runtime-config-invalidation",
+      "title": "Runtime profile mutations leave MCP proof current after its identity inputs change",
+      "severity": "P1",
+      "files": ["launcher/electron/main.cjs", "launcher/electron/state.cjs", "launcher/electron/upgrade-readiness.cjs"],
+      "trigger": "Bigger Context or Zero Risk Pro changes successfully after verification; both settings are inputs to setupIdentity, but their production and DEV callers publish the new setting without invalidating MCP proof.",
+      "fix": "Use the existing account-proof invalidation path after each successful mutation and before publishing the changed runtime state, including both context queue and DEV direct callers.",
+      "sources": ["review2"]
+    }
+  ]
+}

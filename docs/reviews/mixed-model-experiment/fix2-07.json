@@ -1,0 +1,19 @@
+{
+  "lane": 7,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "docs/reviews/mixed-model-experiment/fix2-07.md",
+    "docs/reviews/mixed-model-experiment/fix2-07.json"
+  ],
+  "corrections": [],
+  "notes": [
+    "Sol medium replacement lane after Terra capacity failure; bounded same-model retry context retained.",
+    "No source changes made in wave2. Luna fix1 supervisor edits remain the actual source changes under parent integration review.",
+    "Manual review covered runTunnelCommand, stopChild, forced shutdown, direct tunnel-control callers, queue ownership, cancellation feedback, and descendant cleanup boundaries.",
+    "The removed post-settlement group signal remains removed; pre-settlement graceful/forced signaling and tunnel-control exit-path descendant cleanup remain required.",
+    "Parent owns focused verification and must reconcile the shared working-tree diff before testing."
+  ]
+}

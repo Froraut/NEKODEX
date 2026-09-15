@@ -267,6 +267,8 @@ export class TurnBroker implements TurnBrokerOwner {
   private acceptingExternalOwners = true;
   private server?: Server;
   private startPromise?: Promise<void>;
+  private startAttempt?: symbol;
+  private socketIdentity?: { dev: number; ino: number };
 
   private constructor(readonly socketPath: string) {}
 
@@ -730,22 +732,35 @@ export class TurnBroker implements TurnBrokerOwner {
     for (const token of [...this.channels.keys()]) this.revoke(token);
     const server = this.server;
     this.server = undefined;
+    this.startAttempt = undefined;
     this.startPromise = undefined;
-    brokers.delete(this.socketPath);
+    if (brokers.get(this.socketPath) === this) brokers.delete(this.socketPath);
     if (server?.listening) {
       await new Promise<void>((resolveClose, rejectClose) => server.close(error => {
         if (!error || (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING") resolveClose();
         else rejectClose(error);
       }));
     }
-    if (!isWindowsPipeEndpoint(this.socketPath)
-      && existsSync(this.socketPath)
-      && lstatSync(this.socketPath).isSocket()) unlinkSync(this.socketPath);
+    const socketIdentity = this.socketIdentity;
+    this.socketIdentity = undefined;
+    if (!isWindowsPipeEndpoint(this.socketPath) && socketIdentity && existsSync(this.socketPath)) {
+      const current = lstatSync(this.socketPath);
+      if (current.isSocket()
+        && current.dev === socketIdentity.dev
+        && current.ino === socketIdentity.ino) {
+        unlinkSync(this.socketPath);
+      }
+    }
   }
 
   private start(): Promise<void> {
     if (this.startPromise) return this.startPromise;
-    this.startPromise = new Promise<void>((resolveStart, rejectStart) => {
+    const attempt = Symbol("turn-broker-start");
+    this.startAttempt = attempt;
+    let startupServer: Server | undefined;
+    let startupOwnsSocket = false;
+    let startupSocketIdentity: { dev: number; ino: number } | undefined;
+    const startup = new Promise<void>((resolveStart, rejectStart) => {
       const windowsPipe = isWindowsPipeEndpoint(this.socketPath);
       if (!windowsPipe) {
         // sun_path is a fixed-size field in the kernel, so an over-long path fails inside listen()
@@ -763,6 +778,7 @@ export class TurnBroker implements TurnBrokerOwner {
       }
       const listen = () => {
         const server = createServer(socket => this.handleSocket(socket));
+        startupServer = server;
         this.server = server;
         server.once("error", rejectStart);
         server.on("error", error => {
@@ -771,9 +787,19 @@ export class TurnBroker implements TurnBrokerOwner {
           );
         });
         server.listen(this.socketPath, () => {
-          server.off("error", rejectStart);
-          if (!windowsPipe) chmodSync(this.socketPath, 0o600);
-          resolveStart();
+          try {
+            server.off("error", rejectStart);
+            startupOwnsSocket = !windowsPipe;
+            if (!windowsPipe) {
+              const socketStat = lstatSync(this.socketPath);
+              startupSocketIdentity = { dev: socketStat.dev, ino: socketStat.ino };
+              if (this.startAttempt === attempt) this.socketIdentity = startupSocketIdentity;
+              chmodSync(this.socketPath, 0o600);
+            }
+            resolveStart();
+          } catch (error) {
+            rejectStart(errorOf(error));
+          }
         });
       };
 
@@ -832,6 +858,40 @@ export class TurnBroker implements TurnBrokerOwner {
           }
         });
       });
+    });
+    this.startPromise = startup.catch(async error => {
+      if (this.server === startupServer) this.server = undefined;
+      const server = startupServer;
+      if (server) {
+        await new Promise<void>(resolveClose => {
+          server.close(closeError => {
+            if (closeError && (closeError as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+              console.error(`[chatgpt-web] failed to close broker after startup failure at ${this.socketPath}: ${errorOf(closeError).message}`);
+            }
+            resolveClose();
+          });
+        });
+      }
+      try {
+        if (startupOwnsSocket && startupSocketIdentity && !isWindowsPipeEndpoint(this.socketPath)
+          && existsSync(this.socketPath)) {
+          const socketStat = lstatSync(this.socketPath);
+          if (socketStat.isSocket()
+            && socketStat.dev === startupSocketIdentity.dev
+            && socketStat.ino === startupSocketIdentity.ino) {
+            unlinkSync(this.socketPath);
+          }
+        }
+      } catch (cleanupError) {
+        console.error(`[chatgpt-web] failed to remove broker socket after startup failure at ${this.socketPath}: ${errorOf(cleanupError).message}`);
+      }
+      if (this.startAttempt === attempt) {
+        this.startAttempt = undefined;
+        this.socketIdentity = undefined;
+        if (brokers.get(this.socketPath) === this) brokers.delete(this.socketPath);
+        this.startPromise = undefined;
+      }
+      throw error;
     });
     return this.startPromise;
   }

@@ -1,0 +1,69 @@
+{
+  "lane": 4,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L04-codex-probe",
+      "reason": "inspectCodexIntegration can throw from journal inspection at doctor.ts:155, escaping runDoctor before later independent checks; the CLI fallback emits only generic stderr and no DoctorReport."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L04-profile-probe",
+      "reason": "A selected profile TOML parse error is swallowed at route-diagnostics.ts:68 and collapses into profile-unavailable, losing the distinction from an absent or invalid selection despite the root config-invalid classification."
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L04-profile-probe",
+      "reason": "Root and selected-profile reads share one catch at route-diagnostics.ts:124-138, so a profile read failure is reported as config-unreadable and discards valid root evidence."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L04-codex-probe",
+      "reason": "This independently reports the same uncaught Codex integration probe at doctor.ts:155 and the same loss of the aggregate doctor report; it is a duplicate root."
+    },
+    {
+      "source": "review3",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L04-login-probe",
+      "reason": "The managed-chrome login path calls secureFile, whose statSync can throw outside a per-probe guard at doctor.ts:144-151, aborting the report before subsequent checks."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L04-codex-probe",
+      "title": "Uncaught Codex integration probe aborts the aggregate doctor report",
+      "severity": "P1",
+      "files": ["src/doctor.ts", "src/cli.ts", "src/codex-integration.ts", "src/codex-integration-journal.ts"],
+      "trigger": "The Codex integration journal is unreadable or invalid so inspectCodexIntegration throws during runDoctor.",
+      "fix": "Catch this individual probe, append a bounded codex error check, and continue the existing service, proxy, tunnel, and connector checks.",
+      "sources": ["review1", "review2"]
+    },
+    {
+      "id": "L04-profile-probe",
+      "title": "Selected profile failures lose their identity and root configuration evidence",
+      "severity": "P2",
+      "files": ["src/route-diagnostics.ts", "src/read-bounded-file.ts"],
+      "trigger": "A requested profile is malformed or cannot be read while the root config.toml is valid.",
+      "fix": "Guard root and profile reads separately, preserve valid root diagnostics, and emit distinct stable profile parse/read issue codes.",
+      "sources": ["review1"]
+    },
+    {
+      "id": "L04-login-probe",
+      "title": "Managed-chrome login permission probe can abort doctor without a check",
+      "severity": "P1",
+      "files": ["src/doctor.ts", "src/browser-login.ts"],
+      "trigger": "The login state or verification marker changes or becomes non-stat-able between existence and permission checks, causing secureFile statSync to throw.",
+      "fix": "Wrap the complete login probe in a per-probe guard and append a bounded login error check when filesystem inspection fails.",
+      "sources": ["review3"]
+    }
+  ]
+}

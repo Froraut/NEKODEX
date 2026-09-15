@@ -1,0 +1,36 @@
+{
+  "lane": 8,
+  "fixedRoots": [
+    "L08-helper-stdio",
+    "L08-startup-recovery-result"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L08-startup-timeout"
+  ],
+  "changedFiles": [
+    "launcher/electron/browser-helper-verifier.cjs",
+    "launcher/electron/startup-recovery.cjs"
+  ],
+  "corrections": [
+    {
+      "root": "L08-helper-stdio",
+      "trigger": "The fix1 lifecycle wait could miss a child that settled between the initial fast-path check and listener registration, producing a false timeout.",
+      "change": "Recheck the tracked exit-and-close lifecycle immediately after registering both listeners.",
+      "introducedBy": "fix1"
+    },
+    {
+      "root": "L08-startup-recovery-result",
+      "trigger": "A later readiness, dialog, or relaunch exception returned recovery without the cleanup result already computed by settleWithin.",
+      "change": "Retain cleaned across the recovery function and include it in the outer failure return.",
+      "introducedBy": "baseline"
+    }
+  ],
+  "notes": [
+    "Only the two lane-owned files were edited in wave 3.",
+    "L08-recovery-error is integrated by the lane-5 main.cjs change in the current shared tree; main.cjs was not edited.",
+    "No connector identity, public response shape, ABI, reserved test, or diagnostics file was changed.",
+    "No tests, typechecks, scripts, benchmarks, runtime/app starts, commits, push, or delegation were performed."
+  ]
+}

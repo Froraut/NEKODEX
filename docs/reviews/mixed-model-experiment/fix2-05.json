@@ -1,0 +1,35 @@
+{
+  "lane": 5,
+  "fixedRoots": [
+    "L05-runtime-instance-proof"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "launcher/electron/main.cjs",
+    "docs/reviews/mixed-model-experiment/fix2-05.md",
+    "docs/reviews/mixed-model-experiment/fix2-05.json"
+  ],
+  "corrections": [
+    {
+      "root": "L05-runtime-instance-proof",
+      "trigger": "Manual mode can have a valid supervisor owner with no daemon or tunnel child, while fix1 returned a null runtime identity and then published positive proof with a schema-invalid identity.",
+      "change": "Use the existing supervisor ownerPid as the runtime identity anchor and encode absent child PIDs as zero, preserving child PID changes as proof invalidation signals.",
+      "introducedBy": "fix1"
+    },
+    {
+      "root": "L08-recovery-error",
+      "trigger": "After requestQuit returned a failure, awaited update cancellation could fail and the caller constructed a replacement combined error.",
+      "change": "Keep the original requestQuit message as the thrown primary Error and attach the cancellation failure as cause after awaiting cancelInstall.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "UTC start/end recorded by the coordinator should be used for timing; this lane performed a manual review only.",
+    "No changes were required in state.cjs or upgrade-readiness.cjs after direct-caller review.",
+    "Symlink compensation after atomic inode replacement, absent-file guards, and external-edit ownership remain governed by the existing surrounding atomic/runtime ownership code; no speculative refactor was made outside lane ownership.",
+    "Terra capacity failure and the bounded same-model retry preceded this Sol replacement; Terra made no source changes.",
+    "Parent owns tests, typechecks, scripts, runtime checks, and integration validation."
+  ]
+}

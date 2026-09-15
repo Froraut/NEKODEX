@@ -1,0 +1,113 @@
+{
+  "lane": 6,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L06-default-compatibility",
+      "reason": "The default selected-mode bypass is explicit source policy; the registry contract requires disabled-account failure but does not require universal capability evidence for the primary account, and the callers allow effort/connector fields to be absent. The report infers a stricter contract from UI wording."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L06-admission-currentness",
+      "reason": "beginTurn chooses and records the account before await host.ready(), then reaches host.beginTurn() without rechecking enabled state, evidence epoch, or fresh-turn eligibility. setAccountEnabled invalidates evidence but no post-await guard observes it."
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L06-login-selection",
+      "reason": "The renderer splits selection and login; openAccountLogin crosses selectAccount() and BrowserHost.openLogin() readiness boundaries without retaining selection ownership, so another selection can commit before login operation ownership is installed."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L06-check-invalidation",
+      "reason": "checkAccount awaits host.ready() before invalidateEvidence(), leaving prior capability and connector maps usable during the pending check and after an early readiness failure."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L06-admission-currentness",
+      "reason": "This duplicates the fresh-admission race in review1 claim 2; revealRevision only guards optional UI reveal and does not revalidate the account before host.beginTurn()."
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L06-balanced-evidence",
+      "reason": "With optional effort and connector fields omitted, eligible() does not require a capability map for an authenticated secondary account in balanced mode, while accountSnapshot reports checked:false."
+    },
+    {
+      "source": "review3",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L06-no-additional-defect",
+      "reason": "The direct callers and downstream guards yielded no additional defect with direct evidence and an actionable gap; speculative hardening and unavoidable non-atomic races were excluded."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L06-check-invalidation",
+      "title": "checkAccount leaves prior capability evidence usable during readiness",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/account-pool.cjs"
+      ],
+      "trigger": "A prior capability record exists and checkAccount() is invoked while host.ready() is pending or fails before invalidation.",
+      "fix": "Invalidate capability and connector evidence before the first await, capture the new epoch, and publish only while it remains current.",
+      "sources": [
+        "review2"
+      ]
+    },
+    {
+      "id": "L06-admission-currentness",
+      "title": "fresh turn admission does not revalidate its account decision after readiness",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/account-pool.cjs",
+        "launcher/electron/control-server.cjs"
+      ],
+      "trigger": "A turn chooses an account, then account enablement or capability/connector evidence changes while host.ready() is pending.",
+      "fix": "Revalidate account existence, enabled state, evidence identity, and fresh-turn eligibility immediately before host.beginTurn(); reject and clean up stale reservations while preserving exact retained/running ownership.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    },
+    {
+      "id": "L06-login-selection",
+      "title": "login start is not protected by the selection revision",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/account-pool.cjs",
+        "launcher/src/AccountSettings.tsx",
+        "launcher/electron/browser-host.cjs"
+      ],
+      "trigger": "Account A is selected and openAccountLogin(A) crosses an async readiness boundary while another selection commits.",
+      "fix": "Make selection and login one pool-owned operation or verify the selection revision and selected account immediately before starting login.",
+      "sources": [
+        "review1"
+      ]
+    },
+    {
+      "id": "L06-balanced-evidence",
+      "title": "balanced routing admits an unchecked authenticated secondary account",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/account-pool.cjs",
+        "launcher/electron/control-server.cjs"
+      ],
+      "trigger": "Balanced mode receives a turn without explicit effort or connector requirements while an authenticated secondary account has no current capability record.",
+      "fix": "Require current capability evidence for secondary automatic balanced candidates; keep connector proof separate when a connector is requested.",
+      "sources": [
+        "review2"
+      ]
+    }
+  ]
+}

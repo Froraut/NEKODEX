@@ -8,6 +8,20 @@ const {
 
 const BROWSER_HELPER_OPERATION_TIMEOUT_MS = 90_000;
 const helperScopes = new Map();
+const childLifecycles = new WeakMap();
+
+function trackChildLifecycle(child) {
+  const lifecycle = { exited: child.exitCode !== null || child.signalCode !== null, closed: false };
+  childLifecycles.set(child, lifecycle);
+  child.once("exit", () => { lifecycle.exited = true; });
+  child.once("close", () => { lifecycle.closed = true; });
+  return lifecycle;
+}
+
+function childIsSettled(child) {
+  const lifecycle = childLifecycles.get(child);
+  return Boolean(lifecycle?.exited && lifecycle.closed);
+}
 
 function helperScopeFor(descriptorPath) {
   let scope = helperScopes.get(descriptorPath);
@@ -28,7 +42,7 @@ function releaseHelperScope(descriptorPath, scope) {
 
 function reconcileUnsettledHelperChildren(scope) {
   for (const child of scope.unsettledChildren) {
-    if (child.exitCode !== null || child.signalCode !== null) {
+    if (childIsSettled(child)) {
       scope.unsettledChildren.delete(child);
     }
   }
@@ -38,21 +52,24 @@ function reconcileUnsettledHelperChildren(scope) {
 }
 
 function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  const lifecycle = childLifecycles.get(child) ?? trackChildLifecycle(child);
+  if (lifecycle.exited && lifecycle.closed) return Promise.resolve(true);
   return new Promise((resolve) => {
     let settled = false;
     const finish = (exited) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      child.off("exit", onExit);
-      child.off("close", onExit);
+      child.off("exit", checkSettled);
+      child.off("close", checkSettled);
       resolve(exited);
     };
-    const onExit = () => finish(true);
+    const checkSettled = () => {
+      if (lifecycle.exited && lifecycle.closed) finish(true);
+    };
     const timer = setTimeout(() => finish(false), timeoutMs);
-    child.once("exit", onExit);
-    child.once("close", onExit);
+    child.once("exit", checkSettled);
+    child.once("close", checkSettled);
   });
 }
 
@@ -69,7 +86,7 @@ function writeMessage(child, message) {
 }
 
 async function stopChild(child, unsettledChildren, scope) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (childIsSettled(child)) return;
   // The input write itself may remain pending; the grace period starts when shutdown is requested.
   void writeMessage(child, { type: "shutdown" }).catch(() => {});
   if (await waitForExit(child, 5_000)) return;
@@ -85,12 +102,13 @@ async function stopChild(child, unsettledChildren, scope) {
   // Keep the exact spawned handle reachable until its eventual exit; never target a PID by name.
   unsettledChildren.add(child);
   const release = () => {
+    if (!childIsSettled(child)) return;
     unsettledChildren.delete(child);
     releaseHelperScope(scope.descriptorPath, scope);
   };
   child.once("exit", release);
   child.once("close", release);
-  if (child.exitCode !== null || child.signalCode !== null) release();
+  if (childIsSettled(child)) release();
   const error = new Error("Browser helper verification process exit was not observed after SIGKILL");
   if (signalError) error.cause = signalError;
   throw error;
@@ -119,6 +137,7 @@ async function runBrowserHelperOperationOnce({ helper, descriptorPath, appName, 
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
+  trackChildLifecycle(child);
   let completed = false;
   let sent = false;
   let timer;
@@ -186,9 +205,17 @@ async function runBrowserHelperOperationOnce({ helper, descriptorPath, appName, 
       finish(new Error("Browser helper verification emitted an unexpected message"));
     });
     child.once("error", (error) => finish(error));
-    child.once("exit", (code, signal) => finish(new Error(
-      `Browser helper verification exited ${signal ? `from signal ${signal}` : `with status ${code ?? 1}`}`,
-    )));
+    let exitError;
+    child.once("exit", (code, signal) => {
+      exitError = new Error(
+        `Browser helper verification exited ${signal ? `from signal ${signal}` : `with status ${code ?? 1}`}`,
+      );
+    });
+    // A final stdout line can be buffered between process exit and readline delivery.
+    // Let the close boundary consume that line before treating exit as a failure.
+    child.once("close", () => {
+      if (!completed) finish(exitError ?? new Error("Browser helper verification exited unexpectedly"));
+    });
     timer = setTimeout(
       () => finish(new Error(`Browser helper ${operation} timed out`)),
       BROWSER_HELPER_OPERATION_TIMEOUT_MS,

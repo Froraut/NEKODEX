@@ -1,0 +1,85 @@
+{
+  "lane": 15,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L15-updater-cancel-join",
+      "reason": "cancelInstall kills the detached worker and immediately removes tempRoot without observing exit/close or worker acknowledgement; the direct main.cjs failure path makes the race reachable."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L15-tunnel-install-CAS",
+      "reason": "installTunnelClient performs a final installation snapshot and then separate executable/manifest writes, leaving a real concurrent-edit overwrite window; rollback cannot preserve an edit already overwritten."
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "rejected",
+      "root": "L15-connect-stranding",
+      "reason": "The source does not prove that failed connect leaves a running managed runtime. bootstrapTunnelProfile deliberately stops only after successful connect return and records failedConnectMayHaveWrittenProfile for manual recovery, preserving unknown profile state rather than claiming cleanup completed."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L15-auth-download-limits",
+      "reason": "downloadFile exposes maxBytes and timeoutMs but drops both in the expectedSha256 branch, so authenticated callers receive the helper's larger defaults instead of their requested tighter limits."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L15-updater-cancel-join",
+      "reason": "Duplicate of review1 claim 1: the detached worker is signaled and its tempRoot is removed before exit settlement."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L15-updater-cancel-join",
+      "title": "Updater cancellation deletes worker inputs before worker exit is proven",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/main.cjs",
+        "launcher/electron/update.cjs",
+        "launcher/electron/update-worker.cjs"
+      ],
+      "trigger": "An update worker has been spawned, requestQuit returns failure, and main.cjs invokes cancelInstall while the detached worker may still be alive or preparing its transaction.",
+      "fix": "Acknowledge cancellation and wait for worker exit/close with a bounded policy before removing tempRoot; preserve the owned root for recovery if exit cannot be proven.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    },
+    {
+      "id": "L15-tunnel-install-CAS",
+      "title": "Tunnel client install can overwrite a concurrent edit after its final snapshot",
+      "severity": "P2",
+      "files": [
+        "src/tunnel.ts"
+      ],
+      "trigger": "Another setup or repair process changes the managed executable or manifest after the final snapshot and before atomicWriteFile replaces them.",
+      "fix": "Use an interprocess lock or ownership-aware compare-and-swap spanning the final check and executable/manifest replacement.",
+      "sources": [
+        "review1"
+      ]
+    },
+    {
+      "id": "L15-auth-download-limits",
+      "title": "Authenticated updater downloads ignore caller byte and total-time limits",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/update.cjs",
+        "launcher/electron/resumable-download.cjs"
+      ],
+      "trigger": "A caller invokes downloadFile with expectedSha256 and a tighter maxBytes or timeoutMs than the authenticated helper defaults.",
+      "fix": "Forward and enforce equivalent byte and total-time limits in the authenticated resumable path while retaining the signed-size hard cap and idle timeout.",
+      "sources": [
+        "review2"
+      ]
+    }
+  ]
+}

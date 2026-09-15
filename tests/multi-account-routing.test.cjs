@@ -45,9 +45,36 @@ function fixture() {
     options: { maxTabs: 2 }, reservations: new Map(), pendingAffinity: new Map(), traceOwners: new Map(), affinity: new Map(),
     affinityPath: path.join(home, 'affinity.json'), lastAssigned: new Map(), sequence: 0,
     capabilities: new Map([...hosts.keys()].map(id => [id, { solAvailable: true }])), connectors: new Map(),
+    evidenceEpochs: new Map(),
     writeDescriptor() {}, publish() {}, syncVisibility() {} });
   return { pool, home, second, cleanup: () => fs.rmSync(home, { recursive: true, force: true }) };
 }
+
+test('mixed-model: disabling an account during readiness prevents a fresh turn', async () => {
+  const { pool, cleanup } = fixture();
+  pool.registry.setMode('selected');
+  pool.registry.select('default');
+  const host = pool.hosts.get('default');
+  let releaseReady;
+  let enteredReady;
+  const entered = new Promise(resolve => { enteredReady = resolve; });
+  const gate = new Promise(resolve => { releaseReady = resolve; });
+  host.ready = async () => { enteredReady(); await gate; };
+  const pending = pool.beginTurn('disabled_during_ready', false, 42);
+  try {
+    await entered;
+    pool.registry.setEnabled('default', false);
+    releaseReady();
+    await assert.rejects(pending, /ready|disabled|enabled|changed|eligible/i);
+    assert.equal(host.turnTabs.size, 0);
+    assert.equal(pool.reservations.size, 0);
+    assert.equal(pool.traceOwners.size, 0);
+  } finally {
+    releaseReady();
+    await pending.catch(() => {});
+    cleanup();
+  }
+});
 
 test('pinned fresh turns reject stale connector evidence without moving affinity', () => {
   const { pool, second, cleanup } = fixture();

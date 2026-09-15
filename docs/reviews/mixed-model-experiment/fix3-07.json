@@ -1,0 +1,34 @@
+{
+  "lane": 7,
+  "fixedRoots": [
+    "L07-control-operation-cancellation",
+    "L07-control-close-release"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "launcher/electron/runtime-supervisor.cjs",
+    "docs/reviews/mixed-model-experiment/fix3-07.md",
+    "docs/reviews/mixed-model-experiment/fix3-07.json"
+  ],
+  "corrections": [
+    {
+      "root": "L07-control-operation-cancellation",
+      "trigger": "Forced shutdown reaches an active non-recovery tunnel-control operation before its child is spawned, while wave1 cancellation tracks only post-spawn children.",
+      "change": "Register a supervisor-owned controller for the full operation before queue reservation, cancel queue/provider waits, retain operation ownership until settlement, and gate replacement tunnel stop on all control operations settling.",
+      "introducedBy": "fix1"
+    },
+    {
+      "root": "L07-control-close-release",
+      "trigger": "A spawned tunnel-control child rejects or times out before close, and the wave1 outer catch releases its queue slot and controller immediately.",
+      "change": "Release pre-spawn failures immediately; retain the spawned child controller and queue slot until the child close handler settles, preserving descendant cleanup signals before close.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Final requested correction pass; previous wave roots are not repeated as new corrections.",
+    "Manual source and diff review only; no tests, typechecks, scripts, broad audits, runtime/app starts, commits, pushes, or delegation.",
+    "Parent-owned route-diagnostic files and reserved tests were not edited."
+  ]
+}

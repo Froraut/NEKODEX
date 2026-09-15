@@ -1,0 +1,35 @@
+{
+  "lane": 3,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/codex-integration-shared.ts",
+    "src/codex-integration.ts",
+    "docs/reviews/mixed-model-experiment/fix2-03.md",
+    "docs/reviews/mixed-model-experiment/fix2-03.json"
+  ],
+  "corrections": [
+    {
+      "root": "L03-write-ownership",
+      "trigger": "A managed target was absent at the initial snapshot, or an owned atomic write replaced a symlink target inode before compensation.",
+      "change": "Managed writes now compare the full initial snapshot, compensation records the exact post-write snapshot, and rollback accepts only that owned post-write state before restoring the original file or symlink target.",
+      "introducedBy": "integration"
+    },
+    {
+      "root": "L03-delete-ownership",
+      "trigger": "A managed removal or rollback could act on a path whose state changed after the snapshot, including a path created after an absent snapshot.",
+      "change": "Removals now assert snapshot ownership immediately before deletion, track successful removals, and require the owned post-removal state before rollback removal or restoration.",
+      "introducedBy": "integration"
+    }
+  ],
+  "notes": [
+    "No new root is counted in fixedRoots because both accepted roots were already fixed by fix1; this wave corrected residual integration behavior within those roots.",
+    "src/codex-integration-journal.ts was manually reviewed and intentionally unchanged; synchronous callers and explicit expected-byte recovery writes remain compatible.",
+    "Public connector names and schemas Native4, Native4 DEV, and ZeroRisk4 were preserved.",
+    "Terra made no source changes; this lane is the authorized Sol replacement after Terra capacity failure and bounded same-model retry.",
+    "Manual source review only. No tests, typechecks, scripts, broad audits, runtime checks, commits, pushes, or delegation were performed.",
+    "The compare-then-mutate filesystem race remains a known primitive boundary."
+  ]
+}

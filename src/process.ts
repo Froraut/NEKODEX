@@ -6,6 +6,16 @@ export interface CommandResult {
   stderr: string;
 }
 
+const DEFAULT_LAUNCHCTL_MUTATION_TIMEOUT_MS = 20_000;
+
+export function isMissingLaunchdService(result: CommandResult): boolean {
+  if (result.status !== 113) return false;
+  const detail = `${result.stderr}\n${result.stdout}`.trim();
+  // launchctl print on macOS returns status 113 with this complete diagnostic.
+  // The literal prefix and gui UID are part of its normal absent-service output.
+  return /^(?:Bad request\.\r?\n)?Could not find service "[^"\r\n]+" in domain for (?:system|user(?: gui:[ \t]*\d+)?)$/.test(detail);
+}
+
 export function processRunning(
   pid: unknown,
   probe: (pid: number, signal: 0) => void = process.kill,
@@ -36,7 +46,12 @@ export function runCommand(command: string, args: string[], options: SpawnSyncOp
 }
 
 export function runChecked(command: string, args: string[], options: SpawnSyncOptions = {}): CommandResult {
-  const result = runCommand(command, args, options);
+  const boundedOptions = command === "launchctl"
+    && (args[0] === "bootstrap" || args[0] === "bootout")
+    && options.timeout === undefined
+    ? { ...options, timeout: DEFAULT_LAUNCHCTL_MUTATION_TIMEOUT_MS }
+    : options;
+  const result = runCommand(command, args, boundedOptions);
   if (result.status !== 0) {
     const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.status}`;
     throw new Error(`${command} ${args.join(" ")} failed: ${detail}`);

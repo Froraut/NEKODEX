@@ -98,6 +98,7 @@ export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: L
     "custom-provider": copy.custom, "catalog-override": copy.override, "route-mismatch": copy.routeMismatch,
     "integration-drift": copy.drift, "config-missing": copy.configProblem, "config-invalid": copy.configProblem,
     "config-unreadable": copy.configProblem, "profile-unavailable": copy.profileProblem,
+    "profile-invalid": copy.profileProblem, "profile-unreadable": copy.profileProblem,
     "provider-invalid": copy.providerProblem, "integration-unreadable": copy.integrationProblem,
     "integration-recovery-pending": copy.recoveryPending,
   };

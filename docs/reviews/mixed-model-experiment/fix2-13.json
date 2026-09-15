@@ -1,0 +1,23 @@
+{
+  "lane": 13,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L13-overview-toolbar-responsive-css",
+    "L13-overview-css-import-boundary"
+  ],
+  "changedFiles": [
+    "docs/reviews/mixed-model-experiment/fix2-13.md",
+    "docs/reviews/mixed-model-experiment/fix2-13.json"
+  ],
+  "corrections": [],
+  "notes": [
+    "Wave2 found no additional UI-readiness correction after reviewing fix1 source and direct callers.",
+    "Existing fix1 propagation remains App.tsx -> authenticated currentToolProof(snapshot, operation) -> Overview.tsx toolsReady.",
+    "launcher/src/styles.css was unchanged because the CSS findings were rejected.",
+    "Coordinator symlink, absent-target, and removal-compensation observations are outside renderer ownership and produced no lane-13 patch.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, commits, pushes, or delegation were performed; parent owns focused verification.",
+    "Integration must preserve operation-aware toolsReady propagation, the authentication conjunction, and existing workspace browser-navigation semantics."
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "lane": 4,
+  "fixedRoots": [
+    "L04-codex-probe",
+    "L04-profile-probe",
+    "L04-login-probe"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/doctor.ts",
+    "src/route-diagnostics.ts",
+    "docs/reviews/mixed-model-experiment/fix1-04.md",
+    "docs/reviews/mixed-model-experiment/fix1-04.json"
+  ],
+  "notes": [
+    "UTC start 2026-09-15T20:51:31Z; UTC end 2026-09-15T20:52:20Z.",
+    "Manual diff and direct-caller review only; no tests, typechecks, scripts, benchmarks, runtime/app starts, commits, pushes, or delegation.",
+    "runDoctor now keeps structured codex and managed-Chrome login checks when their independent probes throw, then continues later checks.",
+    "Root config reads and selected-profile reads are independent; profile-invalid and profile-unreadable are stable issue codes and valid root evidence is preserved.",
+    "Public report and route diagnostic shapes, connector names Native4/Native4 DEV/ZeroRisk4, and external authorization behavior are unchanged.",
+    "Parent must reconcile concurrent lane edits and review consumers of the new profile issue codes before cross-lane integration; parent owns focused verification."
+  ]
+}

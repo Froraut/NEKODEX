@@ -1,0 +1,30 @@
+{
+  "lane": 6,
+  "fixedRoots": [
+    "L06-check-invalidation",
+    "L06-admission-currentness",
+    "L06-login-selection",
+    "L06-balanced-evidence"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L06-default-compatibility",
+    "L06-no-additional-defect"
+  ],
+  "changedFiles": [
+    "launcher/electron/account-pool.cjs",
+    "docs/reviews/mixed-model-experiment/fix1-06.md",
+    "docs/reviews/mixed-model-experiment/fix1-06.json"
+  ],
+  "utcStart": "2026-09-15T20:48:56Z",
+  "utcEnd": "2026-09-15T20:51:00Z",
+  "notes": [
+    "checkAccount now invalidates capability and connector evidence before host readiness and retains the epoch guard for all later evidence publication.",
+    "Fresh turn acquisition rechecks account existence, enabled state, evidence epoch, and current eligibility after host readiness; stale reservations are released by the existing finally path, while exact retained/running continuation ownership remains allowed.",
+    "Login now holds a pool-owned selection lease across the async login/reveal path and blocks competing selection through currentOperation().",
+    "Balanced routing now requires current capability evidence for authenticated secondary automatic candidates; selected-primary compatibility bypass and requested connector proof behavior remain unchanged.",
+    "Public schemas, connector names Native4/Native4 DEV/ZeroRisk4, and external authorization behavior were left unchanged.",
+    "No tests, typechecks, scripts, benchmarks, runtime actions, app starts, commits, pushes, or delegation were performed; parent reserves focused verification and cross-lane integration review."
+  ]
+}

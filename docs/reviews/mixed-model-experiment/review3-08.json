@@ -1,0 +1,84 @@
+{
+  "lane": 8,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L08-helper-stdio",
+      "reason": "waitForExit and stopChild accept exit before the normal stdio close boundary, and the per-descriptor tail is released after readline.close without retaining the child for that normal unsettled path."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L08-helper-response",
+      "reason": "The child exit handler rejects the operation immediately, so a valid final identified stdout result that has not yet reached readline can be discarded by the completed guard."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L08-startup-timeout",
+      "reason": "The timeout is an explicit bounded recovery boundary followed by app.relaunch for Restart and app.exit in finally; the report does not show the old process continuing after exit to create an actionable concurrent mutation."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L08-recovery-error",
+      "reason": "main.cjs discards browserHost.destroy errors before awaiting browserControl.close, allowing the cleanup callback to resolve and recovery to report cleaned true after partial browser-host teardown."
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L08-helper-stdio",
+      "reason": "Duplicate of review1 claim 1: the same normal exit-before-close ownership gap remains in waitForExit, stopChild, and descriptor scope release."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L08-helper-stdio",
+      "title": "Helper ownership is released before normal stdio close settlement",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/browser-helper-verifier.cjs"
+      ],
+      "trigger": "A helper emits process exit while one of its stdio streams has not yet reached the close boundary; waitForExit or the already-exited fast path returns and the descriptor operation scope is released.",
+      "fix": "Track exit and stdio close independently, retain the exact child until close is observed or a surfaced bounded failure occurs, and release the descriptor scope only after settlement.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    },
+    {
+      "id": "L08-helper-response",
+      "title": "Final helper response can lose to immediate exit rejection",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/browser-helper-verifier.cjs"
+      ],
+      "trigger": "The helper writes a valid identified result and exits before readline delivers the buffered stdout line; the exit listener rejects first and completed suppresses the result.",
+      "fix": "Defer exit failure until the stdout protocol and close boundary have been consumed, allowing a valid identified result or helper error to decide the operation first.",
+      "sources": [
+        "review1"
+      ]
+    },
+    {
+      "id": "L08-recovery-error",
+      "title": "Startup recovery hides partial browser-host cleanup failure",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/main.cjs",
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/startup-recovery.cjs"
+      ],
+      "trigger": "BrowserHost.destroy throws during startup recovery while the later browser control close succeeds; the caller's empty catch lets the cleanup callback resolve successfully.",
+      "fix": "Continue independent cleanup, retain the first browser-host cleanup error, and return a failed cleanup result with bounded detail so recovery cannot report cleaned true after partial teardown.",
+      "sources": [
+        "review2"
+      ]
+    }
+  ]
+}

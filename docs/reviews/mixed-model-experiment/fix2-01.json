@@ -1,0 +1,26 @@
+{
+  "lane": 1,
+  "fixedRoots": ["L01-launchd-print-unknown"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/process.ts",
+    "docs/reviews/mixed-model-experiment/fix2-01.md",
+    "docs/reviews/mixed-model-experiment/fix2-01.json"
+  ],
+  "corrections": [
+    {
+      "root": "L01-launchd-print-unknown",
+      "trigger": "fix1's multiline absence classifier accepted a matching line inside a nonzero launchctl diagnostic containing unrelated output.",
+      "change": "Require the complete trimmed launchctl output to match the recognized absent-service response before treating the service as unloaded; preserve unknown-result failure handling.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Actual wave2 source change: removed multiline matching from isMissingLaunchdService in src/process.ts. src/service.ts and src/tunnel-service.ts required no additional correction.",
+    "Manual review covered fix1's direct service/tunnel callers and setup status/rollback call sites; no tests, typechecks, scripts, broad audits, runtime actions, commits, pushes, or delegation were performed.",
+    "Parent integration must preserve fix1 timeout and helper changes and review setup snapshot/restore behavior for symlink target replacement, initially absent files, external edits, and removal compensation.",
+    "Public status schemas, connector ABI, normal lifecycle paths, manual cancellation behavior, and primary-error/compensation-error handling remain unchanged."
+  ]
+}

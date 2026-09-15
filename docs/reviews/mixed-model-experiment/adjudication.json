@@ -1,0 +1,1072 @@
+{
+  "baseline": "9925453",
+  "candidateCounts": {
+    "review1": [
+      3,
+      0,
+      3,
+      3,
+      2,
+      3,
+      3,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      3,
+      1
+    ],
+    "review2": [
+      2,
+      0,
+      0,
+      1,
+      3,
+      3,
+      0,
+      3,
+      3,
+      3,
+      1,
+      1,
+      2,
+      0,
+      2,
+      0
+    ]
+  },
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L01-launchd-print-unknown",
+      "reason": "service.ts and tunnel-service.ts derive loaded/running solely from result.status === 0, so ordinary nonzero launchctl print errors become loaded:false; direct setup, doctor, CLI, stop, restart, and uninstall callers branch on that value. Spawn errors and timeouts throw, but that counterevidence does not classify ordinary nonzero results.",
+      "lane": 1
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L02-status-probe-deadline",
+      "reason": "service.ts getServiceStatus calls synchronous runCommand without timeout, while waitForServiceUnloaded checks its deadline only around the call; process.ts uses synchronous spawnSync. Tunnel status polling has a bounded print timeout, but that does not repair the daemon path or provide a uniform enclosing deadline.",
+      "lane": 1
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L03-launchd-mutation-deadline",
+      "reason": "service bootstrap and bootout run without timeout, and bootstrapService checks its deadline only before an unbounded synchronous attempt; restart holds a drain lease until the catch can run. Tunnel bootstrap and bootout also pass signal without a timeout.",
+      "lane": 1
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L01-launchd-print-unknown",
+      "reason": "Same evidenced root as review1 claim 1: ordinary nonzero launchctl print results become an unloaded status and reach lifecycle decisions. Existing thrown-error catches do not cover this nonzero-result path.",
+      "lane": 1
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L02-status-probe-deadline",
+      "reason": "Same daemon status deadline root as review1 claim 2. Tunnel print probes and unload polling have bounded timeouts, so the accepted scope is the confirmed unbounded daemon status path; tunnel mutation timeout evidence is merged into L03.",
+      "lane": 1
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L03-write-ownership",
+      "reason": "uninstall snapshots config/hooks and writes through writeFileSnapshot without expected-byte comparison; same-identity intervening edits can be overwritten, and rollback runs too late to prevent that loss.",
+      "lane": 3
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L03-delete-ownership",
+      "reason": "uninstall removes the legacy catalog and models cache after snapshots but without an immediate byte/identity ownership check, so a recreated or replaced file can be deleted.",
+      "lane": 3
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L03-write-ownership",
+      "reason": "writeIntegrationState supplies no expectedData to writeFilesWithCompensation, so normal install/reconnect/disconnect writes can overwrite edits made after the initial snapshot; merged with claim 1.",
+      "lane": 3
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L04-codex-probe",
+      "reason": "inspectCodexIntegration can throw from journal inspection at doctor.ts:155, escaping runDoctor before later independent checks; the CLI fallback emits only generic stderr and no DoctorReport.",
+      "lane": 4
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L04-profile-probe",
+      "reason": "A selected profile TOML parse error is swallowed at route-diagnostics.ts:68 and collapses into profile-unavailable, losing the distinction from an absent or invalid selection despite the root config-invalid classification.",
+      "lane": 4
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L04-profile-probe",
+      "reason": "Root and selected-profile reads share one catch at route-diagnostics.ts:124-138, so a profile read failure is reported as config-unreadable and discards valid root evidence.",
+      "lane": 4
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L04-codex-probe",
+      "reason": "This independently reports the same uncaught Codex integration probe at doctor.ts:155 and the same loss of the aggregate doctor report; it is a duplicate root.",
+      "lane": 4
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L05-runtime-instance-proof",
+      "reason": "captureAccountProofContext/accountProofContextIsCurrent bind in-flight writes to generation, mode, account and setupIdentity(config, account), but setupIdentity has no runtime PID/boot instance. Startup can replace/start the runtime while retaining mcpSetupComplete, and App.currentToolProof consumes that flag.",
+      "lane": 5
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L05-persisted-proof-schema",
+      "reason": "readState deletes missing or malformed setupIdentityHash without clearing mcpSetupComplete; it does not require setupContract or verification metadata, while currentToolProof checks the positive boolean directly.",
+      "lane": 5
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L05-runtime-config-invalidation",
+      "reason": "The production contextChangeQueue onApplied path and DEV direct Bigger Context caller change an input to setupIdentity but do not invalidate MCP proof fields or retire accountProofGeneration.",
+      "lane": 5
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L05-runtime-config-invalidation",
+      "reason": "launcher:zero-risk-pro changes zeroRiskProEnabled, which is hashed by setupIdentity, but only resets catalog/restart state and leaves mcpSetupComplete, setupIdentityHash and proof generation usable.",
+      "lane": 5
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L05-persisted-proof-schema",
+      "reason": "Startup reuses persisted positive MCP proof without a general setupContract/hash/current account-config comparison; preserveSetup identity checking is limited to the upgrade.updated branch. Existing logout/account/mode/runtime-failure invalidators do not cover this load-time gap.",
+      "lane": 5
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L06-default-compatibility",
+      "reason": "The default selected-mode bypass is explicit source policy; the registry contract requires disabled-account failure but does not require universal capability evidence for the primary account, and the callers allow effort/connector fields to be absent. The report infers a stricter contract from UI wording.",
+      "lane": 6
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L06-admission-currentness",
+      "reason": "beginTurn chooses and records the account before await host.ready(), then reaches host.beginTurn() without rechecking enabled state, evidence epoch, or fresh-turn eligibility. setAccountEnabled invalidates evidence but no post-await guard observes it.",
+      "lane": 6
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L06-login-selection",
+      "reason": "The renderer splits selection and login; openAccountLogin crosses selectAccount() and BrowserHost.openLogin() readiness boundaries without retaining selection ownership, so another selection can commit before login operation ownership is installed.",
+      "lane": 6
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L06-check-invalidation",
+      "reason": "checkAccount awaits host.ready() before invalidateEvidence(), leaving prior capability and connector maps usable during the pending check and after an early readiness failure.",
+      "lane": 6
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L06-admission-currentness",
+      "reason": "This duplicates the fresh-admission race in review1 claim 2; revealRevision only guards optional UI reveal and does not revalidate the account before host.beginTurn().",
+      "lane": 6
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L06-balanced-evidence",
+      "reason": "With optional effort and connector fields omitted, eligible() does not require a capability map for an authenticated secondary account in balanced mode, while accountSnapshot reports checked:false.",
+      "lane": 6
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L07-queue-reservation",
+      "reason": "runtime-supervisor.cjs:1796-1805 awaits tunnelProxyEnvironmentProvider before reserving tunnelControlQueue; overlapping providers can make a later invocation install and run first.",
+      "lane": 7
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L07-post-settlement-kill",
+      "reason": "stopChild waits for exit or close and then unconditionally calls terminateOwnedProcessTree(child, SIGKILL); Unix process-tree termination uses the stale negative PID without a post-settlement identity check.",
+      "lane": 7
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L07-force-control-cancel",
+      "reason": "cancelRecoveries aborts only startup/recovery controllers; ordinary tunnel-control children remain in tunnelControlChildren until close, while forceStopOwnedRuntime neither cancels that set nor settles it before queueing another stop.",
+      "lane": 7
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L08-helper-stdio",
+      "reason": "waitForExit and stopChild accept exit before the normal stdio close boundary, and the per-descriptor tail is released after readline.close without retaining the child for that normal unsettled path.",
+      "lane": 8
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L08-helper-response",
+      "reason": "The child exit handler rejects the operation immediately, so a valid final identified stdout result that has not yet reached readline can be discarded by the completed guard.",
+      "lane": 8
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L08-startup-timeout",
+      "reason": "The timeout is an explicit bounded recovery boundary followed by app.relaunch for Restart and app.exit in finally; the report does not show the old process continuing after exit to create an actionable concurrent mutation.",
+      "lane": 8
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L08-recovery-error",
+      "reason": "main.cjs discards browserHost.destroy errors before awaiting browserControl.close, allowing the cleanup callback to resolve and recovery to report cleaned true after partial browser-host teardown.",
+      "lane": 8
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L08-helper-stdio",
+      "reason": "Duplicate of review1 claim 1: the same normal exit-before-close ownership gap remains in waitForExit, stopChild, and descriptor scope release.",
+      "lane": 8
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L09-primary-cleanup",
+      "reason": "withClaimedTurn awaits activity cleanup in finally, so a cleanup rejection replaces the rejected action; claimTurn and invoke aggregation do not cover this path.",
+      "lane": 9
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "design-limit",
+      "root": "L09-gateway-freeform-envelope",
+      "reason": "The generated exec gateway intentionally transports nested structured data and metadata as a freeform JSON text envelope; the source does not promise native nested MCP field preservation across that boundary.",
+      "lane": 9
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L09-primary-cleanup",
+      "reason": "Duplicate of review1 claim 1: the action rejection is vulnerable to replacement by the awaited settleTurnActivity rejection from finally.",
+      "lane": 9
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L09-browser-outcome-cleanup",
+      "reason": "finishBrowserOutcome awaits the injected TurnBrokerOwner revoke before throwing a preexisting browser outcome error; the asynchronous DEV owner revoke can reject and mask that primary error.",
+      "lane": 9
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "design-limit",
+      "root": "L09-gateway-freeform-envelope",
+      "reason": "Duplicate gateway representation claim: the freeform envelope is an explicit transport boundary, while native field preservation exists only for directly advertised broker results.",
+      "lane": 9
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L10-malformed-call-record",
+      "reason": "toolCalls() skips call-shaped output when call_id is not a string, then send() accepts calls.length===0 with end_turn=true and persists the output without a receipt; downstream guards only protect records that survive parsing.",
+      "lane": 10
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L10-malformed-call-record",
+      "reason": "The same pre-guard call_id filter and successful empty-call branch are present; duplicate-ID checking runs only after parsing. Custom/freeform string input remains a valid separate contract.",
+      "lane": 10
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L10-broker-startup-rollback",
+      "reason": "forSocket() registers the broker before listen(), start() leaves a rejected startPromise in the registry, and transport cleanup is created only after listen succeeds; server is assigned before rejection-capable listen setup.",
+      "lane": 10
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L10-broker-startup-rollback",
+      "reason": "Transport awaits broker.listen() before owning a cleanup closure, while broker startup can reject after assigning server and has no failed-start rollback. The exact OS leak varies by event sequence, but the missing transactional cleanup is evidenced and actionable.",
+      "lane": 10
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L10-interactive-cancel",
+      "reason": "SIGINT only closes readline; an active executeMessage() awaits driver.send(), which creates responseRequest() without an abort signal, so the request and outer cleanup continue until settlement.",
+      "lane": 10
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L11-response-observation-failure",
+      "reason": "responseDomSnapshot catches every non-closed-page evaluate failure and returns an ordinary absent snapshot, bypassing the main loop's bounded observation-fault recovery and potentially triggering missing-response handling after an accepted submission.",
+      "lane": 11
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "rejected",
+      "root": "L11-hidden-descendant-projection",
+      "reason": "The claim provides no current source evidence of a valid ChatGPT assistant response containing a usable markdown root under an ancestor-only hidden state; requiring an ancestor walk would be hypothetical hardening and could conflict with the deliberate hidden-view DOM contract.",
+      "lane": 11
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "design-limit",
+      "root": "L11-response-observation-failure",
+      "reason": "The observation-failure portion duplicates the accepted root, but the stale-cache assertion is false as written: the undefined-observation branch returns absentResponseDomSnapshot at line 4415 before the cache fallback at line 4417.",
+      "lane": 11
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L12-retry-handoff-cancel",
+      "reason": "rememberRetryableTurnFailure runs after queue.push but before bridgeToResponsesSSE processes the terminal event; cancellation aborts and closes the iterator without revoking the stored handoff, while later exact source-hash guards can still accept it as a successor.",
+      "lane": 12
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L12-stream-queue-budget",
+      "reason": "The streaming queue is limited to 10000 objects, but the 32 MiB event-byte budget is skipped for streaming and individual AdapterEvent payloads are not bounded, so retained memory is not byte-bounded.",
+      "lane": 12
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L12-stream-queue-budget",
+      "reason": "The report's literal unbounded-count wording is narrowed because AsyncEventQueue caps buffered count at 10000; the actionable defect remains: deliverEvent lacks an abort guard and can retain late post-cancel payloads up to that cap without a byte budget.",
+      "lane": 12
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L13-overview-stale-runtime-proof",
+      "reason": "Overview.tsx derives toolsReady only from authenticated browser plus persisted mcpSetupComplete, while App.tsx currentToolProof explicitly rejects a failed production automatic runtime-start operation; App.tsx does not pass operation to Overview.",
+      "lane": 13
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "rejected",
+      "root": "L13-overview-toolbar-responsive-css",
+      "reason": "The claim searches only styles.css, but main.tsx imports nekodex.css afterward; nekodex.css:373-375 adds wrapped narrow browser-toolbar behavior, so the asserted absence of narrow handling is false.",
+      "lane": 13
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "rejected",
+      "root": "L13-overview-css-import-boundary",
+      "reason": "Overview is styled by the downstream nekodex.css imported after styles.css: rules exist at nekodex.css:172-232 and responsive container rules at 286-322 and 439-444; searching styles.css alone does not establish an unstyled renderer.",
+      "lane": 13
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L13-overview-stale-runtime-proof",
+      "reason": "The direct Overview caller omits operation, so Overview can show tools verified and ready after the same failed production automatic runtime-start that currentToolProof rejects; optional MCP navigation does not justify stale positive proof.",
+      "lane": 13
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L14-manual-cancel-release",
+      "reason": "browser-host.cjs:1656-1674 signals Manual cancellation, swallows cancelTurn rejection, and removes the running exact-owner tab; main.cjs:1294 wires cancelTurn to runtimeSupervisor.cancelBrowserTurn, so runtime cancellation can remain unacknowledged while the local owner is released.",
+      "lane": 14
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L14-manual-cancel-release",
+      "reason": "control-server.cjs:262-265 dispatches /v1/manual/cancel to browser-host.cjs:2312-2319, where exact trace/helper ownership is checked but cancelTurn is never invoked before signalManualTerminal and removeTurnTab; HTTP success therefore does not prove runtime cancellation.",
+      "lane": 14
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L15-updater-cancel-join",
+      "reason": "cancelInstall kills the detached worker and immediately removes tempRoot without observing exit/close or worker acknowledgement; the direct main.cjs failure path makes the race reachable.",
+      "lane": 15
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L15-tunnel-install-CAS",
+      "reason": "installTunnelClient performs a final installation snapshot and then separate executable/manifest writes, leaving a real concurrent-edit overwrite window; rollback cannot preserve an edit already overwritten.",
+      "lane": 15
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "rejected",
+      "root": "L15-connect-stranding",
+      "reason": "The source does not prove that failed connect leaves a running managed runtime. bootstrapTunnelProfile deliberately stops only after successful connect return and records failedConnectMayHaveWrittenProfile for manual recovery, preserving unknown profile state rather than claiming cleanup completed.",
+      "lane": 15
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L15-auth-download-limits",
+      "reason": "downloadFile exposes maxBytes and timeoutMs but drops both in the expectedSha256 branch, so authenticated callers receive the helper's larger defaults instead of their requested tighter limits.",
+      "lane": 15
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L15-updater-cancel-join",
+      "reason": "Duplicate of review1 claim 1: the detached worker is signaled and its tempRoot is removed before exit settlement.",
+      "lane": 15
+    },
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L16-padded-identity",
+      "reason": "src/config.ts checks legacy names before canonicalization in loadConfigForSetup and parseConfig, so a padded retired name is accepted and can be returned through providerConfig. Electron trims the same value in validateConnectorName/runtime detection, while browser-worker exact matching consumes the untrimmed provider identity; this is a reachable cross-layer connector identity split.",
+      "lane": 16
+    }
+  ],
+  "roots": [
+    {
+      "id": "L01-launchd-print-unknown",
+      "title": "launchd nonzero print is misclassified as unloaded",
+      "severity": "P1",
+      "files": [
+        "src/service.ts",
+        "src/tunnel-service.ts",
+        "src/setup.ts",
+        "src/doctor.ts",
+        "src/cli.ts"
+      ],
+      "trigger": "launchctl print returns an ordinary nonzero result for a permission, malformed-state, transport, or other error that is not a confirmed absent-service result.",
+      "fix": "Represent unknown separately and map only an exact recognized absence result to unloaded; fail closed in lifecycle and ownership decisions.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 1
+    },
+    {
+      "id": "L02-status-probe-deadline",
+      "title": "Service status probes can exceed their enclosing deadline",
+      "severity": "P1",
+      "files": [
+        "src/service.ts",
+        "src/process.ts",
+        "src/tunnel-service.ts"
+      ],
+      "trigger": "The daemon launchctl print blocks inside synchronous spawnSync while the caller is relying on an outer unload or lifecycle deadline.",
+      "fix": "Pass a timeout bounded by the enclosing deadline to every status probe and preserve timeout as unknown.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 1
+    },
+    {
+      "id": "L03-launchd-mutation-deadline",
+      "title": "launchd mutations can block lifecycle and drain compensation",
+      "severity": "P1",
+      "files": [
+        "src/service.ts",
+        "src/tunnel-service.ts"
+      ],
+      "trigger": "launchctl bootstrap or bootout stalls during install, start, stop, restart, or uninstall; restart can hold a drain lease until its catch path runs.",
+      "fix": "Bound every launchd mutation by the operation deadline and retain the primary mutation failure plus any compensation failure.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 1
+    },
+    {
+      "id": "L03-write-ownership",
+      "title": "Managed config and hook writes lack a pre-write ownership comparison",
+      "severity": "P1",
+      "files": [
+        "src/codex-integration.ts",
+        "src/codex-integration-shared.ts"
+      ],
+      "trigger": "An external process edits a managed config or hooks file after the operation snapshots it but before uninstall or writeIntegrationState commits the next managed write; symlink identity can remain unchanged.",
+      "fix": "Require expected snapshot bytes for uninstall config/hooks writes and for every writeIntegrationState managed write, while retaining symlink identity checks and preserving external edits on mismatch.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 3
+    },
+    {
+      "id": "L03-delete-ownership",
+      "title": "Uninstall deletes replacement catalog or model cache without ownership comparison",
+      "severity": "P1",
+      "files": [
+        "src/codex-integration.ts"
+      ],
+      "trigger": "The legacy catalog or models cache is recreated or replaced after uninstall snapshots it and before the unconditional rmSync call.",
+      "fix": "Immediately compare live existence, bytes, and relevant identity with the uninstall snapshot before deletion; preserve the changed file and report an ownership conflict.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 3
+    },
+    {
+      "id": "L04-codex-probe",
+      "title": "Uncaught Codex integration probe aborts the aggregate doctor report",
+      "severity": "P1",
+      "files": [
+        "src/doctor.ts",
+        "src/cli.ts",
+        "src/codex-integration.ts",
+        "src/codex-integration-journal.ts"
+      ],
+      "trigger": "The Codex integration journal is unreadable or invalid so inspectCodexIntegration throws during runDoctor.",
+      "fix": "Catch this individual probe, append a bounded codex error check, and continue the existing service, proxy, tunnel, and connector checks.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 4
+    },
+    {
+      "id": "L04-profile-probe",
+      "title": "Selected profile failures lose their identity and root configuration evidence",
+      "severity": "P2",
+      "files": [
+        "src/route-diagnostics.ts",
+        "src/read-bounded-file.ts"
+      ],
+      "trigger": "A requested profile is malformed or cannot be read while the root config.toml is valid.",
+      "fix": "Guard root and profile reads separately, preserve valid root diagnostics, and emit distinct stable profile parse/read issue codes.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 4
+    },
+    {
+      "id": "L04-login-probe",
+      "title": "Managed-chrome login permission probe can abort doctor without a check",
+      "severity": "P1",
+      "files": [
+        "src/doctor.ts",
+        "src/browser-login.ts"
+      ],
+      "trigger": "The login state or verification marker changes or becomes non-stat-able between existence and permission checks, causing secureFile statSync to throw.",
+      "fix": "Wrap the complete login probe in a per-probe guard and append a bounded login error check when filesystem inspection fails.",
+      "sources": [
+        "review3"
+      ],
+      "ownerLane": 4
+    },
+    {
+      "id": "L05-runtime-instance-proof",
+      "title": "Positive MCP proof is not bound to the current runtime instance",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/main.cjs",
+        "launcher/electron/upgrade-readiness.cjs",
+        "launcher/src/App.tsx"
+      ],
+      "trigger": "A verified runtime is replaced or restarted while account and runtime configuration remain unchanged; the persisted mcpSetupComplete flag survives and setupIdentity produces the same hash for the new instance.",
+      "fix": "Add a boot/supervisor instance identity to the proof record and currentness predicate, or clear the complete MCP proof whenever the managed runtime starts or is replaced and require fresh verification.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 5
+    },
+    {
+      "id": "L05-persisted-proof-schema",
+      "title": "Persisted MCP proof can survive incomplete schema or startup identity drift",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/state.cjs",
+        "launcher/electron/main.cjs",
+        "launcher/electron/upgrade-readiness.cjs",
+        "launcher/src/App.tsx"
+      ],
+      "trigger": "A version-1 state record has mcpSetupComplete true with missing or malformed setup identity/contract, or a saved proof no longer matches the current account/configuration at startup.",
+      "fix": "Fail closed during state normalization/startup unless the contract, identity hash, verification metadata, and current account/config identity are valid and matching; otherwise clear every dependent proof field before publishing readiness.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 5
+    },
+    {
+      "id": "L05-runtime-config-invalidation",
+      "title": "Runtime profile mutations leave MCP proof current after its identity inputs change",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/main.cjs",
+        "launcher/electron/state.cjs",
+        "launcher/electron/upgrade-readiness.cjs"
+      ],
+      "trigger": "Bigger Context or Zero Risk Pro changes successfully after verification; both settings are inputs to setupIdentity, but their production and DEV callers publish the new setting without invalidating MCP proof.",
+      "fix": "Use the existing account-proof invalidation path after each successful mutation and before publishing the changed runtime state, including both context queue and DEV direct callers.",
+      "sources": [
+        "review2"
+      ],
+      "ownerLane": 5
+    },
+    {
+      "id": "L06-check-invalidation",
+      "title": "checkAccount leaves prior capability evidence usable during readiness",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/account-pool.cjs"
+      ],
+      "trigger": "A prior capability record exists and checkAccount() is invoked while host.ready() is pending or fails before invalidation.",
+      "fix": "Invalidate capability and connector evidence before the first await, capture the new epoch, and publish only while it remains current.",
+      "sources": [
+        "review2"
+      ],
+      "ownerLane": 6
+    },
+    {
+      "id": "L06-admission-currentness",
+      "title": "fresh turn admission does not revalidate its account decision after readiness",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/account-pool.cjs",
+        "launcher/electron/control-server.cjs"
+      ],
+      "trigger": "A turn chooses an account, then account enablement or capability/connector evidence changes while host.ready() is pending.",
+      "fix": "Revalidate account existence, enabled state, evidence identity, and fresh-turn eligibility immediately before host.beginTurn(); reject and clean up stale reservations while preserving exact retained/running ownership.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 6
+    },
+    {
+      "id": "L06-login-selection",
+      "title": "login start is not protected by the selection revision",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/account-pool.cjs",
+        "launcher/src/AccountSettings.tsx",
+        "launcher/electron/browser-host.cjs"
+      ],
+      "trigger": "Account A is selected and openAccountLogin(A) crosses an async readiness boundary while another selection commits.",
+      "fix": "Make selection and login one pool-owned operation or verify the selection revision and selected account immediately before starting login.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 6
+    },
+    {
+      "id": "L06-balanced-evidence",
+      "title": "balanced routing admits an unchecked authenticated secondary account",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/account-pool.cjs",
+        "launcher/electron/control-server.cjs"
+      ],
+      "trigger": "Balanced mode receives a turn without explicit effort or connector requirements while an authenticated secondary account has no current capability record.",
+      "fix": "Require current capability evidence for secondary automatic balanced candidates; keep connector proof separate when a connector is requested.",
+      "sources": [
+        "review2"
+      ],
+      "ownerLane": 6
+    },
+    {
+      "id": "L07-queue-reservation",
+      "title": "Tunnel control queue reservation occurs after environment await",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/runtime-supervisor.cjs"
+      ],
+      "trigger": "Two runTunnelCommand calls overlap while tunnelProxyEnvironmentProvider is pending; the later provider resolves first.",
+      "fix": "Reserve the queue successor synchronously before the first await, then resolve proxy environment only after the invocation owns its predecessor slot; retain cancelled slots until predecessor release.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 7
+    },
+    {
+      "id": "L07-post-settlement-kill",
+      "title": "stopChild can kill a reused Unix process group after child settlement",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/runtime-supervisor.cjs",
+        "launcher/electron/process-tree.cjs"
+      ],
+      "trigger": "The owned child settles, its PID/process-group number is reused, and stopChild reaches its unconditional final SIGKILL.",
+      "fix": "Remove the final kill after settlement or require a live, identity-bound ownership check before signaling; keep forced termination before settlement bounded and reported.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 7
+    },
+    {
+      "id": "L07-force-control-cancel",
+      "title": "Forced shutdown does not own cancellation of ordinary tunnel control children",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/runtime-supervisor.cjs"
+      ],
+      "trigger": "An ordinary stop or cleanup control child remains active when shutdown falls into forceStopOwnedRuntime; its queue slot is held until close while force cleanup starts another stop.",
+      "fix": "Track a supervisor cancellation handle for every control child, terminate all tracked children in the force path, wait for close settlement, and report unresolved children as partial cleanup.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 7
+    },
+    {
+      "id": "L08-helper-stdio",
+      "title": "Helper ownership is released before normal stdio close settlement",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/browser-helper-verifier.cjs"
+      ],
+      "trigger": "A helper emits process exit while one of its stdio streams has not yet reached the close boundary; waitForExit or the already-exited fast path returns and the descriptor operation scope is released.",
+      "fix": "Track exit and stdio close independently, retain the exact child until close is observed or a surfaced bounded failure occurs, and release the descriptor scope only after settlement.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 8
+    },
+    {
+      "id": "L08-helper-response",
+      "title": "Final helper response can lose to immediate exit rejection",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/browser-helper-verifier.cjs"
+      ],
+      "trigger": "The helper writes a valid identified result and exits before readline delivers the buffered stdout line; the exit listener rejects first and completed suppresses the result.",
+      "fix": "Defer exit failure until the stdout protocol and close boundary have been consumed, allowing a valid identified result or helper error to decide the operation first.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 8
+    },
+    {
+      "id": "L08-recovery-error",
+      "title": "Startup recovery hides partial browser-host cleanup failure",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/main.cjs",
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/startup-recovery.cjs"
+      ],
+      "trigger": "BrowserHost.destroy throws during startup recovery while the later browser control close succeeds; the caller's empty catch lets the cleanup callback resolve successfully.",
+      "fix": "Continue independent cleanup, retain the first browser-host cleanup error, and return a failed cleanup result with bounded detail so recovery cannot report cleaned true after partial teardown.",
+      "sources": [
+        "review2"
+      ],
+      "ownerLane": 8
+    },
+    {
+      "id": "L09-primary-cleanup",
+      "title": "Claimed-turn cleanup can mask the primary MCP action error",
+      "severity": "P1",
+      "files": [
+        "src/adapters/chatgpt-web/mcp-server.ts"
+      ],
+      "trigger": "A tool using withClaimedTurn rejects and both activity_complete attempts in settleTurnActivity reject.",
+      "fix": "Capture the action failure, settle activity independently, and aggregate cleanup after the action failure; use cleanup as primary only after successful action completion.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 9
+    },
+    {
+      "id": "L09-browser-outcome-cleanup",
+      "title": "Browser outcome errors can be masked by asynchronous broker revocation",
+      "severity": "P1",
+      "files": [
+        "src/adapters/chatgpt-web/index.ts",
+        "src/adapters/chatgpt-web/turn-broker.ts"
+      ],
+      "trigger": "finishBrowserOutcome receives an error outcome and the injected TurnBrokerOwner revoke rejects.",
+      "fix": "Preserve the browser outcome error as primary and attach revoke failure as cleanup detail; allow revoke to be primary only when the browser outcome succeeded.",
+      "sources": [
+        "review2"
+      ],
+      "ownerLane": 9
+    },
+    {
+      "id": "L10-malformed-call-record",
+      "title": "Fail-closed parsing of malformed call-shaped DEV Responses records",
+      "severity": "P1",
+      "files": [
+        "src/dev-chat/driver.ts",
+        "src/dev-chat/cli.ts"
+      ],
+      "trigger": "A completed DEV Responses envelope contains a function_call or custom_tool_call without a usable call_id or required identifying fields and end_turn=true.",
+      "fix": "Detect call-shaped records before filtering; require a bounded non-empty call_id and required fields at the parse boundary, reject malformed records, and preserve custom/freeform string input and existing public connector ABI.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 10
+    },
+    {
+      "id": "L10-broker-startup-rollback",
+      "title": "Transactional broker startup and failure cleanup",
+      "severity": "P2",
+      "files": [
+        "src/dev-chat/transport.ts",
+        "src/adapters/chatgpt-web/turn-broker.ts",
+        "src/dev-chat/cli.ts"
+      ],
+      "trigger": "TurnBroker.forSocket() registers an instance and start() assigns a server, then startup rejects before startDevChatTransport() returns its cleanup closure.",
+      "fix": "On failed startup, remove only the still-mapped instance, clear rejected start state, close the owned server, and unlink only a socket created by this attempt; preserve ownership checks and the original error.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 10
+    },
+    {
+      "id": "L10-interactive-cancel",
+      "title": "Abort active interactive DEV requests on Ctrl-C",
+      "severity": "P2",
+      "files": [
+        "src/dev-chat/cli.ts",
+        "src/dev-chat/driver.ts"
+      ],
+      "trigger": "Ctrl-C arrives while interactive mode is awaiting executeMessage() for an active browser/Responses request.",
+      "fix": "Thread a per-message AbortSignal from interactive SIGINT through executeMessage() and DevChatDriver.send() into responseRequest(), then allow existing finally cleanup after the aborted request settles.",
+      "sources": [
+        "review2"
+      ],
+      "ownerLane": 10
+    },
+    {
+      "id": "L11-response-observation-failure",
+      "title": "Response DOM observation failure is downgraded to ordinary absence",
+      "severity": "P1",
+      "files": [
+        "src/adapters/chatgpt-web/browser-worker.ts"
+      ],
+      "trigger": "An accepted assistant turn is bound, then responseTurn.evaluate in responseDomSnapshot times out, rejects, or fails while the page remains open.",
+      "fix": "Preserve the observation error and route it through bounded observation recovery, or return an explicit non-observed result that cannot enter missing-response handling; keep cache fallback limited to a known-valid observation and retain the original cause.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 11
+    },
+    {
+      "id": "L12-retry-handoff-cancel",
+      "title": "Retry handoff survives cancellation before streamed terminal delivery",
+      "severity": "P1",
+      "files": [
+        "src/server.ts",
+        "src/bridge.ts",
+        "src/adapters/chatgpt-web/retry-continuation.ts"
+      ],
+      "trigger": "A retryable 503 error is queued, then the HTTP stream is cancelled before bridgeToResponsesSSE processes and emits response.failed; the stored handoff remains available to a later exact-source successor.",
+      "fix": "Create the retry handoff only from the bridge's processed terminal-event boundary and revoke any pending handoff when request cancellation wins before that boundary.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 12
+    },
+    {
+      "id": "L12-stream-queue-budget",
+      "title": "Streaming adapter queue lacks cancellation and byte bounds",
+      "severity": "P2",
+      "files": [
+        "src/server.ts",
+        "src/event-queue.ts",
+        "src/bridge.ts"
+      ],
+      "trigger": "A slow or cancelled streaming client leaves a non-cooperating adapter callback delivering large AdapterEvent objects; the callback lacks an abort guard and the streaming queue enforces count only, retaining up to 10000 objects with unrestricted payload bytes.",
+      "fix": "Return immediately from delivery after request abort, close or fail the queue through the cancellation owner, and enforce a streaming byte budget alongside the existing event-count limit.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 12
+    },
+    {
+      "id": "L13-overview-stale-runtime-proof",
+      "title": "Overview publishes stale tool readiness after failed automatic runtime start",
+      "severity": "P1",
+      "files": [
+        "launcher/src/App.tsx",
+        "launcher/src/Overview.tsx"
+      ],
+      "trigger": "In production automatic mode, keep authenticated browser, verified catalog and picker, and mcpSetupComplete true; then receive an operation with name runtime-start and status failed.",
+      "fix": "Make Overview consume the shared currentToolProof(snapshot, operation) result, or pass an equivalent current operation-aware tool-proof value from App.tsx; keep the public connector ABI and names unchanged.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 13
+    },
+    {
+      "id": "L14-manual-cancel-release",
+      "title": "Manual cancellation releases the exact browser owner before runtime cancellation is acknowledged",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/control-server.cjs",
+        "launcher/electron/main.cjs",
+        "src/launcher-browser-host.ts",
+        "src/adapters/chatgpt-web/index.ts"
+      ],
+      "trigger": "A running Manual turn is closed while cancelTurn rejects, or an authenticated /v1/manual/cancel request reaches cancelManualTurn; the local terminal record and browser tab are released even though the launcher-owned runtime was not targeted or did not acknowledge cancellation.",
+      "fix": "Use one exact-owner cancellation path for Manual close and /v1/manual/cancel. Target runtime cancellation before releasing a running tab, preserve a pending/failed cancellation state on rejection, and return success only after acknowledgement or an explicit recoverable pending result. Keep the existing public connector ABI and names unchanged.",
+      "sources": [
+        "review1",
+        "review3"
+      ],
+      "ownerLane": 14
+    },
+    {
+      "id": "L15-updater-cancel-join",
+      "title": "Updater cancellation deletes worker inputs before worker exit is proven",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/main.cjs",
+        "launcher/electron/update.cjs",
+        "launcher/electron/update-worker.cjs"
+      ],
+      "trigger": "An update worker has been spawned, requestQuit returns failure, and main.cjs invokes cancelInstall while the detached worker may still be alive or preparing its transaction.",
+      "fix": "Acknowledge cancellation and wait for worker exit/close with a bounded policy before removing tempRoot; preserve the owned root for recovery if exit cannot be proven.",
+      "sources": [
+        "review1",
+        "review2"
+      ],
+      "ownerLane": 15
+    },
+    {
+      "id": "L15-tunnel-install-CAS",
+      "title": "Tunnel client install can overwrite a concurrent edit after its final snapshot",
+      "severity": "P2",
+      "files": [
+        "src/tunnel.ts"
+      ],
+      "trigger": "Another setup or repair process changes the managed executable or manifest after the final snapshot and before atomicWriteFile replaces them.",
+      "fix": "Use an interprocess lock or ownership-aware compare-and-swap spanning the final check and executable/manifest replacement.",
+      "sources": [
+        "review1"
+      ],
+      "ownerLane": 15
+    },
+    {
+      "id": "L15-auth-download-limits",
+      "title": "Authenticated updater downloads ignore caller byte and total-time limits",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/update.cjs",
+        "launcher/electron/resumable-download.cjs"
+      ],
+      "trigger": "A caller invokes downloadFile with expectedSha256 and a tighter maxBytes or timeoutMs than the authenticated helper defaults.",
+      "fix": "Forward and enforce equivalent byte and total-time limits in the authenticated resumable path while retaining the signed-size hard cap and idle timeout.",
+      "sources": [
+        "review2"
+      ],
+      "ownerLane": 15
+    },
+    {
+      "id": "L16-padded-identity",
+      "title": "Connector names are compared before config canonicalization",
+      "severity": "P2",
+      "files": [
+        "src/config.ts",
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "launcher/electron/connector-identity.cjs",
+        "launcher/electron/runtime.cjs"
+      ],
+      "trigger": "Persist a connector identity with leading or trailing whitespace, especially a retired name such as \"Codex Native3 \".",
+      "fix": "Canonicalize connector fields at the config boundary before migration, legacy detection, equality checks, and provider projection, or reject non-canonical whitespace. Preserve the public connector names and ABI.",
+      "sources": [
+        "review1",
+        "review3"
+      ],
+      "ownerLane": 16
+    }
+  ],
+  "method": "Exclude numbered non-findings and design discussion from candidate denominators; raw agent reports retained."
+}

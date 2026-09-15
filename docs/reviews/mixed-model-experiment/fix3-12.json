@@ -1,0 +1,27 @@
+{
+  "lane": 12,
+  "fixedRoots": ["L12-retry-handoff-cancel"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/bridge.ts",
+    "src/server.ts",
+    "docs/reviews/mixed-model-experiment/fix3-12.md",
+    "docs/reviews/mixed-model-experiment/fix3-12.json"
+  ],
+  "corrections": [
+    {
+      "root": "L12-retry-handoff-cancel",
+      "trigger": "fix1/fix2 published the retry handoff after calling emit(response.failed) without proving that the bridge accepted the failure frame; a closed or failed controller could therefore authorize a successor without delivered failure. The non-streaming path also published before final response construction.",
+      "change": "Make bridge emit return its enqueue result and publish the retry handoff only after a successful response.failed enqueue; in non-streaming mode build the final response JSON before publishing the handoff.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Current source and direct caller contracts were manually reviewed; normal success, retryable failure, cancellation, queue overflow, and iterator cleanup paths remain reachable by source inspection.",
+    "Queue limits remain based on currently queued bytes and release/reset on dequeue/cancellation; no queue change was made in wave 3.",
+    "No tests, typechecks, scripts, broad audits, runtime/app starts, commits, push, or delegation were performed.",
+    "Connector identities and public ABI remain unchanged; parent-reserved test and diagnostic files were not edited."
+  ]
+}

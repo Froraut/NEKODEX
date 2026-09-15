@@ -23,6 +23,7 @@ import {
   getCodexJournalPath,
   getCodexJournalRecoveryPath,
   getCodexModelsCachePath,
+  assertFileSnapshotCurrent,
   restoreFileSnapshot,
   routeUrl,
   sha256,
@@ -690,11 +691,14 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     : undefined;
   const configSnapshot = snapshotFile(journal.configPath, { followSymlink: true });
   const hooksSnapshot = restoredHooks ? snapshotFile(restoredHooks.path, { followSymlink: true }) : undefined;
-  const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath) : undefined;
-  const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath());
+  const catalogSnapshot = journal.version === 2
+    ? snapshotFile(journal.catalogPath, { followSymlink: true })
+    : undefined;
+  const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath(), { followSymlink: true });
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());
   const expected = new Map<string, Buffer | undefined>();
+  const ownedAfterWrite = new Map<string, ReturnType<typeof snapshotFile>>();
   const removeJournalCopy = (snapshot: ReturnType<typeof snapshotFile>): void => {
     const latest = snapshotFile(snapshot.path);
     if (!snapshot.exists || !latest.exists || !snapshot.data || !latest.data?.equals(snapshot.data)) {
@@ -705,15 +709,21 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   };
   try {
     expected.set(configSnapshot.path, Buffer.from(restored));
-    writeFileSnapshot(configSnapshot, restored);
+    assertFileSnapshotCurrent(configSnapshot);
+    writeFileSnapshot(configSnapshot, restored, { expectedData: configSnapshot.data });
+    ownedAfterWrite.set(configSnapshot.path, snapshotFile(configSnapshot.path, { followSymlink: true }));
     if (restoredHooks && hooksSnapshot) {
       expected.set(hooksSnapshot.path, Buffer.from(restoredHooks.text));
-      writeFileSnapshot(hooksSnapshot, restoredHooks.text);
+      assertFileSnapshotCurrent(hooksSnapshot);
+      writeFileSnapshot(hooksSnapshot, restoredHooks.text, { expectedData: hooksSnapshot.data });
+      ownedAfterWrite.set(hooksSnapshot.path, snapshotFile(hooksSnapshot.path, { followSymlink: true }));
     }
     if (catalogSnapshot?.exists) {
+      assertFileSnapshotCurrent(catalogSnapshot);
       expected.set(catalogSnapshot.path, undefined);
       rmSync(catalogSnapshot.path);
     }
+    assertFileSnapshotCurrent(modelsCacheSnapshot);
     expected.set(modelsCacheSnapshot.path, undefined);
     rmSync(modelsCacheSnapshot.path, { force: true });
     // Keep the recovery copy until last. If the inactive hook reappears after
@@ -729,7 +739,10 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
       try {
         if (!expected.has(snapshot.path)) continue;
         const current = snapshotFile(snapshot.path, {
-          followSymlink: snapshot.path === configSnapshot.path || snapshot.path === hooksSnapshot?.path,
+          followSymlink: snapshot.path === configSnapshot.path
+            || snapshot.path === hooksSnapshot?.path
+            || snapshot.path === catalogSnapshot?.path
+            || snapshot.path === modelsCacheSnapshot.path,
         });
         const intended = expected.get(snapshot.path);
         if (current.exists === snapshot.exists
@@ -738,7 +751,7 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
           || (intended !== undefined && !current.data?.equals(intended))) {
           throw new Error("changed after uninstall wrote it; preserving the concurrent edit");
         }
-        restoreFileSnapshot(snapshot);
+        restoreFileSnapshot(snapshot, { expectedCurrent: ownedAfterWrite.get(snapshot.path) });
       } catch (caught) {
         rollbackFailures.push(`${snapshot.path}: ${caught instanceof Error ? caught.message : String(caught)}`);
       }

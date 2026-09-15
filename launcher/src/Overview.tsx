@@ -8,13 +8,13 @@ import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types
 const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
 const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
 
-export function Overview({ copy, browser, snapshot, logs, navigate }: {
+export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
+  toolsReady: boolean;
   logs: LogRecord[]; navigate: (surface: Surface) => void;
 }) {
   const signedIn = browser?.authenticated === true;
   const modelsReady = snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true;
-  const toolsReady = signedIn && snapshot.state.mcpSetupComplete === true;
   const ready = signedIn && modelsReady && toolsReady;
   const workspaceReady = signedIn && modelsReady;
   const active = browser?.tabs.filter(tab => tab.status === "running").length ?? 0;

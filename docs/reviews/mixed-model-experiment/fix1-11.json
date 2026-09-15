@@ -1,0 +1,24 @@
+{
+  "lane": 11,
+  "fixedRoots": [
+    "L11-response-observation-failure"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L11-hidden-descendant-projection"
+  ],
+  "changedFiles": [
+    "src/adapters/chatgpt-web/browser-worker.ts",
+    "docs/reviews/mixed-model-experiment/fix1-11.md",
+    "docs/reviews/mixed-model-experiment/fix1-11.json"
+  ],
+  "notes": [
+    "Open-page responseTurn.evaluate failures are rethrown as a TypeError wrapper with the original error as cause, so the existing bounded internal observation-fault path handles them instead of treating them as ordinary response absence.",
+    "Closed-page classification remains unchanged.",
+    "Cache fallback remains limited to a successful known-revision observation; no public connector schema, connector name, or external authorization behavior changed.",
+    "L11-hidden-descendant-projection was rejected by adjudication and was not changed.",
+    "UTC start=2026-09-15T20:47:00Z; UTC end=2026-09-15T20:51:00Z.",
+    "No tests, typechecks, scripts, benchmarks, runtime actions, app starts, commits, pushes, or delegation were run; parent reserves focused verification and cross-lane integration review."
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "lane": 3,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/codex-integration-shared.ts",
+    "src/codex-integration.ts",
+    "docs/reviews/mixed-model-experiment/fix3-03.md",
+    "docs/reviews/mixed-model-experiment/fix3-03.json"
+  ],
+  "corrections": [
+    {
+      "root": "L03-write-ownership",
+      "trigger": "Compensation for a removed symlink used a snapshot without link and target identity, so rollback could recreate a regular file or follow an externally replaced target.",
+      "change": "Removal snapshots are symlink-aware; rollback restores the original link only after verifying its target inode and preserves external target replacements.",
+      "introducedBy": "fix2"
+    },
+    {
+      "root": "L03-delete-ownership",
+      "trigger": "Uninstall catalog and models-cache deletion snapshots did not retain symlink target identity, allowing a same-content retarget to evade the ownership comparison.",
+      "change": "Uninstall deletion and rollback snapshots now follow symlinks for ownership comparison and retain target identity.",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "No new root is counted as fixed; corrections remain within the two accepted ownership roots.",
+    "src/codex-integration-journal.ts was reviewed and intentionally unchanged.",
+    "Public connector names and schemas Native4, Native4 DEV, and ZeroRisk4 were preserved.",
+    "Manual source review only; no tests, typechecks, scripts, broad audits, runtime checks, app starts, commits, pushes, or delegation were performed.",
+    "The compare-then-mutate filesystem race remains a known primitive boundary."
+  ]
+}

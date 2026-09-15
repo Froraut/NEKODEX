@@ -1,0 +1,70 @@
+{
+  "lane": 9,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L09-primary-cleanup",
+      "reason": "withClaimedTurn awaits activity cleanup in finally, so a cleanup rejection replaces the rejected action; claimTurn and invoke aggregation do not cover this path."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "design-limit",
+      "root": "L09-gateway-freeform-envelope",
+      "reason": "The generated exec gateway intentionally transports nested structured data and metadata as a freeform JSON text envelope; the source does not promise native nested MCP field preservation across that boundary."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L09-primary-cleanup",
+      "reason": "Duplicate of review1 claim 1: the action rejection is vulnerable to replacement by the awaited settleTurnActivity rejection from finally."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L09-browser-outcome-cleanup",
+      "reason": "finishBrowserOutcome awaits the injected TurnBrokerOwner revoke before throwing a preexisting browser outcome error; the asynchronous DEV owner revoke can reject and mask that primary error."
+    },
+    {
+      "source": "review2",
+      "number": 3,
+      "verdict": "design-limit",
+      "root": "L09-gateway-freeform-envelope",
+      "reason": "Duplicate gateway representation claim: the freeform envelope is an explicit transport boundary, while native field preservation exists only for directly advertised broker results."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L09-primary-cleanup",
+      "title": "Claimed-turn cleanup can mask the primary MCP action error",
+      "severity": "P1",
+      "files": [
+        "src/adapters/chatgpt-web/mcp-server.ts"
+      ],
+      "trigger": "A tool using withClaimedTurn rejects and both activity_complete attempts in settleTurnActivity reject.",
+      "fix": "Capture the action failure, settle activity independently, and aggregate cleanup after the action failure; use cleanup as primary only after successful action completion.",
+      "sources": [
+        "review1",
+        "review2"
+      ]
+    },
+    {
+      "id": "L09-browser-outcome-cleanup",
+      "title": "Browser outcome errors can be masked by asynchronous broker revocation",
+      "severity": "P1",
+      "files": [
+        "src/adapters/chatgpt-web/index.ts",
+        "src/adapters/chatgpt-web/turn-broker.ts"
+      ],
+      "trigger": "finishBrowserOutcome receives an error outcome and the injected TurnBrokerOwner revoke rejects.",
+      "fix": "Preserve the browser outcome error as primary and attach revoke failure as cleanup detail; allow revoke to be primary only when the browser outcome succeeded.",
+      "sources": [
+        "review2"
+      ]
+    }
+  ]
+}

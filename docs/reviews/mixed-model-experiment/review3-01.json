@@ -1,0 +1,69 @@
+{
+  "lane": 1,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L01-launchd-print-unknown",
+      "reason": "service.ts and tunnel-service.ts derive loaded/running solely from result.status === 0, so ordinary nonzero launchctl print errors become loaded:false; direct setup, doctor, CLI, stop, restart, and uninstall callers branch on that value. Spawn errors and timeouts throw, but that counterevidence does not classify ordinary nonzero results."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L02-status-probe-deadline",
+      "reason": "service.ts getServiceStatus calls synchronous runCommand without timeout, while waitForServiceUnloaded checks its deadline only around the call; process.ts uses synchronous spawnSync. Tunnel status polling has a bounded print timeout, but that does not repair the daemon path or provide a uniform enclosing deadline."
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L03-launchd-mutation-deadline",
+      "reason": "service bootstrap and bootout run without timeout, and bootstrapService checks its deadline only before an unbounded synchronous attempt; restart holds a drain lease until the catch can run. Tunnel bootstrap and bootout also pass signal without a timeout."
+    },
+    {
+      "source": "review2",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L01-launchd-print-unknown",
+      "reason": "Same evidenced root as review1 claim 1: ordinary nonzero launchctl print results become an unloaded status and reach lifecycle decisions. Existing thrown-error catches do not cover this nonzero-result path."
+    },
+    {
+      "source": "review2",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L02-status-probe-deadline",
+      "reason": "Same daemon status deadline root as review1 claim 2. Tunnel print probes and unload polling have bounded timeouts, so the accepted scope is the confirmed unbounded daemon status path; tunnel mutation timeout evidence is merged into L03."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L01-launchd-print-unknown",
+      "title": "launchd nonzero print is misclassified as unloaded",
+      "severity": "P1",
+      "files": ["src/service.ts", "src/tunnel-service.ts", "src/setup.ts", "src/doctor.ts", "src/cli.ts"],
+      "trigger": "launchctl print returns an ordinary nonzero result for a permission, malformed-state, transport, or other error that is not a confirmed absent-service result.",
+      "fix": "Represent unknown separately and map only an exact recognized absence result to unloaded; fail closed in lifecycle and ownership decisions.",
+      "sources": ["review1", "review2"]
+    },
+    {
+      "id": "L02-status-probe-deadline",
+      "title": "Service status probes can exceed their enclosing deadline",
+      "severity": "P1",
+      "files": ["src/service.ts", "src/process.ts", "src/tunnel-service.ts"],
+      "trigger": "The daemon launchctl print blocks inside synchronous spawnSync while the caller is relying on an outer unload or lifecycle deadline.",
+      "fix": "Pass a timeout bounded by the enclosing deadline to every status probe and preserve timeout as unknown.",
+      "sources": ["review1", "review2"]
+    },
+    {
+      "id": "L03-launchd-mutation-deadline",
+      "title": "launchd mutations can block lifecycle and drain compensation",
+      "severity": "P1",
+      "files": ["src/service.ts", "src/tunnel-service.ts"],
+      "trigger": "launchctl bootstrap or bootout stalls during install, start, stop, restart, or uninstall; restart can hold a drain lease until its catch path runs.",
+      "fix": "Bound every launchd mutation by the operation deadline and retain the primary mutation failure plus any compensation failure.",
+      "sources": ["review1", "review2"]
+    }
+  ]
+}

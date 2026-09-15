@@ -1,0 +1,68 @@
+{
+  "lane": 7,
+  "claims": [
+    {
+      "source": "review1",
+      "number": 1,
+      "verdict": "accepted",
+      "root": "L07-queue-reservation",
+      "reason": "runtime-supervisor.cjs:1796-1805 awaits tunnelProxyEnvironmentProvider before reserving tunnelControlQueue; overlapping providers can make a later invocation install and run first."
+    },
+    {
+      "source": "review1",
+      "number": 2,
+      "verdict": "accepted",
+      "root": "L07-post-settlement-kill",
+      "reason": "stopChild waits for exit or close and then unconditionally calls terminateOwnedProcessTree(child, SIGKILL); Unix process-tree termination uses the stale negative PID without a post-settlement identity check."
+    },
+    {
+      "source": "review1",
+      "number": 3,
+      "verdict": "accepted",
+      "root": "L07-force-control-cancel",
+      "reason": "cancelRecoveries aborts only startup/recovery controllers; ordinary tunnel-control children remain in tunnelControlChildren until close, while forceStopOwnedRuntime neither cancels that set nor settles it before queueing another stop."
+    }
+  ],
+  "roots": [
+    {
+      "id": "L07-queue-reservation",
+      "title": "Tunnel control queue reservation occurs after environment await",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/runtime-supervisor.cjs"
+      ],
+      "trigger": "Two runTunnelCommand calls overlap while tunnelProxyEnvironmentProvider is pending; the later provider resolves first.",
+      "fix": "Reserve the queue successor synchronously before the first await, then resolve proxy environment only after the invocation owns its predecessor slot; retain cancelled slots until predecessor release.",
+      "sources": [
+        "review1"
+      ]
+    },
+    {
+      "id": "L07-post-settlement-kill",
+      "title": "stopChild can kill a reused Unix process group after child settlement",
+      "severity": "P1",
+      "files": [
+        "launcher/electron/runtime-supervisor.cjs",
+        "launcher/electron/process-tree.cjs"
+      ],
+      "trigger": "The owned child settles, its PID/process-group number is reused, and stopChild reaches its unconditional final SIGKILL.",
+      "fix": "Remove the final kill after settlement or require a live, identity-bound ownership check before signaling; keep forced termination before settlement bounded and reported.",
+      "sources": [
+        "review1"
+      ]
+    },
+    {
+      "id": "L07-force-control-cancel",
+      "title": "Forced shutdown does not own cancellation of ordinary tunnel control children",
+      "severity": "P2",
+      "files": [
+        "launcher/electron/runtime-supervisor.cjs"
+      ],
+      "trigger": "An ordinary stop or cleanup control child remains active when shutdown falls into forceStopOwnedRuntime; its queue slot is held until close while force cleanup starts another stop.",
+      "fix": "Track a supervisor cancellation handle for every control child, terminate all tracked children in the force path, wait for close settlement, and report unresolved children as partial cleanup.",
+      "sources": [
+        "review1"
+      ]
+    }
+  ]
+}

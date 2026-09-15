@@ -1,0 +1,19 @@
+{
+  "lane": 16,
+  "fixedRoots": ["L16-padded-identity"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/config.ts",
+    "launcher/electron/connector-identity.cjs"
+  ],
+  "notes": {
+    "utcStart": "2026-09-15T20:50:07Z",
+    "utcEnd": "2026-09-15T20:51:23Z",
+    "behavior": "Trim connector identities before legacy detection, migration, mode equality, provider projection, and Electron legacy checks; preserve Codex Native4, Codex Native4 DEV, Codex Zero Risk4, public schemas, and external authorization behavior.",
+    "residualLimitations": "Directly constructed AppConfig values that bypass config parsing are outside the fixed persisted-config boundary; no live account, DOM, or production behavior was established.",
+    "requiredCrossLaneIntegration": "Keep browser-worker and runtime lanes unchanged and ensure they continue consuming canonical names from config parsing; preserve exact connector matching and existing runtime guards.",
+    "verification": "Manual review only; no tests, typechecks, scripts, benchmarks, runtime/app starts, commits, pushes, or delegation per instruction."
+  }
+}

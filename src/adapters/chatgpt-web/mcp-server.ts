@@ -547,14 +547,37 @@ export async function runChatGptMcpServer(options: {
     action: (claimed: ClaimedTurn) => Promise<T> | T,
   ): Promise<T> => {
     const claimed = await claimTurn(toolName, turnToken, extra);
+    let actionFailed = false;
+    let actionError: unknown;
+    let value: T | undefined;
     try {
-      return await action(claimed);
-    } finally {
+      value = await action(claimed);
+    } catch (error) {
+      actionFailed = true;
+      actionError = error;
+    }
+    let cleanupFailed = false;
+    let cleanupError: unknown;
+    try {
       // The broker's terminal fence treats even a fully local inventory lookup as live MCP work.
       // Settle the lease without the request AbortSignal: cancellation must not strand activity
       // and silently prevent every later completion candidate from committing.
       await settleTurnActivity(turnToken, claimed.activityId);
+    } catch (error) {
+      cleanupFailed = true;
+      cleanupError = error;
     }
+    if (actionFailed) {
+      if (cleanupFailed) {
+        throw new AggregateError(
+          [actionError, cleanupError],
+          "Codex Native action failed and its broker activity could not be retired",
+        );
+      }
+      throw actionError;
+    }
+    if (cleanupFailed) throw cleanupError;
+    return value as T;
   };
 
   if (contract === "safe") {

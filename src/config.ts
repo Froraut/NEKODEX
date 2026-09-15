@@ -30,12 +30,18 @@ export const LEGACY_CHATGPT_CONNECTOR_NAMES = [
 ] as const;
 
 export function isLegacyChatGptConnectorName(value: string): boolean {
-  return (LEGACY_CHATGPT_CONNECTOR_NAMES as readonly string[]).includes(value);
+  return typeof value === "string"
+    && (LEGACY_CHATGPT_CONNECTOR_NAMES as readonly string[]).includes(value.trim());
+}
+
+function canonicalizeChatGptConnectorName(value: string): string {
+  return value.trim();
 }
 
 export function currentChatGptConnectorName(legacyName: string): string {
-  if (legacyName === "Codex Zero Risk" || legacyName === "Codex Zero Risk2" || legacyName === "Codex Zero Risk3") return ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  return legacyName.endsWith(" DEV") ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
+  const canonicalName = canonicalizeChatGptConnectorName(legacyName);
+  if (canonicalName === "Codex Zero Risk" || canonicalName === "Codex Zero Risk2" || canonicalName === "Codex Zero Risk3") return ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  return canonicalName.endsWith(" DEV") ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
 }
 
 export function legacyChatGptConnectorMigrationMessage(legacyName: string): string {
@@ -371,8 +377,13 @@ export function loadConfigForSetup(): AppConfig {
     raw.browserHost = "managed-chrome";
   }
   const interactionMode = raw.browserInteractionMode ?? "automatic";
-  const automaticName = raw.automaticAppName
+  const automaticNameValue = raw.automaticAppName
     ?? (interactionMode === "automatic" ? raw.appName : CHATGPT_CONNECTOR_NAME);
+  const automaticName = typeof automaticNameValue === "string"
+    ? canonicalizeChatGptConnectorName(automaticNameValue)
+    : automaticNameValue;
+  if (typeof raw.appName === "string") raw.appName = canonicalizeChatGptConnectorName(raw.appName);
+  if (typeof raw.manualAppName === "string") raw.manualAppName = canonicalizeChatGptConnectorName(raw.manualAppName);
   // Only setup migrates persisted names. Runtime loading rejects an active retired identity;
   // targeting a fresh identity never claims that ChatGPT has created or verified its connector.
   if (typeof automaticName === "string" && isLegacyChatGptConnectorName(automaticName)) {
@@ -440,16 +451,22 @@ function parseConfig(value: unknown, path: string): AppConfig {
   for (const key of requiredStrings) {
     if (typeof parsed[key] !== "string" || !(parsed[key] as string).trim()) throw new Error(`Missing ${key} in ${path}`);
   }
-  if (parsed.appName!.length > 80) throw new Error(`appName is too long in ${path}`);
-  if (isLegacyChatGptConnectorName(parsed.appName!)) {
-    throw new Error(legacyChatGptConnectorMigrationMessage(parsed.appName!));
+  const appName = canonicalizeChatGptConnectorName(parsed.appName!);
+  if (appName.length > 80) throw new Error(`appName is too long in ${path}`);
+  if (isLegacyChatGptConnectorName(appName)) {
+    throw new Error(legacyChatGptConnectorMigrationMessage(appName));
   }
-  const automaticAppName = parsed.automaticAppName
+  const automaticAppNameValue = parsed.automaticAppName
     ?? (browserInteractionMode === "automatic" ? parsed.appName : CHATGPT_CONNECTOR_NAME);
-  const manualAppName = parsed.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
+  const manualAppNameValue = parsed.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  if (typeof automaticAppNameValue !== "string" || !automaticAppNameValue.trim()) {
     throw new Error(`Invalid automaticAppName in ${path}`);
   }
+  const automaticAppName = canonicalizeChatGptConnectorName(automaticAppNameValue);
+  if (automaticAppName.length > 80) throw new Error(`automaticAppName is too long in ${path}`);
+  const manualAppName = typeof manualAppNameValue === "string"
+    ? canonicalizeChatGptConnectorName(manualAppNameValue)
+    : manualAppNameValue;
   if (isLegacyChatGptConnectorName(automaticAppName)) {
     throw new Error(legacyChatGptConnectorMigrationMessage(automaticAppName));
   }
@@ -463,7 +480,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Automatic and Manual mode connector names must differ in ${path}; rerun setup`);
   }
   const expectedAppName = browserInteractionMode === "manual" ? manualAppName : automaticAppName;
-  if (parsed.appName !== expectedAppName) {
+  if (appName !== expectedAppName) {
     throw new Error(`Active appName does not match browserInteractionMode in ${path}; rerun setup`);
   }
   if (parsed.browserHost === "launcher"

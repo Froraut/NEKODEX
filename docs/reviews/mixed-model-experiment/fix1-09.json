@@ -1,0 +1,23 @@
+{
+  "lane": 9,
+  "fixedRoots": [
+    "L09-primary-cleanup",
+    "L09-browser-outcome-cleanup"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/adapters/chatgpt-web/mcp-server.ts",
+    "src/adapters/chatgpt-web/index.ts"
+  ],
+  "notes": [
+    "withClaimedTurn preserves the rejected MCP action as primary and aggregates activity cleanup failure.",
+    "finishBrowserOutcome preserves an existing browser outcome error as primary and aggregates asynchronous broker revoke failure.",
+    "L09-gateway-freeform-envelope remains an accepted design limit; its existing freeform JSON text boundary was preserved.",
+    "Public schemas, connector names Native4/Native4 DEV/ZeroRisk4, and external authorization behavior were preserved.",
+    "Manual source review only; no tests, typechecks, scripts, benchmarks, runtime launches, app starts, commits, pushes, or delegation.",
+    "UTC start 2026-09-15T20:49:10Z; UTC end 2026-09-15T20:51:10Z.",
+    "Parent integration must preserve concurrent edits and perform the reserved focused verification and live connector checks."
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "lane": 3,
+  "fixedRoots": [
+    "L03-write-ownership",
+    "L03-delete-ownership"
+  ],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/codex-integration-shared.ts",
+    "src/codex-integration.ts",
+    "docs/reviews/mixed-model-experiment/fix1-03.md",
+    "docs/reviews/mixed-model-experiment/fix1-03.json"
+  ],
+  "notes": [
+    "Managed writeIntegrationState config and hooks writes now compare snapshot bytes and filesystem identity before writing.",
+    "Uninstall config and restored-hooks writes now use the same ownership guard.",
+    "Uninstall catalog and models-cache deletions now compare live snapshots immediately before rmSync and preserve changed files.",
+    "Public schemas, connector names Native4, Native4 DEV, ZeroRisk4, and external authorization behavior were preserved.",
+    "src/codex-integration-journal.ts and journal-only callers were intentionally unchanged.",
+    "Manual source review only; no tests, typechecks, scripts, benchmarks, runtime, app starts, commits, push, or delegation performed.",
+    "Residual compare-then-mutate filesystem race remains a known primitive boundary; parent must perform reserved shared fast verification and cross-lane integration."
+  ],
+  "utcStart": "2026-09-15T20:49:14Z",
+  "utcEnd": "2026-09-15T20:52:32Z"
+}

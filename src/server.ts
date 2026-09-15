@@ -21,7 +21,7 @@ import {
   chatGptTurnUserRevisionHistory,
 } from "./adapters/chatgpt-web/environment";
 import { rememberCompactionContinuation } from "./adapters/chatgpt-web/compaction-continuation";
-import { rememberRetryableTurnFailure } from "./adapters/chatgpt-web/retry-continuation";
+import { clearRetryableTurnHandoff, rememberRetryableTurnFailure } from "./adapters/chatgpt-web/retry-continuation";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
@@ -624,16 +624,38 @@ export async function responseRequest(
     });
   }
   const adapter = adapterFactory(provider);
-  const queue = new AsyncEventQueue<AdapterEvent>();
+  const queue = new AsyncEventQueue<AdapterEvent>(
+    10_000,
+    parsed.stream ? 32 * 1024 * 1024 : undefined,
+    event => Buffer.byteLength(JSON.stringify(event), "utf8"),
+  );
   const abort = new AbortController();
-  const onRequestAbort = () => abort.abort(req.signal.reason);
+  let retryHandoffCommitted = false;
+  const revokeRetryHandoff = () => {
+    try {
+      clearRetryableTurnHandoff(parsed, extractChatGptTurnIdentity(parsed));
+    } catch {
+      // Requests without native ChatGPT turn identity have no retry handoff to revoke.
+    }
+  };
+  const onRequestAbort = () => {
+    if (!retryHandoffCommitted) revokeRetryHandoff();
+    abort.abort(req.signal.reason);
+    queue.cancel();
+  };
   if (req.signal.aborted) onRequestAbort();
   else req.signal.addEventListener("abort", onRequestAbort, { once: true });
   let eventDeliveryFailed = false;
   let collectedEventBytes = 0;
   let collectedEventCount = 0;
+  const rememberRetryableHandoff = (event: AdapterEvent): void => {
+    if (event.type !== "error" || event.retryable !== true || event.status !== 503 || abort.signal.aborted) return;
+    retryHandoffCommitted = true;
+    const source = chatGptTurnUserRevisionHistory(parsed).at(-1);
+    if (source) rememberRetryableTurnFailure(parsed, extractChatGptTurnIdentity(parsed), source);
+  };
   const deliverEvent = (event: AdapterEvent): void => {
-    if (eventDeliveryFailed) return;
+    if (eventDeliveryFailed || abort.signal.aborted) return;
     try {
       if (!parsed.stream) {
         // Queue depth alone does not bound an already-drained non-streaming response.
@@ -645,13 +667,6 @@ export async function responseRequest(
       }
       options.onAdapterEvent?.(event);
       queue.push(event);
-      // Only an explicitly retryable 503 actually delivered by this daemon can authorize
-      // Codex's next native turn to resume the identical failed instruction. Submitted
-      // terminal failures, cancellation and arbitrary stale history do not create a handoff.
-      if (event.type === "error" && event.retryable === true && event.status === 503 && !abort.signal.aborted) {
-        const source = chatGptTurnUserRevisionHistory(parsed).at(-1);
-        if (source) rememberRetryableTurnFailure(parsed, extractChatGptTurnIdentity(parsed), source);
-      }
     } catch (error) {
       // Producers also emit from timer/process callbacks outside runTurn's promise. Never
       // throw from that boundary, or try to enqueue an error into an already-full buffer.
@@ -685,7 +700,10 @@ export async function responseRequest(
       maps.toolNsMap,
       maps.freeformToolNames,
       maps.toolSearchToolNames,
-      () => abort.abort(),
+      () => {
+        abort.abort();
+        queue.cancel();
+      },
       2_000,
       {
         hideThinkingSummary: parsed.options.hideThinkingSummary,
@@ -694,6 +712,8 @@ export async function responseRequest(
           : {}),
         ...(compaction ? { compaction: true } : {}),
         onCompletedResponse: rememberCompletedResponse,
+        onProcessedTerminalEvent: rememberRetryableHandoff,
+        onClientCancel: revokeRetryHandoff,
       },
     );
     return new Response(stream, {
@@ -723,6 +743,7 @@ export async function responseRequest(
     toolSearchToolNames: maps.toolSearchToolNames,
     ...(compaction ? { compaction: true } : {}),
   });
+  for (const event of events) rememberRetryableHandoff(event);
   rememberCompletedResponse(json);
   return Response.json(json);
 }

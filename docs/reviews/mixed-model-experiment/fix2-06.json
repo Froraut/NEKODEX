@@ -1,0 +1,27 @@
+{
+  "lane": 6,
+  "fixedRoots": ["L06-check-invalidation-publication"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "launcher/electron/account-pool.cjs",
+    "docs/reviews/mixed-model-experiment/fix2-06.md",
+    "docs/reviews/mixed-model-experiment/fix2-06.json"
+  ],
+  "corrections": [
+    {
+      "root": "L06-check-invalidation-publication",
+      "trigger": "checkAccount() invalidates old evidence, then host.ready() or the active-operation guard fails before the existing try/finally publication scope begins",
+      "change": "Move the first await and active-operation guard inside the existing try/catch/finally so same-epoch cleanup and publish run after every post-invalidation failure",
+      "introducedBy": "fix1"
+    }
+  ],
+  "notes": [
+    "Fix1's four adjudicated roots were preserved; this wave corrected only the failure-publication residual in its checkAccount implementation.",
+    "No tests, typechecks, scripts, broad audits, runtime actions, app starts, commits, pushes, or delegation were performed; parent owns focused verification.",
+    "Direct callers and normal account-selection, login, balanced-routing, and fresh-turn paths remain unchanged.",
+    "Integration must preserve pre-await evidence invalidation, epoch checks before positive publication, and publish on readiness or active-operation failure.",
+    "Symlink compensation, absent-file guards, external edits, and manual cancellation feedback loops were reviewed as out of scope for this owned source path; no lane-6 patch was justified."
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "lane": 8,
+  "fixedRoots": [],
+  "partialRoots": [
+    "L08-recovery-error"
+  ],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L08-startup-timeout"
+  ],
+  "changedFiles": [],
+  "corrections": [],
+  "notes": [
+    "No source changes were made in wave 2: L08-helper-stdio and L08-helper-response remain covered by the existing fix1 changes in launcher/electron/browser-helper-verifier.cjs.",
+    "Direct async callers retain the existing Promise and response compatibility; no caller change was needed.",
+    "L08-recovery-error remains partial because the discarded browserHost.destroy failure is in launcher/electron/main.cjs, assigned to lane 5 and explicitly outside this lane's scope.",
+    "The symlink/inode, absent-target, and external-edit compensation note did not map to either owned file; no speculative correction was made.",
+    "No tests, typechecks, scripts, benchmarks, runtime/app starts, commits, push, or delegation were performed; parent owns verification."
+  ]
+}

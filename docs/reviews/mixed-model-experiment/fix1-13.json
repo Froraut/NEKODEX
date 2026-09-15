@@ -1,0 +1,24 @@
+{
+  "lane": 13,
+  "fixedRoots": ["L13-overview-stale-runtime-proof"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [
+    "L13-overview-toolbar-responsive-css",
+    "L13-overview-css-import-boundary"
+  ],
+  "changedFiles": [
+    "launcher/src/App.tsx",
+    "launcher/src/Overview.tsx",
+    "docs/reviews/mixed-model-experiment/fix1-13.md",
+    "docs/reviews/mixed-model-experiment/fix1-13.json"
+  ],
+  "notes": [
+    "UTC start 2026-09-15T20:49:26Z; UTC end 2026-09-15T20:50:45Z.",
+    "Overview now receives authenticated currentToolProof(snapshot, operation), so failed production automatic runtime-start cannot remain a positive MCP readiness signal.",
+    "Preserved public schemas, connector names Native4/Native4 DEV/ZeroRisk4, external authorization behavior, and workspace browser navigation semantics.",
+    "launcher/src/styles.css was intentionally unchanged because both CSS findings were rejected with downstream nekodex.css counterevidence.",
+    "No tests, typechecks, scripts, benchmarks, runtime/app starts, commits, pushes, or delegation were performed; parent reserves shared fast verification.",
+    "Cross-lane integration must preserve the App-to-Overview toolsReady prop and the authentication conjunction. Evidence is source-level only; installed, runtime, account, authorization, and all async interleavings remain outside this lane."
+  ]
+}

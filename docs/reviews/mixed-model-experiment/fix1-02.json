@@ -1,0 +1,17 @@
+{
+  "lane": 2,
+  "fixedRoots": [],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [],
+  "utcStart": "2026-09-15T20:49:42Z",
+  "utcEnd": "2026-09-15T20:50:03.300Z",
+  "notes": [
+    "No accepted roots were assigned to setup.ts: review3-02.json has roots=[] and adjudicates zero concrete setup defects.",
+    "Manual caller review found no required compatibility adapter for the current lane 1 lifecycle signatures or lane 3 integration caller API.",
+    "Lane 1 accepted roots remain in src/service.ts and src/tunnel-service.ts; lane 3 accepted roots remain in src/codex-integration.ts and src/codex-integration-shared.ts.",
+    "Public schemas, connector names Native4/Native4 DEV/ZeroRisk4, and external authorization behavior were left unchanged.",
+    "No tests, typechecks, scripts, benchmarks, runtime actions, app starts, commits, pushes, or delegation were performed."
+  ]
+}

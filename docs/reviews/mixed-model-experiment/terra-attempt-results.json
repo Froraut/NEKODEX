@@ -1,0 +1,178 @@
+{
+  "name": "fix2",
+  "model": "gpt-5.6-terra",
+  "start": "2026-09-15T20:55:59.620Z",
+  "agents": [
+    {
+      "agent_id": "01a0a6da-e9a1-7bc1-a78e-a3d7ec301575",
+      "nickname": "Ampere the 5th",
+      "lane": 1,
+      "dispatchAt": "2026-09-15T20:55:59.756Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.388Z"
+    },
+    {
+      "agent_id": "01a0a6da-ea27-7de1-80b7-dd7b255e0790",
+      "nickname": "Nash the 5th",
+      "lane": 2,
+      "dispatchAt": "2026-09-15T20:55:59.895Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.453Z"
+    },
+    {
+      "agent_id": "01a0a6da-eab3-74d3-be7a-2f766962386c",
+      "nickname": "Erdos the 5th",
+      "lane": 3,
+      "dispatchAt": "2026-09-15T20:56:00.037Z",
+      "result": {
+        "errored": "Selected model is at capacity. Please try a different model."
+      },
+      "collectedAt": "2026-09-15T21:05:09.581Z"
+    },
+    {
+      "agent_id": "01a0a6da-eb43-7812-ac7e-33c94ee8de4b",
+      "nickname": "Aristotle the 5th",
+      "lane": 4,
+      "dispatchAt": "2026-09-15T20:56:00.185Z",
+      "result": {
+        "errored": "Selected model is at capacity. Please try a different model."
+      },
+      "collectedAt": "2026-09-15T21:00:12.480Z",
+      "retry": {
+        "agent_id": "01a0a6df-5357-7443-a95f-18a904c89660",
+        "nickname": "Dalton the 5th",
+        "dispatchAt": "2026-09-15T21:00:49.132Z",
+        "result": {
+          "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+        },
+        "collectedAt": "2026-09-15T21:09:38.003Z"
+      }
+    },
+    {
+      "agent_id": "01a0a6da-ebd5-7821-bbdb-6c844d1d26cb",
+      "nickname": "Kant the 5th",
+      "lane": 5,
+      "dispatchAt": "2026-09-15T20:56:00.320Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.515Z"
+    },
+    {
+      "agent_id": "01a0a6da-ec5c-7692-8387-597338021187",
+      "nickname": "Singer the 5th",
+      "lane": 6,
+      "dispatchAt": "2026-09-15T20:56:00.455Z",
+      "result": {
+        "errored": "Selected model is at capacity. Please try a different model."
+      },
+      "collectedAt": "2026-09-15T21:09:37.573Z"
+    },
+    {
+      "agent_id": "01a0a6da-ece3-7ea2-9e3b-4046e08b8f7d",
+      "nickname": "Galileo the 5th",
+      "lane": 7,
+      "dispatchAt": "2026-09-15T20:56:00.589Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.632Z"
+    },
+    {
+      "agent_id": "01a0a6da-ed6d-7f90-aded-866a7613b047",
+      "nickname": "Sagan the 5th",
+      "lane": 8,
+      "dispatchAt": "2026-09-15T20:56:00.739Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.694Z"
+    },
+    {
+      "agent_id": "01a0a6da-ee04-7bb0-a341-1e1a5d02751f",
+      "nickname": "Arendt the 5th",
+      "lane": 9,
+      "dispatchAt": "2026-09-15T20:56:00.896Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.756Z"
+    },
+    {
+      "agent_id": "01a0a6da-eea4-7833-aa81-f4526a9b3ebf",
+      "nickname": "Popper the 5th",
+      "lane": 10,
+      "dispatchAt": "2026-09-15T20:56:01.063Z",
+      "result": {
+        "errored": "Selected model is at capacity. Please try a different model."
+      },
+      "collectedAt": "2026-09-15T21:01:19.504Z"
+    },
+    {
+      "agent_id": "01a0a6da-ef46-7183-bcff-c4529fae92b1",
+      "nickname": "Mendel the 5th",
+      "lane": 11,
+      "dispatchAt": "2026-09-15T20:56:01.208Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.818Z"
+    },
+    {
+      "agent_id": "01a0a6da-efd7-7241-8cc4-da768bb6cc45",
+      "nickname": "Huygens the 5th",
+      "lane": 12,
+      "dispatchAt": "2026-09-15T20:56:01.360Z",
+      "result": {
+        "errored": "Selected model is at capacity. Please try a different model."
+      },
+      "collectedAt": "2026-09-15T21:01:19.560Z"
+    },
+    {
+      "agent_id": "01a0a6da-f07b-7101-bb18-236325ba75cc",
+      "nickname": "McClintock the 5th",
+      "lane": 13,
+      "dispatchAt": "2026-09-15T20:56:01.569Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.880Z"
+    },
+    {
+      "agent_id": "01a0a6da-f145-7762-ada2-ea4feda2e430",
+      "nickname": "Plato the 5th",
+      "lane": 14,
+      "dispatchAt": "2026-09-15T20:56:01.724Z",
+      "result": {
+        "errored": "Selected model is at capacity. Please try a different model."
+      },
+      "collectedAt": "2026-09-15T21:00:31.420Z"
+    },
+    {
+      "agent_id": "01a0a6da-f1d8-7ee2-8011-31840ad4d1c6",
+      "nickname": "Newton the 5th",
+      "lane": 15,
+      "dispatchAt": "2026-09-15T20:56:01.861Z",
+      "result": {
+        "errored": "Selected model is at capacity. Please try a different model."
+      },
+      "collectedAt": "2026-09-15T21:02:51.028Z"
+    },
+    {
+      "agent_id": "01a0a6da-f261-73f1-b981-e327da771a85",
+      "nickname": "Ptolemy the 5th",
+      "lane": 16,
+      "dispatchAt": "2026-09-15T20:56:02.009Z",
+      "result": {
+        "interrupted": "Terra unavailable: stopped after bounded retry window; prior status running"
+      },
+      "collectedAt": "2026-09-15T21:09:37.941Z"
+    }
+  ],
+  "end": "2026-09-15T21:09:38.003Z",
+  "outcome": "unavailable; same-model retry exceeded eight-minute wait without result; user authorized fallback"
+}

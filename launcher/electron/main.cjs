@@ -154,7 +154,14 @@ function captureAccountProofContext(stateStore) {
     generation: accountProofGeneration,
     mode: stateStore.read().browserInteractionMode,
     identity: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browser.accountLabel),
+    runtimeIdentity: currentRuntimeIdentity(),
   };
+}
+
+function currentRuntimeIdentity() {
+  const snapshot = runtimeSupervisor?.snapshot?.();
+  if (!snapshot || !Number.isInteger(snapshot.ownerPid) || snapshot.ownerPid < 1) return null;
+  return `${snapshot.ownerPid}:${snapshot.daemonPid ?? 0}:${snapshot.tunnelPid ?? 0}`;
 }
 
 function accountProofContextIsCurrent(context, stateStore, { requireCoreSetup = false } = {}) {
@@ -163,6 +170,7 @@ function accountProofContextIsCurrent(context, stateStore, { requireCoreSetup = 
   return accountProofGeneration === context.generation
     && state.browserInteractionMode === context.mode
     && (!requireCoreSetup || state.coreSetupComplete === true)
+    && currentRuntimeIdentity() === context.runtimeIdentity
     && setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browser.accountLabel) === context.identity;
 }
 
@@ -174,9 +182,18 @@ function invalidateAccountProof(stateStore) {
     browserSmokeVersion: null,
     setupIdentityHash: null,
     setupVerifiedAt: null,
+    setupRuntimeIdentity: null,
     pickerVerifiedAt: null,
   });
   send("launcher:state-changed", state);
+  return state;
+}
+
+function ensureRuntimeProofCurrent(stateStore) {
+  const state = stateStore.read();
+  if (state.mcpSetupComplete === true && state.setupRuntimeIdentity !== currentRuntimeIdentity()) {
+    return invalidateAccountProof(stateStore);
+  }
   return state;
 }
 
@@ -507,6 +524,23 @@ function smokePassedForCurrentVersion(state) {
   return state.browserSmokePassed === true && state.browserSmokeVersion === app.getVersion();
 }
 
+async function closeBrowserResources() {
+  let cleanupError = null;
+  try {
+    browserHost?.destroy();
+  } catch (error) {
+    cleanupError = error;
+  }
+  try {
+    await browserControl?.close();
+  } catch (error) {
+    cleanupError = cleanupError
+      ? new Error(`${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}; browser control close failed: ${error instanceof Error ? error.message : String(error)}`)
+      : error;
+  }
+  if (cleanupError) throw cleanupError;
+}
+
 function registerIpc({ logger, stateStore }) {
   const authorize = createRendererIpcGuard({
     getMainWindow: () => mainWindow,
@@ -520,7 +554,7 @@ function registerIpc({ logger, stateStore }) {
       codexHome: LAUNCHER_PROFILE.codexHome,
       userData: launcherUserData,
     },
-    state: stateStore.read(),
+    state: ensureRuntimeProofCurrent(stateStore),
     proModelVersion: runtimeHost.proModelVersion(),
     browserCapacity: browserCapacitySnapshot(),
     contextCapabilities: (() => {
@@ -710,7 +744,8 @@ function registerIpc({ logger, stateStore }) {
         throw new Error("MCP verification became stale before it could be published");
       }
       const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
-        setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel) });
+        setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
+        setupRuntimeIdentity: currentRuntimeIdentity() });
       send("launcher:state-changed", state);
       const successMessage = "Local Manual mode runtime is healthy; connector selection remains a manual turn step";
       publishOperation({ name: operationName, status: "completed", message: successMessage });
@@ -733,7 +768,8 @@ function registerIpc({ logger, stateStore }) {
         throw new Error("MCP verification became stale before it could be published");
       }
       const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
-        setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel) });
+        setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
+        setupRuntimeIdentity: currentRuntimeIdentity() });
       send("launcher:state-changed", state);
       const successMessage = IS_DEV_PROFILE
         ? "DEV harness and connector verified"
@@ -920,6 +956,7 @@ function registerIpc({ logger, stateStore }) {
       return contextChangeQueue.request(enabled);
     }
     const result = await runtimeHost.setBiggerContext(enabled === true);
+    invalidateAccountProof(stateStore);
     const state = stateStore.update({
       experimentalBiggerContext: result.enabled,
       codexCatalogVerified: IS_DEV_PROFILE ? true : false,
@@ -937,7 +974,8 @@ function registerIpc({ logger, stateStore }) {
     }
     const state = stateStore.update({ codexPickerConfirmed: true, codexRestartRequired: false,
       setupContract: SETUP_CONTRACT, pickerVerifiedAt: new Date().toISOString(),
-      setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel) });
+      setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
+      setupRuntimeIdentity: currentRuntimeIdentity() });
     send("launcher:state-changed", state);
     return state;
   });
@@ -951,6 +989,7 @@ function registerIpc({ logger, stateStore }) {
       );
     }
     const result = await runtimeHost.setZeroRiskPro(enabled === true);
+    invalidateAccountProof(stateStore);
     const state = stateStore.update({
       zeroRiskProEnabled: result.enabled,
       codexCatalogVerified: IS_DEV_PROFILE,
@@ -1072,7 +1111,13 @@ function registerIpc({ logger, stateStore }) {
     const launch = await updateController.beginInstall();
     const result = await requestQuit();
     if (!result.ok) {
-      updateController.cancelInstall(launch);
+      try {
+        await updateController.cancelInstall(launch);
+      } catch (cleanupError) {
+        const primaryError = new Error(result.message);
+        primaryError.cause = cleanupError;
+        throw primaryError;
+      }
       throw new Error(result.message);
     }
     return true;
@@ -1115,8 +1160,7 @@ async function requestQuit() {
     stopCatalogVerificationMonitor();
     quitting = true;
     await browserHost?.persistSession();
-    browserHost?.destroy();
-    await browserControl?.close();
+    await closeBrowserResources();
     exitCommitted = true;
     contextChangeQueue?.stop();
     app.quit();
@@ -1273,6 +1317,7 @@ async function start() {
     },
     apply: enabled => runtimeHost.setBiggerContext(enabled),
     onApplied: enabled => {
+      invalidateAccountProof(stateStore);
       const state = stateStore.update({ experimentalBiggerContext: enabled, codexCatalogVerified: false,
         codexPickerConfirmed: false, codexRestartRequired: true, contextChangeError: null });
       send("launcher:state-changed", state);
@@ -1371,13 +1416,13 @@ async function start() {
       packaged: app.isPackaged,
       runtimeVerified: true,
     })}\n`);
-    browserHost.destroy();
-    await browserControl.close();
+    await closeBrowserResources();
     mainWindow.destroy();
     app.quit();
     return;
   }
   if (IS_DEV_PROFILE) {
+    invalidateAccountProof(stateStore);
     let config = null;
     try {
       config = runtimeSupervisor.readConfig();
@@ -1410,6 +1455,7 @@ async function start() {
     if (config?.mode === "full" && !legacyConnector) {
       void startupAuthenticationRefresh.then(() => {
         if (shutdownInProgress || quitting || exitCommitted) return;
+        invalidateAccountProof(stateStore);
         return runtimeSupervisor.startIfConfigured();
       }).catch((error) => {
         if (shutdownInProgress || quitting || exitCommitted) return;
@@ -1424,6 +1470,7 @@ async function start() {
     const previousSetupIdentity = stateStore.read().setupIdentityHash ?? null;
     await startupAuthenticationRefresh;
     if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
+    invalidateAccountProof(stateStore);
     const upgrade = await runtimeHost.upgradeManagedRuntime();
     if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
     if (upgrade.updated) {
@@ -1466,6 +1513,7 @@ async function start() {
       }
     }
     if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
+    invalidateAccountProof(stateStore);
     const runtime = await runtimeSupervisor.startIfConfigured();
     if (runtime.status !== "ready") return runtime;
     if (shutdownInProgress || quitting || exitCommitted) return runtime;
@@ -1606,9 +1654,8 @@ void start().catch(error => recoverStartupFailure({
     stopCatalogVerificationMonitor();
     // Each release is independent: one failed view must not skip the control socket or
     // leave a hidden window holding the app alive while recovery is displayed.
-    try { browserHost?.destroy(); } catch {}
     try { tray?.destroy(); } catch {}
     try { mainWindow?.destroy(); } catch {}
-    await browserControl?.close();
+    await closeBrowserResources();
   },
 }));

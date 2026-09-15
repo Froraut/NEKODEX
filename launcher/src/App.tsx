@@ -830,7 +830,7 @@ function LauncherShell({
             className="surface-transition"
             key={surface}
           >
-            {surface === "overview" ? <Overview copy={copy} browser={browser} snapshot={snapshot} logs={logs} navigate={navigateSurface} /> : null}
+            {surface === "overview" ? <Overview copy={copy} browser={browser} snapshot={snapshot} toolsReady={browser?.authenticated === true && currentToolProof(snapshot, operation)} logs={logs} navigate={navigateSurface} /> : null}
             {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
               <AccountSettings copy={copy} openBrowser={() => navigateSurface("browser")} setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} />
             </ContentSurface> : null}

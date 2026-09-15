@@ -1,0 +1,103 @@
+{
+  "name": "fix1",
+  "model": "gpt-5.6-luna",
+  "start": "2026-09-15T20:48:29.023Z",
+  "agents": [
+    {
+      "agent_id": "01a0a6d4-097b-7b32-a79a-575313256aa4",
+      "nickname": "Faraday the 4th",
+      "lane": 1,
+      "dispatchAt": "2026-09-15T20:48:29.182Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0a1d-7261-b2ea-f5da0927f29c",
+      "nickname": "Jason the 4th",
+      "lane": 2,
+      "dispatchAt": "2026-09-15T20:48:29.327Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0aab-7bf1-8412-4c16bd90461f",
+      "nickname": "Turing the 4th",
+      "lane": 3,
+      "dispatchAt": "2026-09-15T20:48:29.469Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0b3b-7d21-9928-396ed502f2f2",
+      "nickname": "Dirac the 4th",
+      "lane": 4,
+      "dispatchAt": "2026-09-15T20:48:29.617Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0bce-7de3-8f31-b3bf6d129627",
+      "nickname": "Popper the 4th",
+      "lane": 5,
+      "dispatchAt": "2026-09-15T20:48:29.758Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0c5a-7b92-84bd-393c48180c1b",
+      "nickname": "Lagrange the 4th",
+      "lane": 6,
+      "dispatchAt": "2026-09-15T20:48:29.899Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0ce9-7ab2-bce0-fd5c1e590dc0",
+      "nickname": "Mencius the 4th",
+      "lane": 7,
+      "dispatchAt": "2026-09-15T20:48:30.050Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0d7f-7c91-a258-109a380c53a5",
+      "nickname": "Nietzsche the 4th",
+      "lane": 8,
+      "dispatchAt": "2026-09-15T20:48:30.199Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0e13-7541-9caf-87558d75440f",
+      "nickname": "Franklin the 4th",
+      "lane": 9,
+      "dispatchAt": "2026-09-15T20:48:30.343Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0ea3-7d63-bdd6-049386c3b7c1",
+      "nickname": "Feynman the 4th",
+      "lane": 10,
+      "dispatchAt": "2026-09-15T20:48:30.492Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0f45-7462-93a7-59b5e86eb36e",
+      "nickname": "Volta the 4th",
+      "lane": 11,
+      "dispatchAt": "2026-09-15T20:48:30.670Z"
+    },
+    {
+      "agent_id": "01a0a6d4-0ff1-7e43-ae4d-3686273ef8bd",
+      "nickname": "Kuhn the 4th",
+      "lane": 12,
+      "dispatchAt": "2026-09-15T20:48:30.822Z"
+    },
+    {
+      "agent_id": "01a0a6d4-1086-7382-adc9-6b103a5e84bb",
+      "nickname": "Ampere the 4th",
+      "lane": 13,
+      "dispatchAt": "2026-09-15T20:48:30.978Z"
+    },
+    {
+      "agent_id": "01a0a6d4-1123-7022-b7c5-8db843f4afd8",
+      "nickname": "Boyle the 4th",
+      "lane": 14,
+      "dispatchAt": "2026-09-15T20:48:31.133Z"
+    },
+    {
+      "agent_id": "01a0a6d4-11bf-7ca3-92e0-33cdca69a44a",
+      "nickname": "Ohm the 5th",
+      "lane": 15,
+      "dispatchAt": "2026-09-15T20:48:31.300Z"
+    },
+    {
+      "agent_id": "01a0a6d4-1269-7c81-a2e1-094159e9c8c7",
+      "nickname": "Rawls the 5th",
+      "lane": 16,
+      "dispatchAt": "2026-09-15T20:48:31.476Z"
+    }
+  ]
+}

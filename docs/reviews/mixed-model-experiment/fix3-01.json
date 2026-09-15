@@ -1,0 +1,31 @@
+{
+  "lane": 1,
+  "fixedRoots": ["L01-launchd-print-unknown", "L03-launchd-mutation-deadline"],
+  "partialRoots": [],
+  "unfixedRoots": [],
+  "rejectedRoots": [],
+  "changedFiles": [
+    "src/process.ts",
+    "docs/reviews/mixed-model-experiment/fix3-01.md",
+    "docs/reviews/mixed-model-experiment/fix3-01.json"
+  ],
+  "corrections": [
+    {
+      "root": "L01-launchd-print-unknown",
+      "trigger": "fix2's absence classifier still accepted arbitrary same-line diagnostic text after the recognized system or user domain.",
+      "change": "Require the complete trimmed combined launchctl output to match the recognized absent-service response exactly; preserve unknown nonzero failure handling.",
+      "introducedBy": "fix2"
+    },
+    {
+      "root": "L03-launchd-mutation-deadline",
+      "trigger": "The setup rollback caller bootstrapRestoredDefinition still invoked launchctl bootstrap without an explicit timeout after fix1 bounded the owned service and tunnel paths.",
+      "change": "Make runChecked apply a bounded 20-second default only to launchctl bootstrap and bootout calls that omit a timeout; preserve explicit caller timeouts and other command contracts.",
+      "introducedBy": "baseline"
+    }
+  ],
+  "notes": [
+    "Only the new fix3 correction is recorded here; fix1 and fix2 changes are not repeated.",
+    "src/service.ts and src/tunnel-service.ts required no additional source correction after manual review of direct callers and lifecycle paths.",
+    "No tests, typechecks, scripts, broad audits, runtime/app starts, commits, pushes, or delegation were performed per request."
+  ]
+}
