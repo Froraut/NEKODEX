@@ -17,15 +17,15 @@ export function Overview({ copy, browser, snapshot, logs, navigate }: {
   const active = browser?.tabs.filter(tab => tab.status === "running").length ?? 0;
   const connections: Array<{ icon: IconName; label: string; ready: boolean; surface: Surface; pending: string }> = [
     { icon: "accounts", label: copy.accountConnection, ready: signedIn, surface: "accounts", pending: copy.signInNeededShort },
-    { icon: "setup", label: copy.modelConnection, ready: modelsReady, surface: "setup", pending: copy.connectionPending },
+    { icon: "setup", label: copy.modelConnection, ready: modelsReady, surface: "setup", pending: snapshot.state.coreSetupComplete ? snapshot.state.codexCatalogVerified ? copy.modelsConfirmShort : copy.modelsWaitingShort : copy.connectionPending },
     { icon: "mcp", label: copy.toolConnection, ready: toolsReady, surface: "mcp", pending: copy.notConnectedShort },
   ];
   return <section className="content-surface overview-surface is-page-scroll">
     <div className="content-scroll overview-scroll">
       <header className="overview-heading"><div><h1>{copy.overview}</h1><p>{copy.overviewSubtitle}</p></div><span className="workspace-location"><Icon name="globe" />{copy.localWorkspace}</span></header>
       <section className="workspace-intro">
-        <div className="intro-copy"><h2>{ready ? copy.overviewReady : copy.overviewTitle}</h2>
-          <p>{ready ? copy.overviewReadyBody : copy.overviewBody}</p>
+        <div className="intro-copy"><h2>{ready ? copy.overviewReady : signedIn && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle}</h2>
+          <p>{ready ? copy.overviewReadyBody : signedIn && snapshot.state.coreSetupComplete ? snapshot.state.codexCatalogVerified ? copy.setupConfirmTitle : copy.setupCatalogTitle : copy.overviewBody}</p>
           <button className="button-primary" type="button" onClick={() => navigate(modelsReady ? "browser" : "setup")}>{modelsReady ? copy.openWorkspace : copy.finishSetup}<Icon name="forward" /></button>
         </div>
         <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>

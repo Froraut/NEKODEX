@@ -118,3 +118,10 @@ winking and mouth shapes. Laptop, document, buttons and panels do not animate.
 Non-cat transitions and animations are disabled; reduced-motion preferences also
 suppress the cat effects. Renderer type-check/build and a focused DEV hover/focus
 observation passed before updating the installed app. Backend runtime is unchanged.
+
+
+## Setup and responsive follow-up
+
+See [the focused review](setup-responsive-review.md) for state-based next-step
+guidance, repair separation, workspace-width reflow, scrollable browser tabs,
+MCP footer/video behavior and its five focused progression checks.

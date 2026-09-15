@@ -1,3 +1,4 @@
+import { setupNextStep } from "./setup-progress";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
 import { AccountSettings } from "./AccountSettings";
@@ -1169,7 +1170,15 @@ function SetupSurface({
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
   const catalogPending = !devProfile && snapshot.state.coreSetupComplete === true
     && snapshot.state.codexCatalogVerified !== true;
-  const pickerReady = devProfile || (snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true);
+  const pickerReady = snapshot.state.coreSetupComplete === true && (devProfile || (snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true));
+  const confirmPending = !devProfile && snapshot.state.coreSetupComplete === true && snapshot.state.codexCatalogVerified === true && !snapshot.state.codexPickerConfirmed;
+  const pendingContext = typeof snapshot.state.pendingBiggerContext === "boolean";
+  const troubleshooting = useRef<HTMLDetailsElement>(null);
+  const nextStep = setupNextStep({ manual: manualInteraction, signedIn: browser?.authenticated === true,
+    smokePassed: snapshot.smokePassed, installed: snapshot.state.coreSetupComplete === true,
+    catalogVerified: snapshot.state.codexCatalogVerified === true, pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
+    toolsVerified: snapshot.state.mcpSetupComplete === true, development: devProfile });
   const busy = localBusy
     || operation?.status === "running"
     || (!manualInteraction && (
@@ -1223,6 +1232,32 @@ function SetupSurface({
     finally { setLocalBusy(false); }
   };
 
+  const confirmModels = () => run(async () => { updateState(await api!.confirmCodexModels()); });
+  const showTroubleshooting = () => {
+    if (!troubleshooting.current) return;
+    troubleshooting.current.open = true;
+    troubleshooting.current.scrollIntoView({ block: "start" });
+    troubleshooting.current.querySelector<HTMLButtonElement>("button")?.focus();
+  };
+  const nextTitle = { "sign-in": copy.stepAccount, test: copy.stepSmoke, install: copy.stepInstall,
+    catalog: copy.setupCatalogTitle, confirm: copy.setupConfirmTitle, tools: copy.localTools,
+    ready: snapshot.state.mcpSetupComplete ? copy.setupReadyFull : copy.setupReadyModels }[nextStep];
+  const nextBody = { "sign-in": copy.stepAccountBody, test: copy.stepSmokeBody, install: copy.stepInstallBody,
+    catalog: copy.setupCatalogBody, confirm: copy.setupConfirmBody, tools: copy.mcpBody,
+    ready: copy.setupUseCodex }[nextStep];
+  const nextLabel = { "sign-in": copy.signIn, test: copy.runSmoke, install: copy.install,
+    catalog: copy.diagnostics, confirm: copy.confirmPicker, tools: copy.configureMcp,
+    ready: copy.openWorkspace }[nextStep];
+  const nextAction = () => {
+    if (nextStep === "sign-in") void openLogin();
+    else if (nextStep === "test") void smoke();
+    else if (nextStep === "install") void install();
+    else if (nextStep === "confirm") void confirmModels();
+    else if (nextStep === "catalog") showTroubleshooting();
+    else if (nextStep === "tools") showMcp();
+    else void activateBrowser().catch(cause => setError(messageOf(cause)));
+  };
+
   return (
     <ContentSurface
       eyebrow={copy.required}
@@ -1231,14 +1266,12 @@ function SetupSurface({
         : manualInteraction ? copy.manualInteractionBody : copy.setupSubtitle}
       title={devProfile ? copy.devSetupTitle : copy.setupTitle}
     >
-      {!devProfile ? <div className="setup-overview" role="status">
-        <strong>{pickerReady
-          ? snapshot.state.mcpSetupComplete ? copy.setupReadyFull : snapshot.state.mcpRuntimeInstalled ? copy.setupPendingConnector : copy.setupReadyModels
-          : copy.setupOverviewTitle}</strong>
-        <p>{copy.setupArchitecture}</p>
-        {snapshot.state.codexCatalogVerified ? <p>{snapshot.state.mcpSetupComplete ? copy.setupUseCodex : copy.setupToolsNext}</p> : null}
-        {snapshot.state.codexCatalogVerified && !snapshot.state.mcpSetupComplete ? <PrimaryButton onClick={showMcp}>{copy.configureMcp}</PrimaryButton> : null}
-      </div> : null}
+      <section className="setup-overview setup-next" aria-label={copy.setupNext}>
+        <div><small>{copy.setupNext}</small><h2>{nextTitle}</h2><p>{nextBody}</p>
+          {confirmPending && pendingContext ? <p role="status">{copy.contextWaiting}</p> : null}
+        </div>
+        <PrimaryButton disabled={busy || (nextStep === "confirm" && pendingContext)} onClick={nextAction}>{nextLabel}</PrimaryButton>
+      </section>
       <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} />
       <div className="setup-list">
         {!manualInteraction ? <>
@@ -1261,7 +1294,8 @@ function SetupSurface({
           <SetupRow
             action={snapshot.smokePassed ? copy.smokePassed : copy.runSmoke}
             complete={snapshot.smokePassed}
-            description={copy.stepSmokeBody}
+            description={snapshot.state.coreSetupComplete ? copy.setupOptionalCheck : copy.stepSmokeBody}
+            titleAction={snapshot.state.coreSetupComplete ? <small className="setup-optional">{copy.optional}</small> : undefined}
             disabled={busy || !browser?.authenticated}
             index={2}
             onAction={smoke}
@@ -1269,16 +1303,14 @@ function SetupSurface({
           />
         </> : null}
         <SetupRow
-          action={catalogPending ? copy.awaitingCodex : snapshot.state.coreSetupComplete
-            ? devProfile ? copy.devReinstall : copy.reinstall
-            : devProfile ? copy.devInstall : copy.install}
+          action={confirmPending ? copy.confirmPicker : catalogPending ? copy.diagnostics : pickerReady ? copy.done : devProfile ? copy.devInstall : copy.install}
           complete={pickerReady}
-          description={catalogPending ? copy.stepInstallWaitingBody : devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
-          disabled={busy || catalogPending || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
+          description={confirmPending ? copy.setupConfirmBody : catalogPending ? copy.setupCatalogBody : devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
+          disabled={busy || (confirmPending && pendingContext) || (!manualInteraction && !browser?.authenticated)
+            || (!snapshot.state.coreSetupComplete && !snapshot.smokePassed && !manualInteraction)}
           index={manualInteraction ? 1 : 3}
-          onAction={install}
-          repeatable
-          title={catalogPending ? copy.stepInstallWaiting : devProfile ? copy.devStepInstall : copy.stepInstall}
+          onAction={confirmPending ? confirmModels : catalogPending ? showTroubleshooting : manualInteraction && !snapshot.state.mcpRuntimeInstalled ? showMcp : install}
+          title={confirmPending ? copy.setupConfirmTitle : catalogPending ? copy.setupCatalogTitle : snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : devProfile ? copy.devStepInstall : copy.stepInstall}
           titleAction={manualInteraction ? (
             <ZeroRiskModelMenu
               busy={busy || snapshot.state.coreSetupComplete !== true}
@@ -1290,21 +1322,11 @@ function SetupSurface({
         />
       </div>
 
-      {!devProfile && snapshot.state.codexRestartRequired ? (
-        <NoticeRow icon="alert" tone="warning">
-          {copy.restartCodex}
-          <button className="secondary-button" type="button" disabled={busy || !snapshot.state.codexCatalogVerified || typeof snapshot.state.pendingBiggerContext === "boolean"}
-            onClick={() => void run(async () => { updateState(await api!.confirmCodexModels()); })}>{copy.confirmPicker}</button>
-        </NoticeRow>
-      ) : null}
-
-      {!devProfile && snapshot.state.coreSetupComplete && !snapshot.state.codexCatalogVerified ? (
-        <RouteDiagnostics
-          disabled={busy}
-          language={snapshot.state.language ?? "en"}
-          readReport={() => api!.routeDiagnostics()}
-        />
-      ) : null}
+      <details className="setup-troubleshooting" ref={troubleshooting}>
+        <summary>{copy.setupTroubleshooting}<Icon name="chevron" /></summary>
+        {!devProfile ? <RouteDiagnostics disabled={busy} language={snapshot.state.language ?? "en"} readReport={() => api!.routeDiagnostics()} /> : null}
+        {snapshot.state.coreSetupComplete ? <button className="button-secondary" type="button" disabled={busy} onClick={() => void install()}>{copy.setupRepair}</button> : null}
+      </details>
 
       <SectionHeading label={copy.localTools} meta={manualInteraction ? copy.required : copy.optional} spaced />
       {snapshot.state.mcpSetupComplete && snapshot.state.setupVerifiedAt ? (
@@ -1325,7 +1347,7 @@ function SetupSurface({
         <Icon name="chevron" />
       </button>
       {!devProfile && !manualInteraction ? <>
-        <SectionHeading label="Hermes" meta={copy.optional} spaced />
+        <details className="setup-troubleshooting"><summary>Hermes <small>{copy.optional}</small><Icon name="chevron" /></summary>
         <div className="setup-overview">
           <strong>{copy.hermesTitle}</strong>
           <p>{copy.hermesBody}</p>
@@ -1337,6 +1359,7 @@ function SetupSurface({
             <button className="secondary-button" disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes("codex_responses")} type="button">{copy.hermesDirectAdd}</button>
           </details>
         </div>
+        </details>
       </> : null}
     </ContentSurface>
   );
@@ -1453,7 +1476,6 @@ function McpSurface({
 
   return (
     <ContentSurface
-      fit
       subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
       title={devProfile ? copy.devMcpTitle : copy.localTools}
     >
@@ -1465,6 +1487,8 @@ function McpSurface({
         {steps.map((item, index) => (
           <button
             className={`${index === step ? "is-active" : ""}${index < step || (index === 2 && verified) ? " is-complete" : ""}`}
+            aria-label={`${index + 1}. ${item.title}`}
+            title={item.title}
             disabled={busy || index > step}
             key={item.title}
             onClick={() => void safeMove(index)}
@@ -1477,7 +1501,7 @@ function McpSurface({
       </div>
 
       <div className="mcp-stage">
-        {guideMedia ? <details className="setup-video-help"><summary>{copy.guideVideo}</summary>
+        {guideMedia ? <details className="setup-video-help" onToggle={event => { if (!event.currentTarget.open) event.currentTarget.querySelector("video")?.pause(); }}><summary>{copy.guideVideo}</summary>
           <TutorialVideo
             copy={copy}
             label={`${copy.guideVideo}: ${steps[step]!.title}`}
@@ -2180,12 +2204,13 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
   return (
     <>
       <div className="guide-media">
-        <video aria-label={label} autoPlay loop muted playsInline ref={inlineVideo} src={src} />
+        <video aria-label={label} controls preload="metadata" muted playsInline ref={inlineVideo} src={src} />
         <button
           aria-label={copy.expandGuideVideo}
           className="guide-media-expand"
           onClick={() => {
             expandedAt.current = inlineVideo.current?.currentTime ?? 0;
+            inlineVideo.current?.pause();
             setExpanded(true);
           }}
           type="button"
@@ -2202,8 +2227,8 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
         >
           <video
             aria-label={label}
-            autoPlay
-            loop
+            controls
+            preload="metadata"
             muted
             onLoadedMetadata={(event) => {
               event.currentTarget.currentTime = expandedAt.current;

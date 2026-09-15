@@ -320,9 +320,8 @@ test("saved ChatGPT authentication is refreshed before setup is presented", () =
   assert.match(appSource, /browser\?\.status === "loading" \? copy\.checkingSignIn/);
 });
 
-test("completed model setup remains a repeatable capability probe", () => {
-  assert.match(appSource, /<SetupRow[\s\S]*?onAction=\{install\}[\s\S]*?repeatable/);
-  assert.match(appSource, /complete && !repeatable/);
+// Frontend step selection is covered by tests/setup-progress.test.ts.
+test("initial model installation retains the verified-response guard", () => {
   assert.match(
     electronMain,
     /!setupState\.coreSetupComplete[\s\S]*?smokePassedThisSession[\s\S]*?smokePassedForCurrentVersion\(setupState\)/,

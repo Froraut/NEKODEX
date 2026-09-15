@@ -323,6 +323,61 @@
   .account-card { padding: 15px; }
   .account-add > div { flex-wrap: wrap; }
 }
+/* Setup and narrow workspaces use available content width, not window width. */
+.setup-next { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 24px; }
+.setup-next > div { min-width: 0; }
+.setup-next small { color: var(--brand-accent); font-size: 11px; }
+.setup-next h2 { font-size: 20px; line-height: 1.3; margin: 6px 0 0; font-weight: 600; letter-spacing: -.02em; }
+.setup-next p { margin-bottom: 0; }
+.setup-next > .button-primary { max-width: 290px; padding: 10px 16px; white-space: normal; text-align: center; line-height: 1.4; }
+.setup-optional { font-size: 10px; padding: 3px 6px; border: 1px solid var(--color-border); border-radius: 5px; color: var(--color-text-tertiary); }
+.setup-troubleshooting { margin: 22px 0; border: 1px solid var(--color-border); border-radius: 10px; padding: 0 14px; scroll-margin-top: calc(var(--height-titlebar) + 12px); }
+.setup-troubleshooting > summary { display: flex; align-items: center; gap: 10px; padding: 14px 0; list-style: none; font-size: 13px; font-weight: 600; cursor: pointer; }
+.setup-troubleshooting > summary::-webkit-details-marker { display: none; }
+.setup-troubleshooting > summary > svg { margin-left: auto; width: 14px; height: 14px; }
+.setup-troubleshooting > summary > small { color: var(--color-text-tertiary); font-weight: 400; }
+.setup-troubleshooting[open] > summary > svg { transform: rotate(90deg); }
+.setup-troubleshooting > .button-secondary { margin: 10px 0 16px; }
+.setup-troubleshooting .setup-overview { margin: 0 0 14px; }
+.account-card-header > div { min-width: 0; flex: 1; }
+.account-card-header h2 { overflow-wrap: anywhere; }
+.account-selected { flex-shrink: 0; }
+.account-routing .settings-select { min-width: 0; }
+.account-actions > button { max-width: 100%; white-space: normal; }
+.setup-actions { max-width: 100%; }
+.setup-actions .button-secondary { height: auto; white-space: normal; padding: 8px 12px; line-height: 1.4; }
+.browser-history, .browser-zoom-controls { flex-shrink: 0; }
+.browser-tab-strip { overflow-x: auto; scrollbar-width: none; }
+.browser-tab-strip::-webkit-scrollbar { display: none; }
+.browser-tab { flex-shrink: 0; }
+.mcp-stage { display: block; }
+.wizard-content { overflow: visible; }
+.wizard-footer { position: sticky; bottom: 0; z-index: 2; flex-wrap: wrap; gap: 8px; margin-top: 20px; padding: 12px 0; border-top: 1px solid var(--color-border); background: var(--color-background-surface); }
+.wizard-footer button { max-width: 100%; height: auto; white-space: normal; line-height: 1.4; padding-top: 8px; padding-bottom: 8px; }
+.guide-media:not(.is-expanded) { aspect-ratio: auto; max-height: 280px; }
+.guide-media:not(.is-expanded) video { width: 100%; max-height: 280px; object-fit: contain; }
+@container workspace (max-width: 760px) {
+  .setup-next { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 18px; }
+  .setup-next > .button-primary { justify-self: start; max-width: 100%; }
+  .setup-row { grid-template-columns: 26px minmax(0, 1fr); padding: 14px 0; gap: 10px; }
+  .setup-row > .setup-actions { grid-column: 2; justify-self: stretch; flex-wrap: wrap; justify-content: flex-start; }
+  .setting-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .setting-row:has(> .switch) { grid-template-columns: minmax(0, 1fr) auto; gap: 14px; }
+  .setting-row > div { padding: 4px 0; }
+  .capacity-setting { max-width: none; }
+  .settings-select { min-width: 0; max-width: 100%; }
+  .field-row, .mcp-stage .field-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .activity-filters { flex-wrap: wrap; }
+  .activity-filters input { flex-basis: 240px; }
+  .browser-toolbar { height: auto; flex-basis: auto; flex-wrap: wrap; padding: 6px 8px; }
+  .browser-address { flex: 1 1 calc(100% - 216px); }
+  .browser-toolbar > .toolbar-text-button { flex: 1; min-height: 30px; height: auto; white-space: normal; }
+  .manual-turn-guide { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .manual-turn-status { text-align: left; }
+  .wizard-stepper em { display: none; }
+  .next-surface-row { grid-template-columns: 22px minmax(0, 1fr) 16px; }
+  .next-surface-row em { display: none; }
+}
 /* Motion is limited to cat anatomy; controls and scene props stay stationary. */
 .app-root *:not(.neko-tracking):not(.neko-head):not(.neko-ear):not(.neko-face):not(.neko-eye):not(.neko-mouth):not(.neko-tongue):not(.coding-cat-head):not(.coding-cat-paw),
 .app-root *::before, .app-root *::after {

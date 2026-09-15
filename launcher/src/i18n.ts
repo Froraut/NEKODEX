@@ -1,6 +1,17 @@
 import type { Language } from "./types";
 
 const en = {
+  setupNext: "Next step",
+  setupConfirmTitle: "Confirm your models in Codex",
+  setupConfirmBody: "The installation is saved and Codex has loaded the catalog. Open its model picker and confirm that the ChatGPT Web models are visible. Reinstalling is not needed.",
+  setupCatalogTitle: "Waiting for Codex to load the models",
+  setupCatalogBody: "Keep NEKODEX open. Reopen the app hosting Codex and open its model picker. If the models do not appear, check the routing details below.",
+  setupRepair: "Repair installation",
+  setupTroubleshooting: "Troubleshooting and connection checks",
+  setupOptionalCheck: "The models are already installed. Use this optional check if you need to verify a fresh reply.",
+  setupInstalledTitle: "Model connection installed",
+  modelsConfirmShort: "Confirm in Codex",
+  modelsWaitingShort: "Waiting for Codex",
   searchActivity: "Search activity",
   eventLevel: "Event level",
   allEvents: "All events",
@@ -387,6 +398,17 @@ const en = {
 } as const;
 
 const zh: Record<keyof typeof en, string> = {
+  setupNext: "下一步",
+  setupConfirmTitle: "在 Codex 中确认模型",
+  setupConfirmBody: "安装已保存，Codex 已读取模型列表。打开模型选择器并确认 ChatGPT Web 模型可见，无需重新安装。",
+  setupCatalogTitle: "等待 Codex 读取模型",
+  setupCatalogBody: "保持 NEKODEX 运行。重新打开承载 Codex 的应用及模型选择器。如果模型未显示，请检查下方的路由信息。",
+  setupRepair: "修复安装",
+  setupTroubleshooting: "故障排查与连接检查",
+  setupOptionalCheck: "模型已安装。需要验证新的回复时，可运行这项可选检查。",
+  setupInstalledTitle: "模型连接已安装",
+  modelsConfirmShort: "在 Codex 中确认",
+  modelsWaitingShort: "等待 Codex",
   searchActivity: "搜索活动",
   eventLevel: "事件级别",
   allEvents: "全部事件",
@@ -773,6 +795,17 @@ const zh: Record<keyof typeof en, string> = {
 };
 
 const ja: Record<keyof typeof en, string> = {
+  setupNext: "次のステップ",
+  setupConfirmTitle: "Codex でモデルを確認",
+  setupConfirmBody: "インストールは保存済みで、Codex はモデル一覧を読み込みました。モデル選択画面に ChatGPT Web が表示されることを確認してください。再インストールは不要です。",
+  setupCatalogTitle: "Codex のモデル読み込みを待機中",
+  setupCatalogBody: "NEKODEX を開いたまま、Codex をホストするアプリとモデル選択画面を開き直してください。表示されない場合は下のルーティング情報を確認してください。",
+  setupRepair: "インストールを修復",
+  setupTroubleshooting: "問題の確認と接続チェック",
+  setupOptionalCheck: "モデルはインストール済みです。新しい応答を確認したい場合に実行してください。",
+  setupInstalledTitle: "モデル接続をインストール済み",
+  modelsConfirmShort: "Codex で確認",
+  modelsWaitingShort: "Codex を待機中",
   searchActivity: "アクティビティを検索",
   eventLevel: "イベントの種類",
   allEvents: "すべて",
