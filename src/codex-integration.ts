@@ -230,7 +230,7 @@ export type {
 export function readCodexSubagentProtocol(
   fallback: AppConfig["subagentProtocol"] = "compatibility-v1",
 ): AppConfig["subagentProtocol"] {
-  const journal = readJournal({ reconcileInactiveHook: false });
+  const journal = readJournal({ reconcileInactiveHook: false, repair: false });
   return journal?.version === 8 || journal?.version === 9 || journal?.version === 10 || journal?.version === 11
     ? journal.installed.subagent_protocol
     : fallback;
@@ -289,7 +289,7 @@ export function preflightCodexIntegration(
   const configSnapshot = snapshotFile(configPath, { followSymlink: true });
   const configExists = configSnapshot.exists;
   const currentText = configSnapshot.data?.toString("utf8") ?? "";
-  const existing = readJournal({ reconcileInactiveHook: false });
+  const existing = readJournal({ reconcileInactiveHook: false, repair: false });
   const installedUrl = routeUrl(config);
   let hooksJson = currentHooksJson();
   if (existing?.version === 2 && existing.uninstalling) {
@@ -759,7 +759,7 @@ export function inspectCodexIntegration(): {
   journal?: AnyCodexIntegrationJournal;
   errors: string[];
 } {
-  const journal = readJournal({ reconcileInactiveHook: false });
+  const journal = readJournal({ reconcileInactiveHook: false, repair: false });
   const errors: string[] = [];
   if (journal) {
     try {

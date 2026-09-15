@@ -1,0 +1,29 @@
+# Triwave review 2, lane 13 — renderer App
+
+Frozen source: `3740505b0107af9a83053fd523ae1ad30be36465` (`3740505`, `main`). Independently read `launcher/src/App.tsx`, the relevant preload/main/state and browser-surface callers, `2026-09-15-triwave-review1-13.md`, and the adjudicated four-wave ledger. Manual read-only source review; no tests, typechecks, scripts, broad audits, runtime/account actions, production actions, source edits, or commit. Native4 / Native4 DEV / Zero Risk4 names, App IDs, and public ABI pins remain untouched. The parent owns the final focused verification (at most 60 seconds and 10 scenarios).
+
+## New source-path findings
+
+### T2-13-1 — successful MCP setup can be reported as failed by a later metadata read (P2, conditional)
+
+**Trigger.** `setupMcp` resolves after installing/configuring the selected mode, but both attempts inside `updateSnapshot()` reject (for example, snapshot IPC becomes unavailable or the main snapshot handler throws). `McpSurface.install()` then runs `setCredentialsConfigured(true)`, clears both input fields, and calls `await updateSnapshot()` before `await move(2)` (`launcher/src/App.tsx:1619-1637`). `updateSnapshot` retries one failed metadata read and propagates the second failure (`:226-236`); `refreshMetadata` calls `api.snapshot()` (`:74-103`; preload `:10`).
+
+**Consequence.** The catch at `App.tsx:1636-1637` presents the snapshot error in the same path as an installation error. The wizard stays on step 1, with its credential inputs cleared and local `credentialsConfigured` true, although setup itself succeeded. A user can interpret this as failed setup and retry a committed operation. The completion event can also schedule a metadata refresh, but that does not make the synchronous install path advance when its own awaited read rejects.
+
+**Correction direction.** Record the successful `setupMcp` result separately from post-commit metadata refresh. Advance the wizard using the committed result (or a state event) and report metadata-read failure as a refresh warning/retry. Preserve selected `interactionMode` and the current connector contract. A single failed snapshot is retried successfully by current code; this path requires the second read to fail. No live failure or incidence rate was established.
+
+### T2-13-2 — manual-tab status update can pull the user away from another surface (P3, conditional)
+
+**Trigger.** A manual tab remains active while the user opens Settings, Activity, or MCP. Its `manualState` changes, including `sent` to `completed` or `failed`, without a new tab selection. `selectedManualTab` is derived from active manual tabs (`App.tsx:541`), and the effect depends on `selectedManualTab?.manualState` (`:549-555`). Every such change calls `setSurface("browser")`, closes the sidebar and recommendation, and requests `setBrowserSurfaceActive(true)` regardless of the user's current surface.
+
+**Consequence.** A background manual-turn settlement replaces the surface the user selected. For example, an open Settings page is removed while the tab completes. The browser visibility IPC changes actual host state (`preload.cjs:20`; `main.cjs:548`; `browser-host.cjs:1909-1913`), so this is more than a status badge update. The selected-tab handoff on a *new* active tab can be intentional, but a status-only change needs no new selection. Gate the redirect on a newly selected/manual-prompt tab or on a currently required user action, and preserve explicit surface navigation on completion. This is a renderer navigation path, distinct from D17/T1-6-1's account-selection interleaving; no live tab transition was reproduced.
+
+## Challenge to wave 1 and ledger comparison
+
+- **T1-13-1 stands as a conditional consistency defect, not a demonstrated routine failure.** `McpSurface.move()` sets the local step before awaiting `setMcpStep` (`App.tsx:1598-1609`). The main handler validates and calls `stateStore.update` (`main.cjs:844-847`), which writes before assigning the new in-memory state (`state.cjs:132-143`). A rejected write therefore leaves persisted/in-memory step old while the mounted wizard shows the next page. The wave-1 description of the normal path is correct. Its broader wording about navigation is limited by component remount behavior: reopening can land on step 2 whenever current credentials/runtime are installed (`App.tsx:1565-1568`), regardless of the saved guide step. The defect is the immediate failed-write mismatch, not a guaranteed jump to the previous saved step on every reopen. No T2 ID is assigned to this repeat.
+- **D06 is a corrected historical root.** Current state-event, explicit-update, hydration, and metadata paths derive smoke from current-version state (`App.tsx:44-46,91-100,132-141,172-181,215-223`); the four-wave stale-session OR path is absent. No current D06 finding is counted.
+- **D13 is a corrected startup-failure path in the inspected renderer.** `currentToolProof` excludes failed production automatic `runtime-start` (`App.tsx:48-53`); historical verification time remains a dated record. The ledger's live account/schema boundary still applies. No new tool-contract assertion follows from source review.
+- **Optional efficiency:** `refreshMetadata` reads a full snapshot but applies only state, credential and context fields (`App.tsx:74-101`). This can be streamlined, but is not counted as a new correctness root here.
+- **Known limits:** exact real-world frequency of IPC/read failure and background manual settlement is unmeasured. Source review proves conditional control flow, not occurrence in an installed app or ChatGPT account.
+
+Counts: **2 new conditional renderer paths** (`T2-13-1`, `T2-13-2`); **1 wave-1 repeat refined** (`T1-13-1`); **2 corrected adjudicated roots inspected** (D06, D13); **1 optional efficiency observation**; **0 ABI/connector changes**. Only this review report was saved.

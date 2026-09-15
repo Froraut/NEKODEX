@@ -120,15 +120,18 @@ export function installService(
   assertMacOs();
   assertDurableRuntimeCommand(config.runtimeCommand);
   const path = plistPath();
+  const current = getServiceStatus();
+  const next = plist(config);
+  if (current.loaded && (!current.installed || readFileSync(path, "utf8") !== next)) {
+    throw new Error("Refusing to replace a loaded service definition; stop it before installing the update");
+  }
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   mkdirSync(join(getConfigDir(), "logs"), { recursive: true, mode: 0o700 });
-  const next = plist(config);
-  if (!existsSync(path) || readFileSync(path, "utf8") !== next) {
+  if (!current.installed || readFileSync(path, "utf8") !== next) {
     atomicWriteFile(path, next);
     onDefinitionWritten?.({ path, data: next });
   }
-  const status = getServiceStatus();
-  if (!status.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), path]);
+  if (!current.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), path]);
   return getServiceStatus();
 }
 

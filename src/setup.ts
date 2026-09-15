@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import type { AppConfig, BrowserInteractionMode, RuntimeMode, SubagentProtocol } from "./config";
 import {
@@ -46,7 +47,7 @@ import {
 import { connectTunnel, createTunnelConfig, installRuntimeKey, installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, restoreTunnelClientInstallation, snapshotTunnelClientInstallation, stopTunnel, waitForTunnelReady } from "./tunnel";
 import type { TunnelClientInstallSnapshot } from "./tunnel";
 import { getTunnelServiceStatus, installTunnelService, restartTunnelService, stopTunnelService, tunnelServiceDefinitionMatches, uninstallTunnelService } from "./tunnel-service";
-import { runCommand } from "./process";
+import { runChecked, runCommand } from "./process";
 import { VERSION } from "./version";
 
 export interface SetupOptions {
@@ -487,6 +488,11 @@ function prepareSetup(options: SetupOptions): PreparedSetup {
   return { existing, config, launcherOwned };
 }
 
+/** Re-bootstrap the exact definition restored by rollback; installers regenerate plist bytes. */
+function bootstrapRestoredDefinition(path: string): void {
+  runChecked("launchctl", ["bootstrap", `gui/${userInfo().uid}`, path]);
+}
+
 export function preflightSetup(options: SetupOptions): void {
   const { existing, config } = prepareSetup(options);
   if (config.mode === "full") {
@@ -883,7 +889,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         }
         if (getServiceStatus().loaded) await uninstallService(config);
         restoreFileSnapshot(serviceBeforeRoute);
-        if (beforeService.loaded && existing) installService(existing);
+        if (beforeService.loaded && existing) bootstrapRestoredDefinition(servicePath);
       } catch (caught) {
         rollbackFailures.push(`${servicePath}: ${caught instanceof Error ? caught.message : String(caught)}`);
       }
@@ -932,7 +938,9 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         if (tunnelServiceChanged && tunnelDefinitionBeforeRoute) {
           if (getTunnelServiceStatus().loaded) await uninstallTunnelService();
           restoreFileSnapshot(tunnelDefinitionBeforeRoute);
-          if (tunnelServiceBeforeRoute.loaded && existing?.mode === "full") installTunnelService(existing);
+          if (tunnelServiceBeforeRoute.loaded && existing?.mode === "full") {
+            bootstrapRestoredDefinition(tunnelServicePath!);
+          }
         } else if (tunnelRuntimeTouched && tunnelServiceBeforeRoute.loaded
           && existing?.mode === "full") {
           await restartTunnelService();

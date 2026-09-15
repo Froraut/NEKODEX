@@ -1,0 +1,34 @@
+# Triwave review 2, lane 10 — Codex integration journal
+
+Baseline: `3740505b0107af9a83053fd523ae1ad30be36465` (`HEAD`). Independent read-only manual source review of `src/codex-integration-journal.ts`, direct lifecycle callers in `src/codex-integration.ts`, the JSON hook helper, and the journal compensation writer. Compared `2026-09-15-triwave-review1-10.md` with the adjudicated `2026-09-15-four-wave-adjudication.md` ledger and D07 handoffs. No tests, typechecks, scripts, broad audits, runtime, production actions, source edits, or commit. This report is the only file written.
+
+## Challenge to wave 1
+
+### T2-10-1 — reject `T1-10-1` as stated; pending disconnect can reach hook recovery
+
+**Classification:** rejected repeat/residual claim, not a new root. `T1-10-1` asserts that `journalConfigMatches(recovery)` includes the inactive hook predicate and returns false when the exact hook remains. Current source does not do that. At `src/codex-integration-journal.ts:182-194`, `journalConfigMatches` checks target/config existence and `verifyManagedJournalState` only. The combined predicate is a different function, `journalMatchesConfig` at `:220-222`. `recoverPendingJsonHookWrite` at `:261` explicitly requires the restored config to match **and** `journalExternalHooksMatch(recovery)` to be false. For the stated active-primary/inactive-recovery pair with the exact recorded JSON hook still present, `pendingInactiveDisconnect` at `:339-346` authorizes the explicit caller, the hook predicate is false (`:196-213`), and `:262-279` can remove the entry using `expectedData` before committing primary. The explicit callers are disconnect and uninstall at `src/codex-integration.ts:524,653`; ordinary readers request false.
+
+**Counterevidence/limit:** A changed/occupied slot or duplicate command is rejected by `restoredInactiveJsonHook` (`src/codex-integration-journal.ts:224-253`) and `locateInstalledHook` (`src/codex-interrupt-hook-json.ts:120-140`); those safety guards remain. Source proves the branch is reachable, not that every filesystem interleaving completes. An equal inactive pair still lacks proof of who later inserted an identical hook and returns without destructive reconciliation (`src/codex-integration-journal.ts:316-318`). The D07 fix1/fix2 lane-10 handoffs' statement that config and hook predicates were separated is consistent with HEAD; the contrary fix1 lane-11 follow-up and triwave wave-1 finding are stale for this source.
+
+## New concrete source path
+
+### T2-10-2 — compensation may overwrite a journal copy it never wrote (P2, conditional)
+
+**Classification:** one new independent ownership/rollback root in the journal path, separate from D07's implicit inactive-hook deletion. It is a source-proven conditional interleaving, with no observed live incident.
+
+**Trigger:** During an explicit pending JSON-hook recovery, `recoverPendingJsonHookWrite` supplies two writes in order: guarded `hooks.json`, then the unguarded primary `integration-journal.json` (`src/codex-integration-journal.ts:275-279`). `writeFilesWithCompensation` snapshots both files before its write loop (`src/codex-integration-shared.ts:365-369`). After those snapshots, an external actor changes the primary journal bytes and also changes `hooks.json` before the guard at `:372-378`. The hook guard throws before `startedWrites.add` at `:380`; this operation has written neither file.
+
+**Source path and consequence:** In the catch block, rollback visits the primary journal first because snapshots are reversed (`src/codex-integration-shared.ts:384-400`). The primary's planned write has no `expectedData`, so `guardedWrite` is undefined and rollback calls `restoreFileSnapshot(snapshot)` at `:398` without checking whether this call started that write or whether current primary bytes match its intended bytes. It replaces the actor's new primary journal with the earlier snapshot even though the guarded hook write correctly refused to overwrite the actor's hook edit. The caller receives a hook-guard failure, but an unrelated journal edit has been lost. The same unguarded rollback pattern applies to a primary/recovery copy in other `writeFilesWithCompensation` journal repair calls (`src/codex-integration-journal.ts:329-332,370-373`) when an earlier operation fails.
+
+**Minimum correction for parent adjudication:** Rollback should skip untouched paths and compensate a path only when this operation actually began changing it and its current bytes still equal the operation's owned result; preserve uncertain partial-write cases as explicit recovery errors. Keep the exact hook `expectedData` guard and the active/inactive pair policy. This is an internal helper/journal ownership correction and requires no Native4 / Native4 DEV / Zero Risk4 name or public ABI change.
+
+**Counterevidence and qualification:** For a guarded hook path, the current code does check `startedWrites` and current intended bytes (`src/codex-integration-shared.ts:388-396`); the new issue is the *unguarded, untouched journal* path. The trigger requires another writer between snapshots and the first byte guard, so frequency and live outcome are unproved. The four-wave results already acknowledge general compare/write cross-process gaps; they do not describe this specific rollback of a path that was never written. This finding is not a claim that the exact D07 hook recovery deletes a later actor's hook or that a normal single-process disconnect fails.
+
+## Reviewed boundaries and counts
+
+- Ordinary journal reads are non-destructive for inactive JSON hooks (`src/codex-integration-journal.ts:316-318`; `src/codex-integration.ts:233,292,380,573,762`). They can repair journal copies on read, which is a documented lifecycle behavior; this review does not claim that every ordinary read is filesystem read-only.
+- `readJournalSnapshot()` is the separate non-writing diagnostics path (`src/codex-integration-journal.ts:283-295`). Reappeared inactive hooks are detected before setup, activate, and uninstall instead of silently removed (`src/codex-integration.ts:172-177,299,387,579,656,721-724`).
+- Known limits, not counted: no live filesystem interleaving was exercised; final hook observation and journal deletion remain separate operations; exact identical hook provenance and account-side connector/schema loading are outside this source proof.
+- Optional improvements: **0**. No connector identities, App IDs, tool names/descriptions/schemas, tunnel contracts, or public ABI pins are changed or proposed.
+
+Counts: **1 new conditional concrete root** (`T2-10-2`); **1 rejected first-wave residual/repeat claim** (`T2-10-1` / `T1-10-1`); **0 accepted repeats**; **3 known evidence limits**; **0 optional improvements**. Parent retains the sole final focused verification pass (at most 60 seconds and 10 scenarios); this lane ran none.

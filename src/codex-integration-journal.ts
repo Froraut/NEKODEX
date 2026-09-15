@@ -179,6 +179,14 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
   }
   throw new Error(`Invalid Codex integration journal: ${path}`);
 }
+
+function currentJournalBytes(path: string): Uint8Array {
+  if (!existsSync(path)) {
+    throw new Error(`Codex integration journal changed before the managed write: ${path}`);
+  }
+  return readFileSync(path);
+}
+
 function journalConfigMatches(journal: AnyCodexIntegrationJournal): boolean {
   try {
     assertJournalTargetsConfig(journal, getCodexConfigPath());
@@ -275,7 +283,8 @@ function recoverPendingJsonHookWrite(
   writeFilesWithCompensation([
     { path: recovery.interruptHook.hooksPath, data: next, followSymlink: true,
       expectedData: hookBytes },
-    { path: getCodexJournalPath(), data: serializeJournal(recovery) },
+    { path: getCodexJournalPath(), data: serializeJournal(recovery),
+      expectedData: currentJournalBytes(getCodexJournalPath()) },
   ]);
   return true;
 }
@@ -294,8 +303,16 @@ export function readJournalSnapshot(options: { primaryPath?: string; recoveryPat
   return { journal: primary ?? recovery, recoveryPending: !identical };
 }
 
-/** Repair journal copies on read. Hook removal requires explicit recovery intent and a pending transition. */
-export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): AnyCodexIntegrationJournal | undefined {
+/**
+ * Read the journal, optionally repairing its copies. Inspection callers must disable
+ * repair so status, doctor, and model discovery remain observational. Hook recovery
+ * remains separately gated by explicit reconciliation intent.
+ */
+export function readJournal(options: {
+  reconcileInactiveHook?: boolean;
+  repair?: boolean;
+} = {}): AnyCodexIntegrationJournal | undefined {
+  const repair = options.repair !== false;
   const primaryPath = getCodexJournalPath();
   const recoveryPath = getCodexJournalRecoveryPath();
   let primary: AnyCodexIntegrationJournal | undefined;
@@ -326,10 +343,12 @@ export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): 
     if (serializeJournal(baseline as AnyCodexIntegrationJournal) === serializeJournal(unmarked)
       && journalMatchesConfig(marked)) {
       const data = serializeJournal(marked);
-      writeFilesWithCompensation([
-        { path: recoveryPath, data },
-        { path: primaryPath, data },
-      ]);
+      if (repair) {
+        writeFilesWithCompensation([
+          { path: recoveryPath, data, expectedData: currentJournalBytes(recoveryPath) },
+          { path: primaryPath, data, expectedData: currentJournalBytes(primaryPath) },
+        ]);
+      }
       return marked;
     }
   }
@@ -340,19 +359,19 @@ export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): 
     && recovery.interruptHook.storage === "json"
     && primary?.version === 11 && primary.active
     && serializeJournal({ ...primary, active: false }) === serializeJournal(recovery);
-  if (recovery && !primaryError
+  if (repair && recovery && !primaryError
     && (recovery.version !== 11 || recovery.active || recovery.interruptHook.storage !== "json"
       || (options.reconcileInactiveHook === true && pendingInactiveDisconnect))
     && recoverPendingJsonHookWrite(recovery, primary)) return recovery;
   if (primary && !recovery && !recoveryError) {
-    atomicWriteFile(recoveryPath, serializeJournal(primary));
+    if (repair) atomicWriteFile(recoveryPath, serializeJournal(primary));
     return primary;
   }
   if (recovery && !primary && !primaryError) {
     if (!journalMatchesConfig(recovery)) {
       throw new Error("Codex integration recovery journal does not match the active config");
     }
-    atomicWriteFile(primaryPath, serializeJournal(recovery));
+    if (repair) atomicWriteFile(primaryPath, serializeJournal(recovery));
     return recovery;
   }
 
@@ -367,10 +386,12 @@ export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): 
   }
   const selected = primaryMatches ? primary! : recovery!;
   const data = serializeJournal(selected);
-  writeFilesWithCompensation([
-    { path: recoveryPath, data },
-    { path: primaryPath, data },
-  ]);
+  if (repair) {
+    writeFilesWithCompensation([
+      { path: recoveryPath, data, expectedData: currentJournalBytes(recoveryPath) },
+      { path: primaryPath, data, expectedData: currentJournalBytes(primaryPath) },
+    ]);
+  }
   return selected;
 }
 

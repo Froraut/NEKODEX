@@ -251,6 +251,29 @@ function toolCalls(output: unknown[]): DevToolCall[] {
   return calls;
 }
 
+function retainedToolCallIds(input: unknown[]): Set<string> {
+  const ids = new Set<string>();
+  for (const value of input) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const item = value as Record<string, unknown>;
+    if ((item.type === "function_call" || item.type === "custom_tool_call") && typeof item.call_id === "string" && item.call_id) {
+      ids.add(item.call_id);
+    }
+  }
+  return ids;
+}
+
+function assertUniqueToolCallIds(calls: DevToolCall[], retainedInput: unknown[]): void {
+  const seen = retainedToolCallIds(retainedInput);
+  for (const call of calls) {
+    if (!call.callId) continue;
+    if (seen.has(call.callId)) {
+      throw new Error(`DEV Responses returned duplicate tool call_id: ${call.callId}`);
+    }
+    seen.add(call.callId);
+  }
+}
+
 function simulatedReceipt(state: DevChatState, turnId: string, call: DevToolCall): Record<string, unknown> {
   if (call.name === DEV_LARGE_CONTEXT_TOOL) {
     if (!call.input || typeof call.input !== "object" || Array.isArray(call.input)) {
@@ -523,12 +546,13 @@ export class DevChatDriver {
       if (!Array.isArray(envelope.output)) throw new Error("DEV Responses handler returned no output array");
       if (envelope.status !== "completed") throw new Error(responseError(envelope));
       const output = historyOutput(envelope.output!, turnId);
-      workingInput.push(...output);
       const roundUsage = usageOf(envelope);
       usage.inputTokens += roundUsage.inputTokens;
       usage.outputTokens += roundUsage.outputTokens;
       usage.totalTokens += roundUsage.totalTokens;
       const calls = toolCalls(output);
+      assertUniqueToolCallIds(calls, workingInput);
+      workingInput.push(...output);
       if (calls.length === 0) {
         if (envelope.end_turn !== true) {
           throw new Error("DEV Responses turn completed without tool calls or end_turn=true");
@@ -634,7 +658,9 @@ export class DevChatDriver {
       body: JSON.stringify({
         model: state.model,
         input,
-        instructions: DEV_CHAT_SYSTEM_INSTRUCTIONS,
+        instructions: this.config.mode === "full"
+          ? DEV_CHAT_SYSTEM_INSTRUCTIONS
+          : DEV_CHAT_BROWSER_ONLY_INSTRUCTIONS,
         store: false,
       }),
     }), this.config, this.adapterFactory);

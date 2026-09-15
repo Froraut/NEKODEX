@@ -402,7 +402,14 @@ function tunnel(config: AppConfig): TunnelConfig {
   return config.tunnel;
 }
 
-export function connectTunnel(config: AppConfig): void {
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
+  }
+}
+
+export function connectTunnel(config: AppConfig, signal?: AbortSignal): void {
+  throwIfAborted(signal);
   const settings = tunnel(config);
   mkdirSync(settings.profileDir, { recursive: true, mode: 0o700 });
   const result = runCommand(settings.binaryPath, [
@@ -415,7 +422,8 @@ export function connectTunnel(config: AppConfig): void {
     "--runtime-api-key", `file:${settings.runtimeKeyFile}`,
     "--mcp-command", mcpCommand(config),
     "--json",
-  ], { timeout: TUNNEL_READY_TIMEOUT_MS });
+  ], { timeout: TUNNEL_READY_TIMEOUT_MS, signal });
+  throwIfAborted(signal);
   const structuredOutput = result.stdout.trim();
   const launchError = structuredOutput
     ? tunnelConnectLaunchError(structuredOutput)
@@ -429,13 +437,15 @@ export function connectTunnel(config: AppConfig): void {
   if (launchError) throw new Error(`Tunnel runtime exited during launch: ${launchError}`);
 }
 
-export function stopTunnel(config: AppConfig): void {
+export function stopTunnel(config: AppConfig, signal?: AbortSignal): void {
+  throwIfAborted(signal);
   const settings = tunnel(config);
   const result = runCommand(
     settings.binaryPath,
     ["runtimes", "stop", settings.alias, "--json"],
-    { timeout: 15_000 },
+    { timeout: 15_000, signal },
   );
+  throwIfAborted(signal);
   if (result.status !== 0
     && !/not found|not running|unknown alias|\balias\b[^\r\n]{0,160}\bis not known\b/i.test(
       `${result.stdout}\n${result.stderr}`,
@@ -553,7 +563,8 @@ export function parseTunnelStatus(output: string, exitStatus = 0): TunnelRuntime
   }
 }
 
-export function tunnelStatus(config: AppConfig): TunnelRuntimeStatus {
+export function tunnelStatus(config: AppConfig, signal?: AbortSignal): TunnelRuntimeStatus {
+  throwIfAborted(signal);
   const settings = tunnel(config);
   if (!existsSync(settings.binaryPath)) {
     return { ok: false, processRunning: false, healthy: false, ready: false, detail: `Missing ${settings.binaryPath}` };
@@ -561,20 +572,37 @@ export function tunnelStatus(config: AppConfig): TunnelRuntimeStatus {
   const result = runCommand(
     settings.binaryPath,
     ["runtimes", "status", settings.alias, "--json"],
-    { timeout: 10_000 },
+    { timeout: 10_000, signal },
   );
+  throwIfAborted(signal);
   return parseTunnelStatus(tunnelCommandOutput(result), result.status);
 }
 
 export async function waitForTunnelReady(
   config: AppConfig,
   timeoutMs = TUNNEL_READY_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<TunnelRuntimeStatus> {
+  throwIfAborted(signal);
   const deadline = Date.now() + timeoutMs;
-  let status = tunnelStatus(config);
+  let status = tunnelStatus(config, signal);
   while (!status.ok && Date.now() < deadline) {
-    await new Promise(resolveWait => setTimeout(resolveWait, TUNNEL_STATUS_POLL_INTERVAL_MS));
-    status = tunnelStatus(config);
+    const pause = Math.min(TUNNEL_STATUS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()));
+    await new Promise<void>((resolveWait, rejectWait) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        rejectWait(signal?.reason instanceof Error
+          ? signal.reason
+          : new DOMException("The operation was aborted", "AbortError"));
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolveWait();
+      }, pause);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+    });
+    status = tunnelStatus(config, signal);
   }
   return status;
 }

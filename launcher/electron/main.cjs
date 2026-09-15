@@ -114,6 +114,7 @@ let cdpPort = 0;
 let lastOperation = null;
 let catalogVerificationTimer = null;
 let catalogVerificationEpoch = 0;
+let accountProofGeneration = 0;
 let updateController = null;
 let contextChangeQueue = null;
 let startupPhase = "runtime-files";
@@ -140,6 +141,43 @@ function send(channel, value) {
 function publishOperation(operation) {
   lastOperation = operation;
   send("launcher:operation", operation);
+}
+
+function retireAccountProof() {
+  accountProofGeneration += 1;
+  return accountProofGeneration;
+}
+
+function captureAccountProofContext(stateStore) {
+  const browser = browserHost.snapshot();
+  return {
+    generation: accountProofGeneration,
+    mode: stateStore.read().browserInteractionMode,
+    identity: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browser.accountLabel),
+  };
+}
+
+function accountProofContextIsCurrent(context, stateStore, { requireCoreSetup = false } = {}) {
+  const state = stateStore.read();
+  const browser = browserHost.snapshot();
+  return accountProofGeneration === context.generation
+    && state.browserInteractionMode === context.mode
+    && (!requireCoreSetup || state.coreSetupComplete === true)
+    && setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browser.accountLabel) === context.identity;
+}
+
+function invalidateAccountProof(stateStore) {
+  retireAccountProof();
+  const state = stateStore.update({
+    mcpSetupComplete: false,
+    browserSmokePassed: false,
+    browserSmokeVersion: null,
+    setupIdentityHash: null,
+    setupVerifiedAt: null,
+    pickerVerifiedAt: null,
+  });
+  send("launcher:state-changed", state);
+  return state;
 }
 
 function stopCatalogVerificationMonitor() {
@@ -607,6 +645,7 @@ function registerIpc({ logger, stateStore }) {
     return true;
   });
   handle("launcher:browser-logout", async () => {
+    invalidateAccountProof(stateStore);
     const browser = await browserHost.logout();
     const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
     send("launcher:state-changed", state);
@@ -621,12 +660,17 @@ function registerIpc({ logger, stateStore }) {
     if (stateStore.read().browserInteractionMode === "manual") {
       throw new Error("Browser smoke testing is disabled in Manual mode");
     }
+    const proofContext = captureAccountProofContext(stateStore);
     const result = await browserHost.smokeTest();
+    if (!accountProofContextIsCurrent(proofContext, stateStore)) {
+      throw new Error("Browser smoke evidence became stale before it could be published");
+    }
     stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
     return result;
   });
   handle("launcher:mcp-verify", async (event) => {
     const operationName = "mcp-verification";
+    const proofContext = captureAccountProofContext(stateStore);
     const activeTraceId = browserHost.activeTraceId;
     logger.info("mcp.verification_requested", {
       activeTraceId,
@@ -662,6 +706,9 @@ function registerIpc({ logger, stateStore }) {
       return report;
     }
     if (stateStore.read().browserInteractionMode === "manual") {
+      if (!accountProofContextIsCurrent(proofContext, stateStore, { requireCoreSetup: true })) {
+        throw new Error("MCP verification became stale before it could be published");
+      }
       const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
         setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel) });
       send("launcher:state-changed", state);
@@ -682,6 +729,9 @@ function registerIpc({ logger, stateStore }) {
     try {
       publishOperation({ name: operationName, status: "running", message: "Checking ChatGPT connector" });
       await browserHost.verifyConnector(runtimeHost.mcpConnectorName());
+      if (!accountProofContextIsCurrent(proofContext, stateStore, { requireCoreSetup: true })) {
+        throw new Error("MCP verification became stale before it could be published");
+      }
       const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
         setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel) });
       send("launcher:state-changed", state);
@@ -756,7 +806,7 @@ function registerIpc({ logger, stateStore }) {
     return { cancelled: false, state };
   });
   handle("launcher:setup-core", async () => {
-    const setupState = stateStore.read();
+    let setupState = stateStore.read();
     if (setupState.browserInteractionMode === "automatic") {
       const browser = await browserHost.probeAuthentication({ forSetup: true });
       if (!browser.authenticated) {
@@ -766,6 +816,10 @@ function registerIpc({ logger, stateStore }) {
             : "Sign in to ChatGPT before installing the Codex integration",
         );
       }
+      // Startup migration, account selection, logout, or a mode transition may
+      // invalidate the setup gate while the authentication probe is pending.
+      // Re-read the committed state before consuming its smoke evidence.
+      setupState = stateStore.read();
     }
     if (setupState.browserInteractionMode === "automatic"
       && !setupState.coreSetupComplete
@@ -812,6 +866,7 @@ function registerIpc({ logger, stateStore }) {
       ? currentMode
       : validateBrowserInteractionMode(input.interactionMode);
     const interactionModeChange = interactionMode !== currentMode;
+    if (interactionModeChange) invalidateAccountProof(stateStore);
     const setup = IS_DEV_PROFILE
       ? runtimeHost.setupDevMcp.bind(runtimeHost)
       : runtimeHost.setupMcp.bind(runtimeHost);
@@ -922,6 +977,7 @@ function registerIpc({ logger, stateStore }) {
     if (!runtimeHost.mcpCredentialsConfigured(mode)) {
       return { state: current, credentialsRequired: true, targetMode: mode };
     }
+    invalidateAccountProof(stateStore);
     const result = await browserHost.withInteractionModeChange(
       mode,
       afterRuntimeReady => runtimeHost.setBrowserInteractionMode(mode, afterRuntimeReady),
@@ -941,11 +997,33 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:accounts", () => browserHost.accountSnapshot());
   handle("launcher:account-add", (_event, label) => browserHost.addAccount(label));
-  handle("launcher:account-select", (_event, id) => browserHost.selectAccount(id));
-  handle("launcher:account-enabled", (_event, id, enabled) => browserHost.setAccountEnabled(id, enabled));
+  handle("launcher:account-select", async (_event, id) => {
+    invalidateAccountProof(stateStore);
+    return browserHost.selectAccount(id);
+  });
+  handle("launcher:account-enabled", (_event, id, enabled) => {
+    const result = browserHost.setAccountEnabled(id, enabled);
+    invalidateAccountProof(stateStore);
+    const state = stateStore.read();
+    send("launcher:state-changed", state);
+    return result;
+  });
   handle("launcher:account-mode", (_event, mode) => browserHost.setAccountMode(mode));
   handle("launcher:account-login", (_event, id) => browserHost.openAccountLogin(id));
-  handle("launcher:account-check", (_event, id, connector) => browserHost.checkAccount(id, connector === true));
+  handle("launcher:account-check", async (_event, id, connector) => {
+    const selectedAccountId = browserHost.snapshot().accountId;
+    try {
+      return await browserHost.checkAccount(id, connector === true);
+    } catch (error) {
+      // A failed check for the account currently shown by the launcher makes
+      // the global proof unusable. A check for an account that is no longer
+      // selected must not erase proof established for the newer selection.
+      if (selectedAccountId === id && browserHost.snapshot().accountId === id) {
+        invalidateAccountProof(stateStore);
+      }
+      throw error;
+    }
+  });
   handle("launcher:browser-capacity", async (_event, value) => {
     saveBrowserCapacity(CORE_HOME, value);
     return browserCapacitySnapshot();
@@ -1336,6 +1414,7 @@ async function start() {
       }).catch((error) => {
         if (shutdownInProgress || quitting || exitCommitted) return;
         const message = error instanceof Error ? error.message : String(error);
+        retireAccountProof();
         logger.error("dev_profile.runtime_start_failed", { message });
         const failed = stateStore.update({ mcpSetupComplete: false });
         send("launcher:state-changed", failed);
@@ -1366,6 +1445,7 @@ async function start() {
           mcpGuideStep: 0,
         }),
       });
+      if (upgrade.connectorMigrated || !preserve) retireAccountProof();
       send("launcher:state-changed", state);
       logger.info("runtime.release_upgraded", {
         fromVersion: upgrade.fromVersion,
@@ -1420,6 +1500,7 @@ async function start() {
     }
     if (runtime.status === "not-configured") {
       stopCatalogVerificationMonitor();
+      retireAccountProof();
       const state = stateStore.update({
         coreSetupComplete: false,
         codexCatalogVerified: false,
@@ -1440,6 +1521,7 @@ async function start() {
       return;
     }
     stopCatalogVerificationMonitor();
+    retireAccountProof();
     const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
       mcpSetupComplete: false });
     send("launcher:state-changed", state);
@@ -1465,6 +1547,7 @@ async function start() {
     if (shutdownInProgress || quitting || exitCommitted) return;
     const primary = error instanceof Error ? error.message : String(error);
     stopCatalogVerificationMonitor();
+    retireAccountProof();
     const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
       mcpSetupComplete: false });
     send("launcher:state-changed", state);

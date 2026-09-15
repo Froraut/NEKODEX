@@ -380,6 +380,8 @@ class RuntimeSupervisor {
     this.tunnelMonitorObservationUnavailable = false;
     this.tunnelMonitorGeneration = 0;
     this.tunnelHealthBaseUrl = null;
+    this.tunnelControlQueue = Promise.resolve();
+    this.tunnelControlChildren = new Set();
     this.recoveryTasks = new Set();
     this.recoveryControllers = new Set();
     this.shutdownRequested = false;
@@ -1797,15 +1799,59 @@ class RuntimeSupervisor {
     this.assertRecoveryActive(recoverySignal);
     const proxyEnvironment = await this.tunnelProxyEnvironmentProvider();
     this.assertRecoveryActive(recoverySignal);
-    return await new Promise((resolve, reject) => {
+    const previousControl = this.tunnelControlQueue;
+    let releaseControl;
+    this.tunnelControlQueue = new Promise((resolve) => {
+      releaseControl = resolve;
+    });
+    let removeControlWaitAbort;
+    try {
+      if (recoverySignal) {
+        const controlWaitAbort = new Promise((_, reject) => {
+          const onAbort = () => reject(new Error("Runtime recovery was cancelled for shutdown"));
+          removeControlWaitAbort = () => recoverySignal.removeEventListener("abort", onAbort);
+          if (recoverySignal.aborted) onAbort();
+          else recoverySignal.addEventListener("abort", onAbort, { once: true });
+        });
+        try {
+          await Promise.race([previousControl, controlWaitAbort]);
+        } catch (error) {
+          // Keep this queued slot closed until the predecessor releases its control child.
+          // A cancelled waiter must not let a later command overlap that unresolved child.
+          previousControl.then(releaseControl, releaseControl);
+          throw error;
+        }
+      } else {
+        await previousControl;
+      }
+    } finally {
+      removeControlWaitAbort?.();
+    }
+    try {
       this.assertRecoveryActive(recoverySignal);
-      const child = spawn(tunnel.binaryPath, args, {
-        cwd: tunnel.profileDir,
-        detached: DETACH_OWNED_CHILD,
-        env: { ...process.env, ...proxyEnvironment },
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
+      return await new Promise((resolve, reject) => {
+        let child;
+        try {
+          child = spawn(tunnel.binaryPath, args, {
+            cwd: tunnel.profileDir,
+            detached: DETACH_OWNED_CHILD,
+            env: { ...process.env, ...proxyEnvironment },
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+          });
+        } catch (error) {
+          releaseControl();
+          reject(error);
+          return;
+        }
+        this.tunnelControlChildren.add(child);
+        let controlReleased = false;
+        const releaseOwnedControl = () => {
+          if (controlReleased) return;
+          controlReleased = true;
+          this.tunnelControlChildren.delete(child);
+          releaseControl();
+        };
       const stdout = [];
       const stderr = [];
       let stdoutBytes = 0;
@@ -1829,9 +1875,9 @@ class RuntimeSupervisor {
         if (forceTimeout) clearTimeout(forceTimeout);
         recoverySignal?.removeEventListener("abort", onAbort);
       };
-      const onAbort = () => {
+      const beginTermination = (reason, firstDelayMs, forceDelayMs) => {
         if (settled) return;
-        timeoutError = new Error(`${label} cancelled for runtime shutdown`);
+        timeoutError = reason;
         clearTimeout(timeout);
         try {
           terminateOwnedProcessTree(child);
@@ -1856,41 +1902,14 @@ class RuntimeSupervisor {
             settled = true;
             clearTimers();
             reject(new Error(`${timeoutError.message}; the control process did not exit after forced termination`));
-          }, 1_000);
-        }, 1_000);
+          }, forceDelayMs);
+        }, firstDelayMs);
+      };
+      const onAbort = () => {
+        beginTermination(new Error(`${label} cancelled for runtime shutdown`), 1_000, 1_000);
       };
       const timeout = setTimeout(() => {
-        if (settled) return;
-        timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
-        try {
-          terminateOwnedProcessTree(child);
-        } catch (error) {
-          settled = true;
-          clearTimers();
-          reject(new Error(
-            `${timeoutError.message}; control process tree termination failed: ${errorMessage(error)}`,
-          ));
-          return;
-        }
-        terminationTimeout = setTimeout(() => {
-          if (settled) return;
-          try {
-            terminateOwnedProcessTree(child, "SIGKILL");
-          } catch (error) {
-            settled = true;
-            clearTimers();
-            reject(new Error(
-              `${timeoutError.message}; forced control process tree termination failed: ${errorMessage(error)}`,
-            ));
-            return;
-          }
-          forceTimeout = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            clearTimers();
-            reject(new Error(`${timeoutError.message}; the control process did not exit after forced termination`));
-          }, 2_000);
-        }, 5_000);
+        beginTermination(new Error(`${label} timed out after ${timeoutMs}ms`), 5_000, 2_000);
       }, timeoutMs);
       recoverySignal?.addEventListener("abort", onAbort, { once: true });
       if (recoverySignal?.aborted) onAbort();
@@ -1898,12 +1917,7 @@ class RuntimeSupervisor {
       child.stderr.on("data", (chunk) => capture(stderr, chunk, "stderr"));
       const onOutputError = (stream) => (error) => {
         if (settled) return;
-        settled = true;
-        clearTimers();
-        try {
-          terminateOwnedProcessTree(child);
-        } catch {}
-        reject(new Error(`${label} ${stream} pipe failed: ${errorMessage(error)}`));
+        beginTermination(new Error(`${label} ${stream} pipe failed: ${errorMessage(error)}`), 1_000, 2_000);
       };
       child.stdout.once("error", onOutputError("stdout"));
       child.stderr.once("error", onOutputError("stderr"));
@@ -1915,6 +1929,7 @@ class RuntimeSupervisor {
           ? new Error(`${timeoutError.message}; termination failed: ${error.message}`)
           : error);
       });
+      child.once("close", releaseOwnedControl);
       child.once("exit", (code) => {
         if (settled) return;
         settled = true;
@@ -1942,7 +1957,11 @@ class RuntimeSupervisor {
             : [stderrText, stdoutText].filter(Boolean).join("\n"),
         });
       });
-    });
+      });
+    } catch (error) {
+      releaseControl();
+      throw error;
+    }
   }
 
   async stopStaleOwnedRuntime(config, startSignal) {
@@ -1972,7 +1991,7 @@ class RuntimeSupervisor {
     }
     let managedTunnelRunning = false;
     if (config.mode === "full") {
-      const tunnelHealth = await this.waitForKnownTunnelStatus(config);
+      const tunnelHealth = await this.waitForKnownTunnelStatus(config, 10_000, startSignal);
       if (startSignal) this.assertCanStart(startSignal);
       managedTunnelRunning = !tunnelRuntimeStopped(tunnelHealth);
       if (managedTunnelRunning
@@ -2028,11 +2047,11 @@ class RuntimeSupervisor {
     }
     if (managedTunnelRunning) {
       if (startSignal) this.assertCanStart(startSignal);
-      const stopped = await this.runTunnelStopCommand(config);
+      const stopped = await this.runTunnelStopCommand(config, startSignal);
       if (stopped.code !== 0) {
         throw new Error(`stale tunnel refused graceful shutdown: ${tunnelControlDiagnostic(stopped)}`);
       }
-      await this.waitForTunnelStopped(config, 10_000);
+      await this.waitForTunnelStopped(config, 10_000, startSignal);
     }
     if (startSignal) this.assertCanStart(startSignal);
     this.clearState();

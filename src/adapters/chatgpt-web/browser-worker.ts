@@ -3373,6 +3373,13 @@ export class ChatGptBrowserWorker {
               await this.connectorMentionFailure(menuRows, attemptBudget.triggerAttempts, abortSignal),
             );
           }
+          // A missing exact row can leave ChatGPT's mention popup open. Clear the
+          // complete composer state before the next trigger so a stale popup
+          // cannot make the next attempt fail at assertNoPriorPopup(). The
+          // cleanup also proves that no connector pill survived the failed
+          // attempt; exact-row, highlight, and selected-pill guards remain the
+          // only success gates.
+          await this.clearChatGptComposerState(page);
         }
         if (exactRowVisible) {
           if (await popupCount(abortSignal) !== 1) {

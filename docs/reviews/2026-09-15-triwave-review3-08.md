@@ -1,0 +1,37 @@
+# NEKODEX triwave review 3 of 3, lane 8 — helper verifier
+
+Baseline: `3740505b0107af9a83053fd523ae1ad30be36465` (`HEAD`). Final adversarial, read-only source review of `launcher/electron/browser-helper-verifier.cjs`, `src/adapters/chatgpt-web/browser-helper-main.ts`, the helper-facing paths in `launcher/electron/browser-host.cjs`, `launcher/electron/main.cjs`, `launcher/electron/account-pool.cjs`, and the relevant `src/adapters/chatgpt-web/browser-worker.ts` maintenance paths. Read `docs/reviews/2026-09-15-triwave-review1-08.md` and `docs/reviews/2026-09-15-triwave-review2-08.md` before this pass. No tests, typechecks, scripts, broad audits, runtime/account actions, production actions, source edits, or commits were performed. `Native4`, `Native4 DEV`, `ZeroRisk4`, their identities, and ABI pins remain untouched.
+
+## Final disposition
+
+**No new concrete helper-verifier defect is established. No `T3-8-n` IDs are issued.** The candidate roots examined below either fail closed, are already covered by D16/D14/D15, are a repeated/known live boundary, or are optional diagnostics. The final parent pass remains bounded to at most 60 seconds and 10 scenarios.
+
+## Adversarial scenarios and dispositions
+
+1. **Malformed helper command/config or unsupported operation — rejected as a new root.** `runBrowserHelperOperation` validates helper paths, descriptor path, app name, and the operation allow-list before spawning (`launcher/electron/browser-helper-verifier.cjs:68-80`). No helper child is created on this path, and no success state can be published by the direct callers.
+
+2. **Wrong, duplicated, delayed, or malformed protocol frames — rejected as a new root.** The verifier generates a per-operation ID, accepts readiness once, writes the request with that ID, rejects mismatched IDs, rejects duplicate readiness, converts invalid JSON/unexpected frames and stream/child errors to failure, and clears the operation timeout (`browser-helper-verifier.cjs:81-165`). The helper emits maintenance results/errors with the same ID (`browser-helper-main.ts:348-399`). A late frame cannot turn a completed operation into a second success because `finish` is guarded by `completed` (`browser-helper-verifier.cjs:98-105`).
+
+3. **Retired or incorrect connector accepted as current — rejected as a new root.** `verify` applies `requireCurrentRuntimeConnectorName` before spawning (`browser-helper-verifier.cjs:78-80`), the browser worker returns the selected configured name only after exact-row selection and composer cleanup (`browser-worker.ts:3855-3884`), and the verifier compares returned text with the requested name, including a separate legacy-name error (`browser-helper-verifier.cjs:195-211`). The launcher marks connector proof only after that awaited result succeeds (`browser-host.cjs:3102-3124`, `main.cjs:682-706`).
+
+4. **Malformed or contradictory inspect/smoke evidence — rejected as a new root.** The helper is transport-only for these result frames; direct callers validate the returned value. Smoke requires a nonempty effort and exact `CODEX WEB GPT READY` (`browser-host.cjs:3071-3094`). Inspection requires authenticated temporary evidence and a URL, then validates capability types and contradictions when requested (`browser-host.cjs:3136-3165`). Neither malformed result can publish ready evidence through these callers.
+
+5. **D16 slow shutdown after success, timeout, or operation error — confirmed repeat only.** The helper shutdown waits five seconds, then TERM and KILL windows, retains the exact `ChildProcess` until observed `exit`/`close`, and never falls back to PID-name targeting (`browser-helper-verifier.cjs:43-66`). The helper itself waits for browser-worker closure before exiting (`browser-helper-main.ts:118-154`). This can still turn a successful maintenance result into cleanup failure after the bounded windows, but it is the adjudicated D16 root already covered by waves 1 and 2. With a primary error, cleanup is attached without replacing the primary error (`browser-helper-verifier.cjs:167-192`). No T3 ID.
+
+6. **Primary verification failure plus cleanup failure loses the root cause — rejected as a functional defect; optional diagnostics only.** The primary error retains `cleanupError` and `operationId` (`browser-helper-verifier.cjs:176-180`), and the host logs the primary name/message and trace ID (`browser-host.cjs:3117-3124`). Exposing a bounded cleanup detail to the UI or operation report could improve support, but it cannot create false connector acceptance or hide the failed state. This repeats the optional observation from both earlier waves.
+
+7. **Helper maintenance overlaps with turns or another maintenance operation — rejected in this scope.** Each verifier call owns a separate spawned helper process. Within the helper, maintenance IDs are guarded by `abortControllers`, while the launcher host serializes browser operations through `withManualOperation` and blocks active turns (`browser-host.cjs:3168-3170` and direct callers). The account pool refuses checks while the host has an active trace or operation and removes stale connector evidence on failure (`account-pool.cjs:216-233`). No cross-scope interleaving here establishes a new acceptance or ownership failure.
+
+8. **Account evidence is published after helper success for the wrong account — rejected as a new helper root.** `checkAccount` clears capability/connector evidence before inspection, stores capability evidence only after validated inspection, and stores connector evidence only after the exact host verification succeeds; failures delete the connector claim and publish the resulting snapshot (`account-pool.cjs:216-233`). This preserves account-local evidence and leaves account-selection/transition races to the separate account-pool findings and adjudication. No helper verifier ID applies.
+
+9. **Worker popup observation failure or page-wide row contamination crosses into helper verification — rejected as a new helper root; D14/D15 boundary.** The current worker scopes connector rows to the visible `.popover`, requires one visible popup and one exact row, and turns DOM observation failure into an explicit error with cause (`browser-worker.ts:3128-3145,3222-3238,3350-3397`). The helper returns that failure and the host does not publish verification. Any remaining popup locator or observation behavior is the already adjudicated D14/D15 worker scope, not a new helper-verifier path.
+
+## Repeats, known limits, and contract boundary
+
+- **Repeat:** D16 remains the only helper lifecycle root in this lane. Retained process ownership is present at this HEAD; a live process that ignores both bounded signal windows can still remain alive until its eventual exit.
+- **Repeat:** the optional cleanup-detail propagation gap remains diagnostic-only and was already identified in waves 1 and 2.
+- **Known live-proof boundary:** source review does not prove Chromium/CDP teardown timing, helper pipe behavior on every host, account-side connector/schema availability, or successful live ChatGPT use. Those require live evidence and were outside this request.
+- **Rejected overreach:** no source path justifies changing `Native4`, `Native4 DEV`, `ZeroRisk4`, App IDs, public tool schemas, or generation-4 ABI pins. No candidate root was concrete enough for a `T3-8-n` finding.
+
+Counts: **0 new findings; 2 repeated adjudicated roots/boundaries (D16, D14/D15); 1 repeated optional diagnostic improvement; 1 known live-proof boundary; 9 adversarial scenarios; 0 code changes.**
+

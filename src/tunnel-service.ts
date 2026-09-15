@@ -38,6 +38,12 @@ function serviceTarget(): string {
   return `${launchDomain()}/${LABEL}`;
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
+  }
+}
+
 function settings(config: AppConfig) {
   if (config.mode !== "full" || !config.tunnel) throw new Error("Tunnel service requires full mode");
   return config.tunnel;
@@ -85,7 +91,11 @@ ${args.map(arg => `    <string>${xml(arg)}</string>`).join("\n")}
 `;
 }
 
-export function getTunnelServiceStatus(printTimeoutMs = LAUNCHCTL_PRINT_TIMEOUT_MS): TunnelServiceStatus {
+export function getTunnelServiceStatus(
+  printTimeoutMs = LAUNCHCTL_PRINT_TIMEOUT_MS,
+  signal?: AbortSignal,
+): TunnelServiceStatus {
+  throwIfAborted(signal);
   if (process.platform !== "darwin") {
     return { supported: false, installed: false, loaded: false, running: false, label: LABEL };
   }
@@ -93,7 +103,8 @@ export function getTunnelServiceStatus(printTimeoutMs = LAUNCHCTL_PRINT_TIMEOUT_
   // A stalled probe must not bypass the unload poll's elapsed-time check.
   // runCommand throws on ETIMEDOUT; an ordinary nonzero print still means unloaded.
   const result = runCommand("launchctl", ["print", serviceTarget()],
-    { timeout: printTimeoutMs });
+    { timeout: printTimeoutMs, signal });
+  throwIfAborted(signal);
   return {
     supported: true,
     installed: existsSync(path),
@@ -112,63 +123,91 @@ export function tunnelServiceDefinitionMatches(config: AppConfig): boolean {
 export function installTunnelService(
   config: AppConfig,
   onDefinitionWritten?: (definition: { path: string; data: string }) => void,
+  signal?: AbortSignal,
 ): TunnelServiceStatus {
+  throwIfAborted(signal);
   assertMacOs();
   const tunnel = settings(config);
   const profile = join(tunnel.profileDir, `${tunnel.profileName}.yaml`);
   if (!existsSync(tunnel.binaryPath)) throw new Error(`Tunnel client is missing: ${tunnel.binaryPath}`);
   if (!existsSync(profile)) throw new Error(`Tunnel profile is missing: ${profile}`);
-  const current = getTunnelServiceStatus();
+  const current = getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
   const next = tunnelServiceDefinition(config);
   if (current.loaded && (!current.installed || readFileSync(plistPath(), "utf8") !== next)) {
     throw new Error("Refusing to replace a loaded tunnel service definition; stop it before installing the update");
   }
+  throwIfAborted(signal);
   mkdirSync(dirname(plistPath()), { recursive: true, mode: 0o700 });
   mkdirSync(join(getConfigDir(), "logs"), { recursive: true, mode: 0o700 });
   if (!current.installed || readFileSync(plistPath(), "utf8") !== next) {
+    throwIfAborted(signal);
     atomicWriteFile(plistPath(), next);
     onDefinitionWritten?.({ path: plistPath(), data: next });
   }
-  if (!current.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()]);
-  return getTunnelServiceStatus();
+  if (!current.loaded) {
+    throwIfAborted(signal);
+    runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()], { signal });
+  }
+  return getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
 }
 
-export function startTunnelService(): TunnelServiceStatus {
+export function startTunnelService(signal?: AbortSignal): TunnelServiceStatus {
+  throwIfAborted(signal);
   assertMacOs();
   if (!existsSync(plistPath())) throw new Error("Tunnel service is not installed; rerun full setup");
-  if (!getTunnelServiceStatus().loaded) runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()]);
-  return getTunnelServiceStatus();
+  if (!getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal).loaded) {
+    throwIfAborted(signal);
+    runChecked("launchctl", ["bootstrap", launchDomain(), plistPath()], { signal });
+  }
+  return getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
 }
 
-async function waitForTunnelServiceUnloaded(timeoutMs = 20_000): Promise<void> {
+async function waitForTunnelServiceUnloaded(timeoutMs = 20_000, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error(`launchd did not unload ${LABEL} after ${timeoutMs}ms`);
-    if (!getTunnelServiceStatus(Math.min(LAUNCHCTL_PRINT_TIMEOUT_MS, remaining)).loaded) return;
+    if (!getTunnelServiceStatus(Math.min(LAUNCHCTL_PRINT_TIMEOUT_MS, remaining), signal).loaded) return;
     const pause = Math.min(50, deadline - Date.now());
     if (pause <= 0) throw new Error(`launchd did not unload ${LABEL} after ${timeoutMs}ms`);
-    await new Promise(resolveWait => setTimeout(resolveWait, pause));
+    await new Promise<void>((resolveWait, rejectWait) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        rejectWait(signal?.reason instanceof Error
+          ? signal.reason
+          : new DOMException("The operation was aborted", "AbortError"));
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolveWait();
+      }, pause);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+    });
   }
 }
 
-export async function stopTunnelService(): Promise<TunnelServiceStatus> {
+export async function stopTunnelService(signal?: AbortSignal): Promise<TunnelServiceStatus> {
   assertMacOs();
-  if (getTunnelServiceStatus().loaded) {
-    runChecked("launchctl", ["bootout", serviceTarget()]);
-    await waitForTunnelServiceUnloaded();
+  throwIfAborted(signal);
+  if (getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal).loaded) {
+    runChecked("launchctl", ["bootout", serviceTarget()], { signal });
+    await waitForTunnelServiceUnloaded(20_000, signal);
   }
-  return getTunnelServiceStatus();
+  return getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
 }
 
-export async function restartTunnelService(): Promise<TunnelServiceStatus> {
-  await stopTunnelService();
-  return startTunnelService();
+export async function restartTunnelService(signal?: AbortSignal): Promise<TunnelServiceStatus> {
+  await stopTunnelService(signal);
+  return startTunnelService(signal);
 }
 
-export async function uninstallTunnelService(): Promise<TunnelServiceStatus> {
+export async function uninstallTunnelService(signal?: AbortSignal): Promise<TunnelServiceStatus> {
   assertMacOs();
-  await stopTunnelService();
+  await stopTunnelService(signal);
+  throwIfAborted(signal);
   rmSync(plistPath(), { force: true });
-  return getTunnelServiceStatus();
+  return getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
 }

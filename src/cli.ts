@@ -445,13 +445,40 @@ async function tunnelCommand(args: string[]): Promise<void> {
     stopTunnel(config);
   }
   else if (action !== "status") throw new Error(`Unknown tunnel action: ${action}`);
-  const status = action === "start" || action === "restart"
-    ? await waitForTunnelReady(config)
-    : tunnelStatus(config);
-  const service = getTunnelServiceStatus();
+  let status: ReturnType<typeof tunnelStatus>;
+  try {
+    status = action === "start" || action === "restart"
+      ? await waitForTunnelReady(config)
+      : tunnelStatus(config);
+  } catch (error) {
+    status = {
+      ok: false,
+      processRunning: false,
+      healthy: false,
+      ready: false,
+      detail: `Tunnel status probe failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  let service: ReturnType<typeof getTunnelServiceStatus> & { error?: string };
+  let serviceProbeFailed = false;
+  try {
+    service = getTunnelServiceStatus();
+  } catch (error) {
+    serviceProbeFailed = true;
+    service = {
+      supported: true,
+      installed: false,
+      loaded: false,
+      running: false,
+      label: "unavailable",
+      error: `Tunnel service status probe failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   stdout.write(`${JSON.stringify({ service, runtime: status }, null, 2)}\n`);
   if (action === "status") {
-    if (!status.ok || (config.browserHost !== "launcher" && !service.running)) process.exitCode = 1;
+    if (!status.ok || (config.browserHost !== "launcher" && (serviceProbeFailed || !service.running))) {
+      process.exitCode = 1;
+    }
   } else if (action !== "stop" && (!service.running || !status.ok)) process.exitCode = 1;
 }
 

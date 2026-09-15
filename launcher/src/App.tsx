@@ -488,6 +488,8 @@ function LauncherShell({
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
   const [compactSidebar, setCompactSidebar] = useState(compactAtMount);
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
+  const browserSurfaceCommand = useRef(Promise.resolve());
+  const browserSurfaceIntent = useRef(0);
   const [sessionReminderBusy, setSessionReminderBusy] = useState(false);
   const [sessionReminderDue, setSessionReminderDue] = useState(false);
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
@@ -540,6 +542,18 @@ function LauncherShell({
     : copy.updating;
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
 
+  const enqueueBrowserSurface = useCallback((active: boolean, intent: number, show = false) => {
+    const command = browserSurfaceCommand.current
+      .catch(() => {})
+      .then(async () => {
+        const result = await api!.setBrowserSurfaceActive(active);
+        if (show && intent === browserSurfaceIntent.current) await api!.showBrowser();
+        return result;
+      });
+    browserSurfaceCommand.current = command.then(() => undefined, () => undefined);
+    return command.then(result => ({ intent, result }));
+  }, []);
+
   useEffect(() => {
     if (snapshot.state.browserInteractionMode === "manual") {
       setBiggerContextRecommendationOpen(false);
@@ -551,8 +565,11 @@ function LauncherShell({
     setSurface("browser");
     setSidebarOpen(false);
     setBiggerContextRecommendationOpen(false);
-    void api!.setBrowserSurfaceActive(true).catch((cause) => setError(messageOf(cause)));
-  }, [selectedManualTab?.id, selectedManualTab?.manualState, setError]);
+    const intent = ++browserSurfaceIntent.current;
+    void enqueueBrowserSurface(true, intent).catch((cause) => {
+      if (intent === browserSurfaceIntent.current) setError(messageOf(cause));
+    });
+  }, [enqueueBrowserSurface, selectedManualTab?.id, setError]);
 
   useLayoutEffect(() => {
     let cancelled = false;
@@ -573,13 +590,16 @@ function LauncherShell({
       });
     };
 
-    void api!.setBrowserSurfaceActive(browserSurfaceActive).then(() => {
-      if (cancelled || !browserSurfaceActive || !browserSlot) return;
+    const intent = ++browserSurfaceIntent.current;
+    void enqueueBrowserSurface(browserSurfaceActive, intent).then(({ intent: completedIntent }) => {
+      if (cancelled || completedIntent !== browserSurfaceIntent.current || !browserSurfaceActive || !browserSlot) return;
       measure();
       observer = new ResizeObserver(measure);
       observer.observe(browserSlot);
       window.addEventListener("resize", measure);
-    }).catch((cause) => setError(messageOf(cause)));
+    }).catch((cause) => {
+      if (!cancelled && intent === browserSurfaceIntent.current) setError(messageOf(cause));
+    });
 
     return () => {
       cancelled = true;
@@ -587,7 +607,7 @@ function LauncherShell({
       observer?.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [browserSlot, browserSurfaceActive, setError]);
+  }, [browserSlot, browserSurfaceActive, enqueueBrowserSurface, setError]);
 
   useEffect(() => {
     const media = window.matchMedia(COMPACT_SIDEBAR_QUERY);
@@ -618,23 +638,29 @@ function LauncherShell({
   }, [browser?.authenticated, snapshot.state.sessionRefreshReminderAt]);
 
   const activateBrowser = useCallback(async (show = false) => {
+    const intent = ++browserSurfaceIntent.current;
     setSurface("browser");
-    await api!.setBrowserSurfaceActive(true);
-    if (show) await api!.showBrowser();
-  }, []);
+    await enqueueBrowserSurface(true, intent, show);
+  }, [enqueueBrowserSurface]);
 
   const toggleSidebar = () => {
     const next = !sidebarOpen;
     if (compactSidebar && next && surface === "browser") {
-      void api!.setBrowserSurfaceActive(false)
-        .then(() => setSidebarOpen(true))
-        .catch((cause) => setError(messageOf(cause)));
+      const intent = ++browserSurfaceIntent.current;
+      void enqueueBrowserSurface(false, intent)
+        .then(() => {
+          if (intent === browserSurfaceIntent.current) setSidebarOpen(true);
+        })
+        .catch((cause) => {
+          if (intent === browserSurfaceIntent.current) setError(messageOf(cause));
+        });
       return;
     }
     setSidebarOpen(next);
   };
 
   const navigateSurface = (next: Surface) => {
+    if (next !== "browser") browserSurfaceIntent.current += 1;
     setSurface(next);
     if (compactSidebar) setSidebarOpen(false);
   };
@@ -669,7 +695,8 @@ function LauncherShell({
       const result = await api!.logoutChatGpt();
       updateState(result.state);
       navigateSurface("browser");
-      await api!.setBrowserSurfaceActive(true);
+      const intent = ++browserSurfaceIntent.current;
+      await enqueueBrowserSurface(true, intent);
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -1596,8 +1623,9 @@ function McpSurface({
   const guideMedia = MCP_GUIDE_MEDIA[step];
 
   const move = async (next: number) => {
+    const state = await api!.setMcpStep(next);
+    updateState(state);
     setStep(next);
-    updateState(await api!.setMcpStep(next));
   };
   const safeMove = async (next: number) => {
     if (busy) return;
@@ -1631,7 +1659,13 @@ function McpSurface({
       setTunnelId("");
       setCredentialsConfigured(true);
       setReplacingCredentials(false);
-      await updateSnapshot();
+      try {
+        await updateSnapshot();
+      } catch (cause) {
+        // setupMcp has already committed; a stale metadata read must not make
+        // the committed setup look like an installation failure.
+        setError(messageOf(cause));
+      }
       await move(2);
     } catch (cause) {
       setError(messageOf(cause));

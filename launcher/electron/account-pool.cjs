@@ -17,6 +17,7 @@ class AccountBrowserPool {
     this.traceOwners = new Map();
     this.capabilities = new Map();
     this.connectors = new Map();
+    this.evidenceEpochs = new Map();
     this.lastAssigned = new Map();
     this.sequence = 0;
     this.selectionRevision = 0;
@@ -96,6 +97,17 @@ class AccountBrowserPool {
         connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()) };
     }) };
   }
+  evidenceEpoch(id) { return this.evidenceEpochs.get(id) ?? 0; }
+  invalidateEvidence(id) {
+    this.capabilities.delete(id);
+    this.connectors.delete(id);
+    const epoch = this.evidenceEpoch(id) + 1;
+    this.evidenceEpochs.set(id, epoch);
+    return epoch;
+  }
+  evidenceIsCurrent(id, epoch) {
+    return this.evidenceEpoch(id) === epoch;
+  }
   snapshot() {
     const selected = this.registry.snapshot().selectedId;
     const state = this.selectedHost().snapshot();
@@ -110,7 +122,7 @@ class AccountBrowserPool {
   publish() {
     if (this.destroyed || this.creatingHosts.size) return;
     for (const [id, host] of this.hosts) if (host.state.authenticated === false) {
-      this.capabilities.delete(id); this.connectors.delete(id);
+      this.invalidateEvidence(id);
     }
     if (this.hosts.size) this.options.publishState?.(this.snapshot());
   }
@@ -200,7 +212,12 @@ class AccountBrowserPool {
     this.syncVisibility(); this.publish();
     return this.accountSnapshot();
   }
-  setAccountEnabled(id, enabled) { this.registry.setEnabled(id, enabled); return this.accountSnapshot(); }
+  setAccountEnabled(id, enabled) {
+    this.registry.setEnabled(id, enabled);
+    this.invalidateEvidence(id);
+    this.publish();
+    return this.accountSnapshot();
+  }
   setAccountMode(mode) { this.registry.setMode(mode); return this.accountSnapshot(); }
   syncVisibility() { for (const host of this.hosts.values()) host.syncViewVisibility(); }
   setBounds(bounds, zoom = 1) {
@@ -219,16 +236,24 @@ class AccountBrowserPool {
     if (host.activeTraceId || host.currentOperation()) {
       throw new Error('Finish this account’s active tasks and browser operation before checking it');
     }
-    this.capabilities.delete(id);
-    if (connector) this.connectors.delete(id);
+    const epoch = this.invalidateEvidence(id);
     try {
       const evidence = await host.inspectSession(true);
+      if (!this.evidenceIsCurrent(id, epoch)) {
+        throw new Error('ChatGPT account readiness changed while checking it');
+      }
       this.capabilities.set(id, evidence);
-      if (connector) { await host.verifyConnector(host.connectorName()); this.connectors.set(id, host.connectorName()); }
+      if (connector) {
+        await host.verifyConnector(host.connectorName());
+        if (!this.evidenceIsCurrent(id, epoch)) {
+          throw new Error('ChatGPT account readiness changed while checking its connector');
+        }
+        this.connectors.set(id, host.connectorName());
+      }
       return this.accountSnapshot();
     } catch (error) {
       // Failed inspection cannot keep an older connector claim for this session.
-      this.connectors.delete(id);
+      if (this.evidenceEpoch(id) === epoch) this.connectors.delete(id);
       throw error;
     } finally { this.publish(); }
   }
@@ -236,11 +261,15 @@ class AccountBrowserPool {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
     for (const account of this.registry.snapshot().accounts.filter(account => account.enabled)) {
       const host = this.getHost(account.id);
-      this.capabilities.delete(account.id);
-      this.connectors.delete(account.id);
+      const epoch = this.invalidateEvidence(account.id);
       try {
         await host.refreshAuthentication();
-        if (host.state.authenticated) this.capabilities.set(account.id, await host.inspectSession(true));
+        if (host.state.authenticated && this.evidenceIsCurrent(account.id, epoch)) {
+          const evidence = await host.inspectSession(true);
+          if (this.evidenceIsCurrent(account.id, epoch)) {
+            this.capabilities.set(account.id, evidence);
+          }
+        }
       }
       catch (error) { this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message }); }
     }
@@ -249,9 +278,20 @@ class AccountBrowserPool {
   }
   async inspectSession(detectCapabilities, accountId) {
     const id = accountId ?? this.registry.snapshot().selectedId;
-    const evidence = await this.getHost(id).inspectSession(detectCapabilities);
-    if (detectCapabilities) this.capabilities.set(id, evidence);
-    return evidence;
+    const epoch = detectCapabilities ? this.invalidateEvidence(id) : null;
+    try {
+      const evidence = await this.getHost(id).inspectSession(detectCapabilities);
+      if (detectCapabilities) {
+        if (!this.evidenceIsCurrent(id, epoch)) {
+          throw new Error('ChatGPT account readiness changed while inspecting it');
+        }
+        this.capabilities.set(id, evidence);
+      }
+      return evidence;
+    } catch (error) {
+      if (detectCapabilities && this.evidenceEpoch(id) === epoch) this.invalidateEvidence(id);
+      throw error;
+    } finally { if (detectCapabilities) this.publish(); }
   }
   async openAccountLogin(id) {
     await this.selectAccount(id);
@@ -271,7 +311,7 @@ class AccountBrowserPool {
     const id = this.registry.snapshot().selectedId;
     const host = this.selectedHost();
     if (host.activeTraceId) throw new Error('Finish this account’s active tasks before signing out');
-    this.capabilities.delete(id); this.connectors.delete(id);
+    this.invalidateEvidence(id);
     for (const tab of [...host.turnTabs.values()]) host.removeTurnTab(tab, false);
     await host.logout(); return this.snapshot();
   }
@@ -427,6 +467,7 @@ class AccountBrowserPool {
     const activeTraces = new Set([...active.map(tab => tab.traceId), ...this.reservations.keys()]);
     if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw new Error('Global browser capacity is full');
     const id = this.chooseAccount(traceId, key, retained, { ...requirement, connector });
+    const revealRevision = this.selectionRevision;
     const keys = [key, requirement?.routingKey].filter(Boolean);
     this.reservations.set(traceId, id);
     this.pendingAffinity.set(traceId, { id, keys });
@@ -443,8 +484,16 @@ class AccountBrowserPool {
       if (retained) host.precheckRetainedTurn(traceId, key, connector);
       host.assertLiveConversationOwner(traceId, key);
       this.ensureTabCapacity(host, traceId, key, connector);
-      if (reveal && !this.currentOperation()) { this.registry.select(id); this.selectionRevision++; this.syncVisibility(); }
-      const lease = await host.beginTurn(traceId, reveal, helperPid, key, connector, retained);
+      // Keep the turn owner and its tab independent from visible selection. The
+      // automatic reveal owns the selection only while its revision is current.
+      const lease = await host.beginTurn(traceId, false, helperPid, key, connector, retained);
+      if (reveal && !this.currentOperation() && this.selectionRevision === revealRevision) {
+        this.registry.select(id);
+        this.selectionRevision++;
+        this.syncVisibility();
+        host.selectTab(lease.tabId);
+        host.show();
+      }
       this.persistAffinity(keys, id);
       this.writeDescriptor(); this.publish();
       return { ...lease, accountId: id };

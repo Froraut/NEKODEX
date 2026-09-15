@@ -12,6 +12,7 @@ import { tunnelStatus } from "../tunnel";
 import {
   createLauncherDevAdapter,
   DevChatDriver,
+  DEV_CHAT_TOOLS,
   type DevChatEvent,
   type DevContextStatus,
 } from "./driver";
@@ -91,6 +92,99 @@ function compactJson(value: unknown, limit = 2_000): string {
   const encoded = JSON.stringify(value);
   if (encoded.length <= limit) return encoded;
   return `${encoded.slice(0, limit)}… (${encoded.length.toLocaleString("en-US")} chars)`;
+}
+
+type DeclaredDevToolKind = "function" | "custom";
+
+function declaredDevTools(): Map<string, DeclaredDevToolKind> {
+  const declared = new Map<string, DeclaredDevToolKind>();
+  for (const tool of DEV_CHAT_TOOLS) {
+    if (tool.type === "function" && typeof tool.name === "string") {
+      declared.set(tool.name, "function");
+      continue;
+    }
+    if (tool.type === "custom" && typeof tool.name === "string") {
+      declared.set(tool.name, "custom");
+      continue;
+    }
+    if (tool.type !== "namespace" || typeof tool.name !== "string" || !Array.isArray(tool.tools)) continue;
+    for (const nested of tool.tools) {
+      if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
+      const nestedTool = nested as Record<string, unknown>;
+      if (nestedTool.type !== "function" || typeof nestedTool.name !== "string") continue;
+      declared.set(`${tool.name}__${nestedTool.name}`, "function");
+    }
+  }
+  return declared;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateDeclaredDevTool(name: string, input: unknown, mode: "browser-only" | "full"): void {
+  if (mode !== "full") throw new Error(`DEV browser-only response attempted outer tool ${JSON.stringify(name)}`);
+  const kind = declaredDevTools().get(name);
+  if (!kind) throw new Error(`DEV response requested undeclared tool ${JSON.stringify(name)}`);
+  if (kind === "custom") {
+    if (typeof input !== "string") throw new Error(`DEV custom tool ${JSON.stringify(name)} requires string input`);
+    return;
+  }
+  if (!isRecord(input)) throw new Error(`DEV function tool ${JSON.stringify(name)} requires a JSON object`);
+  if (name !== "mcp__dev_simulator__large_context_payload") return;
+  const keys = Object.keys(input);
+  if (keys.length !== 2 || !keys.includes("segment") || !keys.includes("target_tokens")) {
+    throw new Error("DEV large context payload received malformed arguments");
+  }
+  if (!Number.isInteger(input.segment) || ![1, 2, 3].includes(input.segment as number)) {
+    throw new Error("DEV large context payload segment must be 1, 2, or 3");
+  }
+  if (!Number.isInteger(input.target_tokens) || (input.target_tokens as number) < 1_000 || (input.target_tokens as number) > 95_000) {
+    throw new Error("DEV large context payload target_tokens must be an integer from 1,000 to 95,000");
+  }
+}
+
+function collectCallIds(value: unknown, ids: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectCallIds(item, ids);
+    return;
+  }
+  if (!isRecord(value)) return;
+  if (typeof value.call_id === "string" && value.call_id.length > 0) ids.add(value.call_id);
+  for (const child of Object.values(value)) collectCallIds(child, ids);
+}
+
+function guardedDevEventEmitter(
+  state: DevChatState,
+  mode: "browser-only" | "full",
+  emit: (event: DevChatEvent) => void,
+): (event: DevChatEvent) => void {
+  const seenCallIds = new Set<string>();
+  collectCallIds(state.input, seenCallIds);
+  const pendingNames: string[] = [];
+  return event => {
+    if (event.type === "tool_call") {
+      validateDeclaredDevTool(event.name, event.input, mode);
+      pendingNames.push(event.name);
+    } else if (event.type === "tool_result") {
+      const callId = event.receipt.call_id;
+      if (typeof callId !== "string" || callId.length === 0) {
+        throw new Error(`DEV simulated receipt for ${JSON.stringify(event.name)} has no call_id`);
+      }
+      if (seenCallIds.has(callId)) {
+        throw new Error(`DEV response reused duplicate call_id ${JSON.stringify(callId)}`);
+      }
+      const pendingName = pendingNames.shift();
+      if (pendingName !== event.name) {
+        throw new Error(`DEV simulated receipt tool ${JSON.stringify(event.name)} does not match its call`);
+      }
+      if (event.receipt.simulated !== true || event.receipt.side_effects_performed !== false) {
+        throw new Error(`DEV tool ${JSON.stringify(event.name)} returned a non-simulated receipt`);
+      }
+      seenCallIds.add(callId);
+    }
+    emit(event);
+  };
 }
 
 function modelFromCli(value: string | undefined): DevChatModel | undefined {
@@ -184,8 +278,9 @@ async function assertLauncherReady(config: ReturnType<typeof loadConfig>): Promi
 
 async function executeMessage(driver: DevChatDriver, state: DevChatState, message: string): Promise<void> {
   const renderer = new EventRenderer();
+  const emit = guardedDevEventEmitter(state, driver.config.mode, event => renderer.write(event));
   try {
-    const result = await driver.send(state, message, event => renderer.write(event));
+    const result = await driver.send(state, message, emit);
     renderer.finish();
     stdout.write(`${dim(`usage ${result.usage.inputTokens.toLocaleString("en-US")} input + ${result.usage.outputTokens.toLocaleString("en-US")} output · context ${statusLine(result.status)}`)}\n`);
   } catch (error) {
@@ -317,14 +412,31 @@ export async function runDevCommand(args: string[]): Promise<void> {
         const loaded = loadConfig();
         config = { configured: true, mode: loaded.mode, purpose: loaded.purpose };
         if (loaded.mode === "full") {
-          const inspected = tunnelStatus(loaded);
-          mcpRuntime = { required: true, ready: inspected.ok && inspected.ready, detail: inspected.detail };
+          mcpRuntime = { required: true, ready: false };
+          try {
+            const inspected = tunnelStatus(loaded);
+            mcpRuntime = { required: true, ready: inspected.ok && inspected.ready, detail: inspected.detail };
+          } catch (error) {
+            mcpRuntime = {
+              required: true,
+              ready: false,
+              detail: `status probe failed: ${error instanceof Error ? error.message : String(error)}`,
+            };
+          }
         }
       } catch (error) {
         config = { configured: false, error: error instanceof Error ? error.message : String(error) };
       }
     }
-    const features = readDevChatExperimentalFeatures(paths);
+    let features: ReturnType<typeof readDevChatExperimentalFeatures> & { error?: string } = { biggerContext: false };
+    try {
+      features = readDevChatExperimentalFeatures(paths);
+    } catch (error) {
+      features = {
+        biggerContext: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
     const status = { paths, launcher, config, mcpRuntime, features };
     if (json) stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     else {
@@ -332,7 +444,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
       stdout.write(`launcher: ${launcher.running ? `running (pid ${launcher.pid})` : `not ready${launcher.error ? ` · ${launcher.error}` : ""}`}\n`);
       stdout.write(`config: ${config.configured ? `${config.mode} (${config.purpose})` : `not ready${config.error ? ` · ${config.error}` : ""}`}\n`);
       stdout.write(`MCP runtime: ${mcpRuntime.required ? (mcpRuntime.ready ? "ready" : `not ready${mcpRuntime.detail ? ` · ${mcpRuntime.detail}` : ""}`) : "not required"}\n`);
-      stdout.write(`Bigger Context: ${features.biggerContext ? "enabled (experimental, adaptive 1/2/3 messages; same-agent compaction handoff)" : "disabled"}\n`);
+      stdout.write(`Bigger Context: ${features.error ? `unavailable · ${features.error}` : features.biggerContext ? "enabled (experimental, adaptive 1/2/3 messages; same-agent compaction handoff)" : "disabled"}\n`);
       stdout.write("Codex route: isolated and unused\nResponses listener: not started\n");
     }
     return;

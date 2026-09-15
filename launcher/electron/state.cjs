@@ -3,6 +3,17 @@ const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 420;
 const SESSION_REFRESH_REMINDER_INTERVAL_MS = 48 * 60 * 60 * 1000;
+const MCP_PROOF_INVALIDATION = Object.freeze({
+  mcpSetupComplete: false,
+});
+const ACCOUNT_PROOF_INVALIDATION = Object.freeze({
+  ...MCP_PROOF_INVALIDATION,
+  browserSmokePassed: false,
+  browserSmokeVersion: null,
+  setupIdentityHash: null,
+  setupVerifiedAt: null,
+  pickerVerifiedAt: null,
+});
 
 const DEFAULT_STATE = Object.freeze({
   version: 1,
@@ -30,6 +41,10 @@ const DEFAULT_STATE = Object.freeze({
 function nextSessionRefreshReminderAt(now = Date.now()) {
   if (!Number.isFinite(now)) throw new Error("Session refresh reminder time must be finite");
   return new Date(now + SESSION_REFRESH_REMINDER_INTERVAL_MS).toISOString();
+}
+
+function proofInvalidationPatch(kind) {
+  return kind === "account" ? ACCOUNT_PROOF_INVALIDATION : MCP_PROOF_INVALIDATION;
 }
 
 function readState(filePath) {
@@ -125,12 +140,24 @@ function validateSidebarState(value) {
 
 function createStateStore(filePath) {
   let state = readState(filePath);
+  function persist(next) {
+    writeState(filePath, next);
+    state = next;
+    return structuredClone(next);
+  }
   return {
     read() {
       return structuredClone(state);
     },
     update(patch) {
-      const next = { ...state, ...patch, version: 1 };
+      const modeChanged = Object.prototype.hasOwnProperty.call(patch, "browserInteractionMode")
+        && patch.browserInteractionMode !== state.browserInteractionMode;
+      const next = {
+        ...state,
+        ...patch,
+        ...(modeChanged ? proofInvalidationPatch("account") : {}),
+        version: 1,
+      };
       if (next.coreSetupComplete === false) {
         next.codexCatalogVerified = false;
         next.codexPickerConfirmed = false;
@@ -138,14 +165,21 @@ function createStateStore(filePath) {
       } else if (patch.codexCatalogVerified === false) {
         next.codexPickerConfirmed = false;
       }
-      writeState(filePath, next);
-      state = next;
-      return structuredClone(next);
+      return persist(next);
+    },
+    invalidateAccountProof() {
+      return persist({
+        ...state,
+        ...proofInvalidationPatch("account"),
+        version: 1,
+      });
     },
   };
 }
 
 module.exports = {
+  ACCOUNT_PROOF_INVALIDATION,
+  MCP_PROOF_INVALIDATION,
   SESSION_REFRESH_REMINDER_INTERVAL_MS,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,

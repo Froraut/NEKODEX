@@ -29,6 +29,10 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
+function errorDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function secureFile(path: string): boolean {
   if (process.platform === "win32") return true;
   return (statSync(path).mode & 0o077) === 0;
@@ -157,22 +161,26 @@ export async function runDoctor(): Promise<DoctorReport> {
     checks.push({ id: "codex", status: "ok", message: "Codex native model route is installed" });
   }
 
-  const service = getServiceStatus();
-  if (config.browserHost === "launcher") {
-    checks.push(service.installed || service.loaded
-      ? {
-          id: "service",
-          status: "warning",
-          message: "A legacy OS background service still exists; rerun launcher setup to migrate ownership",
-          detail: JSON.stringify(service),
-        }
-      : { id: "service", status: "ok", message: "Launcher owns the background runtime" });
-  } else if (!service.supported) {
-    checks.push({ id: "service", status: "warning", message: "Managed service is unavailable on this OS; keep `serve` running manually" });
-  } else if (!service.installed || !service.loaded) {
-    checks.push({ id: "service", status: "error", message: "macOS background service is not installed and loaded" });
-  } else {
-    checks.push({ id: "service", status: "ok", message: "macOS background service is loaded" });
+  try {
+    const service = getServiceStatus();
+    if (config.browserHost === "launcher") {
+      checks.push(service.installed || service.loaded
+        ? {
+            id: "service",
+            status: "warning",
+            message: "A legacy OS background service still exists; rerun launcher setup to migrate ownership",
+            detail: JSON.stringify(service),
+          }
+        : { id: "service", status: "ok", message: "Launcher owns the background runtime" });
+    } else if (!service.supported) {
+      checks.push({ id: "service", status: "warning", message: "Managed service is unavailable on this OS; keep `serve` running manually" });
+    } else if (!service.installed || !service.loaded) {
+      checks.push({ id: "service", status: "error", message: "macOS background service is not installed and loaded" });
+    } else {
+      checks.push({ id: "service", status: "ok", message: "macOS background service is loaded" });
+    }
+  } catch (error) {
+    checks.push({ id: "service", status: "error", message: "Managed service status could not be determined", detail: errorDetail(error) });
   }
   checks.push(await proxyCheck(config));
 
@@ -190,25 +198,33 @@ export async function runDoctor(): Promise<DoctorReport> {
     } else {
       checks.push({ id: "tunnel-key", status: "ok", message: "Tunnel runtime key is stored privately" });
     }
-    const tunnelService = getTunnelServiceStatus();
-    if (config.browserHost === "launcher") {
-      checks.push(tunnelService.installed || tunnelService.loaded
-        ? {
-            id: "tunnel-service",
-            status: "warning",
-            message: "A legacy OS tunnel service still exists; rerun launcher MCP setup to migrate ownership",
-            detail: JSON.stringify(tunnelService),
-          }
-        : { id: "tunnel-service", status: "ok", message: "Launcher owns the tunnel runtime" });
-    } else {
-      checks.push(tunnelService.installed && tunnelService.loaded && tunnelService.running
-        ? { id: "tunnel-service", status: "ok", message: "macOS tunnel service is installed, loaded, and running" }
-        : { id: "tunnel-service", status: "error", message: "macOS tunnel service is not fully running", detail: JSON.stringify(tunnelService) });
+    try {
+      const tunnelService = getTunnelServiceStatus();
+      if (config.browserHost === "launcher") {
+        checks.push(tunnelService.installed || tunnelService.loaded
+          ? {
+              id: "tunnel-service",
+              status: "warning",
+              message: "A legacy OS tunnel service still exists; rerun launcher MCP setup to migrate ownership",
+              detail: JSON.stringify(tunnelService),
+            }
+          : { id: "tunnel-service", status: "ok", message: "Launcher owns the tunnel runtime" });
+      } else {
+        checks.push(tunnelService.installed && tunnelService.loaded && tunnelService.running
+          ? { id: "tunnel-service", status: "ok", message: "macOS tunnel service is installed, loaded, and running" }
+          : { id: "tunnel-service", status: "error", message: "macOS tunnel service is not fully running", detail: JSON.stringify(tunnelService) });
+      }
+    } catch (error) {
+      checks.push({ id: "tunnel-service", status: "error", message: "Tunnel service status could not be determined", detail: errorDetail(error) });
     }
-    const runtime = tunnelStatus(config);
-    checks.push(runtime.ok
-      ? { id: "tunnel-runtime", status: "ok", message: "Tunnel runtime reports healthy and ready" }
-      : { id: "tunnel-runtime", status: "error", message: "Tunnel runtime is not ready", detail: runtime.detail });
+    try {
+      const runtime = tunnelStatus(config);
+      checks.push(runtime.ok
+        ? { id: "tunnel-runtime", status: "ok", message: "Tunnel runtime reports healthy and ready" }
+        : { id: "tunnel-runtime", status: "error", message: "Tunnel runtime is not ready", detail: runtime.detail });
+    } catch (error) {
+      checks.push({ id: "tunnel-runtime", status: "error", message: "Tunnel runtime status could not be determined", detail: errorDetail(error) });
+    }
     checks.push({
       id: "connector",
       status: "warning",

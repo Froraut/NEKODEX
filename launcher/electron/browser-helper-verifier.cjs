@@ -7,7 +7,35 @@ const {
 } = require("./connector-identity.cjs");
 
 const BROWSER_HELPER_OPERATION_TIMEOUT_MS = 90_000;
-const unsettledHelperChildren = new Set();
+const helperScopes = new Map();
+
+function helperScopeFor(descriptorPath) {
+  let scope = helperScopes.get(descriptorPath);
+  if (!scope) {
+    scope = { unsettledChildren: new Set(), tail: Promise.resolve(), pendingOperations: 0 };
+    helperScopes.set(descriptorPath, scope);
+  }
+  return scope;
+}
+
+function releaseHelperScope(descriptorPath, scope) {
+  if (scope.pendingOperations === 0
+    && scope.unsettledChildren.size === 0
+    && helperScopes.get(descriptorPath) === scope) {
+    helperScopes.delete(descriptorPath);
+  }
+}
+
+function reconcileUnsettledHelperChildren(scope) {
+  for (const child of scope.unsettledChildren) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      scope.unsettledChildren.delete(child);
+    }
+  }
+  if (scope.unsettledChildren.size > 0) {
+    throw new Error("Browser helper verification cannot start while a previous helper process is still active");
+  }
+}
 
 function waitForExit(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
@@ -40,7 +68,7 @@ function writeMessage(child, message) {
   });
 }
 
-async function stopChild(child) {
+async function stopChild(child, unsettledChildren, scope) {
   if (child.exitCode !== null || child.signalCode !== null) return;
   // The input write itself may remain pending; the grace period starts when shutdown is requested.
   void writeMessage(child, { type: "shutdown" }).catch(() => {});
@@ -55,8 +83,11 @@ async function stopChild(child) {
   } catch (error) { signalError = error; }
   if (await waitForExit(child, 2_000)) return;
   // Keep the exact spawned handle reachable until its eventual exit; never target a PID by name.
-  unsettledHelperChildren.add(child);
-  const release = () => unsettledHelperChildren.delete(child);
+  unsettledChildren.add(child);
+  const release = () => {
+    unsettledChildren.delete(child);
+    releaseHelperScope(scope.descriptorPath, scope);
+  };
   child.once("exit", release);
   child.once("close", release);
   if (child.exitCode !== null || child.signalCode !== null) release();
@@ -65,7 +96,7 @@ async function stopChild(child) {
   throw error;
 }
 
-async function runBrowserHelperOperation({ helper, descriptorPath, appName, operation, payload = {}, logger }) {
+async function runBrowserHelperOperationOnce({ helper, descriptorPath, appName, operation, payload = {}, logger }, scope) {
   if (!helper || typeof helper.executable !== "string" || typeof helper.script !== "string") {
     throw new Error("Browser helper verification command is invalid");
   }
@@ -172,7 +203,7 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
     primaryError = error instanceof Error ? error : new Error(String(error));
   }
   try {
-    await stopChild(child);
+    await stopChild(child, scope.unsettledChildren, scope);
   } catch (cleanupError) {
     if (primaryError) {
       primaryError.cleanupError = cleanupError;
@@ -190,6 +221,26 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
     throw primaryError;
   }
   return value;
+}
+
+async function runBrowserHelperOperation(options) {
+  const descriptorPath = options?.descriptorPath;
+  const scope = helperScopeFor(descriptorPath);
+  scope.descriptorPath = descriptorPath;
+  scope.pendingOperations += 1;
+  const previousOperation = scope.tail;
+  let releaseOperation;
+  const operation = new Promise((resolve) => { releaseOperation = resolve; });
+  scope.tail = operation;
+  await previousOperation;
+  try {
+    reconcileUnsettledHelperChildren(scope);
+    return await runBrowserHelperOperationOnce(options, scope);
+  } finally {
+    releaseOperation();
+    scope.pendingOperations -= 1;
+    releaseHelperScope(descriptorPath, scope);
+  }
 }
 
 async function verifyConnectorWithBrowserHelper(options) {

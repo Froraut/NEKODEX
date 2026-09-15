@@ -1,0 +1,32 @@
+# Triwave review 2, lane 5 — account pool
+
+Frozen source: `3740505b0107af9a83053fd523ae1ad30be36465` (`3740505`). Independent read-only manual review of `launcher/electron/account-pool.cjs`, its direct control-server and IPC callers, `browser-host.cjs`, `account-registry.cjs`, `docs/reviews/2026-09-15-triwave-review1-05.md`, and the adjudicated four-wave ledger/results. No tests, typechecks, scripts, broad audits, account actions, builds, production actions, code edits, or commit. This document is the sole saved change. Native4 / Native4 DEV / Zero Risk4 names, affinity, retained tabs, and public ABI remain untouched.
+
+## T2-5-1 — failed control-server capability reinspection preserves earlier readiness
+
+- **Priority:** P2, conditional source defect; new direct-call path, related to but distinct in trigger from `T1-5-1`.
+- **Trigger:** An authenticated additional account `B` has positive capability evidence from a prior `checkAccount()` or startup refresh (`account-pool.cjs:216-247`). A current automatic caller invokes `POST /v1/session/inspect` with `{ "detectCapabilities": true, "accountId": "B" }` (`control-server.cjs:100,121-130`) to recheck it. The helper inspection fails, for example because a refreshed ChatGPT document cannot be authenticated or the helper returns incomplete capability evidence (`browser-host.cjs:3141-3162`). `AccountBrowserPool.inspectSession()` awaits the host first and only overwrites `this.capabilities` on success (`account-pool.cjs:250-254`); it never invalidates prior capability or connector claims on failure. `BrowserHost.withManualOperation()` marks the browser status `error` but does not necessarily set `authenticated: false` (`browser-host.cjs:3181-3186`).
+- **Consequence:** The control-server returns an inspection error, yet `accountSnapshot().checked` can remain true and balanced routing can still use the earlier positive `caps` (`account-pool.cjs:88-97,356-367`). This conflicts with the semantics of an explicit failed recheck and can prefer B for a model whose current access is unknown. If the host independently reports `authenticated: false`, `publish()` clears the map, so the claim is limited to failure paths that leave authentication apparently true. The connector map may likewise remain positive when the failed inspection did not independently invalidate it; the capability false-readiness path alone establishes the finding.
+- **Minimum correction:** Put `inspectSession(true, accountId)` under the same invalidate-before-recheck rule as `checkAccount()`; retire stale evidence when the attempted authoritative reinspection fails. Preserve exact account affinity and connector identity. A successful inspection may repopulate only the capability evidence it actually checked; it must not silently claim a connector verification.
+- **Counterevidence:** `checkAccount()` deletes capability evidence before inspecting and deletes connector evidence on failure (`account-pool.cjs:222-233`); startup `refreshAuthentication()` also deletes both first (`:235-247`). This is specifically the control-server `inspectSession(true)` branch, not a claim that every account-check path is unsafe. No real ChatGPT failure or paid turn was exercised.
+
+## Challenge to wave 1 and repeated paths
+
+- **`T1-5-1` remains a valid conditional source path, not an observed account transition.** `setAccountEnabled()` persists metadata only (`account-pool.cjs:203`; `account-registry.cjs:140-146`), and the maps are still process-local. During disable, `eligible()` rejects B. After re-enable it can use old positive evidence if the browser continues to appear authenticated (`account-pool.cjs:356-367`). Wave 1 correctly limited its claim to an access/connector change without a negative auth publication. One further boundary: an in-flight `refreshAuthentication()` or `checkAccount()` can complete after a disable and set evidence, but it is the same evidence-lifecycle root, not another T2 defect.
+- **D05 and D17 are repeats, not new findings.** A pinned fresh automatic turn runs the readiness filter unless it has an exact retained tab or matching running trace (`account-pool.cjs:371-381`); an exact continuation retains its account. `selectTab()` rechecks tab identity after readiness and compensates its own failed publication while its revision still owns selection (`:293-331`). The rollback warning leaves a failure-reporting limit, not proof of a new ordinary selection bug.
+- **The wave-1 snapshot claim is bounded.** `AccountSettings.tsx:16-59` refreshes from host/operation events and after its own IPC actions; it does not independently revalidate browser capability data. That UI subscription solves stale *reply ordering*, whereas `T1-5-1` and `T2-5-1` concern the underlying evidence map. Do not count the UI subscription as a fix for either source path.
+
+## Optional and known limits
+
+- A new automatic turn can be chosen before `await host.ready()` and an account can be disabled during that wait (`account-pool.cjs:429-447`). There is no post-await enabled check. Whether disabling should cancel an already-admitted acquisition is an unadjudicated lifecycle policy; this review does **not** count it as a defect without that contract. Retained/running continuations must keep their exact owner.
+- Manual mode's visible-account continuity remains the adjudicated optional choice, with no T2 ID. The current pool rejects a continuation on a different selected account instead of migrating it (`account-pool.cjs:465-483`).
+- Source review cannot prove a live model entitlement change, connector removal, retained-task continuation across account transition, or account-side Native4 schema loading. The current browser's `authenticated` bit and a saved `checked` flag are local evidence, not live end-to-end proof.
+
+## Counts and handoff
+
+- **New conditional source defects:** 1 (`T2-5-1`, failed control-server reinspection).
+- **First-wave findings challenged:** 1 (`T1-5-1` upheld with its conditional boundary); **rejected:** 0.
+- **Repeated adjudicated defects:** 2 (D05 and D17; no new IDs).
+- **Optional policy paths:** 2 (disable during pending acquisition; Manual selected-account continuity).
+- **Known live-proof limits:** 1 category (account-side and retained-task behavior was not exercised).
+- **ABI/name changes proposed:** 0. Parent owns the final focused verification, shared limit `<=60s` and `<=10` expanded scenarios; this lane ran none.

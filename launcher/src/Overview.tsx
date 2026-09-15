@@ -14,8 +14,9 @@ export function Overview({ copy, browser, snapshot, logs, navigate }: {
 }) {
   const signedIn = browser?.authenticated === true;
   const modelsReady = snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true;
-  const toolsReady = snapshot.state.mcpSetupComplete === true;
+  const toolsReady = signedIn && snapshot.state.mcpSetupComplete === true;
   const ready = signedIn && modelsReady && toolsReady;
+  const workspaceReady = signedIn && modelsReady;
   const active = browser?.tabs.filter(tab => tab.status === "running").length ?? 0;
   const connections: Array<{ icon: IconName; label: string; ready: boolean; surface: Surface; pending: string }> = [
     { icon: "accounts", label: copy.accountConnection, ready: signedIn, surface: "accounts", pending: copy.signInNeededShort },
@@ -28,7 +29,7 @@ export function Overview({ copy, browser, snapshot, logs, navigate }: {
       <section className="workspace-intro">
         <div className="intro-copy"><h2>{ready ? copy.overviewReady : signedIn && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle}</h2>
           <p>{ready ? copy.overviewReadyBody : signedIn && snapshot.state.coreSetupComplete ? snapshot.state.codexCatalogVerified ? copy.setupConfirmTitle : copy.setupCatalogTitle : copy.overviewBody}</p>
-          <button className="button-primary" type="button" onClick={() => navigate(modelsReady ? "browser" : "setup")}>{modelsReady ? copy.openWorkspace : copy.finishSetup}<Icon name="forward" /></button>
+          <button className="button-primary" type="button" onClick={() => navigate(workspaceReady ? "browser" : "setup")}>{workspaceReady ? copy.openWorkspace : copy.finishSetup}<Icon name="forward" /></button>
         </div>
         <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>
       </section>
