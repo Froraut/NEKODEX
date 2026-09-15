@@ -4,7 +4,7 @@
   <p><strong>Your ChatGPT accounts. Your coding workspace.</strong></p>
   <p>A standalone desktop workspace that connects ChatGPT Web to Codex tasks and local tools.</p>
   <p>
-    <a href="https://github.com/Froraut/codex-chatgpt-web/releases/tag/v5.2.0-nekodex.1">Download for macOS</a> ·
+    <a href="https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.1">Download for macOS</a> ·
     <a href="docs/architecture.md">Architecture</a> ·
     <a href="TROUBLESHOOTING.md">Troubleshooting</a> ·
     <a href="SECURITY.md">Security</a>
@@ -17,7 +17,7 @@ own identity. The project builds on Codex Web GPT, while keeping the original MI
 compatible account/profile storage.
 
 Maintained by **FroRaut**, based on [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web).
-The GitHub repository retains its historical URL.
+The repository is now **Froraut/NEKODEX**; the previous GitHub URL redirects here.
 
 ## Download and install
 
@@ -25,8 +25,8 @@ The GitHub repository retains its historical URL.
 
 | Mac | Installer |
 | --- | --- |
-| Apple Silicon — M1 and later | [NEKODEX DMG · arm64](https://github.com/Froraut/codex-chatgpt-web/releases/download/v5.2.0-nekodex.1/NEKODEX-5.2.0-nekodex.1-mac-arm64.dmg) |
-| Intel | [NEKODEX DMG · x64](https://github.com/Froraut/codex-chatgpt-web/releases/download/v5.2.0-nekodex.1/NEKODEX-5.2.0-nekodex.1-mac-x64.dmg) |
+| Apple Silicon — M1 and later | [NEKODEX DMG · arm64](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.1/NEKODEX-5.2.0-nekodex.1-mac-arm64.dmg) |
+| Intel | [NEKODEX DMG · x64](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.1/NEKODEX-5.2.0-nekodex.1-mac-x64.dmg) |
 
 Requires macOS 13 or later. Windows and Linux source support remains in the repository; this release
 publishes macOS packages only. See the [release notes](docs/releases/5.2.0-nekodex.1.md) for scope and
@@ -141,7 +141,7 @@ all-model acceptance or a full Windows runtime validation.
 Development requires Bun 1.4.0. Use a native build host for the platform you are packaging.
 
 ```bash
-git clone https://github.com/Froraut/codex-chatgpt-web.git nekodex
+git clone https://github.com/Froraut/NEKODEX.git nekodex
 cd nekodex
 bun install --frozen-lockfile
 bun install --frozen-lockfile --cwd launcher
