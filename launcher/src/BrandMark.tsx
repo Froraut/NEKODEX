@@ -84,7 +84,7 @@ export function CatHead({ reaction }: { reaction: CatReaction | null }) {
           <path className="neko-eye neko-eye-left" d={happy ? "M17 40q3-6 6 0" : closedEyes || reaction === "wink" ? "M17 38q3 2 7 0" : "m23 33-6 5 6 5"} strokeWidth="3.5" />
           <path className="neko-eye neko-eye-right" d={happy ? "M41 40q3-6 6 0" : closedEyes ? "M40 38q3 2 7 0" : "m41 33 6 5-6 5"} strokeWidth="3.5" />
           <path className="neko-mouth" d={mouth} strokeWidth="2.5" />
-          {reaction === "playful" ? <path className="neko-tongue" d="M30 49v3a2 2 0 0 0 4 0v-3Z" fill="#ef9da9" strokeWidth="1.5" /> : null}
+          {reaction === "playful" ? <path className="neko-tongue" d="M28.5 48.5v4a3.5 3.5 0 0 0 7 0v-4" fill="#ef9da9" strokeWidth="1.4" /> : null}
         </g>
       </g></g>
   );
