@@ -458,10 +458,20 @@ function pruneStructuredCompactionRuns(): void {
   pruneStructuredCompactionInterruptions(now);
 }
 
-/** Return the canonical result of an exact compact request, even after its source was retired. */
-export function existingStructuredCompactionRun(key: string): Promise<string> | undefined {
+/** Return the canonical result of an exact compact request unless its native turn was interrupted. */
+export function existingStructuredCompactionRun(
+  key: string,
+  owner: StructuredCompactionOwner,
+): Promise<string> | undefined {
   pruneStructuredCompactionRuns();
-  return structuredCompactionRuns.get(key)?.promise;
+  const existing = structuredCompactionRuns.get(key);
+  if (!existing) return undefined;
+  const interrupted = structuredCompactionInterruption(owner);
+  if (interrupted) return Promise.reject(interrupted);
+  // An active owner can outlive the TTL while its physical helper retires. Its abort signal
+  // remains authoritative even after the timestamped interruption record expires.
+  if (existing.abort.signal.aborted) return Promise.reject(abortReason(existing.abort.signal));
+  return existing.promise;
 }
 
 export function runStructuredCompactionOnce(
@@ -470,10 +480,15 @@ export function runStructuredCompactionOnce(
   start: (operatorSignal: AbortSignal, retainOwnershipUntil: (settlement: Promise<void>) => void) => Promise<string>,
 ): Promise<string> {
   pruneStructuredCompactionRuns();
-  const existing = structuredCompactionRuns.get(key);
-  if (existing) return existing.promise;
+  // Interruption outlives any settled successful run started before it: both retain for 30
+  // minutes, measured from registration and cancellation respectively.
   const interrupted = structuredCompactionInterruption(owner);
   if (interrupted) return Promise.reject(interrupted);
+  const existing = structuredCompactionRuns.get(key);
+  if (existing) {
+    if (existing.abort.signal.aborted) return Promise.reject(abortReason(existing.abort.signal));
+    return existing.promise;
+  }
   const abort = new AbortController();
   const previousOwner = structuredCompactionOwners.get(owner.ownerKey);
   const physicalSettlements: Promise<void>[] = previousOwner ? [previousOwner] : [];

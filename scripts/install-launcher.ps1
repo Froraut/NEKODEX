@@ -31,23 +31,33 @@ $Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   throw "Invalid GitHub repository: $Repository"
 }
-$Version = $env:CODEX_WEB_GPT_VERSION
-if (-not $Version) {
-  $Release = Invoke-WithRetry -Label "Resolving the latest release" -Operation {
-    $Published = @(Invoke-RestMethod "https://api.github.com/repos/$Repository/releases?per_page=1" -TimeoutSec 60)
-    if ($Published.Count -eq 0) { throw "No published NEKODEX release; set CODEX_WEB_GPT_VERSION explicitly" }
-    $Published[0]
-  }
-  $Version = [string]$Release.tag_name
-}
-if ($Version -and $Version.StartsWith("v")) { $Version = $Version.Substring(1) }
-if (-not $Version) { throw "Could not resolve the latest NEKODEX release" }
-if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid release version: $Version" }
-
 if (-not [Environment]::Is64BitOperatingSystem) {
   throw "The packaged Windows launcher requires 64-bit Windows"
 }
 $Arch = "x64"
+
+$Version = $env:CODEX_WEB_GPT_VERSION
+if (-not $Version) {
+  $Published = @(Invoke-WithRetry -Label "Resolving published releases" -Operation {
+    Invoke-RestMethod "https://api.github.com/repos/$Repository/releases?per_page=10" -TimeoutSec 60
+  })
+  foreach ($Release in $Published) {
+    $Candidate = [string]$Release.tag_name
+    if ($Candidate.StartsWith("v")) { $Candidate = $Candidate.Substring(1) }
+    if ($Candidate -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { continue }
+    $RequiredAsset = "codex-web-gpt-$Candidate-win-$Arch.exe"
+    if (@($Release.assets | Where-Object { $_.name -ceq $RequiredAsset }).Count -gt 0) {
+      $Version = $Candidate
+      break
+    }
+  }
+  if (-not $Version) {
+    throw "No published NEKODEX release among the newest 10 has a win-$Arch.exe asset; set CODEX_WEB_GPT_VERSION explicitly"
+  }
+}
+if ($Version -and $Version.StartsWith("v")) { $Version = $Version.Substring(1) }
+if (-not $Version) { throw "Could not resolve the latest NEKODEX release" }
+if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid release version: $Version" }
 
 $Asset = "codex-web-gpt-$Version-win-$Arch.exe"
 $BaseUrl = "https://github.com/$Repository/releases/download/v$Version"

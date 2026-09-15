@@ -2361,13 +2361,21 @@ export class ChatGptBrowserWorker {
     if (!existsSync(this.config.chromeExecutablePath)) {
       throw new Error(`Configured Chrome executable does not exist: ${this.config.chromeExecutablePath}`);
     }
-    this.browser = await chromium.launch({
+    const browser = await chromium.launch({
       executablePath: this.config.chromeExecutablePath,
       headless: !this.config.headed,
     });
-    this.context = await this.browser.newContext({ storageState: this.config.storageStatePath });
-    this.page = await this.context.newPage();
-    return this.page;
+    try {
+      const context = await browser.newContext({ storageState: this.config.storageStatePath });
+      const page = await context.newPage();
+      this.browser = browser;
+      this.context = context;
+      this.page = page;
+      return page;
+    } catch (error) {
+      await browser.close().catch(() => {});
+      throw error;
+    }
   }
 
   private async ensureManagedBrowser(): Promise<{ browser: Browser; context: BrowserContext }> {
@@ -2383,10 +2391,15 @@ export class ChatGptBrowserWorker {
         executablePath: this.config.chromeExecutablePath,
         headless: !this.config.headed,
       });
-      const context = await browser.newContext({ storageState: this.config.storageStatePath });
-      this.browser = browser;
-      this.context = context;
-      return { browser, context };
+      try {
+        const context = await browser.newContext({ storageState: this.config.storageStatePath });
+        this.browser = browser;
+        this.context = context;
+        return { browser, context };
+      } catch (error) {
+        await browser.close().catch(() => {});
+        throw error;
+      }
     })();
     this.managedBrowserReady = opening;
     try {

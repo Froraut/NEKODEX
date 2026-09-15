@@ -5,57 +5,76 @@ import { atomicWriteFile, getConfigDir } from "../config";
 const MAX_STORED_RESPONSES = 1_000;
 const RESPONSE_TTL_MS = 60 * 60 * 1_000;
 const SNAPSHOT_DEBOUNCE_MS = 2_000;
-/** In-memory high-water byte cap across all entries. Forced store:false continuation chains
- * store the full expanded input each turn — ~quadratic bytes per chain —
- * so a count cap alone cannot bound memory. Oldest-first eviction applies past this mark. */
+/** In-memory high-water byte cap across reachable history nodes. */
 const MAX_STORED_RESPONSE_BYTES = 64 * 1024 * 1024;
 /** Entries whose serialized size exceeds this are kept in memory but skipped on disk: inputs can
  * carry base64 `input_image` data URLs, and one screenshot-heavy thread must not balloon the file. */
 const SNAPSHOT_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
 const SNAPSHOT_TOTAL_MAX_BYTES = 24 * 1024 * 1024;
+const MAX_DELTA_DEPTH = 7;
 
 interface StoredResponseState {
   createdAt: number;
-  items: unknown[];
-  /** Approximate in-memory size, computed locally at insert time (never trusted from disk). */
-  sizeBytes?: number;
+  /** A checkpoint is self-contained; subsequent nodes contain only their new suffix. */
+  items: readonly unknown[];
+  parent?: StoredResponseState;
+  depth: number;
+  itemCount: number;
+  /** Local payload size, never trusted from disk. */
+  sizeBytes: number;
 }
 
 const states = new Map<string, StoredResponseState>();
-let storedResponseBytes = 0;
 
-/** The ONLY size computation: approximate entry weight from its items payload. */
-function measuredEntry(entry: Omit<StoredResponseState, "sizeBytes">): StoredResponseState {
+function measureItems(items: readonly unknown[]): number {
   let sizeBytes = 0;
   try {
-    sizeBytes = JSON.stringify(entry.items).length;
+    sizeBytes = JSON.stringify(items).length;
   } catch {
     /* unserializable items: weightless rather than fatal */
   }
-  return { ...entry, sizeBytes };
+  return sizeBytes;
 }
 
-/** The ONLY insertion point: keeps the byte counter consistent on replacement. */
-function setEntry(id: string, entry: Omit<StoredResponseState, "sizeBytes">): void {
-  deleteEntry(id);
-  const measured = measuredEntry(entry);
-  storedResponseBytes += measured.sizeBytes ?? 0;
-  states.set(id, measured);
+function materialize(state: StoredResponseState): unknown[] {
+  const segments: (readonly unknown[])[] = [];
+  let current: StoredResponseState | undefined = state;
+  while (current) {
+    segments.push(current.items);
+    current = current.parent;
+  }
+  const items: unknown[] = [];
+  for (let i = segments.length - 1; i >= 0; i--) {
+    for (const item of segments[i]) items.push(item);
+  }
+  return items;
 }
 
-/** The ONLY deletion point: TTL, count, byte, and explicit deletes all route here. */
-function deleteEntry(id: string): void {
-  const existing = states.get(id);
-  if (!existing) return;
-  storedResponseBytes -= existing.sizeBytes ?? 0;
-  if (storedResponseBytes < 0) storedResponseBytes = 0;
+function setEntry(id: string, state: StoredResponseState): void {
   states.delete(id);
+  states.set(id, state);
+}
+
+/** Evicted IDs may still be ancestors of live IDs; count every reachable node once. */
+function reachableBytes(): number {
+  const seen = new Set<StoredResponseState>();
+  let total = 0;
+  for (const state of states.values()) {
+    let current: StoredResponseState | undefined = state;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      total += current.sizeBytes;
+      current = current.parent;
+    }
+  }
+  return total;
 }
 // Expansion provenance must stay proxy-private: a WeakMap distinguishes replayed history from the
 // newly appended input suffix without adding an unknown field that native passthrough could send
 // upstream. Consumers use the prefix length to bind trusted history and rolling checkpoints to the
 // exact replayed portion of this request.
 const replayedInputPrefixLengths = new WeakMap<object, number>();
+const replayedInputParents = new WeakMap<object, StoredResponseState>();
 let loaded = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPersistPath: string | null = null;
@@ -87,12 +106,15 @@ function ensureLoaded(): void {
       if (!Array.isArray(entry) || entry.length !== 2) continue;
       const [id, state] = entry as [unknown, unknown];
       if (typeof id !== "string" || !state || typeof state !== "object") continue;
-      const rec = state as StoredResponseState;
+      const rec = state as { createdAt?: unknown; items?: unknown };
       if (typeof rec.createdAt !== "number" || !Array.isArray(rec.items)) continue;
       // Recompute sizes locally while loading; persisted sizeBytes is never trusted.
       setEntry(id, {
         createdAt: rec.createdAt,
         items: rec.items,
+        depth: 0,
+        itemCount: rec.items.length,
+        sizeBytes: measureItems(rec.items),
       });
     }
     pruneResponses();
@@ -108,14 +130,15 @@ function persistNow(path: string): void {
   }
   pendingPersistPath = null;
   try {
-    const entries: [string, StoredResponseState][] = [];
+    const entries: [string, { createdAt: number; items: unknown[] }][] = [];
     let total = 0;
     // Newest-first so the most recent chains survive both caps.
     for (const entry of [...states].reverse()) {
-      // sizeBytes is in-memory accounting only; keep it out of the disk snapshot.
       const [id, state] = entry;
-      const { sizeBytes: _sizeBytes, ...persistable } = state;
-      const persistEntry: [string, StoredResponseState] = [id, persistable];
+      // Version 1 remains self-contained: omitted oversized ancestors cannot strand a
+      // descendant, and older snapshots remain readable after this in-memory change.
+      const persistEntry: [string, { createdAt: number; items: unknown[] }] =
+        [id, { createdAt: state.createdAt, items: materialize(state) }];
       const size = JSON.stringify(persistEntry).length;
       if (size > SNAPSHOT_ENTRY_MAX_BYTES) continue;
       if (total + size > SNAPSHOT_TOTAL_MAX_BYTES) break;
@@ -159,18 +182,18 @@ function inputItems(input: unknown): unknown[] {
 
 function pruneResponses(at = now()): void {
   for (const [id, state] of states) {
-    if (at - state.createdAt > RESPONSE_TTL_MS) deleteEntry(id);
+    if (at - state.createdAt > RESPONSE_TTL_MS) states.delete(id);
   }
   while (states.size > MAX_STORED_RESPONSES) {
     const oldest = states.keys().next().value;
     if (!oldest) break;
-    deleteEntry(oldest);
+    states.delete(oldest);
   }
   // Byte high-water eviction, oldest-first (Map preserves insertion order).
-  while (storedResponseBytes > MAX_STORED_RESPONSE_BYTES && states.size > 1) {
+  while (reachableBytes() > MAX_STORED_RESPONSE_BYTES && states.size > 1) {
     const oldest = states.keys().next().value;
     if (!oldest) break;
-    deleteEntry(oldest);
+    states.delete(oldest);
   }
 }
 
@@ -185,9 +208,10 @@ export function expandPreviousResponseInput(body: unknown): unknown {
   if (!previous) return body;
   const expanded = {
     ...request,
-    input: [...previous.items, ...inputItems(request.input)],
+    input: [...materialize(previous), ...inputItems(request.input)],
   };
-  replayedInputPrefixLengths.set(expanded, previous.items.length);
+  replayedInputPrefixLengths.set(expanded, previous.itemCount);
+  replayedInputParents.set(expanded, previous);
   return expanded;
 }
 
@@ -221,9 +245,20 @@ export function rememberResponseState(
       || (details as { reason?: unknown }).reason !== "max_output_tokens") return;
   } else if (response.status !== undefined && response.status !== "completed") return;
   ensureLoaded();
+  const parent = replayedInputParents.get(requestBody);
+  const input = inputItems(request.input);
+  const prefix = parent && replayedInputPrefixLengths.get(requestBody) === parent.itemCount
+    ? parent.itemCount : 0;
+  const suffix = [...input.slice(prefix), ...response.output];
+  const useDelta = !!parent && prefix > 0 && parent.depth < MAX_DELTA_DEPTH;
+  const items = useDelta ? suffix : prefix > 0 ? [...input, ...response.output] : suffix;
   setEntry(response.id, {
     createdAt: now(),
-    items: [...inputItems(request.input), ...response.output],
+    items,
+    ...(useDelta ? { parent } : {}),
+    depth: useDelta ? parent!.depth + 1 : 0,
+    itemCount: (useDelta ? parent!.itemCount : 0) + items.length,
+    sizeBytes: measureItems(items),
   });
   pruneResponses();
   schedulePersist();

@@ -29,7 +29,9 @@ interface PendingTurn {
 
 type HelperMessage =
   | { type: "ready"; features?: string[] }
-  | { type: "event"; id: string; event: "heartbeat" | "send_activated" | "submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
+  | { type: "event"; id: string; event: "heartbeat" | "submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
+  | { type: "event"; id: string; event: "send_activated"; requestId?: number }
+  | { type: "event"; id: string; event: "turn_settled" }
   | { type: "event"; id: string; event: "tool_batch_observed"; revision: number }
   | { type: "event"; id: string; event: "multipart_stage_acknowledged"; stageIndex: number }
   | { type: "event"; id: string; event: "completion_fence_begin"; requestId: number }
@@ -67,6 +69,15 @@ function parseHelperMessage(line: string): HelperMessage {
   }
   if (message.type === "event") {
     const event = message.event;
+    if (event === "turn_settled") return { type: "event", id: message.id, event };
+    if (event === "send_activated") {
+      if (message.requestId !== undefined
+        && (!Number.isSafeInteger(message.requestId) || (message.requestId as number) <= 0)) {
+        throw new Error("Launcher browser helper Send activation request id is invalid");
+      }
+      return { type: "event", id: message.id, event,
+        ...(message.requestId !== undefined ? { requestId: message.requestId as number } : {}) };
+    }
     if (event === "multipart_stage_acknowledged") {
       if (!Number.isSafeInteger(message.stageIndex) || (message.stageIndex as number) <= 0) {
         throw new Error("Launcher browser helper multipart stage index is invalid");
@@ -118,7 +129,7 @@ function parseHelperMessage(line: string): HelperMessage {
       }
       return { type: "event", id: message.id, event, reused: message.reused };
     }
-    if (!["heartbeat", "send_activated", "submitted", "reasoning", "commentary", "text"].includes(String(event))) {
+    if (!["heartbeat", "submitted", "reasoning", "commentary", "text"].includes(String(event))) {
       throw new Error("Launcher browser helper emitted an unknown event");
     }
     if (text !== undefined && typeof text !== "string") {
@@ -130,7 +141,7 @@ function parseHelperMessage(line: string): HelperMessage {
     return {
       type: "event",
       id: message.id,
-      event: event as "heartbeat" | "send_activated" | "submitted" | "reasoning" | "commentary" | "text",
+      event: event as "heartbeat" | "submitted" | "reasoning" | "commentary" | "text",
       ...(text !== undefined ? { text: text as string } : {}),
       ...(continuation !== undefined ? { continuation: continuation as boolean } : {}),
     };
@@ -191,6 +202,9 @@ export class LauncherBrowserHelperClient {
   private closed = false;
   private closing?: Promise<void>;
   private readonly pending = new Map<string, PendingTurn>();
+  // A rejected abort write settles the caller, but the helper may still own this trace ID.
+  // Only its post-cleanup event (or this exact child's exit) releases the reservation.
+  private readonly unresolved = new Map<string, ChildProcessWithoutNullStreams>();
   private helperFeatures = new Set<string>();
 
   constructor(private readonly config: ResolvedBrowserConfig) {}
@@ -244,7 +258,7 @@ export class LauncherBrowserHelperClient {
       );
     }
     return await new Promise<string>((resolveResult, rejectResult) => {
-        if (this.pending.has(turn.traceId)) {
+        if (this.pending.has(turn.traceId) || this.unresolved.has(turn.traceId)) {
           rejectResult(new Error(`Duplicate launcher browser turn: ${turn.traceId}`));
           return;
         }
@@ -266,6 +280,7 @@ export class LauncherBrowserHelperClient {
                 ? { reason: "compaction_handoff_accepted" }
                 : {}),
             }).catch(error => {
+              this.reserveUnresolved(pending);
               this.finishWithError(
                 turn.traceId,
                 error instanceof Error ? error : new Error(String(error)),
@@ -330,6 +345,7 @@ export class LauncherBrowserHelperClient {
     this.readyResolve = undefined;
     this.readyReject = undefined;
     this.helperFeatures.clear();
+    this.unresolved.clear();
     for (const id of [...this.pending.keys()]) {
       this.finishWithError(id, new DOMException("Launcher browser helper is closing", "AbortError"));
     }
@@ -440,8 +456,19 @@ export class LauncherBrowserHelperClient {
       this.readyReject = undefined;
       return;
     }
+    if (message.type === "event" && message.event === "turn_settled") {
+      if (this.unresolved.get(message.id) === child) this.unresolved.delete(message.id);
+      return;
+    }
     const pending = this.pending.get(message.id);
-    if (!pending) return;
+    if (!pending) {
+      // Older helpers complete their cleanup synchronously after writing the final frame.
+      // They do not advertise the explicit post-cleanup event.
+      if ((message.type === "result" || message.type === "error")
+        && !this.helperFeatures.has("turn-settled")
+        && this.unresolved.get(message.id) === child) this.unresolved.delete(message.id);
+      return;
+    }
     if (message.type === "event") {
       if (pending.localFailure) return;
       try {
@@ -512,13 +539,16 @@ export class LauncherBrowserHelperClient {
         }
         else if (message.event === "send_activated") {
           void Promise.resolve().then(() => pending.turn.onSendActivated?.()).then(() => {
-            if (this.pending.get(message.id) !== pending) return;
-            return this.send({ type: "send_activation_ack", id: message.id });
-          }).catch(error => this.abortWithLocalFailure(
-            message.id,
-            error instanceof Error ? error : new Error(String(error)),
-            pending,
-          ));
+            if (this.pending.get(message.id) !== pending || pending.localFailure
+              || pending.turn.abortSignal?.aborted) return;
+            return this.send({ type: "send_activation_ack", id: message.id,
+              ...(message.requestId !== undefined ? { requestId: message.requestId } : {}) });
+          }).catch(error => {
+            if (pending.turn.abortSignal?.aborted) return;
+            this.abortWithLocalFailure(
+              message.id, error instanceof Error ? error : new Error(String(error)), pending,
+            );
+          });
         }
         else if (message.event === "submitted") pending.turn.onSubmitted?.();
         else if (message.event === "multipart_stage_acknowledged") {
@@ -613,6 +643,7 @@ export class LauncherBrowserHelperClient {
     pending.localFailure = error;
     void this.sendAbort(pending, { type: "abort", id }).catch(sendError => {
       if (this.pending.get(id) !== pending) return;
+      this.reserveUnresolved(pending);
       this.finishWithError(
         id,
         new AggregateError(
@@ -679,6 +710,13 @@ export class LauncherBrowserHelperClient {
     pending.reject(error);
   }
 
+  private reserveUnresolved(pending: PendingTurn): void {
+    const id = pending.turn.traceId;
+    const child = this.child;
+    if (this.pending.get(id) === pending && child && child.exitCode === null
+      && child.signalCode === null) this.unresolved.set(id, child);
+  }
+
   private handleExit(child: ChildProcessWithoutNullStreams, error: Error): void {
     if (this.child !== child) return;
     this.readyReject?.(error);
@@ -686,6 +724,9 @@ export class LauncherBrowserHelperClient {
     this.readyResolve = undefined;
     this.ready = undefined;
     this.child = undefined;
+    for (const [id, owner] of this.unresolved) {
+      if (owner === child) this.unresolved.delete(id);
+    }
     for (const id of [...this.pending.keys()]) {
       const pending = this.pending.get(id);
       if (!pending) continue;

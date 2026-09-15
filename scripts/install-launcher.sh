@@ -32,12 +32,80 @@ case "$OS" in
   *) echo "Use install-launcher.ps1 on Windows; unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
-# NEKODEX distributes prereleases: select the newest published release, including prereleases.
+# NEKODEX distributes prereleases. Inspect a bounded published list for an exact
+# platform asset; keep the existing checksum download and SHA-256 gate below.
 if [ -z "$VERSION" ]; then
-  VERSION="$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
-    "https://api.github.com/repos/$REPOSITORY/releases?per_page=1" \
-    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' \
-    | head -n 1)"
+  RELEASES="$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
+    "https://api.github.com/repos/$REPOSITORY/releases?per_page=10")"
+  VERSION="$(printf '%s\n' "$RELEASES" | awk -v platform="$PLATFORM" -v arch="$ARCH" -v extension="$EXTENSION" '
+    # Walk JSON tokens so asset names cannot be confused with release metadata
+    # or nested author/upload objects. The API response is bounded to 10 releases.
+    function value(s, d) {
+      if (d == 2 && kind[d] == "release" && key[d] == "tag_name") {
+        tag = s
+        if (substr(tag, 1, 1) == "v") tag = substr(tag, 2)
+        valid = tag ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+      } else if (d == 4 && kind[d] == "asset" && key[d] == "name") {
+        names[++count] = s
+      }
+      if (d > 0) key[d] = ""
+    }
+    {
+      json = json $0 "\n"
+    }
+    END {
+      depth = 0
+      for (i = 1; i <= length(json); i++) {
+        c = substr(json, i, 1)
+        if (c ~ /[ \t\r\n]/) continue
+        if (c == "\"") {
+          s = ""
+          for (i++; i <= length(json); i++) {
+            c = substr(json, i, 1)
+            if (c == "\\") { i++; s = s substr(json, i, 1); continue }
+            if (c == "\"") break
+            s = s c
+          }
+          j = i + 1
+          while (substr(json, j, 1) ~ /[ \t\r\n]/) j++
+          if (substr(json, j, 1) == ":") key[depth] = s
+          else value(s, depth)
+        } else if (c == "{" || c == "[") {
+          parent = kind[depth]
+          field = key[depth]
+          depth++
+          if (depth == 1 && c == "[") kind[depth] = "root"
+          else if (depth == 2 && parent == "root" && c == "{") {
+            kind[depth] = "release"; tag = ""; valid = 0; count = 0
+          } else if (depth == 3 && parent == "release" && field == "assets" && c == "[") kind[depth] = "assets"
+          else if (depth == 4 && parent == "assets" && c == "{") kind[depth] = "asset"
+          else kind[depth] = "other"
+          key[depth] = ""
+          if (depth > 1) key[depth - 1] = ""
+        } else if (c == "}" || c == "]") {
+          if (depth == 2 && kind[depth] == "release" && valid && !selected) {
+            expected = "codex-web-gpt-" tag "-" platform "-" arch "." extension
+            for (n = 1; n <= count; n++) {
+              if (names[n] == expected) { selected = tag; break }
+            }
+          }
+          delete kind[depth]; delete key[depth]; depth--
+        } else if (c == ",") {
+          if (depth > 0) key[depth] = ""
+        } else if (c != ":") {
+          j = i
+          while (j <= length(json) && index(",}] \t\r\n", substr(json, j, 1)) == 0) j++
+          i = j - 1
+          if (depth > 0) key[depth] = ""
+        }
+      }
+      if (selected) print selected
+    }
+  ')"
+  if [ -z "$VERSION" ]; then
+    echo "No published NEKODEX release among the newest 10 has a $PLATFORM-$ARCH.$EXTENSION asset; set CODEX_WEB_GPT_VERSION explicitly" >&2
+    exit 1
+  fi
 fi
 VERSION="${VERSION#v}"
 if [ -z "$VERSION" ]; then

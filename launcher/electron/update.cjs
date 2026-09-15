@@ -18,6 +18,7 @@ const USER_AGENT = "codex-web-gpt-launcher-updater";
 const MAX_REDIRECTS = 5;
 const MAX_ASSET_BYTES = 1024 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+const RECHECK_COOLDOWN_MS = 60_000;
 
 function validateRepository(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(value)) {
@@ -387,6 +388,8 @@ function createUpdateController({
   let checked = false;
   let pending = null;
   let candidate = null;
+  let checkPromise = null;
+  let lastCheckFinishedAt = 0;
 
   const transition = (next) => {
     state = next;
@@ -394,55 +397,82 @@ function createUpdateController({
     return state;
   };
 
-  async function checkOnce() {
-    if (state.status === "disabled" || checked) return state;
-    checked = true;
+  function startCheck() {
     transition({ status: "checking" });
-    try {
-      let release;
+    checkPromise = (async () => {
       try {
-        release = selectRelease(await deps.fetchRelease(apiUrl), currentVersion, { platform, arch });
+        let release;
+        try {
+          release = selectRelease(await deps.fetchRelease(apiUrl), currentVersion, { platform, arch });
+        } catch (error) {
+          // A new public fork has no latest release until its first stable build.
+          // Never fall back to a different repository in that case.
+          if (error?.statusCode !== 404) throw error;
+        }
+        if (!release) {
+          candidate = null;
+          return transition({ status: "up-to-date" });
+        }
+        const version = releaseVersion(release?.tag_name);
+        if (compareVersions(version, currentVersion) <= 0) {
+          candidate = null;
+          return transition({ status: "up-to-date" });
+        }
+        const assetName = releaseAssetName(version, platform, arch);
+        if (!assetName) return transition({ status: "disabled" });
+        const assets = Array.isArray(release?.assets) ? release.assets : [];
+        const asset = assets.find((item) => item?.name === assetName);
+        const checksums = assets.find((item) => item?.name === "checksums.txt");
+        const metadata = assets.find((item) => item?.name === "release-metadata.json");
+        if (!asset?.browser_download_url || !checksums?.browser_download_url || !metadata?.browser_download_url) {
+          throw new Error(`Release v${version} is missing ${assetName}, checksums.txt or signed release-metadata.json`);
+        }
+        if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_ASSET_BYTES) {
+          throw new Error(`Release v${version} has an invalid or excessive download size`);
+        }
+        candidate = {
+          version,
+          assetName,
+          assetBytes: asset.size,
+          assetUrl: validateReleaseAssetUrl(asset.browser_download_url, version, assetName, repository),
+          checksumsUrl: validateReleaseAssetUrl(checksums.browser_download_url, version, "checksums.txt", repository),
+          metadataUrl: validateReleaseAssetUrl(metadata.browser_download_url, version, "release-metadata.json", repository),
+        };
+        logger?.info("launcher.update_available", { currentVersion, version, platform, arch });
+        return transition({ status: "available", version });
       } catch (error) {
-        // A new public fork has no latest release until its first stable build.
-        // Never fall back to a different repository in that case.
-        if (error?.statusCode !== 404) throw error;
-      }
-      if (!release) {
         candidate = null;
-        return transition({ status: "up-to-date" });
+        const message = error instanceof Error ? error.message : String(error);
+        logger?.warn("launcher.update_check_failed", { message });
+        return transition({ status: "error", message });
+      } finally {
+        lastCheckFinishedAt = Date.now();
       }
-      const version = releaseVersion(release?.tag_name);
-      if (compareVersions(version, currentVersion) <= 0) {
-        candidate = null;
-        return transition({ status: "up-to-date" });
-      }
-      const assetName = releaseAssetName(version, platform, arch);
-      if (!assetName) return transition({ status: "disabled" });
-      const assets = Array.isArray(release?.assets) ? release.assets : [];
-      const asset = assets.find((item) => item?.name === assetName);
-      const checksums = assets.find((item) => item?.name === "checksums.txt");
-      const metadata = assets.find((item) => item?.name === "release-metadata.json");
-      if (!asset?.browser_download_url || !checksums?.browser_download_url || !metadata?.browser_download_url) {
-        throw new Error(`Release v${version} is missing ${assetName}, checksums.txt or signed release-metadata.json`);
-      }
-      if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_ASSET_BYTES) {
-        throw new Error(`Release v${version} has an invalid or excessive download size`);
-      }
-      candidate = {
-        version,
-        assetName,
-        assetBytes: asset.size,
-        assetUrl: validateReleaseAssetUrl(asset.browser_download_url, version, assetName, repository),
-        checksumsUrl: validateReleaseAssetUrl(checksums.browser_download_url, version, "checksums.txt", repository),
-        metadataUrl: validateReleaseAssetUrl(metadata.browser_download_url, version, "release-metadata.json", repository),
-      };
-      logger?.info("launcher.update_available", { currentVersion, version, platform, arch });
-      return transition({ status: "available", version });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger?.warn("launcher.update_check_failed", { message });
-      return transition({ status: "error", message });
+    })();
+    void checkPromise.then(
+      () => { checkPromise = null; },
+      () => { checkPromise = null; },
+    );
+    return checkPromise;
+  }
+
+  function checkOnce() {
+    if (checkPromise) return checkPromise;
+    if (state.status === "disabled" || checked) return Promise.resolve(state);
+    checked = true;
+    return startCheck();
+  }
+
+  function recheck() {
+    if (checkPromise) return checkPromise;
+    if (state.status === "disabled" || pending || ["available", "downloading", "installing"].includes(state.status)) {
+      return Promise.resolve(state);
     }
+    if (lastCheckFinishedAt && Date.now() - lastCheckFinishedAt < RECHECK_COOLDOWN_MS) {
+      return Promise.resolve(state);
+    }
+    checked = true;
+    return startCheck();
   }
 
   async function beginInstall() {
@@ -538,6 +568,7 @@ function createUpdateController({
   return {
     getState: () => state,
     checkOnce,
+    recheck,
     beginInstall,
     cancelInstall,
   };

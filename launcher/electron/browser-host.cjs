@@ -2328,6 +2328,13 @@ class BrowserHost {
     throw error;
   }
 
+  assertLiveConversationOwner(traceId, conversationKey) {
+    if (conversationKey && [...this.turnTabs.values()].some(tab =>
+      tab.traceId !== traceId && tab.status === "running" && tab.conversationKey === conversationKey)) {
+      throw new Error(`ChatGPT conversation ${conversationKey} is already running under another browser turn`);
+    }
+  }
+
   async beginTurn(
     traceId,
     reveal,
@@ -2350,6 +2357,7 @@ class BrowserHost {
       || sameTrace.connectorIdentity !== connectorIdentity)) {
       throw new Error(`ChatGPT browser turn ${traceId} conversation metadata does not match its owned tab`);
     }
+    this.assertLiveConversationOwner(traceId, conversationKey);
     const exactRetained = this.exactRetainedTurnTab(conversationKey, connectorIdentity);
     if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {
       throw new Error(`ChatGPT browser turn ${traceId} is retained under different conversation metadata`);

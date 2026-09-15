@@ -247,11 +247,12 @@ export function installRuntimeKey(
   sourcePath: string,
   interactionMode: BrowserInteractionMode = "automatic",
   onWritten?: (bytes: Uint8Array) => void,
+  expectedBefore?: Uint8Array | null,
 ): string {
   if (!existsSync(sourcePath)) throw new Error(`Tunnel runtime key file does not exist: ${sourcePath}`);
   const key = readFileSync(sourcePath);
   if (key.byteLength === 0 || key.byteLength > 64 * 1024) throw new Error("Tunnel runtime key file is empty or unexpectedly large");
-  return installRuntimeKeyBytes(key, interactionMode, onWritten);
+  return installRuntimeKeyBytes(key, interactionMode, onWritten, expectedBefore);
 }
 
 export function managedRuntimeKeyPath(interactionMode: BrowserInteractionMode = "automatic"): string {
@@ -265,10 +266,18 @@ export function installRuntimeKeyBytes(
   key: Uint8Array | string,
   interactionMode: BrowserInteractionMode = "automatic",
   onWritten?: (bytes: Uint8Array) => void,
+  expectedBefore?: Uint8Array | null,
 ): string {
   const bytes = typeof key === "string" ? new TextEncoder().encode(key.trim()) : key;
   if (bytes.byteLength === 0 || bytes.byteLength > 64 * 1024) throw new Error("Tunnel runtime key is empty or unexpectedly large");
   const destination = managedRuntimeKeyPath(interactionMode);
+  if (expectedBefore !== undefined) {
+    const current = existsSync(destination) ? readFileSync(destination) : null;
+    if ((current === null) !== (expectedBefore === null)
+      || (current !== null && expectedBefore !== null && !current.equals(expectedBefore))) {
+      throw new Error("Tunnel runtime key changed after setup took its snapshot; preserving the concurrent edit");
+    }
+  }
   atomicWriteFile(destination, bytes);
   onWritten?.(bytes);
   return destination;

@@ -122,6 +122,17 @@ function createAccountRegistry(coreHome) {
         mode: state.mode,
       });
     },
+    removeFailedAdd(id, previousSelectedId) {
+      validateAccountId(id);
+      requireAccount(previousSelectedId);
+      // Only undo the exact new, still-selected record. A later selection or
+      // metadata edit belongs to another operation and must not be overwritten.
+      const added = state.accounts.at(-1);
+      if (id === "default" || added?.id !== id || state.selectedId !== id
+        || added.enabled !== true) return false;
+      save({ ...state, accounts: state.accounts.slice(0, -1), selectedId: previousSelectedId });
+      return true;
+    },
     select(id) {
       requireAccount(id);
       return save({ ...state, selectedId: id });

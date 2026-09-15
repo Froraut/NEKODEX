@@ -478,6 +478,9 @@ export async function loginToChatGpt(
     const state = sanitizeBrowserLoginStorageState(await context.storageState());
 
     const inspected = await inspectStoredState(config, state);
+    // A failed repeat write must never leave the previous verification marker paired
+    // with replacement state. Keep the marker absent until both writes succeed.
+    rmSync(loginVerificationMarkerPath(config.storageStatePath), { force: true });
     atomicWriteFile(config.storageStatePath, `${JSON.stringify(state)}\n`);
     writeVerificationMarker(config.storageStatePath, inspected);
     result = {

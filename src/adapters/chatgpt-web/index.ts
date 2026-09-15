@@ -897,24 +897,25 @@ export function createChatGptWebAdapter(
               .digest("hex")
               .slice(0, 12);
             const compactionNativeIdentity = extractChatGptTurnIdentity(parsed);
-            let sharedSummary = existingStructuredCompactionRun(compactionExecutionKey);
+            const compactionOwner = {
+              ownerKey: `${executionNamespace}:${chatGptThreadOwnershipKey(parsed)}`,
+              traceIds: [
+                compactionTraceId,
+                handoffTraceId,
+                `${handoffTraceId}_fallback`,
+              ],
+              ...(compactionNativeIdentity.threadId
+                ? { nativeThreadId: compactionNativeIdentity.threadId }
+                : {}),
+              ...(compactionNativeIdentity.turnId
+                ? { nativeTurnId: compactionNativeIdentity.turnId }
+                : {}),
+            };
+            let sharedSummary = existingStructuredCompactionRun(compactionExecutionKey, compactionOwner);
             if (!sharedSummary) {
               sharedSummary = runStructuredCompactionOnce(
                 compactionExecutionKey,
-                {
-                  ownerKey: `${executionNamespace}:${chatGptThreadOwnershipKey(parsed)}`,
-                  traceIds: [
-                    compactionTraceId,
-                    handoffTraceId,
-                    `${handoffTraceId}_fallback`,
-                  ],
-                  ...(compactionNativeIdentity.threadId
-                    ? { nativeThreadId: compactionNativeIdentity.threadId }
-                    : {}),
-                  ...(compactionNativeIdentity.turnId
-                    ? { nativeTurnId: compactionNativeIdentity.turnId }
-                    : {}),
-                },
+                compactionOwner,
                 async (operatorSignal, retainOwnershipUntil) => {
                   const handoffTimeoutMs = Math.min(
                     timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,

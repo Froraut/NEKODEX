@@ -21,6 +21,7 @@ class AccountBrowserPool {
     this.sequence = 0;
     this.surfaceActive = true;
     this.destroyed = false;
+    this.addingAccount = false;
     this.affinityPath = path.join(options.coreHome, 'account-affinity.json');
     this.affinity = new Map();
     try {
@@ -120,11 +121,37 @@ class AccountBrowserPool {
     writePrivateFileAtomic(this.options.descriptorPath, JSON.stringify({ ...primary, surfaceTargets: targets }) + '\n');
   }
   async addAccount(label) {
-    if (this.currentOperation()) throw new Error('Finish the current browser operation before adding an account');
+    if (this.addingAccount || this.currentOperation()) throw new Error('Finish the current browser operation before adding an account');
+    this.addingAccount = true;
     const previous = this.registry.snapshot().selectedId;
-    this.registry.add(label);
-    try { await this.selectedHost().ready(); }
-    catch (error) { this.registry.select(previous); throw error; }
+    let id;
+    try {
+      id = this.registry.add(label).selectedId;
+      await this.getHost(id).ready();
+    } catch (error) {
+      if (id) {
+        let rolledBack = false;
+        try { rolledBack = this.registry.removeFailedAdd(id, previous); }
+        catch (rollbackError) {
+          this.logger.warn('browser.account_add_rollback_failed', { accountId: id, message: rollbackError.message });
+        }
+        if (rolledBack) {
+          const host = this.hosts.get(id);
+          if (host && host.turnTabs.size === 0) {
+            host.destroy(); this.hosts.delete(id);
+            try { this.writeDescriptor(); }
+            catch (descriptorError) {
+              this.logger.warn('browser.account_descriptor_refresh_failed', { accountId: id, message: descriptorError.message });
+            }
+          }
+        } else {
+          this.syncVisibility(); this.publish();
+          throw new Error(`Account ${id} was saved, but browser readiness failed; review the saved account in Settings`, { cause: error });
+        }
+        this.syncVisibility(); this.publish();
+      }
+      throw error;
+    } finally { this.addingAccount = false; }
     this.syncVisibility(); this.publish();
     return this.accountSnapshot();
   }
@@ -151,12 +178,22 @@ class AccountBrowserPool {
   hide() { for (const host of this.hosts.values()) host.hide(); return this.snapshot(); }
   async checkAccount(id, connector = false) {
     const host = this.getHost(id);
+    await host.ready();
+    if (host.activeTraceId || host.currentOperation()) {
+      throw new Error('Finish this account’s active tasks and browser operation before checking it');
+    }
     this.capabilities.delete(id);
     if (connector) this.connectors.delete(id);
-    const evidence = await host.inspectSession(true);
-    this.capabilities.set(id, evidence);
-    if (connector) { await host.verifyConnector(host.connectorName()); this.connectors.set(id, host.connectorName()); }
-    this.publish(); return this.accountSnapshot();
+    try {
+      const evidence = await host.inspectSession(true);
+      this.capabilities.set(id, evidence);
+      if (connector) { await host.verifyConnector(host.connectorName()); this.connectors.set(id, host.connectorName()); }
+      return this.accountSnapshot();
+    } catch (error) {
+      // Failed inspection cannot keep an older connector claim for this session.
+      this.connectors.delete(id);
+      throw error;
+    } finally { this.publish(); }
   }
   async refreshAuthentication() {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
@@ -264,14 +301,24 @@ class AccountBrowserPool {
     if (!candidates.length) throw new Error('No enabled ChatGPT account is ready for this model and connector. Sign in and check the account in Settings.');
     return candidates[0].id;
   }
-  ensureTabCapacity(traceId, key) {
+  ensureTabCapacity(host, traceId, key, connector, manual = false) {
     const tabs = [...this.turnTabs.values()];
-    if (tabs.some(tab => tab.traceId === traceId || (key && tab.conversationKey === key))) return;
+    const sameTrace = [...host.turnTabs.values()].find(tab => tab.traceId === traceId);
+    if (sameTrace?.status === 'running' && sameTrace.interactionMode === (manual ? 'manual' : 'automatic')
+      && (manual || (sameTrace.conversationKey === key && sameTrace.connectorIdentity === connector))) return;
+    const reusable = manual
+      ? [...host.turnTabs.values()].filter(tab => key && tab.interactionMode === 'manual'
+        && tab.status === 'ready' && tab.conversationKey === key)
+      : [host.exactRetainedTurnTab(key, connector)].filter(Boolean);
+    if (reusable.length === 1) return;
     const represented = new Set(tabs.map(tab => tab.traceId));
     const pending = [...this.reservations.keys()].filter(trace => trace !== traceId && !represented.has(trace)).length;
-    if (tabs.length + pending < this.options.maxTabs) return;
-    if (![...this.hosts.values()].some(host => host.evictOldestReclaimableTurnTab())) {
-      throw new Error('Global browser tab capacity is full');
+    let occupied = tabs.length + pending;
+    while (occupied >= this.options.maxTabs) {
+      if (![...this.hosts.values()].some(candidate => candidate.evictOldestReclaimableTurnTab())) {
+        throw new Error('Global browser tab capacity is full');
+      }
+      occupied--;
     }
   }
   persistAffinity(keys, id) {
@@ -306,7 +353,8 @@ class AccountBrowserPool {
       if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
       await host.ready();
       if (retained) host.precheckRetainedTurn(traceId, key, connector);
-      this.ensureTabCapacity(traceId, key);
+      host.assertLiveConversationOwner(traceId, key);
+      this.ensureTabCapacity(host, traceId, key, connector);
       if (reveal && !this.currentOperation()) { this.registry.select(id); this.syncVisibility(); }
       const lease = await host.beginTurn(traceId, reveal, helperPid, key, connector, retained);
       this.persistAffinity(keys, id);
@@ -343,7 +391,7 @@ class AccountBrowserPool {
     if (pendingOwner && pendingOwner !== id) throw new Error('Conversation and task account ownership conflict');
     if (key && this.affinity.has(key) && this.affinity.get(key) !== id) throw new Error('Conversation and task account ownership conflict');
     if (key && !this.affinity.has(key) && this.affinity.size >= 100000) throw new Error('Account affinity registry is full');
-    this.ensureTabCapacity(traceId, key);
+    this.ensureTabCapacity(this.getHost(id), traceId, key, null, true);
     let lease;
     try {
       lease = this.getHost(id).beginManualTurn(...args);

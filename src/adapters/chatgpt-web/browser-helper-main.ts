@@ -64,7 +64,7 @@ type MaintenanceMessage = VerifyMessage | InspectMessage | SmokeMessage;
 type InputMessage = RunMessage
   | MaintenanceMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
-  | { type: "send_activation_ack"; id: string }
+  | { type: "send_activation_ack"; id: string; requestId?: number }
   | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
   | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
@@ -96,9 +96,11 @@ const abortControllers = new Map<string, AbortController>();
 const turnProgress = new Map<string, ChatGptMirroredTurnProgress>();
 const preparedSelections = new Map<string, ReturnType<typeof createBrowserHelperPromptSelection>>();
 const sendActivationWaiters = new Map<string, {
+  requestId: number;
   resolve: () => void;
   reject: (error: Error) => void;
 }>();
+let sendActivationRequestId = 0;
 const completionFenceBeginWaiters = new Map<string, {
   requestId: number;
   resolve: (revision: number | undefined) => void;
@@ -271,8 +273,9 @@ async function run(message: RunMessage): Promise<void> {
         reject(new Error("Browser helper Send activation already awaits acknowledgement"));
         return;
       }
-      sendActivationWaiters.set(message.id, { resolve, reject });
-      if (!writeProtocol({ type: "event", id: message.id, event: "send_activated" })) {
+      const requestId = ++sendActivationRequestId;
+      sendActivationWaiters.set(message.id, { requestId, resolve, reject });
+      if (!writeProtocol({ type: "event", id: message.id, event: "send_activated", requestId })) {
         sendActivationWaiters.delete(message.id);
         reject(new Error("Browser helper could not request the Send activation boundary"));
       }
@@ -336,6 +339,9 @@ async function run(message: RunMessage): Promise<void> {
     commitWaiter?.reject(new DOMException("Browser helper turn ended before completion-fence commit", "AbortError"));
     abortControllers.delete(message.id);
     turnProgress.delete(message.id);
+    // This event follows all per-turn cleanup; a client that could not deliver Abort may now
+    // safely admit another run with the same deterministic trace ID.
+    writeProtocol({ type: "event", id: message.id, event: "turn_settled" });
   }
 }
 
@@ -427,9 +433,17 @@ const input = createProcessLineReader(stdin, line => {
   } else if (message.type === "send_activation_ack") {
     const waiter = sendActivationWaiters.get(message.id);
     if (!waiter) {
+      // Abort can remove the waiter before a previously queued acknowledgement arrives.
+      // A token from an earlier activation must never fail a new run of this trace ID.
+      if (abortControllers.get(message.id)?.signal.aborted
+        || (Number.isSafeInteger(message.requestId) && message.requestId! > 0
+          && message.requestId! <= sendActivationRequestId)) return;
       writeProtocol({ type: "error", id: message.id, message: "Browser helper has no pending Send activation" });
       return;
     }
+    // An older launcher does not carry the token; accept its current acknowledgement.
+    if (message.requestId !== undefined && waiter.requestId !== message.requestId) return;
+    if (abortControllers.get(message.id)?.signal.aborted) return;
     sendActivationWaiters.delete(message.id);
     waiter.resolve();
   } else if (message.type === "completion_fence_begin_ack") {
@@ -525,4 +539,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "account-routing-key"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "account-routing-key", "turn-settled"] });

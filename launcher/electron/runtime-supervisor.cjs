@@ -369,6 +369,7 @@ class RuntimeSupervisor {
     this.tunnel = null;
     this.stopping = false;
     this.startPromise = null;
+    this.startController = null;
     this.stopPromise = null;
     this.restartHistory = { daemon: [], tunnel: [] };
     this.restartTimers = { daemon: null, tunnel: null };
@@ -1243,15 +1244,18 @@ class RuntimeSupervisor {
       this.shutdownResumeAllowed = false;
     }
     if (this.startPromise) return this.startPromise;
-    this.startPromise = this.startConfigured();
+    const controller = new AbortController();
+    this.startController = controller;
+    this.startPromise = this.startConfigured(controller.signal);
     try {
       return await this.startPromise;
     } finally {
       this.startPromise = null;
+      if (this.startController === controller) this.startController = null;
     }
   }
 
-  async startConfigured() {
+  async startConfigured(startSignal) {
     let config;
     try {
       config = this.readConfig();
@@ -1337,10 +1341,10 @@ class RuntimeSupervisor {
       message: tunnelOnly ? "Starting isolated DEV MCP runtime" : "Starting local runtime",
     });
     try {
-      this.assertCanStart();
-      await this.startTunnel(config, "runtime-start");
-      if (!tunnelOnly) await this.startDaemon(config);
-      this.assertCanStart();
+      this.assertCanStart(startSignal);
+      await this.startTunnel(config, "runtime-start", { recoverySignal: startSignal });
+      if (!tunnelOnly) await this.startDaemon(config, startSignal);
+      this.assertCanStart(startSignal);
       this.restartHistory.daemon = [];
       this.restartHistory.tunnel = [];
       this.writeState("ready");
@@ -1351,6 +1355,9 @@ class RuntimeSupervisor {
       });
       return { status: "ready", daemonPid: this.daemon?.pid, tunnelPid: this.tunnel?.pid };
     } catch (error) {
+      // Shutdown owns the stop after an aborted startup. Its bounded settlement
+      // keeps command cleanup from racing a second tunnel stop.
+      if (startSignal.aborted) throw error;
       this.stopping = true;
       let cleanupError;
       try {
@@ -1390,6 +1397,7 @@ class RuntimeSupervisor {
   }
 
   cancelRecoveries() {
+    this.startController?.abort();
     for (const name of ["daemon", "tunnel"]) {
       if (this.restartTimers[name]) {
         clearTimeout(this.restartTimers[name]);
@@ -1409,6 +1417,21 @@ class RuntimeSupervisor {
     try {
       return await Promise.race([
         Promise.allSettled([...this.recoveryTasks]).then(() => true),
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(false), RECOVERY_SHUTDOWN_SETTLEMENT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async settleInitialStart() {
+    if (!this.startPromise) return true;
+    let timer;
+    try {
+      return await Promise.race([
+        this.startPromise.then(() => true, () => true),
         new Promise(resolve => {
           timer = setTimeout(() => resolve(false), RECOVERY_SHUTDOWN_SETTLEMENT_MS);
         }),
@@ -2115,13 +2138,11 @@ class RuntimeSupervisor {
     let config;
     let drained = false;
     let tunnelStopped = false;
+    let startUnsettled = false;
     try {
-      if (this.startPromise) {
-        try {
-          await this.startPromise;
-        } catch (error) {
-          this.logger.warn("runtime.start_failed_before_stop", { message: errorMessage(error) });
-        }
+      if (!await this.settleInitialStart()) {
+        startUnsettled = true;
+        throw new Error("Cancelled initial runtime startup did not settle within the shutdown bound");
       }
       this.stopTunnelMonitor();
       if (!await this.settleRecoveryTasks()) {
@@ -2177,6 +2198,9 @@ class RuntimeSupervisor {
       this.clearState();
       return { status: "stopped" };
     } catch (error) {
+      // The pending starter still owns its command and state. Do not write a
+      // replacement ownership record or compensate while it can acquire a PID.
+      if (startUnsettled) throw error;
       const compensationErrors = [];
       if (tunnelStopped && config?.mode === "full" && !this.tunnel) {
         try {
@@ -2223,6 +2247,11 @@ class RuntimeSupervisor {
     this.cancelRecoveries();
     try {
       const failures = [];
+      if (!await this.settleInitialStart()) {
+        const message = "cancelled initial runtime startup did not settle within the shutdown bound";
+        this.logger.warn("runtime.forced_shutdown_unsettled_start", { message });
+        return { status: "forced-partial", detail: errorMessage(reason), failures: [message] };
+      }
       if (!await this.settleRecoveryTasks()) {
         failures.push("cancelled runtime recovery did not settle within the shutdown bound");
       }

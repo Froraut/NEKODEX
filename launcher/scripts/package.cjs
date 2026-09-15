@@ -64,6 +64,12 @@ if (target === "--mac" && !signing.release && !env.CSC_LINK && !env.CSC_NAME) {
 
 const staging = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-"));
 const artifactsDirectory = path.join(root, "artifacts");
+const artifactExtension = /\.(?:AppImage|dmg|exe|zip|blockmap)$/i;
+const requiredExtensions = {
+  "--mac": [".dmg", ".zip"],
+  "--win": [".exe", ".zip"],
+  "--linux": [".AppImage"],
+};
 
 function runChecked(command, args) {
   const result = spawnSync(command, args, {
@@ -129,6 +135,76 @@ function signAndNotarizeMacDmg() {
   runChecked("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", image]);
 }
 
+function publishStagedArtifacts() {
+  const artifacts = fs.readdirSync(staging, { withFileTypes: true })
+    .filter(entry => entry.isFile() && artifactExtension.test(entry.name));
+  for (const extension of requiredExtensions[target]) {
+    const matches = artifacts.filter(entry => entry.name.toLowerCase().endsWith(extension.toLowerCase()));
+    if (matches.length !== 1) {
+      throw new Error(`Expected exactly one ${extension} distributable artifact in ${staging}; found ${matches.length}`);
+    }
+  }
+
+  const names = new Set();
+  for (const artifact of artifacts) {
+    const publicName = artifact.name.replace(/-linux-x86_64(?=\.)/, "-linux-x64");
+    const collisionKey = process.platform === "win32" ? publicName.toLowerCase() : publicName;
+    if (names.has(collisionKey)) throw new Error(`Duplicate output artifact: ${publicName}`);
+    names.add(collisionKey);
+    if (fs.statSync(path.join(staging, artifact.name)).size === 0) {
+      throw new Error(`Empty output artifact: ${artifact.name}`);
+    }
+  }
+
+  // Prepare the complete replacement on the same filesystem as artifacts.
+  // Keep unrelated entries in that directory and leave the original untouched
+  // through all staged file copies.
+  const swapRoot = fs.mkdtempSync(path.join(root, ".artifacts-swap-"));
+  const prepared = path.join(swapRoot, "prepared");
+  const previous = path.join(swapRoot, "previous");
+  let retainPrevious = false;
+  try {
+    if (fs.existsSync(artifactsDirectory)) {
+      fs.cpSync(artifactsDirectory, prepared, { recursive: true });
+    } else {
+      fs.mkdirSync(prepared);
+    }
+    for (const entry of fs.readdirSync(prepared, { withFileTypes: true })) {
+      if (entry.isFile() && artifactExtension.test(entry.name)) {
+        fs.rmSync(path.join(prepared, entry.name));
+      }
+    }
+    for (const artifact of artifacts) {
+      const publicName = artifact.name.replace(/-linux-x86_64(?=\.)/, "-linux-x64");
+      fs.copyFileSync(path.join(staging, artifact.name), path.join(prepared, publicName));
+    }
+
+    const hadPrevious = fs.existsSync(artifactsDirectory);
+    if (hadPrevious) fs.renameSync(artifactsDirectory, previous);
+    try {
+      fs.renameSync(prepared, artifactsDirectory);
+    } catch (error) {
+      if (hadPrevious) {
+        try {
+          fs.renameSync(previous, artifactsDirectory);
+        } catch (restoreError) {
+          retainPrevious = true;
+          throw new AggregateError([error, restoreError], `Cannot restore artifacts; previous output is at ${previous}`);
+        }
+      }
+      throw error;
+    }
+  } finally {
+    if (!retainPrevious) {
+      try {
+        fs.rmSync(swapRoot, { recursive: true, force: true });
+      } catch (error) {
+        console.warn(`Could not remove packaging backup ${swapRoot}: ${error.message}`);
+      }
+    }
+  }
+}
+
 try {
   const result = spawnSync(executable, [
     ...builderArgs,
@@ -147,21 +223,7 @@ try {
   }
   if (target === "--win" && signing.release) verifyWindowsTree(staging, env);
 
-  fs.mkdirSync(artifactsDirectory, { recursive: true });
-  for (const entry of fs.readdirSync(artifactsDirectory, { withFileTypes: true })) {
-    if (entry.isFile() && /\.(?:AppImage|dmg|exe|zip|blockmap)$/i.test(entry.name)) {
-      fs.rmSync(path.join(artifactsDirectory, entry.name), { force: true });
-    }
-  }
-  const artifacts = fs.readdirSync(staging, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.(?:AppImage|dmg|exe|zip|blockmap)$/i.test(entry.name));
-  if (!artifacts.some((entry) => /\.(?:AppImage|dmg|exe|zip)$/i.test(entry.name))) {
-    throw new Error(`electron-builder produced no distributable artifact in ${staging}`);
-  }
-  for (const artifact of artifacts) {
-    const publicName = artifact.name.replace(/-linux-x86_64(?=\.)/, "-linux-x64");
-    fs.copyFileSync(path.join(staging, artifact.name), path.join(artifactsDirectory, publicName));
-  }
+  publishStagedArtifacts();
 } finally {
   fs.rmSync(staging, { recursive: true, force: true });
 }

@@ -233,8 +233,10 @@ export class ChatGptThreadEnvironmentStore {
     const stored = this.threads.get(threadId);
     if (!stored) return undefined;
     if (this.now() - stored.updatedAt > THREAD_ENVIRONMENT_TTL_MS) {
-      this.threads.delete(threadId);
-      this.persist();
+      const next = new Map(this.threads);
+      next.delete(threadId);
+      this.persist(next);
+      this.threads = next;
       return undefined;
     }
     return stored;
@@ -242,14 +244,16 @@ export class ChatGptThreadEnvironmentStore {
 
   private set(threadId: string, environment: ChatGptTurnEnvironment): void {
     this.load();
-    this.threads.delete(threadId);
-    this.threads.set(threadId, authority(environment, this.now()));
-    while (this.threads.size > MAX_THREAD_ENVIRONMENTS) {
-      const oldest = this.threads.keys().next().value as string | undefined;
+    const next = new Map(this.threads);
+    next.delete(threadId);
+    next.set(threadId, authority(environment, this.now()));
+    while (next.size > MAX_THREAD_ENVIRONMENTS) {
+      const oldest = next.keys().next().value as string | undefined;
       if (!oldest) break;
-      this.threads.delete(oldest);
+      next.delete(oldest);
     }
-    this.persist();
+    this.persist(next);
+    this.threads = next;
   }
 
   private load(): void {
@@ -274,11 +278,11 @@ export class ChatGptThreadEnvironmentStore {
     this.loaded = true;
   }
 
-  private persist(): void {
+  private persist(threads: Map<string, StoredThreadEnvironment>): void {
     if (!this.path) return;
     const payload: StoredThreadEnvironmentFile = {
       version: 1,
-      threads: Object.fromEntries(this.threads),
+      threads: Object.fromEntries(threads),
     };
     atomicWriteFile(this.path, `${JSON.stringify(payload, null, 2)}\n`);
   }

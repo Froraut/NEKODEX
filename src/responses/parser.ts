@@ -251,7 +251,10 @@ function outputToToolResultContent(output: string | unknown[] | undefined): stri
       if (typeof raw.text === "string") parts.push({ type: "text", text: raw.text });
     } else if (raw.type === "refusal" && typeof raw.refusal === "string") {
       parts.push({ type: "text", text: `[refusal: ${raw.refusal}]` });
-    } else if (raw.type === "input_image" && typeof raw.image_url === "string") {
+    } else if (raw.type === "input_image") {
+      if (typeof raw.image_url !== "string" || raw.image_url.length === 0) {
+        throw new Error("file_id-only tool-result input_image is unsupported; image content was not sent");
+      }
       parts.push({ type: "image", imageUrl: raw.image_url, ...(typeof raw.detail === "string" ? { detail: normalizeImageDetail(raw.detail) } : {}) });
       hasImage = true;
     } else if (raw.type === "encrypted_content") {
@@ -524,7 +527,8 @@ export function parseRequest(body: unknown): CodexParsedRequest {
         // Preserve the model's prior tool_search call as an assistant tool call so multi-turn
         // history stays complete (otherwise the model re-issues tool_search forever).
         const call = item as { id?: string; call_id?: string; arguments?: unknown };
-        const callId = call.call_id ?? call.id ?? "";
+        const callId = call.call_id || call.id;
+        if (!callId) throw new Error("tool_search_call requires a nonempty call_id or id");
         assistantHolderWithReasoning().content.push({
           type: "toolCall", id: callId, name: "tool_search",
           arguments: isObj(call.arguments) ? call.arguments : {},
@@ -535,7 +539,8 @@ export function parseRequest(body: unknown): CodexParsedRequest {
       if (effectiveType === "tool_search_output") {
         pendingReasoning.length = 0;
         // Pair the tool_search call with its result so the model sees what was loaded.
-        const out = item as { call_id?: string; status?: string; tools?: unknown[] };
+        const out = item as { call_id: string; status?: string; tools?: unknown[] };
+        if (!out.call_id) throw new Error("tool_search_output requires a nonempty call_id");
         const specs = Array.isArray(out.tools) ? (out.tools as Record<string, unknown>[]) : [];
         loadedToolSpecs.push(...specs);
         // List the EXACT wire names the model must call (flattened for namespaced specs), matching
@@ -553,7 +558,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
         }
         const failed = typeof out.status === "string" && out.status !== "completed" && out.status !== "success";
         messages.push({
-          role: "toolResult", toolCallId: out.call_id ?? "", toolName: "tool_search",
+          role: "toolResult", toolCallId: out.call_id, toolName: "tool_search",
           content: failed && wireNames.length === 0
             ? `Tool search failed (status: ${out.status}).`
             : wireNames.length

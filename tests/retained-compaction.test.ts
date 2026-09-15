@@ -435,7 +435,7 @@ test("a rejected exact compaction run is evicted while a successful run remains 
     throw new Error("first handoff failed");
   })).rejects.toThrow("first handoff failed");
   await Bun.sleep(0);
-  expect(existingStructuredCompactionRun(key)).toBeUndefined();
+  expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
 
   const retry = runStructuredCompactionOnce(key, owner, async () => {
     starts += 1;
@@ -443,13 +443,14 @@ test("a rejected exact compaction run is evicted while a successful run remains 
   });
   expect(runStructuredCompactionOnce(key, owner, async () => "must not start")).toBe(retry);
   await expect(retry).resolves.toBe("recovered checkpoint");
-  await expect(existingStructuredCompactionRun(key)).resolves.toBe("recovered checkpoint");
+  await expect(existingStructuredCompactionRun(key, owner)).resolves.toBe("recovered checkpoint");
   expect(starts).toBe(2);
 });
 
 test("operator cancellation aborts the shared structured compaction owner", async () => {
   const key = `operator-cancel-${Date.now()}-${Math.random()}`;
   const traceId = `trace-${key}`;
+  const owner = { ownerKey: `owner-${key}`, traceIds: [traceId] };
   let aborted = false;
   const run = runStructuredCompactionOnce(
     key,
@@ -465,7 +466,7 @@ test("operator cancellation aborts the shared structured compaction owner", asyn
   expect(await cancelStructuredCompactionTrace(traceId, new Error("operator cancelled"))).toBe(1);
   await expect(run).rejects.toThrow("operator cancelled");
   expect(aborted).toBeTrue();
-  expect(existingStructuredCompactionRun(key)).toBeUndefined();
+  expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
 });
 
 test("native interruption before registration prevents the detached compaction from starting", async () => {
@@ -511,7 +512,7 @@ test("native interruption before registration prevents the detached compaction f
 
   await expect(run).rejects.toBe(reason);
   expect(started).toBeFalse();
-  expect(existingStructuredCompactionRun(key)).toBeUndefined();
+  expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
 
   let unrelatedStarted = false;
   await expect(runStructuredCompactionOnce(

@@ -339,6 +339,7 @@ async function configureTunnel(
   expectedTunnelClient?: TunnelClientInstallSnapshot,
   onInstalled?: (owned: TunnelClientInstallSnapshot) => void,
   onKeyWritten?: (bytes: Uint8Array) => void,
+  expectedRuntimeKey?: FileSnapshot,
 ): Promise<void> {
   if (config.mode === "browser-only") {
     delete config.tunnel;
@@ -360,19 +361,32 @@ async function configureTunnel(
   if (!tunnelId) {
     throw new Error(`${interactionMode === "manual" ? "Manual mode" : "Automatic"} mode requires its own Tunnel ID`);
   }
+  if (!/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
+    throw new Error("--tunnel-id must be tunnel_ followed by 32 lowercase hexadecimal characters");
+  }
+  const otherTunnel = interactionMode === "manual" ? automaticTunnel : manualTunnel;
+  if (otherTunnel?.tunnelId === tunnelId) {
+    throw new Error("Automatic and Manual mode require different Tunnel IDs and separate ChatGPT connectors");
+  }
+  let expectedKey: Uint8Array | null | undefined = expectedRuntimeKey?.exists
+    ? expectedRuntimeKey.data! : expectedRuntimeKey ? null : undefined;
+  const keyWritten = (bytes: Uint8Array): void => {
+    expectedKey = bytes;
+    onKeyWritten?.(bytes);
+  };
   let runtimeKeyFile = existingTunnel?.runtimeKeyFile;
   const managedKeyFile = managedRuntimeKeyPath(interactionMode);
   if ((!runtimeKeyFile || !existsSync(runtimeKeyFile)) && existsSync(managedKeyFile)) {
     runtimeKeyFile = managedKeyFile;
   }
   if (options.runtimeKeyFile) {
-    runtimeKeyFile = installRuntimeKey(options.runtimeKeyFile, interactionMode, onKeyWritten);
+    runtimeKeyFile = installRuntimeKey(options.runtimeKeyFile, interactionMode, keyWritten, expectedKey);
   }
   if (options.runtimeKeyValue) {
-    runtimeKeyFile = installRuntimeKeyBytes(options.runtimeKeyValue, interactionMode, onKeyWritten);
+    runtimeKeyFile = installRuntimeKeyBytes(options.runtimeKeyValue, interactionMode, keyWritten, expectedKey);
   }
   if (runtimeKeyFile && runtimeKeyFile !== managedKeyFile && existsSync(runtimeKeyFile)) {
-    runtimeKeyFile = installRuntimeKey(runtimeKeyFile, interactionMode, onKeyWritten);
+    runtimeKeyFile = installRuntimeKey(runtimeKeyFile, interactionMode, keyWritten, expectedKey);
   }
   if (!runtimeKeyFile || !existsSync(runtimeKeyFile)) {
     throw new Error(`${interactionMode === "manual" ? "Manual mode" : "Automatic"} mode requires its own runtime key`);
@@ -391,10 +405,6 @@ async function configureTunnel(
     profileName,
     alias: profileName,
   });
-  const otherTunnel = interactionMode === "manual" ? automaticTunnel : manualTunnel;
-  if (otherTunnel?.tunnelId === configuredTunnel.tunnelId) {
-    throw new Error("Automatic and Manual mode require different Tunnel IDs and separate ChatGPT connectors");
-  }
   if (interactionMode === "manual") manualTunnel = configuredTunnel;
   else automaticTunnel = configuredTunnel;
   config.tunnel = configuredTunnel;
@@ -645,7 +655,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     await configureTunnel(config, existing, options,
       tunnelClientBeforeRoute,
       owned => { tunnelClientAfterRoute = owned; },
-      bytes => { runtimeKeyAfterRoute = { path: runtimeKeyPath, exists: true, data: Buffer.from(bytes) }; });
+      bytes => { runtimeKeyAfterRoute = { path: runtimeKeyPath, exists: true, data: Buffer.from(bytes) }; },
+      runtimeKeyBeforeRoute);
     changedWhileLoaded = Boolean(existing && beforeService.loaded && meaningfulRuntimeChange(existing, config));
     tunnelProfilePath = config.mode === "full" && config.tunnel
       ? join(config.tunnel.profileDir, `${config.tunnel.profileName}.yaml`) : undefined;
@@ -751,10 +762,14 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     let configRestored = true;
     if (savedConfigBytes) {
       try {
-        if (!existsSync(getConfigPath()) || !readFileSync(getConfigPath()).equals(savedConfigBytes)) {
+        const current = snapshotFile(getConfigPath());
+        if (sameSnapshot(current, configBeforeRoute)) {
+          // The save failed before replacing the original file; owned tunnel writes can roll back.
+        } else if (current.exists && current.data?.equals(savedConfigBytes)) {
+          restoreFileSnapshot(configBeforeRoute);
+        } else {
           throw new Error("changed after setup wrote it; preserving the concurrent edit");
         }
-        restoreFileSnapshot(configBeforeRoute);
       } catch (caught) {
         configRestored = false;
         rollbackFailures.push(`${getConfigPath()}: ${caught instanceof Error ? caught.message : String(caught)}`);
@@ -877,17 +892,88 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   }
 
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
-  await configureTunnel(config, existing, options);
+  const keyPath = managedRuntimeKeyPath(config.browserInteractionMode);
+  const keyBefore = snapshotFile(keyPath);
+  let keyOwned = keyBefore;
+  const clientBefore = snapshotTunnelClientInstallation();
+  let clientOwned = clientBefore;
+  const configBefore = snapshotFile(getConfigPath());
+  let configPlanned: Buffer | undefined;
+  let profileBefore: FileSnapshot | undefined;
+  let profileOwned: FileSnapshot | undefined;
+  let failedConnectMayHaveWrittenProfile = false;
+  let validationTunnelRunning = false;
   let tunnelReady: boolean | null = null;
-  if (config.mode === "full") {
-    const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
-    const needsProfile = !existsSync(profilePath);
-    if (needsProfile || tunnelWorkerRuntimeChanged(existing, config) || explicitTunnelChange) {
-      await bootstrapTunnelProfile(config);
+  const sameSnapshot = (left: FileSnapshot, right: FileSnapshot): boolean =>
+    left.exists === right.exists
+    && (!left.exists || Boolean(left.data && right.data && left.data.equals(right.data)));
+  try {
+    await configureTunnel(config, existing, options, clientBefore,
+      owned => { clientOwned = owned; },
+      bytes => { keyOwned = { path: keyPath, exists: true, data: Buffer.from(bytes) }; },
+      keyBefore);
+    if (config.mode === "full") {
+      const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
+      profileBefore = snapshotFile(profilePath);
+      profileOwned = profileBefore;
+      if (!profileBefore.exists || tunnelWorkerRuntimeChanged(existing, config) || explicitTunnelChange) {
+        await bootstrapTunnelProfile(config,
+          () => { validationTunnelRunning = true; profileOwned = snapshotFile(profilePath); },
+          () => { validationTunnelRunning = false; },
+          () => { failedConnectMayHaveWrittenProfile = true; });
+      }
+      tunnelReady = false;
     }
-    tunnelReady = false;
+    if (!sameSnapshot(snapshotFile(getConfigPath()), configBefore)) {
+      throw new Error("DEV config changed during setup; preserving the concurrent edit");
+    }
+    configPlanned = Buffer.from(preserveUtf8Bom(
+      `${JSON.stringify(config, null, 2)}\n`, configBefore.data?.toString("utf8") ?? ""));
+    saveConfig(config);
+  } catch (error) {
+    const rollbackFailures: string[] = [];
+    const attempt = (label: string, action: () => void): void => {
+      try { action(); } catch (caught) {
+        rollbackFailures.push(`${label}: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    };
+    if (configPlanned) attempt("DEV config", () => {
+      const current = snapshotFile(getConfigPath());
+      if (sameSnapshot(current, configBefore)) return;
+      if (!current.exists || !current.data?.equals(configPlanned!)) {
+        throw new Error("changed after setup; preserving the concurrent edit");
+      }
+      restoreFileSnapshot(configBefore);
+    });
+    if (validationTunnelRunning) attempt("DEV validation tunnel", () => {
+      stopTunnel(config);
+      validationTunnelRunning = false;
+    });
+    if (!validationTunnelRunning && profileBefore && profileOwned && !sameSnapshot(profileBefore, profileOwned)) {
+      attempt("DEV tunnel profile", () => {
+        if (!sameSnapshot(snapshotFile(profileOwned!.path), profileOwned!)) {
+          throw new Error("changed after setup; preserving the concurrent edit");
+        }
+        restoreFileSnapshot(profileBefore!);
+      });
+    }
+    if (failedConnectMayHaveWrittenProfile) {
+      rollbackFailures.push("DEV tunnel connect may have written an uncheckpointed profile; preserving it for manual recovery");
+    }
+    if (validationTunnelRunning) {
+      rollbackFailures.push("DEV validation tunnel may still be running; preserving its profile for manual recovery");
+    }
+    attempt("DEV tunnel client", () => restoreTunnelClientInstallation(clientBefore, clientOwned));
+    if (!sameSnapshot(keyBefore, keyOwned)) attempt("DEV runtime key", () => {
+      if (!sameSnapshot(snapshotFile(keyPath), keyOwned)) {
+        throw new Error("changed after setup; preserving the concurrent edit");
+      }
+      restoreFileSnapshot(keyBefore);
+    });
+    const primary = error instanceof Error ? error.message : String(error);
+    throw new Error(rollbackFailures.length
+      ? `${primary}; DEV setup rollback also failed: ${rollbackFailures.join("; ")}` : primary);
   }
-  saveConfig(config);
   return {
     mode: config.mode,
     configPath: getConfigPath(),

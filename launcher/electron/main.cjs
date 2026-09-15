@@ -185,8 +185,12 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
 }
 
 async function restoreCodexRouteAfterRuntimeFailure({ logger, stateStore }) {
+  // Starting the route operation is synchronous up to its first await. Quit
+  // either observes that operation or owns shutdown before we can start it.
+  if (shutdownInProgress || quitting || exitCommitted) return { restored: false, skipped: true };
   try {
     const route = await runtimeHost.restoreBridgeRoute("runtime-start-fail-safe");
+    if (shutdownInProgress || quitting || exitCommitted) return { restored: false, skipped: true };
     if (!route.installed || route.active) return { restored: false };
     const state = stateStore.update({
       codexCatalogVerified: false,
@@ -968,6 +972,10 @@ function registerIpc({ logger, stateStore }) {
     logger.info("launcher.logs_exported", { recordCount });
     return result.filePath;
   });
+  handle("launcher:update-recheck", async () => {
+    if (!updateController) throw new Error("Launcher updates are unavailable");
+    return updateController.recheck();
+  });
   handle("launcher:update-install", async () => {
     if (!updateController) throw new Error("Launcher updates are unavailable");
     const launch = await updateController.beginInstall();
@@ -1358,6 +1366,7 @@ async function start() {
     const route = await runtimeHost.connectBridgeRoute();
     return { ...runtime, bridgeRouteChanged: route.changed === true };
   })().then(async (runtime) => {
+    if (shutdownInProgress || quitting || exitCommitted) return;
     if (runtime.status === "ready") {
       const config = runtimeSupervisor.readConfig();
       const current = stateStore.read();
@@ -1384,6 +1393,7 @@ async function start() {
     }
     if (runtime.status === "not-configured") {
       const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
+      if (routeRecovery.skipped || shutdownInProgress || quitting || exitCommitted) return;
       const current = stateStore.read();
       if (current.coreSetupComplete || current.mcpRuntimeInstalled || current.mcpSetupComplete) {
         const state = stateStore.update({
@@ -1405,6 +1415,7 @@ async function start() {
       return;
     }
     const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
+    if (routeRecovery.skipped || shutdownInProgress || quitting || exitCommitted) return;
     const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false });
     send("launcher:state-changed", state);
     if (runtime.status === "external" || runtime.status === "needs-setup") {
@@ -1424,8 +1435,10 @@ async function start() {
       });
     }
   }).catch(async (error) => {
+    if (shutdownInProgress || quitting || exitCommitted) return;
     const primary = error instanceof Error ? error.message : String(error);
     const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
+    if (routeRecovery.skipped || shutdownInProgress || quitting || exitCommitted) return;
     const message = routeRecovery.error
       ? `${primary}; restoring the previous Codex route also failed: ${routeRecovery.error}`
       : routeRecovery.restored

@@ -51,7 +51,41 @@ export function App() {
   const [startupAttempt, setStartupAttempt] = useState(0);
   const stateRevision = useRef(0);
   const snapshotRefresh = useRef(0);
+  const refreshOwner = useRef(0);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
+  const refreshOperationRevision = useRef(0);
+  const operationRevision = useRef(0);
+  const lastOperationStatus = useRef<OperationState["status"] | null>(null);
+  const completionRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const documentLanguage = snapshot?.state.language ?? "en";
+
+  const refreshMetadata = useCallback((reuseCompletedOperation: boolean): Promise<void> => {
+    // A completion snapshot starts after that operation publishes its state and credentials.
+    // A later operation, including a failed verification, needs its own fresh read.
+    if (reuseCompletedOperation && refreshInFlight.current
+      && lastOperationStatus.current === "completed"
+      && refreshOperationRevision.current === operationRevision.current) {
+      return refreshInFlight.current;
+    }
+    const request = ++snapshotRefresh.current;
+    const owner = refreshOwner.current;
+    const revision = stateRevision.current;
+    refreshOperationRevision.current = operationRevision.current;
+    const pending = api!.snapshot().then(fresh => {
+      if (owner !== refreshOwner.current || request !== snapshotRefresh.current) return;
+      setSnapshot(current => current ? {
+        ...current,
+        ...(revision === stateRevision.current ? { state: fresh.state } : {}),
+        mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
+        contextCapabilities: fresh.contextCapabilities,
+      } : current);
+    });
+    refreshInFlight.current = pending;
+    void pending.finally(() => {
+      if (refreshInFlight.current === pending) refreshInFlight.current = null;
+    }).catch(() => {});
+    return pending;
+  }, []);
 
   useEffect(() => {
     document.documentElement.lang = documentLanguage;
@@ -67,17 +101,13 @@ export function App() {
     let pendingUpdate: LauncherSnapshot["update"] | null = null;
     const pendingLogs: LogRecord[] = [];
     const refreshCompletedOperation = () => {
-      const request = ++snapshotRefresh.current;
-      const revision = stateRevision.current;
-      void api.snapshot().then(fresh => {
-        if (cancelled || request !== snapshotRefresh.current) return;
-        setSnapshot(current => current ? {
-          ...current,
-          ...(revision === stateRevision.current ? { state: fresh.state } : {}),
-          mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
-          contextCapabilities: fresh.contextCapabilities,
-        } : current);
-      }).catch(() => {});
+      // Collapse completion events in one turn; an explicit verification read can
+      // take over this pending request before the full IPC snapshot is started.
+      if (completionRefreshTimer.current !== null) return;
+      completionRefreshTimer.current = setTimeout(() => {
+        completionRefreshTimer.current = null;
+        void refreshMetadata(true).catch(() => {});
+      }, 0);
     };
     const unsubscribeState = api.onStateChanged((state) => {
       stateRevision.current += 1;
@@ -96,6 +126,8 @@ export function App() {
       else setBrowser(next);
     });
     const unsubscribeOperation = api.onOperation((next) => {
+      operationRevision.current += 1;
+      lastOperationStatus.current = next.status;
       if (!initialized) pendingOperation = next;
       else setOperation(next);
       if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
@@ -138,13 +170,20 @@ export function App() {
     });
     return () => {
       cancelled = true;
+      if (completionRefreshTimer.current !== null) {
+        clearTimeout(completionRefreshTimer.current);
+        completionRefreshTimer.current = null;
+      }
+      refreshOwner.current += 1;
+      snapshotRefresh.current += 1;
+      refreshInFlight.current = null;
       unsubscribeState();
       unsubscribeBrowser();
       unsubscribeOperation();
       unsubscribeLog();
       unsubscribeUpdate();
     };
-  }, [startupAttempt]);
+  }, [startupAttempt, refreshMetadata]);
 
   const updateState = useCallback((state: LauncherState) => {
     stateRevision.current += 1;
@@ -159,17 +198,12 @@ export function App() {
   }, []);
 
   const updateSnapshot = useCallback(async () => {
-    const request = ++snapshotRefresh.current;
-    const revision = stateRevision.current;
-    const fresh = await api!.snapshot();
-    if (request !== snapshotRefresh.current) return;
-    setSnapshot(current => current ? {
-      ...current,
-      ...(revision === stateRevision.current ? { state: fresh.state } : {}),
-      mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
-      contextCapabilities: fresh.contextCapabilities,
-    } : current);
-  }, []);
+    if (completionRefreshTimer.current !== null) {
+      clearTimeout(completionRefreshTimer.current);
+      completionRefreshTimer.current = null;
+    }
+    await refreshMetadata(true);
+  }, [refreshMetadata]);
 
   const updateBrowserCapacity = useCallback((browserCapacity: BrowserCapacitySettings) => {
     setSnapshot(current => current ? { ...current, browserCapacity } : current);
@@ -438,6 +472,18 @@ function LauncherShell({
   const mcpOptional = snapshot.state.browserInteractionMode === "automatic"
     && snapshot.state.codexCatalogVerified === true
     && snapshot.state.mcpSetupComplete !== true;
+  const [updateCheckCooldown, setUpdateCheckCooldown] = useState(false);
+  const updateCheckTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(updateCheckTimer.current), []);
+  const recheckUpdate = async () => {
+    if (updateCheckCooldown) return;
+    setUpdateCheckCooldown(true);
+    updateCheckTimer.current = window.setTimeout(() => setUpdateCheckCooldown(false), 60_000);
+    try {
+      const next = await api!.recheckUpdate();
+      if (next.status === "error") setError(next.message);
+    } catch (error) { setError(messageOf(error)); }
+  };
   const updateVisible = ["available", "downloading", "installing"].includes(snapshot.update.status);
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
   const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
@@ -687,6 +733,12 @@ function LauncherShell({
                   onClick={() => void installUpdate()}
                   tone="update"
                 />
+              ) : null}
+              {!updateVisible && snapshot.update.status !== "disabled" ? (
+                <SidebarItem active={false} icon="update"
+                  disabled={updateCheckCooldown || snapshot.update.status === "checking"}
+                  label={snapshot.update.status === "checking" ? copy.loading : updateCheckCooldown ? copy.updateCheckCooldown : copy.checkUpdates}
+                  onClick={() => void recheckUpdate()} />
               ) : null}
               <SidebarItem
                 active={surface === "settings"}

@@ -1,6 +1,8 @@
 import type { Language } from "./types";
 
 const en = {
+  checkUpdates: "Check for updates",
+  updateCheckCooldown: "Check again in a minute",
   setupNext: "Next step",
   setupConfirmTitle: "Confirm your models in Codex",
   setupConfirmBody: "The installation is saved and Codex has loaded the catalog. Open its model picker and confirm that the ChatGPT Web models are visible. Reinstalling is not needed.",
@@ -401,6 +403,8 @@ const en = {
 } as const;
 
 const zh: Record<keyof typeof en, string> = {
+  checkUpdates: "检查更新",
+  updateCheckCooldown: "一分钟后再次检查",
   setupNext: "下一步",
   setupConfirmTitle: "在 Codex 中确认模型",
   setupConfirmBody: "安装已保存，Codex 已读取模型列表。打开模型选择器并确认 ChatGPT Web 模型可见，无需重新安装。",
@@ -801,6 +805,8 @@ const zh: Record<keyof typeof en, string> = {
 };
 
 const ja: Record<keyof typeof en, string> = {
+  checkUpdates: "アップデートを確認",
+  updateCheckCooldown: "1分後に再確認",
   setupNext: "次のステップ",
   setupConfirmTitle: "Codex でモデルを確認",
   setupConfirmBody: "インストールは保存済みで、Codex はモデル一覧を読み込みました。モデル選択画面に ChatGPT Web が表示されることを確認してください。再インストールは不要です。",

@@ -833,8 +833,14 @@ export class ChatGptTurnSessions {
       for (const [, session] of matches) if (session.isActive()) session.cancel();
     }
     const releaseObligation = obligation;
-    const retirement = Promise.all(releaseObligation.matches.map(([, session]) => session.physicalSettlement))
-      .then(async () => {
+    const retirement = Promise.allSettled(releaseObligation.matches.map(([, session]) => session.physicalSettlement))
+      .then(async settlements => {
+        // A failed turn-level settlement must not prevent the separate Launcher release attempt.
+        // When no release callback exists, retain the obligation rather than claiming cleanup.
+        if (!releaseObligation.release) {
+          const failure = settlements.find(result => result.status === "rejected");
+          if (failure?.status === "rejected") throw failure.reason;
+        }
         await releaseObligation.release?.();
         if (releaseObligation.matches.some(([, session]) => session.conversationKey() !== conversationKey)) {
           throw new Error("ChatGPT retained-conversation ownership changed during retirement");
@@ -881,17 +887,13 @@ export class ChatGptTurnSessions {
     const session = this.entries.get(key);
     if (!session) return false;
 
-    this.entries.delete(key);
-    this.forgetConversationHead(session);
-    await awaitWithAbort(this.beginRetirement(key, session), signal);
+    await awaitWithAbort(this.retireSession(key, session), signal);
     return true;
   }
 
   retire(key: string, session: ChatGptTurnSession): boolean {
     if (this.entries.get(key) !== session) return false;
-    this.entries.delete(key);
-    this.forgetConversationHead(session);
-    this.beginRetirement(key, session);
+    this.observeRetirement(this.retireSession(key, session));
     return true;
   }
 
@@ -909,28 +911,25 @@ export class ChatGptTurnSessions {
       && session.isActive()
     ));
     for (const [key, session] of matches) {
-      this.entries.delete(key);
-      this.forgetConversationHead(session);
-      this.beginRetirement(key, session);
+      this.observeRetirement(this.retireSession(key, session));
     }
     return matches.length;
   }
 
   clear(): number {
     const cancelled = this.entries.size;
-    // A failed retained release still needs its exact owner and retry handle after registry clear.
-    const obligated = new Set([...this.retainedReleases.values()].flatMap(release => (
-      release.matches.map(([, session]) => session)
-    )));
-    for (const [key, session] of this.entries) {
-      if (obligated.has(session)) session.cancel();
-      else {
-        this.beginRetirement(key, session);
-        this.entries.delete(key);
-      }
+    const conversations = new Set<string>();
+    for (const [key, session] of [...this.entries]) {
+      const conversationKey = session.conversationKey();
+      if (conversationKey) {
+        session.cancel();
+        conversations.add(conversationKey);
+      } else this.observeRetirement(this.retireSession(key, session));
     }
-    for (const [conversationKey, session] of this.conversationHeads) {
-      if (!obligated.has(session)) this.conversationHeads.delete(conversationKey);
+    // The entries and head remain attached until the release acknowledgement. A failure leaves
+    // the exact obligation available to the next owner turn for retry.
+    for (const conversationKey of conversations) {
+      this.observeRetirement(this.closeConversationAndWait(conversationKey).then(() => undefined));
     }
     return cancelled;
   }
@@ -946,10 +945,9 @@ export class ChatGptTurnSessions {
   /**
    * Begin retiring only the browser execution owned by the exact native Codex turn.
    *
-   * Codex runs Interrupt hooks synchronously with a short deadline. Ownership is removed and the
-   * abort is delivered before this method returns; physical helper cleanup remains represented by
-   * `settlement`, so replacement turns still serialize behind the real teardown without blocking
-   * the hook acknowledgement itself.
+   * Codex runs Interrupt hooks synchronously with a short deadline. The abort is delivered before
+   * this method returns; attached ownership stays discoverable until Launcher acknowledges release.
+   * Physical cleanup remains represented by `settlement` without blocking the hook acknowledgement.
    */
   cancelNativeTurn(
     threadId: string,
@@ -960,13 +958,9 @@ export class ChatGptTurnSessions {
       session.nativeThreadId === threadId
       && session.nativeTurnId === turnId
     ));
-    for (const [key, session] of matches) {
-      if (this.entries.get(key) !== session) continue;
-      this.entries.delete(key);
-      this.forgetConversationHead(session);
-    }
+    for (const [, session] of matches) session.cancel(reason);
     const settlement = Promise.all(
-      matches.map(([key, session]) => this.beginRetirement(key, session, reason)),
+      matches.map(([key, session]) => this.retireSession(key, session, reason)),
     ).then(() => undefined);
     return { cancelled: matches.length, settlement };
   }
@@ -996,10 +990,36 @@ export class ChatGptTurnSessions {
       // Keep that entry addressable so the next owner turn waits for actual cleanup.
       if (session.isActive() || !session.isPhysicallySettled() || session.lastUsedAt() >= cutoff
         || [...this.retainedReleases.values()].some(obligation => obligation.matches.some(([, owned]) => owned === session))) continue;
-      session.cancel();
+      const conversationKey = session.conversationKey();
+      // A stale round must not evict a newer exact replay in the same retained conversation.
+      if (conversationKey && [...this.entries.values()].some(peer => (
+        peer !== session && peer.conversationKey() === conversationKey
+        && (peer.isActive() || !peer.isPhysicallySettled() || peer.lastUsedAt() >= cutoff)
+      ))) continue;
+      this.observeRetirement(this.retireSession(key, session));
+    }
+  }
+
+  /** Every removal of an attached session first establishes an acknowledged, retryable release. */
+  private retireSession(key: string, session: ChatGptTurnSession, reason?: Error): Promise<void> {
+    const conversationKey = session.conversationKey();
+    if (conversationKey) {
+      session.cancel(reason);
+      return this.closeConversationAndWait(conversationKey).then(() => undefined);
+    }
+    if (this.entries.get(key) === session) {
       this.entries.delete(key);
       this.forgetConversationHead(session);
     }
+    return this.beginRetirement(key, session, reason);
+  }
+
+  private observeRetirement(retirement: Promise<void>): void {
+    void retirement.catch(error => {
+      console.error(`[chatgpt-web] turn retirement failed; attached release remains retryable: ${
+        error instanceof Error ? error.message : String(error)
+      }`);
+    });
   }
 
   private forgetConversationHead(session: ChatGptTurnSession): void {

@@ -75,12 +75,28 @@ async function pushFiles(event: Record<string, any>): Promise<ChangedScope> {
   if (typeof before !== "string" || typeof after !== "string"
     || !/^[a-f0-9]{40}$/.test(before) || !/^[a-f0-9]{40}$/.test(after)
     || /^0{40}$/.test(before)) return { files: [], manualReason: "Push has no comparable base commit" };
-  const child = Bun.spawn(["git", "diff", "--name-only", "-z", before, after], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["git", "diff", "--name-status", "-z", "--find-renames", before, after, "--"], { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   if (exitCode !== 0) throw new Error(`Could not compare push commits: ${stderr.trim()}`);
-  const files = stdout.split("\0").filter(Boolean);
+  if (stdout && !stdout.endsWith("\0")) throw new Error("Incomplete push diff output");
+  const fields = stdout ? stdout.slice(0, -1).split("\0") : [];
+  const files: string[] = [];
+  for (let index = 0; index < fields.length;) {
+    const status = fields[index++];
+    if (!/^[ACDMTUXB]$|^[RC][0-9]*$/.test(status)) throw new Error(`Unexpected push diff status: ${status}`);
+    const first = fields[index++];
+    if (!first) throw new Error("Push diff entry has no filename");
+    if (status.startsWith("R") || status.startsWith("C")) {
+      const destination = fields[index++];
+      if (!destination) throw new Error("Push rename or copy has no destination filename");
+      if (status.startsWith("R")) files.push(first);
+      files.push(destination);
+    } else {
+      files.push(first);
+    }
+  }
   return files.length > maximumChangedFiles
-    ? { files, manualReason: `Push has more than ${maximumChangedFiles} changed files; automated case selection is too broad` }
+    ? { files, manualReason: `Push has more than ${maximumChangedFiles} changed paths; automated case selection is too broad` }
     : { files };
 }
 

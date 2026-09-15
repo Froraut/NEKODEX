@@ -96,12 +96,27 @@ const customToolCallOutputItemSchema = z.object({
   // codex-rs CustomToolCallOutput carries FunctionCallOutputPayload: string OR content items.
   output: toolOutputSchema,
 });
+const toolSearchCallItemSchema = z.object({
+  type: z.literal("tool_search_call"),
+  id: z.string().min(1).optional(),
+  call_id: z.string().min(1).optional(),
+  arguments: z.record(z.string(), z.unknown()).optional(),
+}).loose().refine(item => Boolean(item.call_id || item.id), {
+  message: "tool_search_call requires a nonempty call_id or id",
+});
+const toolSearchOutputItemSchema = z.object({
+  type: z.literal("tool_search_output"),
+  call_id: z.string().min(1),
+  status: z.string().optional(),
+  tools: z.array(z.unknown()).optional(),
+}).loose();
 
 // The fallback is only for item extensions we do not yet model. A known type that fails its
 // schema must not fall through and turn malformed content into a placeholder or drop a block.
 const knownInputItemTypes = new Set([
   "message", "agent_message", "reasoning", "function_call", "function_call_output",
   "custom_tool_call", "custom_tool_call_output",
+  "tool_search_call", "tool_search_output",
 ]);
 const unknownInputItemSchema = z.object({ type: z.string() }).loose().refine(
   item => !knownInputItemTypes.has(item.type),
@@ -118,6 +133,8 @@ export const inputItemSchema = z.union([
   functionCallOutputItemSchema,
   customToolCallItemSchema,
   customToolCallOutputItemSchema,
+  toolSearchCallItemSchema,
+  toolSearchOutputItemSchema,
   unknownInputItemSchema,
 ]);
 
@@ -192,6 +209,21 @@ export const responsesRequestSchema = z.object({
         message: "input_file.file_data is unsupported; inline file content was not sent",
         path: ["input", itemIndex, "file_data"],
       });
+    }
+    const output = (item as { output?: unknown }).output;
+    if (((item as { type?: unknown }).type === "function_call_output"
+      || (item as { type?: unknown }).type === "custom_tool_call_output") && Array.isArray(output)) {
+      for (const [blockIndex, block] of output.entries()) {
+        if (block && typeof block === "object" && !Array.isArray(block)
+          && (block as { type?: unknown }).type === "input_image"
+          && !(block as { image_url?: unknown }).image_url) {
+          ctx.addIssue({
+            code: "custom",
+            message: "file_id-only tool-result input_image is unsupported; image content was not sent",
+            path: ["input", itemIndex, "output", blockIndex],
+          });
+        }
+      }
     }
     const blocks = (item as { content?: unknown }).content;
     if (!Array.isArray(blocks)) continue;
