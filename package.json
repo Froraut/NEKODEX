@@ -1,8 +1,8 @@
 {
   "name": "codex-chatgpt-web",
-  "version": "5.1.0-froraut.18",
+  "version": "5.2.0-nekodex.1",
   "private": true,
-  "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
+  "description": "NEKODEX \u2014 a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
   "repository": {
     "type": "git",

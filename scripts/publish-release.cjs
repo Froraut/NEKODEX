@@ -24,7 +24,7 @@ async function publish() {
   if (existing.status === 0) throw new Error("Release tag already exists; refusing to overwrite release assets");
   const notes = path.resolve(__dirname, "../docs/releases", `${version}.md`);
   gh(["release", "create", tag, ...files.map(file => path.join(directory, file)), "--repo", repository,
-    "--verify-tag", "--draft", "--title", `${tag} · FroRaut fork`,
+    "--verify-tag", "--draft", "--title", `NEKODEX ${version}`,
     ...(fs.existsSync(notes) ? ["--notes-file", notes] : ["--generate-notes"])]);
   const remote = JSON.parse(gh(["release", "view", tag, "--repo", repository, "--json", "assets"]));
   if (remote.assets.length !== files.length) throw new Error("Draft release asset count mismatch; draft remains unpublished");

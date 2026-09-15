@@ -1,7 +1,7 @@
 # Fork release authenticity, provenance and native signing
 
 This fork replaces the upstream installation by the owner's explicit choice. It retains
-`dev.codexwebgpt.launcher`, the `Codex Web GPT` application name, the NSIS GUID and existing
+`dev.codexwebgpt.launcher`, compatible storage paths and the **NEKODEX** application name, the NSIS GUID and existing
 profile locations. It does not create a second profile or copy/delete browser credentials.
 `launcher/package.json` identifies FroRaut as the maintainer, records upstream attribution,
 and declares `installationMode: replace-upstream`. Asset/update ownership stays pinned to
@@ -226,3 +226,11 @@ and launcher smoke run on every release architecture. The package step still ver
 macOS ZIP's Developer ID signature, expected team, notarization ticket, Gatekeeper assessment
 and runtime integrity. Metadata signatures, uploaded asset digests and GitHub attestations remain
 required. Full source verification is not launched by a prerelease dispatch.
+
+## NEKODEX 5.2 macOS distribution
+
+The app and DMG use NEKODEX branding. The ZIP/runtime filenames keep their compatibility prefixes.
+Publisher packaging now signs the final DMG, submits that disk image separately to Apple,
+staples and validates its ticket, and checks its primary signature with Gatekeeper before
+metadata signing. The application inside the ZIP is independently signed and notarized as before.
+The first transition from the old executable name requires manual DMG installation.

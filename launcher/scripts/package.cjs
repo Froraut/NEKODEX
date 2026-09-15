@@ -103,6 +103,32 @@ function verifySignedMacArchive() {
   }
 }
 
+
+// Sign and notarize the final disk image separately from its already-notarized app.
+// This runs before checksum generation and upload, so authenticated metadata binds stapled bytes.
+function signAndNotarizeMacDmg() {
+  const images = fs.readdirSync(staging).filter(name => name.endsWith(".dmg"));
+  if (images.length !== 1) throw new Error("Expected exactly one release DMG");
+  const image = path.join(staging, images[0]);
+  runChecked("codesign", ["--force", "--timestamp", "--keychain", env.CODEX_WEB_GPT_SIGNING_KEYCHAIN,
+    "--sign", env.CSC_NAME, image]);
+  const credentials = env.APPLE_KEYCHAIN_PROFILE
+    ? ["--keychain-profile", env.APPLE_KEYCHAIN_PROFILE, ...(env.APPLE_KEYCHAIN ? ["--keychain", env.APPLE_KEYCHAIN] : [])]
+    : ["--key", env.APPLE_API_KEY, "--key-id", env.APPLE_API_KEY_ID, "--issuer", env.APPLE_API_ISSUER];
+  const submission = spawnSync("xcrun", ["notarytool", "submit", image, ...credentials,
+    "--wait", "--output-format", "json"], {
+    env, encoding: "utf8", timeout: 20 * 60 * 1000, maxBuffer: 1024 * 1024, shell: false,
+  });
+  if (submission.error || submission.status !== 0) throw new Error("DMG notarization submission failed");
+  const receipt = JSON.parse(submission.stdout);
+  if (receipt.status !== "Accepted") throw new Error(`DMG notarization was not accepted (${receipt.status})`);
+  console.log(`DMG notarization accepted: ${receipt.id}`);
+  runChecked("xcrun", ["stapler", "staple", image]);
+  runChecked("xcrun", ["stapler", "validate", image]);
+  verifyMacPublisher(image, env);
+  runChecked("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", image]);
+}
+
 try {
   const result = spawnSync(executable, [
     ...builderArgs,
@@ -115,7 +141,10 @@ try {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
-  if (target === "--mac") verifySignedMacArchive();
+  if (target === "--mac") {
+    verifySignedMacArchive();
+    if (signing.release) signAndNotarizeMacDmg();
+  }
   if (target === "--win" && signing.release) verifyWindowsTree(staging, env);
 
   fs.mkdirSync(artifactsDirectory, { recursive: true });

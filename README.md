@@ -1,305 +1,184 @@
-<h1 align="center">NEKODEX</h1>
+<div align="center">
+  <img src="launcher/assets/icon.png" alt="NEKODEX cat icon" width="112" />
+  <h1>NEKODEX</h1>
+  <p><strong>Your ChatGPT accounts. Your coding workspace.</strong></p>
+  <p>A standalone desktop workspace that connects ChatGPT Web to Codex tasks and local tools.</p>
+  <p>
+    <a href="https://github.com/Froraut/codex-chatgpt-web/releases/tag/v5.2.0-nekodex.1">Download for macOS</a> ·
+    <a href="docs/architecture.md">Architecture</a> ·
+    <a href="TROUBLESHOOTING.md">Troubleshooting</a> ·
+    <a href="SECURITY.md">Security</a>
+  </p>
+</div>
 
-A desktop workspace for your ChatGPT accounts, coding agents, and local tools.
-NEKODEX has an original cat-and-code icon, an Overview, dedicated account
-management, and a graphite/lavender interface. See the [design and compatibility
-notes](docs/design/nekodex.md).
+NEKODEX brings account management, browser sessions, model setup, MCP tools and runtime activity
+into one desktop app. Its graphite-and-lavender interface and animated coding cat are part of its
+own identity. The project builds on Codex Web GPT, while keeping the original MIT attribution and
+compatible account/profile storage.
 
-**Development source:** the NEKODEX UI is in source; it is not a new signed release.
-The first NEKODEX binary needs a manual installation transition because older
-updaters validate the former executable name. Existing browser profile and data
-identifiers are retained to preserve account state.
+Maintained by **FroRaut**, based on [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web).
+The GitHub repository retains its historical URL.
 
-Maintained by **FroRaut**, based on
-[miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web).
-Original authorship and MIT licensing are preserved. See the
-[review and improvement roadmap](docs/reviews/2026-09-11-review.md).
+## Download and install
+
+**Current NEKODEX release: 5.2.0-nekodex.1 — macOS prerelease.**
+
+| Mac | Installer |
+| --- | --- |
+| Apple Silicon — M1 and later | [NEKODEX DMG · arm64](https://github.com/Froraut/codex-chatgpt-web/releases/download/v5.2.0-nekodex.1/NEKODEX-5.2.0-nekodex.1-mac-arm64.dmg) |
+| Intel | [NEKODEX DMG · x64](https://github.com/Froraut/codex-chatgpt-web/releases/download/v5.2.0-nekodex.1/NEKODEX-5.2.0-nekodex.1-mac-x64.dmg) |
+
+Requires macOS 13 or later. Windows and Linux source support remains in the repository; this release
+publishes macOS packages only. See the [release notes](docs/releases/5.2.0-nekodex.1.md) for scope and
+verification limits.
+
+1. Download the DMG for your Mac.
+2. Quit an existing NEKODEX or Codex Web GPT instance.
+3. Open the DMG and drag **NEKODEX** into **Applications**.
+4. Launch NEKODEX and follow **Continue setup**.
+
+The release pipeline requires Developer ID signing and Apple notarization for the app and the final
+DMG, plus a stapled ticket. Release assets include checksums, signed metadata and GitHub build
+attestations. The Apple certificate identifies its legal holder; FroRaut is the public maintainer.
+See [release authenticity](docs/release-signing.md) for the exact trust boundaries.
+
+### Moving from Codex Web GPT
+
+Install this first NEKODEX-branded version manually from its DMG. Older updaters can reject the
+renamed executable. The bundle identifier and existing storage locations remain compatible so an
+existing account session and settings can be reused. Keep the old app closed during the transition;
+remove the obsolete app bundle after confirming NEKODEX opens correctly. Do not delete its
+Application Support/profile folders as part of removing the old app.
+
+Some ZIP, runtime archive, package and environment-variable names still contain `codex-web-gpt` or
+`codex-chatgpt-web`. They are compatibility identifiers; the installed application is **NEKODEX**.
+
+## What is inside
+
+- **Overview:** setup guidance, connection status, configured parallel-task limit and eight recent events.
+- **Accounts:** manage ChatGPT profiles and select an account or balance eligible new work across accounts.
+  Existing conversations stay attached to their owning account.
+- **Browser:** task-bound ChatGPT surfaces inside the app, with retained conversations and explicit lifecycle handling.
+- **Setup:** state-aware next steps for connecting models to Codex, with separate repair actions.
+- **Codex tools (MCP):** connect the tools of the active Codex task through a turn-bound capability.
+- **Activity and settings:** runtime events, model preferences, interaction mode and resource settings.
+- **Responsive interface:** larger consistent type, adaptable layouts and scroll areas with room for controls.
+- **Coding cat:** varied head, ear, eye, mouth, paw and tail reactions; reduced-motion preferences are respected.
+
+## How the connection works
+
+```text
+Codex task
+   │ Responses API / streamed events
+   ▼
+NEKODEX local bridge
+   ├── Native model requests ───────────► native Codex backend
+   └── Web model requests ──────────────► task-bound ChatGPT browser session
+                                                │
+                                      MCP connector in Full mode
+                                                │
+                                                ▼
+                                     tools of the same Codex task
+```
+
+Codex owns the task, tool execution and its approval policies. NEKODEX routes selected Web-model
+requests into ChatGPT and brings visible output and tool activity back to that task. Sequential
+turns can reuse the exact retained browser conversation; context compaction establishes a new epoch.
+Native requests preserve their upstream route, while known local Web continuation IDs are expanded
+before a switch back to a native model.
+
+NEKODEX is an unofficial integration. It does not add subscription allowance, unlock unavailable
+models or remove account and workspace policies. ChatGPT processes Web-model prompts remotely.
+Temporary Chat is not local-only inference or anonymity.
+
+## Choose an interaction mode
+
+| Mode | Sending to ChatGPT | Local tools |
+| --- | --- | --- |
+| Automatic, browser-only | NEKODEX prepares and sends through the browser | No MCP harness |
+| Automatic, Full | NEKODEX prepares and sends through the browser | Turn-bound Codex tools through the configured connector |
+| Manual | You paste, choose the model/effort/connector and send | Turn-bound Codex tools through the Manual connector |
+
+Available model entries depend on the authenticated account and inspected ChatGPT capabilities.
+NEKODEX fails explicitly when the requested model or required connector is unavailable.
+
+Manual mode does not read or manipulate the ChatGPT page or press Send. Its routed input is text-only;
+images must be attached manually in ChatGPT. The historical `zero-risk` model IDs remain for
+compatibility; the UI calls this mode **Manual**.
+
+For Full mode, follow the app's MCP setup guide. The automatic connector identity is **Codex Native3**;
+Manual uses **Codex Zero Risk2**. DEV profiles use separate connector identities. The outbound tunnel
+uses [OpenAI tunnel-client](https://github.com/openai/tunnel-client).
+
+Tool access remains tied to the originating Codex turn. A cancelled or timed-out MCP invocation
+retires that turn's binding, including sibling calls, so abandoned responses cannot keep invoking
+local tools. Changing this contract requires safe handling of late native results.
+
+## Reliability and resource use
+
+The NEKODEX backend review led to fixes for helper startup/shutdown, account affinity, local/native
+continuation, checkpoint loading, interrupted integration removal and setup rollback. It also added
+bounds for non-streaming event accumulation, admin request bodies, completed MCP activity records
+and emergency logs.
+
+- The default parallel-task ceiling is **16**, configurable in Settings. This is an admission limit,
+  not a measured promise of sixteen sustained browser/model sessions or increased account quota.
+- Retained surfaces remain owned until physical helper cleanup completes. Expired logical state
+  cannot silently release a still-owned browser.
+- Unsupported inline file payloads fail explicitly instead of becoming empty placeholders.
+- A failed final route commit attempts to restore the prior setup-owned configuration and services,
+  preserving detected concurrent edits and reporting incomplete compensation.
+- Managed Chrome login attempts use separate temporary profiles and filter persisted browser state.
+- Experimental larger-context operation remains experimental; long-running compaction and model
+  availability depend on the external service.
+
+The [backend fix report](docs/reviews/2026-09-15-sol-backend-fixes.md) records each finding,
+its disposition and the focused verification performed. It does not claim exhaustive testing,
+all-model acceptance or a full Windows runtime validation.
+
+## Build from source
+
+Development requires Bun 1.4.0. Use a native build host for the platform you are packaging.
 
 ```bash
-git clone https://github.com/Froraut/codex-chatgpt-web.git
-cd codex-chatgpt-web
+git clone https://github.com/Froraut/codex-chatgpt-web.git nekodex
+cd nekodex
 bun install --frozen-lockfile
 bun install --frozen-lockfile --cwd launcher
 bun run dev:launcher
 ```
 
-Use Bun 1.4.0. `dev:launcher` uses an isolated development profile for review and login testing.
-`bun run app` also starts the source development launcher. A packaged build is required to replace
-the installed app. See [DEV isolation](docs/dev-chat.md) before enabling a production integration.
+The DEV launcher uses isolated configuration, browser storage and runtime paths. It does not
+replace the installed app or reuse its authenticated profile. See [DEV isolation](docs/dev-chat.md).
 
-<p align="center">
-  <strong>Use ChatGPT Web (including Pro) as native Codex models.</strong><br>
-  Change the model tier, save your workflow.
-</p>
+Select the smallest relevant regression checks for a change. The CI workflow runs mapped named
+cases once on Linux and identifies paths requiring manual review. Full verification and packaging
+are available through an explicit manual CI run. The release pipeline reuses recorded development
+evidence and enforces native signatures, notarization and artifact integrity before publication.
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
-</p>
+For an optional separate Codex profile, inspect and run `scripts/install-nekodex-profile.ts` after
+setting up the local bridge. It writes the NEKODEX profile and model catalog under your Codex home;
+launch it with `codex --profile nekodex`.
 
-<p align="center">
-  <a href="TROUBLESHOOTING.md">Troubleshooting</a> · <a href="SECURITY.md">Security</a> · <a href="CONTRIBUTING.md">Contributing</a>
-</p>
+## Documentation
 
-<p align="center">
-  <a href="https://github.com/Froraut/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/Froraut/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/macOS-arm64%20%7C%20x64-black?logo=apple" alt="macOS arm64 and x64">
-  <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows11" alt="Windows x64">
-  <img src="https://img.shields.io/badge/Linux-x64-fcc624?logo=linux&logoColor=black" alt="Linux x64">
-</p>
+- [Architecture and lifecycle](docs/architecture.md)
+- [NEKODEX design and compatibility](docs/design/nekodex.md)
+- [Troubleshooting and setup walkthroughs](TROUBLESHOOTING.md)
+- [MCP connector migration](docs/mcp-task-access-migration.md)
+- [Transactional updates](docs/transactional-updates.md)
+- [Release signing and provenance](docs/release-signing.md)
+- [Security model](docs/security-model.md) and [reporting a vulnerability](SECURITY.md)
+- [Development chat harness](docs/dev-chat.md)
+- [Latest release notes](docs/releases/5.2.0-nekodex.1.md)
 
-Free and Go accounts get **ChatGPT Web — Luna** in Codex's native model picker. Accounts that
-expose the reasoning selector keep **Instant**, **Medium**, **High**, **Extra High**, and **Pro** as
-their subscription allows. The bridge sends the current compiled Codex task context to a fresh
-ChatGPT Temporary Chat, attaches images, and streams visible reasoning, tool activity, and Markdown
-back into the same Codex task.
+The older [Chinese](README.zh-CN.md) and [Japanese](README.ja.md) guides retain upstream context;
+they have not yet been fully rewritten for the NEKODEX interface. Use this README for current
+branding, macOS installation and release status.
 
-<p align="center">
-  <img src="assets/demo.gif" alt="A live ChatGPT Web turn using the native Codex harness" width="960">
-</p>
+## License and credits
 
-```text
-Codex task ──Responses + SSE──▶ codex-chatgpt-web ──embedded browser──▶ ChatGPT
-     ▲                                │                                      │
-     └──────── native UI, context, images, tracing, and tool lifecycle ──────┘
-```
-
-Codex keeps the native task, context lifecycle, UI, and tool harness. The local Responses bridge
-routes only the selected model task through a task-bound ChatGPT Temporary Chat; in full mode, MCP
-connects ChatGPT back to the tools of that same Codex task until its next compaction boundary.
-
-## Highlights
-
-- **Native Codex models.** ChatGPT Web runs from Codex's model picker while the original task UI,
-  context lifecycle, streaming, tracing, and tool presentation stay intact.
-- **The full Codex harness over MCP.** Full mode gives every effort exposed by the signed-in account,
-  including Pro, the active task's filesystem, shell, images, approvals, and configured tools/apps.
-- **Continuous task sessions and native compaction.** Sequential messages reuse one task-bound
-  Temporary Chat. At the context boundary, the retained agent writes the checkpoint before Codex
-  starts a clean chat; if that chat was closed, canonical Codex history supplies the fallback.
-- **One cross-platform launcher.** The macOS, Windows, and Linux app owns sign-in, model setup, MCP
-  guidance, health checks, safe diagnostics, and up to sixteen visible task-bound browser tabs.
-- **Fail-closed behavior.** Missing models, tools, or changed ChatGPT UI produce explicit errors
-  instead of silently switching route or capability. End-to-end coverage is documented in
-  [release validation](docs/release-validation.md).
-
-Temporary Chat is a ChatGPT privacy mode, not anonymity or local-only inference: prompts are still
-processed by OpenAI and are subject to the account's settings and OpenAI's
-[Temporary Chat policy](https://help.openai.com/en/articles/8914046-temporary-chat-faq). This project
-is unofficial; users remain responsible for complying with applicable OpenAI terms and workspace
-policies.
-
-## Quick start
-
-Use the source instructions at the top of this page until this fork publishes its first binary
-release. The following packaged-install commands are for future releases of this fork.
-
-Install or update the desktop launcher. To update or repair an existing installation, quit the
-launcher and run the same command again; it replaces the application and embedded runtime while
-preserving the ChatGPT profile and launcher configuration.
-
-**macOS or Linux**
-
-```bash
-curl -fsSL https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
-```
-
-**Windows PowerShell**
-
-```powershell
-irm https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
-```
-
-Then complete the three checks in the app:
-
-1. Sign in directly in the launcher's embedded ChatGPT browser. Ordinary login pages and
-   identity-provider windows stay in the launcher-owned private profile. On macOS, **Use passkey**
-   explicitly opens a dedicated Chrome profile: finish sign-in there, then choose **Import Chrome
-   sign-in** in the launcher to transfer and verify only the allowlisted ChatGPT/OpenAI session.
-2. Run the browser smoke test.
-3. Press **Install models**, restart Codex once, and select a **ChatGPT Web — …** model.
-
-The launcher detects the current account's ChatGPT controls during setup: Free/Go accounts expose
-only Luna, while Pro appears only when the signed-in account exposes it. The separate **MCP** page
-is optional and guides the full-harness setup without terminal commands.
-
-The packaged launcher keeps ChatGPT model turns in its embedded browser. Ordinary embedded login
-needs no installed Chrome/Chromium. The optional macOS passkey flow requires Chrome. Packaged
-builds need no model API key, system Node/Bun, or project-managed browser download.
-
-**Run from source**
-
-```bash
-git clone https://github.com/Froraut/codex-chatgpt-web.git && \
-cd codex-chatgpt-web && \
-bun run app
-```
-
-This source path requires Bun 1.4.0. The command installs locked dependencies in both the repository root and launcher/ before opening the app.
-
-For the complete fork workflow, account/connector boundaries and alternatives, see [Workflow, setup and alternatives](docs/workflow-and-alternatives.md).
-
-[Hermes integration: Web models with Hermes tools](docs/hermes-integration.md)
-
-## Modes
-
-| Mode | Models | Local Codex tools | Extra setup |
-| --- | --- | --- | --- |
-| **Browser-only** | Free/Go: Luna; Plus: Instant–High; Pro: adds Extra High and Pro | No; Codex shows a warning | None |
-| **Full harness (With Automation)** | Free/Go: Luna; Plus: Instant–High; Pro: adds Extra High and Pro | Yes for every listed effort, including Pro | OpenAI tunnel + ChatGPT connector |
-| **Manual mode** | Choose the ChatGPT model and effort manually; optional Pro-sized context | Yes; the full turn-bound Codex harness remains available | Separate OpenAI tunnel + `Codex Zero Risk2` connector; paste and send manually |
-
-Each automatic picker entry has one fixed ChatGPT mode. Codex still displays its built-in Effort and
-Speed rows, but changing them cannot silently change the selected browser model. In automatic Full
-mode every available effort receives the same turn-bound MCP capability. Pro has no separate
-restriction or reduced tool contract.
-
-Manual mode keeps the local Responses bridge and full Codex harness, but never reads or changes the
-ChatGPT page and never sends a prompt for you. The launcher prepares and copies the prompt; you
-choose the model, effort, and `Codex Zero Risk2` connector, then paste and send it yourself. Account
-limits and the effects of MCP/local tools still apply.
-
-Manual mode's Codex route is **text-only** and does not automatically receive Computer Use
-screenshots or other image inputs. Images must be attached manually in ChatGPT; doing so does
-not enable automatic screenshot delivery through the route. For visual checks, use a route that
-supports image input and verify the actual tool result. See the [Computer Use image limitation
-review](docs/upstream-issue-457-computer-use.md) for the separate image, Windows-binding and
-keyboard-error boundaries.
-
-The former **Zero Risk** mode is now named **Manual mode**. Existing `chatgpt-web/zero-risk` and
-`chatgpt-web/zero-risk-pro` model IDs, command flags, and saved settings stay compatible. The exact
-connector name remains `Codex Zero Risk2`; the display rename does not rename your connectors.
-
-## Full harness
-
-Full mode connects ChatGPT's tool calls back to the current Codex task through the official
-[OpenAI tunnel-client](https://github.com/openai/tunnel-client). The tunnel is outbound: it does
-not expose a public IP, open an inbound port, or require router forwarding.
-
-The launcher's **MCP** page guides the complete setup. For the exact clicks, see the
-[video walkthroughs](TROUBLESHOOTING.md).
-
-> **Limits**
->
-> See [Limits](https://github.com/miuuyy/codex-chatgpt-web/discussions/309) for the current
-> ChatGPT message allowances for **GPT-5.6 Sol Pro** and **GPT-6 Astra**. Context limits depend on
-> the account type and selected effort. Plus Medium/High uses a measured 90,000-token window, or
-> up to 270,000 tokens with experimental **3× context** enabled, with native Codex compaction
-> supported throughout.
-
-1. Finish the required setup, open **MCP**, create the Tunnel and regular API key, then press
-   **Connect harness**.
-2. Enable ChatGPT **Developer Mode** and create a new Tunnel connector named exactly
-   **Codex Native3**, with **Authentication: None** and **Allow all actions**.
-3. Run **Verify runtime** to confirm that **Codex Native3** is attached and available.
-
-Upgrading an existing connector requires a new identity, including **Codex Zero Risk2** for
-Manual mode. Follow [MCP task access migration](docs/mcp-task-access-migration.md) and verify the
-new `codex_read_thread` action through a real installed Codex task.
-
-Write/modify actions also require the ChatGPT workspace and its administrator policy to permit
-them. See
-[developer mode and MCP apps](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt).
-Unexpected approval prompts fail closed unless `--auto-approve-tool-calls` is explicitly enabled;
-that option clicks **Allow once**, never a permanent grant.
-
-## Operations
-
-To reuse a ChatGPT account already signed in to your normal Chrome profile, see
-[existing Chrome sign-in](docs/existing-chrome-sign-in.md). This requires Chrome's explicit
-connection permission and transfers only the scoped ChatGPT/OpenAI session into the launcher.
-
-Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
-Use the [scoped account/UI acceptance runner](docs/account-ui-acceptance.md) for versioned offline
-fixtures and separately authorized local or account checks. It defaults to zero account operations.
-Settings can also cancel a retained browser turn or remove the Codex integration before uninstall.
-Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.
-Browser diagnostics retain the latest 50 completed traces and preserve traces owned by active
-helper processes. Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTIC_TRACE_LIMIT` to a value from 1 to 1000
-to change completed-trace retention. Crashed helper traces become eligible for normal pruning.
-
-**Settings → Automated Pro model** can pin automated Pro turns to **GPT-5.6 Sol Pro**,
-**GPT-5.5 Pro**, or **GPT-6 Astra Pro**. The default **Follow ChatGPT** preserves existing behavior.
-The choice applies to the next Pro turn without restarting Codex or the launcher; other efforts and
-manual Manual mode turns are unchanged. An unavailable or unverifiable version stops before sending
-the pending prompt, with no fallback. GPT-6 uses **Latest** only while ChatGPT verifies it as 6 Pro.
-
-New installs use **Compatibility V1** for cross-backend subagents. **Native** preserves Codex's own
-feature settings and enables plaintext Web-to-Web V2 delegation. Restart Codex and start a new task
-after changing the protocol:
-
-```bash
-codex-chatgpt-web subagents status
-codex-chatgpt-web subagents compatibility-v1
-codex-chatgpt-web subagents native
-```
-
-## Limitations and security
-
-- This is unofficial browser automation, not an OpenAI API. ChatGPT UI changes can break selectors;
-  drift fails explicitly instead of silently switching model or transport.
-- Browser state is a sensitive login artifact, and the loopback listener is reachable by processes
-  running as the same local user. Never share the launcher profile; use a trusted workstation.
-- Release packages currently target macOS 13+ (arm64/x64), Windows x64, and Linux x64. Runtime,
-  tests, and packaging are gated on all three in CI; account-bound browser and MCP flows use the
-  separate [release validation](docs/release-validation.md).
-- Builds are not yet platform-signed, so Gatekeeper or SmartScreen may warn. The installers verify
-  the published SHA-256 manifest before installation.
-
-Read the complete [architecture](docs/architecture.md) and
-[security model](docs/security-model.md) before enabling full mode. Report vulnerabilities through
-[SECURITY.md](SECURITY.md).
-
-## Development
-
-```bash
-bun run app
-bun run dev:launcher
-bun run src/cli.ts dev status
-bun run dev:chat compaction-lab "Reply with exactly: DEV READY"
-bun run verify
-bun run smoke:subagents
-bun run app:package
-```
-
-`dev:launcher` starts a second launcher profile under `~/.codex-chatgpt-web-dev`: separate Electron
-state, browser cookies/login, ChatGPT account, configuration, sandboxed `CODEX_HOME`, chats,
-diagnostics, broker, and tunnel profile. It can run beside the normal launcher and never starts a
-Responses daemon or changes Codex. Optional Full setup starts and supervises only its isolated MCP
-tunnel, using the distinct ChatGPT connector name `Codex Native3 DEV`.
-
-`dev:chat` is a named, persistent synthetic outer-Codex harness. It executes the current working
-tree through that isolated launcher browser, Temporary Chat, prompt compiler, Responses parser, and
-compaction handlers. Optional Full setup also exercises the MCP connector and broker; tool effects
-are explicit simulation receipts. Browser-only chats expose no outer tools. It does
-not open a Responses listener, change `openai_base_url`, stop the live daemon, or claim port 17841.
-Run it without a message for `/status`, `/fill 30000`, `/compact`, `/model`, and `/reset` commands.
-Sign in and initialize the profile once inside the window labelled **DEV**. Configure optional Full
-harness only for simulated tool rounds; its launcher keeps the DEV tunnel ready while named chats
-attach their broker on demand. Production credentials and the `Codex Native3` connector are never
-reused implicitly. See
-[DEV chat harness](docs/dev-chat.md).
-
-- [Architecture](docs/architecture.md)
-- [DEV chat harness](docs/dev-chat.md)
-- [Security model](docs/security-model.md)
-- [Troubleshooting](TROUBLESHOOTING.md)
-- [Contributing](CONTRIBUTING.md)
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=Froraut%2Fcodex-chatgpt-web&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&theme=dark&legend=top-left">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&legend=top-left">
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Froraut/codex-chatgpt-web&type=date&legend=top-left">
-  </picture>
-</a>
-
-## Disclaimer
-
-This is independent software and is not affiliated with or endorsed by OpenAI. Use it only with
-your own account and in accordance with applicable [Terms of Use](https://openai.com/policies/terms-of-use/)
-and workspace policies; it does not bypass authentication or access controls.
-
-Having trouble? See [Troubleshooting](TROUBLESHOOTING.md) for common problems and their solutions.
+NEKODEX is maintained by **FroRaut** and derived from **miuuyy/codex-chatgpt-web**.
+Original authorship and the [MIT license](LICENSE) are preserved. Bundled components retain their
+own licenses; each release includes third-party notices and the applicable runtime licenses.
+NEKODEX is not affiliated with or endorsed by OpenAI.
