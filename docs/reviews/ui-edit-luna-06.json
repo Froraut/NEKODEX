@@ -1,0 +1,116 @@
+{
+  "lane": 6,
+  "model": "Luna medium",
+  "scope": {
+    "requestedOwner": "launcher/src/Settings.tsx",
+    "repository": "/Users/alex/Dev/nekodex",
+    "sourcePathPresent": false,
+    "sourceSurfaceLocation": {
+      "settingsAndMcp": "launcher/src/App.tsx",
+      "accounts": "launcher/src/AccountSettings.tsx"
+    }
+  },
+  "fixed": [
+    {
+      "root": "verified-account-lock",
+      "status": "observed-existing",
+      "file": "launcher/src/AccountSettings.tsx",
+      "details": "Fully verified accounts disable the enabled checkbox and account/connector checks and show an explicit Replace credentials primary label."
+    },
+    {
+      "root": "mcp-current-step",
+      "status": "observed-existing",
+      "file": "launcher/src/App.tsx",
+      "details": "The active MCP step exposes aria-current=step."
+    },
+    {
+      "root": "visible-branding",
+      "status": "observed-existing",
+      "files": ["README.md", "launcher/src/i18n.ts"],
+      "details": "Current visible product copy includes NEKODEX branding corrections."
+    }
+  ],
+  "partial": [
+    {
+      "root": "account-selection",
+      "file": "launcher/src/AccountSettings.tsx",
+      "details": "Select requires authenticated and checked, but does not require connectorReady."
+    },
+    {
+      "root": "explicit-account-replace",
+      "file": "launcher/src/AccountSettings.tsx",
+      "details": "Replace credentials is visible, but the current handler follows the existing select/open-login path rather than a distinct replacement transition."
+    },
+    {
+      "root": "mcp-step-accessibility",
+      "file": "launcher/src/App.tsx",
+      "details": "aria-current is present, while completed-state naming and focus on step content remain incomplete."
+    }
+  ],
+  "unfixed": [
+    {
+      "root": "owned-settings-file",
+      "details": "launcher/src/Settings.tsx is absent; no live owned settings component could be edited."
+    },
+    {
+      "root": "mcp-radio-keyboard",
+      "file": "launcher/src/App.tsx",
+      "details": "Custom radio groups lack roving tabindex and Arrow/Home/End handling."
+    },
+    {
+      "root": "mcp-language-listbox",
+      "file": "launcher/src/App.tsx",
+      "details": "Language listbox lacks full keyboard navigation and dependable trigger focus restoration."
+    },
+    {
+      "root": "mcp-credential-validation",
+      "file": "launcher/src/App.tsx",
+      "details": "Whitespace-only credentials can pass the submit gate and lack field-level invalid messaging."
+    },
+    {
+      "root": "mcp-dialog-and-step-focus",
+      "file": "launcher/src/App.tsx",
+      "details": "Focus containment/restoration and step-transition focus are incomplete."
+    },
+    {
+      "root": "loading-error-retry",
+      "details": "Only the existing account loading retry path was observed; other callers were outside ownership and unchanged."
+    }
+  ],
+  "rejected": [
+    {
+      "root": "out-of-scope-source-edits",
+      "files": ["launcher/src/App.tsx", "launcher/src/AccountSettings.tsx", "launcher/src/i18n.ts", "README.md"],
+      "reason": "Outside explicit lane ownership and already modified in the shared tree."
+    },
+    {
+      "root": "compatibility-renames",
+      "reason": "Package names, environment variables, service labels, route IDs, imports, filesystem paths, compatibility identifiers, and historical URLs were explicitly protected."
+    },
+    {
+      "root": "aesthetic-only-edits",
+      "reason": "No forced visual changes without a concrete interaction or accessibility defect."
+    },
+    {
+      "root": "unmounted-settings-shim",
+      "reason": "Creating a duplicate Settings.tsx without integrating its caller would not fix the live surface."
+    }
+  ],
+  "changedFiles": [
+    "docs/reviews/ui-edit-luna-06.md",
+    "docs/reviews/ui-edit-luna-06.json"
+  ],
+  "verification": {
+    "mode": "manual source review only",
+    "tests": false,
+    "typechecks": false,
+    "scripts": false,
+    "runtime": false,
+    "appStart": false,
+    "screenshotsGenerated": false,
+    "commit": false,
+    "push": false,
+    "delegation": false,
+    "limits": "Source-level state only; installed-app, live account, screen-reader, and runtime behavior remain unverified."
+  }
+}

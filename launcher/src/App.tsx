@@ -38,7 +38,7 @@ const COMPACT_SIDEBAR_QUERY = "(max-width: 820px)";
 const MCP_GUIDE_MEDIA = [
   new URL("./assets/mcp-create-tunnel.mp4", import.meta.url).href,
   new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
-  new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
+  null,
 ] as const;
 
 function smokePassedForState(state: LauncherState, version: string): boolean {
@@ -1610,6 +1610,8 @@ function McpSurface({
   const [localBusy, setLocalBusy] = useState(false);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
+  const wizardHeading = useRef<HTMLHeadingElement>(null);
+  const previousStep = useRef(step);
   const verified = !configuringInactiveMode && currentToolProof(snapshot, operation);
   const manualInteraction = interactionMode === "manual";
   const steps = useMemo(() => [
@@ -1621,6 +1623,12 @@ function McpSurface({
     },
   ], [copy, manualInteraction]);
   const guideMedia = MCP_GUIDE_MEDIA[step];
+
+  useEffect(() => {
+    if (previousStep.current === step) return;
+    previousStep.current = step;
+    requestAnimationFrame(() => wizardHeading.current?.focus());
+  }, [step]);
 
   const move = async (next: number) => {
     const state = await api!.setMcpStep(next);
@@ -1697,11 +1705,12 @@ function McpSurface({
         <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
       ) : null}
 
-      <div className="wizard-stepper" aria-label={`${step + 1} / 3`}>
+      <div className="wizard-stepper" aria-label={`${copy.localTools}: ${step + 1} / 3`} role="group">
         {steps.map((item, index) => (
           <button
             className={`${index === step ? "is-active" : ""}${index < step || (index === 2 && verified) ? " is-complete" : ""}`}
             aria-label={`${index + 1}. ${item.title}`}
+            aria-current={index === step ? "step" : undefined}
             title={item.title}
             disabled={busy || index > step}
             key={item.title}
@@ -1714,7 +1723,7 @@ function McpSurface({
         ))}
       </div>
 
-      <div className="mcp-stage">
+      <div aria-busy={busy} className="mcp-stage">
         {guideMedia ? <details className="setup-video-help" onToggle={event => { if (!event.currentTarget.open) event.currentTarget.querySelector("video")?.pause(); }}><summary>{copy.guideVideo}</summary>
           <TutorialVideo
             copy={copy}
@@ -1730,7 +1739,7 @@ function McpSurface({
             <header>
               <span>0{step + 1}</span>
               <div>
-                <h2>{steps[step]!.title}</h2>
+                <h2 ref={wizardHeading} tabIndex={-1}>{steps[step]!.title}</h2>
                 <p>{steps[step]!.body}</p>
               </div>
             </header>
@@ -1767,6 +1776,8 @@ function McpSurface({
                 <div className="field-list">
                   <FieldRow label={copy.tunnelId}>
                     <input
+                      aria-describedby="mcp-credentials-hint"
+                      aria-invalid={Boolean(tunnelId && !tunnelId.trim())}
                       autoCapitalize="none"
                       autoCorrect="off"
                       onChange={(event) => setTunnelId(event.target.value)}
@@ -1777,6 +1788,8 @@ function McpSurface({
                   </FieldRow>
                   <FieldRow label={copy.runtimeKey}>
                     <input
+                      aria-describedby="mcp-credentials-hint"
+                      aria-invalid={Boolean(runtimeKey && !runtimeKey.trim())}
                       autoCapitalize="none"
                       autoCorrect="off"
                       onChange={(event) => setRuntimeKey(event.target.value)}
@@ -1804,7 +1817,7 @@ function McpSurface({
               )
             ) : null}
             {step === 1 ? (
-              <p className="mcp-step-two-hint">
+            <p className="mcp-step-two-hint" id="mcp-credentials-hint">
                 {manualInteraction || configuringInactiveMode || snapshot.state.codexCatalogVerified
                   ? copy.mcpStepTwoHint
                   : copy.mcpCatalogRequired}
@@ -1854,7 +1867,7 @@ function McpSurface({
             disabled={
               busy
               || (!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified)
-              || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
+              || ((!credentialsConfigured || replacingCredentials) && (!tunnelId.trim() || !runtimeKey.trim()))
             }
             onClick={() => void install()}
           >
@@ -2408,6 +2421,7 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
   const [expanded, setExpanded] = useState(false);
   const inlineVideo = useRef<HTMLVideoElement>(null);
   const expandedVideo = useRef<HTMLVideoElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
   const expandedAt = useRef(0);
 
   const closeExpanded = () => {
@@ -2416,6 +2430,7 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
       inlineVideo.current.currentTime = currentTime ?? 0;
     }
     setExpanded(false);
+    requestAnimationFrame(() => opener.current?.focus());
   };
 
   useEffect(() => {
@@ -2434,7 +2449,8 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
         <button
           aria-label={copy.expandGuideVideo}
           className="guide-media-expand"
-          onClick={() => {
+          onClick={(event) => {
+            opener.current = event.currentTarget;
             expandedAt.current = inlineVideo.current?.currentTime ?? 0;
             inlineVideo.current?.pause();
             setExpanded(true);
@@ -2450,6 +2466,7 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
           aria-modal="true"
           className="guide-media is-expanded"
           role="dialog"
+          tabIndex={-1}
         >
           <video
             aria-label={label}

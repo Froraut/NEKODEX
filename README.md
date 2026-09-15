@@ -2,7 +2,7 @@
   <img src="launcher/assets/icon.png" alt="NEKODEX cat icon" width="112" />
   <h1>NEKODEX</h1>
   <p><strong>Your ChatGPT accounts. Your coding workspace.</strong></p>
-  <p>A standalone desktop workspace that connects ChatGPT Web to Codex tasks and local tools.</p>
+  <p>A standalone NEKODEX workspace for accounts, coding tasks and local tools.</p>
   <p>
     <a href="https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.1">Download for macOS</a> ·
     <a href="docs/architecture.md">Architecture</a> ·
@@ -13,8 +13,8 @@
 
 NEKODEX brings account management, browser sessions, model setup, MCP tools and runtime activity
 into one desktop app. Its graphite-and-lavender interface and animated coding cat are part of its
-own identity. The project builds on Codex Web GPT, while keeping the original MIT attribution and
-compatible account/profile storage.
+own identity. NEKODEX preserves compatible account/profile storage and the original MIT attribution
+from its upstream open-source base.
 
 Maintained by **FroRaut**, based on [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web).
 The repository is now **Froraut/NEKODEX**; the previous GitHub URL redirects here.
@@ -33,7 +33,7 @@ publishes macOS packages only. See the [release notes](docs/releases/5.2.0-nekod
 verification limits.
 
 1. Download the DMG for your Mac.
-2. Quit an existing NEKODEX or Codex Web GPT instance.
+2. Quit any older installation before opening NEKODEX.
 3. Open the DMG and drag **NEKODEX** into **Applications**.
 4. Launch NEKODEX and follow **Continue setup**.
 
@@ -42,16 +42,16 @@ DMG, plus a stapled ticket. Release assets include checksums, signed metadata an
 attestations. The Apple certificate identifies its legal holder; FroRaut is the public maintainer.
 See [release authenticity](docs/release-signing.md) for the exact trust boundaries.
 
-### Moving from Codex Web GPT
+### Migrating to NEKODEX
 
-Install this first NEKODEX-branded version manually from its DMG. Older updaters can reject the
+Install this NEKODEX version manually from its DMG. Older updaters can reject the
 renamed executable. The bundle identifier and existing storage locations remain compatible so an
 existing account session and settings can be reused. Keep the old app closed during the transition;
 remove the obsolete app bundle after confirming NEKODEX opens correctly. Do not delete its
 Application Support/profile folders as part of removing the old app.
 
-Some ZIP, runtime archive, package and environment-variable names still contain `codex-web-gpt` or
-`codex-chatgpt-web`. They are compatibility identifiers; the installed application is **NEKODEX**.
+Some ZIP, runtime archive, package, environment-variable, service and profile names remain legacy
+compatibility identifiers. They are not the product name; the installed application is **NEKODEX**.
 
 ## What is inside
 
@@ -210,7 +210,7 @@ branding, macOS installation and release status.
 
 ## License and credits
 
-NEKODEX is maintained by **FroRaut** and derived from **miuuyy/codex-chatgpt-web**.
+NEKODEX is maintained by **FroRaut** and preserves upstream attribution for the open-source base.
 Original authorship and the [MIT license](LICENSE) are preserved. Bundled components retain their
 own licenses; each release includes third-party notices and the applicable runtime licenses.
 NEKODEX is not affiliated with or endorsed by OpenAI.

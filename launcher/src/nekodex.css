@@ -379,14 +379,32 @@
   .next-surface-row { grid-template-columns: 22px minmax(0, 1fr) 16px; }
   .next-surface-row em { display: none; }
 }
-/* Motion is limited to cat anatomy; controls and scene props stay stationary. */
+/* Motion is limited to cat anatomy; functional progress indicators stay alive. */
 .app-root *:not(.neko-tracking):not(.neko-head):not(.neko-ear):not(.neko-face):not(.neko-eye):not(.neko-mouth):not(.neko-tongue):not(.coding-cat-head):not(.coding-cat-paw):not(.coding-cat-tail),
 .app-root *::before, .app-root *::after {
   animation: none !important;
   transition: none !important;
   scroll-behavior: auto !important;
 }
+.app-root .tab-spinner,
+.app-root .browser-loading-line::after,
+.app-root .state-dot.is-busy,
+.app-root .action-dot.is-pulse {
+  animation: none !important;
+}
+.app-root .tab-spinner { animation: spin 0.8s linear infinite !important; }
+.app-root .browser-loading-line::after { animation: browserProgress 1.25s var(--ease-enter) infinite !important; }
+.app-root .state-dot.is-busy,
+.app-root .action-dot.is-pulse { animation: statePulse 1.3s ease-in-out infinite !important; }
 .app-root .button-primary:active:not(:disabled) { transform: none; }
+/* Keep operational progress visible; the motion guard above is for decorative scene props. */
+.app-root .state-dot.is-busy { animation: statePulse 1.3s ease-in-out infinite !important; }
+.app-root .action-dot.is-pulse { animation: statePulse 1.3s ease-in-out infinite !important; }
+.app-root .tab-spinner { animation: spin 0.8s linear infinite !important; }
+.app-root .browser-loading-line::after { animation: browserProgress 1.25s var(--ease-enter) infinite !important; }
+.connection-list > button:focus-visible,
+.workspace-metrics > button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.account-actions > button:disabled { opacity: .58; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .brand-mark .neko-tracking, .brand-mark .neko-face { transform: none; }

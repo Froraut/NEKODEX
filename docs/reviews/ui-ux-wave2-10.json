@@ -1,0 +1,62 @@
+{
+  "lane": 10,
+  "findings": [
+    {
+      "severity": "P2",
+      "component": "MCP_GUIDE_MEDIA / McpSurface",
+      "line": "launcher/src/App.tsx:38-42, 1623-1624",
+      "trigger": "Advance to MCP step 3 and open Guide video",
+      "actual": "Step 3 maps to the same mcp-connect-connector.mp4 asset as step 2",
+      "expected": "Show a connector-attachment video or omit the guide affordance when no asset exists",
+      "smallestFix": "Add a third asset and map index 2 to it, or make index 2 null and hide the video summary",
+      "confidence": "high"
+    },
+    {
+      "severity": "P2",
+      "component": "McpSurface step transition",
+      "line": "launcher/src/App.tsx:1625-1629, 1726-1729",
+      "trigger": "Activate Next, Previous, or a completed step with the keyboard",
+      "actual": "The new step remounts without moving focus or announcing the new heading",
+      "expected": "Focus the new step heading or first invalid control after transition",
+      "smallestFix": "Focus a tabIndex=-1 step heading from an effect keyed by step",
+      "confidence": "high"
+    },
+    {
+      "severity": "P2",
+      "component": "TutorialVideo expanded dialog",
+      "line": "launcher/src/App.tsx:2421-2428, 2447-2475",
+      "trigger": "Open the expanded video, tab, or close with Escape",
+      "actual": "The aria-modal dialog has no focus containment or restoration to the invoking button",
+      "expected": "Keep focus in the dialog and restore it to the expand control on close",
+      "smallestFix": "Store the invoker ref, restore focus on close, and add a small focus scope/tab cycle",
+      "confidence": "high"
+    },
+    {
+      "severity": "P2",
+      "component": "MCP wizard stepper",
+      "line": "launcher/src/App.tsx:1700-1714",
+      "trigger": "Inspect or navigate the stepper with assistive technology",
+      "actual": "The container has only a numeric aria-label and the active step has no current-step semantics",
+      "expected": "Expose step navigation, current step, and completion state accessibly",
+      "smallestFix": "Add stepper region semantics, aria-current=step, and localized status in accessible names",
+      "confidence": "medium-high"
+    }
+  ],
+  "rejected": [
+    "Credentials are read-only after completion and unlock only through explicit Replace credentials / keep-credentials actions",
+    "Reconnect does not silently unlock credential fields",
+    "Technical MCP/connector/runtime identifiers are not branding findings",
+    "Backend MCP proof publication ordering was consistent with the requested state-lock review"
+  ],
+  "cleanAreas": [
+    "Completed credentials are hidden behind a saved-credentials notice",
+    "Renderer verified state is derived from committed backend proof state",
+    "Failed verification clears proof and leaves a retry action",
+    "Browser tab strip has keyboard navigation and roving tabIndex",
+    "Compact CSS handles stepper and credential-row layout at narrow widths"
+  ],
+  "notes": [
+    "Manual source review only against commit 5401800; no runtime, tests, scripts, typechecks, delegation, or edits outside these requested review files",
+    "The snapshot contains only two MCP tutorial video assets, supporting the duplicate step mapping"
+  ]
+}

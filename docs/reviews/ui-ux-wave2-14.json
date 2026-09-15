@@ -1,0 +1,103 @@
+{
+  "lane": 14,
+  "findings": [
+    {
+      "id": "UIUX-W2-14-01",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "2522-2558",
+      "title": "Interaction-mode radio buttons lack keyboard radio behavior",
+      "trigger": "Keyboard user focuses an Automatic or Manual option and presses an arrow key or tabs through the radio group.",
+      "actual": "The group and buttons expose radio roles and aria-checked, but both buttons stay tabbable and no arrow-key or roving-tabindex behavior exists.",
+      "expected": "One selected radio is tabbable; arrow keys move selection and focus within the group and the selected state remains announced.",
+      "smallestFix": "Add roving tabIndex and a shared arrow-key handler that changes and focuses the target option.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-14-02",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "2421-2428, 2447-2475",
+      "title": "Expanded MCP guide video lacks focus containment and restoration",
+      "trigger": "User expands the guide video, tabs through the dialog, or closes it with Escape.",
+      "actual": "The portal declares an aria-modal dialog and autofocuses Close, but does not trap focus or restore focus to the expand control after close.",
+      "expected": "Focus stays in the modal while open and returns to the invoking control after Escape or Close.",
+      "smallestFix": "Store the expand-button ref, add a small focus trap or existing dialog primitive, and restore focus after closing.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-14-03",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "1905-1912",
+      "title": "Activity export has no pending state or duplicate-action guard",
+      "trigger": "User activates Export safe log repeatedly before api.exportLogs() settles or while export is slow.",
+      "actual": "Every activation starts another export; the button has no disabled or busy state and no local completion status.",
+      "expected": "Only one export runs at a time and the control announces loading, completion, or failure.",
+      "smallestFix": "Add local exporting state, disable the button around the promise, and expose a short status message while retaining the error toast.",
+      "confidence": "medium-high"
+    },
+    {
+      "id": "UIUX-W2-14-04",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "1700-1714",
+      "title": "MCP stepper does not expose current or completed state semantically",
+      "trigger": "Screen-reader user navigates the MCP wizard after changing steps or after verification completes.",
+      "actual": "Active/completed state is conveyed by CSS classes and icon replacement; buttons have no aria-current step and no announced completion state.",
+      "expected": "Assistive technology receives the current and completed states conveyed visually while earlier-step navigation remains available.",
+      "smallestFix": "Add aria-current=step to the active button and a localized completion phrase to completed accessible names or descriptions.",
+      "confidence": "medium-high"
+    }
+  ],
+  "rejected": [
+    {
+      "item": "launcher/src/Activity.tsx",
+      "reason": "No separate file exists at baseline 5401800; ActivitySurface is inline in launcher/src/App.tsx."
+    },
+    {
+      "item": "Generic aesthetic preferences",
+      "reason": "No finding was promoted without a reachable interaction, state, responsive, copy, or accessibility impact."
+    },
+    {
+      "item": "Technical compatibility identifiers and connector names",
+      "reason": "Excluded from branding/UI findings by the requested review boundary."
+    },
+    {
+      "item": "Completed MCP credentials and completed setup rows",
+      "reason": "The source already hides saved credential inputs behind an explicit Replace credentials action and blocks completed non-repeatable setup actions."
+    }
+  ],
+  "cleanAreas": [
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1901-1925",
+      "note": "Activity search and level filter labels are present and the no-log/no-match states are distinct."
+    },
+    {
+      "component": "launcher/src/Overview.tsx",
+      "lines": "49-52",
+      "note": "Recent activity has a View all entry and an explicit empty state."
+    },
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1647-1689",
+      "note": "MCP install and verify guard re-entry, clear errors before operations, and preserve committed setup after a stale metadata refresh."
+    },
+    {
+      "component": "launcher/src/ExistingChromeLoginGuide.tsx and launcher/src/PasskeyLoginGuide.tsx",
+      "lines": "ExistingChromeLoginGuide.tsx:69-93; PasskeyLoginGuide.tsx:37-54",
+      "note": "Loading, terminal, error, and retry states use live status/alert regions and terminal retry gates."
+    },
+    {
+      "component": "launcher/src/nekodex.css and launcher/src/styles.css",
+      "lines": "nekodex.css:356-370; styles.css:1765-1797",
+      "note": "The wizard footer and MCP fields wrap/collapse at narrow widths consistent with the reviewed MCP screenshot."
+    }
+  ],
+  "notes": [
+    "Baseline: 5401800.",
+    "Manual source and screenshot review only; no tests, typechecks, scripts, runtime/app starts, commits, pushes, or delegation.",
+    "Reviewed docs/design/screenshots/mcp-responsive.png for narrow MCP wizard behavior."
+  ]
+}

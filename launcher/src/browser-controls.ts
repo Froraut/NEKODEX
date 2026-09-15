@@ -14,6 +14,9 @@ export function browserControls(
     || (operation?.name === "passkey-login" && operation.status === "running"));
   const turnBusy = browser?.status === "running" || browser?.status === "testing";
   const unrelatedOperation = operation?.status === "running" && operation.name !== "passkey-login";
+  // Connector verification owns the browser session even when no browser turn is active.
+  // Keep this in the shared lock so toolbar navigation and its defensive handler agree.
+  const mcpVerificationRunning = operation?.status === "running" && operation.name === "mcp-verification";
   const existingChromeAvailable = interactionMode === "automatic"
     && ["darwin", "win32", "linux"].includes(platform) && browser?.authenticated !== true;
   const existingChromeWaiting = existingChromeAvailable && (browser?.loginKind === "existing-chrome"
@@ -24,7 +27,7 @@ export function browserControls(
   return {
     // Login can still be waiting while the page reports signed-out or ready.
     // The main process owns this lock; page loading is not a reliable proxy.
-    navigationLocked: browser?.navigationLocked === true || browser?.loginInProgress === true || turnBusy || passkeyWaiting || existingChromeWaiting,
+    navigationLocked: browser?.navigationLocked === true || browser?.loginInProgress === true || turnBusy || passkeyWaiting || existingChromeWaiting || mcpVerificationRunning,
     passkeyAvailable,
     passkeyWaiting,
     passkeyCanImport: passkeyWaiting && browser?.passkeyLogin?.canImport === true,

@@ -1,0 +1,82 @@
+{
+  "lane": 7,
+  "findings": [
+    {
+      "id": "UIUX-W2-07-01",
+      "severity": "P1",
+      "component": "launcher/src/AccountSettings.tsx",
+      "line": "91-103",
+      "trigger": "authenticated=true, checked=true, connectorReady=true; the user returns to the account card and reaches its controls",
+      "actual": "Sign in / Open, Check account, Check connector, and the enable checkbox remain actionable outside the unrelated global busy state; no explicit Replace/Edit/Upgrade unlock transition exists",
+      "expected": "A completed account is read-only and only an explicit Replace/Edit/Upgrade action unlocks the relevant operation",
+      "smallestFix": "Derive verified locked predicates, disable or replace post-success actions, and add one explicit state-owning Replace/Edit/Upgrade transition with state-specific accessible text",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-07-02",
+      "severity": "P1",
+      "component": "launcher/src/AccountSettings.tsx",
+      "line": "80-101",
+      "trigger": "authenticated=false or checked=false or connectorReady=false; the user activates Select on a non-current account",
+      "actual": "Select is gated only by busy/current state and can mark an incomplete account current while its status facts remain pending",
+      "expected": "Selection is gated by the mode-specific minimum verified state or becomes Continue setup without changing the current account",
+      "smallestFix": "Add a mode-aware readiness predicate and provide a setup action or disabled explanation for ineligible accounts",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-07-03",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "line": "1700-1713",
+      "trigger": "A keyboard or screen-reader user opens the MCP wizard and moves between its steps",
+      "actual": "The plain div aria-label 1 / 3 and visual is-active class do not expose a programmatic current step or coherent completed-step state",
+      "expected": "Assistive technology announces the current, completed, and available wizard steps independently of visual styling",
+      "smallestFix": "Add stepper grouping/label semantics, aria-current=step on the active button, and an accessible completion state",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-07-04",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "line": "2413-2428, 2447-2477",
+      "trigger": "A keyboard user opens the expanded MCP guide video and closes it with Escape or Close",
+      "actual": "Focus is not restored to the expand control and the portal does not contain focus while open, so the user can lose keyboard context in the wizard",
+      "expected": "Focus enters the dialog, remains contained while open, and returns to the exact launch control on every close path",
+      "smallestFix": "Retain an expand-button ref, add modal focus containment, and restore that ref after Escape or Close while preserving video time",
+      "confidence": "high"
+    }
+  ],
+  "rejected": [
+    {
+      "item": "launcher/src/Accounts.tsx",
+      "reason": "The file is absent at baseline 5401800; the account surface is AccountSettings.tsx."
+    },
+    {
+      "item": "Account snapshot freshness",
+      "reason": "Current AccountSettings.tsx subscribes to browser/operation events and guards stale responses by revision; no new stale-display defect was supported."
+    },
+    {
+      "item": "Login selection race",
+      "reason": "Current account-pool.cjs contains selection revision checks and a pool-owned login operation; no separate new UI defect was established from the renderer call."
+    },
+    {
+      "item": "MCP saved credentials fields",
+      "reason": "The wizard already replaces configured fields with a read-only notice and an explicit Replace credentials action."
+    },
+    {
+      "item": "Branding or technical identifiers",
+      "reason": "Technical compatibility identifiers were not treated as branding problems."
+    }
+  ],
+  "cleanAreas": [
+    "AccountSettings.tsx:67-70 provides loading status, retry, and aria-busy during mutations.",
+    "AccountSettings.tsx:45-59 coalesces event refreshes and rejects stale responses by revision.",
+    "App.tsx:1749-1802 provides read-only saved credentials with explicit Replace and Keep credentials actions.",
+    "Responsive MCP field stacking is defined in styles.css:2752-2805; no additional reachable responsive defect was established from static evidence."
+  ],
+  "notes": [
+    "Manual read-only source and screenshot review at commit 540180047f8a6bee4b735d62a89d3eb64dc428a7.",
+    "No tests, typechecks, scripts, runtime/app starts, commits, pushes, or delegation were performed.",
+    "No claim is made about live ChatGPT authentication, connector approval, runtime focus behavior, or every window size."
+  ]
+}

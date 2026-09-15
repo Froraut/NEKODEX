@@ -1,0 +1,96 @@
+{
+  "lane": 6,
+  "findings": [
+    {
+      "id": "UIUX-W2-06-01",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "1767-1787, 1853-1862",
+      "title": "Whitespace-only MCP credentials pass the form gate",
+      "trigger": "MCP step two is open and the user enters only spaces in the Tunnel ID and/or API key, then activates Connect harness.",
+      "actual": "The submit gate checks raw string truthiness, so whitespace is accepted and passed to setupMcp; failure is reported through a general error path without field-level invalid feedback.",
+      "expected": "Trim or reject whitespace-only values before submission, identify the invalid field, and keep saved credentials locked until explicit Replace credentials re-entry.",
+      "smallestFix": "Use trimmed values in the predicate and payload, add aria-invalid/aria-describedby, and show an inline error for values that trim to empty.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-06-02",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "2508-2558, 2333-2400",
+      "title": "Settings radio groups lack radio keyboard behavior",
+      "trigger": "A keyboard or screen-reader user focuses an Interaction mode radio or a Manual model profile radio.",
+      "actual": "The controls declare radiogroup/radio and aria-checked but use independent normal buttons with no roving tab stops or Arrow/Home/End handling.",
+      "expected": "One radio is tabbable and Arrow keys move focus and selection within the group; Home and End reach the bounds.",
+      "smallestFix": "Implement roving tabIndex plus APG radio-key handlers, or replace the custom group with a native grouped control.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-06-03",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "2759-2815",
+      "title": "Custom language listbox lacks keyboard navigation and focus restoration",
+      "trigger": "A keyboard user opens Language in Settings, presses Arrow keys or Escape, or selects an option.",
+      "actual": "A listbox/option structure is declared without listbox keyboard handling or an active-descendant model; Escape and selection close the popup without returning focus to the trigger or exposing a focused save result.",
+      "expected": "Arrow/Home/End navigation works, Escape returns focus to the trigger, and selection returns focus predictably while an async update/error is announced.",
+      "smallestFix": "Use a native select or add listbox focus management, keyboard handling, trigger restoration, and an aria-live update/error status.",
+      "confidence": "high"
+    }
+  ],
+  "rejected": [
+    {
+      "item": "launcher/src/Settings.tsx",
+      "reason": "Absent at baseline 5401800; SettingsSurface in launcher/src/App.tsx is the actual implementation."
+    },
+    {
+      "item": "AccountSettings findings already recorded in ui-ux-inventory-07.md",
+      "reason": "Duplicate same-baseline account-card scope; no new lane-6 account-state claim added."
+    },
+    {
+      "item": "Technical connector, route, package, MCP, API and compatibility identifiers",
+      "reason": "Functional identifiers are not branding defects."
+    },
+    {
+      "item": "Purely aesthetic preferences",
+      "reason": "No reachable interaction or state consequence."
+    }
+  ],
+  "cleanAreas": [
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1749-1804",
+      "note": "Saved MCP credentials are locked behind an explicit Replace credentials action, with Keep saved credentials to cancel re-entry."
+    },
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1864-1880",
+      "note": "Verified MCP state has explicit Verify runtime and Done actions, with operation-aware verification status."
+    },
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1972-2113",
+      "note": "Browser capacity has bounded validation, disabled save state, ARIA invalid/described-by wiring, and saved/unsaved/error status text."
+    },
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1610-1687, 1847-1883",
+      "note": "MCP busy guards, retry/error handling, and post-commit metadata refresh are present."
+    },
+    {
+      "component": "launcher/src/nekodex.css and launcher/src/styles.css",
+      "lines": "327-380, 1765-1787",
+      "note": "Responsive setup/MCP layout wraps controls and collapses fields for narrow content widths."
+    },
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "2413-2477",
+      "note": "Tutorial video expansion has labelled modal semantics, Escape/close behavior, and playback-position preservation."
+    }
+  ],
+  "notes": [
+    "Baseline 5401800; requested launcher/src/Settings.tsx is absent.",
+    "Manual source review only; no tests, typechecks, scripts, runtime/app starts, commits, pushes, or delegation.",
+    "Live account-side ChatGPT connector loading and approval were not inferred from local source."
+  ]
+}

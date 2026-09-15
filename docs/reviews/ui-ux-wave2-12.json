@@ -1,0 +1,121 @@
+{
+  "lane": 12,
+  "findings": [
+    {
+      "id": "UIUX-W2-12-01",
+      "severity": "P1",
+      "component": "launcher/src/nekodex.css",
+      "lines": "382-391; affected styles.css:495-498, 527-539, 645-659, 767-774",
+      "title": "Global motion guard disables functional progress feedback",
+      "trigger": "A browser tab, navigation, or operation is busy and the app is running with normal motion preferences.",
+      "actual": "The broad selector disables animations/transitions on all non-whitelisted elements and all pseudo-elements, so the tab spinner, browser loading line, busy dots, and pulse dots never animate.",
+      "expected": "Functional progress indicators remain visible and informative; only decorative motion is scoped away, with reduced-motion overrides for the indicators.",
+      "smallestFix": "Scope the rule to the illustration subtree or explicitly exempt functional progress indicators while retaining reduced-motion overrides.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-12-02",
+      "severity": "P1",
+      "component": "launcher/src/App.tsx",
+      "lines": "2407-2477",
+      "title": "Expanded guide-video dialog does not trap or restore focus",
+      "trigger": "A keyboard user opens the MCP guide video expansion and then tabs, presses Escape, or closes it.",
+      "actual": "Only the close button receives autoFocus; there is no focus trap, stable labelled heading, or focus restoration to the opener.",
+      "expected": "Focus enters and stays in the dialog, Escape closes it, and focus returns to the expand button.",
+      "smallestFix": "Add opener/dialog refs, a focus trap, a labelled dialog heading, and restoration after button or Escape close.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-12-03",
+      "severity": "P1",
+      "component": "launcher/src/App.tsx",
+      "lines": "707-716; 906-914; 2903-2945",
+      "title": "Bigger-context dialog lacks modal keyboard focus management",
+      "trigger": "The settings recommendation dialog opens and the user navigates by keyboard or screen reader.",
+      "actual": "The dialog has aria-modal but no initial focus, focus trap, Escape handling, or focus restoration to its trigger.",
+      "expected": "The dialog receives focus, supports Escape, keeps focus within the modal, and restores focus on close.",
+      "smallestFix": "Add dialog and opener refs, initial focus, Tab trapping, Escape close, and restoration to the trigger.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-12-04",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "1625-1637; 1691-1729; 1847-1878",
+      "title": "MCP step replacement is not announced or focus-managed",
+      "trigger": "The user activates Next, Previous, or a reachable MCP stepper button.",
+      "actual": "key={step} remounts the new content, but focus remains on the old control and there is no live announcement or focusable current heading.",
+      "expected": "The new step is announced and focus moves to its heading or first actionable control.",
+      "smallestFix": "Focus a stable current-step heading after move or use a scoped polite live region, and expose the stepper current-state relationship.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-12-05",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "376-398; 2521-2559; 2643-2669",
+      "title": "Custom radio groups omit arrow-key semantics",
+      "trigger": "The user reaches onboarding language, interaction mode, or zero-risk model choices with the keyboard.",
+      "actual": "Buttons are given radio roles but every option remains in the tab order and Arrow/Home/End navigation is absent.",
+      "expected": "One radio is tabbable and arrow keys move selection within the group.",
+      "smallestFix": "Use native radio inputs or implement roving tabIndex and radio-group keyboard handling.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-12-06",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "2326-2403; 2759-2814",
+      "title": "Language and model popovers lack required popup focus behavior",
+      "trigger": "The user opens either custom popup and navigates by keyboard.",
+      "actual": "Listbox/radiogroup roles are present without focus transfer, restoration, roving tabIndex, arrow navigation, or an inert background boundary.",
+      "expected": "The popup follows its role's keyboard pattern and closes with focus restored to the trigger.",
+      "smallestFix": "Implement the matching popup pattern with opener refs, keyboard navigation, focus restoration, and a modal/inert boundary, or use a native select for language.",
+      "confidence": "high"
+    }
+  ],
+  "rejected": [
+    {
+      "item": "Existing account completion/selection findings from docs/reviews/ui-ux-inventory-07",
+      "reason": "Duplicate of the prior review wave; omitted from lane 12 findings."
+    },
+    {
+      "item": "Technical identifiers such as codex, MCP, connector, route, and package names",
+      "reason": "These are compatibility or product-state identifiers, not branding defects."
+    },
+    {
+      "item": "Pure visual preferences",
+      "reason": "No reachable interaction or state-feedback impact."
+    }
+  ],
+  "cleanAreas": [
+    {
+      "component": "launcher/src/CatTail.tsx:12-51",
+      "note": "Reduced-motion preference, document visibility, animation-frame cleanup, and runtime preference changes are handled."
+    },
+    {
+      "component": "launcher/src/nekodex.css:390-393; launcher/src/styles.css:2807-2815",
+      "note": "Reduced-motion fallbacks disable animation, transitions, and smooth scrolling."
+    },
+    {
+      "component": "launcher/src/App.tsx:1749-1804",
+      "note": "Saved MCP credentials remain read-only until explicit Replace credentials is activated."
+    },
+    {
+      "component": "launcher/src/App.tsx:1702-1709",
+      "note": "Future MCP steps are disabled while busy or before the current step is reached."
+    },
+    {
+      "component": "launcher/src/PasskeyLoginGuide.tsx; launcher/src/ExistingChromeLoginGuide.tsx; launcher/src/RouteDiagnostics.tsx",
+      "note": "Visible progress and retry/error states expose live or alert regions."
+    },
+    {
+      "component": "launcher/src/AccountSettings.tsx:70",
+      "note": "Account operations expose aria-busy and loading has a reachable retry action."
+    }
+  ],
+  "notes": [
+    "Manual source review only at baseline 5401800; no tests, typechecks, scripts, runtime, app starts, commits, pushes, or delegation.",
+    "The primary motion finding concerns suppression of functional progress feedback by the global CSS selector, not decorative animation preference."
+  ]
+}

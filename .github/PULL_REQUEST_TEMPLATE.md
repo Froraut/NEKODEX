@@ -14,7 +14,7 @@ Fixes #
 
 - [ ] I read and followed `CONTRIBUTING.md`.
 - [ ] This is a small, focused change with no unrelated cleanup or generated rewrite.
-- [ ] The change stays focused on ChatGPT web-backed Codex models; it does not add a generic provider or unrelated product surface.
+- [ ] The change stays focused on the NEKODEX model bridge; it does not add a generic provider or unrelated product surface.
 - [ ] Model, route, effort, connector, and capability selection remain explicit with no silent fallback or false-success path.
 - [ ] If this touches Full harness or MCP, every available Web effort retains the same turn-bound capability and Browser-only gains no broker or connector.
 - [ ] Terms and trademark claims remain factual; this change is not marketed as a quota or rate-limit bypass.

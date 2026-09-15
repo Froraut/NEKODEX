@@ -1,0 +1,94 @@
+{
+  "lane": 8,
+  "findings": [
+    {
+      "id": "UIUX-08-01",
+      "severity": "P1",
+      "component": "launcher/src/App.tsx; launcher/src/browser-controls.ts",
+      "lines": "App.tsx:1037-1050,1175-1206; browser-controls.ts:15-27",
+      "title": "Zoom controls remain enabled while browser interaction is locked",
+      "trigger": "A login, login import, or active browser turn sets navigationLocked=true, or the browser is hidden; the user activates a zoom control.",
+      "actual": "Back, Forward, and Reload use navigationLocked and visibility guards, but Zoom out, Reset zoom, and Zoom in do not. Their handler also calls zoomBrowser without the lock guard.",
+      "expected": "All browser-mutating controls are disabled while the browser surface is locked or unavailable, then re-enabled after the operation ends.",
+      "smallestFix": "Use navigationLocked || !visible for all zoom controls and keep the same guard in zoom().",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-08-02",
+      "severity": "P1",
+      "component": "launcher/src/App.tsx; launcher/src/browser-controls.ts",
+      "lines": "App.tsx:1175-1189; browser-controls.ts:15-27",
+      "title": "Browser navigation stays actionable during MCP verification",
+      "trigger": "MCP Verify runtime is running with operation.name=mcp-verification and no active browser turn; the user activates Back, Forward, or Reload.",
+      "actual": "unrelatedOperation is computed but omitted from navigationLocked, so navigate() and the three navigation buttons remain active during verification.",
+      "expected": "Navigation is disabled for the duration of browser-owned connector verification and restored after completion or failure.",
+      "smallestFix": "Include running mcp-verification and equivalent browser-inspection operations in navigationLocked and retain the navigate() guard.",
+      "confidence": "medium-high"
+    },
+    {
+      "id": "UIUX-08-03",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx; launcher/src/styles.css",
+      "lines": "App.tsx:2413-2428,2447-2476; styles.css:1564-1607",
+      "title": "Expanded MCP tutorial is modal without focus trapping or focus restoration",
+      "trigger": "The user opens the expanded MCP tutorial video and tabs or closes it with Escape/Close.",
+      "actual": "The portal declares role=dialog and aria-modal=true and autofocuses Close, but Tab can leave the dialog and closing does not restore focus to the expand control.",
+      "expected": "Focus stays inside the modal and returns to the opener on close.",
+      "smallestFix": "Add a small focus trap, retain an opener ref, and restore focus from closeExpanded().",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-08-04",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "1124-1171",
+      "title": "ARIA tabs contain nested close buttons with conflicting keyboard behavior",
+      "trigger": "A keyboard user navigates the tablist and reaches a closable tab’s close button.",
+      "actual": "Each role=tab is a clickable div containing a native button; the tab handler ignores key events from the nested button, so the roving tab behavior and close-control focus model diverge.",
+      "expected": "The tablist has one coherent roving-focus model, with a separately exposed and intentionally managed close action.",
+      "smallestFix": "Implement explicit tab/close focus handling or a documented tablist pattern, add aria-controls, and keep the close action separately labelled.",
+      "confidence": "medium-high"
+    }
+  ],
+  "rejected": [
+    {
+      "item": "launcher/src/Browser.tsx",
+      "reason": "File is absent at baseline 5401800; BrowserSurface in launcher/src/App.tsx is the available implementation."
+    },
+    {
+      "item": "Branding and technical identifiers",
+      "reason": "Connector, route, model, package, filesystem, and service identifiers were excluded from branding findings."
+    },
+    {
+      "item": "Generic aesthetics",
+      "reason": "No preference-only visual observation was recorded without a reachable interaction, responsive, state, or accessibility impact."
+    }
+  ],
+  "cleanAreas": [
+    {
+      "component": "launcher/src/browser-controls.ts",
+      "lines": "9-35",
+      "note": "Passkey and existing-Chrome availability correctly exclude authenticated sessions and cross-block the two login flows during active turns or the other login flow."
+    },
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1749-1803",
+      "note": "Saved MCP credentials are read-only until the explicit Replace credentials action enters replacement mode."
+    },
+    {
+      "component": "launcher/src/ExistingChromeLoginGuide.tsx; launcher/src/PasskeyLoginGuide.tsx",
+      "lines": "ExistingChromeLoginGuide.tsx:59-93; PasskeyLoginGuide.tsx:21-53",
+      "note": "Terminal login states expose retry or re-entry actions while pending actions are disabled and errors are announced."
+    },
+    {
+      "component": "launcher/src/nekodex.css",
+      "lines": "351-380",
+      "note": "The tab strip scrolls horizontally and wizard labels collapse at narrow widths; no standalone overflow defect was found in these rules."
+    }
+  ],
+  "notes": [
+    "Baseline 5401800; BrowserSurface is in App.tsx because Browser.tsx is absent.",
+    "Manual source review only. No tests, typechecks, scripts, runtime, app start, commit, push, or delegation were used.",
+    "right-size-test-runs was read and applied; the allowed manual-review path was used instead of automated verification."
+  ]
+}

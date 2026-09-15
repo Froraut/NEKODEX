@@ -1,0 +1,61 @@
+{
+  "lane": 7,
+  "findings": [
+    {
+      "id": "UIUX-07-01",
+      "severity": "P1",
+      "component": "launcher/src/AccountSettings.tsx",
+      "lines": "91-103",
+      "title": "Verified account remains freely editable and still presents Sign in",
+      "triggerStateSequence": "authenticated=true, checked=true, connectorReady=true; the card re-renders after successful credential/tunnel/API-key checks; the user views or activates the card actions",
+      "expected": "Completed steps are read-only; only explicit Replace credentials or the permitted upgrade flow unlocks them; the primary action reflects the completed state.",
+      "actual": "Sign in, Check, and Check connector remain available outside manual mode, with no verified lock, replace action, or unlock transition.",
+      "accessibilityImpact": "Keyboard and screen-reader users receive actionable controls that imply incomplete setup after success, and the success dots do not explain which actions are locked or allowed.",
+      "smallestFix": "Derive a verified/locked view from the snapshot, disable or replace post-success actions, and add one explicit Replace credentials/upgrade transition with state-specific accessible labels.",
+      "confidence": "high",
+      "productUiIssue": true,
+      "screenshotRelevant": true
+    },
+    {
+      "id": "UIUX-07-02",
+      "severity": "P1",
+      "component": "launcher/src/AccountSettings.tsx",
+      "lines": "80-101",
+      "title": "Unverified account can become current",
+      "triggerStateSequence": "authenticated=false or checked=false or connectorReady=false; the user activates Select on a non-current account",
+      "expected": "Selection is gated on the required verified state, or the action becomes Continue setup without marking the account current.",
+      "actual": "Select is disabled only for the current account or while busy; it does not consult authentication or verification flags before calling selectAccount.",
+      "accessibilityImpact": "The current badge can move to an incomplete account and present a misleading state relationship to assistive technology and keyboard users.",
+      "smallestFix": "Gate Select on the mode-specific minimum verified state or relabel it as Continue setup, with a status explanation associated with the control.",
+      "confidence": "medium-high",
+      "productUiIssue": true,
+      "screenshotRelevant": false
+    }
+  ],
+  "rejected": [
+    {
+      "item": "launcher/src/Accounts.tsx",
+      "reason": "File is absent at baseline 5401800; no separate Accounts component was available for review."
+    },
+    {
+      "item": "ChatGPT wording and technical identifiers",
+      "reason": "The reviewed component contains no external-service branding defect. No connector, route, package, filesystem, or service identifier was proposed for renaming."
+    }
+  ],
+  "cleanAreas": [
+    {
+      "component": "launcher/src/AccountSettings.tsx",
+      "lines": "70-90",
+      "note": "Selected/current state is represented separately from account and connection status dots, providing a usable basis for a locked completed state."
+    },
+    {
+      "component": "launcher/src/AccountSettings.tsx",
+      "lines": "67-69,70",
+      "note": "Loading retry status and section aria-busy are present."
+    }
+  ],
+  "notes": [
+    "Manual code review only; no tests, typecheck, scripts, runtime, app, commit, push, or delegation.",
+    "The actual account state machine needs an explicit completed/locked state and an explicit replace or upgrade transition before the UI can match the described screenshots."
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "lane": 15,
+  "findings": [
+    {
+      "severity": "P1",
+      "component": "launcher/src/App.tsx:1124-1171 BrowserSurface tab strip",
+      "trigger": "Open Browser with a closable tab and navigate the tablist or close control by keyboard.",
+      "actual": "A div with role=tab contains a nested close button while also handling Enter, Space, Arrow, Home, and End. This creates conflicting interactive semantics for keyboard and assistive technology users.",
+      "expected": "Keep the tab as one tab-stop and expose the close action as a separate sibling control, with a coherent tablist/tabpanel relationship.",
+      "smallestFix": "Split each tab item into a role=tab button plus a sibling close button outside the tab element; preserve the existing movement logic.",
+      "confidence": "high"
+    },
+    {
+      "severity": "P1",
+      "component": "launcher/src/App.tsx:375-398, 2327-2378, 2522-2558, 2643-2668 custom radio groups",
+      "trigger": "Reach onboarding language, interaction mode, or Manual model profile choices with a keyboard and use arrow keys or Tab.",
+      "actual": "Custom role=radio buttons have aria-checked but no roving tabindex or arrow-key selection; every option is a separate Tab stop and arrows do nothing.",
+      "expected": "One group tab stop, selected-option roving focus, and arrow-key selection with Space/Enter activation.",
+      "smallestFix": "Use styled native radio inputs or add a shared roving-tabindex radio-group implementation.",
+      "confidence": "high"
+    },
+    {
+      "severity": "P1",
+      "component": "launcher/src/App.tsx:2917-2945 BiggerContextRecommendation",
+      "trigger": "Open the Bigger Context details dialog from Settings and continue with Tab or Escape.",
+      "actual": "The element declares role=dialog and aria-modal=true but does not move or trap focus, close on Escape, or restore focus to the invoker; background controls remain keyboard-reachable.",
+      "expected": "Focus enters and stays in the dialog, Escape closes it, and focus returns to the Details control.",
+      "smallestFix": "Add open/close focus management, Escape handling, and a small focus loop for the switch and Close button.",
+      "confidence": "high"
+    },
+    {
+      "severity": "P2",
+      "component": "launcher/src/App.tsx:816-823 and launcher/src/i18n.ts:86 sidebar source action",
+      "trigger": "Activate the visible item labelled Source & credits.",
+      "actual": "The action opens the GitHub URL directly and provides no credits, attribution, license, or in-app source explanation.",
+      "expected": "The label and destination agree: either Source code opens GitHub, or Source & credits opens a credits/source surface with an explicit repository link.",
+      "smallestFix": "Rename the label to Source code for the current behavior, or add a minimal credits surface with the repository as a secondary link.",
+      "confidence": "high"
+    }
+  ],
+  "rejected": [
+    "Technical codex-web-gpt identifiers in Electron/runtime paths were excluded from branding findings.",
+    "Conditional Native/Zero Risk migration copy was excluded because it is compatibility guidance, not an unqualified visible legacy product name.",
+    "Saved MCP credentials, verified MCP state, and completed setup rows already gate edits behind explicit Replace/Verify/Done or repeatable actions."
+  ],
+  "cleanAreas": [
+    "NEKODEX branding and cat mark usage are consistent across normal launcher surfaces.",
+    "Passkey and existing-Chrome flows have pending guards, terminal error messaging, and retry paths.",
+    "MCP guide media follows wizard steps and pauses when its details element closes.",
+    "Setup state is represented with separate core, catalog, picker, MCP install, and MCP verification fields."
+  ],
+  "notes": [
+    "Source-only manual review at commit 540180047f8a6bee4b735d62a89d3eb64dc428a7.",
+    "No app starts, runtime, scripts, tests, typechecks, commits, pushes, or delegation were used; native screen-reader and screenshot behavior remains unverified."
+  ]
+}

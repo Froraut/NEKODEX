@@ -26,8 +26,8 @@ export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate }
   return <section className="content-surface overview-surface is-page-scroll">
     <div className="content-scroll overview-scroll">
       <header className="overview-heading"><div><h1>{copy.overview}</h1><p>{copy.overviewSubtitle}</p></div><span className="workspace-location"><Icon name="globe" />{copy.localWorkspace}</span></header>
-      <section className="workspace-intro">
-        <div className="intro-copy"><h2>{ready ? copy.overviewReady : signedIn && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle}</h2>
+      <section className="workspace-intro" aria-labelledby="overview-intro-heading">
+        <div className="intro-copy"><h2 id="overview-intro-heading">{ready ? copy.overviewReady : signedIn && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle}</h2>
           <p>{ready ? copy.overviewReadyBody : signedIn && snapshot.state.coreSetupComplete ? snapshot.state.codexCatalogVerified ? copy.setupConfirmTitle : copy.setupCatalogTitle : copy.overviewBody}</p>
           <button className="button-primary" type="button" onClick={() => navigate(workspaceReady ? "browser" : "setup")}>{workspaceReady ? copy.openWorkspace : copy.finishSetup}<Icon name="forward" /></button>
         </div>
@@ -42,11 +42,11 @@ export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate }
         <div className="overview-main-column">
           <section className="connection-section" aria-labelledby="connection-heading">
             <div className="overview-section-heading"><h2 id="connection-heading">{copy.connectionsShort}</h2><small>{copy.connectionsBody}</small></div>
-            <div className="connection-list">{connections.map(connection => <button type="button" key={connection.surface} onClick={() => navigate(connection.surface)}>
-              <Icon name={connection.icon} /><strong>{connection.label}</strong><span className={`connection-status${connection.ready ? " is-ready" : ""}`}><i className={`state-dot is-${connection.ready ? "ready" : "idle"}`} />{connection.ready ? copy.connectionVerified : connection.pending}</span><span className="connection-action">{connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.setup : copy.connectShort}<Icon name="chevron" /></span>
+            <div className="connection-list">{connections.map(connection => <button type="button" key={connection.surface} aria-label={`${connection.label}: ${connection.ready ? copy.connectionVerified : connection.pending}. ${connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.setup : copy.connectShort}`} onClick={() => navigate(connection.surface)}>
+              <Icon name={connection.icon} /><strong>{connection.label}</strong><span className={`connection-status${connection.ready ? " is-ready" : ""}`} aria-live="polite" aria-atomic="true"><i className={`state-dot is-${connection.ready ? "ready" : "idle"}`} />{connection.ready ? copy.connectionVerified : connection.pending}</span><span className="connection-action" aria-hidden="true">{connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.setup : copy.connectShort}<Icon name="chevron" /></span>
             </button>)}</div>
           </section>
-          <section className="overview-activity">
+          <section className="overview-activity" aria-live="polite" aria-atomic="false">
             <div className="overview-section-heading"><h2>{copy.recentActivity}</h2><button className="text-button" type="button" onClick={() => navigate("activity")}>{copy.viewAllShort}<Icon name="chevron" /></button></div>
             {logs.length ? <ul>{logs.slice(-8).reverse().map((log, index) => <li key={`${log.at}-${index}`}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{log.event.replaceAll(/[._-]+/g, " ")}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
               : <div className="overview-empty"><Icon name="logs" /><div><strong>{copy.activityEmpty}</strong><p>{copy.activityEmptyBody}</p></div></div>}

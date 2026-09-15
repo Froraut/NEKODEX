@@ -1,0 +1,103 @@
+{
+  "lane": 4,
+  "findings": [
+    {
+      "id": "UIUX-W2-04-01",
+      "severity": "P1",
+      "component": "launcher/src/App.tsx",
+      "lines": "1124-1171",
+      "title": "Browser tabs nest a close button inside a role-tab container",
+      "trigger": "A closable browser tab is present and a keyboard or screen-reader user navigates the tablist.",
+      "actual": "A focusable div with role=tab and custom Enter/Space/arrow handling contains a native close button, creating nested interactive semantics and an inconsistent roving-tab-stop model.",
+      "expected": "Each tab has one coherent tab interaction and a separately reachable close action with predictable focus behavior.",
+      "smallestFix": "Make the tab and close control sibling owned controls, preserving one roving tab stop for tabs and a separately named close action.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-04-02",
+      "severity": "P2",
+      "component": "launcher/src/App.tsx",
+      "lines": "376-398; 2508-2558; 2353-2400; 2657-2668",
+      "title": "Custom radio groups lack arrow-key navigation and roving focus",
+      "trigger": "A keyboard user focuses a language, interaction-mode, or zero-risk model choice and presses an arrow key.",
+      "actual": "Each role=radio is a default-tab-stop button and no group handles arrow/Home/End navigation.",
+      "expected": "One radio is tabbable and arrow keys move focus and selection within the group.",
+      "smallestFix": "Use native radio inputs or implement the APG roving-tabindex radio pattern.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-04-03",
+      "severity": "P1",
+      "component": "launcher/src/App.tsx",
+      "lines": "2407-2477",
+      "title": "Expanded MCP tutorial dialog does not contain or restore focus",
+      "trigger": "The user expands the MCP guide video, tabs through controls, or closes it with Escape.",
+      "actual": "The dialog uses aria-modal and autoFocus on close, but has no focus trap, inert background, opener ref, or focus restoration.",
+      "expected": "Focus enters and stays in the modal, Escape closes it, and focus returns to the expand button.",
+      "smallestFix": "Add dialog focus containment, retain the opener ref, restore focus on close, and expose a labelled heading via aria-labelledby.",
+      "confidence": "high"
+    },
+    {
+      "id": "UIUX-W2-04-04",
+      "severity": "P1",
+      "component": "launcher/src/AccountSettings.tsx",
+      "lines": "80-103",
+      "title": "Verified account remains actionable instead of read-only",
+      "trigger": "An account is authenticated and its account and connector checks are complete; the user returns to the account card.",
+      "actual": "Sign in remains enabled, and Check and Check connector remain available outside manual mode even when the corresponding success flags are true; no explicit replace/edit/upgrade unlock exists.",
+      "expected": "Completed controls are read-only/disabled and only one explicit Replace/Edit/Upgrade action can re-enter the flow.",
+      "smallestFix": "Derive a completed locked state, disable or relabel completed actions, and add one explicit replace/edit/upgrade transition.",
+      "confidence": "high"
+    }
+  ],
+  "rejected": [
+    {
+      "item": "Branding and technical identifiers",
+      "reason": "Technical compatibility identifiers were excluded as instructed; no branding defect was established."
+    },
+    {
+      "item": "Generic aesthetic preferences",
+      "reason": "Only reachable keyboard, screen-reader, form-state, error-state, or transition defects were retained."
+    },
+    {
+      "item": "MCP saved credentials state",
+      "reason": "Completed credentials are hidden/read-only and only explicit Replace exposes inputs at App.tsx:1749-1801."
+    },
+    {
+      "item": "Global error announcement path",
+      "reason": "The app toast and direct login/diagnostic failures already use alert/status semantics."
+    }
+  ],
+  "cleanAreas": [
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1749-1801",
+      "note": "MCP credentials remain read-only until explicit Replace or Keep credentials action."
+    },
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "1847-1882",
+      "note": "Wizard buttons use native disabled states and block invalid credential submission."
+    },
+    {
+      "component": "launcher/src/App.tsx",
+      "lines": "2103-2113",
+      "note": "Capacity field has label, invalid state, description, and live status feedback."
+    },
+    {
+      "component": "launcher/src/RouteDiagnostics.tsx and login guides",
+      "lines": "RouteDiagnostics.tsx:113-150; PasskeyLoginGuide.tsx:38-46; ExistingChromeLoginGuide.tsx:70-80",
+      "note": "Result, retry, and failure paths expose status or alert semantics."
+    },
+    {
+      "component": "launcher/src/nekodex.css",
+      "lines": "354-380; 395-430",
+      "note": "MCP wizard and form layout includes responsive wrapping, visible focus, readable sizing, and error styling."
+    }
+  ],
+  "notes": [
+    "Manual code review only at baseline 5401800; no tests, typechecks, scripts, runtime, app start, commit, push, or delegation.",
+    "No live screenshot session was started under the read-only constraint; screenshot-relevant behavior was assessed from implemented UI callers and state transitions.",
+    "right-size-test-runs was read and applied."
+  ]
+}

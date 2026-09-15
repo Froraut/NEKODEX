@@ -1,0 +1,42 @@
+{
+  "lane": 3,
+  "baseline": "540180047f8a6bee4b735d62a89d3eb64dc428a7",
+  "findings": [
+    {
+      "severity": "P2",
+      "component": "launcher/src/App.tsx:McpSurface wizard stepper:1700-1713",
+      "trigger": "Open the MCP wizard, move to a step, and navigate the stepper with a keyboard or screen reader.",
+      "actual": "The current step is only styled with is-active; no step button exposes aria-current and the wrapper has only an aria-label.",
+      "expected": "Assistive technology announces the current step and the stepper as a named wizard navigation group.",
+      "smallestFix": "Add aria-current=\"step\" to the active step button and an appropriate named grouping role to the stepper.",
+      "confidence": "high"
+    },
+    {
+      "severity": "P2",
+      "component": "launcher/src/App.tsx:MCP_GUIDE_MEDIA:38-42; McpSurface guide media:1717-1723",
+      "trigger": "Open Guide video on the MCP connector verification step.",
+      "actual": "The second and third wizard steps both use mcp-connect-connector.mp4, while the third video is labeled as the verification step.",
+      "expected": "Step 3 provides verification-specific guidance or no video.",
+      "smallestFix": "Use a dedicated verification asset at index 2 or omit the step 3 media entry.",
+      "confidence": "high"
+    }
+  ],
+  "rejected": [
+    "No branding issue; technical compatibility identifiers were excluded by scope.",
+    "Completed MCP credentials are read-only until explicit Replace credentials.",
+    "Completed setup rows are disabled unless explicitly repeatable."
+  ],
+  "cleanAreas": [
+    "MCP back/next/connect/reconnect/verify/done busy gating",
+    "MCP saved-credential replacement flow",
+    "Setup-row completion gating",
+    "Login guide retry and terminal-state actions",
+    "Focus-visible rules and expanded-video Escape handling",
+    "Responsive wizard footer and narrow-content rules"
+  ],
+  "notes": [
+    "Manual source review and static MCP screenshot inspection only.",
+    "No source edits, tests, typechecks, scripts, runtime/app starts, commits, pushes, or delegation.",
+    "Live MCP, browser, and screen-reader behavior was not established."
+  ]
+}

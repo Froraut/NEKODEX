@@ -12,6 +12,8 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
   const [busy, setBusy] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [replacingId, setReplacingId] = useState<string | null>(null);
+  const retryRef = useRef<HTMLButtonElement | null>(null);
   const refreshRef = useRef<() => void>(() => {});
   useEffect(() => {
     let disposed = false;
@@ -57,6 +59,9 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
       refreshRef.current = () => {};
     };
   }, [api, setError, attempt]);
+  useEffect(() => {
+    if (loadFailed) retryRef.current?.focus();
+  }, [loadFailed]);
   const run = async (action: () => Promise<AccountPoolSnapshot>) => {
     if (busy) return;
     setBusy(true); setError(null);
@@ -64,8 +69,8 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   };
-  if (!state) return <div className="account-loading" role="status">{loadFailed
-    ? <button type="button" className="button-secondary" onClick={() => setAttempt(value => value + 1)}>{copy.retry}</button>
+  if (!state) return <div className="account-loading" role={loadFailed ? "alert" : "status"} aria-live="polite">{loadFailed
+    ? <button ref={retryRef} type="button" className="button-secondary" onClick={() => setAttempt(value => value + 1)}>{copy.retry}</button>
     : copy.accountsLoading}</div>;
   return <section className="account-settings" aria-label={copy.accountsTitle} aria-busy={busy}>
     {manual ? <p>{copy.accountsManual}</p> : null}
@@ -78,6 +83,12 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
       </select>
     </div>
     {state.accounts.map(account => <article className={`account-card${account.id === state.selectedId ? " is-selected" : ""}`} key={account.id}>
+      {(() => {
+        const verified = account.authenticated && account.checked && account.connectorReady;
+        const replacing = replacingId === account.id;
+        const locked = verified && !replacing;
+        const selectable = verified;
+        return <>
       <header className="account-card-header">
         <span className="account-avatar" aria-hidden="true">{account.label.trim().slice(0, 1).toLocaleUpperCase()}</span>
         <div><h2>{account.label}</h2><p>{account.accountLabel || (account.authenticated ? copy.accountsSignedIn : copy.accountsSignInNeeded)}</p></div>
@@ -89,19 +100,22 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
         <span className={account.connectorReady ? "is-ready" : ""}><i className={`state-dot is-${account.connectorReady ? "ready" : "idle"}`} />{copy.toolConnection}: {account.connectorReady ? copy.connectionVerified : copy.connectionPending}</span>
       </div>
       <div className="account-actions">
-        <label><input type="checkbox" checked={account.enabled} disabled={busy}
+        <label><input type="checkbox" checked={account.enabled} disabled={busy || locked}
           onChange={event => void run(() => api.setAccountEnabled(account.id, event.target.checked))} />{copy.accountsEnabled}</label>
-        <button type="button" className="button-primary" disabled={busy} onClick={() => void run(async () => {
+        <button type="button" className="button-primary" disabled={busy} aria-label={locked ? copy.replaceCredentials : copy.accountsSignIn} onClick={() => void run(async () => {
           const next = await api.selectAccount(account.id);
+          if (verified) setReplacingId(account.id);
           openBrowser();
           void api.openAccountLogin(account.id).catch(error => setError(String(error)));
           return next;
-        })}><Icon name="browser" />{copy.accountsSignIn}</button>
-        <button type="button" className="button-secondary" disabled={busy || account.id === state.selectedId}
+        })}><Icon name="browser" />{locked ? copy.replaceCredentials : copy.accountsSignIn}</button>
+        <button type="button" className="button-secondary" disabled={busy || account.id === state.selectedId || !selectable}
           onClick={() => void run(() => api.selectAccount(account.id))}>{account.id === state.selectedId ? copy.accountsCurrent : copy.accountsSelect}</button>
-        <button type="button" className="text-button" disabled={busy || manual} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
-        <button type="button" className="text-button" disabled={busy || manual} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
+        <button type="button" className="text-button" disabled={busy || manual || locked} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
+        <button type="button" className="text-button" disabled={busy || manual || locked} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
       </div>
+        </>;
+      })()}
     </article>)}
     <form className="account-add" onSubmit={event => {
       event.preventDefault();
