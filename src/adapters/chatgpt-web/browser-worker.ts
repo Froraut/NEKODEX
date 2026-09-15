@@ -774,7 +774,7 @@ export async function throwIfChatGptSubmissionDialog(page: Page): Promise<void> 
   const dialogs = page.locator('[role="dialog"], [role="alertdialog"]').filter({ visible: true });
   if (await dialogs.count() === 0) return;
   throw new ChatGptWebAdapterError(
-    "ChatGPT is showing a dialog that blocks submission. Review it in Codex Web GPT, then retry the task.",
+    "ChatGPT is showing a dialog that blocks submission. Review it in NEKODEX, then retry the task.",
     { status: 409, errorType: "invalid_request_error", code: "chatgpt_submission_dialog", retryable: false },
   );
 }
@@ -813,7 +813,7 @@ const chatGptExpiredSessionAlert = (page: Page): Locator => page
 export async function throwIfChatGptSessionFailureAlert(page: Page): Promise<void> {
   if (await chatGptExpiredSessionAlert(page).isVisible().catch(() => false)) {
     throw new ChatGptWebAdapterError(
-      "The ChatGPT session has expired. Sign in again in Codex Web GPT.",
+      "The ChatGPT session has expired. Sign in again in NEKODEX.",
       { status: 401, errorType: "authentication_error", code: "chatgpt_session_expired", retryable: false },
     );
   }

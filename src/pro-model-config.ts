@@ -54,7 +54,7 @@ export async function runProModelVersionConfigCommand(args: string[]): Promise<v
     }
   }
   if (!launcherControl) {
-    throw new Error("Pro model configuration must be changed through Codex Web GPT Settings");
+    throw new Error("Pro model configuration must be changed through NEKODEX Settings");
   }
   const authorizedDescriptorPath = authorizeLauncherControl("Pro model configuration");
   const config = loadConfig();

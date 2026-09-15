@@ -128,6 +128,8 @@ export function installedLauncherCandidates({
   const targetPath = platform === "win32" ? win32 : posix;
   if (platform === "darwin") {
     candidates.push(
+      "/Applications/NEKODEX.app/Contents/MacOS/NEKODEX",
+      posix.join(homeDirectory, "Applications", "NEKODEX.app", "Contents", "MacOS", "NEKODEX"),
       "/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT",
       posix.join(homeDirectory, "Applications", "Codex Web GPT.app", "Contents", "MacOS", "Codex Web GPT"),
     );
@@ -136,10 +138,12 @@ export function installedLauncherCandidates({
       || (process.platform === "win32" && environment === process.env
         ? registeredWindowsLauncherInstallLocation() : undefined);
     if (registeredLocation && win32.isAbsolute(registeredLocation)) {
+      candidates.push(win32.join(registeredLocation, "NEKODEX.exe"));
       candidates.push(win32.join(registeredLocation, "Codex Web GPT.exe"));
     } else {
       const localAppData = environment.LOCALAPPDATA?.trim();
       if (localAppData) {
+        candidates.push(win32.join(localAppData, "Programs", "NEKODEX", "NEKODEX.exe"));
         candidates.push(win32.join(localAppData, "Programs", "Codex Web GPT", "Codex Web GPT.exe"));
       }
     }

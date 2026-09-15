@@ -14,7 +14,9 @@ body,
 
 body,
 button,
-input {
+input,
+select,
+textarea {
   font-family: var(--font-ui);
 }
 
@@ -44,8 +46,11 @@ input {
 }
 
 button:focus-visible,
-input:focus-visible {
-  box-shadow: 0 0 0 1px var(--color-border-focus);
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 3px;
 }
 
 button:disabled {
@@ -255,7 +260,7 @@ code {
   height: 100%;
   min-width: 0;
   overflow: visible;
-  background: rgb(33 33 33 / 78%);
+  background: var(--color-background-sidebar);
   backdrop-filter: blur(28px) saturate(1.08);
   -webkit-backdrop-filter: blur(28px) saturate(1.08);
 }
@@ -282,7 +287,7 @@ code {
   min-width: var(--sidebar-width);
   height: 100%;
   flex-direction: column;
-  padding: calc(var(--height-titlebar) + 8px) 8px 8px;
+  padding: calc(var(--height-titlebar) + 14px) 14px 10px;
 }
 
 .sidebar-brand-row {
@@ -312,8 +317,8 @@ code {
 .sidebar-brand-identity strong {
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -395,8 +400,8 @@ code {
 }
 
 .sidebar-item.is-active {
-  background: var(--color-background-control-active);
-  color: var(--color-text-primary);
+  background: #c6bdff14;
+  color: var(--brand-accent);
 }
 
 .sidebar-item.is-update {
@@ -464,7 +469,7 @@ code {
   flex: 1;
   padding-top: 0;
   overflow: hidden;
-  background: rgb(24 24 24 / 90%);
+  background: var(--color-background-surface);
   backdrop-filter: blur(22px) saturate(1.04);
   -webkit-backdrop-filter: blur(22px) saturate(1.04);
 }
@@ -554,7 +559,7 @@ code {
   gap: 3px;
   padding: 4px 8px 0;
   border-bottom: 1px solid var(--color-border-light);
-  background: rgb(24 24 24 / 72%);
+  background: var(--color-background-sidebar);
 }
 
 .app-shell:not(.is-sidebar-open) .browser-tab-strip {
@@ -930,7 +935,7 @@ code {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 4px 0 48px;
+  padding: 26px 0 48px;
   scrollbar-color: transparent transparent;
   scrollbar-gutter: auto;
 }
@@ -1019,8 +1024,8 @@ code {
   margin: 0;
   color: var(--color-text-primary);
   font-size: var(--text-title);
-  font-weight: 500;
-  letter-spacing: -0.018em;
+  font-weight: 600;
+  letter-spacing: -0.035em;
   line-height: 1.2;
 }
 
@@ -1059,7 +1064,7 @@ code {
 
 .setup-row {
   display: grid;
-  min-height: 82px;
+  min-height: 98px;
   grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
@@ -1336,7 +1341,7 @@ code {
 .button-primary,
 .button-secondary,
 .text-button {
-  min-height: 30px;
+  min-height: 34px;
   border: 0;
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
@@ -1345,8 +1350,8 @@ code {
 
 .button-primary {
   padding: 0 14px;
-  background: var(--gray-0);
-  color: var(--gray-1000);
+  background: var(--brand-accent);
+  color: var(--brand-ink);
   transition:
     opacity var(--duration-micro) ease,
     transform 100ms ease;

@@ -47,7 +47,7 @@ function recoveryRegistration(transaction, { home = os.homedir(), env = process.
     // Desktop-entry Exec quoting also escapes expansion and field-code syntax.
     const quote = value => `"${String(value).replace(/[\\"`$]/g, c => `\\${c}`).replace(/%/g, "%%")}"`;
     return { type: "file", path: path.join(config, "autostart", `codex-web-gpt-update-recovery-${id}.desktop`),
-      contents: `[Desktop Entry]\nType=Application\nName=Codex Web GPT update recovery\nExec=${args.map(quote).join(" ")}\nTerminal=false\nNoDisplay=true\n` };
+      contents: `[Desktop Entry]\nType=Application\nName=NEKODEX update recovery\nExec=${args.map(quote).join(" ")}\nTerminal=false\nNoDisplay=true\n` };
   }
   throw new Error("Unsupported update recovery platform");
 }

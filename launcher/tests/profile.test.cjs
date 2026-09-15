@@ -20,6 +20,10 @@ test("DEV launcher profile isolates every durable home from production", () => {
 
   assert.equal(production.kind, "production");
   assert.equal(development.kind, "development");
+  assert.equal(production.displayName, "NEKODEX");
+  assert.equal(development.displayName, "NEKODEX DEV");
+  assert.equal(production.userData, path.join(homeDir, "Library", "Application Support", "Codex Web GPT"));
+  assert.equal(production.browserPartition, "persist:codex-web-gpt-chatgpt");
   assert.notEqual(development.coreHome, production.coreHome);
   assert.notEqual(development.codexHome, production.codexHome);
   assert.notEqual(development.userData, production.userData);

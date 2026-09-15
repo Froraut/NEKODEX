@@ -1,14 +1,19 @@
-<h1 align="center">ChatGPT Web for Codex</h1>
+<h1 align="center">NEKODEX</h1>
 
-> **FroRaut maintenance fork.** Based on [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
-> v5.0.6 (`e85e369`). This fork fixes confirmed authentication, request-boundary, lifecycle,
-> update, and usability bugs. See the [review and improvement roadmap](docs/reviews/2026-09-11-review.md)
-> for evidence and remaining limitations. Original authorship and MIT licensing are preserved.
->
-> **Source publication:** this review does not certify a new platform release or a successful
-> account-bound Codex/MCP session. Fork binaries are not yet published. Clone this fork and use
-> the source commands below; the upstream binary does not contain these fixes. Built-in update
-> checks stay on this fork and never silently install upstream releases.
+A desktop workspace for your ChatGPT accounts, coding agents, and local tools.
+NEKODEX has an original cat-and-code icon, an Overview, dedicated account
+management, and a graphite/lavender interface. See the [design and compatibility
+notes](docs/design/nekodex.md).
+
+**Development source:** the NEKODEX UI is in source; it is not a new signed release.
+The first NEKODEX binary needs a manual installation transition because older
+updaters validate the former executable name. Existing browser profile and data
+identifiers are retained to preserve account state.
+
+Maintained by **FroRaut**, based on
+[miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web).
+Original authorship and MIT licensing are preserved. See the
+[review and improvement roadmap](docs/reviews/2026-09-11-review.md).
 
 ```bash
 git clone https://github.com/Froraut/codex-chatgpt-web.git

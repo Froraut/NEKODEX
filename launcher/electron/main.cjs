@@ -208,7 +208,7 @@ function trayImage() {
   if (process.platform !== "darwin") {
     return nativeImage.createFromPath(APP_ICON_PATH).resize({ width: 18, height: 18 });
   }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><path d="M4.1 3.4h6.4l3.4 3.4v7.8H7.5l-3.4-3.4V3.4Z" fill="none" stroke="white" stroke-width="1.5" stroke-linejoin="round"/><path d="m7 7 2-2 2 2M7 11l2 2 2-2" fill="none" stroke="white" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const svg = fs.readFileSync(path.join(__dirname, "..", "assets", "tray.svg"), "utf8");
   const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
   image.setTemplateImage(true);
   return image;
@@ -216,32 +216,32 @@ function trayImage() {
 
 const NATIVE_COPY = Object.freeze({
   en: Object.freeze({
-    openLauncher: "Open Codex Web GPT",
+    openLauncher: "Open NEKODEX",
     quit: "Quit",
     exportDiagnostics: "Export privacy-safe diagnostics",
     cancel: "Cancel",
     remove: "Remove",
-    removeTitle: "Remove Codex Web GPT",
+    removeTitle: "Remove NEKODEX",
     removeMessage: "Remove the ChatGPT Web models from Codex and restore the previous model route?",
     removeDetail: "The launcher's ChatGPT login profile will be preserved. Codex must be restarted once.",
   }),
   "zh-CN": Object.freeze({
-    openLauncher: "打开 Codex Web GPT",
+    openLauncher: "打开 NEKODEX",
     quit: "退出",
     exportDiagnostics: "导出隐私安全诊断",
     cancel: "取消",
     remove: "移除",
-    removeTitle: "移除 Codex Web GPT",
+    removeTitle: "移除 NEKODEX",
     removeMessage: "从 Codex 中移除 ChatGPT Web 模型并恢复此前的模型路由？",
     removeDetail: "启动器中的 ChatGPT 登录 profile 会保留。Codex 需要重启一次。",
   }),
   ja: Object.freeze({
-    openLauncher: "Codex Web GPT を開く",
+    openLauncher: "NEKODEX を開く",
     quit: "終了",
     exportDiagnostics: "プライバシー保護済みの診断情報をエクスポート",
     cancel: "キャンセル",
     remove: "削除",
-    removeTitle: "Codex Web GPT を削除",
+    removeTitle: "NEKODEX を削除",
     removeMessage: "Codex から ChatGPT Web モデルを削除し、以前のモデルルートを復元しますか？",
     removeDetail: "ランチャーの ChatGPT ログインプロファイルは保持されます。Codex を一度再起動する必要があります。",
   }),
@@ -337,18 +337,17 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
     title: LAUNCHER_PROFILE.displayName,
     icon: APP_ICON_PATH,
     show: false,
-    backgroundColor: isMac ? "#00000000" : "#181818",
+    backgroundColor: "#1b1b24",
     titleBarStyle: isMac ? "hiddenInset" : "hidden",
-    transparent: isMac,
+    transparent: false,
     ...(isMac ? {
       trafficLightPosition: { x: 16, y: 17 },
-      vibrancy: "under-window",
       visualEffectState: "active",
     } : {
       titleBarOverlay: {
-        color: "#181818",
+        color: "#1b1b24",
         symbolColor: "#a8a8a8",
-        height: 46,
+        height: 52,
       },
     }),
     webPreferences: {
@@ -999,7 +998,7 @@ async function requestQuit() {
   try {
     const activeOperation = runtimeHost?.currentOperation() || browserHost?.currentOperation();
     if (activeOperation) {
-      throw new Error(`Wait for ${activeOperation} to finish before quitting Codex Web GPT`);
+      throw new Error(`Wait for ${activeOperation} to finish before quitting NEKODEX`);
     }
     await runtimeSupervisor?.shutdown({ cancelActiveTurns: true, force: true });
     stopCatalogVerificationMonitor();
@@ -1057,6 +1056,15 @@ async function start() {
 
   startupPhase = "electron-ready";
   await app.whenReady();
+  if (process.platform === "darwin") {
+    app.dock.setIcon(APP_ICON_PATH);
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { role: "appMenu", label: LAUNCHER_PROFILE.displayName },
+      { role: "editMenu" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
+    ]));
+  }
 
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
   if (IS_DEV_PROFILE && !stateStore.read().onboardingComplete) {
@@ -1384,7 +1392,7 @@ async function start() {
     if (runtime.status === "external" || runtime.status === "needs-setup") {
       const detail = runtime.detail || (
         runtime.status === "external"
-          ? "Another process owns the configured Codex Web GPT runtime"
+          ? "Another process owns the configured NEKODEX runtime"
           : "The installed runtime configuration must be repaired from Setup"
       );
       publishOperation({

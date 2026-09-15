@@ -47,14 +47,14 @@ async function recoverStartupFailure({
     const ready = app.isReady() || await settleWithin(() => app.whenReady(), timeoutMs);
     if (!ready) {
       try {
-        dialog.showErrorBox("Codex Web GPT could not start",
+        dialog.showErrorBox("NEKODEX could not start",
           `Startup failed while ${STARTUP_PHASES[details.phase]}. The application will exit. Open it again to retry.`);
       } catch {}
       return { action: "quit", ...details, cleaned };
     }
     const result = await dialog.showMessageBox({
       type: "error",
-      title: "Codex Web GPT could not start",
+      title: "NEKODEX could not start",
       message: `Startup failed while ${STARTUP_PHASES[details.phase]}.`,
       detail: `${details.reason === "timeout" ? "This startup step exceeded its readiness deadline. " : ""}Restart to try again in a new process, or quit and reopen the application later. Your saved settings and sign-in data are retained.`,
       buttons: ["Quit", "Restart"],

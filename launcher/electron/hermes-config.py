@@ -88,7 +88,7 @@ def install(options):
         connection.request("GET", "/hermes/v1/models", headers={"Authorization": "Bearer " + token})
         response = connection.getresponse()
         if response.status != 200:
-            raise ValueError("Start the updated Codex Web GPT runtime before adding Hermes.")
+            raise ValueError("Start the updated NEKODEX runtime before adding Hermes.")
         models = json.loads(response.read(128 * 1024)).get("data", [])
     finally:
         connection.close()

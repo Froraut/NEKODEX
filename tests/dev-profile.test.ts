@@ -73,6 +73,8 @@ test("installed launcher discovery has explicit platform candidates", () => {
     homeDirectory: "/Users/tester",
     environment: {},
   })).toEqual([
+    "/Applications/NEKODEX.app/Contents/MacOS/NEKODEX",
+    "/Users/tester/Applications/NEKODEX.app/Contents/MacOS/NEKODEX",
     "/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT",
     "/Users/tester/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT",
   ]);
@@ -90,6 +92,7 @@ test("installed launcher discovery has explicit platform candidates", () => {
     homeDirectory: "C:\\Users\\tester",
     environment: { LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" },
   })).toEqual([
+    "C:\\Users\\tester\\AppData\\Local\\Programs\\NEKODEX\\NEKODEX.exe",
     "C:\\Users\\tester\\AppData\\Local\\Programs\\Codex Web GPT\\Codex Web GPT.exe",
   ]);
   expect(installedLauncherCandidates({
@@ -98,6 +101,7 @@ test("installed launcher discovery has explicit platform candidates", () => {
     environment: { LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" },
     windowsInstallLocation: "D:\\Apps\\Codex Web GPT",
   })).toEqual([
+    "D:\\Apps\\Codex Web GPT\\NEKODEX.exe",
     "D:\\Apps\\Codex Web GPT\\Codex Web GPT.exe",
   ]);
 });
@@ -112,14 +116,14 @@ test("injected Windows discovery avoids the live registry while ordinary discove
     expect(installedLauncherCandidates({
       platform: "win32",
       environment: { LOCALAPPDATA: "C:\\Fixture\\AppData\\Local" },
-    })).toEqual(["C:\\Fixture\\AppData\\Local\\Programs\\Codex Web GPT\\Codex Web GPT.exe"]);
+    })).toEqual(["C:\\Fixture\\AppData\\Local\\Programs\\NEKODEX\\NEKODEX.exe", "C:\\Fixture\\AppData\\Local\\Programs\\Codex Web GPT\\Codex Web GPT.exe"]);
     expect(registry).not.toHaveBeenCalled();
     expect(installedLauncherCandidates({ platform: "win32", environment: process.env }))
-      .toEqual(["D:\\Installed\\Codex Web GPT\\Codex Web GPT.exe"]);
+      .toEqual(["D:\\Installed\\Codex Web GPT\\NEKODEX.exe", "D:\\Installed\\Codex Web GPT\\Codex Web GPT.exe"]);
     expect(registry).toHaveBeenCalledTimes(1);
     expect(installedLauncherCandidates({
       platform: "win32", environment: {}, windowsInstallLocation: "E:\\Explicit",
-    })).toEqual(["E:\\Explicit\\Codex Web GPT.exe"]);
+    })).toEqual(["E:\\Explicit\\NEKODEX.exe", "E:\\Explicit\\Codex Web GPT.exe"]);
     expect(registry).toHaveBeenCalledTimes(1);
   } finally {
     Object.defineProperty(process, "platform", platform);

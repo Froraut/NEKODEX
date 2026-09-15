@@ -2,7 +2,7 @@
   "name": "codex-web-gpt-launcher",
   "version": "5.1.0-froraut.18",
   "private": true,
-  "description": "FroRaut maintained fork of Codex ChatGPT Web desktop control center",
+  "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
   "updateRepository": "Froraut/codex-chatgpt-web",
   "type": "module",
@@ -44,7 +44,7 @@
   },
   "build": {
     "appId": "dev.codexwebgpt.launcher",
-    "productName": "Codex Web GPT",
+    "productName": "NEKODEX",
     "artifactName": "codex-web-gpt-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
@@ -59,7 +59,8 @@
       "assets/icon.png",
       "assets/linux-appimage-runner.sh",
       "package.json",
-      "release-trust.json"
+      "release-trust.json",
+      "assets/tray.svg"
     ],
     "extraResources": [
       {
@@ -80,7 +81,7 @@
         "zip"
       ],
       "extendInfo": {
-        "CFBundleGetInfoString": "FroRaut maintained fork · replaces upstream compatibly"
+        "CFBundleGetInfoString": "NEKODEX by FroRaut"
       }
     },
     "win": {
@@ -122,6 +123,7 @@
     "repository": "Froraut/codex-chatgpt-web",
     "upstream": "miuuyy/codex-chatgpt-web",
     "installationMode": "replace-upstream",
-    "profileCompatibility": "dev.codexwebgpt.launcher"
+    "profileCompatibility": "dev.codexwebgpt.launcher",
+    "displayName": "NEKODEX"
   }
 }

@@ -2,7 +2,7 @@
   "name": "codex-chatgpt-web",
   "version": "5.1.0-froraut.18",
   "private": true,
-  "description": "FroRaut maintained fork: a local Responses bridge for Codex tasks through a user-authenticated ChatGPT web session.",
+  "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
   "repository": {
     "type": "git",

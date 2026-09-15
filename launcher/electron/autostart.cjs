@@ -28,8 +28,8 @@ function linuxDesktopEntry(app, executable = linuxExecutable(app)) {
   return `[Desktop Entry]
 Type=Application
 Version=1.0
-Name=Codex Web GPT
-Comment=Start the Codex Web GPT launcher in the background
+Name=NEKODEX
+Comment=Start the NEKODEX launcher in the background
 Exec=${desktopExecArgument(executable)} --hidden
 Terminal=false
 X-GNOME-Autostart-enabled=true

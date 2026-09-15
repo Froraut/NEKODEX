@@ -1,6 +1,8 @@
 import type { SVGProps } from "react";
 
 export type IconName =
+  | "overview"
+  | "accounts"
   | "activity"
   | "alert"
   | "back"
@@ -29,6 +31,8 @@ export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGEle
   const common = { fill: "none", stroke: "currentColor", strokeLinecap: "round" as const, strokeLinejoin: "round" as const, strokeWidth: 1.7 };
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>
+      {name === "overview" ? <><rect {...common} x="3" y="3" width="7" height="7" rx="2" /><rect {...common} x="14" y="3" width="7" height="7" rx="2" /><rect {...common} x="3" y="14" width="7" height="7" rx="2" /><rect {...common} x="14" y="14" width="7" height="7" rx="2" /></> : null}
+      {name === "accounts" ? <><circle {...common} cx="9" cy="8" r="3" /><path {...common} d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2" /></> : null}
       {name === "activity" ? <><path {...common} d="M3 12h4l2.2-6 4.1 12 2.3-6H21" /></> : null}
       {name === "alert" ? <><path {...common} d="M10.3 4.2 2.8 17.1A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.9L13.7 4.2a2 2 0 0 0-3.4 0Z" /><path {...common} d="M12 9v4M12 16.5h.01" /></> : null}
       {name === "back" ? <path {...common} d="m14.5 6-6 6 6 6" /> : null}

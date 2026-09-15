@@ -1,12 +1,17 @@
-<h1 align="center">ChatGPT Web for Codex</h1>
+<h1 align="center">NEKODEX</h1>
 
-> **FroRaut 维护分支。** 基于 [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
-> v5.0.6（`e85e369`）。本分支修复已确认的身份验证、请求边界、生命周期、更新和易用性问题。
-> 证据和剩余限制见[审查与改进路线图](docs/reviews/2026-09-11-review.md)。保留原作者归属及 MIT 许可证。
->
-> **源码发布：** 本次审查不代表新的平台发行版已通过认证，也不代表已在真实账户下成功完成
-> Codex/MCP 会话。当前尚未发布本分支的二进制安装包。请克隆本分支并使用下方的源码命令；
-> 上游安装包不包含这些修复。内置更新只检查本分支，不会静默安装上游版本。
+ChatGPT 账户、编程智能体与本地工具的桌面工作空间。
+NEKODEX 提供原创猫咪图标、概览、独立账户管理页和石墨紫色界面。
+参见[设计与兼容性说明](docs/design/nekodex.md)。
+
+**开发源码：** NEKODEX 界面已进入源码，目前尚未发布新的签名发行版。
+首次安装 NEKODEX 需要手动过渡，因为旧更新器会验证原来的可执行文件名。
+已有浏览器配置及数据标识保持不变，以保留账户状态。
+
+由 **FroRaut** 维护，基于
+[miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)。
+保留原作者归属及 MIT 许可证。
+参见[审查与改进路线图](docs/reviews/2026-09-11-review.md)。
 
 ```bash
 git clone https://github.com/Froraut/codex-chatgpt-web.git

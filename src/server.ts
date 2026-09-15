@@ -930,7 +930,7 @@ export function startServer(
         if (!hermes.authorized(req)) return formatErrorResponse(401, "authentication_error", "Add the Hermes provider from Setup to authorize this local connection.");
         if (req.method === "GET" && url.pathname === "/hermes/v1/models") return hermes.models(config);
         if (req.method === "POST" && url.pathname === "/hermes/v1/responses") {
-          if (draining) return formatErrorResponse(503, "server_error", "Codex Web GPT is restarting; retry after it is ready.");
+          if (draining) return formatErrorResponse(503, "server_error", "NEKODEX is restarting; retry after it is ready.");
           return httpTurns.track(signal => hermes.respond(new Request(req, { signal }), config,
             (request, hermesContext, onCompletedResponse) => responseRequest(request, config, dependencies.adapterFactory, {
               hermesContext, onCompletedResponse, rememberState: false,

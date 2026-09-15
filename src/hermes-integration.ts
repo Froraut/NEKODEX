@@ -135,7 +135,7 @@ export class HermesIntegration {
       const raw = JSON.parse(new TextDecoder().decode(await readRequestBodyBytes(req, 4 * 1024 * 1024)));
       if (!hermesModels(config).some(model => model.id === raw?.model)) throw new Error("This Web model does not provide the minimum 64k context required by Hermes. Choose a model from this provider's current catalog.");
       prepared = this.prepare(raw);
-      if (prepared.body.tools?.length && config.mode !== "full") throw new Error("Finish ChatGPT MCP setup in Codex Web GPT before using Hermes tools.");
+      if (prepared.body.tools?.length && config.mode !== "full") throw new Error("Finish ChatGPT MCP setup in NEKODEX before using Hermes tools.");
       const internal = new Request("http://127.0.0.1/v1/responses", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(prepared.body), signal: req.signal,
       });

@@ -35,7 +35,7 @@ const MESSAGES: Record<ExistingChromeLoginErrorCode, string> = {
   "consent-required": "Confirm access to your current Chrome profile before importing its ChatGPT sign-in.",
   "unsupported-platform": "Existing Chrome sign-in import is unavailable on this operating system.",
   "chrome-unavailable": "Open Google Chrome and enable its remote debugging approval setting, then retry the import.",
-  "chrome-profile-access-denied": "The operating system denied access to Chrome's local connection information. Review access permissions for Codex Web GPT, then retry.",
+  "chrome-profile-access-denied": "The operating system denied access to Chrome's local connection information. Review access permissions for NEKODEX, then retry.",
   "invalid-endpoint": "Chrome's local connection information is unavailable or invalid. Reopen its remote debugging settings and retry.",
   "chrome-permission-denied": "Chrome did not allow the connection. Choose Allow in Chrome when you retry.",
   "chrome-permission-timeout": "Chrome did not finish approving the connection in time. Check its Allow prompt and retry.",

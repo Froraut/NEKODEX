@@ -2,7 +2,7 @@ export type Language = "en" | "zh-CN" | "ja";
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type ProModelVersion = "5.6" | "5.5" | "6";
-export type Surface = "browser" | "setup" | "mcp" | "activity" | "settings";
+export type Surface = "overview" | "accounts" | "browser" | "setup" | "mcp" | "activity" | "settings";
 
 export interface LauncherState {
   version: 1;

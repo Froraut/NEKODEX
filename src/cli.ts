@@ -156,7 +156,7 @@ async function loginCommand(args: string[]): Promise<void> {
     assertNoArgs(args);
     const config = loadConfig();
     if (config.browserHost === "launcher") {
-      throw new Error("ChatGPT login is owned by the launcher; open Codex Web GPT and use its Sign in step");
+      throw new Error("ChatGPT login is owned by the launcher; open NEKODEX and use its Sign in step");
     }
     const result = await loginToChatGpt(config);
     stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
@@ -479,7 +479,7 @@ async function uninstallCommand(args: string[]): Promise<void> {
   const config = existsSync(getConfigPath()) ? loadConfigForSetup() : undefined;
   if (config?.browserHost === "launcher" && !launcherControl) {
     throw new Error(
-      "Launcher-owned integration must be removed from Codex Web GPT Settings so the active runtime can be drained safely.",
+      "Launcher-owned integration must be removed from NEKODEX Settings so the active runtime can be drained safely.",
     );
   }
   if (!config && process.platform === "darwin" && getServiceStatus().installed) {
