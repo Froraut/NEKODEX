@@ -1,3 +1,4 @@
+const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapacity } = require("./browser-capacity.cjs");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
@@ -59,6 +60,13 @@ const SOURCE_ROOT = path.resolve(__dirname, "../..");
 const LAUNCHER_PROFILE = resolveLauncherProfile({ appData: app.getPath("appData") });
 const IS_DEV_PROFILE = LAUNCHER_PROFILE.kind === DEVELOPMENT_PROFILE;
 const CORE_HOME = LAUNCHER_PROFILE.coreHome;
+const ACTIVE_BROWSER_CAPACITY = readBrowserCapacity(CORE_HOME);
+process.env[CAPACITY_ENV] = String(ACTIVE_BROWSER_CAPACITY);
+function browserCapacitySnapshot() {
+  const configured = readBrowserCapacity(CORE_HOME);
+  return { configured, active: ACTIVE_BROWSER_CAPACITY, maximum: MAX_BROWSER_CAPACITY,
+    restartRequired: configured !== ACTIVE_BROWSER_CAPACITY };
+}
 const BROWSER_DESCRIPTOR_PATH = path.join(CORE_HOME, "runtime", "launcher-browser.json");
 const BROWSER_HELPER_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "runtime", "app", "browser-helper.cjs")
@@ -457,6 +465,7 @@ function registerIpc({ logger, stateStore }) {
     },
     state: stateStore.read(),
     proModelVersion: runtimeHost.proModelVersion(),
+    browserCapacity: browserCapacitySnapshot(),
     contextCapabilities: (() => {
       const config = runtimeHost.runtimeConfigSnapshot().config;
       return config ? { solAvailable: config.solAvailable === true, proAvailable: config.proAvailable === true,
@@ -912,6 +921,10 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE && result.configured) startCatalogVerificationMonitor({ logger, stateStore });
     return { state, credentialsRequired: false, targetMode: mode };
   });
+  handle("launcher:browser-capacity", async (_event, value) => {
+    saveBrowserCapacity(CORE_HOME, value);
+    return browserCapacitySnapshot();
+  });
   handle("launcher:pro-model-version", async (_event, rawVersion) => {
     const version = validateProModelVersion(rawVersion);
     const browserOperation = browserHost.currentOperation();
@@ -1139,6 +1152,7 @@ async function start() {
   }
   startupPhase = "browser";
   browserHost = new BrowserHost({
+    maxTabs: ACTIVE_BROWSER_CAPACITY,
     window: mainWindow,
     descriptorPath: BROWSER_DESCRIPTOR_PATH,
     cdpPort,

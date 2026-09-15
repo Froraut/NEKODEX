@@ -1,6 +1,11 @@
 import type { Language } from "./types";
 
 const en = {
+  browserCapacity: "Parallel agents",
+  browserCapacityBody: "Maximum simultaneous browser tasks: 1–64. A higher limit allows more agents; it does not increase your ChatGPT allowance.",
+  browserCapacitySave: "Save",
+  browserCapacityStatus: "Active: {active} · Saved: {saved}",
+  browserCapacityRestart: "Saved. Finish active tasks, then quit and reopen Codex Web GPT to apply. Closing the window alone may keep the app running.",
   contextBudgetCaption: "Active transfer budgets",
   contextBudgetModel: "Web mode",
   contextBudgetHistory: "History before compaction",
@@ -295,6 +300,11 @@ const en = {
 } as const;
 
 const zh: Record<keyof typeof en, string> = {
+  browserCapacity: "并行代理",
+  browserCapacityBody: "同时运行的浏览器任务上限：1–64。提高此值可运行更多代理，但不会增加 ChatGPT 使用额度。",
+  browserCapacitySave: "保存",
+  browserCapacityStatus: "当前：{active} · 已保存：{saved}",
+  browserCapacityRestart: "已保存。请等待当前任务结束，然后退出并重新打开 Codex Web GPT。仅关闭窗口可能不会退出应用。",
   contextBudgetCaption: "当前传输预算",
   contextBudgetModel: "Web 模式",
   contextBudgetHistory: "压缩前历史",
@@ -589,6 +599,11 @@ const zh: Record<keyof typeof en, string> = {
 };
 
 const ja: Record<keyof typeof en, string> = {
+  browserCapacity: "並列エージェント",
+  browserCapacityBody: "同時に実行するブラウザータスクの上限：1–64。上限を増やしても ChatGPT の利用枠は増えません。",
+  browserCapacitySave: "保存",
+  browserCapacityStatus: "現在：{active} · 保存済み：{saved}",
+  browserCapacityRestart: "保存しました。実行中のタスクが終了してから Codex Web GPT を終了し、再度開いてください。ウィンドウを閉じるだけでは終了しない場合があります。",
   contextBudgetCaption: "現在の転送容量",
   contextBudgetModel: "Web モード",
   contextBudgetHistory: "圧縮前の履歴",

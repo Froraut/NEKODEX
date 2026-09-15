@@ -130,7 +130,15 @@ export type UpdateState =
       downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null }
   | { status: "error"; message: string };
 
+export interface BrowserCapacitySettings {
+  configured: number;
+  active: number;
+  maximum: number;
+  restartRequired: boolean;
+}
+
 export interface LauncherSnapshot {
+  browserCapacity: BrowserCapacitySettings;
   profile: LauncherProfile;
   profilePaths: {
     coreHome: string;
@@ -226,6 +234,7 @@ export interface LauncherApi {
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
+  setBrowserCapacity(value: number): Promise<BrowserCapacitySettings>;
   setProModelVersion(version: ProModelVersion | null): Promise<{ proModelVersion: ProModelVersion | null }>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
     state: LauncherState;

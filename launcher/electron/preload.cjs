@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   cancelContextChange: () => ipcRenderer.invoke("launcher:cancel-context-change"),
   confirmCodexModels: () => ipcRenderer.invoke("launcher:confirm-codex-models"),
   setZeroRiskPro: (enabled) => ipcRenderer.invoke("launcher:zero-risk-pro", enabled),
+  setBrowserCapacity: (value) => ipcRenderer.invoke("launcher:browser-capacity", value),
   setProModelVersion: (version) => ipcRenderer.invoke("launcher:pro-model-version", version),
   setBrowserInteractionMode: (mode) => ipcRenderer.invoke("launcher:browser-interaction-mode", mode),
   setPreference: (key, value) => ipcRenderer.invoke("launcher:set-preference", key, value),

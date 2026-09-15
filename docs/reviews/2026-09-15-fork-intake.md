@@ -123,3 +123,57 @@ Final metadata-binding/type/read-timeout refinements were reviewed manually;
 passed tests were not repeated. Live ChatGPT UI, account-backed follow-up delivery,
 actual ambiguous tunnel-command behavior and packaging of this branch remain
 unverified. These changes address reliability; no overall throughput claim is made.
+
+
+## Final targeted fork pass and configurable capacity
+
+The final read-only pass checked the eight latest commit headers on marcmy/main
+and hpete28/main and the production patches for these three remaining candidates:
+
+- [marcmy 8af13dfd](https://github.com/marcmy/codex-chatgpt-web/commit/8af13dfd95f9b1683d81ee1cf2dccb9129b1aa22)
+  replaces instruction-ID hashing with a chain of instruction content. This can
+  address reconnect ID churn, but changes replay/steering identity and depends
+  on retained history shape. Not imported without a locally demonstrated case.
+- [hpete28 fd758b8c](https://github.com/hpete28/codex-chatgpt-web/commit/fd758b8c84122b9b1f94e2e074fb9d3f79d7151a)
+  permits one further same-page rebind after viewport failure when native work
+  remains live. It is bounded and preserves transport close ordering, but adds
+  retries inside a caller that already has its own retry accounting. Not imported
+  as an automatic improvement to our recovery behavior.
+- [hpete28 2573116a](https://github.com/hpete28/codex-chatgpt-web/commit/2573116a2932af9db075d8f3385baff8d38b7990)
+  adds compaction detail and copies native tool failure text into diagnostics.
+  Useful context, but copying raw tool output into logs needs separate redaction
+  treatment. No extra logging or structured-result synthesis was imported.
+
+No external code or new package was executed. This bounded final pass is not an
+exhaustive review of every fork or branch. The previously selected five adaptations
+remain the implementation set; the three candidates above remain unimplemented.
+
+The user's separate gateway setting is now implemented as Settings → Parallel
+agents, accepting integers 1–64, default 16. The canonical profile-local file is
+`browser-capacity.json` with `maxParallelTurns`; writes use a private temporary
+file and atomic rename. IPC validates values independently of the renderer.
+The launcher captures the limit at boot and passes it to the Electron allocator
+and child runtime environment. Backend worker and session registry share the
+same startup constant. A standalone backend reads the same profile-local file.
+The runtime health response exposes `browser_capacity` for diagnosis.
+
+Saving does not change active limits or interrupt tasks. The UI displays saved
+and active values and requests a full quit/reopen when they differ. A daemon
+restart within the same launcher lifetime keeps the pinned active capacity.
+This implementation does not change account/model usage limits.
+
+Development evidence: launched this source through Electron/Vite on port 4182
+with disposable profile `/tmp/codex-web-capacity-settings-20260915`. The occupied
+4178 development instance was left alone. In the actual renderer, saved 32 from
+the initial 16: UI showed Active 16 / Saved 32 and a restart notice. Fully quit
+and reopened the same profile: UI showed Active 32 / Saved 32 with no restart
+notice. A direct load of the backend concurrency module under that profile
+returned 32. No account login, model request or 32-agent load run was performed.
+The private DEV instance and Vite process were stopped afterward.
+
+Manual review covered IPC sender guarding, range validation, shared startup
+configuration, both tab allocation modes, subprocess environment inheritance,
+renderer state after saving, and package module inclusion. The historical
+capacity-16 fixture was adjusted for the new configurable default without
+rerunning the earlier suites. No release archive, signing or installation was
+performed for this feature; production settings were not changed.

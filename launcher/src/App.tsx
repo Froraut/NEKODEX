@@ -16,6 +16,7 @@ import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
 import { ExistingChromeLoginGuide } from "./ExistingChromeLoginGuide";
 import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits, resolveChatGptWebTransportLimits } from "../../src/chatgpt-web-models";
 import type {
+  BrowserCapacitySettings,
   BrowserInteractionMode,
   BrowserState,
   DoctorReport,
@@ -108,6 +109,10 @@ export function App() {
       : current);
   }, []);
 
+  const updateBrowserCapacity = useCallback((browserCapacity: BrowserCapacitySettings) => {
+    setSnapshot(current => current ? { ...current, browserCapacity } : current);
+  }, []);
+
   const updateProModelVersion = useCallback((proModelVersion: ProModelVersion | null) => {
     setSnapshot((current) => current ? { ...current, proModelVersion } : current);
   }, []);
@@ -154,6 +159,7 @@ export function App() {
             operation={operation}
             setError={setError}
             snapshot={snapshot}
+            updateBrowserCapacity={updateBrowserCapacity}
             updateProModelVersion={updateProModelVersion}
             updateState={updateState}
           />
@@ -343,6 +349,7 @@ function LauncherShell({
   operation,
   setError,
   snapshot,
+  updateBrowserCapacity,
   updateProModelVersion,
   updateState,
 }: {
@@ -353,6 +360,7 @@ function LauncherShell({
   operation: OperationState | null;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
+  updateBrowserCapacity: (value: BrowserCapacitySettings) => void;
   updateProModelVersion: (value: ProModelVersion | null) => void;
   updateState: (state: LauncherState) => void;
 }) {
@@ -717,6 +725,7 @@ function LauncherShell({
                 operation={operation}
                 setError={setError}
                 snapshot={snapshot}
+                updateBrowserCapacity={updateBrowserCapacity}
                 updateProModelVersion={updateProModelVersion}
                 showBiggerContextInfo={() => setBiggerContextRecommendationOpen(true)}
                 updateState={updateState}
@@ -1706,6 +1715,7 @@ function SettingsSurface({
   operation,
   setError,
   snapshot,
+  updateBrowserCapacity,
   updateProModelVersion,
   showBiggerContextInfo,
   updateState,
@@ -1718,10 +1728,27 @@ function SettingsSurface({
   operation: OperationState | null;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
+  updateBrowserCapacity: (value: BrowserCapacitySettings) => void;
   updateProModelVersion: (value: ProModelVersion | null) => void;
   showBiggerContextInfo: () => void;
   updateState: (state: LauncherState) => void;
 }) {
+  const [capacity, setCapacity] = useState(snapshot.browserCapacity);
+  const [capacityInput, setCapacityInput] = useState(String(snapshot.browserCapacity.configured));
+  const capacityValue = Number(capacityInput);
+  const capacityValid = capacityInput.trim() !== "" && Number.isSafeInteger(capacityValue)
+    && capacityValue >= 1 && capacityValue <= capacity.maximum;
+  const saveCapacity = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await api!.setBrowserCapacity(capacityValue);
+      setCapacity(saved);
+      updateBrowserCapacity(saved);
+      setCapacityInput(String(saved.configured));
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
@@ -1829,6 +1856,18 @@ function SettingsSurface({
           mode={snapshot.state.browserInteractionMode}
           onChange={(mode) => void setInteractionMode(mode)}
         />
+        <SettingRow body={copy.browserCapacityBody} label={copy.browserCapacity}>
+          <div className="capacity-setting">
+            <div className="capacity-controls">
+              <input aria-label={copy.browserCapacity} type="number" min={1} max={capacity.maximum} step={1}
+                value={capacityInput} disabled={busy} onChange={event => setCapacityInput(event.target.value)} />
+              <button className="text-button" type="button" disabled={busy || !capacityValid || capacityValue === capacity.configured}
+                onClick={() => void saveCapacity()}>{copy.browserCapacitySave}</button>
+            </div>
+            <p role="status">{copy.browserCapacityStatus.replace("{active}", String(capacity.active)).replace("{saved}", String(capacity.configured))}</p>
+            {capacity.restartRequired ? <p role="status">{copy.browserCapacityRestart}</p> : null}
+          </div>
+        </SettingRow>
         <SettingRow body={copy.proModelVersionBody} label={copy.proModelVersion}>
           <ProModelVersionMenu
             copy={copy}

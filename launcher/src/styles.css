@@ -2815,3 +2815,12 @@ code {
 .context-budget-table caption { text-align: left; font-weight: 600; padding: 8px 0; }
 .context-budget-table th, .context-budget-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--color-border-light); }
 .context-budget-table p { color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+
+.capacity-setting { max-width: 310px; }
+.capacity-controls { display: flex; align-items: center; gap: 12px; }
+.capacity-controls input {
+  width: 76px; padding: 6px 8px; border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); background: var(--color-background-control);
+  color: var(--color-text-primary); font: inherit;
+}
+.capacity-setting p { margin-top: 6px; }

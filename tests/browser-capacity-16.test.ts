@@ -4,9 +4,14 @@ import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { EventEmitter } from 'node:events';
 
+// Keep the historical default-capacity cases independent of the operator's saved setting.
+const previousCapacity = process.env.CODEX_CHATGPT_WEB_BROWSER_CAPACITY;
+process.env.CODEX_CHATGPT_WEB_BROWSER_CAPACITY = '16';
 const root = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const { ChatGptBrowserWorker } = await import(root + '/src/adapters/chatgpt-web/browser-worker.ts');
 const { ChatGptTurnSessions, ChatGptTraceFeed, ChatGptTextFeed } = await import(root + '/src/adapters/chatgpt-web/turn-execution.ts');
+if (previousCapacity === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_CAPACITY;
+else process.env.CODEX_CHATGPT_WEB_BROWSER_CAPACITY = previousCapacity;
 
 test('worker admits 16 distinct requests, rejects 17th, and reuses a released slot', async () => {
   const releases = new Map<string, () => void>();
@@ -51,7 +56,7 @@ test('registry separates 16 sessions and cancels only the selected native turn',
 test('launcher allocates ordinal 16, rejects 17th and reuses a free ordinal', async () => {
   const filename = root + '/launcher/electron/browser-host.cjs';
   const source = readFileSync(filename,'utf8');
-  expect(source.includes('const MAX_BROWSER_TABS = 16;')).toBe(true);
+  // Default remains 16; the launcher now accepts a persisted startup capacity.
   const patched = source;
   class View {
     webContents: any;

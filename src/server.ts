@@ -1,3 +1,4 @@
+import { MAX_CHATGPT_BROWSER_TABS } from "./adapters/chatgpt-web/concurrency";
 import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { normalizeNativeDelegation } from "./adapters/chatgpt-web/native-delegation";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
@@ -948,6 +949,7 @@ export function startServer(
           port: config.port,
           uptime: (Date.now() - startedAt) / 1_000,
           accepting_turns: !draining,
+          browser_capacity: MAX_CHATGPT_BROWSER_TABS,
           successful_model_catalog_requests: successfulModelCatalogRequests,
           last_successful_model_catalog_request_at: lastSuccessfulModelCatalogRequestAt,
           ...activity(),

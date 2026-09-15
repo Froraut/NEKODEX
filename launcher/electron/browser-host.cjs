@@ -33,7 +33,7 @@ const CHATGPT_ORIGIN = "https://chatgpt.com";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
-const MAX_BROWSER_TABS = 16;
+const { DEFAULT_BROWSER_CAPACITY, validateBrowserCapacity } = require("./browser-capacity.cjs");
 const MAX_CANCELLED_TURN_TRACES = 256;
 const MANUAL_SUBMIT_TIMEOUT_MS = 30_000;
 const MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS = 120_000;
@@ -344,6 +344,7 @@ class BrowserHost {
     clipboardApi = clipboard,
     dialogApi = dialog,
     getBrowserInteractionMode = () => "automatic",
+    maxTabs = DEFAULT_BROWSER_CAPACITY,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -351,6 +352,7 @@ class BrowserHost {
     if (typeof loginWithPasskey !== "function") {
       throw new Error("Browser host passkey login operation is unavailable");
     }
+    this.configuredMaxTabs = validateBrowserCapacity(maxTabs);
     this.window = window;
     this.descriptorPath = descriptorPath;
     this.cdpPort = cdpPort;
@@ -539,6 +541,8 @@ class BrowserHost {
     }
   }
 
+  get maxTabs() { return this.configuredMaxTabs ?? DEFAULT_BROWSER_CAPACITY; }
+
   browserInteractionMode() {
     return browserInteractionModeFor(this);
   }
@@ -578,15 +582,15 @@ class BrowserHost {
   }
 
   async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity) {
-    if (this.turnTabs.size >= MAX_BROWSER_TABS
+    if (this.turnTabs.size >= this.maxTabs
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
       throw new Error(
-        `ChatGPT Web already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
+        `ChatGPT Web already has ${this.maxTabs} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
       );
     }
     const id = randomBytes(12).toString("base64url");
     const surfaceId = randomBytes(24).toString("base64url");
-    const ordinal = Array.from({ length: MAX_BROWSER_TABS }, (_unused, index) => index + 1)
+    const ordinal = Array.from({ length: this.maxTabs }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
     const view = new WebContentsView({
@@ -650,14 +654,14 @@ class BrowserHost {
   }
 
   createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs) {
-    if (this.turnTabs.size >= MAX_BROWSER_TABS
+    if (this.turnTabs.size >= this.maxTabs
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
       throw new Error(
-        `ChatGPT Web already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
+        `ChatGPT Web already has ${this.maxTabs} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
       );
     }
     const id = randomBytes(12).toString("base64url");
-    const ordinal = Array.from({ length: MAX_BROWSER_TABS }, (_unused, index) => index + 1)
+    const ordinal = Array.from({ length: this.maxTabs }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
     const view = new WebContentsView({
@@ -1335,7 +1339,7 @@ class BrowserHost {
             ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
           ]
         : [homeTab],
-      maxTabs: MAX_BROWSER_TABS,
+      maxTabs: this.maxTabs,
       navigationLocked: Boolean(this.activeTraceId || this.manualOperation || this.loginOperation),
       loginInProgress: Boolean(this.loginOperation),
       loginKind: this.existingChromeLoginOperation ? "existing-chrome" : this.passkeyLoginOperation ? "passkey" : this.embeddedLoginController ? "embedded" : null,
