@@ -443,12 +443,27 @@
   .overview-section-heading small { text-align: left; max-width: none; }
 }
 
-.coding-cat-tail { transform-origin: 514px 710px; }
-.is-playing .coding-cat-tail { animation: coding-tail-sway 2.4s ease-in-out infinite; }
-.illustration-reaction-1 .coding-cat-tail { animation-duration: 1.7s; }
-.illustration-reaction-2 .coding-cat-tail { animation-duration: 3.1s; }
-@keyframes coding-tail-sway {
-  0%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(-9deg); }
-  75% { transform: rotate(7deg); }
+/* The root stays behind the laptop; two joined curves bend continuously. */
+.coding-cat-tail { d: path("M514 687 C493 646 449 636 429 598 C405 555 420 504 445 466"); }
+.is-playing .coding-cat-tail { animation: coding-tail-soft 4.8s ease-in-out infinite; }
+.illustration-reaction-1 .coding-cat-tail { animation-name: coding-tail-flick; animation-duration: 3.6s; }
+.illustration-reaction-2 .coding-cat-tail { animation-name: coding-tail-curious; animation-duration: 5.8s; }
+@keyframes coding-tail-soft {
+  0%, 100% { d: path("M514 687 C493 646 449 636 429 598 C405 555 420 504 445 466"); }
+  28% { d: path("M514 687 C474 654 410 642 390 601 C365 558 375 510 402 486"); }
+  62% { d: path("M514 687 C501 641 470 612 466 572 C457 527 465 486 447 459"); }
+  82% { d: path("M514 687 C488 642 442 628 424 590 C403 548 429 508 456 490"); }
+}
+@keyframes coding-tail-flick {
+  0%, 100% { d: path("M514 687 C493 646 449 636 429 598 C405 555 420 504 445 466"); }
+  30%, 45% { d: path("M514 687 C474 654 410 642 390 601 C365 558 382 503 409 480"); }
+  54% { d: path("M514 687 C474 654 410 642 390 601 C365 558 368 512 347 497"); }
+  65% { d: path("M514 687 C474 654 410 642 390 601 C365 558 398 499 424 501"); }
+  78% { d: path("M514 687 C488 642 442 628 424 590 C403 548 423 502 448 475"); }
+}
+@keyframes coding-tail-curious {
+  0%, 100% { d: path("M514 687 C493 646 449 636 429 598 C405 555 420 504 445 466"); }
+  30% { d: path("M514 687 C495 635 447 605 436 556 C424 505 438 449 469 454"); }
+  52% { d: path("M514 687 C495 635 447 605 436 556 C424 505 461 439 482 479"); }
+  76% { d: path("M514 687 C479 647 422 626 408 581 C391 532 421 491 445 492"); }
 }
