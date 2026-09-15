@@ -745,7 +745,7 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:setup-core", async () => {
     const setupState = stateStore.read();
     if (setupState.browserInteractionMode === "automatic") {
-      const browser = await browserHost.probeAuthentication();
+      const browser = await browserHost.probeAuthentication({ forSetup: true });
       if (!browser.authenticated) {
         throw new Error(
           IS_DEV_PROFILE

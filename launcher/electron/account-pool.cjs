@@ -22,6 +22,7 @@ class AccountBrowserPool {
     this.surfaceActive = true;
     this.destroyed = false;
     this.addingAccount = false;
+    this.initializingHosts = true;
     this.affinityPath = path.join(options.coreHome, 'account-affinity.json');
     this.affinity = new Map();
     try {
@@ -72,6 +73,7 @@ class AccountBrowserPool {
   }
   async ready() {
     await Promise.all([...this.hosts.values()].map(host => host.ready()));
+    this.initializingHosts = false;
     this.writeDescriptor();
   }
   get turnTabs() { return new Map([...this.hosts.values()].flatMap(host => [...host.turnTabs])); }
@@ -79,6 +81,7 @@ class AccountBrowserPool {
     return [...this.hosts.values()].map(host => host.activeTraceId).find(Boolean) || null;
   }
   currentOperation() {
+    if (this.addingAccount) return 'ChatGPT account addition';
     return [...this.hosts.values()].map(host => host.currentOperation()).find(Boolean) || null;
   }
   accountSnapshot() {
@@ -115,10 +118,24 @@ class AccountBrowserPool {
       try { return [JSON.parse(fs.readFileSync(host.descriptorPath, 'utf8'))]; }
       catch (error) { if (error.code === 'ENOENT') return []; throw error; }
     });
-    const primary = descriptors.find(descriptor => descriptor.accountId === 'default');
-    if (!primary) return;
+    const selectedId = this.registry.snapshot().selectedId;
+    let selected = descriptors.find(descriptor => descriptor.accountId === selectedId);
+    if (!selected) {
+      if (this.initializingHosts) return; // Wait for the saved selected host, never publish default as home.
+      const pendingHost = this.hosts.get(selectedId);
+      const primary = descriptors.find(descriptor => descriptor.accountId === 'default');
+      if (!this.addingAccount || !pendingHost || !primary) {
+        throw new Error(`Selected ChatGPT account ${selectedId} has no browser descriptor`);
+      }
+      // During account creation, publish the new home identity before its target exists. Setup
+      // cannot inspect another account, while existing turn targets remain in the union below.
+      selected = { ...primary, accountId: pendingHost.accountId,
+        partition: pendingHost.partition, surfaceId: pendingHost.surfaceId };
+    }
     const targets = Object.assign({}, ...descriptors.map(descriptor => descriptor.surfaceTargets));
-    writePrivateFileAtomic(this.options.descriptorPath, JSON.stringify({ ...primary, surfaceTargets: targets }) + '\n');
+    // The home session belongs to the selected account; active turn leases still address their
+    // exact surface IDs through the union of every account's target map.
+    writePrivateFileAtomic(this.options.descriptorPath, JSON.stringify({ ...selected, surfaceTargets: targets }) + '\n');
   }
   async addAccount(label) {
     if (this.addingAccount || this.currentOperation()) throw new Error('Finish the current browser operation before adding an account');
@@ -127,7 +144,9 @@ class AccountBrowserPool {
     let id;
     try {
       id = this.registry.add(label).selectedId;
-      await this.getHost(id).ready();
+      const host = this.getHost(id);
+      this.writeDescriptor();
+      await host.ready();
     } catch (error) {
       if (id) {
         let rolledBack = false;
@@ -154,14 +173,23 @@ class AccountBrowserPool {
       }
       throw error;
     } finally { this.addingAccount = false; }
+    this.writeDescriptor();
     this.syncVisibility(); this.publish();
     return this.accountSnapshot();
   }
   async selectAccount(id) {
+    if (this.addingAccount) throw new Error('Finish adding the ChatGPT account before switching accounts');
     if (this.currentOperation()) throw new Error('Finish the current browser operation before switching accounts');
     const host = this.getHost(id);
     await host.ready();
+    const previous = this.registry.snapshot().selectedId;
     this.registry.select(id);
+    try { this.writeDescriptor(); }
+    catch (error) {
+      this.registry.select(previous);
+      this.writeDescriptor();
+      throw error;
+    }
     this.syncVisibility(); this.publish();
     return this.accountSnapshot();
   }
@@ -265,7 +293,7 @@ class AccountBrowserPool {
   copyManualPrompt(tabId) { return this.ownerForTab(tabId).copyManualPrompt(tabId); }
   confirmManualSent(tabId) { return this.ownerForTab(tabId).confirmManualSent(tabId); }
   async withInteractionModeChange(mode, action) {
-    if (this.activeTraceId || this.currentOperation()) throw new Error('Finish active tasks and account operations before changing interaction mode');
+    if (this.addingAccount || this.activeTraceId || this.currentOperation()) throw new Error('Finish active tasks and account operations before changing interaction mode');
     return this.selectedHost().withInteractionModeChange(mode, action);
   }
   chooseAccount(traceId, key, retained, requirement) {

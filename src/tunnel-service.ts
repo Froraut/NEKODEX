@@ -6,6 +6,7 @@ import { atomicWriteFile, getConfigDir } from "./config";
 import { runCommand, runChecked } from "./process";
 
 const LABEL = "io.github.codex-chatgpt-web.tunnel";
+const LAUNCHCTL_PRINT_TIMEOUT_MS = 5_000;
 
 export interface TunnelServiceStatus {
   supported: boolean;
@@ -84,12 +85,15 @@ ${args.map(arg => `    <string>${xml(arg)}</string>`).join("\n")}
 `;
 }
 
-export function getTunnelServiceStatus(): TunnelServiceStatus {
+export function getTunnelServiceStatus(printTimeoutMs = LAUNCHCTL_PRINT_TIMEOUT_MS): TunnelServiceStatus {
   if (process.platform !== "darwin") {
     return { supported: false, installed: false, loaded: false, running: false, label: LABEL };
   }
   const path = plistPath();
-  const result = runCommand("launchctl", ["print", serviceTarget()]);
+  // A stalled probe must not bypass the unload poll's elapsed-time check.
+  // runCommand throws on ETIMEDOUT; an ordinary nonzero print still means unloaded.
+  const result = runCommand("launchctl", ["print", serviceTarget()],
+    { timeout: printTimeoutMs });
   return {
     supported: true,
     installed: existsSync(path),
@@ -132,10 +136,14 @@ export function startTunnelService(): TunnelServiceStatus {
 
 async function waitForTunnelServiceUnloaded(timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (getTunnelServiceStatus().loaded && Date.now() < deadline) {
-    await new Promise(resolveWait => setTimeout(resolveWait, 50));
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`launchd did not unload ${LABEL} after ${timeoutMs}ms`);
+    if (!getTunnelServiceStatus(Math.min(LAUNCHCTL_PRINT_TIMEOUT_MS, remaining)).loaded) return;
+    const pause = Math.min(50, deadline - Date.now());
+    if (pause <= 0) throw new Error(`launchd did not unload ${LABEL} after ${timeoutMs}ms`);
+    await new Promise(resolveWait => setTimeout(resolveWait, pause));
   }
-  if (getTunnelServiceStatus().loaded) throw new Error(`launchd did not unload ${LABEL} after ${timeoutMs}ms`);
 }
 
 export async function stopTunnelService(): Promise<TunnelServiceStatus> {

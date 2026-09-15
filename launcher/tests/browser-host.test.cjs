@@ -2170,7 +2170,7 @@ test("a later provider round reuses only its exact connector-bound conversation"
   assert.equal(tab.loading, true);
   assert.equal(tab.message, "ChatGPT is working");
   assert.equal(tab.bootstrapReady, true);
-  assert.equal(fixture.selectedTabId, tab.id);
+  assert.equal(fixture.selectedTabId, "home");
   assert.deepEqual(throttling, [false]);
   assert.deepEqual(rendererViewport, { width: 1280, height: 800 });
   assert.deepEqual(events, ["visible", "published", "descriptor", "browser.tab_reused"]);

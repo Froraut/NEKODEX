@@ -139,12 +139,13 @@ bun run app
 | --- | --- | --- | --- |
 | **仅浏览器** | Free/Go：Luna；Plus：Instant–High；Pro：增加 Extra High 和 Pro | 不可用；Codex 会显示警告 | 无 |
 | **完整 harness** | Free/Go：Luna；Plus：Instant–High；Pro：增加 Extra High 和 Pro | 每个列出的 effort 均支持，包括 Pro | OpenAI 隧道 + ChatGPT 连接器 |
+| **手动模式（Manual）** | 在 ChatGPT 中自行选择模型和 effort；启动器不会验证手动选择 | 通过独立连接器使用与当前回合绑定的 Codex 工具；Codex 路由仅支持文本 | 独立的 OpenAI 隧道 + `Codex Zero Risk2` 连接器；自行粘贴并发送提示 |
 
-模型选择器中的每一项都对应一个固定的 ChatGPT 模式。Codex 仍会显示内置的 Effort 和 Speed
-选项，但更改它们不会在后台静默切换所选的浏览器模型。在完整模式下，每一个可用 effort 都会
+自动模式的模型选择器条目各自对应一个固定的 ChatGPT 模式。Codex 仍会显示内置的 Effort 和 Speed
+选项，但更改它们不会在后台静默切换所选的浏览器模型。在自动完整模式下，每一个可用 effort 都会
 获得同一个与当前回合绑定的 MCP 能力；Pro 没有单独限制，也没有缩减后的工具契约。
 
-旧版 **Zero Risk** 模式现改名为**手动模式**。现有 `chatgpt-web/zero-risk` 和 `chatgpt-web/zero-risk-pro` 模型 ID、命令行选项及已保存设置保持兼容。连接器的准确名称仍为 `Codex Zero Risk2`。手动模式不自动读写 ChatGPT 页面或发送提示，但账户限制及 MCP/本地工具的实际影响仍然存在。
+旧版 **Zero Risk** 模式现改名为**手动模式**。现有 `chatgpt-web/zero-risk` 和 `chatgpt-web/zero-risk-pro` 模型 ID、命令行选项及已保存设置保持兼容。连接器的准确名称仍为 `Codex Zero Risk2`。手动模式不自动读写 ChatGPT 页面或发送提示，但账户限制及 MCP/本地工具的实际影响仍然存在。操作步骤和故障排查见[手动流程指南](TROUBLESHOOTING.md#manual-workflow-stops)。
 
 手动模式的 Codex 路由**仅支持文本**，不会自动接收 Computer Use 截图或其他图片输入。
 图片必须在 ChatGPT 中手动添加；这样做也不会启用此路由的自动截图传递。进行视觉检查时，

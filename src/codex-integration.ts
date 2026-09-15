@@ -509,7 +509,9 @@ export function installCodexIntegration(
 }
 
 export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
-  const existing = readJournal();
+  // A repeated disconnect must inspect the inactive journal before any recovery path
+  // removes a JSON hook that appeared after the original disconnect.
+  const existing = readJournal({ reconcileInactiveHook: false });
   if (!existing) return { changed: false, active: false };
   if (existing.version === 2) {
     throw new Error("Legacy Codex integration must be upgraded by Setup before the bridge can be disconnected");
@@ -519,6 +521,16 @@ export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
   const current = readFileSync(existing.configPath, "utf8");
   if ((existing.version === 4 || existing.version === 5 || existing.version === 6 || existing.version === 7 || existing.version === 8 || existing.version === 9 || existing.version === 10 || existing.version === 11) && !existing.active) {
     verifyRestoredRoute(current, existing);
+    if (existing.version === 11 && existing.interruptHook.storage === "json") {
+      if (!existsSync(existing.interruptHook.hooksPath)) {
+        throw new Error(`Inactive Codex integration hooks JSON is missing: ${existing.interruptHook.hooksPath}`);
+      }
+      // The recorded hook has no ownership while inactive. A matching entry, or an
+      // occupied recorded slot with external content, requires manual reconciliation.
+      if (restoredInactiveJsonHook(existing)) {
+        throw new Error("Inactive Codex integration journal still has its managed JSON interrupt hook; refusing to disconnect");
+      }
+    }
     return { changed: false, active: false };
   }
   if (existing.version === 11) {

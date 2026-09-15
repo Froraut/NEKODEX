@@ -10,6 +10,9 @@ export const TUNNEL_VERSION = "0.0.12";
 const MIGRATABLE_TUNNEL_VERSIONS = new Set(["0.0.10"]);
 const RELEASE_BASE = `https://github.com/openai/tunnel-client/releases/download/v${TUNNEL_VERSION}`;
 const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_CHECKSUM_BYTES = 1024 * 1024;
+const MAX_ZIP_ENTRIES = 128;
+const MAX_BINARY_BYTES = 100 * 1024 * 1024;
 export const TUNNEL_READY_TIMEOUT_MS = 120_000;
 const TUNNEL_STATUS_POLL_INTERVAL_MS = 1_000;
 
@@ -101,23 +104,87 @@ function platformAsset(): string {
   return `tunnel-client-v${TUNNEL_VERSION}-${os}-${arch}.zip`;
 }
 
-async function fetchBytes(url: string, timeoutMs = 120_000): Promise<Uint8Array> {
+/** Read at most maxBytes before materializing a complete download. */
+export async function readBoundedResponse(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let complete = false;
+  try {
+    const length = Number(response.headers.get("content-length") ?? "0");
+    if (Number.isFinite(length) && length > maxBytes) throw new Error(`Download exceeds ${maxBytes} bytes`);
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > maxBytes - size) throw new Error(`Download exceeds ${maxBytes} bytes`);
+      size += value.byteLength;
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    complete = true;
+    return bytes;
+  } finally {
+    if (!complete) {
+      // Request cancellation but do not let a stalled source's cancel callback
+      // extend the download deadline or hide the original read/size error.
+      try { void reader.cancel().catch(() => {}); } catch { /* Preserve the original error. */ }
+    }
+    reader.releaseLock();
+  }
+}
+
+async function fetchBytes(url: string, maxBytes = MAX_DOWNLOAD_BYTES, timeoutMs = 120_000): Promise<Uint8Array> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
     const response = await fetch(url, { redirect: "follow", signal: controller.signal });
     if (!response.ok) throw new Error(`Download failed (${response.status}): ${url}`);
-    const length = Number(response.headers.get("content-length") ?? "0");
-    if (Number.isFinite(length) && length > MAX_DOWNLOAD_BYTES) throw new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes: ${url}`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_DOWNLOAD_BYTES) throw new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes: ${url}`);
-    return bytes;
+    return await readBoundedResponse(response, maxBytes);
   } catch (error) {
-    if (controller.signal.aborted) throw new Error(`Download timed out after ${timeoutMs}ms: ${url}`);
+    if (timedOut) throw new Error(`Download timed out after ${timeoutMs}ms: ${url}`);
+    if (error instanceof Error && error.message.startsWith("Download exceeds ")) {
+      controller.abort();
+      throw new Error(`${error.message}: ${url}`);
+    }
     throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Select one safe executable without expanding unrelated archive members. */
+export function extractTunnelBinary(archive: Uint8Array, expectedName: string): Uint8Array {
+  let entries = 0;
+  let matches = 0;
+  const files = unzipSync(archive, {
+    filter(file) {
+      if (++entries > MAX_ZIP_ENTRIES) throw new Error(`Tunnel archive has more than ${MAX_ZIP_ENTRIES} entries`);
+      const name = file.name;
+      const parts = name.replace(/\/$/, "").split("/");
+      if (!name || name.startsWith("/") || name.includes("\\") || name.includes("\0")
+        || parts.some(part => !part || part === "." || part === "..")) {
+        throw new Error(`Tunnel archive has an unsafe entry path: ${name}`);
+      }
+      if (basename(name) !== expectedName) return false;
+      if (++matches > 1) throw new Error(`Tunnel archive contains multiple ${expectedName} entries`);
+      if (!Number.isSafeInteger(file.originalSize) || file.originalSize < 1
+        || file.originalSize > MAX_BINARY_BYTES) {
+        throw new Error(`Tunnel binary exceeds ${MAX_BINARY_BYTES} bytes or has an invalid size`);
+      }
+      return true;
+    },
+  });
+  const entry = Object.entries(files).find(([name]) => basename(name) === expectedName);
+  if (!entry || matches !== 1) throw new Error(`Tunnel archive does not contain ${expectedName}`);
+  if (entry[1].byteLength > MAX_BINARY_BYTES) throw new Error(`Tunnel binary exceeds ${MAX_BINARY_BYTES} bytes`);
+  return entry[1];
 }
 
 function parseExpectedChecksum(text: string, asset: string): string {
@@ -177,16 +244,13 @@ export async function installTunnelClient(
   const asset = platformAsset();
   const [archive, sums] = await Promise.all([
     fetchBytes(`${RELEASE_BASE}/${asset}`),
-    fetchBytes(`${RELEASE_BASE}/SHA256SUMS.txt`),
+    fetchBytes(`${RELEASE_BASE}/SHA256SUMS.txt`, MAX_CHECKSUM_BYTES),
   ]);
   const expected = parseExpectedChecksum(new TextDecoder().decode(sums), asset);
   const archiveHash = sha256(archive);
   if (archiveHash !== expected) throw new Error(`Checksum mismatch for ${asset}`);
-  const files = unzipSync(archive);
   const expectedName = process.platform === "win32" ? "tunnel-client.exe" : "tunnel-client";
-  const entry = Object.entries(files).find(([name]) => basename(name) === expectedName);
-  if (!entry) throw new Error(`${asset} does not contain ${expectedName}`);
-  const binary = entry[1];
+  const binary = extractTunnelBinary(archive, expectedName);
   mkdirSync(dirname(executable), { recursive: true, mode: 0o700 });
   const stagedExecutable = `${executable}.install-${process.pid}-${randomUUID()}${process.platform === "win32" ? ".exe" : ""}`;
   atomicWriteFile(stagedExecutable, binary);

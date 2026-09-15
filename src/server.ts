@@ -1,6 +1,7 @@
 import { MAX_CHATGPT_BROWSER_TABS } from "./adapters/chatgpt-web/concurrency";
 import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { normalizeNativeDelegation } from "./adapters/chatgpt-web/native-delegation";
+import { validateChatGptWebInputImage } from "./adapters/chatgpt-web/input-image-validation";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { timingSafeEqual } from "node:crypto";
@@ -362,6 +363,22 @@ export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppCo
   return route;
 }
 
+/** Inspect the effective Web context, including restored continuation and delegated messages. */
+function findInvalidChatGptWebInputImage(parsed: CodexParsedRequest): string | undefined {
+  for (const [index, message] of parsed.context.messages.entries()) {
+    if (typeof message.content === "string") continue;
+    for (const part of message.content) {
+      if (part.type !== "image") continue;
+      const invalid = validateChatGptWebInputImage(part.imageUrl);
+      if (invalid) {
+        return `ChatGPT web input image in ${message.role} message ${index + 1} ${invalid}. `
+          + "Inline the image bytes as a base64 data URL (png, jpeg, gif, or webp) before retrying.";
+      }
+    }
+  }
+  return undefined;
+}
+
 export async function modelsRequest(
   req: Request,
   config: AppConfig,
@@ -491,6 +508,8 @@ export async function responseRequest(
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
+  const invalidWebImage = findInvalidChatGptWebInputImage(parsed);
+  if (invalidWebImage) return formatErrorResponse(400, "invalid_request_error", invalidWebImage);
   let requestConfig = config;
   if (route.interactionMode === "automatic" && route.adapterEffort === "max" && options.readProModelVersion) {
     requestConfig = { ...config };

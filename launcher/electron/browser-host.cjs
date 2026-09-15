@@ -238,7 +238,14 @@ function manualPromptDigest(prompt) {
 }
 
 function browserInteractionModeFor(host) {
-  const mode = host.interactionModeOverride ?? host.getBrowserInteractionMode?.() ?? "automatic";
+  const savedMode = host.getBrowserInteractionMode?.();
+  // Setup commits the runtime before the launcher publishes its state. Keep the new descriptor
+  // mode across that gap, then release the override once the persisted state catches up.
+  if (host.interactionModeOverride && host.manualOperation !== INTERACTION_MODE_CHANGE_OPERATION
+    && savedMode === host.interactionModeOverride) {
+    host.interactionModeOverride = null;
+  }
+  const mode = host.interactionModeOverride ?? savedMode ?? "automatic";
   if (mode !== "automatic" && mode !== "manual") {
     throw new Error("Launcher browser interaction mode is invalid");
   }
@@ -526,24 +533,31 @@ class BrowserHost {
     this.assertTurnTabsCanResetForInteractionModeChange();
     this.interactionModeOverride = mode;
     this.manualOperation = INTERACTION_MODE_CHANGE_OPERATION;
+    let committed = false;
     try {
       let browserCommitted = false;
+      // Setup inspects the launcher descriptor before afterRuntimeReady runs. Publish the target
+      // mapping under the temporary mode before starting setup, without changing account/profile.
+      if (mode === "automatic") await this.markOwnedSurface();
+      this.writeDescriptor();
       const commitBrowserChange = async () => {
         if (browserCommitted) throw new Error("Browser interaction mode change was committed more than once");
-        // The runtime setup invokes this callback inside its own rollback boundary. Existing tabs
-        // are mode-bound and remain valid history, so the browser commit has no irreversible tab
-        // mutation that could survive a runtime rollback.
-        if (mode === "automatic") await this.markOwnedSurface();
+        // Runtime setup invokes this callback inside its rollback boundary. The browser mapping
+        // was already published so its own capability inspection could use the target surface.
         browserCommitted = true;
       };
       const result = await action(commitBrowserChange);
       if (!browserCommitted) {
         throw new Error("Runtime setup returned before committing the browser interaction mode");
       }
+      committed = true;
       return result;
     } finally {
       this.manualOperation = null;
-      this.interactionModeOverride = null;
+      if (!committed) this.interactionModeOverride = null;
+      // Failure restores the prior mode after runtime rollback. Success retains the new mode until
+      // the launcher state is published, so no helper observes a transient old target mapping.
+      this.writeDescriptor();
     }
   }
 
@@ -2394,7 +2408,7 @@ class BrowserHost {
       if (!existing.view.webContents.isDestroyed()) {
         existing.view.webContents.setBackgroundThrottling(false);
       }
-      this.selectedTabId = existing.id;
+      if (reveal) this.selectedTabId = existing.id;
       if (reveal) this.show();
       else this.syncViewVisibility();
       this.publishState?.(this.snapshot());
@@ -2413,7 +2427,7 @@ class BrowserHost {
       throw error;
     }
     const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity);
-    this.selectedTabId = tab.id;
+    if (reveal) this.selectedTabId = tab.id;
     if (reveal) this.show();
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
@@ -2827,9 +2841,12 @@ class BrowserHost {
     return tracked;
   }
 
-  async probeAuthentication() {
+  async probeAuthentication({ forSetup = false } = {}) {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
-    if (!this.view || this.view.webContents.isDestroyed()) return this.snapshot();
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      if (forSetup) throw new Error("ChatGPT session verification is unavailable: embedded browser is not ready");
+      return this.snapshot();
+    }
     const generation = this.authGeneration ?? 0;
     const primaryView = this.view;
     const primaryContents = primaryView.webContents;
@@ -2852,6 +2869,7 @@ class BrowserHost {
     };
     let url = primaryContents.getURL();
     if (url === IDLE_BROWSER_URL) {
+      if (forSetup) throw new Error("ChatGPT session verification is unavailable: Temporary Chat has not loaded");
       this.setState({
         status: this.state.authenticated ? "ready" : "signed-out",
         message: this.state.authenticated ? "No active task" : "Sign in to ChatGPT",
@@ -2860,6 +2878,7 @@ class BrowserHost {
       return this.snapshot();
     }
     if (!url.startsWith(CHATGPT_ORIGIN)) {
+      if (forSetup) throw new Error("ChatGPT session verification is unavailable: Temporary Chat has not loaded");
       this.setState({ status: "signed-out", message: "Sign in to ChatGPT", authenticated: false, url });
       return this.snapshot();
     }
@@ -2879,6 +2898,8 @@ class BrowserHost {
       };
       const initialSurface = readSurface();
       let sessionAuthenticated = false;
+      let sessionVerification = "unavailable";
+      let verificationFailure = "session response unavailable";
       let accountLabel = null;
       if (new URL(initialSurface.url).origin === expectedUrl.origin) {
         const controller = new AbortController();
@@ -2891,62 +2912,99 @@ class BrowserHost {
             signal: controller.signal,
           });
           const responseUrl = new URL(response.url);
-          const payload = response.ok
-            && responseUrl.origin === expectedUrl.origin
-            && responseUrl.pathname === "/api/auth/session"
-            && response.headers.get("content-type")?.includes("application/json")
-            ? await response.json()
-            : null;
-          const user = payload?.user && typeof payload.user === "object" && !Array.isArray(payload.user)
-            ? payload.user
-            : null;
-          const sessionHasUser = user !== null && Object.keys(user).length > 0;
-          const sessionHasNoError = payload?.error === undefined || payload.error === null || payload.error === "";
-          const sessionExpiryIsValid = payload?.expires === undefined || payload.expires === null
-            ? true
-            : typeof payload.expires === "string"
-              && Number.isFinite(Date.parse(payload.expires))
-              && Date.parse(payload.expires) > Date.now();
-          sessionAuthenticated = sessionHasUser
-            && sessionHasNoError
-            && sessionExpiryIsValid;
-          if (sessionAuthenticated) {
-            const label = typeof user.email === "string" ? user.email : typeof user.name === "string" ? user.name : null;
-            accountLabel = label ? label.replace(/[\\u0000-\\u001f\\u007f]/g, "").slice(0, 160) : null;
+          const trustedEndpoint = responseUrl.origin === expectedUrl.origin
+            && responseUrl.pathname === "/api/auth/session";
+          if (!trustedEndpoint) {
+            verificationFailure = "session endpoint redirected";
+          } else if (!response.ok) {
+            // A service/protective response, including 401/403 HTML, is not an auth verdict.
+            verificationFailure = "session HTTP " + response.status;
+          } else if (!response.headers.get("content-type")?.includes("application/json")) {
+            verificationFailure = "session response was not JSON";
+          } else {
+            const payload = await response.json();
+            if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+              const user = payload.user && typeof payload.user === "object" && !Array.isArray(payload.user)
+                ? payload.user
+                : null;
+              const sessionHasUser = user !== null && Object.keys(user).length > 0;
+              const sessionHasNoError = payload.error === undefined || payload.error === null || payload.error === "";
+              const hasExpiry = payload.expires !== undefined && payload.expires !== null;
+              const expiry = hasExpiry && typeof payload.expires === "string" ? Date.parse(payload.expires) : NaN;
+              const expiryKnown = !hasExpiry || Number.isFinite(expiry);
+              const sessionExpired = hasExpiry && expiryKnown && expiry <= Date.now();
+              if (!sessionHasNoError) {
+                verificationFailure = "session payload reported an error";
+              } else if (!expiryKnown) {
+                verificationFailure = "session expiry was invalid";
+              } else if (!sessionHasUser || sessionExpired) {
+                sessionVerification = "rejected";
+              } else {
+                sessionAuthenticated = true;
+                sessionVerification = "authenticated";
+                const label = typeof user.email === "string" ? user.email : typeof user.name === "string" ? user.name : null;
+                accountLabel = label ? label.replace(/[\\u0000-\\u001f\\u007f]/g, "").slice(0, 160) : null;
+              }
+            } else {
+              verificationFailure = "session payload was invalid";
+            }
           }
-        } catch {}
+        } catch (error) {
+          verificationFailure = error?.name === "AbortError" ? "session request timed out" : "session request failed";
+        }
         finally { clearTimeout(timeout); }
       }
-      return { ...readSurface(), sessionAuthenticated, accountLabel };
+      return { ...readSurface(), sessionAuthenticated, sessionVerification, verificationFailure, accountLabel };
     })()`, true).catch(() => ({
       url: "",
       composer: false,
       temporary: false,
       sessionAuthenticated: false,
+      sessionVerification: "unavailable",
+      verificationFailure: "browser inspection failed",
       readyState: "unknown",
     }));
     let result = await probe(primaryContents);
-    if (!isCurrent()) return this.snapshot();
+    if (!isCurrent()) {
+      if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
+      return this.snapshot();
+    }
+    let authResult;
     if (!(result.composer && result.temporary && result.sessionAuthenticated)
       && authView) {
-      const authResult = await probe(authView.webContents);
-      if (!isCurrent()) return this.snapshot();
+      authResult = await probe(authView.webContents);
+      if (!isCurrent()) {
+        if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
+        return this.snapshot();
+      }
       if (authResult.sessionAuthenticated) {
         this.closeAuthView(authView, true, false);
         authView = this.authView;
-        if (!isCurrent() || !(await loadPrimary())) return this.snapshot();
+        if (!isCurrent() || !(await loadPrimary())) {
+          if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
+          return this.snapshot();
+        }
         url = primaryContents.getURL();
         result = await probe(primaryContents);
-        if (!isCurrent()) return this.snapshot();
+        if (!isCurrent()) {
+          if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
+          return this.snapshot();
+        }
       }
     }
     if (this.manualOperation === "ChatGPT login"
       && result.sessionAuthenticated
       && !result.temporary) {
-      if (!(await loadPrimary())) return this.snapshot();
+      if (!(await loadPrimary())) {
+        if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
+        return this.snapshot();
+      }
       url = primaryContents.getURL();
       result = await probe(primaryContents);
-      if (!isCurrent()) return this.snapshot();
+      if (!isCurrent()) {
+        if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
+        return this.snapshot();
+      }
     }
     if (result.composer && result.temporary && result.sessionAuthenticated) {
       if (authView) {
@@ -2962,12 +3020,21 @@ class BrowserHost {
       if (!wasAuthenticated) this.logger.info("browser.authenticated", { url: result.url });
     } else {
       const loaded = result.readyState === "complete";
+      const rejected = result.sessionVerification === "rejected"
+        && (!authResult || authResult.sessionVerification === "rejected");
+      const failure = result.sessionVerification === "unavailable" ? result.verificationFailure
+        : authResult?.sessionVerification === "unavailable" ? authResult.verificationFailure
+          : "Temporary Chat surface unavailable";
       this.setState({
-        status: loaded ? "signed-out" : "loading",
-        message: loaded ? "Sign in to ChatGPT" : "Waiting for ChatGPT",
+        status: rejected && loaded ? "signed-out" : loaded ? "error" : "loading",
+        message: rejected && loaded ? "Sign in to ChatGPT"
+          : loaded ? `ChatGPT session verification unavailable: ${failure}` : "Waiting for ChatGPT",
         authenticated: false,
         url: result.url || url,
       });
+      if (forSetup && !rejected) {
+        throw new Error(`ChatGPT session verification is unavailable: ${failure}`);
+      }
     }
     return this.snapshot();
   }

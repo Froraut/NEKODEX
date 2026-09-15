@@ -308,7 +308,7 @@ export function readJournalSnapshot(options: { primaryPath?: string; recoveryPat
   return { journal: primary ?? recovery, recoveryPending: !identical };
 }
 
-export function readJournal(): AnyCodexIntegrationJournal | undefined {
+export function readJournal(options: { reconcileInactiveHook?: boolean } = {}): AnyCodexIntegrationJournal | undefined {
   const primaryPath = getCodexJournalPath();
   const recoveryPath = getCodexJournalRecoveryPath();
   let primary: AnyCodexIntegrationJournal | undefined;
@@ -327,7 +327,7 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
     return undefined;
   }
   if (primary && recovery && serializeJournal(primary) === serializeJournal(recovery)) {
-    reconcileInactiveJsonHook(primary);
+    if (options.reconcileInactiveHook !== false) reconcileInactiveJsonHook(primary);
     return primary;
   }
   // A v2 uninstall marker is intent, while the older copy is the pre-uninstall commit.
@@ -347,14 +347,17 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
       return marked;
     }
   }
-  if (recovery && !primaryError && recoverPendingJsonHookWrite(recovery, primary)) return recovery;
+  if (recovery && !primaryError
+    && (options.reconcileInactiveHook !== false || recovery.version !== 11 || recovery.active
+      || recovery.interruptHook.storage !== "json")
+    && recoverPendingJsonHookWrite(recovery, primary)) return recovery;
   if (primary && !recovery && !recoveryError) {
-    reconcileInactiveJsonHook(primary);
+    if (options.reconcileInactiveHook !== false) reconcileInactiveJsonHook(primary);
     atomicWriteFile(recoveryPath, serializeJournal(primary));
     return primary;
   }
   if (recovery && !primary && !primaryError) {
-    reconcileInactiveJsonHook(recovery);
+    if (options.reconcileInactiveHook !== false) reconcileInactiveJsonHook(recovery);
     if (!journalMatchesConfig(recovery)) {
       throw new Error("Codex integration recovery journal does not match the active config");
     }
@@ -372,7 +375,7 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
     );
   }
   const selected = primaryMatches ? primary! : recovery!;
-  reconcileInactiveJsonHook(selected);
+  if (options.reconcileInactiveHook !== false) reconcileInactiveJsonHook(selected);
   const data = serializeJournal(selected);
   writeFilesWithCompensation([
     { path: recoveryPath, data },
