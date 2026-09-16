@@ -39,8 +39,13 @@ for (const [path, needle] of expected) {
 }
 const launcherPackage = JSON.parse(readFileSync(resolve(root, "launcher/package.json"), "utf8")) as {
   version?: string;
-  build: { artifactName: string; dmg: { artifactName: string } };
+  build: { appId: string; productName: string; artifactName: string; dmg: { artifactName: string } };
+  forkIdentity: { profileCompatibility: string; displayName: string };
 };
+if (launcherPackage.forkIdentity.profileCompatibility !== launcherPackage.build.appId
+  || launcherPackage.forkIdentity.displayName !== launcherPackage.build.productName) {
+  throw new Error("The persisted updater identity must match the packaged application identity");
+}
 const repository = packageJson.repository?.url?.match(/^git\+https:\/\/github\.com\/(.+)\.git$/)?.[1];
 if (!repository) throw new Error("package.json must identify the GitHub release repository");
 for (const name of readdirSync(root).filter(name => /^README(?:\.[\w-]+)?\.md$/.test(name))) {

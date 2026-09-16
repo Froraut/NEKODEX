@@ -10,6 +10,20 @@ const { validateStagedApplication } = require("./update-validation.cjs");
 const { verifyReleaseMetadata } = require("./release-trust.cjs");
 const { downloadAuthenticatedAsset } = require("./resumable-download.cjs");
 const BUILD = require("../package.json");
+const APPLICATION = applicationIdentity(BUILD);
+
+function applicationIdentity(manifest) {
+  // electron-builder removes `build` from the shipped package.json. These
+  // persisted fork fields are also checked against build configuration before release.
+  const identity = manifest.forkIdentity?.profileCompatibility;
+  const productName = manifest.forkIdentity?.displayName;
+  if (typeof identity !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(identity)
+    || typeof productName !== "string" || !productName.trim() || productName.length > 128
+    || /[\\/\x00-\x1f]/.test(productName) || [".", ".."].includes(productName)) {
+    throw new Error("The packaged application identity is missing or invalid");
+  }
+  return { identity, productName };
+}
 
 // Update origin belongs to this packaged build, never to an ambient environment
 // variable. A fork must not silently replace itself with an upstream release.
@@ -268,7 +282,7 @@ function findMacApplication(root) {
   const appEntry = entries.find((entry) => entry.isDirectory() && entry.name.endsWith(".app"));
   if (!appEntry) throw new Error("The macOS update archive does not contain an application bundle");
   const application = path.join(root, appEntry.name);
-  const executable = path.join(application, "Contents", "MacOS", BUILD.build.productName);
+  const executable = path.join(application, "Contents", "MacOS", APPLICATION.productName);
   if (!fs.existsSync(executable) || !fs.statSync(executable).isFile()) {
     throw new Error("The macOS update archive is incomplete");
   }
@@ -278,7 +292,7 @@ function findMacApplication(root) {
 function buildJob({ version, platform, arch = process.arch, executablePath, assetPath, stagingRoot, tempRoot, logPath,
   runtimeExecutable, repository = REPOSITORY }) {
   const common = { version, platform, arch, parentPid: process.pid, tempRoot, logPath, runtimeExecutable,
-    identity: BUILD.build.appId, productName: BUILD.build.productName, packageName: BUILD.name, repository };
+    identity: APPLICATION.identity, productName: APPLICATION.productName, packageName: BUILD.name, repository };
   if (platform === "darwin") {
     const target = macApplicationPath(executablePath);
     return {
@@ -640,6 +654,7 @@ function createUpdateController({
 }
 
 module.exports = {
+  applicationIdentity,
   buildJob,
   compareVersions,
   createUpdateController,

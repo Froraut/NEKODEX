@@ -4,14 +4,14 @@ ChatGPT 账户、编程智能体与本地工具的桌面工作空间。
 NEKODEX 提供原创猫咪图标、概览、独立账户管理页和石墨紫色界面。
 参见[设计与兼容性说明](docs/design/nekodex.md)。
 
-**当前下载版本：** `5.2.0-nekodex.6`，适用于 macOS 13 或更高版本。
+**当前下载版本：** `5.2.0-nekodex.7`，适用于 macOS 13 或更高版本。
 
 | Mac 类型 | 下载 |
 | --- | --- |
-| Apple Silicon（M1 及更新型号） | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.6/NEKODEX-5.2.0-nekodex.6-mac-arm64.dmg) |
-| Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.6/NEKODEX-5.2.0-nekodex.6-mac-x64.dmg) |
+| Apple Silicon（M1 及更新型号） | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.7/NEKODEX-5.2.0-nekodex.7-mac-arm64.dmg) |
+| Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.7/NEKODEX-5.2.0-nekodex.7-mac-x64.dmg) |
 
-[发行页面](https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.6) · [校验和](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.6/checksums.txt)。本次发行仅提供 macOS 安装包。
+[发行页面](https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.7) · [校验和](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.7/checksums.txt)。本次发行仅提供 macOS 安装包。
 首次安装 NEKODEX 需要手动过渡，因为旧更新器会验证原来的可执行文件名。
 已有浏览器配置及数据标识保持不变，以保留账户状态。
 

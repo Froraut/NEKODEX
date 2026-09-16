@@ -6,6 +6,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { Readable } = require("node:stream");
 const {
+  applicationIdentity,
   buildJob,
   compareVersions,
   createUpdateController,
@@ -19,6 +20,16 @@ const {
   validateReleaseAssetUrl,
   validateRepository,
 } = require("../electron/update.cjs");
+
+test("packaged updater resolves identity without electron-builder build metadata", () => {
+  const packaged = { name: "codex-web-gpt-launcher", forkIdentity: {
+    profileCompatibility: "dev.codexwebgpt.launcher", displayName: "NEKODEX",
+  } };
+  assert.deepEqual(applicationIdentity(packaged), {
+    identity: "dev.codexwebgpt.launcher", productName: "NEKODEX",
+  });
+  assert.throws(() => applicationIdentity({ forkIdentity: { ...packaged.forkIdentity, displayName: "../NEKODEX" } }));
+});
 
 function updateController(dependencies) {
   return createUpdateController({
