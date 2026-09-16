@@ -4,7 +4,7 @@ export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type ProModelVersion = "5.6" | "5.5" | "6";
-export type Surface = "overview" | "accounts" | "browser" | "setup" | "mcp" | "activity" | "settings";
+export type Surface = "overview" | "accounts" | "browser" | "setup" | "mcp" | "activity" | "settings" | "updates";
 
 export interface LauncherState {
   version: 1;
@@ -130,7 +130,7 @@ export interface OperationState {
 
 export type UpdateState =
   | { status: "disabled" | "idle" | "checking" | "up-to-date" }
-  | { status: "available" | "downloading" | "installing"; version: string;
+  | { status: "available" | "downloading" | "verifying" | "installing"; version: string;
       downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null }
   | { status: "error"; message: string };
 

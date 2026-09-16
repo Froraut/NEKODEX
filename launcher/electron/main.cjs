@@ -1133,7 +1133,14 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:update-install", async () => {
     if (!updateController) throw new Error("Launcher updates are unavailable");
+    const updateBlocked = () => runtimeHost?.currentOperation() || browserHost?.currentOperation()
+      || [...(browserHost?.turnTabs?.values() ?? [])].some(tab => tab.status === "running");
+    if (updateBlocked()) throw new Error("Finish active tasks and setup operations before updating NEKODEX");
     const launch = await updateController.beginInstall();
+    if (updateBlocked()) {
+      await updateController.cancelInstall(launch);
+      throw new Error("A task started while the update was downloading. Finish it, then retry the update");
+    }
     const result = await requestQuit();
     if (!result.ok) {
       try {

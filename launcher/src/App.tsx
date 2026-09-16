@@ -3,6 +3,8 @@ import languages from "../electron/languages.json";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
 import { AccountSettings } from "./AccountSettings";
+import { Updates } from "./Updates";
+import { updateCopyFor } from "./update-copy";
 import {
   useCallback,
   useEffect,
@@ -495,6 +497,8 @@ function LauncherShell({
   const mcpOptional = snapshot.state.browserInteractionMode === "automatic"
     && snapshot.state.codexCatalogVerified === true
     && snapshot.state.mcpSetupComplete !== true;
+  const updateCopy = updateCopyFor(language);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateCheckCooldown, setUpdateCheckCooldown] = useState(false);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const updateCheckTimer = useRef<number | undefined>(undefined);
@@ -509,27 +513,23 @@ function LauncherShell({
   const recheckUpdate = async () => {
     if (updateCheckCooldown || updateCheckBusy) return;
     setUpdateCheckBusy(true);
+    setUpdateError(null);
     try {
       const next = await api!.recheckUpdate();
       if (!updateCheckMounted.current) return;
-      if (next.status === "error") setError(next.message);
+      if (next.status === "error") setUpdateError(next.message);
       setUpdateCheckCooldown(true);
       window.clearTimeout(updateCheckTimer.current);
       updateCheckTimer.current = window.setTimeout(() => setUpdateCheckCooldown(false), 60_000);
     } catch (error) {
-      if (updateCheckMounted.current) setError(messageOf(error));
+      if (updateCheckMounted.current) setUpdateError(messageOf(error));
     } finally {
       if (updateCheckMounted.current) setUpdateCheckBusy(false);
     }
   };
-  const updateVisible = ["available", "downloading", "installing"].includes(snapshot.update.status);
-  const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
-  const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
-  const downloadLabel = snapshot.update.status === "downloading" && snapshot.update.totalBytes
-    ? `${copy.updating} ${Math.floor((snapshot.update.downloadedBytes ?? 0) / snapshot.update.totalBytes * 100)}% · `
-      + `${((snapshot.update.bytesPerSecond ?? 0) / 1024).toFixed(0)} KB/s`
-      + (snapshot.update.remainingSeconds != null ? ` · ~${Math.ceil(snapshot.update.remainingSeconds / 60)} min` : "")
-    : copy.updating;
+  const updateBusy = ["downloading", "verifying", "installing"].includes(snapshot.update.status);
+  const updateBlocked = operation?.status === "running" || browser?.status === "running"
+    || browser?.tabs.some(tab => tab.status === "running") === true;
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
 
   const enqueueBrowserSurface = useCallback((active: boolean, intent: number, show = false) => {
@@ -656,11 +656,11 @@ function LauncherShell({
   };
 
   const installUpdate = async () => {
-    setError(null);
+    setUpdateError(null);
     try {
       await api!.installUpdate();
     } catch (cause) {
-      setError(messageOf(cause));
+      setUpdateError(messageOf(cause));
     }
   };
 
@@ -713,6 +713,7 @@ function LauncherShell({
     >
       <TitleBar
         copy={copy}
+        language={language}
         surface={surface}
         devProfile={devProfile}
         draggable
@@ -787,22 +788,14 @@ function LauncherShell({
 
             <div className="sidebar-footer">
               <div className="sidebar-session"><StateDot state={browser?.authenticated ? "ready" : "idle"} /><span>{browser?.authenticated ? copy.sessionConnected : copy.sessionDisconnected}</span></div>
-              {updateVisible ? (
-                <SidebarItem
-                  active={false}
-                  disabled={updateBusy || operation?.status === "running" || browser?.status === "running"}
-                  icon="update"
-                  label={updateBusy ? downloadLabel : `${copy.updateAvailable} v${updateVersion}`}
-                  onClick={() => void installUpdate()}
-                  tone="update"
-                />
-              ) : null}
-              {!updateVisible && snapshot.update.status !== "disabled" ? (
-                <SidebarItem active={false} icon="update"
-                  disabled={updateCheckBusy || updateCheckCooldown || snapshot.update.status === "checking"}
-                  label={updateCheckBusy || snapshot.update.status === "checking" ? copy.loading : updateCheckCooldown ? copy.updateCheckCooldown : copy.checkUpdates}
-                  onClick={() => void recheckUpdate()} />
-              ) : null}
+              <SidebarItem
+                active={surface === "updates"}
+                icon="update"
+                label={updateCopy.title}
+                badge={snapshot.update.status === "available" ? <ActionDot tone="optional" /> : null}
+                tone={snapshot.update.status === "available" ? "update" : undefined}
+                onClick={() => navigateSurface("updates")}
+              />
               <SidebarItem
                 active={surface === "settings"}
                 icon="settings"
@@ -871,6 +864,10 @@ function LauncherShell({
             {surface === "activity" ? (
               <ActivitySurface copy={copy} language={language} logs={logs} setError={setError} />
             ) : null}
+            {surface === "updates" ? <Updates language={language} currentVersion={snapshot.version}
+              state={snapshot.update} busy={updateBusy} blocked={updateBlocked} checking={updateCheckBusy}
+              cooldown={updateCheckCooldown} error={updateError}
+              onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()} /> : null}
             {surface === "settings" ? (
               <SettingsSurface
                 browser={browser}
@@ -917,6 +914,7 @@ function LauncherShell({
 
 function TitleBar({
   copy,
+  language,
   surface,
   devProfile,
   draggable,
@@ -924,6 +922,7 @@ function TitleBar({
   toggleSidebar,
 }: {
   copy: Copy;
+  language: Language;
   surface: Surface;
   devProfile: boolean;
   draggable: boolean;
@@ -940,7 +939,7 @@ function TitleBar({
         />
         {devProfile ? <span className="titlebar-dev-profile">{copy.devBadge}</span> : null}
       </div>
-      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, setup: copy.setup, mcp: copy.localTools, activity: copy.activity, settings: copy.settings })[surface]}</strong></div>
+      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, setup: copy.setup, mcp: copy.localTools, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface]}</strong></div>
     </header>
   );
 }

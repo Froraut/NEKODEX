@@ -27,16 +27,16 @@ The interface uses a quiet graphite-and-lavender palette, responsive layouts and
 
 ## Download
 
-**NEKODEX 5.2.0-nekodex.4 · macOS prerelease · macOS 13 or later**
+**NEKODEX 5.2.0-nekodex.5 · macOS prerelease · macOS 13 or later**
 
 | Your Mac | Download |
 | --- | --- |
-| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.4/NEKODEX-5.2.0-nekodex.4-mac-arm64.dmg) |
-| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.4/NEKODEX-5.2.0-nekodex.4-mac-x64.dmg) |
+| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.5/NEKODEX-5.2.0-nekodex.5-mac-arm64.dmg) |
+| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.5/NEKODEX-5.2.0-nekodex.5-mac-x64.dmg) |
 
 Both macOS builds are **Developer ID signed and Apple notarized**, including the final DMGs with stapled notarization tickets.
 
-[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.4) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.4/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
+[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.5) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.5/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
 
 Windows and Linux code remains in the repository. **This release provides macOS builds only.**
 
@@ -46,6 +46,12 @@ Windows and Linux code remains in the repository. **This release provides macOS 
 2. Quit the existing installation, if it is running.
 3. Open the DMG and drag **NEKODEX** into **Applications**.
 4. Launch NEKODEX and choose **Continue setup**.
+
+### Update from inside NEKODEX
+
+Open **Updates** in the sidebar, choose **Check for updates**, then **Download and restart** when a new version is available. The screen shows download progress and package verification; NEKODEX restarts itself to finish installation. Account profiles and settings are preserved. Finish active tasks before updating.
+
+The app checks its own GitHub releases, including the NEKODEX prerelease channel. Updates require the publisher's signed metadata and a verified package. If GitHub's anonymous API quota is exhausted, the app can discover the release through GitHub's public feed and authenticate the same signed metadata. No GitHub token is needed.
 
 <details>
 <summary><strong>Upgrading from an older installation</strong></summary>

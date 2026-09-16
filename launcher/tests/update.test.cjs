@@ -341,12 +341,14 @@ test("verified update is handed to one detached worker", async () => {
   const assetBody = Buffer.from("new appimage");
   const hash = require("node:crypto").createHash("sha256").update(assetBody).digest("hex");
   let spawned = null;
+  const phases = [];
   const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
   const previousWrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
   process.env.CODEX_WEB_GPT_APPIMAGE = oldAppImage;
   process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = wrapper;
   try {
     const controller = createUpdateController({
+      publish: state => phases.push(state.status),
       currentVersion: "1.1.4",
       platform: "linux",
       arch: "x64",
@@ -383,7 +385,7 @@ test("verified update is handed to one detached worker", async () => {
         sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
         spawnWorker: (runtime, worker, job) => {
           spawned = { runtime, worker, job, data: JSON.parse(fs.readFileSync(job, "utf8")) };
-          return { pid: 123, unref() {}, kill() {} };
+          return { pid: 123, exitCode: 0, signalCode: null, unref() {}, kill() {} };
         },
       },
     });
@@ -396,7 +398,8 @@ test("verified update is handed to one detached worker", async () => {
     assert.equal(path.basename(spawned.data.runnerSource), "linux-appimage-runner.sh");
     assert.equal(fs.existsSync(spawned.data.runnerSource), true);
     assert.equal(controller.getState().status, "installing");
-    controller.cancelInstall(launch);
+    assert.deepEqual(phases, ["checking", "available", "downloading", "verifying", "installing"]);
+    await controller.cancelInstall(launch);
     assert.equal(fs.existsSync(launch.tempRoot), false);
     assert.deepEqual(controller.getState(), { status: "available", version: "1.2.0" });
   } finally {

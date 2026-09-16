@@ -33,6 +33,17 @@ function releaseApiUrl(repository = REPOSITORY) {
   return `https://api.github.com/repos/${validateRepository(repository)}/releases?per_page=20`;
 }
 
+function releaseFeedEntries(xml, repository = REPOSITORY) {
+  const prefix = `https://github.com/${validateRepository(repository)}/releases/tag/v`;
+  const versions = new Set();
+  for (const match of String(xml).matchAll(/<link\b[^>]*\bhref="([^"]+)"[^>]*>/g)) {
+    if (!match[1].startsWith(prefix)) continue;
+    const version = match[1].slice(prefix.length);
+    if (parseVersion(version)) versions.add(version);
+  }
+  return [...versions].map(version => ({ tag_name: `v${version}` }));
+}
+
 function selectRelease(releases, currentVersion, { platform, arch } = {}) {
   const current = parseVersion(currentVersion);
   const channel = current?.prerelease?.split(".")[0];
@@ -143,6 +154,8 @@ function request(url, redirects = 0, { signal, headers = {}, allowPartial = fals
         response.resume();
         const error = new Error(`Update download failed with HTTP ${response.statusCode}`);
         error.statusCode = response.statusCode;
+        error.rateLimited = response.statusCode === 429
+          || (response.statusCode === 403 && response.headers["x-ratelimit-remaining"] === "0");
         reject(error);
         return;
       }
@@ -398,6 +411,30 @@ function createUpdateController({
     return state;
   };
 
+  async function checkSignedFeed() {
+    // Public Atom discovery is not subject to the anonymous REST quota. The feed
+    // is only a discovery hint: pinned signatures still authenticate every asset.
+    const feed = await deps.downloadText(`https://github.com/${repository}/releases.atom`, 512 * 1024, { timeoutMs: 10_000 });
+    let entries = releaseFeedEntries(feed, repository);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const release = selectRelease(entries, currentVersion);
+      if (!release || compareVersions(releaseVersion(release.tag_name), currentVersion) <= 0) return release;
+      const version = releaseVersion(release.tag_name);
+      const base = `https://github.com/${repository}/releases/download/v${version}/`;
+      const raw = await deps.downloadText(`${base}release-metadata.json`, 512 * 1024, { timeoutMs: 10_000 });
+      const metadata = deps.verifyReleaseMetadata(raw, { repository, tag: release.tag_name, version });
+      const name = releaseAssetName(version, platform, arch);
+      if (metadata.assets.some(asset => asset.name === name)) {
+        return { ...release, assets: [
+          ...metadata.assets.map(asset => ({ name: asset.name, size: asset.size, browser_download_url: `${base}${asset.name}` })),
+          { name: "release-metadata.json", browser_download_url: `${base}release-metadata.json` },
+        ] };
+      }
+      entries = entries.filter(entry => entry.tag_name !== release.tag_name);
+    }
+    throw new Error("No compatible update found in the newest signed releases. Try again later.");
+  }
+
   function startCheck() {
     transition({ status: "checking" });
     checkPromise = (async () => {
@@ -408,7 +445,9 @@ function createUpdateController({
         } catch (error) {
           // A new public fork has no latest release until its first stable build.
           // Never fall back to a different repository in that case.
-          if (error?.statusCode !== 404) throw error;
+          if (error?.rateLimited) {
+            release = await checkSignedFeed();
+          } else if (error?.statusCode !== 404) throw error;
         }
         if (!release) {
           candidate = null;
@@ -466,7 +505,7 @@ function createUpdateController({
 
   function recheck() {
     if (checkPromise) return checkPromise;
-    if (state.status === "disabled" || pending || ["available", "downloading", "installing"].includes(state.status)) {
+    if (state.status === "disabled" || pending || ["available", "downloading", "verifying", "installing"].includes(state.status)) {
       return Promise.resolve(state);
     }
     if (lastCheckFinishedAt && Date.now() - lastCheckFinishedAt < RECHECK_COOLDOWN_MS) {
@@ -508,6 +547,7 @@ function createUpdateController({
           expectedBytes: available.assetBytes, expectedSha256: expected,
           onProgress: progress => transition({ status: "downloading", version: available.version, ...progress }),
         });
+        transition({ status: "verifying", version: available.version });
         fs.copyFileSync(cachedAsset, assetPath);
         const actual = deps.sha256(assetPath);
         if (actual !== expected) throw new Error(`SHA-256 verification failed for ${available.assetName}`);
@@ -565,8 +605,8 @@ function createUpdateController({
   }
 
   async function cancelInstall(launch) {
-    let settled = !launch?.child;
     const child = launch?.child;
+    let settled = !child || child.exitCode !== null || child.signalCode !== null;
     if (child && child.exitCode === null && child.signalCode === null) {
       const exited = new Promise(resolve => {
         let done = false;
@@ -610,6 +650,7 @@ module.exports = {
   parseVersion,
   releaseAssetName,
   releaseApiUrl,
+  releaseFeedEntries,
   selectRelease,
   releaseVersion,
   validateReleaseAssetUrl,
