@@ -50,7 +50,7 @@ Windows and Linux code remains in the repository. **This release provides macOS 
 <details>
 <summary><strong>Upgrading from an older installation</strong></summary>
 
-Install the `.2` DMG manually when moving from `.1` or a legacy installation. Earlier binaries can retain the previous repository identity or executable name in their updater trust policy.
+Install the current DMG manually when moving from `.1` or a legacy installation. Earlier binaries can retain the previous repository identity or executable name in their updater trust policy.
 
 Existing account/profile storage locations remain compatible. Keep the old app closed during the transition and preserve its Application Support and profile folders. Remove an obsolete app bundle only after confirming NEKODEX opens correctly.
 

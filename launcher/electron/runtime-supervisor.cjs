@@ -856,7 +856,7 @@ class RuntimeSupervisor {
     if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
     const result = await this.runTunnelCommand(
       config,
-      ["runtimes", "status", tunnel.alias, "--json"],
+      ["runtimes", "list", "--json"],
       5_000,
       "Local tunnel health discovery",
       recoverySignal,
@@ -871,13 +871,20 @@ class RuntimeSupervisor {
     } catch (error) {
       throw new Error(`Local tunnel health discovery returned invalid JSON: ${errorMessage(error)}`);
     }
-    const candidates = [
-      parsed?.local?.effective_health?.base_url,
-      parsed?.local?.health?.base_url,
-      parsed?.health_url,
-      parsed?.ui_url,
-    ];
-    const baseUrl = candidates.map(loopbackHealthBaseURL).find(Boolean);
+    const aliases = Array.isArray(parsed?.aliases)
+      ? parsed.aliases.filter(entry => entry?.alias === tunnel.alias)
+      : [];
+    const healthFile = aliases.length === 1 ? aliases[0].health_url_file : undefined;
+    if (typeof healthFile !== "string" || !absolutePath(healthFile)) {
+      throw new Error("Local tunnel health discovery returned no unique alias health URL file");
+    }
+    this.assertRecoveryActive(recoverySignal);
+    const healthFileInfo = await fs.promises.lstat(healthFile);
+    if (!healthFileInfo.isFile() || healthFileInfo.size > 4_096) {
+      throw new Error("Local tunnel health discovery returned an invalid health URL file");
+    }
+    const baseUrl = loopbackHealthBaseURL(await fs.promises.readFile(healthFile, "utf8"));
+    this.assertRecoveryActive(recoverySignal);
     if (!baseUrl) {
       throw new Error("Local tunnel health discovery returned no verified loopback endpoint");
     }
@@ -2175,15 +2182,18 @@ class RuntimeSupervisor {
     };
   }
 
-  async cancelBrowserTurn(traceId) {
+  async cancelBrowserTurn(traceId, reason) {
     if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId || "")) throw new Error("Browser turn trace id is invalid");
+    if (reason !== undefined && !["browser_surface_bootstrap_timeout", "helper_heartbeat_expired"].includes(reason)) {
+      throw new Error("Browser turn cancellation reason is invalid");
+    }
     const config = this.readConfig();
     const daemon = this.daemon;
     if (!config || !daemon || daemon.exitCode !== null || daemon.signalCode !== null) {
       throw new Error("Launcher-owned runtime is unavailable for browser-turn cancellation");
     }
     const result = await this.control(config, "cancel-turn", {
-      body: { traceId },
+      body: { traceId, ...(reason ? { reason } : {}) },
       timeoutMs: 15_000,
     });
     if (result.status !== "ok"

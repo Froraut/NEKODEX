@@ -104,7 +104,7 @@ test("versioned provenance reuses the existing synthetic Pro tooltip ownership a
   const source = fs.readFileSync(new URL("./fixtures/pro-retry-tooltip.html", import.meta.url), "utf8");
   expect(source).toContain("SYNTHETIC linkage and layout");
   expect(source).toContain('role="menuitemradio">Extra High');
-  expect(source).toContain('id="pro" role="menuitemradio">Pro');
+  expect(source).toContain('id="pro" role="menuitemradio" aria-disabled="true">Pro');
   expect(datasetV1.provenance.sourceFixtures).toContain("tests/fixtures/pro-retry-tooltip.html");
   const linked = proRetryTooltipFixture();
   expect(await chatGptProUsageLimitTooltip(linked.menu, { timeoutMs: 0 }))

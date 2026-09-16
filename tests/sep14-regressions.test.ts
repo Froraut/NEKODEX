@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { CHATGPT_STOPPED_THINKING_LABELS } from "../src/adapters/chatgpt-web/ui-labels";
 import { chatGptModelStateMatches } from "../src/chatgpt-session";
 import { forwardNativeCodexRequest } from "../src/native-passthrough";
 import { rememberRetryableTurnFailure, isAcceptedRetryContinuation, clearRetryableTurnHandoff } from "../src/adapters/chatgpt-web/retry-continuation";
@@ -14,13 +15,14 @@ test("contradictory model descriptions cannot authorize a pinned send", () => {
 test("French stopped-thinking UI is terminal while quoted answer text remains content", () => {
   const { createDocument } = require("@mixmark-io/domino");
   const source = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8").split("// CHATGPT_STOPPED_THINKING_BEGIN")[1]!.split("// CHATGPT_STOPPED_THINKING_END")[0]!;
-  const detect = new Function("root", "overlapsRenderedAnswer", "overlapsCommentary", "renderedInDom", "document", "NodeFilter", new Bun.Transpiler({ loader: "ts" }).transformSync(source) + "; return stoppedThinkingVisible;");
+  const detect = new Function("root", "overlapsRenderedAnswer", "overlapsCommentary", "renderedInDom", "document", "NodeFilter", "options", new Bun.Transpiler({ loader: "ts" }).transformSync(source) + "; return stoppedThinkingVisible;");
   const document = createDocument('<section id="turn"><button aria-label="Réflexion interrompue"></button></section>');
   const root = document.getElementById("turn");
   const query = root.querySelectorAll.bind(root);
   Object.defineProperty(root, "querySelectorAll", { value: (selector: string) => Array.from(query(selector)) });
-  expect(detect(root, () => false, () => false, () => true, document, { SHOW_TEXT: 4 })).toBeTrue();
-  expect(detect(root, () => true, () => false, () => true, document, { SHOW_TEXT: 4 })).toBeFalse();
+  const options = { stoppedThinkingLabels: CHATGPT_STOPPED_THINKING_LABELS };
+  expect(detect(root, () => false, () => false, () => true, document, { SHOW_TEXT: 4 }, options)).toBeTrue();
+  expect(detect(root, () => true, () => false, () => true, document, { SHOW_TEXT: 4 }, options)).toBeFalse();
 });
 
 test("the native passthrough consumes its own proxy without changing destination or authorization", async () => {

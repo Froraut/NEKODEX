@@ -82,6 +82,7 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { chatGptProUsageLimitTooltip } from "./pro-retry-hint";
+import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import { retainBrowserDiagnosticTrace } from "./browser-diagnostic-retention";
 import { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
 import {
@@ -3974,7 +3975,12 @@ export class ChatGptBrowserWorker {
   ): Promise<ChatGptResponseDomSnapshot> {
     const observed = await responseTurn.evaluate((element, options) => {
       const root = element as HTMLElement;
-      type ObserverState = { id: number; revision: number; observer: MutationObserver };
+      type ObserverState = {
+        id: number;
+        revision: number;
+        observer: MutationObserver;
+        rendered: Map<HTMLElement, boolean>;
+      };
       type ObserverRegistry = { documentId: string; nextId: number; states: WeakMap<Element, ObserverState> };
       const scope = globalThis as typeof globalThis & {
         __CODEX_WEB_GPT_RESPONSE_OBSERVERS__?: ObserverRegistry;
@@ -3990,6 +3996,7 @@ export class ChatGptBrowserWorker {
           id: ++registry.nextId,
           revision: 0,
           observer: undefined as unknown as MutationObserver,
+          rendered: new Map<HTMLElement, boolean>(),
         };
         const state = observerState;
         state.observer = new MutationObserver(() => {
@@ -4004,17 +4011,31 @@ export class ChatGptBrowserWorker {
         });
         registry.states.set(root, state);
       }
-      const observerKey = `${registry.documentId}:${observerState.id}:${observerState.revision}`;
-      if (options.knownKey === observerKey) return { key: observerKey };
       // Browser turn WebContents are intentionally allowed to run while their Electron view is
       // hidden or has no measured width. Layout geometry is therefore not response visibility:
       // completed Markdown can have width=0 while remaining connected, rendered and readable.
-      const renderedInDom = (candidate: HTMLElement): boolean => {
+      const isRendered = (candidate: HTMLElement): boolean => {
         const style = getComputedStyle(candidate);
         return candidate.isConnected
           && style.display !== "none"
           && style.visibility !== "hidden"
           && style.opacity !== "0";
+      };
+      // A stylesheet change or CSS animation can reveal an answer or completion control
+      // without mutating this response subtree. Recheck the previous scan's dependencies.
+      for (const [candidate, rendered] of observerState.rendered) {
+        if (isRendered(candidate) !== rendered) {
+          observerState.revision += 1;
+          break;
+        }
+      }
+      const observerKey = `${registry.documentId}:${observerState.id}:${observerState.revision}`;
+      if (options.knownKey === observerKey) return { key: observerKey };
+      observerState.rendered.clear();
+      const renderedInDom = (candidate: HTMLElement): boolean => {
+        const rendered = isRendered(candidate);
+        observerState.rendered.set(candidate, rendered);
+        return rendered;
       };
 
       // ChatGPT uses the same Markdown renderer for intermediate commentary and for the final
@@ -4376,17 +4397,18 @@ export class ChatGptBrowserWorker {
           }
           return true;
         };
-        // Exact labels observed in the English and Simplified Chinese ChatGPT UI. A generic
-        // "stopped" match could turn ordinary answer text into a false upstream failure.
-        const stoppedLabels = new Set(["Stopped thinking", "已停止思考", "Réflexion interrompue"]);
-        const ariaMatch = [...root.querySelectorAll<HTMLElement>(
-          '[aria-label="Stopped thinking"], [aria-label="已停止思考"], [aria-label="Réflexion interrompue"]',
-        )]
-          .some(isStatus);
+        // Exact observed ChatGPT UI labels only; generic phrase matching would mistake
+        // quoted response text for a terminal status.
+        const stoppedLabels = new Set<string>(options.stoppedThinkingLabels);
+        const isStoppedLabel = (value: string | null): boolean => (
+          stoppedLabels.has(value?.replace(/\s+/g, " ").trim() ?? "")
+        );
+        const ariaMatch = [...root.querySelectorAll<HTMLElement>("[aria-label]")]
+          .some(candidate => isStoppedLabel(candidate.getAttribute("aria-label")) && isStatus(candidate));
         if (ariaMatch) return true;
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          if (!stoppedLabels.has(node.textContent?.replace(/\s+/g, " ").trim() ?? "")) continue;
+          if (!isStoppedLabel(node.textContent)) continue;
           const parent = node.parentElement;
           if (parent && isStatus(parent)) return true;
         }
@@ -4407,6 +4429,7 @@ export class ChatGptBrowserWorker {
       };
     }, {
       completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
+      stoppedThinkingLabels: [...CHATGPT_STOPPED_THINKING_LABELS],
       knownKey: cache?.key,
       attributeFilter: [...CHATGPT_DOM_REVISION_ATTRIBUTES],
     }, { timeout: 2_000 }).catch(error => {

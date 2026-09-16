@@ -5,7 +5,14 @@ NEKODEX は独自の猫アイコン、概要画面、独立したアカウント
 グラファイトとラベンダーの配色を備えています。
 [デザインと互換性の説明](docs/design/nekodex.md)を参照してください。
 
-**開発ソース：** NEKODEX の UI は実装済みですが、新しい署名付きリリースは未公開です。
+**ダウンロード版：** `5.2.0-nekodex.3`。macOS 13 以降に対応しています。
+
+| Mac | ダウンロード |
+| --- | --- |
+| Apple Silicon（M1 以降） | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.3/NEKODEX-5.2.0-nekodex.3-mac-arm64.dmg) |
+| Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.3/NEKODEX-5.2.0-nekodex.3-mac-x64.dmg) |
+
+[リリースページ](https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.3) · [チェックサム](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.3/checksums.txt)。このリリースは macOS 版のみです。
 旧アップデーターは以前の実行ファイル名を検証するため、初回は手動での移行が必要です。
 アカウント状態を保持するため、既存のブラウザープロファイルとデータ識別子を維持します。
 
@@ -93,24 +100,9 @@ Full モードでは、次のコンパクション境界まで、MCP が ChatGPT
 
 ## クイックスタート
 
-このフォークの最初のバイナリリリースが公開されるまでは、ページ上部のソース実行手順を使用してください。
-以下のインストールコマンドは、このフォークで今後公開されるバイナリリリース用です。
-
-デスクトップランチャーをインストールまたは更新します。既存のインストールを更新・修復する場合は、
-ランチャーを終了して同じコマンドをもう一度実行してください。ChatGPT プロファイルとランチャー設定を保持したまま、
-アプリケーションと内蔵ランタイムが置き換えられます。
-
-**macOS または Linux**
-
-```bash
-curl -fsSL https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
-```
-
-**Windows PowerShell**
-
-```powershell
-irm https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
-```
+ページ上部からお使いの Mac に対応する DMG をダウンロードしてください。既存のアプリを終了し、
+NEKODEX を「アプリケーション」フォルダーにドラッグします。既存のプロファイルとアカウントデータは保持してください。
+Windows と Linux のソースは引き続き利用できますが、このリリースに各プラットフォームのインストーラーは含まれません。
 
 アプリ内で次の 3 項目を完了します。
 

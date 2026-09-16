@@ -21,6 +21,7 @@ const {
   Tray,
 } = require("electron");
 const { resolveNativeProxyEnvironment, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
+const LANGUAGES = require("./languages.json");
 const { installHermesProvider } = require("./hermes-integration.cjs");
 const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
@@ -58,6 +59,10 @@ const {
 } = require("./window-state.cjs");
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+const launchEnvironment = {
+  CODEX_CHATGPT_WEB_HOME: process.env.CODEX_CHATGPT_WEB_HOME,
+  CODEX_HOME: process.env.CODEX_HOME,
+};
 const SOURCE_ROOT = path.resolve(__dirname, "../..");
 const LAUNCHER_PROFILE = resolveLauncherProfile({ appData: app.getPath("appData") });
 const IS_DEV_PROFILE = LAUNCHER_PROFILE.kind === DEVELOPMENT_PROFILE;
@@ -309,6 +314,16 @@ const NATIVE_COPY = Object.freeze({
     removeMessage: "从 Codex 中移除 ChatGPT Web 模型并恢复此前的模型路由？",
     removeDetail: "启动器中的 ChatGPT 登录 profile 会保留。Codex 需要重启一次。",
   }),
+  "zh-TW": Object.freeze({
+    openLauncher: "開啟 NEKODEX",
+    quit: "結束",
+    exportDiagnostics: "匯出隱私安全診斷",
+    cancel: "取消",
+    remove: "移除",
+    removeTitle: "移除 NEKODEX",
+    removeMessage: "從 Codex 中移除 ChatGPT Web 模型並還原先前的模型路由？",
+    removeDetail: "啟動器中的 ChatGPT 登入設定檔會保留。Codex 需要重新啟動一次。",
+  }),
   ja: Object.freeze({
     openLauncher: "NEKODEX を開く",
     quit: "終了",
@@ -318,6 +333,16 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "NEKODEX を削除",
     removeMessage: "Codex から ChatGPT Web モデルを削除し、以前のモデルルートを復元しますか？",
     removeDetail: "ランチャーの ChatGPT ログインプロファイルは保持されます。Codex を一度再起動する必要があります。",
+  }),
+  ko: Object.freeze({
+    openLauncher: "NEKODEX 열기",
+    quit: "종료",
+    exportDiagnostics: "개인정보가 보호된 진단 정보 내보내기",
+    cancel: "취소",
+    remove: "제거",
+    removeTitle: "NEKODEX 제거",
+    removeMessage: "Codex에서 ChatGPT Web 모델을 제거하고 이전 모델 경로를 복원할까요?",
+    removeDetail: "런처의 ChatGPT 로그인 프로필은 유지됩니다. Codex를 한 번 다시 시작해야 합니다.",
   }),
 });
 
@@ -492,8 +517,8 @@ async function loadRenderer(window) {
 }
 
 function validateLanguage(value) {
-  if (value !== "en" && value !== "zh-CN" && value !== "ja") {
-    throw new Error("Language must be en, zh-CN, or ja");
+  if (typeof value !== "string" || !Object.hasOwn(LANGUAGES, value)) {
+    throw new Error("Language must be en, zh-CN, zh-TW, ja, or ko");
   }
   return value;
 }
@@ -1336,7 +1361,7 @@ async function start() {
     descriptorPath: BROWSER_DESCRIPTOR_PATH,
     cdpPort,
     control: browserControl.descriptor(),
-    cancelTurn: IS_DEV_PROFILE ? undefined : traceId => runtimeSupervisor.cancelBrowserTurn(traceId),
+    cancelTurn: IS_DEV_PROFILE ? undefined : (traceId, reason) => runtimeSupervisor.cancelBrowserTurn(traceId, reason),
     getConnectorName: () => runtimeHost.browserConnectorName(),
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
@@ -1645,6 +1670,11 @@ void start().catch(error => recoverStartupFailure({
   dialog,
   error,
   phase: startupPhase,
+  launchEnvironment,
+  language: (() => {
+    try { return createStateStore(path.join(app.getPath("userData"), "launcher-state.json")).read().language || "en"; }
+    catch { return "en"; }
+  })(),
   interactive: !process.argv.includes("--launcher-smoke-test"),
   recordFailure: details => fs.appendFileSync(path.join(app.getPath("logs"), "launcher-fatal.log"),
     `${JSON.stringify({ at: new Date().toISOString(), ...details })}\n`, { mode: 0o600 }),

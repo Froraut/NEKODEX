@@ -1,4 +1,5 @@
 import { setupNextStep } from "./setup-progress";
+import languages from "../electron/languages.json";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
 import { AccountSettings } from "./AccountSettings";
@@ -374,27 +375,16 @@ function Onboarding({
 
           {isLanguage ? (
             <div className="welcome-options" role="radiogroup" aria-label={localized.chooseLanguage}>
-              <WelcomeOption
-                active={selectedLanguage === "en"}
-                detail={localized.english}
-                label={localized.english}
-                marker="EN"
-                onClick={() => setSelectedLanguage("en")}
-              />
-              <WelcomeOption
-                active={selectedLanguage === "zh-CN"}
-                detail={localized.chinese}
-                label={localized.chinese}
-                marker="简"
-                onClick={() => setSelectedLanguage("zh-CN")}
-              />
-              <WelcomeOption
-                active={selectedLanguage === "ja"}
-                detail={localized.japanese}
-                label={localized.japanese}
-                marker="日"
-                onClick={() => setSelectedLanguage("ja")}
-              />
+              {(Object.entries(languages) as Array<[Language, { label: string; marker: string }]>).map(([code, option]) => (
+                <WelcomeOption
+                  active={selectedLanguage === code}
+                  detail={option.label}
+                  key={code}
+                  label={option.label}
+                  marker={option.marker}
+                  onClick={() => setSelectedLanguage(code)}
+                />
+              ))}
             </div>
           ) : isInteraction ? (
             <InteractionModePicker
@@ -2775,11 +2765,8 @@ function Switch({
 
 function LanguageMenu({ copy, language, onChange }: { copy: Copy; language: Language; onChange: (language: Language) => void }) {
   const [open, setOpen] = useState(false);
-  const options: Array<{ label: string; value: Language }> = [
-    { label: copy.english, value: "en" },
-    { label: copy.chinese, value: "zh-CN" },
-    { label: copy.japanese, value: "ja" },
-  ];
+  const options: Array<{ label: string; value: Language }> =
+    (Object.entries(languages) as Array<[Language, { label: string }]>).map(([value, { label }]) => ({ label, value }));
   const selected = options.find((option) => option.value === language) ?? options[0];
 
   return (
@@ -3042,7 +3029,7 @@ function formatTime(value: string, language: Language): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleTimeString(language === "ja" ? "ja-JP" : language === "zh-CN" ? "zh-CN" : "en", {
+    : date.toLocaleTimeString(languages[language].locale, {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",

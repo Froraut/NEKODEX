@@ -1,4 +1,6 @@
 import type { Language } from "./types";
+import korean from "./i18n-ko.json";
+import traditionalChinese from "./i18n-zh-TW.json";
 
 const en = {
   checkUpdates: "Check for updates",
@@ -1208,9 +1210,14 @@ const ja: Record<keyof typeof en, string> = {
 
 export type Copy = typeof en;
 
+const koreanCopy = korean satisfies Record<keyof typeof en, string>;
+const traditionalChineseCopy = traditionalChinese satisfies Record<keyof typeof en, string>;
+
 export function copyFor(language: Language): Copy {
   if (language === "zh-CN") return zh as Copy;
+  if (language === "zh-TW") return traditionalChineseCopy as Copy;
   if (language === "ja") return ja as Copy;
+  if (language === "ko") return koreanCopy as Copy;
   return en;
 }
 

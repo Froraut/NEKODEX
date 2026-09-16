@@ -89,6 +89,28 @@ test("Japanese is preserved as a supported persisted launcher language", () => {
   }
 });
 
+test("Traditional Chinese and Korean persist with complete launcher copy", () => {
+  const languages = require("../electron/languages.json");
+  const source = fs.readFileSync(path.join(__dirname, "../src/i18n.ts"), "utf8");
+  const englishBlock = /^const en = \{\n([\s\S]*?)^\} as const;/m.exec(source)?.[1];
+  assert.ok(englishBlock);
+  const englishKeys = [...englishBlock.matchAll(/^  (\w+): /gm)].map(match => match[1]).sort();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nekodex-new-languages-"));
+  try {
+    const file = path.join(root, "state.json");
+    for (const language of ["zh-TW", "ko"]) {
+      assert.ok(Object.hasOwn(languages, language));
+      fs.writeFileSync(file, JSON.stringify({ version: 1, language }));
+      assert.equal(createStateStore(file).read().language, language);
+      const copy = require(`../src/i18n-${language}.json`);
+      assert.deepEqual(Object.keys(copy).sort(), englishKeys);
+      assert.ok(Object.values(copy).every(value => typeof value === "string" && value.length > 0));
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("persisted sidebar corruption is repaired without changing the rest of launcher state", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-sidebar-state-"));
   const file = path.join(root, "state.json");

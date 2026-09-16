@@ -4,8 +4,14 @@ ChatGPT 账户、编程智能体与本地工具的桌面工作空间。
 NEKODEX 提供原创猫咪图标、概览、独立账户管理页和石墨紫色界面。
 参见[设计与兼容性说明](docs/design/nekodex.md)。
 
-**当前已发布版本：** `5.2.0-nekodex.1` 是 macOS 签名预发行版；本仓库的 `.2` 是开发源码，
-尚未发布为新的二进制安装包。`.1` 的连接器契约和安装包保持不变。
+**当前下载版本：** `5.2.0-nekodex.3`，适用于 macOS 13 或更高版本。
+
+| Mac 类型 | 下载 |
+| --- | --- |
+| Apple Silicon（M1 及更新型号） | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.3/NEKODEX-5.2.0-nekodex.3-mac-arm64.dmg) |
+| Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.3/NEKODEX-5.2.0-nekodex.3-mac-x64.dmg) |
+
+[发行页面](https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.3) · [校验和](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.3/checksums.txt)。本次发行仅提供 macOS 安装包。
 首次安装 NEKODEX 需要手动过渡，因为旧更新器会验证原来的可执行文件名。
 已有浏览器配置及数据标识保持不变，以保留账户状态。
 
@@ -90,23 +96,8 @@ Codex 会保留原生任务、上下文生命周期、界面和工具 harness。
 
 ## 快速开始
 
-在本分支发布首个二进制安装包前，请使用本页顶部的源码说明。
-下列安装命令用于本分支未来的二进制发行版。
-
-安装或更新桌面启动器。若要更新或修复现有安装，请先退出启动器，然后再次运行同一条命令；它会
-替换应用程序和内置运行时，同时保留 ChatGPT 配置文件和启动器配置。
-
-**macOS 或 Linux**
-
-```bash
-curl -fsSL https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
-```
-
-**Windows PowerShell**
-
-```powershell
-irm https://github.com/Froraut/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
-```
+从本页顶部下载与 Mac 匹配的 DMG。先退出已有应用，再将 NEKODEX 拖入“应用程序”文件夹。
+保留已有配置文件和账户数据。Windows 和 Linux 源码仍保留在仓库中，本次发行不提供对应安装包。
 
 然后在应用中完成三项检查：
 

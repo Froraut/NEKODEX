@@ -12,11 +12,8 @@ test("pins the fixed tunnel-client and migrates only the previously shipped vers
 describe("tunnel status boundary", () => {
   test("requires the managed runtime process, health, and readiness together", () => {
     expect(parseTunnelStatus(JSON.stringify({
-      process_running: true,
-      healthy: true,
-      ready: true,
-      runtime_state: "ready",
-    }))).toEqual({
+      entries: [{ alias: "ours", runtime_state: "ready" }, { alias: "other", runtime_state: "stopped" }],
+    }), "ours")).toEqual({
       ok: true,
       processRunning: true,
       healthy: true,
@@ -25,16 +22,14 @@ describe("tunnel status boundary", () => {
       detail: "process_running=true healthy=true ready=true",
     });
     expect(parseTunnelStatus(JSON.stringify({
-      process_running: false,
-      healthy: true,
-      ready: true,
-      runtime_state: "ready",
-    }))).toMatchObject({ ok: false, processRunning: false, healthy: true, ready: true });
+      entries: [{ alias: "other", runtime_state: "ready" }],
+    }), "ours")).toMatchObject({ ok: false, processRunning: false, healthy: false, ready: false, state: "stopped" });
   });
 
   test("redacts tunnel ids and keys from safe diagnostics", () => {
     const result = parseTunnelStatus(
       "failed tunnel_0123456789abcdef0123456789abcdef with sk-secretsecretsecret",
+      "ours",
       1,
     );
     expect(result.detail).toBe("failed [tunnel-id] with [redacted-key]");
@@ -79,22 +74,13 @@ describe("tunnel status boundary", () => {
     expect(tunnelConnectLaunchError("not json")).toBe("tunnel-client returned non-JSON connect output");
   });
 
-  test("includes the managed runtime log tail in stopped status diagnostics", () => {
+  test("rejects duplicate local inventory aliases instead of treating one as ready", () => {
     const result = parseTunnelStatus(JSON.stringify({
-      process_running: false,
-      healthy: false,
-      ready: false,
-      runtime_state: "stopped",
-      local: {
-        issues: ["recorded process pid is not running"],
-        log: {
-          tail: "runtime startup failed with sk-secretsecretsecret",
-        },
-      },
-    }));
+      entries: [{ alias: "ours", runtime_state: "ready" }, { alias: "ours", runtime_state: "ready" }],
+    }), "ours");
 
-    expect(result.detail).toContain("runtime_log=runtime startup failed with [redacted-key]");
-    expect(result.detail).not.toContain("sk-secret");
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("duplicate aliases");
   });
 
   test("status diagnostics do not discard stderr when a failed command also wrote stdout", () => {

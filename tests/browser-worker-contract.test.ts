@@ -3,10 +3,11 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
-import type { Page } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, CHATGPT_COMPLETION_SETTLE_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, ChatGptCompletionTracker, chatGptExternalProgressSuppressesDomHealth, CHATGPT_RESPONSE_DOM_GRACE_MS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_PAGE_REBINDS, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, chatGptConnectorAttachmentMode, chatGptNewTurnIdentity, chatGptReboundTurnIdentity, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, sanitizeChatGptBrowserDiagnosticState, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, withChatGptBrowserObservationTimeout, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, ChatGptSuspensionClock, remainingStageBudgetMs } from "../src/adapters/chatgpt-web/browser-worker";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
+import { CHATGPT_STOPPED_THINKING_LABELS } from "../src/adapters/chatgpt-web/ui-labels";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
 import { parseChatGptEffortSliderState } from "../src/chatgpt-session";
@@ -3308,7 +3309,7 @@ test("Stopped thinking is an explicit upstream error, not a user cancellation or
   expect(error.message).not.toContain("5 seconds");
 });
 
-test("the shipped stopped-thinking detector recognizes the Chinese status only in the bound visible UI", () => {
+function detectStoppedThinkingInFixture(html: string): boolean {
   // Execute the production page.evaluate predicate against a real DOM, without opening ChatGPT.
   const { createDocument } = require("@mixmark-io/domino") as {
     createDocument: (html: string) => Document;
@@ -3318,28 +3319,32 @@ test("the shipped stopped-thinking detector recognizes the Chinese status only i
   if (!source) throw new Error("stopped-thinking detector sentinels are missing");
   const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
   const detect = new Function(
-    "root", "overlapsRenderedAnswer", "overlapsCommentary", "renderedInDom", "document", "NodeFilter",
+    "root", "overlapsRenderedAnswer", "overlapsCommentary", "renderedInDom", "document", "NodeFilter", "options",
     `${javascript}; return stoppedThinkingVisible;`,
   ) as (...args: unknown[]) => boolean;
-  const detected = (html: string): boolean => {
-    const document = createDocument(`<body>${html}</body>`);
-    const root = document.querySelector<HTMLElement>('[data-turn-id="current"]')!;
-    // Domino's NodeList is array-like rather than iterable; preserve its real selector behavior.
-    const queryAll = root.querySelectorAll.bind(root);
-    Object.defineProperty(root, "querySelectorAll", {
-      value: (selector: string) => Array.from(queryAll(selector)),
-    });
-    const overlaps = (selector: string) => (candidate: HTMLElement): boolean => (
-      Array.from(queryAll(selector)).some(element => element.contains(candidate) || candidate.contains(element))
-    );
-    return detect(root, overlaps(".answer"), overlaps(".commentary"),
-      (element: HTMLElement) => !element.hidden && element.style.display !== "none"
-        && element.style.visibility !== "hidden" && element.style.opacity !== "0",
-      document, { SHOW_TEXT: 4 });
-  };
+  const document = createDocument(`<body>${html}</body>`);
+  const root = document.querySelector<HTMLElement>('[data-turn-id="current"]')!;
+  // Domino's NodeList is array-like rather than iterable; preserve its real selector behavior.
+  const queryAll = root.querySelectorAll.bind(root);
+  Object.defineProperty(root, "querySelectorAll", {
+    value: (selector: string) => Array.from(queryAll(selector)),
+  });
+  const overlaps = (selector: string) => (candidate: HTMLElement): boolean => (
+    Array.from(queryAll(selector)).some(element => element.contains(candidate) || candidate.contains(element))
+  );
+  return detect(root, overlaps(".answer"), overlaps(".commentary"),
+    (element: HTMLElement) => !element.hidden && element.style.display !== "none"
+      && element.style.visibility !== "hidden" && element.style.opacity !== "0",
+    document, { SHOW_TEXT: 4 }, { stoppedThinkingLabels: CHATGPT_STOPPED_THINKING_LABELS });
+}
+
+test("the shipped stopped-thinking detector recognizes exact localized status only in the bound visible UI", () => {
+  const detected = detectStoppedThinkingInFixture;
   expect(detected('<section data-turn-id="current"><button>已停止思考<svg></svg></button></section>')).toBeTrue();
   expect(detected('<section data-turn-id="current"><button aria-label="已停止思考"></button></section>')).toBeTrue();
   expect(detected('<section data-turn-id="current"><button>Stopped thinking</button></section>')).toBeTrue();
+  expect(detected('<section data-turn-id="current"><button aria-label="Рассуждение остановлено"></button></section>')).toBeTrue();
+  expect(detected('<section data-turn-id="current"><button>Рассуждение остановлено</button></section>')).toBeTrue();
   for (const content of [
     '<div class="answer"><p>已停止思考</p></div>',
     '<div class="commentary"><p>已停止思考</p></div>',
@@ -3349,12 +3354,46 @@ test("the shipped stopped-thinking detector recognizes the Chinese status only i
     '<div style="display:none"><button aria-label="已停止思考"></button></div>',
     '<button>Pro 思考中</button>',
     '<button>已思考</button>',
+    '<div class="answer"><p>Рассуждение остановлено</p></div>',
+    '<div class="commentary"><p>Рассуждение остановлено</p></div>',
+    '<blockquote>Рассуждение остановлено</blockquote>',
   ]) {
     expect(detected(`<section data-turn-id="current">${content}</section>`)).toBeFalse();
   }
   expect(detected('<section data-turn-id="old"><button>已停止思考</button></section>'
     + '<section data-turn-id="current"><button>Pro 思考中</button></section>')).toBeFalse();
 });
+
+test("Russian stopped-thinking status is terminal while quoted answer text remains content", () => {
+  expect(detectStoppedThinkingInFixture(
+    '<section data-turn-id="current"><button aria-label="Рассуждение остановлено"></button></section>',
+  )).toBeTrue();
+  expect(detectStoppedThinkingInFixture(
+    '<section data-turn-id="current"><div class="answer"><blockquote>Рассуждение остановлено</blockquote></div></section>',
+  )).toBeFalse();
+});
+
+test("response snapshot invalidates cached answer visibility when a stylesheet changes outside the turn", async () => {
+  const browser = await chromium.launch({ executablePath: defaultChromeExecutable(), headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<style id="answer-style">#answer { display: none }</style>'
+      + '<section id="response"><div id="answer" class="markdown"><p>Answer revealed</p></div></section>');
+    const responseDomSnapshot = (ChatGptBrowserWorker.prototype as unknown as {
+      responseDomSnapshot(locator: unknown, cache: object): Promise<{ visibleText: string }>;
+    }).responseDomSnapshot;
+    const cache: { fullScans?: number; cacheHits?: number } = {};
+    const locator = page.locator("#response");
+    expect((await responseDomSnapshot.call({}, locator, cache)).visibleText).toBe("");
+    expect((await responseDomSnapshot.call({}, locator, cache)).visibleText).toBe("");
+    expect(cache.cacheHits).toBe(1);
+    await page.locator("#answer-style").evaluate(style => { style.textContent = "#answer { display: block }"; });
+    expect((await responseDomSnapshot.call({}, locator, cache)).visibleText).toBe("Answer revealed");
+    expect(cache.fullScans).toBe(2);
+  } finally {
+    await browser.close();
+  }
+}, 5_000);
 
 test("visible DOM trace keeps a complete action phrase instead of a nested count", () => {
   expect(new ChatGptVisibleTraceTracker(0).observe([

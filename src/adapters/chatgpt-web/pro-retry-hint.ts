@@ -30,7 +30,7 @@ export async function chatGptProUsageLimitTooltip(
 ): Promise<string | undefined> {
   try {
     const pro = menu.locator(CHATGPT_EFFORT_ITEM_SELECTOR).filter({ hasText: /^\s*Pro\s*$/ }).filter({ visible: true });
-    if (await pro.count() !== 1) return undefined;
+    if (await pro.count() !== 1 || await pro.getAttribute("aria-disabled") !== "true") return undefined;
     await pro.hover({ timeout: 1_500 });
     const deadline = Date.now() + Math.max(0, timeoutMs);
     do {
@@ -45,17 +45,31 @@ export async function chatGptProUsageLimitTooltip(
           // content, even if that content is incorrectly labelled as a tooltip.
           const conversationContent = '[data-message-author-role], [data-testid^="conversation-turn-"], article, [contenteditable="true"], textarea';
           if (tooltip.closest(conversationContent) || tooltip.querySelector(conversationContent)) continue;
+          let visible = true;
+          for (let current: HTMLElement | null = tooltip; current; current = current.parentElement) {
+            const style = document.defaultView?.getComputedStyle(current);
+            if (!current.isConnected || current.hidden || current.getAttribute("aria-hidden") === "true"
+              || style?.display === "none" || style?.visibility === "hidden"
+              || style?.visibility === "collapse" || style?.opacity === "0") {
+              visible = false;
+              break;
+            }
+          }
           const rect = tooltip.getBoundingClientRect();
-          const style = document.defaultView?.getComputedStyle(tooltip);
-          if (rect.width <= 0 || rect.height <= 0 || style?.visibility === "hidden" || style?.visibility === "collapse") continue;
-          texts.push(tooltip.innerText);
+          if (!visible || rect.width <= 0 || rect.height <= 0) continue;
+          const text = tooltip.innerText.replace(/\s+/g, " ").trim();
+          if (text && text.length <= 512) texts.push(text);
         }
         return texts;
       });
-      const hints = new Set(texts.map(retrySentence).filter((hint): hint is string => hint !== undefined));
-      if (hints.size === 1) return [...hints][0];
-      // Conflicting descriptions cannot establish a single retry date.
-      if (hints.size > 1 || Date.now() >= deadline) return undefined;
+      // Preserve the existing narrow English retry-date detail. Other languages can
+      // expose ChatGPT's own bounded explanation without guessing a reset date.
+      const hints = new Set(texts.map(text => retrySentence(text)
+        ?? (/\bTry again\b/i.test(text) ? undefined : text))
+        .filter((hint): hint is string => hint !== undefined));
+      if (hints.size === 1 && texts.length === 1) return [...hints][0];
+      // Multiple linked descriptions cannot establish one authoritative explanation.
+      if (texts.length > 1 || Date.now() >= deadline) return undefined;
       await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(0, deadline - Date.now()))));
     } while (Date.now() <= deadline);
   } catch {

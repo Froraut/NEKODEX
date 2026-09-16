@@ -1666,12 +1666,49 @@ test("an uninitialized browser surface is reaped instead of remaining as a gray 
   assert.equal(fixture.selectedTabId, "home");
   assert.equal(fixture.closedTurnOwners.get(tab.traceId), tab.helperPid);
   assert.deepEqual(closed, ["view", "contents"]);
-  assert.deepEqual(warnings, [["browser.orphan_turn_reaped", {
+  assert.deepEqual(warnings.at(-1), ["browser.orphan_turn_reaped", {
     tabId: tab.id,
     traceId: tab.traceId,
     helperPid: tab.helperPid,
     evidence: "browser_surface_bootstrap_timeout",
-  }]]);
+  }]);
+});
+
+test("expired automatic turn waits for exact cancellation and guards replacement ownership", async () => {
+  const tab = {
+    id: "tab-expired", traceId: "trace_expired", helperPid: 555,
+    status: "running", bootstrapReady: false, bootstrapDeadlineAt: 100,
+  };
+  let completeCancellation;
+  const calls = [];
+  const fixture = {
+    lastTurnSweepAt: 96,
+    turnTabs: new Map([[tab.id, tab]]),
+    logger: { warn() {} },
+    cancelTurn(traceId, reason) {
+      calls.push([traceId, reason]);
+      return new Promise(resolve => { completeCancellation = resolve; });
+    },
+    removeTurnTab(owner) { calls.push(["remove", owner.id]); this.turnTabs.delete(owner.id); },
+  };
+  const first = BrowserHost.prototype.reapExpiredTurnTabs.call(fixture, 101);
+  const second = BrowserHost.prototype.reapExpiredTurnTabs.call(fixture, 102);
+  await Promise.resolve();
+  assert.deepEqual(calls, [[tab.traceId, "browser_surface_bootstrap_timeout"]]);
+  assert.equal(fixture.turnTabs.get(tab.id), tab);
+  completeCancellation();
+  await Promise.all([first, second]);
+  assert.deepEqual(calls.at(-1), ["remove", tab.id]);
+
+  // A delayed acknowledgement must never remove a replacement owner with the same tab ID.
+  fixture.turnTabs.set(tab.id, tab);
+  fixture.lastTurnSweepAt = 96;
+  const delayed = BrowserHost.prototype.reapExpiredTurnTabs.call(fixture, 101);
+  await Promise.resolve();
+  fixture.turnTabs.set(tab.id, { ...tab });
+  completeCancellation();
+  await delayed;
+  assert.equal(fixture.turnTabs.has(tab.id), true);
 });
 
 test("removing the final turn tab keeps the descriptor-owned idle host attached offscreen", () => {

@@ -45,6 +45,7 @@ export function proRetryTooltipFixture(options: {
     filter: ({ hasText, visible }: { hasText?: RegExp; visible?: boolean }) => wrap(elements.filter(element =>
       (!hasText || hasText.test(element.textContent ?? "")) && (visible === undefined || !element.closest("[hidden]") === visible))),
     count: async () => elements.length,
+    getAttribute: async (name: string) => elements.length === 1 ? elements[0]!.getAttribute(name) : null,
     last: () => wrap(elements.slice(-1)),
     isVisible: async () => elements.length === 1 && !elements[0]!.closest("[hidden]"),
     hover: async () => {
@@ -69,4 +70,3 @@ export function proRetryTooltipFixture(options: {
     hovered: () => hovered,
   };
 }
-

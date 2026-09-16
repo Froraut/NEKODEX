@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { assertReadmeDownloads } from "./readme-downloads";
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
@@ -7,6 +8,7 @@ const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8
   packageManager?: string;
   devDependencies?: Record<string, string>;
   engines?: Record<string, string>;
+  repository?: { url?: string };
 };
 const packageVersion = packageJson.version;
 if (!packageVersion) throw new Error("package.json has no version");
@@ -35,6 +37,20 @@ const expected = [
 for (const [path, needle] of expected) {
   if (!readFileSync(resolve(root, path), "utf8").includes(needle)) throw new Error(`${path} is not synchronized to ${packageVersion}`);
 }
+const launcherPackage = JSON.parse(readFileSync(resolve(root, "launcher/package.json"), "utf8")) as {
+  version?: string;
+  build: { artifactName: string; dmg: { artifactName: string } };
+};
+const repository = packageJson.repository?.url?.match(/^git\+https:\/\/github\.com\/(.+)\.git$/)?.[1];
+if (!repository) throw new Error("package.json must identify the GitHub release repository");
+for (const name of readdirSync(root).filter(name => /^README(?:\.[\w-]+)?\.md$/.test(name))) {
+  assertReadmeDownloads(name, readFileSync(resolve(root, name), "utf8"), {
+    version: packageVersion,
+    repository,
+    dmgName: launcherPackage.build.dmg.artifactName,
+    archiveName: launcherPackage.build.artifactName,
+  });
+}
 const releaseWorkflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
 const bunSetupCount = [...releaseWorkflow.matchAll(/uses:\s*oven-sh\/setup-bun@/g)].length;
 const releaseBunPins = [...releaseWorkflow.matchAll(/^\s+bun-version:\s*(\S+)\s*$/gm)].map(match => match[1]);
@@ -43,6 +59,6 @@ const releaseBunPins = [...releaseWorkflow.matchAll(/^\s+bun-version:\s*(\S+)\s*
 if (bunSetupCount < 1 || releaseBunPins.length !== bunSetupCount || releaseBunPins.some(version => version !== bunVersion)) {
   throw new Error(`release.yml must pin Bun ${bunVersion} in every Bun setup step`);
 }
-const launcherVersion = (JSON.parse(readFileSync(resolve(root, "launcher/package.json"), "utf8")) as { version?: string }).version;
+const launcherVersion = launcherPackage.version;
 if (launcherVersion !== packageVersion) throw new Error(`launcher/package.json is not synchronized to ${packageVersion}`);
 process.stdout.write(`VERSION_SYNC_OK ${packageVersion} bun@${bunVersion}\n`);

@@ -4,7 +4,9 @@ const { existingChromeError } = require("./existing-chrome-errors.cjs");
 const COPY = {
   en: { title: "Allow access to Chrome connection file", buttonLabel: "Allow this file", message: "Select DevToolsActivePort in the Google Chrome folder. The launcher reads only this connection file, then Chrome asks separately whether to allow the connection." },
   "zh-CN": { title: "允许访问 Chrome 连接文件", buttonLabel: "允许此文件", message: "请选择 Google Chrome 文件夹中的 DevToolsActivePort。启动器仅读取此连接文件；Chrome 随后会单独询问是否允许连接。" },
+  "zh-TW": { title: "允許存取 Chrome 連線檔案", buttonLabel: "允許此檔案", message: "請選取 Google Chrome 資料夾中的 DevToolsActivePort。啟動器只會讀取此連線檔案；接著 Chrome 會另外詢問是否允許連線。" },
   ja: { title: "Chrome 接続ファイルへのアクセスを許可", buttonLabel: "このファイルを許可", message: "Google Chrome フォルダ内の DevToolsActivePort を選択してください。ランチャーはこの接続ファイルだけを読み取り、その後 Chrome が接続の許可を別途確認します。" },
+  ko: { title: "Chrome 연결 파일 접근 허용", buttonLabel: "이 파일 허용", message: "Google Chrome 폴더의 DevToolsActivePort를 선택하세요. 런처는 이 연결 파일만 읽고, 이후 Chrome이 연결 허용 여부를 별도로 묻습니다." },
 };
 function expectedChromeConnectionFile(homeDir) {
   if (typeof homeDir !== "string" || !path.isAbsolute(homeDir) || homeDir.includes("\0") || homeDir.length > 4096) {

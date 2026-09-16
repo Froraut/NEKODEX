@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import extraLocales from "./route-diagnostics-locales.json";
 import { Icon } from "./icons";
 import type { Language, RouteDiagnosticsReport } from "./types";
 
@@ -67,7 +68,11 @@ const ja: DiagnosticsCopy = {
 };
 
 export function routeDiagnosticsCopy(language: Language): DiagnosticsCopy {
-  return language === "zh-CN" ? zh : language === "ja" ? ja : en;
+  if (language === "zh-CN") return zh;
+  if (language === "zh-TW") return extraLocales["zh-TW"];
+  if (language === "ja") return ja;
+  if (language === "ko") return extraLocales.ko;
+  return en;
 }
 
 export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language) {

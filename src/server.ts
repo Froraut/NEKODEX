@@ -12,7 +12,7 @@ import {
   cancelStructuredCompactionNativeTurn,
   cancelStructuredCompactionTrace,
 } from "./adapters/chatgpt-web/compaction-handoff";
-import { chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
+import { ChatGptWebAdapterError, chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
 import {
   CHATGPT_TURN_REVISION_CONFLICT_MESSAGE,
   extractChatGptTurnIdentity,
@@ -994,17 +994,31 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let traceId: string;
+        let leaseFailure: "browser_surface_bootstrap_timeout" | "helper_heartbeat_expired" | undefined;
         try {
-          const body = await readJsonRequestBody(req, 4_096, 4_096) as { traceId?: unknown };
+          const body = await readJsonRequestBody(req, 4_096, 4_096) as { traceId?: unknown; reason?: unknown };
           traceId = typeof body?.traceId === "string" ? body.traceId : "";
           if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) throw new Error("traceId is invalid");
+          if (body.reason !== undefined) {
+            if (body.reason !== "browser_surface_bootstrap_timeout" && body.reason !== "helper_heartbeat_expired") {
+              throw new Error("Browser turn cancellation reason is invalid");
+            }
+            leaseFailure = body.reason;
+          }
         } catch (error) {
           return Response.json(
             { status: "error", error: error instanceof Error ? error.message : String(error) },
             { status: 400 },
           );
         }
-        const reason = chatGptBrowserTabClosedError();
+        const reason = leaseFailure
+          ? new ChatGptWebAdapterError(
+            leaseFailure === "browser_surface_bootstrap_timeout"
+              ? "The ChatGPT browser turn did not finish browser setup before its lease expired. The turn was stopped."
+              : "The ChatGPT browser helper stopped reporting progress and its lease expired. The turn was stopped.",
+            { status: 504, errorType: "server_error", code: leaseFailure, retryable: false },
+          )
+          : chatGptBrowserTabClosedError();
         // Revoke the owner first. This prevents a compaction callback that observes its retained
         // source being cancelled below from starting a fresh fallback during operator shutdown.
         const compactionCancellation = cancelStructuredCompactionTrace(traceId, reason);

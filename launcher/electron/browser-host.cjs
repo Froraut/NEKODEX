@@ -1431,6 +1431,7 @@ class BrowserHost {
   }
 
   reapExpiredTurnTabs(now = Date.now()) {
+    const cancellations = [];
     const lastSweepAt = this.lastTurnSweepAt;
     this.lastTurnSweepAt = now;
     if (sweepGapIndicatesSuspension(lastSweepAt, now, TURN_HEARTBEAT_SWEEP_MS)) {
@@ -1475,15 +1476,44 @@ class BrowserHost {
       const heartbeatExpired = tab.bootstrapReady === true
         && now - (tab.lastHeartbeatAt ?? 0) >= TURN_HEARTBEAT_TIMEOUT_MS;
       if (!bootstrapExpired && !heartbeatExpired) continue;
+      if (tab.expiryCancellation) {
+        cancellations.push(tab.expiryCancellation);
+        continue;
+      }
       const evidence = bootstrapExpired ? "browser_surface_bootstrap_timeout" : "helper_heartbeat_expired";
-      this.logger.warn("browser.orphan_turn_reaped", {
+      const expiredOwner = {
         tabId: tab.id,
         traceId: tab.traceId,
         helperPid: tab.helperPid,
         evidence,
+      };
+      this.logger.warn("browser.orphan_turn_expired", expiredOwner);
+      if (!this.cancelTurn) {
+        // The DEV profile has no launcher-owned runtime control callback.
+        this.removeTurnTab(tab, true);
+        this.logger.warn("browser.orphan_turn_reaped", expiredOwner);
+        continue;
+      }
+      const { traceId, helperPid } = tab;
+      tab.expiryCancellation = Promise.resolve().then(async () => {
+        try {
+          await this.cancelTurn(traceId, evidence);
+          if (this.turnTabs.get(tab.id) === tab && tab.traceId === traceId
+            && tab.helperPid === helperPid && tab.status === "running") {
+            this.removeTurnTab(tab, true);
+            this.logger.warn("browser.orphan_turn_reaped", expiredOwner);
+          }
+        } catch (error) {
+          this.logger.warn("browser.orphan_turn_cancel_failed", {
+            tabId: tab.id, traceId, evidence, errorType: error?.name || "Error",
+          });
+        } finally {
+          delete tab.expiryCancellation;
+        }
       });
-      this.removeTurnTab(tab, true);
+      cancellations.push(tab.expiryCancellation);
     }
+    return Promise.all(cancellations);
   }
 
   setBounds(bounds, rendererZoomFactor = 1) {

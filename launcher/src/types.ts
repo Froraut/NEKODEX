@@ -1,4 +1,6 @@
-export type Language = "en" | "zh-CN" | "ja";
+import languages from "../electron/languages.json";
+
+export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type ProModelVersion = "5.6" | "5.5" | "6";

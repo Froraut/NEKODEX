@@ -52,11 +52,36 @@ test("bootstrap failure gets a native Quit/Restart recovery independent of a hid
 });
 
 test("explicit recovery restarts a new visible process and then releases the old process", async () => {
-  const f = fixture({ args: ["launcher.cjs", "--hidden", "--profile=development"] });
-  f.dialog.showMessageBox = async () => ({ response: 1 });
-  const result = await recoverStartupFailure(f.options);
-  assert.equal(result.action, "restart");
-  assert.deepEqual(f.calls.slice(-2), [["relaunch", { args: ["launcher.cjs", "--profile=development"] }], ["exit", 0]]);
+  const f = fixture({
+    args: ["launcher.cjs", "--hidden", "--profile=development"],
+    launchEnvironment: { CODEX_CHATGPT_WEB_HOME: undefined, CODEX_HOME: "/original/codex" },
+    language: "zh-TW",
+  });
+  f.dialog.showMessageBox = async options => { f.calls.push(["dialog", options]); return { response: 1 }; };
+  const oldHome = process.env.CODEX_CHATGPT_WEB_HOME;
+  const oldCodex = process.env.CODEX_HOME;
+  process.env.CODEX_CHATGPT_WEB_HOME = "/dev/home";
+  process.env.CODEX_HOME = "/dev/codex";
+  f.app.relaunch = options => {
+    assert.equal(process.env.CODEX_CHATGPT_WEB_HOME, undefined);
+    assert.equal(process.env.CODEX_HOME, "/original/codex");
+    f.calls.push(["relaunch", options]);
+  };
+  try {
+    const result = await recoverStartupFailure(f.options);
+    assert.equal(result.action, "restart");
+    // Recovery uses fixed localized phases and never renders the raw exception.
+    const prompt = f.calls.find(call => Array.isArray(call) && call[0] === "dialog")[1];
+    assert.equal(prompt.title, "NEKODEX 無法啟動");
+    assert.deepEqual(prompt.buttons, ["結束", "重新啟動"]);
+    assert.match(prompt.message, /初始化內嵌瀏覽器/);
+    assert.deepEqual(f.calls.slice(-2), [["relaunch", { args: ["launcher.cjs", "--profile=development"] }], ["exit", 0]]);
+  } finally {
+    if (oldHome === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
+    else process.env.CODEX_CHATGPT_WEB_HOME = oldHome;
+    if (oldCodex === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = oldCodex;
+  }
 });
 
 test("cleanup rejection or a hung control socket cannot trap recovery behind the single-instance lock", async () => {

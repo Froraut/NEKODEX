@@ -560,9 +560,39 @@ test("every retired broker handle kind is scrubbed across JSON escape boundaries
       expect(scrubbed).toBe(JSON.stringify({ h: `${prefix}[retired ${kind} handle]` }));
       expect(JSON.parse(scrubbed)).toEqual({ h: `${prefix}[retired ${kind} handle]` });
     }
-    expect(withoutRetiredTurnHandles(`"\\u001F${kind}_${body}"`))
-      .toBe(`"\\u001F[retired ${kind} handle]"`);
+    expect(JSON.parse(withoutRetiredTurnHandles(`"\\u001F${kind}_${body}"`)))
+      .toBe(`\u001F[retired ${kind} handle]`);
   }
+});
+
+test("decoded history preserves native linkage and keys while retiring broker values", () => {
+  const body = "0123456789abcdefghijklmnopqrst_-";
+  const nativeCallId = `call_${body}`;
+  const envelope = {
+    version: 3,
+    [`turn_${body}`]: "keep-property-name",
+    system: [`note\ncontrol_${body}`],
+    messages: [
+      { role: "assistant", content: [{
+        type: "tool_call", id: nativeCallId,
+        arguments: { stale: `turn_${body}`, nested: { role: "tool_result", tool_call_id: nativeCallId, content: `handoff_${body}` } },
+      }, { type: "text", text: `call_${body}` }] },
+      { role: "tool_result", tool_call_id: nativeCallId, content: `request_${body}` },
+    ],
+  };
+  expect(JSON.parse(withoutRetiredTurnHandles(JSON.stringify(envelope)))).toEqual({
+    version: 3,
+    [`turn_${body}`]: "keep-property-name",
+    system: ["note\n[retired control handle]"],
+    messages: [
+      { role: "assistant", content: [{
+        type: "tool_call", id: nativeCallId,
+        arguments: { stale: "[retired turn handle]", nested: { role: "tool_result", tool_call_id: "[retired call handle]", content: "[retired handoff handle]" } },
+      }, { type: "text", text: "[retired call handle]" }] },
+      { role: "tool_result", tool_call_id: nativeCallId, content: "[retired request handle]" },
+    ],
+  });
+  expect(() => withoutRetiredTurnHandles("{invalid json")).toThrow();
 });
 
 test("retired broker handle near-misses and adjacent identifier data are preserved", () => {

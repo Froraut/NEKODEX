@@ -145,7 +145,7 @@ export function formatChatGptWebMultipartCommit(
 
 const RETIRED_HANDLE_KIND = "turn|binding|call|request|control|handoff";
 const RETIRED_TURN_HANDLE = new RegExp(
-  `(?:(?<![A-Za-z0-9_-])|(?<=\\\\[bfnrt])|(?<=\\\\u00[01][0-9a-fA-F]))(${RETIRED_HANDLE_KIND})_[A-Za-z0-9_-]{32}(?![A-Za-z0-9_-])`,
+  `(?<![A-Za-z0-9_-])(${RETIRED_HANDLE_KIND})_[A-Za-z0-9_-]{32}(?![A-Za-z0-9_-])`,
   "g",
 );
 
@@ -155,7 +155,60 @@ const RETIRED_TURN_HANDLE = new RegExp(
  * the current turn is supplied by the contract text, never by the replayed context.
  */
 export function withoutRetiredTurnHandles(contextJson: string): string {
-  return contextJson.replace(RETIRED_TURN_HANDLE, (_handle, kind: string) => `[retired ${kind} handle]`);
+  // Every caller passes JSON generated from our context envelope. Decode first so escaped
+  // control characters are handled as values, and schema keys cannot be rewritten as handles.
+  const scrub = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      return value.replace(RETIRED_TURN_HANDLE, (_handle, kind: string) => `[retired ${kind} handle]`);
+    }
+    if (Array.isArray(value)) return value.map(scrub);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, scrub(entry)]));
+  };
+  const scrubMessage = (value: unknown): unknown => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return scrub(value);
+    const message = value as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(message).map(([key, entry]) => {
+      // These two exact history fields connect a native assistant tool call to its result.
+      // Tool arguments and other nested content still use ordinary broker-handle scrubbing.
+      if (message.role === "tool_result" && key === "tool_call_id") return [key, entry];
+      if (message.role === "assistant" && key === "content" && Array.isArray(entry)) {
+        return [key, entry.map(part => {
+          if (part === null || typeof part !== "object" || Array.isArray(part)) return scrub(part);
+          const nativePart = part as Record<string, unknown>;
+          if (nativePart.type !== "tool_call") return scrub(part);
+          return Object.fromEntries(Object.entries(nativePart).map(([partKey, partValue]) => [
+            partKey, partKey === "id" ? partValue : scrub(partValue),
+          ]));
+        })];
+      }
+      return [key, scrub(entry)];
+    }));
+  };
+  const scrubRecord = (value: unknown): unknown => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return scrub(value);
+    const record = value as Record<string, unknown>;
+    if (record.kind !== "message") return scrub(value);
+    return Object.fromEntries(Object.entries(record).map(([key, entry]) => [
+      key, key === "message" ? scrubMessage(entry) : scrub(entry),
+    ]));
+  };
+  const root = JSON.parse(contextJson) as unknown;
+  if (root !== null && typeof root === "object" && !Array.isArray(root)) {
+    const envelope = root as Record<string, unknown>;
+    if (envelope.version === 3 && Array.isArray(envelope.messages)) {
+      return JSON.stringify(Object.fromEntries(Object.entries(envelope).map(([key, entry]) => [
+        key, key === "messages" ? (entry as unknown[]).map(scrubMessage) : scrub(entry),
+      ])));
+    }
+    if (envelope.version === 1 && Array.isArray(envelope.records)) {
+      return JSON.stringify(Object.fromEntries(Object.entries(envelope).map(([key, entry]) => [
+        key, key === "records" ? (entry as unknown[]).map(scrubRecord) : scrub(entry),
+      ])));
+    }
+    if (envelope.kind === "message") return JSON.stringify(scrubRecord(root));
+  }
+  return JSON.stringify(scrub(root));
 }
 
 /** ChatGPT accepts at most this many attachments on one message. */
