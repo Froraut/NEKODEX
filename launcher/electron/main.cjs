@@ -22,6 +22,7 @@ const {
 } = require("electron");
 const { resolveNativeProxyEnvironment, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
 const LANGUAGES = require("./languages.json");
+const { applicationMenu } = require("./application-menu.cjs");
 const { installHermesProvider } = require("./hermes-integration.cjs");
 const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
@@ -121,6 +122,7 @@ let catalogVerificationTimer = null;
 let catalogVerificationEpoch = 0;
 let accountProofGeneration = 0;
 let updateController = null;
+let updatesPanelRequestRevision = 0;
 let contextChangeQueue = null;
 let startupPhase = "runtime-files";
 
@@ -350,7 +352,22 @@ function nativeCopyFor(language) {
   return NATIVE_COPY[language] || NATIVE_COPY.en;
 }
 
+function updateApplicationMenu(language) {
+  if (process.platform !== "darwin") return;
+  const labels = { en: "Check for updates…", "zh-CN": "检查更新…", "zh-TW": "檢查更新…", ja: "アップデートを確認…", ko: "업데이트 확인…" };
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenu({
+    name: LAUNCHER_PROFILE.displayName,
+    checkLabel: labels[language] || labels.en,
+    onCheck: () => {
+      updatesPanelRequestRevision += 1;
+      showMainWindow();
+      send("launcher:open-updates");
+    },
+  })));
+}
+
 function updateTrayMenu(language) {
+  updateApplicationMenu(language);
   if (!tray) return;
   const copy = nativeCopyFor(language);
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -1131,6 +1148,7 @@ function registerIpc({ logger, stateStore }) {
     if (!updateController) throw new Error("Launcher updates are unavailable");
     return updateController.recheck();
   });
+  handle("launcher:update-request-revision", () => updatesPanelRequestRevision);
   handle("launcher:update-install", async () => {
     if (!updateController) throw new Error("Launcher updates are unavailable");
     const updateBlocked = () => runtimeHost?.currentOperation() || browserHost?.currentOperation()
@@ -1251,15 +1269,10 @@ async function start() {
   await app.whenReady();
   if (process.platform === "darwin") {
     app.dock.setIcon(APP_ICON_PATH);
-    Menu.setApplicationMenu(Menu.buildFromTemplate([
-      { role: "appMenu", label: LAUNCHER_PROFILE.displayName },
-      { role: "editMenu" },
-      { role: "viewMenu" },
-      { role: "windowMenu" },
-    ]));
   }
 
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
+  updateApplicationMenu(stateStore.read().language);
   if (IS_DEV_PROFILE && !stateStore.read().onboardingComplete) {
     stateStore.update({
       language: stateStore.read().language || "en",

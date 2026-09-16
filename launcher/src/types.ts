@@ -268,6 +268,8 @@ export interface LauncherApi {
   exportLogs(): Promise<string | null>;
   installUpdate(): Promise<boolean>;
   recheckUpdate(): Promise<UpdateState>;
+  readUpdateRequestRevision?(): Promise<number>;
+  onOpenUpdates?(listener: () => void): () => void;
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;
   windowControl(action: "close" | "minimize" | "zoom"): void;
   onWindowStateChanged(listener: (state: { fullScreen: boolean; maximized: boolean }) => void): () => void;

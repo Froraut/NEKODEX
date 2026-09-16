@@ -73,6 +73,23 @@ export function App() {
   const lastOperationName = useRef<string | null>(null);
   const completionRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const documentLanguage = snapshot?.state.language ?? "en";
+  const [updatePanelRequest, setUpdatePanelRequest] = useState(0);
+  const seenUpdatePanelRequest = useRef(0);
+  useEffect(() => {
+    if (!api) return;
+    let mounted = true;
+    const receive = () => {
+      void api.readUpdateRequestRevision?.().then(revision => {
+        if (mounted && revision > seenUpdatePanelRequest.current) {
+          seenUpdatePanelRequest.current = revision;
+          setUpdatePanelRequest(revision);
+        }
+      }).catch(cause => { if (mounted) setError(messageOf(cause)); });
+    };
+    const unsubscribe = api.onOpenUpdates?.(receive);
+    receive(); // Retain a native menu click made before the renderer finished loading.
+    return () => { mounted = false; unsubscribe?.(); };
+  }, []);
 
   const refreshMetadata = useCallback((reuseCompletedOperation: boolean): Promise<void> => {
     // A completion snapshot starts after that operation publishes its state and credentials.
@@ -293,6 +310,7 @@ export function App() {
             updateProModelVersion={updateProModelVersion}
             updateState={updateState}
             updateSnapshot={updateSnapshot}
+            updatePanelRequest={updatePanelRequest}
           />
         )}
         {error ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
@@ -453,6 +471,7 @@ function LauncherShell({
   updateProModelVersion,
   updateState,
   updateSnapshot,
+  updatePanelRequest,
 }: {
   browser: BrowserState | null;
   copy: Copy;
@@ -465,6 +484,7 @@ function LauncherShell({
   updateProModelVersion: (value: ProModelVersion | null) => void;
   updateState: (state: LauncherState) => void;
   updateSnapshot: () => Promise<void>;
+  updatePanelRequest: number;
 }) {
   const interactionSetupComplete = snapshot.state.coreSetupComplete === true
     && (snapshot.state.browserInteractionMode === "manual"
@@ -528,6 +548,13 @@ function LauncherShell({
     }
   };
   const updateBusy = ["downloading", "verifying", "installing"].includes(snapshot.update.status);
+  const handledUpdatePanelRequest = useRef(0);
+  useEffect(() => {
+    if (updatePanelRequest <= handledUpdatePanelRequest.current) return;
+    handledUpdatePanelRequest.current = updatePanelRequest;
+    setSurface("updates");
+    void recheckUpdate();
+  }, [updatePanelRequest]);
   const updateBlocked = operation?.status === "running" || browser?.status === "running"
     || browser?.tabs.some(tab => tab.status === "running") === true;
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
