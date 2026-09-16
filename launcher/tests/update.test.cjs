@@ -101,6 +101,26 @@ function scopedRelease(version, platforms = ["darwin", "win32", "linux"]) {
     browser_download_url: `https://github.com/Froraut/NEKODEX/releases/download/v${version}/${name}` })) };
 }
 
+test("manual refresh replaces an available update with a newer published release", async () => {
+  const originalNow = Date.now;
+  let now = 100_000;
+  let version = "1.2.0";
+  let requests = 0;
+  Date.now = () => now;
+  try {
+    const controller = updateController({ fetchRelease: async () => {
+      requests += 1;
+      return [scopedRelease(version, ["linux"])];
+    } });
+    assert.equal((await controller.checkOnce()).version, "1.2.0");
+    version = "1.3.0";
+    assert.equal((await controller.recheck()).version, "1.2.0"); // Retain the quota cooldown.
+    now += 60_001;
+    assert.equal((await controller.recheck()).version, "1.3.0");
+    assert.equal(requests, 2);
+  } finally { Date.now = originalNow; }
+});
+
 test("Apple-only prereleases are skipped only for platforms whose archive is absent", async () => {
   const newest = scopedRelease("5.2.0-froraut.1", ["darwin"]);
   const previous = scopedRelease("5.1.0-froraut.1");

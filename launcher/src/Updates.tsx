@@ -38,13 +38,13 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
           <p>{busy ? copy.restart : copy.automatic}</p>
           {blocked && state.status === "available" ? <p className="updates-wait">{copy.wait}</p> : null}
           <div className="updates-actions">
-            {state.status === "available" ? <button type="button" className="button-primary" disabled={blocked || busy} onClick={onInstall}>
+            {state.status === "available" ? <button type="button" className="button-primary" disabled={blocked || busy || checking} onClick={onInstall}>
               <Icon name="update" />{failure ? copy.retry : copy.install}
             </button> : null}
-            {!busy && state.status !== "available" ? <button type="button" className="button-primary" disabled={checking || cooldown || state.status === "checking"} onClick={onCheck}>
+            {!busy ? <button type="button" className={state.status === "available" ? "button-secondary" : "button-primary"} disabled={checking || cooldown || state.status === "checking"} onClick={onCheck}>
               <Icon name="update" />{checking || state.status === "checking" ? copy.checking : copy.check}
             </button> : null}
-            {cooldown && !busy && state.status !== "available" ? <span>{copy.cooldown}</span> : null}
+            {cooldown && !busy ? <span>{copy.cooldown}</span> : null}
           </div>
         </>}
         {state.status !== "disabled" ? <p className="updates-preserved">{copy.preserved}</p> : null}

@@ -519,7 +519,7 @@ function createUpdateController({
 
   function recheck() {
     if (checkPromise) return checkPromise;
-    if (state.status === "disabled" || pending || ["available", "downloading", "verifying", "installing"].includes(state.status)) {
+    if (state.status === "disabled" || pending || ["downloading", "verifying", "installing"].includes(state.status)) {
       return Promise.resolve(state);
     }
     if (lastCheckFinishedAt && Date.now() - lastCheckFinishedAt < RECHECK_COOLDOWN_MS) {
