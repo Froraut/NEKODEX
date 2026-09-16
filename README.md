@@ -137,7 +137,7 @@ NEKODEX is an unofficial integration and does not bypass ChatGPT account or work
 
 ## Development
 
-Use **Bun 1.4.0**. Packaging requires a native host for the target operating system and architecture.
+Development requires Bun 1.4.0. Packaging requires a native host for the target operating system and architecture.
 
 ```bash
 git clone https://github.com/Froraut/NEKODEX.git nekodex
