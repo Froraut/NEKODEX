@@ -39,10 +39,9 @@
 .sidebar-item.is-active { box-shadow: inset 2px 0 var(--brand-accent); font-weight: 600; }
 .sidebar-item.is-active > svg, .sidebar-item.is-active > .mcp-mark { color: var(--brand-accent); }
 .sidebar-session { display: flex; align-items: center; gap: 9px; padding: 13px 11px; color: var(--color-text-tertiary); font-size: var(--text-xs); }
-.sidebar-source { display: flex; align-items: center; width: 100%; padding: 15px 10px 4px; gap: 7px; color: var(--color-text-tertiary); background: transparent; border: 0; font-size: var(--text-xs); text-align: left; }
-.sidebar-source > svg { width: 13px; height: 13px; flex-shrink: 0; }
-.sidebar-source small { margin-left: auto; font-size: var(--text-xs); max-width: 67px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-source:hover { color: var(--color-text-primary); }
+.sidebar-version { display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 10px 4px; color: var(--color-text-tertiary); font-size: var(--text-xs); }
+.sidebar-version .brand-mark.is-small { flex: 0 0 24px; width: 24px; height: 24px; }
+.sidebar-version > span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .brand-mark { color: var(--brand-accent); }
 .brand-mark { --neko-x: 0px; --neko-y: 0px; --neko-tilt: 0deg; user-select: none; }
 .brand-mark:focus-visible { outline: 2px solid var(--brand-accent); outline-offset: 7px; border-radius: 12px; }

@@ -802,7 +802,7 @@ function LauncherShell({
                 label={copy.settings}
                 onClick={() => navigateSurface("settings")}
               />
-              <button className="sidebar-source" type="button" onClick={() => void api!.openExternal(snapshot.urls.github).catch(cause => setError(messageOf(cause)))}><Icon name="github" /><span>{copy.sourceCode}</span><small>v{snapshot.version}</small></button>
+              <div className="sidebar-version"><BrandMark small /><span>v{snapshot.version}</span></div>
             </div>
           </div>
         </div>
