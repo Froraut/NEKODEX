@@ -82,3 +82,10 @@ Release workflow `35353147606` completed successfully: both macOS builds and the
 The old browser's false authentication state was examined more precisely: its message is `ChatGPT session verification unavailable: session HTTP 403`, and the actual embedded Temporary Chat page says `Unable to load site`. This is not evidence that credentials were erased or the user signed out. `upgradeManagedRuntime()` explicitly refreshes capabilities, and setup calls `inspectLauncherCapabilities()`, so replacing the working native bridge while that condition persists can fail the managed runtime migration. No installation was attempted and no guard was bypassed.
 
 The user was asked to restore ordinary access in the existing NEKODEX Browser, and separately to permit exactly one 20-second native response probe after installation beyond the already consumed shared verification budget. Both answers remain pending; a default-selected option is not approval. Continue independent source integration; keep the goal active until installation and the agreed response evidence are complete (or report a genuine repeated block according to the goal policy).
+
+
+## Main integration
+
+PR #1 is integrated into `main` by merge commit `32896d1db91f122c8217d7621937588a116c69e0`; the remote main SHA was confirmed. Published tag `v5.3.0-nekodex.1` remains immutable at `de79f5d5ec8a41f599acfa393760c219a95dad34`, whose runtime code is included in main. No additional behavioral checks were triggered. The release workflow watcher completed with success and no task-owned development app remains running.
+
+Only the installed handoff remains: current `.9` continues to serve the native route. Both required user answers (existing ChatGPT access and a single extra bounded native response probe) are still pending. This is the first goal turn in which the external HTTP 403 installation blocker was established; do not mark the goal complete or blocked yet. Revalidate the live state on a later continuation; do not treat silence as permission, and do not re-run source tests.
