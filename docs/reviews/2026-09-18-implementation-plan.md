@@ -52,3 +52,10 @@ Installed `/Applications/NEKODEX.app` remains 5.2.0-nekodex.9. No production pro
 ## Attribution
 
 Adapted upstream v5.0.8 selected-skill attachment transport and DIL response-root selector, PR #474 compaction execution policy/contract, PR #462 Web-only collaboration filtering, and the ideas/changes in #550, #559 and #567. Preserved existing project licensing and authorship; this integration also contains original NEKODEX account safety, network, usage UI/storage, Firefox capture and lifecycle adaptations.
+
+
+## Source publication
+
+Implementation commit `637ce65bd0fe497da4a3be4e4d6eb7f1ee8f5e61` was pushed to `origin/codex/upstream-v508-complete`; `git ls-remote` confirmed that exact SHA. Draft review: https://github.com/Froraut/NEKODEX/pull/1. `[skip ci]` prevents additional validation beyond the completed focused budget. Author and committer are FroRaut with the canonical GitHub no-reply address. Unrelated untracked branding inventories and dependency symlinks were not staged.
+
+The app delivery portion of the active goal is not complete: installed NEKODEX is still `.9`; source publication is not installed behavior. Continue from the existing branch/PR and reuse the recorded verification. Do not start another review or repeat tests. Before any package/install work, follow the existing source-ready evidence, preserve production accounts and the active route, and distinguish build/package/install outcomes. Current development runtime tool is `/tmp/nekodex-v508-development-tools/bun` (task-owned ad-hoc copy, not the installed executable); remove it after delivery no longer needs it. The three disposable DEV homes and their exact app processes have been retired. Screenshot evidence is outside Git in the task artifact directory.
