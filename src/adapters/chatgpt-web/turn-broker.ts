@@ -1377,6 +1377,10 @@ export async function callTurnBroker<T>(
         // frame is therefore the terminal boundary; ordinary calls still wait for physical close.
         finishResponse();
         socket.destroy();
+      } else {
+        // Complete the duplex close handshake (notably Windows named pipes), while
+        // retaining physical close as the settlement boundary for ordinary calls.
+        socket.end();
       }
     });
   });

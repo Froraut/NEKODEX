@@ -61,6 +61,9 @@ export interface SetupOptions {
   forceLogin?: boolean;
   autoApproveToolCalls?: boolean;
   experimentalBiggerContext?: boolean;
+  experimentalSkillAttachments?: boolean;
+  allowWebSubagents?: boolean;
+  experimentalFreshConversationPerTurn?: boolean;
   zeroRiskProEnabled?: boolean;
   replaceCodexRoute?: boolean;
   restartService?: boolean;
@@ -164,6 +167,9 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     extraHighAvailable: before.extraHighAvailable,
     proAvailable: before.proAvailable,
     experimentalBiggerContext: before.experimentalBiggerContext,
+    allowWebSubagents: before.allowWebSubagents,
+    experimentalSkillAttachments: before.experimentalSkillAttachments,
+    experimentalFreshConversationPerTurn: before.experimentalFreshConversationPerTurn,
     zeroRiskProEnabled: before.zeroRiskProEnabled,
     autoApproveToolCalls: before.autoApproveToolCalls,
     controlToken: before.controlToken,
@@ -192,6 +198,9 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     extraHighAvailable: after.extraHighAvailable,
     proAvailable: after.proAvailable,
     experimentalBiggerContext: after.experimentalBiggerContext,
+    allowWebSubagents: after.allowWebSubagents,
+    experimentalSkillAttachments: after.experimentalSkillAttachments,
+    experimentalFreshConversationPerTurn: after.experimentalFreshConversationPerTurn,
     zeroRiskProEnabled: after.zeroRiskProEnabled,
     autoApproveToolCalls: after.autoApproveToolCalls,
     controlToken: after.controlToken,
@@ -206,6 +215,7 @@ export function tunnelWorkerRuntimeChanged(before: AppConfig | undefined, after:
   if (!before || before.mode !== "full" || after.mode !== "full") return false;
   return before.releaseVersion !== after.releaseVersion
     || JSON.stringify(before.runtimeCommand) !== JSON.stringify(after.runtimeCommand)
+    || before.allowWebSubagents !== after.allowWebSubagents
     || before.brokerSocketPath !== after.brokerSocketPath
     || before.browserInteractionMode !== after.browserInteractionMode
     || JSON.stringify(before.tunnel) !== JSON.stringify(after.tunnel);
@@ -287,6 +297,13 @@ function baseConfig(
     delete config.browserHostDescriptorPath;
   }
   if (options.autoApproveToolCalls !== undefined) config.autoApproveToolCalls = options.autoApproveToolCalls;
+  if (options.experimentalFreshConversationPerTurn !== undefined) {
+    config.experimentalFreshConversationPerTurn = options.experimentalFreshConversationPerTurn;
+  }
+  if (options.allowWebSubagents !== undefined) config.allowWebSubagents = options.allowWebSubagents;
+  if (options.experimentalSkillAttachments !== undefined) {
+    config.experimentalSkillAttachments = options.experimentalSkillAttachments;
+  }
   if (options.experimentalBiggerContext !== undefined) {
     config.experimentalBiggerContext = options.experimentalBiggerContext;
   }
@@ -303,6 +320,9 @@ function baseConfig(
     if (options.forceLogin) {
       throw new Error("Manual mode uses the launcher's existing ChatGPT session; --login is unavailable");
     }
+    if (options.experimentalSkillAttachments === true) {
+      throw new Error("Manual mode does not support Skills as files");
+    }
     if (options.experimentalBiggerContext === true) {
       throw new Error("Manual mode does not support Bigger Context");
     }
@@ -313,6 +333,8 @@ function baseConfig(
       throw new Error("Manual mode requires the Launcher; pass --browser-host-descriptor from the running Launcher");
     }
     config.experimentalBiggerContext = false;
+    config.experimentalSkillAttachments = false;
+    config.experimentalFreshConversationPerTurn = false;
     config.solAvailable = false;
     config.extraHighAvailable = false;
     config.proAvailable = false;
@@ -435,13 +457,14 @@ async function bootstrapTunnelProfile(
   onProfileWritten?: () => void,
   onValidationStopped?: () => void,
   onConnectFailed?: () => void,
+  keepRuntime = false,
 ): Promise<void> {
   let bootstrapError: unknown;
   let connectReturned = false;
   try {
     // `runtimes connect` writes the native profile and returns once its managed runtime is healthy.
     // Readiness follows after a successful control-plane poll, so setup proves it separately before
-    // stopping the validation runtime. The launcher supervisor reconnects the committed profile.
+    // transferring it to the launcher supervisor, or stopping temporary external-service validation.
     connectTunnel(config);
     connectReturned = true;
     onProfileWritten?.();
@@ -451,6 +474,7 @@ async function bootstrapTunnelProfile(
     if (!connectReturned) onConnectFailed?.();
     bootstrapError = error;
   }
+  if (keepRuntime && connectReturned && !bootstrapError) return;
   if (connectReturned) {
     try {
       stopTunnel(config);
@@ -790,7 +814,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
           await bootstrapTunnelProfile(config,
             () => { validationTunnelStarted = validationTunnelRunning = true; checkpointOwnedTunnelProfile(); },
             () => { validationTunnelRunning = false; },
-            () => { failedConnectMayHaveWrittenProfile = true; });
+            () => { failedConnectMayHaveWrittenProfile = true; }, true);
         }
       } else {
         const needsOwnershipMigration = !tunnelService.installed || !tunnelService.loaded || !tunnelServiceDefinitionMatches(config);
@@ -1093,7 +1117,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
         await bootstrapTunnelProfile(config,
           () => { validationTunnelRunning = true; profileOwned = snapshotFile(profilePath); },
           () => { validationTunnelRunning = false; },
-          () => { failedConnectMayHaveWrittenProfile = true; });
+          () => { failedConnectMayHaveWrittenProfile = true; }, true);
       }
       tunnelReady = false;
     }

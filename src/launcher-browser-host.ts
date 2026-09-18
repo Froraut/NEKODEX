@@ -1,3 +1,6 @@
+export class LauncherAccountCooldownError extends Error {
+  constructor(message: string) { super(message); this.name = "LauncherAccountCooldownError"; }
+}
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
@@ -437,6 +440,8 @@ export const LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS = 30_000;
 export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
 export type LauncherTurnActivity =
+  | { phase: "usage"; traceId: string; helperPid: number; receipt: string;
+      effort: string; modelVersion: string; outcome?: "completed"; }
   | {
       phase: "start";
       traceId: string;
@@ -462,6 +467,7 @@ export type LauncherTurnActivity =
       message?: string;
       retain?: boolean;
       connectorBound?: boolean;
+      failureCode?: "rate_limit_exceeded" | "account_safety_stop";
     };
 
 export const LAUNCHER_TURN_START_TIMEOUT_MS = 5_000;
@@ -720,6 +726,9 @@ export async function notifyLauncherTurn(
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (body.code === "account_cooldown") throw new LauncherAccountCooldownError(
+        typeof body.error === "string" ? body.error : "Account cooldown is active. Wait before retrying.",
+      );
       if (response.status === 409 && body.code === "turn_cancelled") {
         throw new LauncherBrowserTurnCancelledError(
           typeof body.error === "string" ? body.error : `Browser turn ${activity.traceId} was cancelled by the user`,
@@ -759,6 +768,7 @@ export async function notifyLauncherTurn(
     return {};
   } catch (error) {
     if (error instanceof LauncherBrowserTurnCancelledError
+      || error instanceof LauncherAccountCooldownError
       || error instanceof LauncherRetainedConversationUnavailableError) throw error;
     throw new Error(`Launcher browser control channel failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {

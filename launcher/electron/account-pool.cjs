@@ -1,6 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { BrowserHost } = require('./browser-host.cjs');
+const { AccountSafety } = require('./account-safety.cjs');
+const { AccountNetwork, validateProxy } = require('./account-network.cjs');
+const { UsageStore } = require('./usage-store.cjs');
 const { createAccountRegistry, validateAccountId } = require('./account-registry.cjs');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 
@@ -10,6 +13,10 @@ class AccountBrowserPool {
     this.options = options;
     this.logger = options.logger;
     this.registry = createAccountRegistry(options.coreHome);
+    this.safety = new AccountSafety(options.coreHome);
+    this.network = new AccountNetwork(options.coreHome);
+    this.usage = new UsageStore(options.coreHome);
+    this.networkOperation = null;
     this.hosts = new Map();
     this.creatingHosts = new Set();
     this.reservations = new Map();
@@ -62,6 +69,7 @@ class AccountBrowserPool {
     let host;
     try { host = new BrowserHost({ ...this.options,
       accountId: id,
+      configureAccountSession: (session, accountId) => this.network.apply(session, this.network.get(accountId)),
       partition: id === 'default' ? basePartition : `${basePartition}-account-${id}`,
       descriptorPath: path.join(this.options.coreHome, 'runtime', `browser-account-${id}.json`),
       isAccountVisible: () => this.registry.snapshot().selectedId === id,
@@ -84,6 +92,7 @@ class AccountBrowserPool {
     return [...this.hosts.values()].map(host => host.activeTraceId).find(Boolean) || null;
   }
   currentOperation() {
+    if (this.networkOperation) return 'Account network configuration';
     if (this.addingAccount) return 'ChatGPT account addition';
     if (this.loginOperation) return 'ChatGPT account login';
     return [...this.hosts.values()].map(host => host.currentOperation()).find(Boolean) || null;
@@ -92,12 +101,56 @@ class AccountBrowserPool {
     const config = this.registry.snapshot();
     return { ...config, accounts: config.accounts.map(account => {
       const host = this.hosts.get(account.id);
-      return { ...account, authenticated: host?.state.authenticated === true,
+      return { ...account, proxy: this.network.get(account.id), safety: this.safety.snapshot(account.id), authenticated: host?.state.authenticated === true,
         accountLabel: host?.state.accountLabel ?? null,
         activeTurns: host ? [...host.turnTabs.values()].filter(tab => tab.status === 'running').length : 0,
         checked: this.capabilities.has(account.id),
         connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()) };
     }) };
+  }
+  recordUsage(action) {
+    try { action(); }
+    catch { this.usage.error = 'Usage recording failed; stored history was preserved and totals may be incomplete.'; }
+  }
+  usageObservation(traceId, helperPid, receipt, effort, modelVersion, outcome) {
+    const host = this.ownerForTrace(traceId);
+    const tab = [...host.turnTabs.values()].find(tab => tab.traceId === traceId && tab.helperPid === helperPid);
+    if (!tab || tab.status !== 'running') throw new Error('Usage observation has no active owner');
+    if (typeof receipt !== 'string' || !/^[a-f0-9-]{36}$/.test(receipt)) throw new Error('Invalid usage receipt');
+    this.recordUsage(() => {
+      this.usage.accept(traceId, helperPid, receipt, effort, modelVersion);
+      if (outcome === 'completed') this.usage.finish(traceId, helperPid, outcome, receipt);
+    });
+  }
+  async setAccountProxy(id, value) {
+    const proxy = validateProxy(value);
+    const host = this.getHost(id);
+    if (this.currentOperation() || host.activeTraceId || [...this.reservations.values()].includes(id)) {
+      throw new Error('Finish account tasks before changing its proxy');
+    }
+    this.networkOperation = id;
+    const previous = this.network.get(id);
+    try {
+      await host.ready();
+      await this.network.apply(host.view.webContents.session, proxy);
+      this.network.save(id, proxy);
+      this.invalidateEvidence(id);
+      return this.accountSnapshot();
+    } catch (error) {
+      try { await this.network.apply(host.view.webContents.session, previous); }
+      catch (restoreError) { throw new AggregateError([error, restoreError], 'Account proxy change and restoration failed'); }
+      throw error;
+    } finally { this.networkOperation = null; this.publish(); }
+  }
+  setAccountSafety(id, policy) {
+    const host = this.getHost(id);
+    if (host.activeTraceId || host.currentOperation()) throw new Error('Wait for account activity before changing pacing');
+    this.safety.setPolicy(id, policy); this.publish(); return this.accountSnapshot();
+  }
+  resumeAccount(id) {
+    const host = this.getHost(id);
+    if (host.activeTraceId || host.currentOperation()) throw new Error('Wait for account activity before resuming');
+    this.safety.resume(id); this.publish(); return this.accountSnapshot();
   }
   evidenceEpoch(id) { return this.evidenceEpochs.get(id) ?? 0; }
   invalidateEvidence(id) {
@@ -389,7 +442,12 @@ class AccountBrowserPool {
   closeTab(tabId) { const result = this.ownerForTab(tabId).closeTab(tabId); this.publish(); return result; }
   removeTurnTab(tab, abortRunning) { this.ownerForTab(tab.id).removeTurnTab(tab, abortRunning); }
   copyManualPrompt(tabId) { return this.ownerForTab(tabId).copyManualPrompt(tabId); }
-  confirmManualSent(tabId) { return this.ownerForTab(tabId).confirmManualSent(tabId); }
+  confirmManualSent(tabId) {
+    const host = this.ownerForTab(tabId), tab = host.turnTabs.get(tabId);
+    const result = host.confirmManualSent(tabId);
+    if (tab) this.recordUsage(() => this.usage.accept(tab.traceId, tab.helperPid, 'manual', 'unknown', 'unknown', 'manual'));
+    return result;
+  }
   async withInteractionModeChange(mode, action) {
     if (this.addingAccount || this.activeTraceId || this.currentOperation()) throw new Error('Finish active tasks and account operations before changing interaction mode');
     return this.selectedHost().withInteractionModeChange(mode, action);
@@ -478,6 +536,7 @@ class AccountBrowserPool {
     this.affinity = next;
   }
   async beginTurn(traceId, reveal, helperPid, key, connector, retained, requirement) {
+    if (this.networkOperation) throw new Error('Account network settings are changing; retry after they finish');
     if (this.reservations.has(traceId)) throw new Error('Browser turn is already acquiring its account');
     const active = [...this.turnTabs.values()].filter(tab => tab.status === 'running');
     const activeTraces = new Set([...active.map(tab => tab.traceId), ...this.reservations.keys()]);
@@ -486,6 +545,13 @@ class AccountBrowserPool {
     const admissionEpoch = this.evidenceEpoch(id);
     const revealRevision = this.selectionRevision;
     const keys = [key, requirement?.routingKey].filter(Boolean);
+    if (!activeTraces.has(traceId)) {
+      // Pin first: rejected retries must not rotate to another account to evade a cooldown.
+      this.persistAffinity(keys, id);
+      const accountActive = active.filter(tab => this.traceOwners.get(tab.traceId) === id).length
+        + [...this.reservations.values()].filter(owner => owner === id).length;
+      this.safety.admit(id, accountActive);
+    }
     this.reservations.set(traceId, id);
     this.pendingAffinity.set(traceId, { id, keys });
     this.traceOwners.set(traceId, id);
@@ -538,9 +604,15 @@ class AccountBrowserPool {
     } finally { this.reservations.delete(traceId); this.pendingAffinity.delete(traceId); }
   }
   heartbeatTurn(...args) { return this.ownerForTrace(args[0]).heartbeatTurn(...args); }
-  async endTurn(...args) {
-    try { return await this.ownerForTrace(args[0]).endTurn(...args); }
-    finally { this.traceOwners.delete(args[0]); this.publish(); }
+  async endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound, failureCode) {
+    const owner = this.ownerForTrace(traceId);
+    const id = this.traceOwners.get(traceId) ?? owner.accountId;
+    // Host validates trace/helper ownership before account-wide state can change.
+    const result = await owner.endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound);
+    this.recordUsage(() => this.usage.finish(traceId, helperPid, status));
+    try { if (id && status === 'failed') this.safety.fail(id, failureCode); }
+    finally { this.traceOwners.delete(traceId); this.publish(); }
+    return result;
   }
   beginManualTurn(...args) {
     // Manual submission is deliberately tied to the profile visible to the user.
@@ -579,7 +651,11 @@ class AccountBrowserPool {
   waitManualTerminal(...args) { return this.ownerForTrace(args[0]).waitManualTerminal(...args); }
   markManualTurnStarted(...args) { return this.ownerForTrace(args[0]).markManualTurnStarted(...args); }
   cancelManualTurn(...args) { return this.ownerForTrace(args[0]).cancelManualTurn(...args); }
-  endManualTurn(...args) { try { return this.ownerForTrace(args[0]).endManualTurn(...args); } finally { this.traceOwners.delete(args[0]); this.publish(); } }
+  endManualTurn(...args) {
+    const result = this.ownerForTrace(args[0]).endManualTurn(...args);
+    this.recordUsage(() => this.usage.finish(args[0], args[1], args[2]));
+    this.traceOwners.delete(args[0]); this.publish(); return result;
+  }
   async persistSession() { await Promise.all([...this.hosts.values()].map(host => host.persistSession())); }
   destroy() {
     this.destroyed = true;

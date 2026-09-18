@@ -29,8 +29,13 @@ const DEFAULT_STATE = Object.freeze({
   autoStart: false,
   keepRunningOnClose: true,
   showBrowserDuringTurns: true,
+  manualSubmitTimeoutSec: 120,
+  passkeyBrowser: "chrome",
   browserInteractionMode: "automatic",
   experimentalBiggerContext: false,
+  experimentalSkillAttachments: false,
+  allowWebSubagents: false,
+  experimentalFreshConversationPerTurn: false,
   pendingBiggerContext: null,
   contextChangeApplying: false,
   contextChangeError: null,
@@ -58,6 +63,10 @@ function readState(filePath) {
     if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
     const state = { ...DEFAULT_STATE, ...parsed };
     state.contextChangeApplying = false;
+    if (!["chrome", "firefox"].includes(state.passkeyBrowser)) state.passkeyBrowser = "chrome";
+    if (!Number.isInteger(state.manualSubmitTimeoutSec) || state.manualSubmitTimeoutSec < 30 || state.manualSubmitTimeoutSec > 600) {
+      state.manualSubmitTimeoutSec = DEFAULT_STATE.manualSubmitTimeoutSec;
+    }
     if (typeof state.pendingBiggerContext !== "boolean") state.pendingBiggerContext = null;
     if (typeof state.contextChangeError !== "string") state.contextChangeError = null;
     if (state.coreSetupComplete === true && state.codexPickerConfirmed !== true) state.codexRestartRequired = true;
@@ -73,6 +82,9 @@ function readState(filePath) {
       "keepRunningOnClose",
       "showBrowserDuringTurns",
       "experimentalBiggerContext",
+      "experimentalSkillAttachments",
+      "allowWebSubagents",
+      "experimentalFreshConversationPerTurn",
       "zeroRiskProEnabled",
       "browserSmokePassed",
       "sidebarOpen",

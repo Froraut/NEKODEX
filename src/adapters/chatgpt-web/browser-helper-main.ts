@@ -1,3 +1,4 @@
+import { validateSkillFiles } from "./skill-attachments";
 import { createProcessLineReader } from "./process-line-reader";
 import { CHATGPT_HELPER_DIAGNOSTIC_BYTES } from "./resource-budgets";
 import { stdin, stderr, stdout } from "node:process";
@@ -10,6 +11,11 @@ import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-sele
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import { ChatGptMirroredTurnProgress } from "./turn-progress";
 import type { ChatGptExternalTurnProgressSnapshot } from "./turn-progress";
+import { CHATGPT_WEB_BACKEND_MODEL } from "../../chatgpt-web-models";
+import {
+  parseChatGptWebCompactionExecution,
+  type ChatGptWebCompactionExecution,
+} from "../../chatgpt-web-compaction-policy";
 
 interface RunMessage {
   type: "run";
@@ -33,6 +39,7 @@ interface RunMessage {
     conversationKey?: string;
     accountRoutingKey?: string;
     compaction?: boolean;
+    compactionExecution?: BrowserTurn["compactionExecution"];
     captureLunaCheckpoint?: boolean;
     externalProgress?: boolean;
   };
@@ -181,6 +188,22 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.compaction !== undefined && typeof message.turn.compaction !== "boolean") {
     throw new Error("Browser helper compaction flag is invalid");
   }
+  let compactionExecution: ChatGptWebCompactionExecution | undefined;
+  if (message.turn.compactionExecution !== undefined) {
+    try {
+      compactionExecution = parseChatGptWebCompactionExecution(message.turn.compactionExecution);
+    } catch {
+      throw new Error("Browser helper compaction execution is invalid");
+    }
+    if (message.turn.compaction !== true
+      || message.turn.modelId !== CHATGPT_WEB_BACKEND_MODEL
+      || message.turn.reasoning !== compactionExecution.effort
+      || message.turn.capabilities?.localToolsEnabled !== false
+      || message.turn.capabilities?.solAvailable !== true
+      || message.turn.capabilities?.proAvailable !== true) {
+      throw new Error("Browser helper compaction execution is invalid");
+    }
+  }
   if (message.turn.captureLunaCheckpoint !== undefined && typeof message.turn.captureLunaCheckpoint !== "boolean") {
     throw new Error("Browser helper Luna checkpoint flag is invalid");
   }
@@ -230,6 +253,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.accountRoutingKey !== undefined ? { accountRoutingKey: message.turn.accountRoutingKey } : {}),
     abortSignal: abortController.signal,
     ...(message.turn.compaction ? { compaction: true } : {}),
+    ...(compactionExecution ? { compactionExecution } : {}),
     ...(progress ? {
       externalProgress: progress,
       completionFence: {
@@ -413,6 +437,12 @@ const input = createProcessLineReader(stdin, line => {
       abortControllers.get(message.id)?.abort();
       return;
     }
+    try { validateSkillFiles(prepared.skillFiles); }
+    catch (error) {
+      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+      abortControllers.get(message.id)?.abort();
+      return;
+    }
     if (prepared.multipart !== undefined) {
       const multipart = prepared.multipart;
       if (!multipart || !Array.isArray(multipart.parts)
@@ -539,4 +569,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "account-routing-key", "turn-settled"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "compaction-execution"] });

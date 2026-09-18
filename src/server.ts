@@ -37,11 +37,13 @@ import {
   type CodexModelContextOverride,
 } from "./codex-integration";
 import {
+  CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   isChatGptWebModelSlug,
   requireChatGptWebModelRoute,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
+import type { ChatGptWebCompactionModel } from "./chatgpt-web-compaction-policy";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
 import {
   buildCompactV1Output,
@@ -350,6 +352,7 @@ export interface ResponseRequestOptions {
   onTurnIdentity?: (identity: NativeCodexTurnIdentity) => void;
   /** Read the live Pro preference only after this request resolves to the automatic Pro route. */
   readProModelVersion?: () => ChatGptWebProModelVersion | undefined;
+  readCompactionModel?: () => ChatGptWebCompactionModel | undefined;
 }
 
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
@@ -496,9 +499,9 @@ export async function responseRequest(
   let parsed: CodexParsedRequest;
   let route: ChatGptWebModelRoute;
   try {
-    parsed = parseRequest(expanded);
+    parsed = parseRequest(expanded, { allowWebSubagents: config.allowWebSubagents });
     const delegated = normalizeNativeDelegation(parsed);
-    if (delegated) parsed = parseRequest(delegated);
+    if (delegated) parsed = parseRequest(delegated, { allowWebSubagents: config.allowWebSubagents });
     if (options.hermesContext) parsed._hermesContext = options.hermesContext;
     route = routeChatGptWebRequest(parsed, config);
     const identity = extractChatGptTurnIdentity(parsed);
@@ -539,6 +542,16 @@ export async function responseRequest(
   }
 
   const compaction = parsed._compactionRequest === true;
+  if (compaction
+    && route.interactionMode === "automatic"
+    && route.backendModel === CHATGPT_WEB_BACKEND_MODEL
+    && route.adapterEffort === "max"
+    && options.readCompactionModel) {
+    requestConfig = { ...requestConfig };
+    const compactionModel = options.readCompactionModel();
+    if (compactionModel === undefined) delete requestConfig.compactionModel;
+    else requestConfig.compactionModel = compactionModel;
+  }
   const rememberCompletedResponse = (response: Record<string, unknown>): void => {
     options.onCompletedResponse?.(response);
     if (!compaction) {
@@ -752,7 +765,7 @@ export async function compactRequest(
   req: Request,
   config: AppConfig,
   adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter,
-  options: Pick<ResponseRequestOptions, "onTurnIdentity" | "readProModelVersion"> = {},
+  options: Pick<ResponseRequestOptions, "onTurnIdentity" | "readProModelVersion" | "readCompactionModel"> = {},
 ): Promise<Response> {
   const nativeRequest = req.clone();
   let raw: Record<string, unknown>;
@@ -917,6 +930,7 @@ export function startServer(
     fetchUpstream?: NativeFetch;
     adapterFactory?: ChatGptWebAdapterFactory;
     readProModelVersion?: () => ChatGptWebProModelVersion | undefined;
+  readCompactionModel?: () => ChatGptWebCompactionModel | undefined;
   } = {},
 ): Bun.Server<undefined> & { disposeSignalHandlers(): void } {
   if (config.purpose === "dev-harness") {
@@ -965,6 +979,7 @@ export function startServer(
             (request, hermesContext, onCompletedResponse) => responseRequest(request, config, dependencies.adapterFactory, {
               hermesContext, onCompletedResponse, rememberState: false,
               ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
+              ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
             })), req.signal, process.platform, "responses");
         }
         return formatErrorResponse(404, "invalid_request_error", "Hermes uses /hermes/v1/responses with transport codex_responses.");
@@ -1175,6 +1190,7 @@ export function startServer(
             {
               onTurnIdentity: bindIdentity,
               ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
+              ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
             },
           ),
           req.signal,
@@ -1192,6 +1208,7 @@ export function startServer(
             {
               onTurnIdentity: bindIdentity,
               ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
+              ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
             },
           ),
           req.signal,

@@ -15,8 +15,13 @@ export interface LauncherState {
   autoStart: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
+  manualSubmitTimeoutSec: number;
+  passkeyBrowser: "chrome" | "firefox";
   browserInteractionMode: BrowserInteractionMode;
   experimentalBiggerContext: boolean;
+  experimentalSkillAttachments: boolean;
+  allowWebSubagents: boolean;
+  experimentalFreshConversationPerTurn: boolean;
   pendingBiggerContext?: boolean | null;
   contextChangeApplying?: boolean;
   contextChangeError?: string | null;
@@ -134,10 +139,30 @@ export type UpdateState =
       downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null }
   | { status: "error"; message: string };
 
+export type CompactionModel = "extra-high" | "5.6-pro" | "5.5-pro";
+
+export interface UsageSnapshot {
+  available: boolean; error?: string; startedAt?: string; lifetime?: number;
+  rows: Array<{ day: string; effort: string; modelVersion: string; mode: string;
+    accepted: number; completed: number; failed: number; aborted: number }>;
+}
+export interface AccountProxy { mode: "system" | "direct" | "http" | "https" | "socks5" | "pac"; url?: string; }
+
+export interface AccountSafetyPolicy {
+  enabled: boolean;
+  minIntervalSec: number;
+  maxConcurrent: number;
+  breakAfterMinutes: number;
+  breakMinutes: number;
+  maxSessionMinutes: number;
+  cooldownMinutes: number;
+}
 export interface AccountPoolSnapshot {
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
+    proxy: AccountProxy;
+    safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean };
     accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean }>;
 }
 
@@ -158,6 +183,7 @@ export interface LauncherSnapshot {
   };
   state: LauncherState;
   proModelVersion: ProModelVersion | null;
+  compactionModel: CompactionModel | null;
   contextCapabilities?: { solAvailable: boolean; proAvailable: boolean; extraHighAvailable?: boolean } | null;
   browser: BrowserState | null;
   connectorName: string;
@@ -244,26 +270,36 @@ export interface LauncherApi {
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
+  setFreshConversation(enabled: boolean): Promise<LauncherState>;
+  setWebSubagents(enabled: boolean): Promise<LauncherState>;
+  setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   accounts(): Promise<AccountPoolSnapshot>;
   addAccount(label: string): Promise<AccountPoolSnapshot>;
   selectAccount(id: string): Promise<AccountPoolSnapshot>;
   setAccountEnabled(id: string, enabled: boolean): Promise<AccountPoolSnapshot>;
+  setAccountProxy(id: string, value: AccountProxy): Promise<AccountPoolSnapshot>;
+  setAccountSafety(id: string, policy: AccountSafetyPolicy): Promise<AccountPoolSnapshot>;
+  resumeAccount(id: string): Promise<AccountPoolSnapshot>;
   setAccountMode(mode: "selected" | "balanced"): Promise<AccountPoolSnapshot>;
   openAccountLogin(id: string): Promise<BrowserState>;
   checkAccount(id: string, connector: boolean): Promise<AccountPoolSnapshot>;
   setBrowserCapacity(value: number): Promise<BrowserCapacitySettings>;
+  setCompactionModel(value: CompactionModel | null): Promise<{ compactionModel: CompactionModel | null }>;
   setProModelVersion(version: ProModelVersion | null): Promise<{ proModelVersion: ProModelVersion | null }>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
     state: LauncherState;
     credentialsRequired: boolean;
     targetMode: BrowserInteractionMode;
   }>;
+  setPreference(key: "passkeyBrowser", value: "chrome" | "firefox"): Promise<LauncherState>;
+  setPreference(key: "manualSubmitTimeoutSec", value: number): Promise<LauncherState>;
   setPreference(
     key: "keepRunningOnClose" | "showBrowserDuringTurns",
     value: boolean,
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
+  usage(days: 7 | 30 | 90): Promise<UsageSnapshot>;
   logs(limit?: number): Promise<LogRecord[]>;
   exportLogs(): Promise<string | null>;
   installUpdate(): Promise<boolean>;

@@ -437,6 +437,7 @@ export function mcpCommand(config: AppConfig, platform = process.platform): stri
   const command = [
     ...config.runtimeCommand,
     "mcp",
+    config.allowWebSubagents === false ? "--no-web-subagents" : "--allow-web-subagents",
     "--contract",
     contract,
     "--broker-socket",

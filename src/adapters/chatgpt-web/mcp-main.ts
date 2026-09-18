@@ -12,6 +12,12 @@ function option(args: string[], name: string, fallback: string): string {
 
 export async function runChatGptMcpMain(args: string[]): Promise<void> {
   const remaining = [...args];
+  const allow = remaining.includes("--allow-web-subagents");
+  const deny = remaining.includes("--no-web-subagents");
+  if (allow && deny) throw new Error("Conflicting Web subagent flags");
+  for (const flag of ["--allow-web-subagents", "--no-web-subagents"]) {
+    const index = remaining.indexOf(flag); if (index >= 0) remaining.splice(index, 1);
+  }
   const brokerSocketPath = resolveBrokerEndpoint(option(remaining, "--broker-socket", defaultBrokerEndpoint()));
   const requestedContract = option(remaining, "--contract", "native");
   if (requestedContract !== "native" && requestedContract !== "safe") {
@@ -20,6 +26,7 @@ export async function runChatGptMcpMain(args: string[]): Promise<void> {
   if (remaining.length > 0) throw new Error(`Unknown MCP arguments: ${remaining.join(" ")}`);
   await runChatGptMcpServer({
     brokerSocketPath,
+    allowWebSubagents: !deny,
     contract: requestedContract as ChatGptMcpContract,
   });
 }

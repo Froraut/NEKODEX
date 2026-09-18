@@ -36,7 +36,8 @@ export interface SystemBrowserLoginCapture {
   marker: SystemBrowserLoginCaptureMarker;
 }
 
-interface SystemBrowserLoginOptions {
+export interface SystemBrowserLoginOptions {
+  browser?: "chrome" | "firefox";
   continuation: Promise<void>;
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -222,6 +223,10 @@ export async function captureSystemBrowserLogin(
   config: Pick<AppConfig, "chromeExecutablePath" | "storageStatePath">,
   options: SystemBrowserLoginOptions,
 ): Promise<SystemBrowserLoginCapture> {
+  if (options.browser === "firefox") {
+    const { captureFirefoxLogin } = await import("./firefox-login");
+    return captureFirefoxLogin(config.chromeExecutablePath, config.storageStatePath, options);
+  }
   if (process.platform !== "darwin") {
     throw new Error("Passkey sign-in is currently supported only on macOS");
   }

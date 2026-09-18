@@ -9,6 +9,10 @@ import {
   parseChatGptWebProModelVersion,
   type ChatGptWebProModelVersion,
 } from "./chatgpt-web-models";
+import {
+  parseChatGptWebCompactionModel,
+  type ChatGptWebCompactionModel,
+} from "./chatgpt-web-compaction-policy";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
 
@@ -105,7 +109,11 @@ export interface AppConfig {
   proAvailable: boolean;
   /** Optional explicit ChatGPT model family used for automatic Pro turns. */
   proModelVersion?: ChatGptWebProModelVersion;
+  compactionModel?: ChatGptWebCompactionModel;
   experimentalBiggerContext: boolean;
+  experimentalSkillAttachments: boolean;
+  allowWebSubagents: boolean;
+  experimentalFreshConversationPerTurn: boolean;
   /** Explicitly install the additional Pro-sized model row while Manual mode is active. */
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
@@ -235,6 +243,9 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     extraHighAvailable: false,
     proAvailable: false,
     experimentalBiggerContext: false,
+    experimentalSkillAttachments: false,
+    allowWebSubagents: false,
+    experimentalFreshConversationPerTurn: false,
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -545,6 +556,12 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.proAvailable !== undefined && typeof parsed.proAvailable !== "boolean") {
     throw new Error(`Invalid proAvailable in ${path}`);
   }
+  let compactionModel: ChatGptWebCompactionModel | undefined;
+  try {
+    compactionModel = parseChatGptWebCompactionModel(parsed.compactionModel);
+  } catch {
+    throw new Error(`Invalid compactionModel in ${path}`);
+  }
   let proModelVersion: ChatGptWebProModelVersion | undefined;
   try {
     proModelVersion = parseChatGptWebProModelVersion(parsed.proModelVersion);
@@ -571,6 +588,22 @@ function parseConfig(value: unknown, path: string): AppConfig {
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;
   const extraHighAvailable = parsed.extraHighAvailable ?? proAvailable;
+  if (parsed.experimentalSkillAttachments !== undefined && typeof parsed.experimentalSkillAttachments !== "boolean") {
+    throw new Error(`Invalid experimentalSkillAttachments in ${path}`);
+  }
+  if (parsed.experimentalFreshConversationPerTurn !== undefined && typeof parsed.experimentalFreshConversationPerTurn !== "boolean") {
+    throw new Error(`Invalid experimentalFreshConversationPerTurn in ${path}`);
+  }
+  const experimentalFreshConversationPerTurn = browserInteractionMode !== "manual" && parsed.experimentalFreshConversationPerTurn === true;
+  if (parsed.allowWebSubagents !== undefined && typeof parsed.allowWebSubagents !== "boolean") {
+    throw new Error(`Invalid allowWebSubagents in ${path}`);
+  }
+  // Existing installations retain their prior delegation behavior; new defaults are opt-in.
+  const allowWebSubagents = parsed.allowWebSubagents !== false;
+  const experimentalSkillAttachments = parsed.experimentalSkillAttachments === true;
+  if (browserInteractionMode === "manual" && experimentalSkillAttachments) {
+    throw new Error(`Manual mode does not support Skills as files in ${path}`);
+  }
   const experimentalBiggerContext = parsed.experimentalBiggerContext === true;
   const zeroRiskProEnabled = parsed.zeroRiskProEnabled === true;
   if (browserInteractionMode === "manual" && experimentalBiggerContext) {
@@ -596,7 +629,11 @@ function parseConfig(value: unknown, path: string): AppConfig {
     extraHighAvailable: browserInteractionMode === "manual" ? false : extraHighAvailable,
     proAvailable: browserInteractionMode === "manual" ? false : proAvailable,
     proModelVersion,
+    compactionModel,
     experimentalBiggerContext,
+    experimentalSkillAttachments,
+    allowWebSubagents,
+    experimentalFreshConversationPerTurn,
     zeroRiskProEnabled,
   } as AppConfig;
 }
@@ -654,7 +691,11 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       ...(!manual && config.proModelVersion !== undefined
         ? { proModelVersion: config.proModelVersion }
         : {}),
+      ...(!manual && config.compactionModel !== undefined ? { compactionModel: config.compactionModel } : {}),
       experimentalBiggerContext: manual ? false : config.experimentalBiggerContext,
+      allowWebSubagents: config.allowWebSubagents,
+      experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
+      experimentalFreshConversationPerTurn: manual ? false : config.experimentalFreshConversationPerTurn,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },

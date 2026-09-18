@@ -352,6 +352,8 @@ class BrowserHost {
     clipboardApi = clipboard,
     dialogApi = dialog,
     getBrowserInteractionMode = () => "automatic",
+    getManualSubmitTimeoutSec = () => 120,
+    configureAccountSession = async () => {},
     maxTabs = DEFAULT_BROWSER_CAPACITY,
     accountId = "default",
     isAccountVisible = () => true,
@@ -389,6 +391,8 @@ class BrowserHost {
     this.showWindow = showWindow;
     this.clipboard = clipboardApi;
     this.getBrowserInteractionMode = getBrowserInteractionMode;
+    this.getManualSubmitTimeoutSec = getManualSubmitTimeoutSec;
+    this.configureAccountSession = configureAccountSession;
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -501,6 +505,7 @@ class BrowserHost {
   }
 
   async initializePrimaryView() {
+    await this.configureAccountSession(this.view.webContents.session, this.accountId);
     this.view.setBounds(this.hiddenTurnBounds());
     this.view.setVisible(true);
     try {
@@ -2064,9 +2069,11 @@ class BrowserHost {
       throw new Error(`Manual resume prompt must contain between 1 and ${MAX_MANUAL_PROMPT_CHARS} characters`);
     }
     if (typeof compaction !== "boolean") throw new Error("Manual compaction flag must be boolean");
+    const configuredSubmitSec = this.getManualSubmitTimeoutSec();
+    const submitMs = Number.isInteger(configuredSubmitSec) && configuredSubmitSec >= 30 && configuredSubmitSec <= 600
+      ? configuredSubmitSec * 1000 : 120_000;
     const manualSubmitTimeoutMs = compaction
-      ? MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS
-      : MANUAL_SUBMIT_TIMEOUT_MS;
+      ? Math.max(MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS, submitMs) : submitMs;
     const completion = this.manualCompletionSignals.get(traceId);
     if (completion) {
       throw new Error(completion.helperPid === helperPid
@@ -2727,7 +2734,7 @@ class BrowserHost {
         this.setState({
           authenticated: false,
           status: "loading",
-          message: "Waiting for passkey sign-in in Chrome",
+          message: "Waiting for passkey sign-in in the selected browser",
           loading: true,
         });
         this.logger.info("browser.passkey_login_started");
