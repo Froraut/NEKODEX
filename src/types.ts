@@ -1,5 +1,7 @@
 import type { ChatGptWebProModelVersion } from "./chatgpt-web-models";
 
+import type { ChatGptWebCompactionModel } from "./chatgpt-web-compaction-policy";
+
 export interface CodexParsedRequest {
   modelId: string;
   previousResponseId?: string;
@@ -41,6 +43,8 @@ export type CodexMessage =
 
 export interface CodexUserMessage {
   role: "user";
+  /** Native Responses metadata, never inferred from message text. */
+  origin?: "codex_skill";
   content: string | CodexContentPart[];
   timestamp: number;
 }
@@ -307,9 +311,13 @@ export interface CodexProviderConfig {
     proAvailable?: boolean;
     /** Optional explicit ChatGPT model family used for automatic Pro turns. */
     proModelVersion?: ChatGptWebProModelVersion;
+    compactionModel?: ChatGptWebCompactionModel;
     /** Authorize per-call "Allow once" confirmation clicks for this connector. */
     autoApproveToolCalls?: boolean;
     /** DEV-only experimental transport: adapt one context across one, two, or three ChatGPT messages. */
     experimentalBiggerContext?: boolean;
+    experimentalSkillAttachments?: boolean;
+    allowWebSubagents?: boolean;
+    experimentalFreshConversationPerTurn?: boolean;
   };
 }

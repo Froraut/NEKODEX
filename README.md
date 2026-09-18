@@ -27,16 +27,16 @@ The interface uses a quiet graphite-and-lavender palette, responsive layouts and
 
 ## Download
 
-**NEKODEX 5.2.0-nekodex.9 · macOS prerelease · macOS 13 or later**
+**NEKODEX 5.3.0-nekodex.1 · macOS prerelease · macOS 13 or later**
 
 | Your Mac | Download |
 | --- | --- |
-| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.9/NEKODEX-5.2.0-nekodex.9-mac-arm64.dmg) |
-| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.9/NEKODEX-5.2.0-nekodex.9-mac-x64.dmg) |
+| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/NEKODEX-5.3.0-nekodex.1-mac-arm64.dmg) |
+| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/NEKODEX-5.3.0-nekodex.1-mac-x64.dmg) |
 
 Both macOS builds are **Developer ID signed and Apple notarized**, including the final DMGs with stapled notarization tickets.
 
-[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.2.0-nekodex.9) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.2.0-nekodex.9/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
+[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.3.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
 
 Windows and Linux code remains in the repository. **This release provides macOS builds only.**
 

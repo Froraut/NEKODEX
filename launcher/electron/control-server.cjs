@@ -94,6 +94,7 @@ class BrowserControlServer {
       return;
     }
     const isTurn = request.url === "/v1/turn/start"
+      || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/end";
     const isTurnRelease = request.url === "/v1/turn/release";
@@ -278,6 +279,11 @@ class BrowserControlServer {
       }
       if (body.accountRoutingKey !== undefined && !/^[a-f0-9]{64}$/.test(body.accountRoutingKey)) throw new Error("Invalid account routing key");
       if (body.requestedEffort !== undefined && !["luna", "low", "medium", "high", "xhigh", "max"].includes(body.requestedEffort)) throw new Error("Invalid requested effort");
+      if (request.url === "/v1/turn/usage") {
+        if (body.outcome !== undefined && body.outcome !== "completed") throw new Error("Invalid usage outcome");
+        host.usageObservation(body.traceId, body.helperPid, body.receipt, body.effort, body.modelVersion, body.outcome);
+        writeJson(response, 200, { ok: true }); return;
+      }
       if (request.url === "/v1/turn/start") {
         if (host.browserInteractionMode() === "manual") {
           throw new Error("Automatic browser interaction is disabled");
@@ -301,6 +307,7 @@ class BrowserControlServer {
         return;
       } else {
         if (!['completed', 'failed', 'aborted'].includes(body.status)) throw new Error("turn status is invalid");
+        if (body.failureCode !== undefined && !['rate_limit_exceeded', 'account_safety_stop'].includes(body.failureCode)) throw new Error("Invalid account failure code");
         const release = await host.endTurn(
           body.traceId,
           body.helperPid,
@@ -309,6 +316,7 @@ class BrowserControlServer {
           body.message,
           body.retain === true,
           body.connectorBound === true,
+          body.failureCode,
         );
         this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
         writeJson(response, 200, { ok: true, ...release });
@@ -329,6 +337,7 @@ class BrowserControlServer {
           : manualTimedOut ? 408 : 400,
         {
         error: message,
+        ...(error?.code === "account_cooldown" ? { code: "account_cooldown", retryAt: error.retryAt } : {}),
         ...(cancelled ? { code: "turn_cancelled" } : {}),
         ...(retainedUnavailable ? { code: "retained_conversation_unavailable" } : {}),
         ...(manualInspectionDisabled ? { code: "manual_browser_inspection_disabled" } : {}),

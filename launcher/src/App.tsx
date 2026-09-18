@@ -1,8 +1,10 @@
+import type { CompactionModel } from "./types";
 import { setupNextStep } from "./setup-progress";
 import languages from "../electron/languages.json";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
 import { AccountSettings } from "./AccountSettings";
+import { UsageDashboard } from "./UsageDashboard";
 import { Updates } from "./Updates";
 import { updateCopyFor } from "./update-copy";
 import {
@@ -263,6 +265,9 @@ export function App() {
   const updateProModelVersion = useCallback((proModelVersion: ProModelVersion | null) => {
     setSnapshot((current) => current ? { ...current, proModelVersion } : current);
   }, []);
+  const updateCompactionModel = useCallback((compactionModel: CompactionModel | null) => {
+    setSnapshot((current) => current ? { ...current, compactionModel } : current);
+  }, []);
 
   if (!api) return <FatalMessage message="Launcher IPC is unavailable." />;
   if (!snapshot && startupError) return (
@@ -308,6 +313,7 @@ export function App() {
             snapshot={snapshot}
             updateBrowserCapacity={updateBrowserCapacity}
             updateProModelVersion={updateProModelVersion}
+            updateCompactionModel={updateCompactionModel}
             updateState={updateState}
             updateSnapshot={updateSnapshot}
             updatePanelRequest={updatePanelRequest}
@@ -469,6 +475,7 @@ function LauncherShell({
   snapshot,
   updateBrowserCapacity,
   updateProModelVersion,
+  updateCompactionModel,
   updateState,
   updateSnapshot,
   updatePanelRequest,
@@ -482,6 +489,7 @@ function LauncherShell({
   snapshot: LauncherSnapshot;
   updateBrowserCapacity: (value: BrowserCapacitySettings) => void;
   updateProModelVersion: (value: ProModelVersion | null) => void;
+  updateCompactionModel: (value: CompactionModel | null) => void;
   updateState: (state: LauncherState) => void;
   updateSnapshot: () => Promise<void>;
   updatePanelRequest: number;
@@ -910,6 +918,7 @@ function LauncherShell({
                 snapshot={snapshot}
                 updateBrowserCapacity={updateBrowserCapacity}
                 updateProModelVersion={updateProModelVersion}
+                updateCompactionModel={updateCompactionModel}
                 showBiggerContextInfo={() => setBiggerContextRecommendationOpen(true)}
                 updateState={updateState}
               />
@@ -1931,6 +1940,7 @@ function ActivitySurface({
     && `${humanEvent(record.event)} ${logDetail(record.detail)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return (
     <ContentSurface subtitle={copy.activitySubtitle} title={copy.activityTitle}>
+      <UsageDashboard copy={copy} />
       <div className="section-heading activity-heading">
         <span>{copy.recentActivity}</span>
         <SecondaryButton
@@ -1980,6 +1990,7 @@ function SettingsSurface({
   updateBrowserCapacity,
   updateProModelVersion,
   showBiggerContextInfo,
+  updateCompactionModel,
   updateState,
 }: {
   browser: BrowserState | null;
@@ -1993,6 +2004,7 @@ function SettingsSurface({
   updateBrowserCapacity: (value: BrowserCapacitySettings) => void;
   updateProModelVersion: (value: ProModelVersion | null) => void;
   showBiggerContextInfo: () => void;
+  updateCompactionModel: (value: CompactionModel | null) => void;
   updateState: (state: LauncherState) => void;
 }) {
   const [capacity, setCapacity] = useState(snapshot.browserCapacity);
@@ -2064,6 +2076,17 @@ function SettingsSurface({
     setError(null);
     try {
       updateState(await api!.setBiggerContext(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const setSkillAttachments = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setSkillAttachments(enabled));
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -2142,6 +2165,22 @@ function SettingsSurface({
             {capacity.restartRequired ? <p role="status">{copy.browserCapacityRestart}</p> : null}
           </div>
         </SettingRow>
+        <SettingRow body={copy.compactionModelBody} label={copy.compactionModel}>
+          <select className="settings-select" aria-label={copy.compactionModel}
+            disabled={proModelBusy || !snapshot.state.coreSetupComplete || snapshot.state.browserInteractionMode === "manual"}
+            value={snapshot.compactionModel ?? "follow"}
+            onChange={event => {
+              const value = event.target.value === "follow" ? null : event.target.value as CompactionModel;
+              setBusy(true); setError(null);
+              void api!.setCompactionModel(value).then(result => updateCompactionModel(result.compactionModel))
+                .catch(cause => setError(messageOf(cause))).finally(() => setBusy(false));
+            }}>
+            <option value="follow">{copy.compactionFollow}</option>
+            <option value="extra-high">GPT-5.6 Extra High</option>
+            <option value="5.6-pro">GPT-5.6 Pro</option>
+            <option value="5.5-pro">GPT-5.5 Pro</option>
+          </select>
+        </SettingRow>
         <SettingRow body={copy.proModelVersionBody} label={copy.proModelVersion}>
           <ProModelVersionMenu
             copy={copy}
@@ -2158,6 +2197,20 @@ function SettingsSurface({
             disabled={busy}
             onChange={(checked) => void savePreference(() => api!.setPreference("keepRunningOnClose", checked))}
           />
+        </SettingRow>
+        <SettingRow body={copy.passkeyBrowserBody} label={copy.passkeyBrowser}>
+          <select className="settings-select" aria-label={copy.passkeyBrowser} value={snapshot.state.passkeyBrowser ?? "chrome"}
+            disabled={busy || operation?.status === "running"}
+            onChange={event => void savePreference(() => api!.setPreference("passkeyBrowser", event.target.value as "chrome" | "firefox"))}>
+            <option value="chrome">Google Chrome</option><option value="firefox">Firefox</option>
+          </select>
+        </SettingRow>
+        <SettingRow body={copy.manualSubmitTimeBody} label={copy.manualSubmitTime}>
+          <select aria-label={copy.manualSubmitTime} disabled={busy}
+            value={snapshot.state.manualSubmitTimeoutSec ?? 120}
+            onChange={event => void savePreference(() => api!.setPreference("manualSubmitTimeoutSec", Number(event.target.value)))}>
+            {[30, 60, 120, 180, 300, 600].map(seconds => <option key={seconds} value={seconds}>{seconds} s</option>)}
+          </select>
         </SettingRow>
         <SettingRow body={copy.showDuringTurnsBody} label={copy.showDuringTurns}>
           <Switch
@@ -2186,6 +2239,25 @@ function SettingsSurface({
               || snapshot.state.coreSetupComplete !== true}
             onChange={(checked) => void setBiggerContext(checked)}
           />
+        </SettingRow>
+        <SettingRow body={snapshot.state.browserInteractionMode === "manual"
+          ? copy.manualSkillAttachmentsUnavailable : copy.skillAttachmentsBody} label={copy.skillAttachments}>
+          <Switch
+            label={copy.skillAttachments}
+            checked={snapshot.state.experimentalSkillAttachments}
+            disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}
+            onChange={(checked) => void setSkillAttachments(checked)}
+          />
+        </SettingRow>
+        <SettingRow body={copy.webSubagentsBody} label={copy.webSubagents}>
+          <Switch label={copy.webSubagents} checked={snapshot.state.allowWebSubagents}
+            disabled={proModelBusy || !snapshot.state.coreSetupComplete}
+            onChange={enabled => void savePreference(() => api!.setWebSubagents(enabled))} />
+        </SettingRow>
+        <SettingRow body={copy.freshConversationBody} label={copy.freshConversation}>
+          <Switch label={copy.freshConversation} checked={snapshot.state.experimentalFreshConversationPerTurn}
+            disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}
+            onChange={enabled => void savePreference(() => api!.setFreshConversation(enabled))} />
         </SettingRow>
         <p role="status">{snapshot.state.experimentalBiggerContext ? copy.contextActiveBigger : copy.contextActiveStandard}</p>
         <ContextBudgetTable snapshot={snapshot} copy={copy} />

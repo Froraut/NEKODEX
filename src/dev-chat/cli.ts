@@ -31,6 +31,7 @@ import {
   resolveDevProfilePaths,
 } from "./profile";
 import { DEV_CONFIG_PURPOSE, DEV_LAUNCHER_PROFILE } from "./constants";
+import { runCompactionModelConfigCommand } from "../compaction-model-config";
 import { runProModelVersionConfigCommand } from "../pro-model-config";
 
 const DEV_HELP = `Codex Web GPT DEV chat
@@ -466,7 +467,8 @@ export async function runDevCommand(args: string[]): Promise<void> {
   }
   if (action === "config") {
     activateDevProfileEnvironment(paths);
-    await runProModelVersionConfigCommand(args);
+    if (args[0] === "compaction-model") await runCompactionModelConfigCommand(args);
+    else await runProModelVersionConfigCommand(args);
     return;
   }
   if (action === "setup") {

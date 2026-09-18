@@ -618,6 +618,24 @@ describe("trusted Codex task environment continuity", () => {
     expect(() => store.resolve(invalidUpdate)).toThrow("missing cwd");
   });
 
+  test("upstream508: historical environment may reuse only its own previously trusted thread", () => {
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, join(root, "nonexistent-review-codex-home"));
+    const trusted = store.resolve(currentWire());
+    const next = currentWire();
+    next._rawBody = {
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_current", turn_id: "turn_next" }) },
+      input: [
+        { type: "message", role: "user", internal_chat_message_metadata_passthrough: { turn_id: "turn_current" },
+          content: [{ type: "input_text", text: environmentXml }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done." }] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Continue" }] },
+      ],
+    };
+    expect(store.resolve(next)).toEqual(trusted);
+    ((next._rawBody as { client_metadata: Record<string, string> }).client_metadata)["x-codex-turn-metadata"] = JSON.stringify({ thread_id: "other", turn_id: "turn_next" });
+    expect(() => store.resolve(next)).toThrow("missing cwd");
+  });
+
   test("inherits authority only through canonical Codex thread-spawn lineage", () => {
     const store = new ChatGptThreadEnvironmentStore();
     const parent = currentWire();

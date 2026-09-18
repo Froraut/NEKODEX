@@ -3,6 +3,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { observeMcpTransport } from "./mcp-diagnostics";
 import * as z from "zod/v4";
+import {
+  chatgptWebBlockedGatewayWireNames,
+  isSpawnCollaborationWireName,
+} from "../../collaboration-tools";
 import { namespacedToolName, type CodexTool } from "../../types";
 import { VERSION } from "../../version";
 import type { ChatGptTurnEnvironment } from "./environment";
@@ -45,6 +49,8 @@ const AGENT_WAIT_TRANSPORT_RULE = `ChatGPT Web transport rule: wait for exactly 
 // must settle first so an abandoned native tool call is returned as an MCP error instead of
 // letting the tunnel tear down and poison its long-lived stdio transport.
 export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+// Polling earlier preserves the native session and leaves room for MCP delivery.
+export const CHATGPT_WEB_WRITE_STDIN_MAX_FORWARD_YIELD_MS = 60_000;
 
 const ZERO_RISK_MCP_INSTRUCTIONS = [
   "For each pasted Codex Web GPT request, begin with codex_turn_start using the request_id in its request block.",
@@ -407,13 +413,18 @@ function execGatewayProgram(
  * as direct calls. The model still owns its JavaScript; only the tool registry it receives is a
  * transparent proxy whose native wait functions validate their transport-bound argument before dispatch.
  */
-function transportBoundRawExecProgram(input: string, blockedExecName: string): string {
+export function transportBoundRawExecProgram(
+  input: string,
+  blockedExecName: string,
+  spawnExclusions: readonly string[] = [],
+): string {
   return [
     "await (async (tools) => {",
     input,
     "})((() => {",
     "  const source = tools;",
     `  const waitNames = new Set(${JSON.stringify([...GATEWAY_AGENT_WAIT_TOOL_NAMES])});`,
+    `  const spawnNames = new Set(${JSON.stringify(spawnExclusions)});`,
     `  const blockedExecName = ${JSON.stringify(blockedExecName)};`,
     `  const pollMs = ${CHATGPT_WEB_AGENT_WAIT_POLL_MS};`,
     "  const registryNames = new Set(Reflect.ownKeys(source));",
@@ -427,6 +438,8 @@ function transportBoundRawExecProgram(input: string, blockedExecName: string): s
     "    let exposed = value;",
     "    if (typeof value === \"function\" && name === blockedExecName) {",
     "      exposed = () => { throw new Error(\"Nested raw exec is unavailable inside ChatGPT Web exec\"); };",
+    "    } else if (typeof value === \"function\" && typeof name === \"string\" && spawnNames.has(name)) {",
+    "      exposed = () => { throw new Error(\"ChatGPT Web cannot run Codex \" + name); };",
     "    } else if (typeof value === \"function\" && typeof name === \"string\" && waitNames.has(name)) {",
     "      exposed = args => {",
     "        if (!args || typeof args !== \"object\" || Array.isArray(args) || args.timeout_ms !== pollMs) {",
@@ -485,8 +498,10 @@ export function execCommandGatewayProgram(
 export async function runChatGptMcpServer(options: {
   brokerSocketPath: string;
   contract?: ChatGptMcpContract;
+  allowWebSubagents?: boolean;
 }): Promise<void> {
   const contract = options.contract ?? "native";
+  const spawnExclusions = options.allowWebSubagents !== false ? [] : chatgptWebBlockedGatewayWireNames();
   const server = new McpServer(
     { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
@@ -671,7 +686,10 @@ export async function runChatGptMcpServer(options: {
       throw new Error(`This Codex turn did not advertise ${nestedToolName} or the native exec gateway`);
     }
     return invoke(bindingId, bound, gateway, {
-      input: execGatewayProgram(nestedToolName, freeform, payload, bound.tools.map(wireName)),
+      input: execGatewayProgram(nestedToolName, freeform, payload, [
+        ...bound.tools.map(wireName),
+        ...spawnExclusions,
+      ]),
     }, signal);
   };
 
@@ -769,10 +787,12 @@ export async function runChatGptMcpServer(options: {
         const { session_id, chars, yield_time_ms, max_output_tokens } = input;
         const bound = claimed.environment;
         const tool = exactTool(bound, "write_stdin");
+        const forwardedYieldMs = yield_time_ms === undefined ? undefined
+          : Math.min(yield_time_ms, CHATGPT_WEB_WRITE_STDIN_MAX_FORWARD_YIELD_MS);
         const payload = { arguments: {
           session_id,
           ...(chars !== undefined ? { chars } : {}),
-          ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
+          ...(forwardedYieldMs !== undefined ? { yield_time_ms: forwardedYieldMs } : {}),
           ...(max_output_tokens !== undefined ? { max_output_tokens } : {}),
         } };
         return tool
@@ -899,7 +919,7 @@ export async function runChatGptMcpServer(options: {
         const { query, offset, limit, include_schema } = input;
         const bound = claimed.environment;
         const needle = query?.trim().toLowerCase();
-        const directMatches = safeVisibleTools(bound, contract).filter(tool => !needle || [
+        const directMatches = safeVisibleTools(bound, contract).filter(tool => options.allowWebSubagents !== false || !isSpawnCollaborationWireName(wireName(tool))).filter(tool => !needle || [
           wireName(tool),
           tool.name,
           tool.namespace ?? "",
@@ -917,7 +937,10 @@ export async function runChatGptMcpServer(options: {
         let nestedPage: Array<Record<string, unknown>> = [];
         const gateway = execGateway(bound);
         if (gateway) {
-          const excludedGatewayNames = bound.tools.map(wireName);
+          const excludedGatewayNames = [
+            ...bound.tools.map(wireName),
+            ...spawnExclusions,
+          ];
           const nestedOffset = Math.max(0, offset - directMatches.length);
           const nestedLimit = Math.max(0, limit - directPage.length);
           const response = await invoke(claimed.bindingId, bound, gateway, {
@@ -974,6 +997,9 @@ export async function runChatGptMcpServer(options: {
     },
     async (toolInput, extra) => {
       const { wire_name, arguments: args, input } = toolInput;
+      if (options.allowWebSubagents === false && isSpawnCollaborationWireName(wire_name)) {
+        throw new Error(`Web subagents are disabled: ${wire_name}`);
+      }
       const requestId = turnReference(contract, toolInput);
       if (contract === "native" && wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
         if (input !== undefined) {
@@ -1002,8 +1028,13 @@ export async function runChatGptMcpServer(options: {
         if (!tool) {
           const gateway = execGateway(bound);
           const hiddenOuterTool = bound.tools.some(candidate => wireName(candidate) === wire_name);
-          if (!gateway || hiddenOuterTool || !gatewayToolNameIsValid(wire_name)) {
-            throw new Error(`Codex tool is not available in this turn: ${wire_name}`);
+          if ((options.allowWebSubagents === false && isSpawnCollaborationWireName(wire_name))
+            || !gateway || hiddenOuterTool || !gatewayToolNameIsValid(wire_name)) {
+            throw new Error(
+              options.allowWebSubagents === false && isSpawnCollaborationWireName(wire_name)
+                ? `ChatGPT Web cannot run Codex ${wire_name}`
+                : `Codex tool is not available in this turn: ${wire_name}`,
+            );
           }
           if (input !== undefined && args && Object.keys(args).length > 0) {
             throw new Error(`Codex nested tool ${wire_name} accepts either arguments or freeform input, not both`);
@@ -1016,14 +1047,16 @@ export async function runChatGptMcpServer(options: {
           return invoke(claimed.bindingId, bound, gateway, {
             input: execGatewayProgram(wire_name, input !== undefined, {
               ...(input !== undefined ? { input } : { arguments: invocationArguments }),
-            }, bound.tools.map(wireName)),
+            }, [...bound.tools.map(wireName), ...spawnExclusions]),
           }, extra.signal);
         }
         if (tool.freeform) {
           if (input === undefined) throw new Error(`Freeform Codex tool ${wire_name} requires input`);
           if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wire_name} does not accept arguments`);
           return invoke(claimed.bindingId, bound, tool, {
-            input: tool === execGateway(bound) ? transportBoundRawExecProgram(input, wireName(tool)) : input,
+            input: tool === execGateway(bound)
+              ? transportBoundRawExecProgram(input, wireName(tool), spawnExclusions)
+              : input,
           }, extra.signal);
         }
         if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);

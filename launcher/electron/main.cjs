@@ -598,6 +598,7 @@ function registerIpc({ logger, stateStore }) {
     },
     state: ensureRuntimeProofCurrent(stateStore),
     proModelVersion: runtimeHost.proModelVersion(),
+    compactionModel: runtimeHost.compactionModel(),
     browserCapacity: browserCapacitySnapshot(),
     contextCapabilities: (() => {
       const config = runtimeHost.runtimeConfigSnapshot().config;
@@ -877,6 +878,8 @@ function registerIpc({ logger, stateStore }) {
       codexRestartRequired: true,
       browserInteractionMode: "automatic",
       experimentalBiggerContext: false,
+      experimentalSkillAttachments: false,
+      experimentalFreshConversationPerTurn: false,
       zeroRiskProEnabled: false,
     });
     send("launcher:state-changed", state);
@@ -960,7 +963,7 @@ function registerIpc({ logger, stateStore }) {
       : await runSetup();
     const state = stateStore.update({
       browserInteractionMode: interactionMode,
-      ...(interactionMode === "manual" ? { experimentalBiggerContext: false } : {}),
+      ...(interactionMode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false, experimentalFreshConversationPerTurn: false } : {}),
       zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
       coreSetupComplete: true,
       codexCatalogVerified: IS_DEV_PROFILE,
@@ -1006,6 +1009,36 @@ function registerIpc({ logger, stateStore }) {
     });
     send("launcher:state-changed", state);
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
+    return state;
+  });
+  handle("launcher:skill-attachments", async (_event, enabled) => {
+    if (typeof enabled !== "boolean") throw new Error("Skills as files must be a boolean");
+    if (browserHost.activeTraceId || browserHost.currentOperation()) {
+      throw new Error("Finish or cancel active ChatGPT turns before changing Skills as files");
+    }
+    const result = await runtimeHost.setSkillAttachments(enabled === true);
+    const state = stateStore.update({ experimentalSkillAttachments: result.enabled });
+    send("launcher:state-changed", state);
+    return state;
+  });
+  handle("launcher:web-subagents", async (_event, enabled) => {
+    if (typeof enabled !== "boolean") throw new Error("Web subagents must be a boolean");
+    if (browserHost.activeTraceId || browserHost.currentOperation()) {
+      throw new Error("Finish or cancel active ChatGPT turns before changing Web subagents");
+    }
+    const result = await runtimeHost.setWebSubagents(enabled === true);
+    const state = stateStore.update({ allowWebSubagents: result.enabled });
+    send("launcher:state-changed", state);
+    return state;
+  });
+  handle("launcher:fresh-conversation", async (_event, enabled) => {
+    if (typeof enabled !== "boolean") throw new Error("Fresh conversation per turn must be a boolean");
+    if (browserHost.activeTraceId || browserHost.currentOperation()) {
+      throw new Error("Finish or cancel active ChatGPT turns before changing Fresh conversation per turn");
+    }
+    const result = await runtimeHost.setFreshConversation(enabled === true);
+    const state = stateStore.update({ experimentalFreshConversationPerTurn: result.enabled });
+    send("launcher:state-changed", state);
     return state;
   });
   handle("launcher:cancel-context-change", async () => contextChangeQueue.cancel());
@@ -1065,7 +1098,7 @@ function registerIpc({ logger, stateStore }) {
     );
     const state = stateStore.update({
       browserInteractionMode: mode,
-      ...(mode === "manual" ? { experimentalBiggerContext: false } : {}),
+      ...(mode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false, experimentalFreshConversationPerTurn: false } : {}),
       ...(result.configured ? {
         codexCatalogVerified: IS_DEV_PROFILE,
         codexRestartRequired: !IS_DEV_PROFILE,
@@ -1089,6 +1122,9 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:state-changed", state);
     return result;
   });
+  handle("launcher:account-proxy", (_event, id, value) => browserHost.setAccountProxy(id, value));
+  handle("launcher:account-safety", (_event, id, policy) => browserHost.setAccountSafety(id, policy));
+  handle("launcher:account-resume", (_event, id) => browserHost.resumeAccount(id));
   handle("launcher:account-mode", (_event, mode) => browserHost.setAccountMode(mode));
   handle("launcher:account-login", (_event, id) => browserHost.openAccountLogin(id));
   handle("launcher:account-check", async (_event, id, connector) => {
@@ -1109,6 +1145,10 @@ function registerIpc({ logger, stateStore }) {
     saveBrowserCapacity(CORE_HOME, value);
     return browserCapacitySnapshot();
   });
+  handle("launcher:compaction-model", async (_event, value) => {
+    if (browserHost.activeTraceId || browserHost.currentOperation()) throw new Error("Finish active tasks before changing the compaction model");
+    return runtimeHost.setCompactionModel(value);
+  });
   handle("launcher:pro-model-version", async (_event, rawVersion) => {
     const version = validateProModelVersion(rawVersion);
     const browserOperation = browserHost.currentOperation();
@@ -1122,11 +1162,22 @@ function registerIpc({ logger, stateStore }) {
     return runtimeHost.setProModelVersion(version);
   });
   handle("launcher:set-preference", (_event, key, value) => {
+    if (key === "passkeyBrowser") {
+      if (value !== "chrome" && value !== "firefox") throw new Error("Passkey browser must be Chrome or Firefox");
+      // Each login attempt snapshots its browser before launch; this preference affects
+      // only the next attempt and must not be blocked by an unrelated session probe.
+      return stateStore.update({ passkeyBrowser: value });
+    }
+    if (key === "manualSubmitTimeoutSec") {
+      if (!Number.isInteger(value) || value < 30 || value > 600) throw new Error("Manual submission time must be 30–600 seconds");
+      return stateStore.update({ manualSubmitTimeoutSec: value });
+    }
     const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns";
     if (!ordinary) throw new Error("Unknown preference");
     return stateStore.update({ [key]: value === true });
   });
   handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
+  handle("launcher:usage", (_event, days) => browserHost.usage.snapshot(days));
   handle("launcher:logs", (_event, limit) => logger.recent(limit));
   handle("launcher:export-logs", async () => {
     const date = new Date().toISOString().slice(0, 10);
@@ -1375,6 +1426,7 @@ async function start() {
   }
   startupPhase = "browser";
   browserHost = new AccountBrowserPool({
+    getManualSubmitTimeoutSec: () => stateStore.read().manualSubmitTimeoutSec,
     coreHome: CORE_HOME,
     maxTabs: ACTIVE_BROWSER_CAPACITY,
     window: mainWindow,
@@ -1385,7 +1437,7 @@ async function start() {
     getConnectorName: () => runtimeHost.browserConnectorName(),
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
-    loginWithPasskey: onProgress => runtimeHost.capturePasskeyLogin(onProgress),
+    loginWithPasskey: onProgress => runtimeHost.capturePasskeyLogin(onProgress, stateStore.read().passkeyBrowser),
     loginWithExistingChrome: (onProgress, options) => runtimeHost.captureExistingChromeLogin(onProgress, options),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
@@ -1488,6 +1540,9 @@ async function start() {
       codexRestartRequired: false,
       autoStart: false,
       experimentalBiggerContext: config?.experimentalBiggerContext === true,
+      experimentalSkillAttachments: config?.experimentalSkillAttachments === true,
+      allowWebSubagents: config?.allowWebSubagents !== false,
+      experimentalFreshConversationPerTurn: config?.experimentalFreshConversationPerTurn === true,
       zeroRiskProEnabled: config?.zeroRiskProEnabled === true,
     });
     send("launcher:state-changed", state);
@@ -1527,6 +1582,8 @@ async function start() {
         ...(upgrade.connectorMigrated ? { browserSmokePassed: false, browserSmokeVersion: null } : {}),
         ...(!preserve ? { codexCatalogVerified: false, codexRestartRequired: true } : {}),
         experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
+        experimentalSkillAttachments: runtimeHost.runtimeConfigSnapshot().config?.experimentalSkillAttachments === true,
+        experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
         zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
         ...(upgrade.mode === "full" ? {
           mcpRuntimeInstalled: true,
@@ -1549,11 +1606,17 @@ async function start() {
     const configuredRuntime = runtimeHost.runtimeConfigSnapshot();
     if (configuredRuntime.configured) {
       const enabled = configuredRuntime.config?.experimentalBiggerContext === true;
+      const experimentalSkillAttachments = configuredRuntime.config?.experimentalSkillAttachments === true;
+      const allowWebSubagents = configuredRuntime.config?.allowWebSubagents !== false;
+      const experimentalFreshConversationPerTurn = configuredRuntime.config?.experimentalFreshConversationPerTurn === true;
       const zeroRiskProEnabled = configuredRuntime.config?.zeroRiskProEnabled === true;
       const saved = stateStore.read();
-      if (saved.experimentalBiggerContext !== enabled
+      if (saved.allowWebSubagents !== allowWebSubagents
+        || saved.experimentalFreshConversationPerTurn !== experimentalFreshConversationPerTurn
+        || saved.experimentalSkillAttachments !== experimentalSkillAttachments
+        || saved.experimentalBiggerContext !== enabled
         || saved.zeroRiskProEnabled !== zeroRiskProEnabled) {
-        const state = stateStore.update({ experimentalBiggerContext: enabled, zeroRiskProEnabled });
+        const state = stateStore.update({ experimentalBiggerContext: enabled, experimentalSkillAttachments, experimentalFreshConversationPerTurn, allowWebSubagents, zeroRiskProEnabled });
         send("launcher:state-changed", state);
       }
     }
@@ -1574,6 +1637,8 @@ async function start() {
         coreSetupComplete: true,
         mcpRuntimeInstalled: config.mode === "full",
         experimentalBiggerContext: config.experimentalBiggerContext === true,
+        experimentalSkillAttachments: config.experimentalSkillAttachments === true,
+        experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn === true,
         zeroRiskProEnabled: config.zeroRiskProEnabled === true,
         ...(runtime.bridgeRouteChanged ? {
           codexCatalogVerified: false,

@@ -13,6 +13,7 @@ import {
   readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
 import { processRunning } from "./process";
+import { runtimeBuildIdentity, type BuildIdentity } from "./build-identity";
 
 export type CheckStatus = "ok" | "warning" | "error";
 
@@ -25,6 +26,8 @@ export interface DoctorCheck {
 
 export interface DoctorReport {
   ok: boolean;
+  build?: BuildIdentity;
+  connectorVerified?: false;
   mode?: AppConfig["mode"];
   checks: DoctorCheck[];
 }
@@ -102,14 +105,20 @@ async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
 }
 
 export async function runDoctor(): Promise<DoctorReport> {
-  const checks: DoctorCheck[] = [];
+  const build = runtimeBuildIdentity();
+  const checks: DoctorCheck[] = [{
+    id: "build", status: "ok", message: `NEKODEX runtime ${build.version}`,
+    detail: build.commit
+      ? `${build.commit}${build.dirty ? " (modified source)" : build.dirty === false ? " (clean source)" : ""}; built ${build.builtAt ?? "unknown"}`
+      : "Source commit is unavailable for this runtime; version alone does not identify its source.",
+  }];
   let config: AppConfig;
   try {
     config = loadConfig();
     checks.push({ id: "config", status: "ok", message: `Configuration is valid (${getConfigPath()})` });
   } catch (error) {
     checks.push({ id: "config", status: "error", message: "Configuration is invalid", detail: error instanceof Error ? error.message : String(error) });
-    return { ok: false, checks };
+    return { ok: false, build, checks };
   }
 
   if (config.browserHost === "launcher") {
@@ -249,6 +258,8 @@ export async function runDoctor(): Promise<DoctorReport> {
 
   return {
     ok: !checks.some(check => check.status === "error"),
+    build,
+    ...(config.mode === "full" ? { connectorVerified: false as const } : {}),
     mode: config.mode,
     checks,
   };

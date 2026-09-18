@@ -286,15 +286,15 @@ class RuntimeHost {
     }
   }
 
-  passkeyChromeExecutable() {
+  passkeyChromeExecutable(browser = "chrome") {
     if (this.platform !== "darwin") throw new Error("Passkey sign-in is currently supported only on macOS");
     const setupConfig = this.supervisor.readSetupConfig
       ? this.supervisor.readSetupConfig()
       : this.supervisor.readConfig();
-    const candidate = setupConfig?.chromeExecutablePath
-      || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    const candidate = browser === "firefox" ? "/Applications/Firefox.app/Contents/MacOS/firefox"
+      : setupConfig?.chromeExecutablePath || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     if (!usableExecutable(candidate, this.platform)) {
-      throw new Error(`Google Chrome is unavailable at ${candidate}`);
+      throw new Error(`${browser === "firefox" ? "Firefox" : "Google Chrome"} is unavailable at ${candidate}`);
     }
     return candidate;
   }
@@ -380,11 +380,12 @@ class RuntimeHost {
     return existingChromeRuntime.cancelExistingChromeLogin(this);
   }
 
-  async capturePasskeyLogin(onProgress) {
+  async capturePasskeyLogin(onProgress, browser = "chrome") {
+    if (browser !== "chrome" && browser !== "firefox") throw new Error("Invalid passkey browser");
     // Claim runtime ownership before deleting any stale transfers or changing continuation state.
     if (this.currentOperation() || this.passkeyProgress) throw new Error("Another launcher operation is active");
     this.cleanupPasskeyTransfers();
-    const chrome = this.passkeyChromeExecutable();
+    const chrome = this.passkeyChromeExecutable(browser);
     const parent = path.join(this.app.getPath("userData"), "passkey-login");
     fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
     try { fs.chmodSync(parent, 0o700); } catch {}
@@ -401,13 +402,14 @@ class RuntimeHost {
         "--launcher-control",
         "--chrome",
         chrome,
+        "--login-browser", browser,
         "--storage-state",
         storageStatePath,
       ], {
         embedded: true,
         controlStdin: true,
         env: this.launcherControlEnvironment(),
-        message: "Sign in with your passkey in Chrome, then return here and choose Continue",
+        message: `Sign in with your passkey in ${browser === "firefox" ? "Firefox" : "Chrome"}, then return here and choose Continue`,
         successMessage: "Passkey session captured for private Launcher verification",
         timeoutMs: PASSKEY_LOGIN_TIMEOUT_MS,
         onStdoutLine: line => {
@@ -1218,6 +1220,43 @@ class RuntimeHost {
     return { ...result, mode, enabled: enabled === true };
   }
 
+  compactionModel() {
+    return this.runtimeConfigSnapshot().config?.compactionModel ?? null;
+  }
+
+  async setCompactionModel(value) {
+    if (value !== null && value !== "extra-high" && value !== "5.6-pro" && value !== "5.5-pro") {
+      throw new Error("Compaction model must be follow, extra-high, 5.6-pro, or 5.5-pro");
+    }
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) {
+      throw new Error("Install the Codex integration before changing the compaction model");
+    }
+    if ((current.config?.compactionModel ?? null) === value) return { compactionModel: value };
+    const args = [
+      ...(this.launcherProfile === "development" ? ["dev"] : []),
+      "config",
+      "compaction-model",
+      value ?? "follow",
+      "--launcher-control",
+    ];
+    await this.run("compaction-model", args, {
+      ...(this.launcherProfile === "development" ? {
+        embedded: true,
+        environment: this.devSetupEnvironment(),
+      } : {}),
+      env: this.launcherControlEnvironment(),
+      message: "Saving the Pro compaction model",
+      successMessage: "Pro compaction model saved for the next compaction",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    });
+    const saved = this.compactionModel();
+    if (saved !== value) {
+      throw new Error("Runtime configuration did not persist the requested compaction model");
+    }
+    return { compactionModel: saved };
+  }
+
   proModelVersion() {
     return this.runtimeConfigSnapshot().config?.proModelVersion ?? null;
   }
@@ -1258,6 +1297,87 @@ class RuntimeHost {
       throw new Error("Runtime configuration did not persist the requested Pro model version");
     }
     return { proModelVersion: saved };
+  }
+
+  async setSkillAttachments(enabled) {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing Skills as files");
+    if (current.config?.browserInteractionMode === "manual") {
+      throw new Error("Skills as files is unavailable in Zero Risk mode");
+    }
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled === true ? "--skill-attachments" : "--inline-skills",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: enabled ? "Enabling Skills as files" : "Disabling Skills as files",
+      successMessage: enabled ? "Skills as files enabled" : "Inline skills restored",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("skill-attachments", args, options)
+      : await this.runSetup("skill-attachments", args, options);
+    return { ...result, enabled: enabled === true };
+  }
+
+  async setWebSubagents(enabled) {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing Web subagents");
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled === true ? "--allow-web-subagents" : "--no-web-subagents",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: enabled ? "Enabling Web subagents" : "Disabling Web subagents",
+      successMessage: enabled ? "Web subagents enabled" : "Web subagents disabled",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("allow-web-subagents", args, options)
+      : await this.runSetup("allow-web-subagents", args, options);
+    return { ...result, enabled: enabled === true };
+  }
+
+  async setFreshConversation(enabled) {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing Fresh conversation per turn");
+    if (current.config?.browserInteractionMode === "manual") {
+      throw new Error("Fresh conversation per turn is unavailable in Zero Risk mode");
+    }
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled === true ? "--fresh-conversation" : "--retained-conversation",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: enabled ? "Enabling Fresh conversation per turn" : "Disabling Fresh conversation per turn",
+      successMessage: enabled ? "Fresh conversation per turn enabled" : "Retained conversations restored",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("fresh-conversation", args, options)
+      : await this.runSetup("fresh-conversation", args, options);
+    return { ...result, enabled: enabled === true };
   }
 
   async setZeroRiskPro(enabled) {
@@ -1516,7 +1636,7 @@ class RuntimeHost {
           ...options,
           message: "Validating Codex configuration before changing the runtime",
           successMessage: "Codex configuration is ready for setup",
-          timeoutMs: Math.min(options.timeoutMs || 15_000, 15_000),
+          timeoutMs: options.timeoutMs || CORE_SETUP_TIMEOUT_MS,
         });
       }
       runtimeTransitionStarted = true;

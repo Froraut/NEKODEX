@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
+import { AccountSafetySettings } from "./AccountSafetySettings";
+import { AccountProxySettings } from "./AccountProxySettings";
 import type { AccountPoolSnapshot } from "./types";
 import type { Copy } from "./i18n";
 
@@ -114,6 +116,13 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
         <button type="button" className="text-button" disabled={busy || manual || locked} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
         <button type="button" className="text-button" disabled={busy || manual || locked} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
       </div>
+      {account.safety ? <AccountSafetySettings id={account.id} safety={account.safety} copy={copy}
+        disabled={busy || account.activeTurns > 0}
+        save={policy => void run(() => api.setAccountSafety(account.id, policy))}
+        resume={() => void run(() => api.resumeAccount(account.id))} /> : null}
+      {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy}
+        disabled={busy || account.activeTurns > 0}
+        save={value => void run(() => api.setAccountProxy(account.id, value))} /> : null}
         </>;
       })()}
     </article>)}

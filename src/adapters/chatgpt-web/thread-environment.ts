@@ -190,9 +190,10 @@ export class ChatGptThreadEnvironmentStore {
           return rolloutEnvironment;
         }
       }
-      // Only a current native rollout can supersede an unrecognized historical envelope. Without
-      // that proof, do not turn arbitrary history or an invalid update into cached authority.
-      if (hasRawChatGptEnvironmentContext(parsed)) throw error;
+      // History may reuse this thread's earned authority, but never masks a current invalid
+      // update or authorizes inheritance from a different thread (#567).
+      const hasRawContext = hasRawChatGptEnvironmentContext(parsed);
+      if (hasRawContext && hasCurrentContext) throw error;
       const sameThread = this.get(identity.threadId);
       if (sameThread) return {
         cwd: sameThread.cwd,
@@ -202,7 +203,7 @@ export class ChatGptThreadEnvironmentStore {
         tools: parsed.context.tools ?? [],
       };
 
-      if (!lineage) throw error;
+      if (hasRawContext || !lineage) throw error;
       const parent = this.get(lineage.parentThreadId);
       if (!parent) throw error;
       if (lineage.sandboxType !== parent.sandboxPolicy.type) {

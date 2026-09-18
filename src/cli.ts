@@ -31,6 +31,7 @@ import { installRuntimeKeyBytes, managedRuntimeKeyPath, stopTunnel, tunnelStatus
 import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
 import { runDevCommand } from "./dev-chat/cli";
+import { runCompactionModelConfigCommand } from "./compaction-model-config";
 import { authorizeLauncherControl, runProModelVersionConfigCommand } from "./pro-model-config";
 import { readCodexRouteDiagnostics } from "./route-diagnostics";
 
@@ -46,6 +47,7 @@ Usage:
   codex-chatgpt-web route <status|connect|disconnect|diagnostics> [--profile NAME]
   codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web config pro-model-version <follow|5.6|5.5|6> --launcher-control
+  codex-chatgpt-web config compaction-model <follow|extra-high|5.6-pro|5.5-pro> --launcher-control
   codex-chatgpt-web browser check
   codex-chatgpt-web dev launcher
   codex-chatgpt-web dev status [--json]
@@ -82,6 +84,12 @@ Setup options:
   --login                      Refresh the stored ChatGPT login even if one exists
   --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
   --bigger-context             Enable experimental adaptive 1/2/3-message context
+  --skill-attachments         Experimental selected skills as text attachments
+  --inline-skills             Keep selected skills inline (default)
+  --fresh-conversation         Start each automatic turn with complete context in a new chat
+  --retained-conversation      Reuse the current conversation (default)
+  --allow-web-subagents        Allow delegation from ChatGPT Web tasks
+  --no-web-subagents           Disable Web delegation; native models are unchanged
   --standard-context           Disable experimental multi-message context
   --acknowledge-unofficial     Accept the one-time unofficial-browser-automation notice
 
@@ -163,6 +171,9 @@ async function loginCommand(args: string[]): Promise<void> {
     return;
   }
 
+  const loginBrowser = takeOption(args, "--login-browser") ?? "chrome";
+  if (loginBrowser !== "chrome" && loginBrowser !== "firefox") throw new Error("Login browser must be chrome or firefox");
+  if (existingChrome && loginBrowser !== "chrome") throw new Error("Existing Chrome import cannot use Firefox");
   const chromeExecutablePath = takeOption(args, "--chrome");
   const storageStatePath = takeOption(args, "--storage-state");
   assertNoArgs(args);
@@ -204,7 +215,7 @@ async function loginCommand(args: string[]): Promise<void> {
       ...defaultConfig(),
       chromeExecutablePath,
       storageStatePath,
-    }, { continuation: control.continuation, signal: control.signal, onBrowserReady: control.onBrowserReady });
+    }, { browser: loginBrowser, continuation: control.continuation, signal: control.signal, onBrowserReady: control.onBrowserReady });
   } finally {
     control.close();
   }
@@ -250,12 +261,24 @@ async function setupCommand(args: string[]): Promise<void> {
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
+  const freshConversation = takeFlag(args, "--fresh-conversation");
+  const retainedConversation = takeFlag(args, "--retained-conversation");
+  if (freshConversation && retainedConversation) throw new Error("Choose fresh or retained conversations");
+  if (freshConversation || retainedConversation) options.experimentalFreshConversationPerTurn = freshConversation;
+  const allowWebSubagents = takeFlag(args, "--allow-web-subagents");
+  const noWebSubagents = takeFlag(args, "--no-web-subagents");
+  if (allowWebSubagents && noWebSubagents) throw new Error("Choose one Web subagent setting");
+  if (allowWebSubagents || noWebSubagents) options.allowWebSubagents = allowWebSubagents;
+  const skillAttachments = takeFlag(args, "--skill-attachments");
+  const inlineSkills = takeFlag(args, "--inline-skills");
+  if (skillAttachments && inlineSkills) throw new Error("Choose --skill-attachments or --inline-skills");
   const biggerContext = takeFlag(args, "--bigger-context");
   const standardContext = takeFlag(args, "--standard-context");
   if (biggerContext && standardContext) {
     throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
   }
   if (biggerContext || standardContext) options.experimentalBiggerContext = biggerContext;
+  if (skillAttachments || inlineSkills) options.experimentalSkillAttachments = skillAttachments;
   const zeroRiskPro = takeFlag(args, "--zero-risk-pro");
   const zeroRiskDefault = takeFlag(args, "--zero-risk-default");
   if (zeroRiskPro && zeroRiskDefault) {
@@ -554,7 +577,10 @@ async function main(): Promise<void> {
   else if (command === "doctor" || command === "status") await doctorCommand(args);
   else if (command === "route") await routeCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
-  else if (command === "config") await runProModelVersionConfigCommand(args);
+  else if (command === "config") {
+    if (args[0] === "compaction-model") await runCompactionModelConfigCommand(args);
+    else await runProModelVersionConfigCommand(args);
+  }
   else if (command === "browser") {
     const action = args.shift();
     assertNoArgs(args);
@@ -577,6 +603,7 @@ async function main(): Promise<void> {
     const config = loadConfig();
     const server = startServer(config, {
       readProModelVersion: () => loadConfig().proModelVersion,
+      readCompactionModel: () => loadConfig().compactionModel,
     });
     stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
     await new Promise<void>(() => {});

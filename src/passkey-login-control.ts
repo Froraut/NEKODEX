@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 
-/** Native activation is restricted to the exact live Chrome child created for this attempt. */
+/** Native activation is restricted to the exact live browser child created for this attempt. */
 export async function revealOwnedLoginBrowser(
   child: ChildProcess,
   executable: string,
@@ -12,19 +12,20 @@ export async function revealOwnedLoginBrowser(
     || !Number.isSafeInteger(child.pid) || child.pid! < 1
     || child.exitCode !== null || child.signalCode !== null
     || child.spawnfile !== executable
-    || !child.spawnargs.includes(`--user-data-dir=${profileDir}`)
-    || !child.spawnargs.includes("--new-window")) {
-    throw new Error("The dedicated Chrome login window is no longer owned by this attempt");
+    || !((child.spawnargs.includes(`--user-data-dir=${profileDir}`) && child.spawnargs.includes("--new-window"))
+      || (child.spawnargs.includes("-no-remote") && child.spawnargs.includes("-new-window")
+        && child.spawnargs[child.spawnargs.indexOf("-profile") + 1] === profileDir))) {
+    throw new Error("The dedicated browser login window is no longer owned by this attempt");
   }
   // AppKit targets a PID without asking System Events for access to other applications.
   // Both PID and executable are checked; no app name, browser profile or arbitrary PID is accepted.
   const script = `ObjC.import('AppKit');
 const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid});
-if (!app || app.isTerminated || ObjC.unwrap(app.executableURL.path) !== ${JSON.stringify(executable)}) throw Error('Dedicated Chrome ownership changed');
-if (!app.activateWithOptions(3)) throw Error('Could not reveal the dedicated Chrome login window');`;
+if (!app || app.isTerminated || ObjC.unwrap(app.executableURL.path) !== ${JSON.stringify(executable)}) throw Error('Dedicated browser ownership changed');
+if (!app.activateWithOptions(3)) throw Error('Could not reveal the dedicated browser login window');`;
   await new Promise<void>((resolve, reject) => {
     run("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { timeout: 5_000 }, error => {
-      if (error) reject(new Error("Could not reveal the dedicated Chrome login window. Use Mission Control or retry sign-in."));
+      if (error) reject(new Error("Could not reveal the dedicated browser login window. Use Mission Control or retry sign-in."));
       else resolve();
     });
   });

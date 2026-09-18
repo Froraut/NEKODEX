@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -201,9 +202,18 @@ function bundleIdFor(files: RuntimeManifestFile[]): string {
 
 const playwrightPackage = join(appDir, "node_modules", "playwright-core", "package.json");
 const files = runtimeManifestFiles();
+let commit: string | undefined;
+let dirty: boolean | undefined;
+try {
+  commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", timeout: 5000 }).trim();
+  dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], {
+    cwd: root, encoding: "utf8", timeout: 5000,
+  }).trim().length > 0;
+} catch { /* Source archives may have no Git metadata; do not invent a clean commit. */ }
 writeFileSync(join(output, "manifest.json"), `${JSON.stringify({
   schemaVersion: 2,
   appVersion: VERSION,
+  build: { ...(commit ? { commit } : {}), ...(dirty !== undefined ? { dirty } : {}), builtAt: new Date().toISOString() },
   bundleId: bundleIdFor(files),
   bunVersion: Bun.version,
   platform: process.platform,
