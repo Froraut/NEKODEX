@@ -64,3 +64,21 @@ The app delivery portion of the active goal is not complete: installed NEKODEX i
 ## Delivery constraints discovered after publication
 
 The effective `/Users/alex/.codex/config.toml` still routes `openai_base_url` through `http://127.0.0.1:17841/v1`; do not stop or replace its owner casually. Current installed app is the connection dependency. `launcher/scripts/package.cjs` runs platform signing/runtime integrity checks and expects `node` on PATH; `prepare-runtime.cjs` runs the runtime bundler. The task-owned Bun copy can build the renderer without the installed executable's library-validation restriction. Repository stable-release instructions include broad live/platform gates that were not run and are not authorized by the standing small-check policy; local development/alpha packaging must not be described as a verified stable release. Do not auto-trigger CI or full verification to complete packaging.
+
+
+## Signed prerelease delivery in progress
+
+Prepared version `5.3.0-nekodex.1` at source/tag commit `de79f5d5ec8a41f599acfa393760c219a95dad34`, preserving the existing `nekodex` updater channel. The existing macOS-only release workflow was dispatched explicitly: https://github.com/Froraut/NEKODEX/actions/runs/35353147606. It packages ARM64 and Intel, enforces publisher signatures, notarization, artifact integrity and signed update metadata; no full behavioral suite was added or requested. Version-only source markers and prerelease notes are committed on the same PR branch.
+
+Before delivery, production renderer ID `DC65C370F03C37ADB35B688E6DD4B7E4` at the owned CDP endpoint `http://127.0.0.1:49491` was identified by its exact installed-app file URL. Its snapshot reports version `.9`, production, zero running browser tabs, no active operation, and `authenticated: false` already before update. Native bridge health reports PID 1759, `.9`, accepting turns and zero active HTTP/browser/compaction work. Launcher PID is 1452. These are baseline observations, not evidence that Web login is usable.
+
+Private permission-preserving configuration rollback copies are in `~/.codex/backups/20260918-nekodex-5.3.0-nekodex.1/`. No browser credentials were copied into development profiles. Use the installed updater once the authenticated new release is available; do not replace it with an ad-hoc app or stop the current bridge during active work. The post-update end-to-end native response requirement remains outstanding; do not claim that health alone proves it.
+
+
+## Publisher result and current installation boundary
+
+Release workflow `35353147606` completed successfully: both macOS builds and the publication job passed. Published prerelease: https://github.com/Froraut/NEKODEX/releases/tag/v5.3.0-nekodex.1. It contains ARM64/Intel DMG and ZIP packages, runtime archives, checksums, signed release metadata and licenses. The installed .9 updater recheck returned `{status: available, version: 5.3.0-nekodex.1}` through the actual production renderer.
+
+The old browser's false authentication state was examined more precisely: its message is `ChatGPT session verification unavailable: session HTTP 403`, and the actual embedded Temporary Chat page says `Unable to load site`. This is not evidence that credentials were erased or the user signed out. `upgradeManagedRuntime()` explicitly refreshes capabilities, and setup calls `inspectLauncherCapabilities()`, so replacing the working native bridge while that condition persists can fail the managed runtime migration. No installation was attempted and no guard was bypassed.
+
+The user was asked to restore ordinary access in the existing NEKODEX Browser, and separately to permit exactly one 20-second native response probe after installation beyond the already consumed shared verification budget. Both answers remain pending; a default-selected option is not approval. Continue independent source integration; keep the goal active until installation and the agreed response evidence are complete (or report a genuine repeated block according to the goal policy).
