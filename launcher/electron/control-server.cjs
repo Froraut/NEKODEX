@@ -38,10 +38,11 @@ function writeJson(response, status, body) {
 }
 
 class BrowserControlServer {
-  constructor({ logger, getBrowserHost, getPreferences }) {
+  constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
+    this.resolveNativeProxy = resolveNativeProxy;
     this.token = randomBytes(32).toString("base64url");
     this.port = 0;
     this.server = createServer((request, response) => {
@@ -93,6 +94,7 @@ class BrowserControlServer {
       writeJson(response, 401, { error: "unauthorized" });
       return;
     }
+    const isNativeProxy = request.url === "/v1/network/resolve-proxy";
     const isTurn = request.url === "/v1/turn/start"
       || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/heartbeat"
@@ -107,7 +109,7 @@ class BrowserControlServer {
       ["/v1/manual/end", "end"],
       ["/v1/manual/cancel", "cancel"],
     ]).get(request.url);
-    if (request.method !== "POST" || (!isTurn && !isTurnRelease && !isSessionInspect && !manualAction)) {
+    if (request.method !== "POST" || (!isNativeProxy && !isTurn && !isTurnRelease && !isSessionInspect && !manualAction)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -116,6 +118,16 @@ class BrowserControlServer {
         request,
         manualAction === "start" ? MAX_MANUAL_START_BODY_BYTES : MAX_BODY_BYTES,
       );
+      if (isNativeProxy) {
+        if (!body || typeof body.url !== "string" || body.url.length > 16_384
+          || typeof this.resolveNativeProxy !== "function") {
+          writeJson(response, 400, { error: "invalid_native_proxy_request" });
+          return;
+        }
+        const proxy = await this.resolveNativeProxy(body.url);
+        if (!response.destroyed) writeJson(response, 200, { proxy });
+        return;
+      }
       const preferences = this.getPreferences();
       const host = this.getBrowserHost();
       if (!host) throw new Error("browser host is not ready");

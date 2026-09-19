@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import extraLocales from "./route-diagnostics-locales.json";
 import { Icon } from "./icons";
+import { copyFor } from "./i18n";
 import type { Language, RouteDiagnosticsReport } from "./types";
 
 const en = {
@@ -81,8 +82,26 @@ export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: L
   const path = (value: string) => value.length <= 4096 && !/[\u0000-\u001f\u007f]|:\/\//.test(value) ? value : copy.unknown;
   const knownConfiguration = report.configStatus === "loaded";
   const catalogStatus = report.catalog.status;
-  const catalogValue = catalogStatus === "observed" ? `${copy.observed} (${report.catalog.successfulRequests})`
-    : catalogStatus === "waiting" ? copy.waiting : copy.unavailable;
+  const receipt = report.catalog.lastResult;
+  // IPC types do not replace validation. Never render arbitrary receipt text or unknown stages.
+  const validReceipt = receipt && Number.isSafeInteger(receipt.request) && receipt.request > 0
+    && Number.isInteger(receipt.status) && receipt.status >= 200 && receipt.status <= 599
+    && typeof receipt.at === "string" && receipt.at.length <= 64
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(receipt.at)
+    && Number.isFinite(Date.parse(receipt.at));
+  const validFailure = validReceipt && receipt.status >= 400;
+  const failureStage = ["config", "request", "transport", "upstream", "catalog"].includes(receipt?.failure?.stage ?? "")
+    ? receipt!.failure!.stage : copy.unknown;
+  const failureCode = typeof receipt?.failure?.code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(receipt.failure.code)
+    ? receipt.failure.code : null;
+  const failureCopy = copyFor(language);
+  const failureValue = validFailure ? failureCopy.routingCatalogFailed
+    .replace("{status}", String(receipt.status))
+    .replace("{reason}", failureCode ? `${failureStage}/${failureCode}` : failureStage) : null;
+  const malformedReceipt = receipt != null && !validReceipt;
+  const catalogValue = failureValue ?? (malformedReceipt ? copy.unavailable
+    : catalogStatus === "observed" ? `${copy.observed} (${report.catalog.successfulRequests})`
+    : catalogStatus === "waiting" ? copy.waiting : copy.unavailable);
   const rows = [
     { label: copy.home, value: path(report.codexHome) },
     { label: copy.file, value: path(report.configPath) },
@@ -95,7 +114,7 @@ export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: L
     { label: copy.route, value: report.active === false ? copy.inactive : report.active && report.routeMatches === true ? copy.active : report.active && report.routeMatches === false ? copy.mismatch : copy.unverified },
     { label: copy.catalog, value: catalogValue },
   ];
-  if (catalogStatus === "observed" && report.catalog.lastSuccessfulAt) {
+  if (!failureValue && !malformedReceipt && catalogStatus === "observed" && report.catalog.lastSuccessfulAt) {
     const date = new Date(report.catalog.lastSuccessfulAt);
     if (Number.isFinite(date.getTime())) rows.push({ label: copy.last, value: new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "medium" }).format(date) });
   }
@@ -108,7 +127,8 @@ export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: L
     "integration-recovery-pending": copy.recoveryPending,
   };
   return { rows, guidance: [...new Set(report.issueCodes.filter(code => Object.hasOwn(messages, code)).map(code => messages[code]!))],
-    catalogBody: catalogStatus === "observed" ? copy.observedBody : catalogStatus === "waiting" ? copy.waitingBody : copy.unavailableBody };
+    catalogBody: failureValue ? failureCopy.routingCatalogFailureBody : malformedReceipt ? copy.unavailableBody
+      : catalogStatus === "observed" ? copy.observedBody : catalogStatus === "waiting" ? copy.waitingBody : copy.unavailableBody };
 }
 
 export function RouteDiagnosticsResult({ report, language }: { report: RouteDiagnosticsReport; language: Language }) {

@@ -1,6 +1,23 @@
 import { useEffect, useState } from "react";
-import type { UsageSnapshot } from "./types";
+import type { UsageGroup, UsageSnapshot } from "./types";
 import type { Copy } from "./i18n";
+import "./usage-lifetime.css";
+
+const groupLabel = (row: UsageGroup, copy: Copy) => {
+  const effort = row.effort === "max" ? "Pro" : row.effort === "unknown" ? copy.usageUnknown : row.effort;
+  return `${row.mode} · ${effort} · ${row.modelVersion === "unknown" ? copy.usageUnknown : `GPT-${row.modelVersion}`}`;
+};
+
+function UsageTable({ caption, groups, copy }: { caption: string; groups: Array<[string, Pick<UsageGroup, "accepted" | "completed" | "failed" | "aborted">]>; copy: Copy }) {
+  return <div className="usage-table-scroll"><table>
+    <caption>{caption}</caption>
+    <thead><tr><th scope="col">{copy.usageModel}</th><th scope="col">{copy.usageAccepted}</th><th scope="col">{copy.usageCompleted}</th><th scope="col">{copy.usageFailed}</th><th scope="col">{copy.usageAborted}</th><th scope="col">{copy.usageUnrecorded}</th></tr></thead>
+    <tbody>{[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, row]) => <tr key={name}>
+      <th scope="row">{name}</th><td>{row.accepted}</td><td>{row.completed}</td><td>{row.failed}</td><td>{row.aborted}</td>
+      <td>{row.accepted - row.completed - row.failed - row.aborted}</td>
+    </tr>)}</tbody>
+  </table></div>;
+}
 
 export function UsageDashboard({ copy }: { copy: Copy }) {
   const [days, setDays] = useState<7 | 30 | 90>(7);
@@ -29,8 +46,7 @@ export function UsageDashboard({ copy }: { copy: Copy }) {
   const groups = new Map<string, { accepted: number; completed: number; failed: number; aborted: number }>();
   const daily = new Map<string, number>();
   for (const row of data?.available ? data.rows : []) {
-    const effort = row.effort === 'max' ? 'Pro' : row.effort === 'unknown' ? copy.usageUnknown : row.effort;
-    const key = `${row.mode} · ${effort} · ${row.modelVersion === 'unknown' ? copy.usageUnknown : `GPT-${row.modelVersion}`}`;
+    const key = groupLabel(row, copy);
     const group = groups.get(key) ?? { accepted: 0, completed: 0, failed: 0, aborted: 0 };
     for (const field of ['accepted', 'completed', 'failed', 'aborted'] as const) group[field] += row[field];
     groups.set(key, group); daily.set(row.day, (daily.get(row.day) ?? 0) + row.accepted);
@@ -49,14 +65,12 @@ export function UsageDashboard({ copy }: { copy: Copy }) {
         {[...daily].map(([day, count]) => <div key={day} title={`${day}: ${count}`} role="img" aria-label={`${day}: ${count}`}
           style={{ flex: 1, height: `${Math.max(3, count / max * 100)}%`, background: 'var(--accent, #7569ee)', borderRadius: 3 }} />)}
       </div> : null}
-      <div style={{ overflowX: 'auto' }}><table>
-        <caption>{copy.usageGroups}</caption>
-        <thead><tr><th scope="col">{copy.usageModel}</th><th scope="col">{copy.usageAccepted}</th><th scope="col">{copy.usageCompleted}</th><th scope="col">{copy.usageFailed}</th><th scope="col">{copy.usageAborted}</th><th scope="col">{copy.usageUnrecorded}</th></tr></thead>
-        <tbody>{[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, row]) => <tr key={name}>
-          <th scope="row">{name}</th><td>{row.accepted}</td><td>{row.completed}</td><td>{row.failed}</td><td>{row.aborted}</td>
-          <td>{row.accepted - row.completed - row.failed - row.aborted}</td>
-        </tr>)}</tbody>
-      </table></div>
+      <UsageTable caption={copy.usageGroups} groups={[...groups]} copy={copy} />
+      {data.lifetimeGroups && <UsageTable caption={copy.usageLifetimeGroups}
+        groups={data.lifetimeGroups.map(row => [groupLabel(row, copy), row])} copy={copy} />}
+      {!!data.lifetimeUnclassified && <p>{copy.usageLifetimeUnclassified}: {data.lifetimeUnclassified}</p>}
+      {data.recovered && <p role="status">{copy.usageRecovered}</p>}
+      {data.backupAvailable === false && (data.lifetime ?? 0) > 0 && <p role="status">{copy.usageBackupUnavailable}</p>}
     </>}
   </section>;
 }

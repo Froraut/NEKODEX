@@ -1,3 +1,4 @@
+const { catalogReceipt } = require("./catalog-receipt.cjs");
 const ISSUE_CODES = new Set([
   "integration-unreadable", "integration-drift", "config-missing", "config-invalid",
   "config-unreadable", "profile-unavailable", "profile-invalid", "profile-unreadable", "provider-invalid", "custom-provider",
@@ -28,6 +29,8 @@ function withCatalogObservation(report, health, config, expectedPid) {
     && health.pid === expectedPid;
   const count = current && Number.isSafeInteger(health.successful_model_catalog_requests)
     && health.successful_model_catalog_requests >= 0 ? health.successful_model_catalog_requests : null;
+  const receipt = current ? catalogReceipt(health.last_model_catalog_result) : null;
+  const failed = receipt?.status >= 400;
   const timestamp = health?.last_successful_model_catalog_request_at;
   const lastAt = count > 0 && typeof timestamp === "string" && timestamp.length <= 64
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp)
@@ -48,9 +51,10 @@ function withCatalogObservation(report, health, config, expectedPid) {
     routeMatches: report.routeMatches,
     issueCodes: [...report.issueCodes],
     catalog: {
-      status: count === null || (count > 0 && !lastAt) ? "unavailable" : count > 0 ? "observed" : "waiting",
+      status: failed || count === null || (count > 0 && !lastAt) ? "unavailable" : count > 0 ? "observed" : "waiting",
       successfulRequests: count,
       lastSuccessfulAt: lastAt,
+      lastResult: receipt,
     },
   };
 }

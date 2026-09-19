@@ -141,10 +141,15 @@ export type UpdateState =
 
 export type CompactionModel = "extra-high" | "5.6-pro" | "5.5-pro";
 
+export interface UsageGroup {
+  effort: string; modelVersion: string; mode: string;
+  accepted: number; completed: number; failed: number; aborted: number;
+}
 export interface UsageSnapshot {
   available: boolean; error?: string; startedAt?: string; lifetime?: number;
-  rows: Array<{ day: string; effort: string; modelVersion: string; mode: string;
-    accepted: number; completed: number; failed: number; aborted: number }>;
+  lifetimeGroups?: UsageGroup[]; lifetimeUnclassified?: number;
+  recovered?: boolean; backupAvailable?: boolean;
+  rows: Array<UsageGroup & { day: string }>;
 }
 export interface AccountProxy { mode: "system" | "direct" | "http" | "https" | "socks5" | "pac"; url?: string; }
 
@@ -221,7 +226,17 @@ export interface RouteDiagnosticsReport {
   active: boolean | null;
   routeMatches: boolean | null;
   issueCodes: string[];
-  catalog: { status: "observed" | "waiting" | "unavailable"; successfulRequests: number | null; lastSuccessfulAt: string | null };
+  catalog: {
+    status: "observed" | "waiting" | "unavailable";
+    successfulRequests: number | null;
+    lastSuccessfulAt: string | null;
+    lastResult?: {
+      request: number;
+      at: string;
+      status: number;
+      failure?: { stage: "config" | "request" | "transport" | "upstream" | "catalog"; code?: string };
+    } | null;
+  };
 }
 
 export interface LauncherApi {

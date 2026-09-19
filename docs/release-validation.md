@@ -17,6 +17,15 @@ capture cookies, tunnel IDs, API keys, bearer tokens, or prompt contents.
 
 ## Windows 11 gate
 
+The Windows package smoke extracts the NSIS application payload into a temporary directory and
+uses isolated launcher, runtime and Codex homes. It never runs the installer or resolves the live
+installation from the registry. Browser session and account-pool initialization still finish, but
+the smoke does not navigate to ChatGPT or establish account availability. Installer upgrade and
+uninstall checks belong on a disposable Windows VM, never a host serving an active bridge.
+
+Running package/platform validation requires its own authorization under the user's focused-check
+policy; changing the smoke implementation does not authorize executing these release gates.
+
 Run this list on a maintained Windows 11 x64 machine with a real ChatGPT account:
 
 1. Install the packaged launcher on a clean profile and prove that the embedded Bun runtime starts.

@@ -354,6 +354,7 @@ class BrowserHost {
     getBrowserInteractionMode = () => "automatic",
     getManualSubmitTimeoutSec = () => 120,
     configureAccountSession = async () => {},
+    skipInitialNavigation = false,
     maxTabs = DEFAULT_BROWSER_CAPACITY,
     accountId = "default",
     isAccountVisible = () => true,
@@ -393,6 +394,7 @@ class BrowserHost {
     this.getBrowserInteractionMode = getBrowserInteractionMode;
     this.getManualSubmitTimeoutSec = getManualSubmitTimeoutSec;
     this.configureAccountSession = configureAccountSession;
+    this.skipInitialNavigation = skipInitialNavigation === true;
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -509,8 +511,12 @@ class BrowserHost {
     this.view.setBounds(this.hiddenTurnBounds());
     this.view.setVisible(true);
     try {
-      await loadCommittedBrowserSurface(this.view.webContents, IDLE_BROWSER_URL);
-      if (browserInteractionModeFor(this) === "automatic") await this.markOwnedSurface();
+      // Package smoke verifies local startup, not network/account availability. Still finish
+      // session configuration, pool initialization and descriptor publication below.
+      if (!this.skipInitialNavigation) {
+        await loadCommittedBrowserSurface(this.view.webContents, IDLE_BROWSER_URL);
+        if (browserInteractionModeFor(this) === "automatic") await this.markOwnedSurface();
+      }
     } finally {
       this.syncViewVisibility();
     }

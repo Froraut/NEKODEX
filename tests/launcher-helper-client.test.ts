@@ -61,7 +61,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
     ChatGptBrowserWorker.prototype.run = async turn => {
       await turn.onPreparedSelected(false);
       const prepared = await turn.prepare();
-      if (prepared.multipart.parts.length !== 3) throw new Error("Multipart context was lost");
+      if (prepared.multipart.parts.length !== 6) throw new Error("Multipart context was lost");
       await turn.onMultipartStageAcknowledged?.(1);
       await turn.onMultipartStageAcknowledged?.(2);
       await turn.onSendActivated();
@@ -131,7 +131,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
       prepare: async () => ({
         text: "inspect", images: [],
-        multipart: { parts: ["part one", "part two", "part three"], commit: "inspect" },
+        multipart: { parts: ["part one", "part two", "part three", "part four", "part five", "part six"], commit: "inspect" },
         release: () => { released = true; },
       }),
       onMultipartStageAcknowledged: stage => { acknowledgedStages.push(stage); },
@@ -311,7 +311,7 @@ test("launcher helper protocol preserves multipart context and the compaction fl
     prepare: async () => ({
       text: "commit",
       images: [],
-      multipart: { parts: ["{\"part\":1}", "{\"part\":2}", "{\"part\":3}"], commit: "commit" },
+      multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
       trimmedCompactionMessages: 4,
       release() {},
     }),
@@ -328,7 +328,7 @@ test("launcher helper protocol preserves multipart context and the compaction fl
     type: "prepared_selected_ack",
     prepared: {
         text: "commit",
-        multipart: { parts: ["{\"part\":1}", "{\"part\":2}", "{\"part\":3}"], commit: "commit" },
+        multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
         trimmedCompactionMessages: 4,
     },
   });
