@@ -54,6 +54,30 @@ Do not hand-edit the launcher's route journal. It exists so setup and removal ca
 of silently destroying another provider's configuration. First-class external-router composition is
 tracked in [#205](https://github.com/miuuyy/codex-chatgpt-web/issues/205), but is not supported today.
 
+## Encrypted history cannot be verified after switching models
+
+A switch from ChatGPT Web to native Codex in the same task can report that encrypted content
+cannot be verified or decrypted if bridge-owned history reaches the native backend unchanged.
+The error alone does not identify which program forwarded the request.
+
+NEKODEX stores its own `ocx1:` continuation summaries and `ocxr1:` reasoning envelopes in the
+Responses `encrypted_content` field. They are not OpenAI-issued ciphertext. The native
+passthrough converts our summaries to readable context and removes our reasoning envelopes;
+genuine native encrypted payloads remain intact. This applies to ordinary responses and both
+compaction protocols.
+
+With the NEKODEX-owned route, include the source/destination model and whether compaction preceded
+the failure in an Activity safe-log report. An external router may send native requests directly
+to OpenAI, bypassing this normalization even though its Web requests go through NEKODEX. That
+router needs compatible conversion on `/responses`, `/responses/compact`, and requests ending
+in `compaction_trigger`. Updating NEKODEX cannot change a bypassed route.
+
+Do not reinstall models to fix another router's history conversion: setup changes route ownership.
+Do not strip all encrypted fields or delete compaction records, which can destroy valid context.
+An available workaround is to return to the Web model, request a readable summary, and start a
+new native task with that summary. Include versions, route owner and the redacted error when
+reporting; never attach raw history, decoded envelopes or credentials.
+
 ## ChatGPT sign-in does not complete
 
 The launcher must own the ChatGPT session used for model turns. Signing in to an unrelated browser
@@ -136,6 +160,30 @@ select the Manual connector yourself before sending. DEV Full uses its isolated 
 **Codex Native4 DEV**. Keep older connectors unchanged: ChatGPT caches the public MCP contract by
 identity, and renaming or refreshing one does not load the new schema. Local setup or connector
 visibility is not proof of an actual tool call.
+
+### Windows: `unable to verify the first certificate`
+
+If connecting the harness and checking for updates both fail with this certificate error,
+first check the same connection through the Windows trust store:
+
+```powershell
+curl.exe -Iv https://api.openai.com/
+```
+
+If curl identifies its TLS backend as `schannel`, completes TLS and receives an HTTP response,
+Windows accepted that certificate chain. After active tasks finish, quit NEKODEX and try launching
+it from PowerShell with the system CA option:
+
+```powershell
+$env:NODE_USE_SYSTEM_CA = "1"
+$install = (Get-ItemProperty "HKCU:\Software\d1a6026a-6210-588e-9a2b-da3936f94e02").InstallLocation
+Start-Process (Join-Path $install "NEKODEX.exe")
+```
+
+This adds operating-system trust roots for Node versions supporting the option; it does not
+disable certificate verification or guarantee that a separate runtime uses the same trust store.
+Retry once and export a safe log if it still fails, noting the curl result. Do not set
+`NODE_TLS_REJECT_UNAUTHORIZED=0`. A proxy or runtime-specific CA configuration may still be needed.
 
 ### ChatGPT shows `Error creating connector`
 

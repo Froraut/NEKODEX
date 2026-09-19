@@ -3,6 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
+const { stageWindowsSmoke } = require("./stage-windows-smoke.cjs");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const artifactsDirectory = path.join(launcherRoot, "artifacts");
@@ -30,24 +31,6 @@ function run(command, args, options = {}) {
       `${command} failed with status ${result.status}: ${result.stderr?.trim() || result.stdout?.trim() || "no output"}`,
     );
   }
-}
-
-function windowsInstallLocation() {
-  const guid = launcherManifest.build.nsis.guid;
-  const registryKey = `HKCU\\Software\\${guid}`;
-  const result = spawnSync("reg.exe", ["query", registryKey, "/v", "InstallLocation"], {
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`Windows installer did not register ${registryKey}: ${result.stderr?.trim() || "no output"}`);
-  }
-  const match = result.stdout.match(/^\s*InstallLocation\s+REG_SZ\s+(.+?)\s*$/mi);
-  if (!match || !path.win32.isAbsolute(match[1])) {
-    throw new Error(`Windows installer registered an invalid InstallLocation: ${result.stdout.trim()}`);
-  }
-  return match[1];
 }
 
 function artifact(pattern, label) {
@@ -97,8 +80,7 @@ try {
     env.APPIMAGE_EXTRACT_AND_RUN = "1";
   } else if (process.platform === "win32") {
     const installer = artifact(/-win-x64\.exe$/, "Windows installer");
-    run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
-    executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
+    executable = stageWindowsSmoke({ installer, scratch, productName: launcherManifest.build.productName, run });
     command = executable;
     args = ["--launcher-smoke-test"];
   } else {
@@ -106,7 +88,7 @@ try {
   }
 
   if (!fs.existsSync(executable)) throw new Error(`Packaged launcher executable is missing: ${executable}`);
-  run(command, args, { env });
+  run(command, args, { env, timeout: process.platform === "win32" ? 120_000 : 45_000 });
   if (!fs.existsSync(markerPath)) throw new Error("Packaged launcher did not write its readiness marker");
   const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
   if (marker.ok !== true
@@ -148,9 +130,14 @@ try {
         launchServices,
         ["-u", macAppBundle],
       );
-      run(launchServices, ["-gc"]);
+      // Unregister only this task-owned bundle; leave unrelated app registrations alone.
     }
   } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
+    try {
+      fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (error) {
+      if (process.platform !== "win32" || !["EPERM", "EBUSY", "ENOTEMPTY"].includes(error?.code)) throw error;
+      process.stderr.write(`Temporary package smoke files remain at ${scratch}: ${error.code}\n`);
+    }
   }
 }

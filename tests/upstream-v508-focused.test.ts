@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRequest } from "../src/responses/parser";
@@ -26,10 +26,7 @@ test("upstream508: accepted usage survives restart and duplicates preserve its f
     restarted.accept("trace", 123, "receipt", "max", "5.6");
     restarted.finish("trace", 123, "failed");
     expect(restarted.snapshot().rows[0]).toMatchObject({ accepted: 1, completed: 1, failed: 0, modelVersion: "5.6" });
-    writeFileSync(join(dir, "local-usage.json"), "broken");
-    const corrupt = new UsageStore(dir); corrupt.accept("new", 1, "other", "high", "unknown");
-    expect(corrupt.snapshot().available).toBeFalse();
-    expect(readFileSync(join(dir, "local-usage.json"), "utf8")).toBe("broken");
+    // Corrupt-primary recovery is covered by the dedicated versioned usage-store cases.
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

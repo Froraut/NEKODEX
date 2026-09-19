@@ -2972,7 +2972,7 @@ test("Bigger Context fits mixed-density whole records within both token and comp
         systemPrompt: [],
         messages: contents.map((content, index) => ({ role: "user", content, timestamp: index + 1 })),
       },
-    }, capabilities, undefined, { experimentalMultipartParts: 3 });
+    }, capabilities, undefined, { experimentalMultipartParts: 6 });
     const multipart = compiled.multipart!;
     const records = multipart.parts.flatMap(part => JSON.parse(part).records);
     expect(records).toEqual(contents.map((content, message_index) => ({
@@ -2982,7 +2982,7 @@ test("Bigger Context fits mixed-density whole records within both token and comp
 
     const transaction = "ctx_0123456789abcdef0123456789abcdef";
     const stages = multipart.parts.slice(0, -1).map((payload, index) => (
-      formatChatGptWebMultipartStage(payload, transaction, index + 1, 3).text
+      formatChatGptWebMultipartStage(payload, transaction, index + 1, 6).text
     ));
     const final = formatChatGptWebMultipartCommit(multipart, transaction);
     const maxStageMessageTokens = Math.max(...stages.map(text => estimateTokens(text)));
@@ -2995,7 +2995,7 @@ test("Bigger Context fits mixed-density whole records within both token and comp
       estimateCompiledChatGptWebInputTokens(compiled, CHATGPT_WEB_MODEL_ID),
       Math.max(maxStageMessageTokens, finalMessageTokens),
       CHATGPT_WEB_MODEL_ID, "high", capabilities,
-      Math.max(maxStageChars, final.length), 3,
+      Math.max(maxStageChars, final.length), 6,
       { stagingEffort: stagingMode.effort, maxStageMessageTokens, maxStageChars, finalMessageTokens, finalMessageChars: final.length },
     )).not.toThrow();
   }
@@ -3020,8 +3020,8 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     pro,
-    900_000,
-    3,
+    500_000,
+    6,
   )).not.toThrow();
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     333_579,
@@ -3029,16 +3029,16 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     pro,
-    900_000,
-    3,
-  )).toThrow("three-part ceiling");
+    500_000,
+    6,
+  )).toThrow("six-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     222_385,
     95_000,
     "gpt-5.6-sol",
     "high",
     pro,
-    900_000,
+    500_000,
     2,
   )).not.toThrow();
   expect(() => assertChatGptWebMultipartInputWithinLimits(
@@ -3047,7 +3047,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     pro,
-    900_000,
+    500_000,
     2,
   )).toThrow("two-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
@@ -3057,7 +3057,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "high",
     plus,
     900_000,
-    3,
+    6,
   )).not.toThrow();
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     270_000,
@@ -3066,8 +3066,8 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "high",
     plus,
     900_000,
-    3,
-  )).toThrow("270,000-token three-part ceiling");
+    6,
+  )).toThrow("270,000-token six-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     180_000,
     80_000,
@@ -3083,8 +3083,8 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     pro,
-    900_000,
-    3,
+    500_000,
+    6,
   )).toThrow("ChatGPT message boundary");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     20_000,
@@ -3114,7 +3114,7 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
     const inline = () => assertChatGptWebInputWithinLimits(tokens + 8_192, tokens, "gpt-5.6-sol", "high", plus, 300_000);
     const stage = () => resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, tokens, 300_000);
     const final = () => assertChatGptWebMultipartInputWithinLimits(
-      tokens + 10_000, tokens, "gpt-5.6-sol", "high", plus, 300_000, 3,
+      tokens + 10_000, tokens, "gpt-5.6-sol", "high", plus, 300_000, 6,
       { stagingEffort: "medium", maxStageMessageTokens: 500, maxStageChars: 2_000, finalMessageTokens: tokens, finalMessageChars: 300_000 },
     );
     for (const preflight of [inline, stage, final]) {

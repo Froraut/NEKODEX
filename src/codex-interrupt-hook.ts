@@ -232,7 +232,8 @@ function locateCodexInterruptHookTrust(text: string, installed: InstalledCodexIn
   if (!markerPreservesTomlValues(startMarker) || !markerPreservesTomlValues(endMarker)) {
     throw new Error("Codex JSON interrupt hook trust changed after setup; refusing to overwrite it");
   }
-  const stateHeaders = lineRanges(`[hooks.state.${JSON.stringify(installed.stateKey)}]`, true);
+  const stateHeaders = equivalentTrustStateHeaders(text, installed.stateKey)
+    .flatMap(header => lineRanges(header, true));
   const trustedHashes = lineRanges(`trusted_hash = ${JSON.stringify(installed.trustedHash)}`, true);
   const expected = structuredClone(parsed) as { hooks?: { state?: Record<string, unknown> } };
   delete expected.hooks?.state?.[installed.stateKey];
@@ -310,6 +311,33 @@ function hookTextPattern(text: string): string {
     .join("(?:\\r\\n|\\n|\\r)");
 }
 
+/** Decode only the header spelling; callers still prove ownership of the complete document. */
+function equivalentTrustStateHeaders(text: string, stateKey: string): string[] {
+  return [...new Set([...text.matchAll(/^\[hooks\.state\.[^\r\n]+$/gm)].flatMap(match => {
+    try {
+      const parsed = Bun.TOML.parse(match[0]) as { hooks?: { state?: Record<string, unknown> } };
+      const state = parsed.hooks?.state;
+      const value = state?.[stateKey];
+      // Do not accept a descendant table or a similarly spelled foreign config path.
+      return state && Object.keys(state).length === 1 && value && typeof value === "object"
+        && !Array.isArray(value) && Object.keys(value).length === 0 ? [match[0]] : [];
+    } catch {
+      return [];
+    }
+  }))];
+}
+
+function ownedHookTextPattern(fragment: string, text: string, stateKey: string): string {
+  const header = `[hooks.state.${JSON.stringify(stateKey)}]`;
+  const offset = fragment.indexOf(header);
+  if (offset < 0) return hookTextPattern(fragment);
+  const headers = equivalentTrustStateHeaders(text, stateKey);
+  if (!headers.length) return "(?!)";
+  return hookTextPattern(fragment.slice(0, offset))
+    + `(?:${headers.map(hookTextPattern).join("|")})`
+    + hookTextPattern(fragment.slice(offset + header.length));
+}
+
 function locateInterleavedCodexInterruptHook(
   text: string,
   installed: InstalledCodexInterruptHook,
@@ -320,7 +348,7 @@ function locateInterleavedCodexInterruptHook(
   const stateOffset = ownedPrefix.indexOf(stateHeader);
   if (stateOffset < 0 || ownedPrefix.indexOf(stateHeader, stateOffset + 1) !== -1) throw changed();
   const uniqueRange = (fragment: string): { start: number; end: number } => {
-    const pattern = new RegExp(hookTextPattern(fragment), "g");
+    const pattern = new RegExp(ownedHookTextPattern(fragment, text, installed.stateKey), "g");
     const match = pattern.exec(text);
     if (!match || pattern.exec(text)) throw changed();
     return { start: match.index, end: match.index + match[0].length };
@@ -389,7 +417,7 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   if (marker < 0) throw new Error("Codex interrupt lifecycle hook journal fragment is invalid");
   const ownedPrefix = installed.fragment.slice(0, marker);
   // Native config writes normalize CRLF to LF; commands and owned fields must still match exactly.
-  const pattern = new RegExp(hookTextPattern(ownedPrefix), "g");
+  const pattern = new RegExp(ownedHookTextPattern(ownedPrefix, text, installed.stateKey), "g");
   const match = pattern.exec(text);
   if (!match && allowInterleaved) return locateInterleavedCodexInterruptHook(text, installed, ownedPrefix);
   if (!match || pattern.exec(text)) {
@@ -423,6 +451,23 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   }
   if (codexInterruptHookHash(installed.command) !== installed.trustedHash) {
     throw new Error("Codex interrupt lifecycle hook journal hash is invalid");
+  }
+  // Header spelling may differ, but duplicate keys, modified fields and later extensions of
+  // either owned definition must still fail. Parse the full document, not just the matched text.
+  try {
+    const actual = Bun.TOML.parse(text) as {
+      hooks?: { Interrupt?: unknown[]; state?: Record<string, unknown> };
+    };
+    const expected = Bun.TOML.parse(ownedPrefix) as {
+      hooks: { Interrupt: unknown[]; state: Record<string, unknown> };
+    };
+    const values = (value: unknown) => JSON.stringify(canonicalJson(value));
+    if (values(actual.hooks?.Interrupt?.[installed.groupIndex]) !== values(expected.hooks.Interrupt[0])
+      || values(actual.hooks?.state?.[installed.stateKey]) !== values(expected.hooks.state[installed.stateKey])) {
+      throw new Error("Modified owned definitions");
+    }
+  } catch {
+    throw new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
   }
   // Codex's TOML editor inserts new tables before trailing comments. The end marker can therefore
   // move past unrelated config even though the owned hook fields remain unchanged.

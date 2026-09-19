@@ -1,3 +1,4 @@
+import { canRetireDetachedToolDelivery } from "./browser-lifecycle-safety";
 import { createHash } from "node:crypto";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { BrokerToolRequest } from "./turn-broker";
@@ -296,6 +297,9 @@ export class ChatGptTurnSession {
   supersededError?: Error;
   readonly createdAt = Date.now();
   private lastTouchedAt = this.createdAt;
+  private observers = 0;
+  private activityRevision = 0;
+  private outstandingStartedAt?: number;
   readonly browserOutcome: Promise<ChatGptBrowserOutcome>;
   readonly physicalSettlement: Promise<void>;
   private readonly outstandingById = new Map<string, BrokerToolRequest>();
@@ -352,19 +356,27 @@ export class ChatGptTurnSession {
 
   runExclusive<T>(task: () => Promise<T>): Promise<T> {
     this.touch();
-    const run = this.tail.then(task);
+    this.observers += 1;
+    const run = this.tail.then(task).finally(() => { this.observers -= 1; });
     this.tail = run.then(() => undefined, () => undefined);
     this.scheduleCapabilityRetirement();
     return run;
   }
 
   touch(): void {
+    this.activityRevision += 1;
     this.lastTouchedAt = Date.now();
   }
 
   lastUsedAt(): number {
     return this.lastTouchedAt;
   }
+
+  hasObservers(): boolean { return this.observers > 0; }
+
+  observerActivityRevision(): number { return this.activityRevision; }
+
+  outstandingSince(): number | undefined { return this.outstandingStartedAt; }
 
   outstanding(): BrokerToolRequest[] {
     return [...this.outstandingById.values()];
@@ -404,6 +416,7 @@ export class ChatGptTurnSession {
     }
     this.replaceReplayField("outstanding", retainedRecordBytes(requests) + retainedRecordBytes(reasoning) + retainedRecordBytes(prelude));
     for (const request of requests) this.outstandingById.set(request.callId, request);
+    this.outstandingStartedAt = requests.length ? Date.now() : undefined;
     this.outstandingReasoning = [...reasoning];
     this.outstandingPrelude = [...prelude];
   }
@@ -417,6 +430,7 @@ export class ChatGptTurnSession {
     const releasedBytes = this.outstandingById.size === 1 ? (this.replayFields.get("outstanding") ?? 0) : 0;
     this.reserveReplayBytes(retainedRecordBytes(callId) - releasedBytes);
     this.outstandingById.delete(callId);
+    if (this.outstandingById.size === 0) this.outstandingStartedAt = undefined;
     this.deliveredResultIds.add(callId);
     if (this.outstandingById.size === 0) {
       this.replayFields.set("outstanding", 0);
@@ -573,6 +587,7 @@ export class ChatGptTurnSession {
 
 export class ChatGptTurnSessions {
   private readonly entries = new Map<string, ChatGptTurnSession>();
+  private readonly detachedToolReapers = new Map<ChatGptTurnSession, { key: string; disconnectedAt: number; activityRevision: number; timer?: ReturnType<typeof setTimeout> }>();
   private readonly conversationHeads = new Map<string, ChatGptTurnSession>();
   private readonly retirements = new Map<string, Promise<void>>();
   private readonly ownerRetirements = new Map<string, Promise<void>>();
@@ -909,6 +924,63 @@ export class ChatGptTurnSessions {
     return true;
   }
 
+  /** Register even before runExclusive unwinds; the deferred check requires all observers gone. */
+  scheduleDetachedToolRetirement(key: string, session: ChatGptTurnSession): void {
+    if (this.entries.get(key) !== session || !session.ownerKey
+      || !session.nativeThreadId || !session.nativeTurnId || session.runtime.mode !== "tools") return;
+    const previous = this.detachedToolReapers.get(session);
+    if (previous?.timer) clearTimeout(previous.timer);
+    const receipt = { key, disconnectedAt: Date.now(), activityRevision: session.observerActivityRevision(),
+      timer: undefined as ReturnType<typeof setTimeout> | undefined };
+    const check = (): void => {
+      this.reapDetachedToolTurns();
+      if (this.detachedToolReapers.get(session) !== receipt) return;
+      receipt.timer = setTimeout(check, 60_000);
+      receipt.timer.unref?.();
+    };
+    receipt.timer = setTimeout(check, 30 * 60_000);
+    receipt.timer.unref?.();
+    this.detachedToolReapers.set(session, receipt);
+  }
+
+  /** Residual cleanup of a retired broker, NOT expiry of unanswered tools or approval waits. */
+  reapDetachedToolTurns(now = Date.now()): number {
+    let retired = 0;
+    for (const [session, receipt] of this.detachedToolReapers) {
+      const forget = () => {
+        if (receipt.timer) clearTimeout(receipt.timer);
+        this.detachedToolReapers.delete(session);
+      };
+      if (this.entries.get(receipt.key) !== session || !session.isActive()
+        || session.observerActivityRevision() !== receipt.activityRevision || session.outstandingSince() === undefined) {
+        forget();
+        continue;
+      }
+      if (session.hasObservers()) continue;
+      const progress = session.runtime.mode === "tools" ? session.runtime.externalProgress : undefined;
+      const snapshot = progress?.snapshot();
+      let brokerRetired = false;
+      // A known valid batch revision only fails this assertion after the exact capability retired.
+      // Zero active calls by itself is not enough to establish that ownership transition.
+      if (progress && snapshot && snapshot.lastToolBatchRevision > 0 && snapshot.activeToolCalls === 0) {
+        try { progress.assertToolBatchActive(snapshot.lastToolBatchRevision); }
+        catch { brokerRetired = true; }
+      }
+      const conversation = session.conversationKey();
+      const peerActive = conversation && [...this.entries.values()].some(peer => peer !== session
+        && peer.conversationKey() === conversation && (peer.isActive() || !peer.isPhysicallySettled()));
+      if (!canRetireDetachedToolDelivery({ exactOwner: this.entries.get(receipt.key) === session,
+        brokerRetired, hasObservers: false, activeToolCalls: snapshot?.activeToolCalls,
+        peerActive: Boolean(peerActive), disconnectedAt: receipt.disconnectedAt, outstandingSince: session.outstandingSince(),
+        lastProgressAt: snapshot?.lastProgressAt, now })) continue;
+      forget();
+      this.observeRetirement(this.retireSession(receipt.key, session,
+        new Error("Disconnected ChatGPT tool delivery belongs to a retired broker capability")));
+      retired += 1;
+    }
+    return retired;
+  }
+
   /** Cancel only active responses whose exact native turn ids Codex marked as interrupted. */
   retireAbortedOwnerTurns(
     ownerKey: string,
@@ -1014,6 +1086,9 @@ export class ChatGptTurnSessions {
 
   /** Every removal of an attached session first establishes an acknowledged, retryable release. */
   private retireSession(key: string, session: ChatGptTurnSession, reason?: Error): Promise<void> {
+    const receipt = this.detachedToolReapers.get(session);
+    if (receipt?.timer) clearTimeout(receipt.timer);
+    this.detachedToolReapers.delete(session);
     const conversationKey = session.conversationKey();
     if (conversationKey) {
       session.cancel(reason);

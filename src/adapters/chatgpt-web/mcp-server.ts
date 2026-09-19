@@ -919,7 +919,9 @@ export async function runChatGptMcpServer(options: {
         const { query, offset, limit, include_schema } = input;
         const bound = claimed.environment;
         const needle = query?.trim().toLowerCase();
-        const directMatches = safeVisibleTools(bound, contract).filter(tool => options.allowWebSubagents !== false || !isSpawnCollaborationWireName(wireName(tool))).filter(tool => !needle || [
+        const visibleTools = safeVisibleTools(bound, contract)
+          .filter(tool => options.allowWebSubagents !== false || !isSpawnCollaborationWireName(wireName(tool)));
+        const directMatches = visibleTools.filter(tool => !needle || [
           wireName(tool),
           tool.name,
           tool.namespace ?? "",
@@ -973,10 +975,24 @@ export async function runChatGptMcpServer(options: {
         }
         const page = [...directPage, ...nestedPage];
         const total = directMatches.length + nestedTotal;
+        // A filtered miss need not mean deferred tools are unavailable. Advertise only the
+        // current contract's visible native search tools, separately from matches/pagination.
+        // This does not invoke discovery or widen Native/Manual or subagent visibility.
+        const discoveryTools = needle && total === 0
+          ? visibleTools.filter(tool => tool.toolSearch).map(tool => ({
+            wire_name: wireName(tool),
+            name: tool.name,
+            namespace: tool.namespace ?? null,
+            description: browserToolDescription(tool),
+            kind: "tool_search",
+            ...(include_schema ? { parameters: browserToolParameters(tool) } : {}),
+          }))
+          : [];
         return result({
           tools: page,
           total,
           next_offset: offset + page.length < total ? offset + page.length : null,
+          ...(discoveryTools.length > 0 ? { discovery_tools: discoveryTools } : {}),
         });
       },
     ),

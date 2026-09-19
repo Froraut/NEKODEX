@@ -1,3 +1,4 @@
+const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
 const { MANUAL_CONNECTOR_NAME, isLegacyConnectorName } = require("./connector-identity.cjs");
 const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapacity } = require("./browser-capacity.cjs");
@@ -20,7 +21,7 @@ const {
   shell,
   Tray,
 } = require("electron");
-const { resolveNativeProxyEnvironment, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
+const { resolveNativeRequestProxy, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
 const LANGUAGES = require("./languages.json");
 const { applicationMenu } = require("./application-menu.cjs");
 const { installHermesProvider } = require("./hermes-integration.cjs");
@@ -215,6 +216,7 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
   const epoch = catalogVerificationEpoch;
   const supervisor = runtimeSupervisor;
   let inFlight = false;
+  let reportedFailure = null;
   const check = async () => {
     if (epoch !== catalogVerificationEpoch || supervisor !== runtimeSupervisor) return;
     const current = stateStore.read();
@@ -233,17 +235,41 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
       if (latest.coreSetupComplete !== true || latest.codexCatalogVerified === true
         || typeof latest.pendingBiggerContext === "boolean"
         || JSON.stringify(supervisor.readConfig()) !== configSnapshot) return;
-      if (!Number.isInteger(health?.successful_model_catalog_requests)
-        || health.successful_model_catalog_requests < 1
-        || supervisor.catalogHealthIsCurrent(config, health) !== true) return;
+      if (supervisor.catalogHealthIsCurrent(config, health) !== true) return;
+      const result = catalogReceipt(health.last_model_catalog_result);
+      if (result?.status >= 400) {
+        if (lastOperation?.status === "running") return;
+        const identity = `${health.pid}:${result.request}:${result.at}`;
+        if (identity === reportedFailure) return;
+        reportedFailure = identity;
+        // Receipt proves Codex reached this runtime; generic restart guidance must not mask failure.
+        const state = stateStore.update({ codexRestartRequired: false });
+        send("launcher:state-changed", state);
+        const reason = result.failure.code ? `${result.failure.stage}/${result.failure.code}` : result.failure.stage;
+        logger.warn("codex.model_catalog_failed", result);
+        publishOperation({
+          name: "catalog-verification", status: "failed",
+          message: nativeCopyFor(latest.language).catalogFailure
+            .replace("{status}", String(result.status)).replace("{reason}", reason),
+        });
+        return;
+      }
+      if (!Number.isSafeInteger(health.successful_model_catalog_requests)
+        || health.successful_model_catalog_requests < 1) return;
+      // A malformed new-style receipt must not authorize success from a stale counter.
+      if (health.last_model_catalog_result != null && (!result || result.status >= 300)) return;
       const state = stateStore.update({
         codexCatalogVerified: true,
+        codexRestartRequired: false,
       });
       logger.info("codex.model_catalog_served", {
         requests: health.successful_model_catalog_requests,
         at: health.last_successful_model_catalog_request_at,
       });
       send("launcher:state-changed", state);
+      if (lastOperation?.name === "catalog-verification" && lastOperation.status === "failed") {
+        publishOperation({ name: "catalog-verification", status: "completed", message: "" });
+      }
       stopCatalogVerificationMonitor();
     } catch (error) {
       if (epoch === catalogVerificationEpoch) {
@@ -305,6 +331,7 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "Remove NEKODEX",
     removeMessage: "Remove the ChatGPT Web models from Codex and restore the previous model route?",
     removeDetail: "The launcher's ChatGPT login profile will be preserved. Codex must be restarted once.",
+    catalogFailure: "Codex reached NEKODEX, but loading the model catalog failed (HTTP {status}; {reason}). Check the routing details and Activity; export privacy-safe diagnostics if it persists.",
   }),
   "zh-CN": Object.freeze({
     openLauncher: "打开 NEKODEX",
@@ -315,6 +342,7 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "移除 NEKODEX",
     removeMessage: "从 Codex 中移除 ChatGPT Web 模型并恢复此前的模型路由？",
     removeDetail: "启动器中的 ChatGPT 登录 profile 会保留。Codex 需要重启一次。",
+    catalogFailure: "Codex 已连接到 NEKODEX，但模型列表加载失败（HTTP {status}；{reason}）。请检查路由信息和“活动”；若问题持续，请导出隐私安全诊断。",
   }),
   "zh-TW": Object.freeze({
     openLauncher: "開啟 NEKODEX",
@@ -325,6 +353,7 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "移除 NEKODEX",
     removeMessage: "從 Codex 中移除 ChatGPT Web 模型並還原先前的模型路由？",
     removeDetail: "啟動器中的 ChatGPT 登入設定檔會保留。Codex 需要重新啟動一次。",
+    catalogFailure: "Codex 已連線到 NEKODEX，但模型清單載入失敗（HTTP {status}；{reason}）。請檢查路由資訊與「活動」；若問題持續，請匯出隱私安全診斷。",
   }),
   ja: Object.freeze({
     openLauncher: "NEKODEX を開く",
@@ -335,6 +364,7 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "NEKODEX を削除",
     removeMessage: "Codex から ChatGPT Web モデルを削除し、以前のモデルルートを復元しますか？",
     removeDetail: "ランチャーの ChatGPT ログインプロファイルは保持されます。Codex を一度再起動する必要があります。",
+    catalogFailure: "Codex は NEKODEX に接続しましたが、モデル一覧を読み込めませんでした（HTTP {status}、{reason}）。ルーティング情報とアクティビティを確認し、問題が続く場合はプライバシー保護済みの診断情報をエクスポートしてください。",
   }),
   ko: Object.freeze({
     openLauncher: "NEKODEX 열기",
@@ -345,6 +375,7 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "NEKODEX 제거",
     removeMessage: "Codex에서 ChatGPT Web 모델을 제거하고 이전 모델 경로를 복원할까요?",
     removeDetail: "런처의 ChatGPT 로그인 프로필은 유지됩니다. Codex를 한 번 다시 시작해야 합니다.",
+    catalogFailure: "Codex가 NEKODEX에 연결했지만 모델 목록을 불러오지 못했습니다(HTTP {status}; {reason}). 경로 정보와 활동을 확인하고 문제가 계속되면 개인정보가 보호된 진단 정보를 내보내세요.",
   }),
 });
 
@@ -1367,6 +1398,9 @@ async function start() {
     logger,
     getBrowserHost: () => browserHost,
     getPreferences: () => stateStore.read(),
+    // A dedicated system-proxy session must not inherit any account's fixed/PAC proxy.
+    resolveNativeProxy: url => resolveNativeRequestProxy(
+      session.fromPartition(`nekodex-native-network-${LAUNCHER_PROFILE.kind}`), url),
   }).start();
   runtimeSupervisor = new RuntimeSupervisor({
     app,
@@ -1378,7 +1412,8 @@ async function start() {
     browserDescriptorPath: BROWSER_DESCRIPTOR_PATH,
     launcherProfile: LAUNCHER_PROFILE.kind,
     publishOperation,
-    nativeProxyEnvironmentProvider: () => resolveNativeProxyEnvironment(session.fromPartition(LAUNCHER_PROFILE.browserPartition)),
+    // Native requests resolve the current OS route through the authenticated control channel.
+    nativeProxyEnvironmentProvider: async () => ({}),
     tunnelProxyEnvironmentProvider: () => resolveTunnelProxyEnvironment(session.fromPartition(LAUNCHER_PROFILE.browserPartition)),
   });
   runtimeHost = new RuntimeHost({
@@ -1425,7 +1460,9 @@ async function start() {
     stateStore.update({ browserInteractionMode: configuredInteractionMode });
   }
   startupPhase = "browser";
+  const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
   browserHost = new AccountBrowserPool({
+    skipInitialNavigation: launcherSmokeTest,
     getManualSubmitTimeoutSec: () => stateStore.read().manualSubmitTimeoutSec,
     coreHome: CORE_HOME,
     maxTabs: ACTIVE_BROWSER_CAPACITY,
@@ -1464,7 +1501,6 @@ async function start() {
   registerIpc({ logger, stateStore });
   const trayAvailable = createTray(logger, stateStore.read().language);
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
-  const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
   let startupAuthenticationRefresh = Promise.resolve();
   if (!launcherSmokeTest && stateStore.read().browserInteractionMode === "automatic") {
     startupAuthenticationRefresh = browserHost.refreshAuthentication().catch((error) => {

@@ -34,6 +34,14 @@ async function resolvePac(session, url, timeoutMs) {
   } finally { clearTimeout(timer); }
 }
 
+async function resolveNativeRequestProxy(session, value, timeoutMs = 5000) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error("Invalid native request URL"); }
+  if (url.origin !== "https://chatgpt.com" || !url.pathname.startsWith("/backend-api/codex/")
+    || url.username || url.password || url.hash) throw new Error("Native proxy resolution requires the first-party Codex endpoint");
+  return resolvePac(session, url.href, timeoutMs);
+}
+
 async function resolveNativeProxyEnvironment(session, environment = process.env, timeoutMs = 5000) {
   if (["CODEX_CHATGPT_WEB_NATIVE_PROXY", ...EXPLICIT_PROXY_KEYS].some(key => environment[key]?.trim())) return {};
   const origin = await resolvePac(session, NATIVE_URL, timeoutMs);
@@ -47,4 +55,4 @@ async function resolveTunnelProxyEnvironment(session, environment = process.env,
   return origin ? { HTTPS_PROXY: origin, https_proxy: origin, ...bypass } : bypass;
 }
 
-module.exports = { loopbackBypass, proxyOriginFromPac, resolveNativeProxyEnvironment, resolveTunnelProxyEnvironment };
+module.exports = { loopbackBypass, proxyOriginFromPac, resolveNativeProxyEnvironment, resolveNativeRequestProxy, resolveTunnelProxyEnvironment };
