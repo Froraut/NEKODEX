@@ -43,3 +43,18 @@ Windows on a native Windows runner and uploads labelled unsigned installer/ZIP A
 it never contributes those files to the authenticated updater release. Default signed Windows
 publication remains fail-closed. The authenticated build matrix includes both Macs and Linux.
 The publish job downloads only release-* artifacts, excluding the separately named preview.
+
+## Development evidence
+
+The new source was checked from a detached clean worktree at `21e56cd`, excluding unrelated updater
+edits. All 449 Russian keys and interpolation placeholders match English. Version/download markers
+pass the existing checker. Launcher TypeScript and the Vite renderer build pass. One isolated
+Electron scenario saves `ru` through the real state store, renders Russian usage/update/routing
+components, and retains the HTTP 502 diagnostic. The temporary Electron process exited.
+The release-plan check confirms default all-platform publication still includes signed Windows;
+explicit prerelease preview excludes Windows from signed assets while including Linux and both Macs.
+The publisher downloads only `release-*` artifacts. These new checks/builds took about 5.7 seconds;
+together with the earlier 8.2 seconds of implementation verification, the task remains under 60 seconds.
+No old successful test or full suite was rerun. Russian raw provider errors can remain untranslated.
+Vite reports a 500 kB chunk-size advisory; build success does not imply a performance improvement.
+Native distribution/signing and remote publication outcomes are recorded separately after CI finishes.
