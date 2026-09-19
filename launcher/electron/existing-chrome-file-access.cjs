@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { existingChromeError } = require("./existing-chrome-errors.cjs");
 const COPY = {
+  ru: {"title": "Разрешить доступ к файлу соединения Chrome", "buttonLabel": "Разрешить этот файл", "message": "Выберите DevToolsActivePort в папке Google Chrome. NEKODEX прочитает только этот файл соединения; затем Chrome отдельно запросит разрешение на подключение."},
   en: { title: "Allow access to Chrome connection file", buttonLabel: "Allow this file", message: "Select DevToolsActivePort in the Google Chrome folder. The launcher reads only this connection file, then Chrome asks separately whether to allow the connection." },
   "zh-CN": { title: "允许访问 Chrome 连接文件", buttonLabel: "允许此文件", message: "请选择 Google Chrome 文件夹中的 DevToolsActivePort。启动器仅读取此连接文件；Chrome 随后会单独询问是否允许连接。" },
   "zh-TW": { title: "允許存取 Chrome 連線檔案", buttonLabel: "允許此檔案", message: "請選取 Google Chrome 資料夾中的 DevToolsActivePort。啟動器只會讀取此連線檔案；接著 Chrome 會另外詢問是否允許連線。" },

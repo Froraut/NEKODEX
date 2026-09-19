@@ -1,0 +1,10 @@
+.usage-dashboard .usage-table-scroll {
+  overflow-x: auto;
+  margin-block: 16px;
+}
+
+.usage-dashboard .usage-table-scroll caption {
+  text-align: start;
+  font-weight: 600;
+  padding-block: 8px;
+}

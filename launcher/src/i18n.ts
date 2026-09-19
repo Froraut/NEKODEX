@@ -1,5 +1,6 @@
 import type { Language } from "./types";
 import korean from "./i18n-ko.json";
+import russian from "./i18n-ru.json";
 import traditionalChinese from "./i18n-zh-TW.json";
 
 const en = {
@@ -11,12 +12,18 @@ const en = {
   compactionModelBody: "Choose the model used only for the next automatic Pro context summary. Task turns keep their original model. Unavailable choices fail before sending; no fallback is selected.",
   compactionFollow: "Follow task model",
   usageTitle: "Local usage",
+  routingCatalogFailed: "Failed (HTTP {status}; {reason})",
+  routingCatalogFailureBody: "Codex reached NEKODEX, but the model catalog request failed. Check Activity and the routing details above; export privacy-safe diagnostics if the failure persists.",
   usageBody: "Counts accepted browser messages, including context staging, from installation of this feature. Manual sends have unknown model identity. Unknown versions are never guessed. Unrecorded outcomes include active requests and interrupted recording. Local days; not official quotas or remaining allowances.",
   usageUnavailable: "Usage history is unavailable.",
   usageUnknown: "Unknown",
   usageRange: "Reporting period",
   usageDays: "days",
   usageLifetime: "Lifetime accepted",
+  usageLifetimeGroups: "Lifetime messages by mode and model",
+  usageLifetimeUnclassified: "Older accepted messages without retained model details",
+  usageRecovered: "Usage history was restored from a local backup. Recent messages or outcomes may be missing.",
+  usageBackupUnavailable: "The recovery backup could not be updated. Current usage is still saved in the main history file.",
   usageSince: "Recording since",
   usageGroups: "Messages by mode and model",
   usageModel: "Mode / model",
@@ -169,7 +176,7 @@ const en = {
 
   confirmPicker: "I can see the Web models in Codex",
   contextActiveStandard: "Active: standard history budget. This is a browser-transfer budget, not the API model context window.",
-  contextActiveBigger: "Active: Bigger Context, 3× the standard history budget. Larger turns use up to three messages; the API model window is unchanged.",
+  contextActiveBigger: "Active: Bigger Context, 3× the standard history budget. Larger turns use up to six messages; the API model window is unchanged.",
   contextWaiting: "Change saved. Waiting for active requests to finish; the current budget remains active.",
   contextApplying: "Applying the saved context change…",
   contextFailed: "The context change could not be applied. The current setting was kept.",
@@ -215,7 +222,7 @@ const en = {
   devSettingsTitle: "DEV profile settings",
   devKeepRunningBody: "Keep the isolated browser session and DEV MCP tunnel available when this window closes.",
   biggerContext: "Bigger Context (experimental)",
-  biggerContextBody: "Warning: keeps small turns as one message, then splits large context across two or three messages. The final part starts the task without an extra request. It triples the bridge history budget and compaction thresholds. Changes wait for active requests to finish; restart Codex after the change is applied. Extra requests may increase rate limits or temporary cooldowns. Disabled by default.",
+  biggerContextBody: "Warning: keeps small turns as one message, then splits large context across two or six messages. The final part starts the task without an extra request. It triples the bridge history budget and compaction thresholds. Changes wait for active requests to finish; restart Codex after the change is applied. Extra requests may increase rate limits or temporary cooldowns. Disabled by default.",
   biggerContextRecommendationTitle: "Use up to 3× more context",
   biggerContextRecommendationBody: "Bigger Context sends large tasks in multiple messages so NEKODEX can use up to three times more context. It remains experimental and can increase rate limits or temporary cooldowns.",
   biggerContextRecommendationToggleBody: "Stage large tasks across multiple messages and raise the model context and compaction limits.",
@@ -461,12 +468,18 @@ const zh: Record<keyof typeof en, string> = {
   compactionModelBody: "仅选择下一次自动 Pro 上下文摘要使用的模型。任务回合保持原模型。不可用时在发送前报错，不自动切换。",
   compactionFollow: "跟随任务模型",
   usageTitle: "本地使用统计",
+  routingCatalogFailed: "失败（HTTP {status}；{reason}）",
+  routingCatalogFailureBody: "Codex 已连接到 NEKODEX，但模型目录请求失败。请检查“活动”和上方路由信息；若问题持续，请导出隐私安全诊断。",
   usageBody: "从安装此功能开始统计浏览器已接受的消息，包括上下文分段。手动发送的模型身份未知，不猜测版本。未记录结果包括活动请求和记录中断。使用本地日期，不代表官方配额或剩余额度。",
   usageUnavailable: "使用记录不可用。",
   usageUnknown: "未知",
   usageRange: "统计周期",
   usageDays: "天",
   usageLifetime: "累计接受",
+  usageLifetimeGroups: "按模式和模型统计的累计消息",
+  usageLifetimeUnclassified: "未保留模型详情的较早已接受消息",
+  usageRecovered: "使用记录已从本地备份恢复。最近的消息或结果可能缺失。",
+  usageBackupUnavailable: "无法更新恢复备份。当前使用记录仍保存在主历史文件中。",
   usageSince: "记录开始于",
   usageGroups: "按模式和模型统计消息",
   usageModel: "模式 / 模型",
@@ -619,7 +632,7 @@ const zh: Record<keyof typeof en, string> = {
 
   confirmPicker: "已在 Codex 中看到 Web 模型",
   contextActiveStandard: "当前：标准历史预算。这是浏览器传输预算，不是 API 模型的上下文窗口。",
-  contextActiveBigger: "当前：更大上下文，标准历史预算的 3 倍。大回合最多分三条消息，API 模型窗口不变。",
+  contextActiveBigger: "当前：更大上下文，标准历史预算的 3 倍。大回合最多分六条消息，API 模型窗口不变。",
   contextWaiting: "更改已保存，等待当前请求结束。现有预算仍有效。",
   contextApplying: "正在应用保存的上下文更改…",
   contextFailed: "无法应用上下文更改，已保留当前设置。",
@@ -665,7 +678,7 @@ const zh: Record<keyof typeof en, string> = {
   devSettingsTitle: "DEV 配置设置",
   devKeepRunningBody: "窗口关闭后保持隔离的浏览器会话和 DEV MCP Tunnel 可用。",
   biggerContext: "更大上下文（实验性）",
-  biggerContextBody: "警告：较小回合仍作为一条消息发送；较大的上下文会拆分为两条或三条消息，最后一部分会直接开始任务，不会额外发送请求。桥接历史预算和压缩阈值扩大三倍。等待当前请求结束后应用更改，再重启 Codex。额外请求可能提高触发速率限制或临时冷却的概率。默认关闭。",
+  biggerContextBody: "警告：较小回合仍作为一条消息发送；较大的上下文会拆分为两条或六条消息，最后一部分会直接开始任务，不会额外发送请求。桥接历史预算和压缩阈值扩大三倍。等待当前请求结束后应用更改，再重启 Codex。额外请求可能提高触发速率限制或临时冷却的概率。默认关闭。",
   biggerContextRecommendationTitle: "使用多达 3 倍的上下文",
   biggerContextRecommendationBody: "Bigger Context 通过多条消息发送大型任务，让 NEKODEX 使用多达三倍的上下文。此功能仍处于实验阶段，可能增加触发速率限制或临时冷却的概率。",
   biggerContextRecommendationToggleBody: "将大型任务分成多条消息，并提高模型上下文与压缩限制。",
@@ -911,12 +924,18 @@ const ja: Record<keyof typeof en, string> = {
   compactionModelBody: "次の自動 Pro コンテキスト要約のモデルだけを変更します。通常のタスクは元のモデルを維持します。利用不可なら送信前に停止し、代替しません。",
   compactionFollow: "タスクのモデルに従う",
   usageTitle: "ローカル使用状況",
+  routingCatalogFailed: "失敗（HTTP {status}、{reason}）",
+  routingCatalogFailureBody: "Codex は NEKODEX に接続しましたが、モデルカタログ要求が失敗しました。アクティビティと上記のルーティング情報を確認し、問題が続く場合はプライバシー保護済みの診断情報をエクスポートしてください。",
   usageBody: "この機能の導入以降、コンテキスト分割を含む受理済みメッセージを数えます。手動送信のモデルは不明です。版を推測しません。未記録には実行中や記録中断も含みます。現地日付による集計で、公式の利用枠ではありません。",
   usageUnavailable: "使用履歴を取得できません。",
   usageUnknown: "不明",
   usageRange: "集計期間",
   usageDays: "日",
   usageLifetime: "累計受理数",
+  usageLifetimeGroups: "モード・モデル別の累計メッセージ数",
+  usageLifetimeUnclassified: "モデル詳細が保存されていない過去の受理済みメッセージ",
+  usageRecovered: "使用履歴をローカルバックアップから復元しました。最近のメッセージや結果が欠けている可能性があります。",
+  usageBackupUnavailable: "復元用バックアップを更新できませんでした。現在の使用状況はメインの履歴ファイルに保存されています。",
   usageSince: "記録開始日",
   usageGroups: "モードとモデル別メッセージ",
   usageModel: "モード / モデル",
@@ -1069,7 +1088,7 @@ const ja: Record<keyof typeof en, string> = {
 
   confirmPicker: "Codex に Web モデルが表示されています",
   contextActiveStandard: "現在：標準の履歴容量。ブラウザー転送用の容量であり、API モデルのコンテキスト上限ではありません。",
-  contextActiveBigger: "現在：Bigger Context、標準履歴容量の 3 倍。大きいターンは最大 3 メッセージで転送し、API モデルの上限は変わりません。",
+  contextActiveBigger: "現在：Bigger Context、標準履歴容量の 3 倍。大きいターンは最大 6 メッセージで転送し、API モデルの上限は変わりません。",
   contextWaiting: "変更を保存しました。実行中の要求が終わるまで現在の設定を維持します。",
   contextApplying: "保存したコンテキスト変更を適用中…",
   contextFailed: "コンテキスト変更を適用できませんでした。現在の設定は維持されています。",
@@ -1115,7 +1134,7 @@ const ja: Record<keyof typeof en, string> = {
   devSettingsTitle: "DEV プロファイル設定",
   devKeepRunningBody: "ウィンドウを閉じても、隔離されたブラウザーセッションと DEV MCP トンネルを使用可能な状態に保ちます。",
   biggerContext: "Bigger Context（試験的）",
-  biggerContextBody: "警告：小さなターンは 1 件のメッセージとして維持し、大きなコンテキストは 2～3 件のメッセージに分割します。最後の部分から追加リクエストなしでタスクを開始します。ブリッジの履歴容量と圧縮しきい値が 3 倍になります。実行中の要求が終わって変更が適用された後、Codex を再起動してください。追加リクエストにより、レート制限や一時的なクールダウンが発生しやすくなる場合があります。初期設定では無効です。",
+  biggerContextBody: "警告：小さなターンは 1 件のメッセージとして維持し、大きなコンテキストは 2 件または 6 件のメッセージに分割します。最後の部分から追加リクエストなしでタスクを開始します。ブリッジの履歴容量と圧縮しきい値が 3 倍になります。実行中の要求が終わって変更が適用された後、Codex を再起動してください。追加リクエストにより、レート制限や一時的なクールダウンが発生しやすくなる場合があります。初期設定では無効です。",
   biggerContextRecommendationTitle: "最大 3 倍のコンテキストを使用",
   biggerContextRecommendationBody: "Bigger Context は大きなタスクを複数のメッセージで送信し、NEKODEX で最大 3 倍のコンテキストを使用できるようにします。試験的な機能であり、レート制限や一時的なクールダウンが発生しやすくなる場合があります。",
   biggerContextRecommendationToggleBody: "大きなタスクを複数のメッセージに分割し、モデルのコンテキスト上限とコンパクション上限を引き上げます。",
@@ -1354,10 +1373,13 @@ const ja: Record<keyof typeof en, string> = {
 
 export type Copy = typeof en;
 
+// Russian copy adapts upstream PR #584 to the full NEKODEX dictionary and connector contracts.
+const russianCopy = russian satisfies Record<keyof typeof en, string>;
 const koreanCopy = korean satisfies Record<keyof typeof en, string>;
 const traditionalChineseCopy = traditionalChinese satisfies Record<keyof typeof en, string>;
 
 export function copyFor(language: Language): Copy {
+  if (language === "ru") return russianCopy as Copy;
   if (language === "zh-CN") return zh as Copy;
   if (language === "zh-TW") return traditionalChineseCopy as Copy;
   if (language === "ja") return ja as Copy;

@@ -5,14 +5,14 @@ NEKODEX は独自の猫アイコン、概要画面、独立したアカウント
 グラファイトとラベンダーの配色を備えています。
 [デザインと互換性の説明](docs/design/nekodex.md)を参照してください。
 
-**ダウンロード版：** `5.3.0-nekodex.1`。macOS 13 以降に対応しています。
+**ダウンロード版：** `5.4.0-nekodex.1`。macOS 13 以降に対応しています。
 
 | Mac | ダウンロード |
 | --- | --- |
-| Apple Silicon（M1 以降） | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/NEKODEX-5.3.0-nekodex.1-mac-arm64.dmg) |
-| Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/NEKODEX-5.3.0-nekodex.1-mac-x64.dmg) |
+| Apple Silicon（M1 以降） | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/NEKODEX-5.4.0-nekodex.1-mac-arm64.dmg) |
+| Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/NEKODEX-5.4.0-nekodex.1-mac-x64.dmg) |
 
-[リリースページ](https://github.com/Froraut/NEKODEX/releases/tag/v5.3.0-nekodex.1) · [チェックサム](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/checksums.txt)。このリリースは macOS 版のみです。
+[リリースページ](https://github.com/Froraut/NEKODEX/releases/tag/v5.4.0-nekodex.1) · [チェックサム](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/checksums.txt)。このリリースは macOS 版のみです。
 旧アップデーターは以前の実行ファイル名を検証するため、初回は手動での移行が必要です。
 アカウント状態を保持するため、既存のブラウザープロファイルとデータ識別子を維持します。
 
@@ -39,7 +39,7 @@ Bun 1.4.0 を使用してください。`dev:launcher` はレビューとログ�
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a>
 </p>
 
 <p align="center">

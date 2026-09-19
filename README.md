@@ -27,18 +27,23 @@ The interface uses a quiet graphite-and-lavender palette, responsive layouts and
 
 ## Download
 
-**NEKODEX 5.3.0-nekodex.1 · macOS prerelease · macOS 13 or later**
+**NEKODEX 5.4.0-nekodex.1 · prerelease · macOS 13 or later / Linux x64**
 
 | Your Mac | Download |
 | --- | --- |
-| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/NEKODEX-5.3.0-nekodex.1-mac-arm64.dmg) |
-| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/NEKODEX-5.3.0-nekodex.1-mac-x64.dmg) |
+| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/NEKODEX-5.4.0-nekodex.1-mac-arm64.dmg) |
+| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/NEKODEX-5.4.0-nekodex.1-mac-x64.dmg) |
 
 Both macOS builds are **Developer ID signed and Apple notarized**, including the final DMGs with stapled notarization tickets.
 
-[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.3.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.3.0-nekodex.1/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
+[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.4.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
 
-Windows and Linux code remains in the repository. **This release provides macOS builds only.**
+Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/codex-web-gpt-5.4.0-nekodex.1-linux-x64.AppImage).
+
+Windows x64 is built separately as an **unsigned preview** installer and ZIP in the
+[release workflow artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml).
+It has no Authenticode publisher certificate and is not delivered through authenticated in-app updates.
+The preview artifact is retained for 90 days; downloading Actions artifacts requires GitHub sign-in.
 
 ### Install
 
@@ -182,7 +187,7 @@ For changes, select small relevant checks and inspect affected callers. Do not t
 <details>
 <summary>Other language guides</summary>
 
-The [Chinese](README.zh-CN.md) and [Japanese](README.ja.md) guides retain earlier upstream context. They have not yet been fully updated for the current NEKODEX release. Use this English README for current downloads and connector names.
+The [Russian guide](README.ru.md) covers the current release. The [Chinese](README.zh-CN.md) and [Japanese](README.ja.md) guides retain earlier upstream context. They have not yet been fully updated for the current NEKODEX release. Use this English README for current downloads and connector names.
 
 </details>
 

@@ -13,6 +13,14 @@ on:
         options:
           - macos
           - all
+      windows_delivery:
+        description: Windows delivery for all-platform prereleases; preview is an unsigned Actions artifact, never an authenticated update
+        type: choice
+        required: true
+        default: signed
+        options:
+          - signed
+          - preview
 
 permissions:
   contents: read
@@ -37,6 +45,7 @@ jobs:
         name: Validate selected release tag and platform scope
         env:
           RELEASE_PLATFORM_SCOPE: ${{ inputs.platform_scope || 'all' }}
+          RELEASE_WINDOWS_DELIVERY: ${{ inputs.windows_delivery || 'signed' }}
         run: node scripts/release-plan.cjs
 
   build:
@@ -156,6 +165,52 @@ jobs:
           }
           Remove-Item -LiteralPath "$env:RUNNER_TEMP/codex-web-release-signing.pfx" -Force -ErrorAction SilentlyContinue
 
+  windows-preview:
+    needs: plan
+    if: github.event_name == 'workflow_dispatch' && inputs.platform_scope == 'all' && inputs.windows_delivery == 'preview'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: launcher
+      - name: Prepare AVX2-independent Windows runtime
+        shell: pwsh
+        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
+      - name: Build explicitly unsigned Windows preview
+        env:
+          CODEX_WEB_GPT_RELEASE: "0"
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          bun run --cwd launcher build:renderer
+          bun run --cwd launcher build:runtime
+          bun run --cwd launcher scripts/package.cjs --win
+      - name: Mark preview and record artifact integrity
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if (-not $version.Contains('-')) { throw 'Unsigned preview requires a prerelease version' }
+          $files = Get-ChildItem launcher/artifacts -File | Where-Object { $_.Extension -in '.exe','.zip' }
+          if ($files.Count -ne 2) { throw 'Expected exactly the Windows installer and ZIP' }
+          "UNSIGNED WINDOWS PREVIEW`nVersion: $version`nSource: $env:GITHUB_SHA`nThis development build has no Authenticode publisher signature. It is not an authenticated in-app update. Integrity hashes do not replace a publisher certificate." | Set-Content launcher/artifacts/UNSIGNED-PREVIEW.txt -Encoding utf8
+          $files | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content launcher/artifacts/preview-checksums.txt -Encoding utf8
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: NEKODEX-${{ github.ref_name }}-windows-x64-unsigned
+          path: |
+            launcher/artifacts/*.exe
+            launcher/artifacts/*.zip
+            launcher/artifacts/UNSIGNED-PREVIEW.txt
+            launcher/artifacts/preview-checksums.txt
+          if-no-files-found: error
+          retention-days: 90
+
   publish:
     needs: build
     environment: release-publishing
@@ -172,6 +227,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
+          pattern: release-*
           merge-multiple: true
       - name: Verify release tag matches package version
         run: |

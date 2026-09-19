@@ -1148,8 +1148,10 @@ export function createChatGptWebAdapter(
                 // available to a canonical reconnect without a second browser submission.
                 throw error;
               }
-              const handoffError = error instanceof Error ? error : new Error(String(error));
-              console.error("[chatgpt-web] structured context handoff failed:", handoffError);
+              const failure = error instanceof Error ? error : new Error(String(error));
+              const primary = failure instanceof AggregateError ? failure.errors[0] : failure;
+              const handoffError = primary instanceof ChatGptWebAdapterError ? primary : failure;
+              console.error("[chatgpt-web] structured context handoff failed:", failure);
               emit({
                 type: "error",
                 message: handoffError instanceof ChatGptWebAdapterError
@@ -1471,6 +1473,9 @@ export function createChatGptWebAdapter(
               // that Codex already shows as stopped waiting forever.
               chatGptTurnSessions.retire(executionKey, session);
             }
+            // A real observer disconnect arms residual cleanup only after exact broker retirement;
+            // unanswered tools and approval waits never expire solely because of their age.
+            if (!session.runtime.manualControl) chatGptTurnSessions.scheduleDetachedToolRetirement(executionKey, session);
             // Automatic browser turns keep their exact execution and journal for reconnect. Their
             // owned DOM observer can continue proving the same accepted ChatGPT submission.
             throw error;

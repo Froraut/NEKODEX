@@ -14,6 +14,23 @@ const turndown = new TurndownService({
 
 turndown.use(gfm);
 turndown.remove(["button", "script", "style"]);
+turndown.addRule("literalCodexPlanMarkers", {
+  filter: node => {
+    if (!["P", "DIV"].includes(node.nodeName)
+      || !/<\/?proposed_plan>/.test(node.textContent ?? "")
+      || node.querySelector("pre, code, blockquote, q")) return false;
+    for (let ancestor = node.parentNode; ancestor; ancestor = ancestor.parentNode) {
+      if (["PRE", "CODE", "BLOCKQUOTE", "Q"].includes(ancestor.nodeName)) return false;
+    }
+    return true;
+  },
+  replacement: content => {
+    // Restore only literal standalone markers escaped by Turndown. Do this while the HTML
+    // ancestry is available, so quoted examples and fenced/inline code cannot become plans.
+    const restored = content.replace(/^([ \t]*)<(\/?)proposed\\_plan>([ \t]*)$/gm, "$1<$2proposed_plan>$3");
+    return `\n\n${restored}\n\n`;
+  },
+});
 const fileLabelSelector = "button.behavior-btn.entity-underline, span[data-chatgpt-file-label]";
 turndown.addRule("inertFileLabelLinks", {
   filter: node => node.nodeName === "A" && Boolean(node.querySelector(fileLabelSelector)),

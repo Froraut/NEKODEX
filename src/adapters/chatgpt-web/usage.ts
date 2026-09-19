@@ -2,6 +2,7 @@ import { skillFileTokens } from "./skill-attachments";
 import { estimateTokens } from "../../lib/token-estimate";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
+  CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
   isChatGptWebZeroRiskBackendModel,
   resolveChatGptWebContextLimits,
   resolveChatGptWebMessageTokenBudget,
@@ -62,7 +63,7 @@ export function estimateChatGptWebInputTokens(
 /**
  * The compaction threshold chooses the initial part count. Whole records and composer limits
  * can require more parts even when the total token estimate is small. Plan before submission;
- * compaction always receives all three parts without passing through the legacy inline budget.
+ * compaction always receives all six parts without passing through the legacy inline budget.
  */
 export function resolveBiggerContextMultipartParts(
   parsed: CodexParsedRequest,
@@ -106,12 +107,12 @@ export function resolveBiggerContextMultipartParts(
       );
       if (estimateTokens(text, parsed.modelId) > budget) return false;
     }
-    return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId) < contextWindow * messages.length;
+    return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId) < contextWindow * Math.min(messages.length, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
   };
   if (initialParts === undefined && fits(inline)) return undefined;
   try { return fits(compile(2)) ? 2 : CHATGPT_BIGGER_CONTEXT_PARTS; }
   catch (error) {
-    // A valid context that cannot be partitioned into two complete messages may still fit three.
+    // A valid context that cannot be partitioned into two complete messages may still fit six.
     if (error && typeof error === "object" && "code" in error
       && error.code === "context_length_exceeded") return CHATGPT_BIGGER_CONTEXT_PARTS;
     throw error;
