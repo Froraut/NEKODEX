@@ -322,6 +322,13 @@ function trayImage() {
 }
 
 const NATIVE_COPY = Object.freeze({
+  ru: Object.freeze({
+    openLauncher: "Открыть NEKODEX", quit: "Выйти", exportDiagnostics: "Экспортировать диагностику без личных данных",
+    cancel: "Отмена", remove: "Удалить", removeTitle: "Удалить NEKODEX",
+    removeMessage: "Удалить модели ChatGPT Web из Codex и восстановить прежний маршрут моделей?",
+    removeDetail: "Профиль входа ChatGPT в NEKODEX сохранится. Codex потребуется один раз перезапустить.",
+    catalogFailure: "Codex подключился к NEKODEX, но загрузка списка моделей завершилась ошибкой (HTTP {status}; {reason}). Проверьте маршрутизацию и события. Если ошибка повторяется, экспортируйте диагностику без личных данных.",
+  }),
   en: Object.freeze({
     openLauncher: "Open NEKODEX",
     quit: "Quit",
@@ -385,8 +392,9 @@ function nativeCopyFor(language) {
 
 function updateApplicationMenu(language) {
   if (process.platform !== "darwin") return;
-  const labels = { en: "Check for updates…", "zh-CN": "检查更新…", "zh-TW": "檢查更新…", ja: "アップデートを確認…", ko: "업데이트 확인…" };
+  const labels = { ru: "Проверить обновления…", en: "Check for updates…", "zh-CN": "检查更新…", "zh-TW": "檢查更新…", ja: "アップデートを確認…", ko: "업데이트 확인…" };
   Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenu({
+    language,
     name: LAUNCHER_PROFILE.displayName,
     checkLabel: labels[language] || labels.en,
     onCheck: () => {
@@ -566,7 +574,7 @@ async function loadRenderer(window) {
 
 function validateLanguage(value) {
   if (typeof value !== "string" || !Object.hasOwn(LANGUAGES, value)) {
-    throw new Error("Language must be en, zh-CN, zh-TW, ja, or ko");
+    throw new Error("Language must be en, zh-CN, zh-TW, ja, ko, or ru");
   }
   return value;
 }

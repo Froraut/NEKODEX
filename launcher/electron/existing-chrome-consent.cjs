@@ -1,5 +1,6 @@
 const CHROME_SETTINGS_ADDRESS = "chrome://inspect/#remote-debugging";
 const COPY = {
+  ru: {"title": "Использовать существующий вход из Chrome?", "message": "Импортировать сеанс ChatGPT из текущего профиля Google Chrome", "detail": "Разрешение Chrome предоставляет широкие возможности отладки браузера. NEKODEX использует соединение один раз для чтения файлов cookie входа ChatGPT/OpenAI и затем отключается. Другие сайты, сохранённые пароли, историю и содержимое страниц приложение не читает; профиль Chrome не копирует и Chrome не закрывает.\n\nВам нужно самостоятельно включить удалённую отладку по адресу chrome://inspect/#remote-debugging и разрешить соединение в диалоге самого Chrome. После импорта отладку можно выключить. Текущий аккаунт Chrome остаётся открытым; NEKODEX проверяет собственный импортированный сеанс.", "cancel": "Отмена", "allow": "Перейти к разрешению Chrome"},
   en: {
     title: "Use your existing Chrome sign-in?",
     message: "Import the ChatGPT sign-in from your current Google Chrome profile",

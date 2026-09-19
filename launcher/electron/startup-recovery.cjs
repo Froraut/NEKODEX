@@ -9,6 +9,17 @@ const STARTUP_PHASES = Object.freeze({
 });
 
 const RECOVERY_COPY = Object.freeze({
+  ru: {
+    title: "Не удалось запустить NEKODEX", failed: phase => `Ошибка запуска на этапе: ${phase}.`,
+    unavailable: "Приложение завершит работу. Откройте его снова, чтобы повторить попытку.",
+    timeout: "Истекло время ожидания готовности на этом этапе. ",
+    detail: "Перезапустите приложение для новой попытки или выйдите и откройте его позже. Сохранённые настройки и данные входа останутся на месте.",
+    quit: "Выйти", restart: "Перезапустить", phases: {
+      "runtime-files": "подготовка встроенной среды", "electron-ready": "запуск приложения", window: "создание окна NEKODEX",
+      "browser-control": "запуск внутренней службы управления браузером", browser: "подготовка встроенного браузера",
+      renderer: "загрузка интерфейса", runtime: "запуск локальной среды",
+    },
+  },
   en: {
     title: "NEKODEX could not start", failed: phase => `Startup failed while ${phase}.`,
     unavailable: "The application will exit. Open it again to retry.",

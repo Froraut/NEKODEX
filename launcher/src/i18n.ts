@@ -1,5 +1,6 @@
 import type { Language } from "./types";
 import korean from "./i18n-ko.json";
+import russian from "./i18n-ru.json";
 import traditionalChinese from "./i18n-zh-TW.json";
 
 const en = {
@@ -1372,10 +1373,13 @@ const ja: Record<keyof typeof en, string> = {
 
 export type Copy = typeof en;
 
+// Russian copy adapts upstream PR #584 to the full NEKODEX dictionary and connector contracts.
+const russianCopy = russian satisfies Record<keyof typeof en, string>;
 const koreanCopy = korean satisfies Record<keyof typeof en, string>;
 const traditionalChineseCopy = traditionalChinese satisfies Record<keyof typeof en, string>;
 
 export function copyFor(language: Language): Copy {
+  if (language === "ru") return russianCopy as Copy;
   if (language === "zh-CN") return zh as Copy;
   if (language === "zh-TW") return traditionalChineseCopy as Copy;
   if (language === "ja") return ja as Copy;
