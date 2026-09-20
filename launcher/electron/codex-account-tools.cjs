@@ -2,6 +2,7 @@ const { AccountQuotaReader } = require('./account-quotas.cjs');
 const { createCodexLoginController, OFFICIAL_DEVICE_VERIFICATION_URL } = require('./codex-login.cjs');
 const { allowedAuthUrl } = require('./browser-host.cjs');
 const { validateAccountId } = require('./account-registry.cjs');
+const { awaitInspection } = require('./inspection-control.cjs');
 
 function sameIdentity(a, b) {
   return Boolean(a && b && a.accountId === b.accountId
@@ -81,9 +82,13 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
       // Reuse the host's bounded read-only inspection lease. Its abort path advances the
       // authentication generation, so a timed-out read cannot commit a stale signed-in result.
       return host.withReadOnlyInspection('Codex sign-in reconciliation', signal =>
-        host.probeAuthentication({ signal }));
+        awaitInspection(host.probeAuthentication({ signal }), signal));
     })
-      .catch(error => logger.warn('codex.account_login_reconciliation_failed', { accountId: id, message: error.message }))
+      .catch(error => logger?.warn?.('codex.account_login_reconciliation_failed', {
+        accountId: id,
+        reason: error?.message === 'Browser check timed out' ? 'timed_out'
+          : error?.name === 'AbortError' ? 'cancelled' : 'failed',
+      }))
       .finally(() => {
         release();
         if (releaseAccountOperation === release) releaseAccountOperation = null;

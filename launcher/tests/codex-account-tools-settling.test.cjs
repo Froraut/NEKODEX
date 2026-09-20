@@ -77,3 +77,51 @@ test('terminal Codex login remains settling until bounded account reconciliation
   assert.equal(leaseHeld, false);
   assert.equal(tools.snapshot().settling, false);
 });
+
+test('aborted reconciliation releases the account lease without waiting for its queued probe', async () => {
+  let current = loginProgress(true);
+  let leaseHeld = false;
+  let abortInspection;
+  const pendingProbe = new Promise(() => {});
+  const host = {
+    withReadOnlyInspection: (_name, action) => {
+      const controller = new AbortController();
+      abortInspection = () => controller.abort(Object.assign(new Error('fixture abort'), { name: 'AbortError' }));
+      return action(controller.signal);
+    },
+    probeAuthentication: () => pendingProbe,
+  };
+  const pool = {
+    accountSnapshot: () => ({ accounts: [{ id: 'default', authenticated: true }] }),
+    accountIdentityLease: id => ({ accountId: id, identityEpoch: 1, principalFingerprint: 'principal' }),
+    currentOperation: () => null,
+    acquireAccountOperation: () => {
+      leaseHeld = true;
+      return () => { leaseHeld = false; };
+    },
+    getHost: () => host,
+  };
+  const controller = {
+    selectionLock: () => current.active ? { flowId: current.flowId, accountId: current.accountId } : null,
+    start: async () => current,
+    status: () => current,
+    destroy: async () => {},
+  };
+  const tools = createCodexAccountTools({
+    getPool: () => pool,
+    BrowserWindow: class {}, clipboard: { writeText() {} }, codexHome: '/tmp',
+    quotaReader: { clear() {} }, createController: () => controller,
+  });
+
+  await tools.start('default');
+  current = loginProgress(false);
+  assert.equal(tools.status(current.flowId, current.accountId).settling, true);
+  await Promise.resolve();
+  assert.equal(leaseHeld, true);
+
+  abortInspection();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(leaseHeld, false);
+  assert.equal(tools.snapshot().settling, false);
+});
