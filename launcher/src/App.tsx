@@ -207,6 +207,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [catalogFailure, setCatalogFailure] = useState<string | null>(null);
   const catalogAlert = useRef<string | null>(null);
+  const acceptedLifecycle = useRef<LifecycleProjection | null>(null);
+  const currentInteractionMode = useRef<BrowserInteractionMode>("automatic");
   const [startupError, setStartupError] = useState<string | null>(null);
   const [startupAttempt, setStartupAttempt] = useState(0);
   const stateRevision = useRef(0);
@@ -219,6 +221,23 @@ export function App() {
   const lastOperationName = useRef<string | null>(null);
   const completionRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const documentLanguage = snapshot?.state.language ?? "en";
+  const currentLanguage = useRef(documentLanguage);
+  currentLanguage.current = documentLanguage;
+  const acceptLifecycle = useCallback((next: LifecycleProjection | null | undefined) => {
+    if (!next || (acceptedLifecycle.current?.revision ?? -1) >= next.revision) return false;
+    // Advance the receipt synchronously. React may defer setSnapshot, while a
+    // competing event or snapshot must already observe this same revision.
+    acceptedLifecycle.current = next;
+    if (currentInteractionMode.current === "manual" || next.catalog?.status === "ready") {
+      const staleCatalogAlert = catalogAlert.current;
+      catalogAlert.current = null;
+      setCatalogFailure(null);
+      setError(current => current === staleCatalogAlert ? null : current);
+    } else if (next.catalog?.status === "failed") {
+      setCatalogFailure(copyFor(currentLanguage.current).catalogFailureKeptInstall);
+    }
+    return true;
+  }, []);
   const [updatePanelRequest, setUpdatePanelRequest] = useState(0);
   const seenUpdatePanelRequest = useRef(0);
   useEffect(() => {
@@ -261,6 +280,8 @@ export function App() {
         if (attempt === 0) await load(1);
         return;
       }
+      currentInteractionMode.current = fresh.state.browserInteractionMode;
+      acceptLifecycle(fresh.lifecycle);
       setSnapshot(current => {
         if (!current) return current;
         const keepNewerLifecycle = (current.lifecycle?.revision ?? -1) > (fresh.lifecycle?.revision ?? -1);
@@ -288,7 +309,7 @@ export function App() {
       if (refreshInFlight.current === pending) refreshInFlight.current = null;
     }).catch(() => {});
     return pending;
-  }, []);
+  }, [acceptLifecycle]);
 
   useEffect(() => {
     document.documentElement.lang = documentLanguage;
@@ -298,6 +319,7 @@ export function App() {
     if (!api) return;
     let cancelled = false;
     let initialized = false;
+    acceptedLifecycle.current = null;
     let pendingState: LauncherState | null = null;
     let pendingBrowser: BrowserState | null = null;
     let pendingOperation: OperationState | null = null;
@@ -315,7 +337,9 @@ export function App() {
     };
     const unsubscribeState = api.onStateChanged((state) => {
       stateRevision.current += 1;
-      if (state.codexCatalogVerified === true) {
+      currentInteractionMode.current = state.browserInteractionMode;
+      if (state.browserInteractionMode === "manual"
+        || (state.codexCatalogVerified === true && !(api as ProjectedLauncherApi).onLifecycle)) {
         const staleCatalogAlert = catalogAlert.current;
         catalogAlert.current = null;
         setCatalogFailure(null);
@@ -335,6 +359,9 @@ export function App() {
       else setBrowser(next);
     });
     const unsubscribeOperation = api.onOperation((next) => {
+      const lifecycleRevision = (next as OperationState & { revision?: number }).revision;
+      if (next.name === "catalog-verification" && typeof lifecycleRevision === "number"
+        && lifecycleRevision < (acceptedLifecycle.current?.revision ?? -1)) return;
       operationRevision.current += 1;
       lastOperationStatus.current = next.status;
       lastOperationName.current = next.name;
@@ -350,7 +377,7 @@ export function App() {
         });
       }
       if (next.name === "catalog-verification") {
-        if (next.status === "failed") {
+        if (next.status === "failed" && currentInteractionMode.current !== "manual") {
           catalogAlert.current = next.message;
           setCatalogFailure(next.message);
           setError(next.message);
@@ -386,21 +413,16 @@ export function App() {
       setSnapshot((current) => current ? { ...current, update } : current);
     });
     const unsubscribeLifecycle = (api as ProjectedLauncherApi).onLifecycle?.((next) => {
-      if (!initialized) pendingLifecycle = next;
+      if (!initialized) {
+        if (!pendingLifecycle || pendingLifecycle.revision < next.revision) pendingLifecycle = next;
+      }
       else {
+        if (!acceptLifecycle(next)) return;
         setSnapshot(current => {
-          if (!current || (current.lifecycle?.revision ?? -1) >= next.revision) return current;
+          if (!current) return current;
           return { ...current, lifecycle: next, runtimeStatus: next.runtimeStatus,
             runtimeCapabilities: next };
         });
-        if (next.catalog?.status === "failed") {
-          setCatalogFailure(copyFor(documentLanguage).catalogFailureKeptInstall);
-        } else if (next.catalog?.status === "ready") {
-          const staleCatalogAlert = catalogAlert.current;
-          catalogAlert.current = null;
-          setCatalogFailure(null);
-          setError(current => current === staleCatalogAlert ? null : current);
-        }
       }
     }) ?? (() => {});
     void api.snapshot().then((rawNext) => {
@@ -410,6 +432,8 @@ export function App() {
       const latestOperation = (pendingOperation as OperationState | null) ?? next.operation;
       const lifecycle = pendingLifecycle && pendingLifecycle.revision > (next.lifecycle?.revision ?? -1)
         ? pendingLifecycle : next.lifecycle;
+      currentInteractionMode.current = latestState.browserInteractionMode;
+      acceptLifecycle(lifecycle);
       setSnapshot({
         ...next,
         ...(lifecycle ? { lifecycle, runtimeStatus: lifecycle.runtimeStatus,
@@ -424,11 +448,13 @@ export function App() {
           && JSON.stringify(existing.detail) === JSON.stringify(record.detail)));
       setLogs([...next.logs, ...unseenLogs].slice(-300));
       setOperation(latestOperation);
-      if (latestState.codexCatalogVerified !== true && lifecycle?.catalog?.status === "failed") {
+      if (latestState.browserInteractionMode !== "manual" && latestState.codexCatalogVerified !== true && lifecycle?.catalog?.status === "failed") {
         setCatalogFailure(copyFor(latestState.language ?? "en").catalogFailureKeptInstall);
       }
+      const catalogOperationRevision = (latestOperation as (OperationState & { revision?: number }) | null)?.revision;
       if (latestOperation?.status === "failed" && latestOperation.name === "catalog-verification"
-        && latestState.codexCatalogVerified !== true) {
+        && latestState.browserInteractionMode !== "manual" && latestState.codexCatalogVerified !== true && lifecycle?.catalog?.status !== "ready"
+        && (typeof catalogOperationRevision !== "number" || catalogOperationRevision >= (lifecycle?.revision ?? -1))) {
         catalogAlert.current = latestOperation.message;
         setCatalogFailure(latestOperation.message);
         setError(latestOperation.message);
@@ -460,11 +486,12 @@ export function App() {
       unsubscribeUpdate();
       unsubscribeLifecycle();
     };
-  }, [startupAttempt, refreshMetadata]);
+  }, [startupAttempt, refreshMetadata, acceptLifecycle]);
 
   const updateState = useCallback((state: LauncherState) => {
     stateRevision.current += 1;
-    if (state.codexCatalogVerified === true) {
+    currentInteractionMode.current = state.browserInteractionMode;
+    if (state.codexCatalogVerified === true || state.browserInteractionMode === "manual") {
       const staleCatalogAlert = catalogAlert.current;
       catalogAlert.current = null;
       setCatalogFailure(null);
@@ -1850,7 +1877,7 @@ function SetupSurface({
       <ConnectionsTabs active="models" copy={copy} modelsReady={pickerReady}
         onModels={() => {}} onTools={showMcp} toolsReady={toolsVerified} />
       {manualInteraction ? <NoticeRow icon="info" tone="success">{copy.manualInteractionBody}</NoticeRow> : null}
-      {catalogFailure ? (
+      {!manualInteraction && catalogFailure ? (
         <section className="connection-inline-failure" aria-labelledby="catalog-failure-title">
           <Icon name="alert" />
           <div><strong id="catalog-failure-title">{copy.catalogUnavailable}</strong><p>{copy.catalogFailureKeptInstall}</p></div>

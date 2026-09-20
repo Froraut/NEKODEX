@@ -1300,6 +1300,7 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:bigger-context", async (_event, enabled) => {
     if (typeof enabled !== "boolean") throw new Error("Context mode must be a boolean");
+    if (shutdownInProgress || quitting || exitCommitted) throw new Error("NEKODEX is shutting down");
     if (!IS_DEV_PROFILE) {
       const current = runtimeHost.runtimeConfigSnapshot();
       if (!current.configured || current.config?.browserInteractionMode === "manual") {
@@ -1871,11 +1872,19 @@ async function start() {
         throw new Error("Pending context change requires an installed automatic model route");
       }
       const health = await runtimeSupervisor.proxyHealthPayload(current.config).catch(() => null);
+      if (quitting || shutdownInProgress || exitCommitted || runtimeHost.currentOperation()) return false;
+      const latest = runtimeHost.runtimeConfigSnapshot();
+      if (!latest.configured || latest.owner !== current.owner || latest.serialized !== current.serialized) return false;
       return health?.status === "ok" && health.accepting_turns === true
         && health.active_http_turns === 0 && health.active_browser_turns === 0
         && health.active_compaction_runs === 0;
     },
-    apply: enabled => runtimeHost.setBiggerContext(enabled),
+    apply: enabled => {
+      if (quitting || shutdownInProgress || exitCommitted) {
+        throw Object.assign(new Error("Context change deferred while NEKODEX is shutting down"), { code: "RUNTIME_BUSY" });
+      }
+      return runtimeHost.setBiggerContext(enabled);
+    },
     onApplied: enabled => {
       invalidateAccountProof(stateStore);
       const state = stateStore.update({ experimentalBiggerContext: enabled, codexCatalogVerified: false,

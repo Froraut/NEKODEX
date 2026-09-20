@@ -95,6 +95,10 @@ function readState(filePath) {
     if (state.browserInteractionMode !== "automatic" && state.browserInteractionMode !== "manual") {
       state.browserInteractionMode = DEFAULT_STATE.browserInteractionMode;
     }
+    if (state.browserInteractionMode === "manual" || state.coreSetupComplete === false) {
+      state.pendingBiggerContext = null;
+      state.contextChangeError = null;
+    }
     if (state.coreSetupComplete !== true) {
       if (state.onboardingComplete !== true) state.browserInteractionMode = "automatic";
       state.experimentalAsyncToolOperations = false;
@@ -211,6 +215,11 @@ function createStateStore(filePath) {
       }
       if (next.coreSetupComplete === true && next.codexCatalogVerified === true) {
         next.codexRestartRequired = false;
+      }
+      if (next.browserInteractionMode === "manual" || next.coreSetupComplete === false) {
+        next.pendingBiggerContext = null;
+        next.contextChangeError = null;
+        next.contextChangeApplying = false;
       }
       return persist(next);
     },

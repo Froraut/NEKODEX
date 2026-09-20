@@ -17,6 +17,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
 }) {
   const overviewId = useId();
   const manual = snapshot.state.browserInteractionMode === "manual";
+  const catalogUnavailable = !manual && Boolean(catalogFailure);
   const signedIn = browser?.authenticated === true;
   const models = modelConnectionReadiness({ manual,
     installed: snapshot.state.coreSetupComplete === true,
@@ -29,27 +30,27 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const runtime = snapshot.runtimeCapabilities ?? snapshot.lifecycle;
   const toolsTransportUnavailable = snapshot.state.mcpRuntimeInstalled && runtime
     && ["degraded", "failed", "recovering", "starting", "stopping"].includes(runtime.tunnelStatus);
-  const heroOpensWorkspace = workspaceReady && !toolsTransportUnavailable && !catalogFailure;
+  const heroOpensWorkspace = workspaceReady && !toolsTransportUnavailable && !catalogUnavailable;
   const activeTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
-  const modelStatus = catalogFailure ? copy.catalogUnavailable
+  const modelStatus = catalogUnavailable ? copy.catalogUnavailable
     : modelsReady ? (manual ? copy.setupInstalledTitle : copy.connectionVerified)
       : models === "picker-pending" ? copy.modelsConfirmShort
         : models === "catalog-pending" ? copy.modelsWaitingShort : copy.connectionPending;
   const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [
     { icon: "accounts", label: copy.accountConnection, ready: signedIn, surface: "accounts",
       status: manual ? copy.manualShort : signedIn ? copy.connectionVerified : copy.signInNeededShort },
-    { error: Boolean(catalogFailure), icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogFailure,
+    { error: catalogUnavailable, icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogUnavailable,
       surface: "setup", status: modelStatus },
     { error: Boolean(toolsTransportUnavailable), icon: "mcp", label: copy.toolsConnectionTab, ready: toolsReady, surface: "mcp",
       status: toolsTransportUnavailable ? copy.localToolsUnavailable : toolsReady ? copy.connectorVerified : copy.connectorNotVerified },
   ];
-  const heroTitle = catalogFailure ? copy.catalogUnavailable
+  const heroTitle = catalogUnavailable ? copy.catalogUnavailable
     : toolsTransportUnavailable ? copy.localToolsUnavailable : ready ? copy.setupChecksPassed
       : (manual || signedIn) && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle;
-  const heroBody = catalogFailure ? copy.catalogFailureKeptInstall
+  const heroBody = catalogUnavailable ? copy.catalogFailureKeptInstall
     : toolsTransportUnavailable ? runtime?.nativeAvailability === "ready" ? copy.localToolsUnavailableNativeBody : copy.localToolsUnavailableBody
     : ready ? copy.connectorAvailableNotExecuted
       : (manual || signedIn) && snapshot.state.coreSetupComplete
