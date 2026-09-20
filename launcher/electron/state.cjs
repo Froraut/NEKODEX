@@ -70,7 +70,6 @@ function readState(filePath) {
     }
     if (typeof state.pendingBiggerContext !== "boolean") state.pendingBiggerContext = null;
     if (typeof state.contextChangeError !== "string") state.contextChangeError = null;
-    if (state.coreSetupComplete === true && state.codexPickerConfirmed !== true) state.codexRestartRequired = true;
     delete state.bridgeEnabled;
     if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;
@@ -129,6 +128,12 @@ function readState(filePath) {
       "launcherRestartRequired",
     ]) {
       if (state[key] !== undefined && typeof state[key] !== "boolean") delete state[key];
+    }
+    // A received catalog and a user's picker confirmation are separate facts.
+    // Older launchers recreated the refresh flag on every launch until the user
+    // confirmed the picker, even after the live catalog monitor had cleared it.
+    if (state.coreSetupComplete === true && state.codexCatalogVerified === true) {
+      state.codexRestartRequired = false;
     }
     if (state.coreSetupComplete === false) {
       state.codexCatalogVerified = false;
@@ -203,6 +208,9 @@ function createStateStore(filePath) {
         next.experimentalAsyncToolOperations = false;
       } else if (patch.codexCatalogVerified === false) {
         next.codexPickerConfirmed = false;
+      }
+      if (next.coreSetupComplete === true && next.codexCatalogVerified === true) {
+        next.codexRestartRequired = false;
       }
       return persist(next);
     },

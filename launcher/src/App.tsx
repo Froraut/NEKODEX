@@ -1,5 +1,5 @@
 import type { CompactionModel } from "./types";
-import { modelConnectionReadiness, setupNextStep } from "./setup-progress";
+import { codexSettingsStatus, modelConnectionReadiness, setupNextStep } from "./setup-progress";
 import languages from "../electron/languages.json";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
@@ -1182,6 +1182,8 @@ function LauncherShell({
             {surface === "settings" ? (
               <SettingsSurface
                 browser={browser}
+                catalogFailure={catalogFailure}
+                showModelSetup={() => navigateSurface("setup")}
                 configureInteractionMode={(mode) => {
                   setMcpTargetMode(mode);
                   setSurface("mcp");
@@ -2424,6 +2426,8 @@ function ActivitySurface({
 
 function SettingsSurface({
   browser,
+  catalogFailure,
+  showModelSetup,
   configureInteractionMode,
   copy,
   devProfile,
@@ -2438,6 +2442,8 @@ function SettingsSurface({
   updateState,
 }: {
   browser: BrowserState | null;
+  catalogFailure: string | null;
+  showModelSetup: () => void;
   configureInteractionMode: (mode: BrowserInteractionMode) => void;
   copy: Copy;
   devProfile: boolean;
@@ -2472,6 +2478,7 @@ function SettingsSurface({
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const codexStatus = codexSettingsStatus(snapshot.state, devProfile, Boolean(catalogFailure));
   const proModelBusy = busy
     || operation?.status === "running"
     || browser?.tabs.some((tab) => tab.status === "running") === true;
@@ -2730,11 +2737,18 @@ function SettingsSurface({
         </SettingRow>
       </div>
 
-      {!devProfile && snapshot.state.codexRestartRequired ? (
-        <NoticeRow icon="alert" tone="warning">
-          {copy.restartCodex}
-        </NoticeRow>
-      ) : null}
+      {codexStatus ? <section className="codex-settings-status" aria-label={copy.modelsConnectionTab}>
+        <div role="status"><strong>{codexStatus === "picker" ? copy.setupConfirmTitle
+          : codexStatus === "catalog-error" ? copy.catalogUnavailable
+          : codexStatus === "catalog" ? copy.setupCatalogTitle
+          : codexStatus === "removed" ? copy.integrationRemoved : copy.codexSettingsSaved}</strong>
+          <p>{codexStatus === "picker" ? copy.setupConfirmBody
+            : codexStatus === "catalog-error" ? copy.catalogFailureKeptInstall
+            : codexStatus === "removed" ? copy.codexIntegrationRemovedBody
+            : codexStatus === "manual-refresh" ? copy.codexManualRefreshBody : copy.setupCatalogBody}</p>
+        </div>
+        <SecondaryButton onClick={showModelSetup}>{copy.openModelSettings}</SecondaryButton>
+      </section> : null}
 
       <SectionHeading label={copy.diagnostics} spaced />
       {!devProfile ? <RouteDiagnostics
@@ -3467,7 +3481,7 @@ function BiggerContextRecommendation({
           </div>
           <Switch label={copy.biggerContext} checked={checked} disabled={busy} onChange={onChange} />
         </div>
-        {checked ? <p className="bigger-context-recommendation-restart">{copy.restartCodex}</p> : null}
+        {checked ? <p className="bigger-context-recommendation-restart">{copy.contextClientRefreshBody}</p> : null}
         <footer>
           <button className="button-secondary" data-modal-autofocus disabled={busy} onClick={onClose} type="button">{copy.close}</button>
         </footer>
