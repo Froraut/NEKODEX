@@ -125,3 +125,47 @@ test('aborted reconciliation releases the account lease without waiting for its 
   assert.equal(leaseHeld, false);
   assert.equal(tools.snapshot().settling, false);
 });
+
+test('start rejection waits for account reconciliation before releasing its lease', async () => {
+  const reconciliation = deferred();
+  const startError = new Error('fixture startup failure');
+  let leaseHeld = false;
+  let probeStarted = false;
+  let startSettled = false;
+  const host = {
+    withReadOnlyInspection: (_name, action) => action(new AbortController().signal),
+    probeAuthentication: () => { probeStarted = true; return reconciliation.promise; },
+  };
+  const pool = {
+    accountSnapshot: () => ({ accounts: [{ id: 'default', authenticated: true }] }),
+    accountIdentityLease: id => ({ accountId: id, identityEpoch: 1, principalFingerprint: 'principal' }),
+    currentOperation: () => null,
+    acquireAccountOperation: () => {
+      leaseHeld = true;
+      return () => { leaseHeld = false; };
+    },
+    getHost: () => host,
+  };
+  const controller = {
+    selectionLock: () => null,
+    start: async () => { throw startError; },
+    status: () => { throw new Error('no flow should be fabricated'); },
+    destroy: async () => {},
+  };
+  const tools = createCodexAccountTools({
+    getPool: () => pool,
+    BrowserWindow: class {}, clipboard: { writeText() {} }, codexHome: '/tmp',
+    quotaReader: { clear() {} }, createController: () => controller,
+  });
+
+  const pendingStart = tools.start('default').finally(() => { startSettled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(probeStarted, true);
+  assert.equal(startSettled, false);
+  assert.equal(leaseHeld, true);
+
+  reconciliation.resolve({ authenticated: false });
+  await assert.rejects(pendingStart, error => error === startError);
+  assert.equal(leaseHeld, false);
+});

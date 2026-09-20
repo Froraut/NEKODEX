@@ -157,7 +157,10 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
       watch();
       return progress(result);
     } catch (error) {
-      if (!controller.selectionLock()) settleAccount();
+      if (!controller.selectionLock()) {
+        settleAccount();
+        if (settling) await settling;
+      }
       throw error;
     } finally { starting = false; }
   }
