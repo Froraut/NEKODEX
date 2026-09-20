@@ -7,6 +7,12 @@ import { accountCodexCopyFor, type Copy } from "./i18n";
 import type { AccountPoolSnapshot, AccountQuotaSnapshot, CodexLoginProgress, Language } from "./types";
 import "./account-codex.css";
 
+type Account = AccountPoolSnapshot["accounts"][number];
+
+function quotaEvidenceFor(account: Account) {
+  return JSON.stringify([account.id, account.evidenceEpoch ?? null]);
+}
+
 export function AccountSettings({ copy, language, openBrowser, setError, manual }: {
   manual: boolean; copy: Copy; language: Language; openBrowser: () => void; setError: (message: string | null) => void;
 }) {
@@ -26,6 +32,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
   const [quotaClock, setQuotaClock] = useState(() => Date.now());
   const quotaInFlight = useRef(new Set<string>());
   const quotaRevisions = useRef(new Map<string, number>());
+  const quotaRefreshEvidence = useRef(new Map<string, string>());
+  const quotaAccountEvidence = useRef(new Map<string, string>());
   const quotaGlobalLock = useRef(false);
   const [login, setLogin] = useState<CodexLoginProgress | null>(null);
   const [loginSnapshotStatus, setLoginSnapshotStatus] = useState<"loading" | "ready" | "failed">("loading");
@@ -38,6 +46,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
   const loginLockedId = login && (login.active || login.settling) ? login.accountId : null;
   const loginLockedIdRef = useRef<string | null>(null);
   loginLockedIdRef.current = loginLockedId;
+  quotaAccountEvidence.current = new Map((state?.accounts ?? [])
+    .map(account => [account.id, quotaEvidenceFor(account)] as const));
   useEffect(() => {
     let disposed = false;
     let timer: number | undefined;
@@ -84,27 +94,31 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     if (loadFailed && state === null) retryRef.current?.focus();
   }, [loadFailed, state === null]);
 
-  const quotaEvidenceKey = state === null ? "" : JSON.stringify(state.accounts.map(account => [account.id, account.evidenceEpoch ?? null]));
+  const quotaEvidenceKey = state === null ? "" : JSON.stringify(state.accounts.map(quotaEvidenceFor));
   useEffect(() => {
     if (!state) return;
     let disposed = false;
     const accounts = state.accounts.map(account => account.id);
     const activeIds = new Set(accounts);
+    const evidenceById = new Map(state.accounts.map(account => [account.id, quotaEvidenceFor(account)]));
+    const hydrationAccounts = accounts.filter(id => !quotaInFlight.current.has(id)
+      || quotaRefreshEvidence.current.get(id) !== evidenceById.get(id));
     // Reserve every hydration revision before the sequential reads begin. A newer manual
     // refresh can then supersede its account's reserved read even while an earlier account
-    // is still loading. evidenceEpoch remains part of the effect key for replacements.
-    const revisions = new Map(accounts.map(id => {
+    // is still loading. Preserve a matching in-flight refresh when unrelated evidence changes;
+    // a replacement epoch for that account still joins hydration and invalidates the old read.
+    const revisions = new Map(hydrationAccounts.map(id => {
       const revision = (quotaRevisions.current.get(id) ?? 0) + 1;
       quotaRevisions.current.set(id, revision);
       return [id, revision] as const;
     }));
     setQuotas(current => {
       const next = new Map([...current].filter(([id]) => activeIds.has(id)));
-      for (const id of accounts) next.set(id, null);
+      for (const id of hydrationAccounts) next.set(id, null);
       return next;
     });
     void (async () => {
-      for (const id of accounts) {
+      for (const id of hydrationAccounts) {
         const revision = revisions.get(id)!;
         try {
           const value = await api.accountCodexQuotaSnapshot(id);
@@ -197,7 +211,10 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
   const refreshQuota = async (id: string, fromRefreshAll = false) => {
     if (loadFailed || loginLockedIdRef.current === id
       || (!fromRefreshAll && quotaGlobalLock.current) || quotaInFlight.current.has(id)) return;
+    const refreshEvidence = quotaAccountEvidence.current.get(id);
+    if (!refreshEvidence) return;
     quotaInFlight.current.add(id);
+    quotaRefreshEvidence.current.set(id, refreshEvidence);
     setQuotaRefreshing(current => new Set(current).add(id));
     const revision = (quotaRevisions.current.get(id) ?? 0) + 1;
     quotaRevisions.current.set(id, revision);
@@ -211,6 +228,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
       if (quotaRevisions.current.get(id) === revision) setError(error instanceof Error ? error.message : String(error));
     } finally {
       quotaInFlight.current.delete(id);
+      if (quotaRefreshEvidence.current.get(id) === refreshEvidence) quotaRefreshEvidence.current.delete(id);
       setQuotaRefreshing(current => {
         const next = new Set(current);
         next.delete(id);
