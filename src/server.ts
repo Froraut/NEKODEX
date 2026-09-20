@@ -4,7 +4,7 @@ import { normalizeNativeDelegation } from "./adapters/chatgpt-web/native-delegat
 import { validateChatGptWebInputImage } from "./adapters/chatgpt-web/input-image-validation";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import {
   activeStructuredCompactionCount,
@@ -31,7 +31,7 @@ import { readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
 import { createHash } from "node:crypto";
 import { augmentNativeModelCatalog } from "./model-catalog";
-import { fetchNativeCodex } from "./native-network";
+import { fetchNativeCodex, nativeNetworkBackgroundReady } from "./native-network";
 import {
   readCodexModelContextOverride,
   readCodexSubagentProtocol,
@@ -138,6 +138,7 @@ export class HttpTurnCounter {
     done: Promise<void>;
     finish: () => void;
     identity?: NativeCodexTurnIdentity;
+    web?: boolean;
   }>();
   private readonly interrupted = new Map<string, unknown>();
   private nextId = 1;
@@ -161,6 +162,10 @@ export class HttpTurnCounter {
 
   count(): number {
     return this.active.size;
+  }
+
+  webCount(): number {
+    return [...this.active.values()].filter(turn => turn.web).length;
   }
 
   async cancelAll(reason: unknown = new Error("Active HTTP turns cancelled")): Promise<number> {
@@ -202,6 +207,7 @@ export class HttpTurnCounter {
     run: (
       signal: AbortSignal,
       bindIdentity: (identity: NativeCodexTurnIdentity) => void,
+      bindWeb: () => void,
     ) => Promise<Response>,
     clientSignal?: AbortSignal,
     platform: NodeJS.Platform = process.platform,
@@ -216,6 +222,7 @@ export class HttpTurnCounter {
       done: Promise<void>;
       finish: () => void;
       identity?: NativeCodexTurnIdentity;
+      web?: boolean;
     } = { abort, done, finish };
     this.active.set(id, tracked);
     let released = false;
@@ -248,7 +255,7 @@ export class HttpTurnCounter {
         tracked.identity = identity;
         const interruptedReason = this.interrupted.get(this.identityKey(identity));
         if (interruptedReason !== undefined && !abort.signal.aborted) abort.abort(interruptedReason);
-      });
+      }, () => { tracked.web = true; });
       if (!response.body) {
         release();
         return response;
@@ -991,6 +998,9 @@ export function startServer(
     throw new Error("DEV harness configuration cannot start a Responses listener");
   }
   const startedAt = Date.now();
+  const instanceId = randomUUID();
+  const backgroundRuntime = process.env.CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME === "1";
+  let launcherDetached = false;
   const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;
   let brokerState: "not-required" | "starting" | "ready" | "failed" = turnBroker
     ? "starting"
@@ -1004,12 +1014,14 @@ export function startServer(
   let tunnelStatusRevision = 0;
   const brokerReady = () => !turnBroker || brokerState === "ready";
   const acceptingNative = () => !draining;
-  const acceptingTurns = () => !draining && brokerReady() && tunnelReady;
+  const acceptingTurns = () => !draining && !launcherDetached && brokerReady() && tunnelReady;
   const admissionFailure = () => formatErrorResponse(
     503,
     "server_error",
     draining
       ? "NEKODEX is restarting; retry after it is ready."
+      : launcherDetached
+        ? "Open NEKODEX to use ChatGPT Web. Native Codex models remain available in the background."
       : !brokerReady()
         ? "NEKODEX local-tool broker is not ready; native models remain available. Repair the tool connection before retrying this Web request."
         : "NEKODEX tool tunnel is not ready; native models remain available. Reconnect the tunnel before retrying this Web request.",
@@ -1042,6 +1054,7 @@ export function startServer(
   const hermes = new HermesIntegration();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
+    active_web_http_turns: httpTurns.webCount(),
     active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0),
     active_compaction_runs: activeStructuredCompactionCount(),
   });
@@ -1064,12 +1077,15 @@ export function startServer(
         if (req.method === "GET" && url.pathname === "/hermes/v1/models") return hermes.models(config);
         if (req.method === "POST" && url.pathname === "/hermes/v1/responses") {
           if (!acceptingTurns()) return admissionFailure();
-          return httpTurns.track(signal => hermes.respond(new Request(req, { signal }), config,
+          return httpTurns.track((signal, _bindIdentity, bindWeb) => {
+            bindWeb();
+            return hermes.respond(new Request(req, { signal }), config,
             (request, hermesContext, onCompletedResponse) => responseRequest(request, config, dependencies.adapterFactory, {
               hermesContext, onCompletedResponse, rememberState: false,
               ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
               ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
-            })), req.signal, process.platform, "responses");
+            }));
+          }, req.signal, process.platform, "responses");
         }
         return formatErrorResponse(404, "invalid_request_error", "Hermes uses /hermes/v1/responses with transport codex_responses.");
       }
@@ -1080,6 +1096,9 @@ export function startServer(
           version: VERSION,
           mode: config.mode,
           pid: process.pid,
+          instance_id: instanceId,
+          background_runtime: backgroundRuntime,
+          launcher_detached: launcherDetached,
           port: config.port,
           uptime: (Date.now() - startedAt) / 1_000,
           accepting_turns: acceptingTurns(),
@@ -1098,6 +1117,38 @@ export function startServer(
           last_successful_model_catalog_request_at: lastSuccessfulModelCatalogRequestAt,
           ...activity(),
         });
+      }
+      if (req.method === "POST" && url.pathname === "/admin/runtime-session") {
+        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        let body: { action?: unknown; instanceId?: unknown };
+        try { body = await readJsonRequestBody(req, 4096, 4096) as typeof body; }
+        catch { return new Response("Invalid runtime session request", { status: 400 }); }
+        if (!body || typeof body.action !== "string" || !["status", "attach", "detach"].includes(body.action)
+          || body.instanceId !== instanceId) return new Response("Runtime identity changed", { status: 409 });
+        if (body.action === "detach") {
+          // Close Web admission before inspecting owners. Native HTTP streams do not depend
+          // on Electron and must neither be drained nor cancelled by an interface exit.
+          const previous = launcherDetached;
+          launcherDetached = true;
+          turnBroker?.setExternalOwnersAccepted(false);
+          const current = activity();
+          if (!backgroundRuntime || !nativeNetworkBackgroundReady() || draining
+            || current.active_web_http_turns || current.active_browser_turns || current.active_compaction_runs) {
+            launcherDetached = previous;
+            turnBroker?.setExternalOwnersAccepted(acceptingTurns());
+            return Response.json({ status: "refused", ...current }, { status: 409 });
+          }
+        } else if (body.action === "attach") {
+          launcherDetached = false;
+          // An attached interface must establish its own live tunnel observation.
+          tunnelReady = !requiresTunnelSignal;
+          turnBroker?.setExternalOwnersAccepted(acceptingTurns());
+        }
+        return Response.json({ status: "ok", service: "codex-chatgpt-web", version: VERSION,
+          mode: config.mode, pid: process.pid, instance_id: instanceId,
+          background_runtime: backgroundRuntime, background_network_ready: nativeNetworkBackgroundReady(),
+          launcher_detached: launcherDetached, native_accepting_turns: acceptingNative(),
+          web_accepting_turns: acceptingTurns(), ...activity() });
       }
       if (req.method === "POST" && url.pathname === "/admin/tunnel-status") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
@@ -1319,13 +1370,17 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/responses") {
         if (!acceptingNative()) return admissionFailure();
         return httpTurns.track(
-          (signal, bindIdentity) => responseRequest(
+          (signal, bindIdentity, bindWeb) => responseRequest(
             new Request(req, { signal }),
             config,
             dependencies.adapterFactory,
             {
               onTurnIdentity: bindIdentity,
-              webAdmission: () => acceptingTurns() ? undefined : admissionFailure(),
+              webAdmission: () => {
+                if (!acceptingTurns()) return admissionFailure();
+                bindWeb();
+                return undefined;
+              },
               fetchUpstream: dependencies.fetchUpstream,
               ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
               ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
@@ -1339,13 +1394,17 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
         if (!acceptingNative()) return admissionFailure();
         return httpTurns.track(
-          (signal, bindIdentity) => compactRequest(
+          (signal, bindIdentity, bindWeb) => compactRequest(
             new Request(req, { signal }),
             config,
             dependencies.adapterFactory,
             {
               onTurnIdentity: bindIdentity,
-              webAdmission: () => acceptingTurns() ? undefined : admissionFailure(),
+              webAdmission: () => {
+                if (!acceptingTurns()) return admissionFailure();
+                bindWeb();
+                return undefined;
+              },
               fetchUpstream: dependencies.fetchUpstream,
               ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
               ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),

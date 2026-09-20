@@ -12,6 +12,21 @@ export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
 export const LAUNCHER_BROWSER_IDLE_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ENEKODEX%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 export type LauncherBrowserHostProfile = "production" | "development";
 
+export type LauncherBrowserHostUnavailableReason = "descriptor-missing" | "process-not-running";
+
+/** A verified launcher-absence condition that background native networking may recover from. */
+export class LauncherBrowserHostUnavailableError extends Error {
+  readonly code = "LauncherBrowserHostUnavailable";
+
+  constructor(
+    message: string,
+    readonly reason: LauncherBrowserHostUnavailableReason,
+  ) {
+    super(message);
+    this.name = "LauncherBrowserHostUnavailableError";
+  }
+}
+
 export class LauncherBrowserTurnCancelledError extends Error {
   constructor(message: string) {
     super(message);
@@ -162,8 +177,18 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
 
 export function readLauncherBrowserHostDescriptor(configuredPath: string): LauncherBrowserHostDescriptor {
   const path = resolve(expandUserPath(configuredPath));
-  if (!existsSync(path)) throw new Error(`Launcher browser host is unavailable: descriptor is missing at ${path}`);
-  const stat = statSync(path);
+  let stat: ReturnType<typeof statSync>;
+  try {
+    stat = statSync(path);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      throw new LauncherBrowserHostUnavailableError(
+        `Launcher browser host is unavailable: descriptor is missing at ${path}`,
+        "descriptor-missing",
+      );
+    }
+    throw error;
+  }
   if (!stat.isFile()) throw new Error(`Launcher browser descriptor is not a regular file: ${path}`);
   if (process.platform !== "win32") {
     if ((stat.mode & 0o077) !== 0) throw new Error(`Launcher browser descriptor has unsafe permissions: ${path}`);
@@ -175,11 +200,20 @@ export function readLauncherBrowserHostDescriptor(configuredPath: string): Launc
   let decoded: unknown;
   try { decoded = JSON.parse(readFileSync(path, "utf8")); }
   catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      throw new LauncherBrowserHostUnavailableError(
+        `Launcher browser host is unavailable: descriptor is missing at ${path}`,
+        "descriptor-missing",
+      );
+    }
     throw new Error(`Launcher browser descriptor is invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   const descriptor = assertDescriptorShape(decoded);
   if (!processRunning(descriptor.pid)) {
-    throw new Error(`Launcher browser host process is not running (pid ${descriptor.pid})`);
+    throw new LauncherBrowserHostUnavailableError(
+      `Launcher browser host process is not running (pid ${descriptor.pid})`,
+      "process-not-running",
+    );
   }
   return descriptor;
 }

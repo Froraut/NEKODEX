@@ -1,4 +1,4 @@
-function applicationMenu({ name, checkLabel, onCheck, language = "en" }) {
+function applicationMenu({ name, checkLabel, onCheck, quitLabel, stopLabel, onStop, language = "en" }) {
   if (language === "ru") return [
     { label: name, submenu: [
       { role: "about", label: `О программе ${name}` },
@@ -6,7 +6,8 @@ function applicationMenu({ name, checkLabel, onCheck, language = "en" }) {
       { type: "separator" }, { role: "services", label: "Службы" },
       { type: "separator" }, { role: "hide", label: `Скрыть ${name}` },
       { role: "hideOthers", label: "Скрыть остальные" }, { role: "unhide", label: "Показать все" },
-      { type: "separator" }, { role: "quit", label: `Завершить ${name}` },
+      { type: "separator" }, { role: "quit", label: quitLabel || `Завершить ${name}` },
+      ...(onStop ? [{ label: stopLabel, click: onStop }] : []),
     ] },
     { label: "Правка", submenu: [
       { role: "undo", label: "Отменить" }, { role: "redo", label: "Повторить" },
@@ -38,7 +39,8 @@ function applicationMenu({ name, checkLabel, onCheck, language = "en" }) {
       { role: "services" },
       { type: "separator" },
       { role: "hide" }, { role: "hideOthers" }, { role: "unhide" },
-      { type: "separator" }, { role: "quit" },
+      { type: "separator" }, { role: "quit", ...(quitLabel ? { label: quitLabel } : {}) },
+      ...(onStop ? [{ label: stopLabel, click: onStop }] : []),
     ] },
     { role: "editMenu" }, { role: "viewMenu" }, { role: "windowMenu" },
   ];

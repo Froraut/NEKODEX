@@ -24,6 +24,18 @@ function proxyOriginFromPac(result) {
   return url.origin;
 }
 
+function nativeFallbackProxyEnvironment(value) {
+  if (value === "") return { CODEX_CHATGPT_WEB_NATIVE_FALLBACK_PROXY: "DIRECT" };
+  if (typeof value !== "string") throw new Error("Native fallback proxy must be DIRECT or an HTTP/HTTPS origin");
+  let url;
+  try { url = new URL(value); }
+  catch { throw new Error("Native fallback proxy must be DIRECT or an HTTP/HTTPS origin"); }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname
+    || url.username || url.password || url.pathname !== "/" || url.search || url.hash
+    || url.origin !== value) throw new Error("Native fallback proxy must be DIRECT or an HTTP/HTTPS origin");
+  return { CODEX_CHATGPT_WEB_NATIVE_FALLBACK_PROXY: url.origin };
+}
+
 async function resolvePac(session, url, timeoutMs) {
   let timer;
   try {
@@ -55,4 +67,11 @@ async function resolveTunnelProxyEnvironment(session, environment = process.env,
   return origin ? { HTTPS_PROXY: origin, https_proxy: origin, ...bypass } : bypass;
 }
 
-module.exports = { loopbackBypass, proxyOriginFromPac, resolveNativeProxyEnvironment, resolveNativeRequestProxy, resolveTunnelProxyEnvironment };
+module.exports = {
+  loopbackBypass,
+  nativeFallbackProxyEnvironment,
+  proxyOriginFromPac,
+  resolveNativeProxyEnvironment,
+  resolveNativeRequestProxy,
+  resolveTunnelProxyEnvironment,
+};

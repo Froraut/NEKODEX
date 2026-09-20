@@ -22,7 +22,7 @@ const {
   shell,
   Tray,
 } = require("electron");
-const { resolveNativeRequestProxy, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
+const { nativeFallbackProxyEnvironment, resolveNativeRequestProxy, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
 const LANGUAGES = require("./languages.json");
 const { applicationMenu } = require("./application-menu.cjs");
 const { installHermesProvider } = require("./hermes-integration.cjs");
@@ -381,7 +381,7 @@ function trayImage() {
 
 const NATIVE_COPY = Object.freeze({
   ru: Object.freeze({
-    openLauncher: "Открыть NEKODEX", quit: "Выйти", exportDiagnostics: "Экспортировать диагностику без личных данных",
+    openLauncher: "Открыть NEKODEX", quit: "Закрыть интерфейс — native продолжит работу", stopAndQuit: "Остановить соединения и выйти", exportDiagnostics: "Экспортировать диагностику без личных данных",
     cancel: "Отмена", remove: "Удалить", removeTitle: "Удалить NEKODEX",
     removeMessage: "Удалить модели ChatGPT Web из Codex и восстановить прежний маршрут моделей?",
     removeDetail: "Профиль входа ChatGPT в NEKODEX сохранится. Codex потребуется один раз перезапустить.",
@@ -389,7 +389,8 @@ const NATIVE_COPY = Object.freeze({
   }),
   en: Object.freeze({
     openLauncher: "Open NEKODEX",
-    quit: "Quit",
+    quit: "Quit interface — keep native running",
+    stopAndQuit: "Stop connections and quit",
     exportDiagnostics: "Export privacy-safe diagnostics",
     cancel: "Cancel",
     remove: "Remove",
@@ -400,7 +401,8 @@ const NATIVE_COPY = Object.freeze({
   }),
   "zh-CN": Object.freeze({
     openLauncher: "打开 NEKODEX",
-    quit: "退出",
+    quit: "退出界面并保持原生模型运行",
+    stopAndQuit: "停止连接并退出",
     exportDiagnostics: "导出隐私安全诊断",
     cancel: "取消",
     remove: "移除",
@@ -411,7 +413,8 @@ const NATIVE_COPY = Object.freeze({
   }),
   "zh-TW": Object.freeze({
     openLauncher: "開啟 NEKODEX",
-    quit: "結束",
+    quit: "關閉介面並保持原生模型執行",
+    stopAndQuit: "停止連線並結束",
     exportDiagnostics: "匯出隱私安全診斷",
     cancel: "取消",
     remove: "移除",
@@ -422,7 +425,8 @@ const NATIVE_COPY = Object.freeze({
   }),
   ja: Object.freeze({
     openLauncher: "NEKODEX を開く",
-    quit: "終了",
+    quit: "画面を終了してネイティブを維持",
+    stopAndQuit: "接続を停止して終了",
     exportDiagnostics: "プライバシー保護済みの診断情報をエクスポート",
     cancel: "キャンセル",
     remove: "削除",
@@ -433,7 +437,8 @@ const NATIVE_COPY = Object.freeze({
   }),
   ko: Object.freeze({
     openLauncher: "NEKODEX 열기",
-    quit: "종료",
+    quit: "화면 종료 및 네이티브 유지",
+    stopAndQuit: "연결 중지 후 종료",
     exportDiagnostics: "개인정보가 보호된 진단 정보 내보내기",
     cancel: "취소",
     remove: "제거",
@@ -455,6 +460,9 @@ function updateApplicationMenu(language) {
     language,
     name: LAUNCHER_PROFILE.displayName,
     checkLabel: labels[language] || labels.en,
+    quitLabel: nativeCopyFor(language).quit,
+    stopLabel: nativeCopyFor(language).stopAndQuit,
+    onStop: () => { void requestQuit({ stopRuntime: true }); },
     onCheck: () => {
       updatesPanelRequestRevision += 1;
       showMainWindow({ activateApplication: true });
@@ -471,6 +479,7 @@ function updateTrayMenu(language) {
     { label: copy.openLauncher, click: () => showMainWindow({ activateApplication: true }) },
     { type: "separator" },
     { label: copy.quit, click: () => { void requestQuit(); } },
+    { label: copy.stopAndQuit, click: () => { void requestQuit({ stopRuntime: true }); } },
   ]));
 }
 
@@ -609,8 +618,10 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
   window.on("close", (event) => {
     if (quitting) return;
     event.preventDefault();
-    if (stateStore.read().keepRunningOnClose && tray) window.hide();
-    else void requestQuit();
+    if (stateStore.read().keepRunningOnClose) {
+      if (tray) window.hide();
+      else window.minimize();
+    } else void requestQuit();
   });
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -1604,7 +1615,7 @@ function registerIpc({ logger, stateStore }) {
   }, authorize);
 }
 
-async function requestQuit({ admissionHeld = false, restart = false } = {}) {
+async function requestQuit({ admissionHeld = false, restart = false, stopRuntime = false } = {}) {
   if (shutdownInProgress || exitCommitted) {
     return { ok: false, message: "Launcher shutdown is already in progress" };
   }
@@ -1629,12 +1640,13 @@ async function requestQuit({ admissionHeld = false, restart = false } = {}) {
       throw new Error("Finish or cancel active tasks before quitting NEKODEX");
     }
 
-    // Runtime shutdown owns the final native HTTP/compaction drain veto and compensates a
-    // refused stop. A rejection is still pre-commit: restore restart eligibility and keep the
-    // complete application graph available.
-    shutdownResult = await runtimeSupervisor?.shutdown({ cancelActiveTurns: false, force: false });
+    // Closing the interface releases only its Web dependency. Explicit stop/setup still
+    // use the global idle drain. A failed detach is pre-commit and preserves the GUI.
+    shutdownResult = stopRuntime || IS_DEV_PROFILE
+      ? await runtimeSupervisor?.shutdown({ cancelActiveTurns: false, force: false })
+      : await runtimeSupervisor?.detachForQuit();
 
-    // A resolved shutdown result is terminal (stopped or an explicit terminal partial result).
+    // A resolved result is either stopped or a durable background-runtime handoff.
     // Commit only now; subsequent browser/account cleanup is best effort and cannot return the
     // user to a partially dismantled launcher.
     stopCatalogVerificationMonitor();
@@ -1812,8 +1824,19 @@ async function start() {
     launcherProfile: LAUNCHER_PROFILE.kind,
     publishOperation,
     publishCapabilities: capability => lifecycleProjection.update(capability),
-    // Native requests resolve the current OS route through the authenticated control channel.
-    nativeProxyEnvironmentProvider: async () => ({}),
+    // Prime a known transport for GUI absence. While the GUI is alive, each native request
+    // still resolves the current system route through its authenticated control channel.
+    nativeProxyEnvironmentProvider: async () => {
+      try {
+        const proxy = await resolveNativeRequestProxy(
+          session.fromPartition(`nekodex-native-network-${LAUNCHER_PROFILE.kind}`),
+          "https://chatgpt.com/backend-api/codex/responses");
+        return nativeFallbackProxyEnvironment(proxy);
+      } catch (error) {
+        logger.warn("runtime.background_network_unavailable", { message: error.message });
+        return {};
+      }
+    },
     tunnelProxyEnvironmentProvider: () => resolveTunnelProxyEnvironment(session.fromPartition(LAUNCHER_PROFILE.browserPartition)),
   });
   runtimeHost = new RuntimeHost({
@@ -2013,6 +2036,12 @@ async function start() {
   } else void (async () => {
     if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
     retireAccountProof();
+    const surviving = runtimeHost.runtimeConfigSnapshot();
+    if (surviving.configured && surviving.owner === "launcher") {
+      // Keep the surviving generation visible even when pending rollback or upgrade must
+      // wait for active work. Recovery may stop it only through the existing idle drain.
+      await runtimeSupervisor.adoptBackgroundDaemon(surviving.config);
+    }
     const recoveredGeneration = await runtimeHost.recoverManagedRuntimeGeneration();
     if (recoveredGeneration.status !== "none") logger.warn("runtime.startup_generation_recovered", recoveredGeneration);
     const before = runtimeHost.runtimeConfigSnapshot();
