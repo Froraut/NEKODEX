@@ -147,7 +147,10 @@ function unavailable(accountId, reason, checkedAt, retryAt = null) {
 }
 
 function exactResponse(response, expectedUrl) {
-  return response.redirected !== true && response.url === expectedUrl
+  // Electron Session.fetch constructs a GlobalResponse with an empty URL (documented
+  // limitation). Reject redirects in the transport below; never manufacture a final URL.
+  // A nonempty mismatched URL still indicates an unexpected response and is rejected.
+  return response.redirected !== true && (response.url === "" || response.url === expectedUrl)
     && (response.status < 300 || response.status >= 400);
 }
 
@@ -355,7 +358,8 @@ class AccountQuotaReader {
         method: "GET",
         credentials: "include",
         cache: "no-store",
-        redirect: "manual",
+        redirect: "error",
+        bypassCustomProtocolHandlers: true,
         referrerPolicy: "no-referrer",
         headers: { accept: "application/json" },
         signal: controller.signal,
@@ -374,7 +378,8 @@ class AccountQuotaReader {
         method: "GET",
         credentials: "omit",
         cache: "no-store",
-        redirect: "manual",
+        redirect: "error",
+        bypassCustomProtocolHandlers: true,
         referrerPolicy: "no-referrer",
         headers: {
           accept: "application/json",
