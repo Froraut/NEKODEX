@@ -16,7 +16,7 @@ function captureUpdateReadiness(env = process.env) {
 }
 
 function acknowledgeUpdateReady(handoff, { version, platform = process.platform, arch = process.arch,
-  executablePath = process.execPath, pid = process.pid, env = process.env } = {}) {
+  executablePath = process.execPath, pid = process.pid, env = process.env, ...lifecycle } = {}) {
   if (!handoff) return false;
   let packageTarget;
   if (platform === "darwin") packageTarget = executablePath.match(/^(.*\.app)[\\/]Contents[\\/]MacOS[\\/][^\\/]+$/)?.[1];
@@ -27,7 +27,8 @@ function acknowledgeUpdateReady(handoff, { version, platform = process.platform,
   const next = `${handoff.filename}.next`;
   const fd = fs.openSync(next, "wx", 0o600);
   try {
-    fs.writeFileSync(fd, JSON.stringify({ token: handoff.token, version, platform, arch, pid, packageTarget }));
+    fs.writeFileSync(fd, JSON.stringify({ token: handoff.token, version, platform, arch, pid, packageTarget,
+      ...lifecycle }));
     fs.fsyncSync(fd);
   } finally { fs.closeSync(fd); }
   fs.renameSync(next, handoff.filename);
@@ -41,6 +42,15 @@ function proveUpdateReadiness(handoff, options, runtimeInvocation, run = spawnSy
   if (result.error) throw result.error;
   if (result.status !== 0 || result.stdout.trim() !== options.version) {
     throw new Error("Replacement runtime did not report the expected launcher version");
+  }
+  if (!(["local-usable", "not-configured"].includes(options.lifecycleStatus))
+    || options.readinessSchema !== 2
+    || !Number.isSafeInteger(options.lifecycleRevision)
+    || options.lifecycleRevision < 0
+    || (options.lifecycleStatus === "local-usable" && (options.nativeAvailability !== "ready"
+      || typeof options.configVersion !== "string" || !options.configVersion
+      || (options.configVersion !== options.version && options.legacyCommittedRuntime !== true)))) {
+    throw new Error("Replacement launcher has not reached a locally usable lifecycle state");
   }
   return acknowledgeUpdateReady(handoff, options);
 }

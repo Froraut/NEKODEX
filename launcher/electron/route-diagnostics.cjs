@@ -50,6 +50,16 @@ function withCatalogObservation(report, health, config, expectedPid) {
     active: report.active,
     routeMatches: report.routeMatches,
     issueCodes: [...report.issueCodes],
+    availability: {
+      current,
+      nativeAccepting: current ? (health.native_accepting_turns === true
+        || (health.native_accepting_turns === undefined && health.accepting_turns === true)) : null,
+      webAccepting: current ? (typeof health.web_accepting_turns === "boolean"
+        ? health.web_accepting_turns : health.accepting_turns === true) : null,
+      brokerReady: current && typeof health.broker_ready === "boolean" ? health.broker_ready : null,
+      tunnelReady: current && typeof health.tunnel_ready === "boolean" ? health.tunnel_ready : null,
+      draining: current && typeof health.draining === "boolean" ? health.draining : null,
+    },
     catalog: {
       status: failed || count === null || (count > 0 && !lastAt) ? "unavailable" : count > 0 ? "observed" : "waiting",
       successfulRequests: count,

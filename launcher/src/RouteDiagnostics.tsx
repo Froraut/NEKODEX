@@ -149,27 +149,47 @@ export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: L
     "provider-invalid": copy.providerProblem, "integration-unreadable": copy.integrationProblem,
     "integration-recovery-pending": copy.recoveryPending,
   };
-  return { rows, guidance: [...new Set(report.issueCodes.filter(code => Object.hasOwn(messages, code)).map(code => messages[code]!))],
+  return { rows, catalogFailed: Boolean(failureValue),
+    guidance: [...new Set(report.issueCodes.filter(code => Object.hasOwn(messages, code)).map(code => messages[code]!))],
     catalogBody: failureValue ? failureCopy.routingCatalogFailureBody : malformedReceipt ? copy.unavailableBody
       : catalogStatus === "observed" ? copy.observedBody : catalogStatus === "waiting" ? copy.waitingBody : copy.unavailableBody };
 }
 
-export function RouteDiagnosticsResult({ report, language }: { report: RouteDiagnosticsReport; language: Language }) {
+export function RouteDiagnosticsResult({ report, language, onActionError, onExport, onViewActivity }: {
+  report: RouteDiagnosticsReport;
+  language: Language;
+  onActionError?: (error: unknown) => void;
+  onExport?: () => Promise<unknown>;
+  onViewActivity?: () => void;
+}) {
   const copy = routeDiagnosticsCopy(language);
+  const appCopy = copyFor(language);
   const view = routeDiagnosticsView(report, language);
   return (
     <div className="route-diagnostics-result" aria-live="polite">
+      {view.catalogFailed ? <section className="route-diagnostics-summary" aria-labelledby="route-catalog-failure">
+        <Icon name="alert" />
+        <div><strong id="route-catalog-failure">{appCopy.catalogUnavailable}</strong><p>{view.catalogBody}</p></div>
+        <div className="route-diagnostics-actions">
+          {onViewActivity ? <button className="button-secondary" onClick={onViewActivity} type="button">{appCopy.viewActivity}</button> : null}
+          {onExport ? <button className="button-secondary" onClick={() => void onExport().catch(error => onActionError?.(error))}
+            type="button">{appCopy.exportSafeLog}</button> : null}
+        </div>
+      </section> : null}
       <p>{copy.scope}</p>
       <dl>{view.rows.map(row => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
-      <p>{view.catalogBody}</p>
+      {!view.catalogFailed ? <p>{view.catalogBody}</p> : null}
       {view.guidance.length ? <ul>{view.guidance.map(message => <li key={message}>{message}</li>)}</ul> : null}
     </div>
   );
 }
 
-export function RouteDiagnostics({ language, disabled = false, readReport }: {
+export function RouteDiagnostics({ language, disabled = false, onActionError, onExport, onViewActivity, readReport }: {
   language: Language;
   disabled?: boolean;
+  onActionError?: (error: unknown) => void;
+  onExport?: () => Promise<unknown>;
+  onViewActivity?: () => void;
   readReport: () => Promise<RouteDiagnosticsReport>;
 }) {
   const [report, setReport] = useState<RouteDiagnosticsReport | null>(null);
@@ -195,7 +215,8 @@ export function RouteDiagnostics({ language, disabled = false, readReport }: {
         <Icon name="chevron" />
       </button>
       {failed ? <p className="route-diagnostics-error" role="alert">{copy.failed}</p> : null}
-      {report ? <RouteDiagnosticsResult report={report} language={language} /> : null}
+      {report ? <RouteDiagnosticsResult report={report} language={language}
+        onActionError={onActionError} onExport={onExport} onViewActivity={onViewActivity} /> : null}
     </section>
   );
 }

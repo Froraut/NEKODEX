@@ -359,6 +359,7 @@ class BrowserHost {
     maxTabs = DEFAULT_BROWSER_CAPACITY,
     accountId = "default",
     isAccountVisible = () => true,
+    onAuthIdentityChanged = () => {},
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -382,6 +383,7 @@ class BrowserHost {
     }
     this.accountId = validateAccountId(accountId);
     this.isAccountVisible = isAccountVisible;
+    this.onAuthIdentityChanged = onAuthIdentityChanged;
     const basePartition = profile === "development"
       ? "persist:codex-web-gpt-dev-chatgpt"
       : "persist:codex-web-gpt-chatgpt";
@@ -411,6 +413,11 @@ class BrowserHost {
     this.manualOperation = null;
     this.loginOperation = null;
     this.authGeneration = 0;
+    this.authProbeRevision = 0;
+    this.authProbeTail = Promise.resolve();
+    this.authPrincipalFingerprint = null;
+    this.authSessionFingerprint = null;
+    this.authIdentityEpoch = 0;
     this.embeddedLoginController = null;
     this.passkeyLoginOperation = null;
     this.sessionRefreshOperation = null;
@@ -1389,8 +1396,20 @@ class BrowserHost {
     this.publishState?.(this.snapshot());
   }
 
-  heartbeatTurn(traceId, helperPid, refreshViewport = false) {
+  retireAuthenticatedIdentity() {
+    if (this.authPrincipalFingerprint === null && this.authSessionFingerprint === null) return;
+    this.authPrincipalFingerprint = null;
+    this.authSessionFingerprint = null;
+    this.authIdentityEpoch += 1;
+    this.onAuthIdentityChanged(this.accountId, this.authIdentityEpoch);
+  }
+
+  heartbeatTurn(traceId, helperPid, refreshViewport = false, expectedSurfaceId) {
     if (typeof refreshViewport !== "boolean") throw new Error("refreshViewport is invalid");
+    if (expectedSurfaceId !== undefined
+      && (typeof expectedSurfaceId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(expectedSurfaceId))) {
+      throw new Error("Browser turn surface identity is invalid");
+    }
     const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
     if (!tab) {
       const closedOwner = this.closedTurnOwners.get(traceId);
@@ -1399,6 +1418,9 @@ class BrowserHost {
     }
     if (tab.helperPid !== helperPid) {
       throw new Error(`Browser helper ownership mismatch: expected ${tab.helperPid}, received ${helperPid}`);
+    }
+    if (expectedSurfaceId !== undefined && tab.surfaceId !== expectedSurfaceId) {
+      throw new Error(`Browser surface ownership mismatch for turn ${traceId}`);
     }
     if (tab.status !== "running") throw new Error(`Browser turn ${traceId} is no longer running`);
     tab.lastHeartbeatAt = Date.now();
@@ -2821,6 +2843,7 @@ class BrowserHost {
     await browserSession.clearStorageData();
     browserSession.flushStorageData();
     await browserSession.cookies.flushStore();
+    this.retireAuthenticatedIdentity();
     for (const tab of tabs) this.removeTurnTab(tab, false);
   }
 
@@ -2914,6 +2937,7 @@ class BrowserHost {
       if (this.authView) this.closeAuthView(this.authView, true, false);
       const contents = this.view.webContents;
       await contents.session.clearStorageData();
+      this.retireAuthenticatedIdentity();
       this.setState({
         authenticated: false,
         loading: true,
@@ -2955,19 +2979,30 @@ class BrowserHost {
     return tracked;
   }
 
-  async probeAuthentication({ forSetup = false } = {}) {
+  probeAuthentication(options = {}) {
+    const operation = this.authProbeTail.then(
+      () => this.runAuthenticationProbe(options),
+      () => this.runAuthenticationProbe(options),
+    );
+    this.authProbeTail = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  async runAuthenticationProbe({ forSetup = false } = {}) {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
     if (!this.view || this.view.webContents.isDestroyed()) {
       if (forSetup) throw new Error("ChatGPT session verification is unavailable: embedded browser is not ready");
       return this.snapshot();
     }
     const generation = this.authGeneration ?? 0;
+    const probeRevision = ++this.authProbeRevision;
     const primaryView = this.view;
     const primaryContents = primaryView.webContents;
     let authView = this.authView;
     // Page-load event probes run independently of the tracked login operation.
     // A response from an old session or a replaced popup must not alter the new one.
     const isCurrent = () => (this.authGeneration ?? 0) === generation
+      && this.authProbeRevision === probeRevision
       && this.view === primaryView
       && !primaryContents.isDestroyed()
       && this.authView === authView
@@ -3015,6 +3050,8 @@ class BrowserHost {
       let sessionVerification = "unavailable";
       let verificationFailure = "session response unavailable";
       let accountLabel = null;
+      let principalFingerprint = null;
+      let sessionFingerprint = null;
       if (new URL(initialSurface.url).origin === expectedUrl.origin) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), ${CHATGPT_AUTH_SESSION_TIMEOUT_MS});
@@ -3042,6 +3079,11 @@ class BrowserHost {
                 ? payload.user
                 : null;
               const sessionHasUser = user !== null && Object.keys(user).length > 0;
+              const principal = typeof user?.id === "string" && user.id.trim()
+                ? "id:" + user.id.trim()
+                : typeof user?.email === "string" && user.email.trim()
+                  ? "email:" + user.email.trim().toLowerCase()
+                  : null;
               const sessionHasNoError = payload.error === undefined || payload.error === null || payload.error === "";
               const hasExpiry = payload.expires !== undefined && payload.expires !== null;
               const expiry = hasExpiry && typeof payload.expires === "string" ? Date.parse(payload.expires) : NaN;
@@ -3053,7 +3095,19 @@ class BrowserHost {
                 verificationFailure = "session expiry was invalid";
               } else if (!sessionHasUser || sessionExpired) {
                 sessionVerification = "rejected";
+              } else if (!principal) {
+                verificationFailure = "session principal identity was unavailable";
               } else {
+                const digestValue = async value => [...new Uint8Array(
+                  await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
+                )]
+                  .map(value => value.toString(16).padStart(2, "0")).join("");
+                const stableSessionId = [payload.sessionId, payload.session_id, payload.sid]
+                  .find(value => typeof value === "string" && value.trim());
+                principalFingerprint = await digestValue(principal);
+                sessionFingerprint = stableSessionId
+                  ? await digestValue(principal + "|session:" + stableSessionId.trim())
+                  : principalFingerprint;
                 sessionAuthenticated = true;
                 sessionVerification = "authenticated";
                 const label = typeof user.email === "string" ? user.email : typeof user.name === "string" ? user.name : null;
@@ -3068,7 +3122,8 @@ class BrowserHost {
         }
         finally { clearTimeout(timeout); }
       }
-      return { ...readSurface(), sessionAuthenticated, sessionVerification, verificationFailure, accountLabel };
+      return { ...readSurface(), sessionAuthenticated, sessionVerification, verificationFailure,
+        accountLabel, principalFingerprint, sessionFingerprint };
     })()`, true).catch(() => ({
       url: "",
       composer: false,
@@ -3076,6 +3131,8 @@ class BrowserHost {
       sessionAuthenticated: false,
       sessionVerification: "unavailable",
       verificationFailure: "browser inspection failed",
+      principalFingerprint: null,
+      sessionFingerprint: null,
       readyState: "unknown",
     }));
     let result = await probe(primaryContents);
@@ -3130,6 +3187,26 @@ class BrowserHost {
         : this.manualOperation
           ? {}
           : { status: "ready", message: "ChatGPT is ready" };
+      if (typeof result.principalFingerprint !== "string"
+        || !/^[a-f0-9]{64}$/.test(result.principalFingerprint)
+        || typeof result.sessionFingerprint !== "string"
+        || !/^[a-f0-9]{64}$/.test(result.sessionFingerprint)) {
+        if (forSetup) throw new Error("ChatGPT session verification is unavailable: principal identity was unavailable");
+        return this.snapshot();
+      }
+      const previousPrincipal = this.authPrincipalFingerprint;
+      const previousSession = this.authSessionFingerprint;
+      if (previousPrincipal === null) {
+        this.authPrincipalFingerprint = result.principalFingerprint;
+        this.authSessionFingerprint = result.sessionFingerprint;
+        this.authIdentityEpoch += 1;
+      } else if (previousPrincipal !== result.principalFingerprint
+        || previousSession !== result.sessionFingerprint) {
+        this.authPrincipalFingerprint = result.principalFingerprint;
+        this.authSessionFingerprint = result.sessionFingerprint;
+        this.authIdentityEpoch += 1;
+        this.onAuthIdentityChanged(this.accountId, this.authIdentityEpoch);
+      }
       this.setState({ ...availability, authenticated: true, accountLabel: result.accountLabel ?? null, url: result.url });
       if (!wasAuthenticated) this.logger.info("browser.authenticated", { url: result.url });
     } else {
@@ -3139,6 +3216,7 @@ class BrowserHost {
       const failure = result.sessionVerification === "unavailable" ? result.verificationFailure
         : authResult?.sessionVerification === "unavailable" ? authResult.verificationFailure
           : "Temporary Chat surface unavailable";
+      if (rejected && loaded) this.retireAuthenticatedIdentity();
       this.setState({
         status: rejected && loaded ? "signed-out" : loaded ? "error" : "loading",
         message: rejected && loaded ? "Sign in to ChatGPT"

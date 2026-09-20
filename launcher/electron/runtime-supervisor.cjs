@@ -352,6 +352,7 @@ class RuntimeSupervisor {
     browserDescriptorPath,
     launcherProfile = "production",
     publishOperation,
+    publishCapabilities,
     runtimeInvocationFactory = runtimeInvocation,
     nativeProxyEnvironmentProvider = async () => ({}),
     tunnelProxyEnvironmentProvider = async () => ({}),
@@ -368,6 +369,7 @@ class RuntimeSupervisor {
     }
     this.launcherProfile = launcherProfile;
     this.publishOperation = publishOperation;
+    this.publishCapabilities = publishCapabilities;
     this.runtimeInvocationFactory = runtimeInvocationFactory;
     this.nativeProxyEnvironmentProvider = nativeProxyEnvironmentProvider;
     this.tunnelProxyEnvironmentProvider = tunnelProxyEnvironmentProvider;
@@ -399,6 +401,51 @@ class RuntimeSupervisor {
     this.restartableChildren = new WeakSet();
     this.lastChildFailure = { daemon: null, tunnel: null };
     this.lastChildOutput = { daemon: null, tunnel: null };
+    this.capabilityRevision = 0;
+    this.runtimeStatus = "unconfigured";
+    this.runtimeDetail = null;
+    this.nativeAccepting = null;
+    this.webAccepting = null;
+    this.brokerReady = null;
+    this.reportedTunnelReady = null;
+  }
+
+  capabilitySnapshot(config = undefined) {
+    let current = config;
+    if (current === undefined) {
+      try { current = this.readConfig(); } catch { current = null; }
+    }
+    const nativeReady = Boolean(this.daemon && this.daemon.exitCode === null && this.daemon.signalCode === null);
+    const tunnelRequired = current?.mode === "full";
+    const tunnelReady = Boolean(this.tunnel && this.tunnel.exitCode === null && this.tunnel.signalCode === null
+      && this.reportedTunnelReady !== false);
+    const webReady = nativeReady && tunnelReady && this.brokerReady === true && this.webAccepting === true;
+    return {
+      revision: this.capabilityRevision,
+      runtimeStatus: this.runtimeStatus,
+      nativeAvailability: this.launcherProfile === "development"
+        ? "unavailable" : nativeReady && this.nativeAccepting !== false ? "ready" : this.runtimeStatus === "starting" ? "unknown" : "unavailable",
+      webAvailability: this.launcherProfile === "development"
+        ? !tunnelRequired ? "ready" : tunnelReady ? "ready" : "degraded"
+        : !tunnelRequired ? nativeReady ? "ready" : "unavailable" : webReady ? "ready" : nativeReady ? "degraded" : "unavailable",
+      tunnelStatus: !tunnelRequired ? "absent" : tunnelReady ? "ready"
+        : ["starting", "recovering", "stopping"].includes(this.runtimeStatus) ? this.runtimeStatus : "degraded",
+      releaseVersion: current?.releaseVersion ?? null,
+      daemonPid: this.daemon?.pid ?? null,
+      tunnelPid: this.tunnel?.pid ?? null,
+      brokerReady: this.brokerReady,
+      tunnelReady: this.reportedTunnelReady,
+      detail: this.runtimeDetail,
+    };
+  }
+
+  updateCapabilities(runtimeStatus, detail = null, config = undefined) {
+    this.runtimeStatus = runtimeStatus;
+    this.runtimeDetail = detail;
+    this.capabilityRevision += 1;
+    const snapshot = this.capabilitySnapshot(config);
+    this.publishCapabilities?.(snapshot);
+    return snapshot;
   }
 
   readConfig() {
@@ -562,6 +609,16 @@ class RuntimeSupervisor {
           + (this.lastChildOutput[name] ? `: ${this.lastChildOutput[name]}` : "");
       this.lastChildFailure[name] = detail;
       const statePersisted = this.tryWriteState(expected ? "stopping" : "degraded", detail);
+      if (!expected) {
+        this.updateCapabilities("degraded", detail);
+        if (name === "tunnel") {
+          let config;
+          try { config = this.readConfig(); } catch {}
+          if (config) void this.reportTunnelStatus(config, false).catch((statusError) => {
+            this.logger.warn("runtime.tunnel_status_report_failed", { message: errorMessage(statusError) });
+          });
+        }
+      }
       this.logger[expected ? "info" : "error"](
         error ? `runtime.${name}_spawn_failed` : `runtime.${name}_exited`,
         error ? { message: error.message } : { code, signal },
@@ -581,8 +638,8 @@ class RuntimeSupervisor {
     return child;
   }
 
-  runtimeCommand(args) {
-    if (this.runtimeRootProvider) this.installedRuntimeRoot = this.runtimeRootProvider();
+  runtimeCommand(args, releaseVersion = this.app.getVersion()) {
+    if (this.runtimeRootProvider) this.installedRuntimeRoot = this.runtimeRootProvider(releaseVersion);
     return this.runtimeInvocationFactory({
       app: this.app,
       sourceRoot: this.sourceRoot,
@@ -615,6 +672,41 @@ class RuntimeSupervisor {
     }
   }
 
+  nativeHealthAccepting(payload) {
+    return payload?.native_accepting_turns === true
+      || (payload?.native_accepting_turns === undefined && payload?.accepting_turns === true);
+  }
+
+  async reportTunnelStatus(config, ready, recoverySignal) {
+    if (this.launcherProfile === "development" || config?.mode !== "full" || !this.daemon) return null;
+    this.assertRecoveryActive(recoverySignal);
+    let result;
+    try {
+      result = await this.control(config, "tunnel-status", { body: { ready: ready === true } });
+    } catch (error) {
+      if (config.releaseVersion !== this.app.getVersion() && /HTTP 404\b/.test(errorMessage(error))) return null;
+      throw error;
+    }
+    this.assertRecoveryActive(recoverySignal);
+    if (result === null) return null;
+    if (result.status !== "ok"
+      || result.tunnel_ready !== (ready === true)
+      || result.native_accepting_turns !== true
+      || typeof result.web_accepting_turns !== "boolean"
+      || typeof result.broker_ready !== "boolean") {
+      throw new Error("Responses proxy did not acknowledge tunnel capability state");
+    }
+    const capabilityChanged = this.nativeAccepting !== result.native_accepting_turns
+      || this.webAccepting !== result.web_accepting_turns
+      || this.brokerReady !== result.broker_ready
+      || this.reportedTunnelReady !== result.tunnel_ready;
+    this.nativeAccepting = result.native_accepting_turns;
+    this.webAccepting = result.web_accepting_turns;
+    this.brokerReady = result.broker_ready;
+    this.reportedTunnelReady = result.tunnel_ready;
+    return { ...result, capabilityChanged };
+  }
+
   catalogHealthIsCurrent(config, payload) {
     try {
       const currentConfig = this.readConfig();
@@ -630,7 +722,7 @@ class RuntimeSupervisor {
         && !runtimeOwnershipPredatesCurrentBoot(state)
         && state.ownerPid === process.pid
         && state.daemonPid === pid
-        && state.status === "ready"
+        && ["ready", "degraded"].includes(state.status)
         && Number.isSafeInteger(pid)
         && pid > 0
         && daemon.exitCode === null
@@ -640,7 +732,7 @@ class RuntimeSupervisor {
         && payload?.status === "ok"
         && payload?.version === config.releaseVersion
         && payload?.mode === config.mode
-        && payload?.accepting_turns === true
+        && this.nativeHealthAccepting(payload)
         && payload?.pid === pid);
     } catch {
       return false;
@@ -649,12 +741,18 @@ class RuntimeSupervisor {
 
   async proxyHealth(config, timeoutMs = 2_000, expectedPid, requireAccepting = false) {
     const body = await this.proxyHealthPayload(config, timeoutMs);
-    return body?.service === "codex-chatgpt-web"
+    const matches = body?.service === "codex-chatgpt-web"
       && body?.status === "ok"
       && body?.mode === config.mode
       && body?.version === config.releaseVersion
-      && (expectedPid === undefined || body?.pid === expectedPid)
-      && (!requireAccepting || body?.accepting_turns === true);
+      && (expectedPid === undefined || body?.pid === expectedPid);
+    if (matches && expectedPid !== undefined && this.daemon?.pid === expectedPid) {
+      this.nativeAccepting = this.nativeHealthAccepting(body);
+      this.webAccepting = typeof body.web_accepting_turns === "boolean" ? body.web_accepting_turns : body.accepting_turns === true;
+      this.brokerReady = typeof body.broker_ready === "boolean" ? body.broker_ready : null;
+      this.reportedTunnelReady = typeof body.tunnel_ready === "boolean" ? body.tunnel_ready : this.reportedTunnelReady;
+    }
+    return matches && (!requireAccepting || this.nativeHealthAccepting(body));
   }
 
   async waitForProxy(config, timeoutMs = 20_000, recoverySignal) {
@@ -1155,7 +1253,7 @@ class RuntimeSupervisor {
       contract,
       "--broker-socket",
       config.brokerSocketPath,
-    ]);
+    ], config.releaseVersion);
     return await this.runTunnelCommand(
       config,
       managedTunnelConnectArgs(config, invocation),
@@ -1182,7 +1280,11 @@ class RuntimeSupervisor {
       this.lastChildFailure.tunnel = message;
       this.tunnel = null;
       this.stopTunnelMonitor();
+      void this.reportTunnelStatus(config, false).catch((error) => {
+        this.logger.warn("runtime.tunnel_status_report_failed", { message: errorMessage(error) });
+      });
       if (!this.tryWriteState("degraded", message)) return;
+      this.updateCapabilities("degraded", message, config);
       this.publishOperation?.({ name: "runtime-recovery", status: "running", message });
       this.scheduleRecovery("tunnel");
     };
@@ -1211,6 +1313,14 @@ class RuntimeSupervisor {
         }
         if (health.ready) {
           this.tunnelMonitorFailures = 0;
+          void this.reportTunnelStatus(config, true).then((result) => {
+            if (result && result.capabilityChanged !== true) return;
+            const available = this.webAccepting === true && this.brokerReady === true;
+            this.updateCapabilities(available ? "ready" : "degraded",
+              available ? null : "Tool tunnel is ready; local broker admission is still pending", config);
+          }).catch((error) => {
+            this.logger.warn("runtime.tunnel_status_report_failed", { message: errorMessage(error) });
+          });
           if (this.tunnel?.pid !== health.pid) {
             this.tunnel = {
               pid: health.pid,
@@ -1251,7 +1361,7 @@ class RuntimeSupervisor {
         this.assertCanStart(recoverySignal);
         const resumed = await this.control(config, "resume");
         this.assertCanStart(recoverySignal);
-        if (resumed.status !== "ok" || resumed.accepting_turns !== true) {
+        if (resumed.status !== "ok" || !this.nativeHealthAccepting(resumed)) {
           throw new Error("Responses proxy did not acknowledge readiness after resume");
         }
       }
@@ -1266,7 +1376,7 @@ class RuntimeSupervisor {
       const env = await this.nativeProxyEnvironmentProvider();
       if (this.stopping) throw new Error("Responses startup was cancelled while resolving the system proxy");
       this.assertCanStart(recoverySignal);
-      child = this.spawnChild("daemon", { ...this.runtimeCommand(["serve"]), env }, recoverySignal);
+      child = this.spawnChild("daemon", { ...this.runtimeCommand(["serve"], config.releaseVersion), env }, recoverySignal);
       await this.waitForProxy(config, 20_000, recoverySignal);
       this.assertCanStart(recoverySignal);
       if (this.daemon !== child) throw new Error("Responses proxy exited immediately after becoming healthy");
@@ -1286,7 +1396,7 @@ class RuntimeSupervisor {
     }
   }
 
-  async startIfConfigured() {
+  async startIfConfigured(options = {}) {
     if (this.stopPromise) await this.stopPromise;
     if (this.shutdownRequested) {
       if (!this.shutdownResumeAllowed) {
@@ -1304,7 +1414,7 @@ class RuntimeSupervisor {
     if (this.startPromise) return this.startPromise;
     const controller = new AbortController();
     this.startController = controller;
-    this.startPromise = this.startConfigured(controller.signal);
+    this.startPromise = this.startConfigured(controller.signal, options);
     try {
       return await this.startPromise;
     } finally {
@@ -1313,7 +1423,7 @@ class RuntimeSupervisor {
     }
   }
 
-  async startConfigured(startSignal) {
+  async startConfigured(startSignal, { allowCommittedVersion = false } = {}) {
     this.assertCanStart(startSignal);
     let config;
     try {
@@ -1321,6 +1431,7 @@ class RuntimeSupervisor {
     } catch (error) {
       const detail = errorMessage(error);
       this.logger.warn("runtime.setup_required", { detail });
+      this.updateCapabilities("needs-setup", detail, null);
       return { status: "needs-setup", detail };
     }
     if (!config) {
@@ -1332,9 +1443,11 @@ class RuntimeSupervisor {
       )) {
         const detail = "Runtime configuration is missing while launcher ownership processes are still alive";
         this.logger.warn("runtime.external_owner_detected", { detail });
+        this.updateCapabilities("external", detail, null);
         return { status: "external", detail };
       }
       this.clearState();
+      this.updateCapabilities("unconfigured", null, null);
       return { status: "not-configured" };
     }
     const tunnelOnly = this.launcherProfile === "development";
@@ -1344,37 +1457,27 @@ class RuntimeSupervisor {
       if (runtimeOwnershipMayBeLive(ownershipState)) {
         const detail = "A DEV MCP runtime is still owned while the profile is configured as browser-only";
         this.writeExternalState(detail);
+        this.updateCapabilities("external", detail, config);
         return { status: "external", detail };
       }
       this.clearState();
+      this.updateCapabilities("ready", null, config);
       return { status: "ready", daemonPid: null, tunnelPid: null };
     }
     if (!tunnelOnly && config.releaseVersion !== this.app.getVersion()) {
-      const ownershipState = this.readState();
-      const healthyRuntime = await this.proxyHealth(config);
-      this.assertCanStart(startSignal);
-      if (healthyRuntime || runtimeOwnershipMayBeLive(ownershipState)) {
-        try {
-          const recovered = await this.stopStaleOwnedRuntime(config, startSignal);
-          this.assertCanStart(startSignal);
-          if (!recovered) {
-            const detail = "A runtime for another launcher version could not be safely recovered";
-            this.writeExternalState(detail);
-            this.logger.warn("runtime.external_owner_detected", { port: config.port, detail });
-            return { status: "external", detail };
-          }
-        } catch (error) {
-          this.assertCanStart(startSignal);
-          const detail = errorMessage(error);
-          this.writeExternalState(detail);
-          this.logger.warn("runtime.external_owner_detected", { port: config.port, detail });
-          return { status: "external", detail };
-        }
+      const detail = `Config requires committed runtime ${config.releaseVersion}; launcher is ${this.app.getVersion()}`;
+      if (!allowCommittedVersion) {
+        this.writeState("needs-setup", detail);
+        this.logger.warn("runtime.setup_required", { detail });
+        this.updateCapabilities("needs-setup", detail, config);
+        return { status: "needs-setup", detail };
       }
-      const detail = `Config requires ${config.releaseVersion}; launcher is ${this.app.getVersion()}`;
-      this.writeState("needs-setup", detail);
-      this.logger.warn("runtime.setup_required", { detail });
-      return { status: "needs-setup", detail };
+      // Resolve and validate the committed bundle before disturbing its process or route.
+      this.runtimeCommand(["--version"], config.releaseVersion);
+      this.logger.info("runtime.committed_release_bootstrap", {
+        committedVersion: config.releaseVersion,
+        launcherVersion: this.app.getVersion(),
+      });
     }
     if (!this.daemon && !this.tunnel) {
       const healthyRuntime = tunnelOnly ? false : await this.proxyHealth(config);
@@ -1390,6 +1493,7 @@ class RuntimeSupervisor {
               : "Existing launcher runtime ownership could not be safely recovered";
             this.writeExternalState(detail);
             this.logger.warn("runtime.external_owner_detected", { port: config.port, detail });
+            this.updateCapabilities("external", detail, config);
             return { status: "external", detail };
           }
         } catch (error) {
@@ -1397,12 +1501,14 @@ class RuntimeSupervisor {
           const detail = errorMessage(error);
           this.writeExternalState(detail);
           this.logger.warn("runtime.external_owner_detected", { port: config.port, detail });
+          this.updateCapabilities("external", detail, config);
           return { status: "external", detail };
         }
       }
     }
 
     this.stopping = false;
+    this.updateCapabilities("starting", null, config);
     this.publishOperation?.({
       name: "runtime-start",
       status: "running",
@@ -1410,18 +1516,36 @@ class RuntimeSupervisor {
     });
     try {
       this.assertCanStart(startSignal);
-      await this.startTunnel(config, "runtime-start", { recoverySignal: startSignal });
-      if (!tunnelOnly) await this.startDaemon(config, startSignal);
+      if (tunnelOnly) {
+        await this.startTunnel(config, "runtime-start", { recoverySignal: startSignal });
+      } else {
+        await this.startDaemon(config, startSignal);
+      }
       this.assertCanStart(startSignal);
       this.restartHistory.daemon = [];
-      this.restartHistory.tunnel = [];
-      this.writeState("ready");
+      let tunnelFailure = null;
+      if (!tunnelOnly && config.mode === "full") {
+        try {
+          await this.reportTunnelStatus(config, false, startSignal);
+        } catch (error) {
+          if (startSignal.aborted) throw error;
+          tunnelFailure = `Tunnel capability status could not be initialized: ${errorMessage(error)}`;
+        }
+        tunnelFailure = tunnelFailure || "Tool tunnel startup is continuing in bounded recovery";
+        this.lastChildFailure.tunnel = tunnelFailure;
+        this.scheduleRecovery("tunnel");
+      }
+      this.writeState(tunnelFailure ? "degraded" : "ready", tunnelFailure || undefined);
+      this.updateCapabilities(tunnelFailure ? "degraded" : "ready", tunnelFailure, config);
       this.publishOperation?.({
         name: "runtime-start",
         status: "completed",
-        message: tunnelOnly ? "Isolated DEV MCP runtime is ready" : "Local runtime is ready",
+        message: tunnelOnly ? "Isolated DEV MCP runtime is ready"
+          : tunnelFailure ? `Native runtime is ready; tool tunnel is recovering: ${tunnelFailure}` : "Local runtime is ready",
       });
-      return { status: "ready", daemonPid: this.daemon?.pid, tunnelPid: this.tunnel?.pid };
+      return { status: "ready", nativeReady: !tunnelOnly, webReady: config.mode !== "full" || !tunnelFailure,
+        tunnelStatus: tunnelFailure ? "degraded" : config.mode === "full" ? "ready" : "absent",
+        ...(tunnelFailure ? { detail: tunnelFailure } : {}), daemonPid: this.daemon?.pid, tunnelPid: this.tunnel?.pid };
     } catch (error) {
       // Shutdown owns the stop after an aborted startup. Its bounded settlement
       // keeps command cleanup from racing a second tunnel stop.
@@ -1440,6 +1564,7 @@ class RuntimeSupervisor {
         ? appendFailure(primary, "runtime startup cleanup failed", cleanupError)
         : primary;
       this.tryWriteState("failed", message);
+      this.updateCapabilities("failed", message, config);
       this.publishOperation?.({ name: "runtime-start", status: "failed", message });
       throw new Error(message);
     }
@@ -1527,7 +1652,9 @@ class RuntimeSupervisor {
       const cause = this.lastChildFailure[name];
       const message = `${name} stopped more than ${MAX_RESTARTS_PER_WINDOW} times in 60 seconds; automatic restart is disabled`
         + (cause ? `; last failure: ${cause}` : "");
-      this.tryWriteState("failed", message);
+      const nativeSurvives = name === "tunnel" && Boolean(this.daemon);
+      this.tryWriteState(nativeSurvives ? "degraded" : "failed", message);
+      this.updateCapabilities(nativeSurvives ? "degraded" : "failed", message);
       this.publishOperation?.({ name: "runtime-recovery", status: "failed", message });
       return;
     }
@@ -1541,7 +1668,11 @@ class RuntimeSupervisor {
         if (controller.signal.aborted || this.stopping || this.shutdownRequested) return;
         const message = errorMessage(error);
         this.logger.error(`runtime.${name}_recovery_failed`, { message });
-        if (this.tryWriteState("failed", message)) this.scheduleRecovery(name);
+        const nativeSurvives = name === "tunnel" && Boolean(this.daemon);
+        if (this.tryWriteState(nativeSurvives ? "degraded" : "failed", message)) {
+          this.updateCapabilities(nativeSurvives ? "degraded" : "failed", message);
+          this.scheduleRecovery(name);
+        }
       });
       this.recoveryTasks.add(recovery);
       void recovery.finally(() => {
@@ -1556,24 +1687,29 @@ class RuntimeSupervisor {
     const config = this.readConfig();
     this.assertRecoveryActive(recoverySignal);
     if (!config) return;
+    this.updateCapabilities("recovering", `Restarting ${name}`, config);
     this.publishOperation?.({ name: "runtime-recovery", status: "running", message: `Restarting ${name}` });
     const tunnelOnly = this.launcherProfile === "development";
     if (name === "tunnel") {
+      await this.reportTunnelStatus(config, false, recoverySignal);
       await this.startTunnel(config, "runtime-recovery", { forceRestart: true, recoverySignal });
+      await this.reportTunnelStatus(config, true, recoverySignal);
     }
     else if (tunnelOnly) throw new Error("DEV runtime cannot recover a Responses daemon");
     else await this.startDaemon(config, recoverySignal);
     this.assertRecoveryActive(recoverySignal);
     if (!tunnelOnly && !this.daemon) throw new Error("Responses proxy is unavailable after runtime recovery");
-    if (config.mode === "full" && !this.tunnel) {
+    if (tunnelOnly && config.mode === "full" && !this.tunnel) {
       throw new Error("Tunnel runtime is unavailable after runtime recovery");
     }
     if (!tunnelOnly) await this.waitForProxy(config, 20_000, recoverySignal);
-    if (config.mode === "full") {
+    if (name === "tunnel" && config.mode === "full") {
       await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, "runtime-recovery", recoverySignal);
     }
     this.assertRecoveryActive(recoverySignal);
-    if (!this.tryWriteState("ready")) {
+    const recoveredStatus = config.mode === "full"
+      && (!this.tunnel || this.webAccepting !== true || this.brokerReady !== true) ? "degraded" : "ready";
+    if (!this.tryWriteState(recoveredStatus)) {
       let cleanupError;
       try {
         await this.cleanupFailedStart(config);
@@ -1589,6 +1725,7 @@ class RuntimeSupervisor {
         : "Recovered runtime could not persist launcher ownership";
       throw new Error(message);
     }
+    this.updateCapabilities(recoveredStatus, null, config);
     this.publishOperation?.({ name: "runtime-recovery", status: "completed", message: `${name} recovered` });
   }
 
@@ -1631,7 +1768,7 @@ class RuntimeSupervisor {
         throw new Error("drained daemon is still alive but no longer provides matching health evidence");
       }
       const resumed = await this.control(config, "resume");
-      if (resumed.status !== "ok" || resumed.accepting_turns !== true) {
+      if (resumed.status !== "ok" || !this.nativeHealthAccepting(resumed)) {
         throw new Error("drained daemon did not acknowledge resume");
       }
       await this.waitForProxy(config);
@@ -1655,8 +1792,7 @@ class RuntimeSupervisor {
       || !await this.proxyHealth(config, 2_000, daemon.pid, true)) {
       return false;
     }
-    if (config.mode !== "full") return true;
-    return Boolean(this.tunnel && await this.tunnelHealth(config));
+    return true;
   }
 
   async control(config, action, options = {}) {
@@ -2273,6 +2409,7 @@ class RuntimeSupervisor {
 
   async performStopForSetup() {
     this.stopping = true;
+    this.updateCapabilities("stopping");
     let config;
     let drained = false;
     let tunnelStopped = false;
@@ -2312,6 +2449,7 @@ class RuntimeSupervisor {
           }
         }
         this.clearState();
+        this.updateCapabilities("stopped", null, config);
         return { status: "stopped" };
       }
       if (this.daemon && config) {
@@ -2334,6 +2472,7 @@ class RuntimeSupervisor {
         await this.shutdownDaemon(config);
       }
       this.clearState();
+      this.updateCapabilities("stopped", null, config);
       return { status: "stopped" };
     } catch (error) {
       // The pending starter still owns its command and state. Do not write a
@@ -2367,6 +2506,7 @@ class RuntimeSupervisor {
         }
       }
       this.tryWriteState(restoredReady ? "ready" : "failed", message);
+      this.updateCapabilities(restoredReady ? "ready" : "failed", message, config);
       throw new Error(message);
     } finally {
       this.stopping = false;

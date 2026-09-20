@@ -5,9 +5,16 @@ REPOSITORY="${CODEX_WEB_GPT_REPOSITORY:-Froraut/NEKODEX}"
 VERSION="${CODEX_WEB_GPT_VERSION:-}"
 OS="$(uname -s)"
 MACHINE="$(uname -m)"
+TRUSTED_REPOSITORY="Froraut/NEKODEX"
+TRUSTED_APPLE_TEAM_ID="CNMWGJF2CG"
+TRUSTED_MACOS_BUNDLE_ID="dev.codexwebgpt.launcher"
 
 if ! printf '%s\n' "$REPOSITORY" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
   echo "Invalid GitHub repository: $REPOSITORY" >&2
+  exit 1
+fi
+if [ "$REPOSITORY" != "$TRUSTED_REPOSITORY" ]; then
+  echo "The standalone installer trusts releases from $TRUSTED_REPOSITORY only" >&2
   exit 1
 fi
 
@@ -31,6 +38,11 @@ case "$OS" in
     ;;
   *) echo "Use install-launcher.ps1 on Windows; unsupported OS: $OS" >&2; exit 1 ;;
 esac
+
+if [ "$OS" = "Linux" ] && ! command -v node >/dev/null 2>&1; then
+  echo "Authenticated Linux installation requires a preinstalled Node.js runtime to verify NEKODEX release-metadata.json; no downloaded executable will be run as a verifier" >&2
+  exit 1
+fi
 
 # NEKODEX distributes prereleases. Inspect a bounded published list for an exact
 # platform asset; keep the existing checksum download and SHA-256 gate below.
@@ -119,7 +131,34 @@ esac
 ASSET="codex-web-gpt-$VERSION-$PLATFORM-$ARCH.$EXTENSION"
 BASE_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex-web-gpt-launcher.XXXXXX")"
-trap 'rm -rf "$TEMP_DIR"' EXIT HUP INT TERM
+MAC_STAGE_ROOT=""
+MAC_TARGET_APP=""
+MAC_BACKUP_APP=""
+MAC_REPLACEMENT_STARTED=0
+MAC_COMMITTED=0
+
+cleanup() {
+  status="$?"
+  trap - EXIT HUP INT TERM
+  set +e
+  if [ "$MAC_COMMITTED" -ne 1 ]; then
+    if [ -n "$MAC_BACKUP_APP" ] && [ -e "$MAC_BACKUP_APP" ]; then
+      if [ -n "$MAC_TARGET_APP" ] && [ -e "$MAC_TARGET_APP" ]; then rm -rf -- "$MAC_TARGET_APP"; fi
+      if ! mv "$MAC_BACKUP_APP" "$MAC_TARGET_APP"; then
+        echo "Could not restore the previous NEKODEX app; it remains at $MAC_BACKUP_APP" >&2
+      fi
+    elif [ "$MAC_REPLACEMENT_STARTED" -eq 1 ] && [ -n "$MAC_TARGET_APP" ]; then
+      rm -rf -- "$MAC_TARGET_APP"
+    fi
+  fi
+  if [ -n "$MAC_STAGE_ROOT" ] && [ -d "$MAC_STAGE_ROOT" ]; then rm -rf -- "$MAC_STAGE_ROOT"; fi
+  rm -rf -- "$TEMP_DIR"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 900 \
   "$BASE_URL/$ASSET" -o "$TEMP_DIR/$ASSET"
@@ -140,6 +179,123 @@ if [ "$ACTUAL" != "$EXPECTED" ]; then
   exit 1
 fi
 
+verify_signed_release_metadata() {
+  metadata="$TEMP_DIR/release-metadata.json"
+  curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
+    "$BASE_URL/release-metadata.json" -o "$metadata"
+  node - "$metadata" "$TEMP_DIR/$ASSET" "$ASSET" "$VERSION" <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+
+const [metadataPath, assetPath, assetName, version] = process.argv.slice(2);
+const repository = "Froraut/NEKODEX";
+const keyId = "2175d07bb3fdb619aba59b9739d346ca4354a4fa6b81b1f76edaaa3256c4f048";
+const publicKey = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEACJiU70zrWLssiLbR+hPV9OB6/nbQi14qegzMYI5QUIE=
+-----END PUBLIC KEY-----
+`;
+const keyNotBefore = Date.parse("2026-09-11T19:04:10.618Z");
+const keyNotAfter = Date.parse("2031-09-11T19:09:10.618Z");
+const domain = Buffer.from("codex-web-gpt.release.v1\0", "utf8");
+const now = Date.now();
+const fail = (message) => { throw new Error(message); };
+const decodeBase64 = (value, limit, label) => {
+  if (typeof value !== "string" || value.length > Math.ceil(limit / 3) * 4
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) fail(`Invalid ${label}`);
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.length > limit || decoded.toString("base64") !== value) fail(`Invalid ${label}`);
+  return decoded;
+};
+const parseTimestamp = (value, label) => {
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)) fail(`Invalid ${label}`);
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) fail(`Invalid ${label}`);
+  return parsed;
+};
+
+const parsedPublicKey = crypto.createPublicKey(publicKey);
+const actualKeyId = crypto.createHash("sha256").update(parsedPublicKey.export({ type: "spki", format: "der" })).digest("hex");
+if (parsedPublicKey.asymmetricKeyType !== "ed25519" || actualKeyId !== keyId) fail("Packaged NEKODEX release trust key is invalid");
+
+const raw = fs.readFileSync(metadataPath);
+if (raw.length > 512 * 1024) fail("Release metadata exceeds its limit");
+const envelope = JSON.parse(raw.toString("utf8"));
+if (envelope?.schemaVersion !== 1 || !Array.isArray(envelope.signatures) || envelope.signatures.length < 1 || envelope.signatures.length > 16) {
+  fail("Invalid signed release metadata envelope");
+}
+const payloadBytes = decodeBase64(envelope.payload, 512 * 1024, "release metadata payload");
+const signatures = envelope.signatures.filter(entry => entry?.keyId === keyId);
+if (signatures.length !== 1) fail("Release metadata does not contain exactly one trusted publisher signature");
+const signature = decodeBase64(signatures[0].signature, 64, "release metadata signature");
+if (signature.length !== 64 || !crypto.verify(null, Buffer.concat([domain, payloadBytes]), parsedPublicKey, signature)) {
+  fail("Release metadata signature does not match the packaged NEKODEX trust key");
+}
+const payload = JSON.parse(payloadBytes.toString("utf8"));
+if (payload?.schemaVersion !== 1 || payload.repository !== repository || payload.tag !== `v${version}` || payload.version !== version) {
+  fail("Signed release identity does not match the requested NEKODEX version");
+}
+const issuedAt = parseTimestamp(payload.issuedAt, "release issuedAt");
+const expiresAt = parseTimestamp(payload.expiresAt, "release expiresAt");
+if (now < keyNotBefore || now >= keyNotAfter || issuedAt < keyNotBefore || issuedAt >= keyNotAfter
+  || issuedAt > now + 5 * 60 * 1000 || expiresAt <= now || expiresAt <= issuedAt || expiresAt - issuedAt > 180 * 86400000) {
+  fail("Signed release metadata or publisher key is outside its validity interval");
+}
+if (!/^[a-f0-9]{40}$/.test(payload.source?.commit || "") || !/^\d+$/.test(payload.source?.runId || "")
+  || payload.source?.workflow !== ".github/workflows/release.yml" || payload.source?.buildType !== "github-actions" || payload.source.runId === "0") {
+  fail("Signed release provenance is not a published GitHub Actions release");
+}
+if (!Array.isArray(payload.assets) || payload.assets.length < 1 || payload.assets.length > 256) fail("Invalid signed release asset list");
+const matches = payload.assets.filter(entry => entry?.name === assetName);
+if (matches.length !== 1 || !Number.isSafeInteger(matches[0].size) || matches[0].size < 1 || matches[0].size > 1024 ** 3
+  || !/^[a-f0-9]{64}$/.test(matches[0].sha256 || "")) fail("Asset is absent or invalid in signed release metadata");
+const info = fs.lstatSync(assetPath);
+if (!info.isFile() || info.isSymbolicLink() || info.size !== matches[0].size) fail("Authenticated release asset size mismatch");
+const digest = crypto.createHash("sha256");
+const descriptor = fs.openSync(assetPath, "r");
+const chunk = Buffer.allocUnsafe(1024 * 1024);
+try {
+  for (;;) {
+    const count = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+    if (count === 0) break;
+    digest.update(chunk.subarray(0, count));
+  }
+} finally {
+  fs.closeSync(descriptor);
+}
+const actual = digest.digest("hex");
+if (actual !== matches[0].sha256) fail("Authenticated release asset checksum mismatch");
+NODE
+}
+
+verify_macos_publisher() {
+  app="$1"
+  details="$TEMP_DIR/codesign-details.txt"
+  codesign --verify --deep --strict "$app"
+  codesign --display --verbose=4 "$app" >"$details" 2>&1
+  grep -Fqx "Identifier=$TRUSTED_MACOS_BUNDLE_ID" "$details" \
+    || { echo "macOS app bundle identity does not match NEKODEX" >&2; exit 1; }
+  grep -Fqx "TeamIdentifier=$TRUSTED_APPLE_TEAM_ID" "$details" \
+    || { echo "macOS publisher team does not match NEKODEX" >&2; exit 1; }
+  grep -Eq "^Authority=Developer ID Application: .+ \\($TRUSTED_APPLE_TEAM_ID\\)$" "$details" \
+    || { echo "macOS app is not signed by the expected NEKODEX Developer ID identity" >&2; exit 1; }
+  grep -Eq '^Timestamp=.+' "$details" \
+    || { echo "macOS app signature has no secure timestamp" >&2; exit 1; }
+  spctl --assess --type execute "$app"
+  bun="$app/Contents/Resources/runtime/runtime/bun"
+  if [ ! -x "$bun" ]; then
+    echo "Packaged NEKODEX runtime is missing its executable" >&2
+    exit 1
+  fi
+  codesign --verify --strict "$bun"
+  codesign --display --verbose=4 "$bun" >"$details" 2>&1
+  grep -Fqx "TeamIdentifier=$TRUSTED_APPLE_TEAM_ID" "$details" \
+    || { echo "Bundled runtime publisher team does not match NEKODEX" >&2; exit 1; }
+}
+
+if [ "$OS" = "Linux" ]; then
+  verify_signed_release_metadata
+fi
+
 if [ "$OS" = "Darwin" ]; then
   INSTALL_DIR="${CODEX_WEB_GPT_APPLICATIONS_DIR:-/Applications}"
   STAGE_DIR="$TEMP_DIR/stage"
@@ -150,26 +306,55 @@ if [ "$OS" = "Darwin" ]; then
     echo "Launcher archive is incomplete" >&2
     exit 1
   fi
-  # A matching download hash alone is not a native publisher signature. Verify before
-  # moving the installed app; the standalone preview path must not weaken this installer.
-  codesign --verify --deep --strict "$SOURCE_APP"
-  spctl --assess --type execute "$SOURCE_APP"
+  verify_macos_publisher "$SOURCE_APP"
   if [ ! -w "$INSTALL_DIR" ]; then
     INSTALL_DIR="$HOME/Applications"
     mkdir -p "$INSTALL_DIR"
   fi
-  TARGET_APP="$INSTALL_DIR/NEKODEX.app"
+  case "$INSTALL_DIR" in
+    /*) ;;
+    *) echo "Application install directory must be absolute" >&2; exit 1 ;;
+  esac
+  INSTALL_DIR="$(CDPATH= cd -- "$INSTALL_DIR" && pwd -P)"
+  if [ "$INSTALL_DIR" = "/" ]; then
+    echo "Refusing to use the filesystem root as the application install directory" >&2
+    exit 1
+  fi
+  MAC_TARGET_APP="$INSTALL_DIR/NEKODEX.app"
+  TARGET_APP="$MAC_TARGET_APP"
   if pgrep -x "NEKODEX" >/dev/null 2>&1 || pgrep -x "Codex Web GPT" >/dev/null 2>&1; then
     echo "Quit NEKODEX before updating it" >&2
     exit 1
   fi
-  BACKUP_APP="$TEMP_DIR/NEKODEX.previous.app"
-  if [ -e "$TARGET_APP" ]; then mv "$TARGET_APP" "$BACKUP_APP"; fi
-  if ! ditto "$SOURCE_APP" "$TARGET_APP"; then
-    rm -rf "$TARGET_APP"
-    if [ -e "$BACKUP_APP" ]; then mv "$BACKUP_APP" "$TARGET_APP"; fi
+  if [ -L "$TARGET_APP" ]; then
+    echo "Refusing to replace a symbolic-link application target: $TARGET_APP" >&2
     exit 1
   fi
+  MAC_STAGE_ROOT="$(mktemp -d "$INSTALL_DIR/.nekodex-install.XXXXXX")"
+  STAGED_APP="$MAC_STAGE_ROOT/NEKODEX.app"
+  ditto "$SOURCE_APP" "$STAGED_APP"
+  verify_macos_publisher "$STAGED_APP"
+  STAGED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$STAGED_APP/Contents/Info.plist")"
+  if [ "$STAGED_VERSION" != "$VERSION" ]; then
+    echo "Packaged NEKODEX version $STAGED_VERSION does not match requested version $VERSION" >&2
+    exit 1
+  fi
+  MAC_BACKUP_APP="$INSTALL_DIR/.NEKODEX.previous.$$"
+  if [ -e "$MAC_BACKUP_APP" ] || [ -L "$MAC_BACKUP_APP" ]; then
+    echo "Refusing to overwrite an existing recovery app: $MAC_BACKUP_APP" >&2
+    exit 1
+  fi
+  if [ -e "$TARGET_APP" ]; then mv "$TARGET_APP" "$MAC_BACKUP_APP"; fi
+  MAC_REPLACEMENT_STARTED=1
+  mv "$STAGED_APP" "$TARGET_APP"
+  verify_macos_publisher "$TARGET_APP"
+  INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TARGET_APP/Contents/Info.plist")"
+  if [ "$INSTALLED_VERSION" != "$VERSION" ]; then
+    echo "Installed NEKODEX version does not match requested version $VERSION" >&2
+    exit 1
+  fi
+  MAC_COMMITTED=1
+  if [ -e "$MAC_BACKUP_APP" ]; then rm -rf -- "$MAC_BACKUP_APP"; fi
   echo "Installed $TARGET_APP"
   open "$TARGET_APP"
   exit 0

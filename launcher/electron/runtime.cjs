@@ -15,6 +15,7 @@ const { embeddedRuntimeInvocation, runtimeInvocation } = require("./runtime-comm
 const { redactText } = require("./logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
 const { parsePasskeyProgress } = require("./passkey-login-progress.cjs");
+const { RuntimeGenerationStore } = require("./runtime-generation.cjs");
 const existingChromeRuntime = require("./existing-chrome-runtime.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
@@ -203,6 +204,10 @@ class RuntimeHost {
       : path.join(os.homedir(), "Library", "LaunchAgents");
     this.publishOperation = publishOperation;
     this.supervisor = supervisor;
+    this.runtimeGeneration = new RuntimeGenerationStore({
+      configPath: this.supervisor.configPath,
+      journalPath: path.join(this.coreHome || path.dirname(this.supervisor.configPath), "runtime", "pending-runtime-generation.json"),
+    });
     this.getBrowserInteractionMode = getBrowserInteractionMode;
     this.active = null;
     this.activeChild = null;
@@ -455,6 +460,18 @@ class RuntimeHost {
     });
   }
 
+  commandForRelease(args, releaseVersion) {
+    const runtimeRoot = this.runtimeRootProvider
+      ? this.runtimeRootProvider(releaseVersion)
+      : this.installedRuntimeRoot;
+    return runtimeInvocation({
+      app: this.app,
+      sourceRoot: this.sourceRoot,
+      installedRuntimeRoot: runtimeRoot,
+      args,
+    });
+  }
+
   launcherControlEnvironment() {
     let descriptor;
     try {
@@ -643,7 +660,7 @@ class RuntimeHost {
       });
       return;
     }
-    const runtime = await this.supervisor.startIfConfigured();
+    const runtime = await this.supervisor.startIfConfigured({ allowCommittedVersion: snapshot.configured });
     const expected = snapshot.configured ? "ready" : "not-configured";
     if (runtime.status !== expected) {
       throw new Error(
@@ -692,8 +709,10 @@ class RuntimeHost {
     if (this.lifecycleOperation && this.lifecycleOperation !== name) {
       throw new Error(`Another launcher operation is active: ${this.lifecycleOperation}`);
     }
+    const childOfLifecycle = options.parentLifecycle === true;
     this.active = name;
-    this.publishOperation?.({ name, status: "running", message: options.message || name });
+    this.publishOperation?.({ name, status: "running", phase: options.phase || (childOfLifecycle ? "command" : "running"),
+      message: options.message || name });
     this.logger.info("runtime.operation_started", { name, args: args.map((arg) => /key|token/i.test(arg) ? "[redacted]" : arg) });
     try {
       const invocation = options.embedded
@@ -833,14 +852,16 @@ class RuntimeHost {
         throw new Error(detail);
       }
       this.logger.info("runtime.operation_completed", { name });
-      this.publishOperation?.({ name, status: "completed", message: options.successMessage || "Completed" });
+      if (!childOfLifecycle) {
+        this.publishOperation?.({ name, status: "completed", message: options.successMessage || "Completed" });
+      }
       return result;
     } catch (error) {
       const message = options.privateOutput
         ? `${name} ${/timed out/i.test(error?.message ?? "") ? "timed out" : "failed"}`
         : redactText(error instanceof Error ? error.message : String(error));
       this.logger.error("runtime.operation_failed", { name, message });
-      this.publishOperation?.({ name, status: "failed", message });
+      if (!childOfLifecycle) this.publishOperation?.({ name, status: "failed", message });
       throw new Error(message);
     } finally {
       this.active = null;
@@ -1007,13 +1028,9 @@ class RuntimeHost {
         }
         return result;
       } catch (error) {
-        let cleanupError;
-        try { await this.supervisor.stopForSetup(); } catch (caught) { cleanupError = caught; }
-        if (!cleanupError) throw error;
-        throw new Error(
-          `${error instanceof Error ? error.message : String(error)}; stopping the unrouted runtime also failed:`
-          + ` ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-        );
+        // Route failure does not revoke a proven local/native runtime. Startup/update
+        // coordination decides whether to retain it or roll the application candidate back.
+        throw error;
       }
     } finally {
       this.lifecycleOperation = null;
@@ -1466,6 +1483,10 @@ class RuntimeHost {
   async upgradeManagedRuntime() {
     this.assertProductionProfile("Managed Codex runtime upgrade");
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
+    const recoveredGeneration = await this.recoverManagedRuntimeGeneration();
+    if (recoveredGeneration.status !== "none") {
+      this.logger.warn("runtime.pending_generation_recovered", recoveredGeneration);
+    }
     const existing = this.runtimeConfigSnapshot();
     const currentVersion = this.app.getVersion();
     const connectorMigrationRequired = Boolean(existing.persistedLegacyConnectorNames?.length);
@@ -1487,41 +1508,154 @@ class RuntimeHost {
       || activeTunnel.alias !== expectedTunnelProfile
       || path.basename(activeTunnel.runtimeKeyFile) !== expectedKeyFile
     );
-    if (existing.owner !== "launcher"
-      || (existing.config?.releaseVersion === currentVersion
-        && !connectorMigrationRequired
-        && !tunnelProfileMigrationRequired)) {
+    if (existing.owner !== "launcher") {
       return { updated: false };
     }
-    const args = [
-      "setup",
-      existing.mode === "full" ? "--full" : "--browser-only",
-      "--browser-host-descriptor",
-      this.browserDescriptorPath,
-      // A release may repair capability detection. Reusing the previous result can
-      // keep eligible models disabled even after the corrected probe is installed.
-      ...this.browserInteractionArgs({ mode: interactionMode, refreshCapabilities: true }),
-      "--acknowledge-unofficial",
-      "--restart-service",
-    ];
-    const result = await this.runSetup("runtime-upgrade", args, {
-      message: tunnelProfileMigrationRequired
-        ? `Separating ${interactionMode === "manual" ? "Manual mode" : "Automatic"} MCP credentials`
-        : `Upgrading launcher runtime from ${existing.config.releaseVersion} to ${currentVersion}`,
-      successMessage: tunnelProfileMigrationRequired
-        ? `${interactionMode === "manual" ? "Manual mode" : "Automatic"} MCP profile migrated`
-        : `Launcher runtime upgraded to ${currentVersion}`,
-      timeoutMs: existing.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
-    });
+    if (connectorMigrationRequired || tunnelProfileMigrationRequired) {
+      return {
+        updated: false,
+        repairRequired: true,
+        connectorMigrated: connectorMigrationRequired,
+        tunnelProfileMigrated: tunnelProfileMigrationRequired,
+        detail: connectorMigrationRequired
+          ? "The saved connector contract requires explicit Setup repair and verification"
+          : "The saved tunnel profile requires explicit Setup repair",
+      };
+    }
+    if (existing.config?.releaseVersion === currentVersion) return { updated: false };
+
+    // Ordinary release rebinding is local and preserves saved account capability evidence.
+    // Browser/account inspection belongs to first setup or an explicit Repair action.
+    this.commandForRelease(["--version"], existing.config.releaseVersion);
+    const configPath = this.supervisor.configPath;
+    const before = fs.readFileSync(configPath);
+    const beforeText = before.toString("utf8");
+    const hadBom = beforeText.startsWith("\uFEFF");
+    const persisted = JSON.parse(hadBom ? beforeText.slice(1) : beforeText);
+    if (persisted.browserHost !== "launcher" || persisted.releaseVersion !== existing.config.releaseVersion) {
+      throw new Error("Runtime configuration identity changed before local release rebinding");
+    }
+    const invocation = this.command([]);
+    const next = {
+      ...persisted,
+      releaseVersion: currentVersion,
+      runtimeCommand: [invocation.executable, ...invocation.args],
+    };
+    const planned = Buffer.from(`${hadBom ? "\uFEFF" : ""}${JSON.stringify(next, null, 2)}\n`);
+    let generation;
+    let previousStopped = false;
+    try {
+      // Stop/recover the previous owner while health and ownership are still
+      // evaluated against the exact previous config generation. Candidate bytes
+      // were prepared first, so no fallible parsing remains outside this boundary.
+      await this.supervisor.stopForSetup();
+      previousStopped = true;
+      if (!fs.readFileSync(configPath).equals(before)) {
+        throw new Error("Runtime configuration changed while the previous generation was stopping");
+      }
+      generation = this.runtimeGeneration.stage({
+        before,
+        candidate: planned,
+        fromVersion: existing.config.releaseVersion,
+        toVersion: currentVersion,
+      });
+      this.supervisor.readConfig();
+    } catch (error) {
+      const failures = [];
+      let restorationSafe = false;
+      try {
+        if (generation?.id) {
+          this.runtimeGeneration.rollback(generation.id);
+          restorationSafe = true;
+        } else {
+          const pending = this.runtimeGeneration.inspect();
+          if (pending.status === "candidate" || pending.status === "previous") {
+            this.runtimeGeneration.rollback(pending.journal.id);
+            restorationSafe = true;
+          } else if (pending.status === "none" && fs.readFileSync(configPath).equals(before)) {
+            restorationSafe = true;
+          } else {
+            failures.push("runtime config changed during generation staging; preserving the concurrent edit");
+          }
+        }
+      } catch (rollbackError) {
+        failures.push(`local runtime generation rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      }
+      if (previousStopped && restorationSafe && failures.length === 0) {
+        try {
+          const restored = await this.supervisor.startIfConfigured({ allowCommittedVersion: true });
+          if (restored.status !== "ready") {
+            failures.push(`previous runtime restart returned ${restored.status}: ${restored.detail || "not ready"}`);
+          }
+        } catch (restartError) {
+          failures.push(`previous runtime restart failed: ${restartError instanceof Error ? restartError.message : String(restartError)}`);
+        }
+      }
+      const primary = error instanceof Error ? error.message : String(error);
+      throw new Error(failures.length ? `${primary}; ${failures.join("; ")}` : primary);
+    }
     return {
       updated: true,
       mode: existing.mode,
       fromVersion: existing.config.releaseVersion,
       toVersion: currentVersion,
-      connectorMigrated: connectorMigrationRequired,
-      tunnelProfileMigrated: tunnelProfileMigrationRequired,
-      stdout: result.stdout,
+      connectorMigrated: false,
+      tunnelProfileMigrated: false,
+      localRebind: true,
+      generationId: generation.id,
     };
+  }
+
+  async recoverManagedRuntimeGeneration() {
+    const observed = this.runtimeGeneration.inspect();
+    if (observed.status === "none") return { status: "none" };
+    if (observed.status === "concurrent") return this.runtimeGeneration.recover();
+    const previous = JSON.parse(observed.journal.before.toString("utf8").replace(/^\uFEFF/, ""));
+    this.commandForRelease(["--version"], previous.releaseVersion);
+    this.runtimeGeneration.activateCandidateForStop(observed.journal.id);
+    // The candidate config is active for this stop even if an earlier partial
+    // recovery had already restored previous bytes. This lets ownership and
+    // health checks identify an interrupted candidate daemon by its real version.
+    const candidate = this.supervisor.readConfig();
+    if (!candidate || candidate.releaseVersion !== observed.journal.toVersion) {
+      throw new Error("Pending runtime generation candidate config could not be activated for ownership recovery");
+    }
+    await this.supervisor.stopForSetup();
+    const result = this.runtimeGeneration.recover();
+    if (result.status !== "none") this.supervisor.readConfig();
+    return result;
+  }
+
+  commitManagedRuntimeUpgrade(generationId) {
+    if (typeof generationId !== "string" || !generationId) throw new Error("Runtime generation id is required");
+    return this.runtimeGeneration.commit(generationId);
+  }
+
+  async rollbackManagedRuntimeUpgrade(generationId) {
+    if (typeof generationId !== "string" || !generationId) throw new Error("Runtime generation id is required");
+    const observed = this.runtimeGeneration.inspect(generationId);
+    if (observed.status === "none") throw new Error("Runtime generation is no longer pending");
+    if (observed.status === "concurrent") {
+      throw new Error("Runtime config changed after generation staging; preserving the concurrent edit and running runtime");
+    }
+    const previous = JSON.parse(observed.journal.before.toString("utf8").replace(/^\uFEFF/, ""));
+    this.commandForRelease(["--version"], previous.releaseVersion);
+    this.runtimeGeneration.activateCandidateForStop(generationId);
+    const candidate = this.supervisor.readConfig();
+    if (!candidate || candidate.releaseVersion !== observed.journal.toVersion) {
+      throw new Error("Candidate runtime config could not be activated for rollback ownership recovery");
+    }
+    await this.supervisor.stopForSetup();
+    const rollback = this.runtimeGeneration.rollback(generationId);
+    const config = this.supervisor.readConfig();
+    if (!config || config.releaseVersion !== previous.releaseVersion) {
+      throw new Error("Previous runtime configuration was not restored after candidate failure");
+    }
+    const runtime = await this.supervisor.startIfConfigured({ allowCommittedVersion: true });
+    if (runtime.status !== "ready") {
+      throw new Error(`Previous runtime restart returned ${runtime.status}: ${runtime.detail || "not ready"}`);
+    }
+    return { ...rollback, runtime };
   }
 
   setupMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}, afterRuntimeReady) {
@@ -1684,6 +1818,7 @@ class RuntimeHost {
     const previousRuntime = this.runtimeConfigSnapshot();
     const checkpoint = this.captureSetupCheckpoint(previousRuntime);
     this.lifecycleOperation = name;
+    this.publishOperation?.({ name, status: "running", phase: "preflight", message: options.message || name });
     let setupCommandStarted = false;
     let runtimeTransitionStarted = false;
     try {
@@ -1692,22 +1827,29 @@ class RuntimeHost {
           ...options,
           message: "Validating Codex configuration before changing the runtime",
           successMessage: "Codex configuration is ready for setup",
+          phase: "preflight",
+          parentLifecycle: true,
           timeoutMs: options.timeoutMs || CORE_SETUP_TIMEOUT_MS,
         });
       }
       runtimeTransitionStarted = true;
+      this.publishOperation?.({ name, status: "running", phase: "draining", message: "Preparing the current runtime for configuration" });
       if (previousRuntime.owner === "external") this.supervisor.prepareExternalMigration();
       else await this.supervisor.stopForSetup();
       setupCommandStarted = true;
-      const result = await this.run(name, args, options);
+      const result = await this.run(name, args, { ...options, phase: "configuring", parentLifecycle: true });
+      this.publishOperation?.({ name, status: "running", phase: "starting", message: "Starting the configured runtime" });
       const runtime = await this.supervisor.startIfConfigured();
       if (runtime.status !== "ready") {
         throw new Error(`Setup completed, but the launcher-owned runtime is ${runtime.status}: ${runtime.detail || "not ready"}`);
       }
+      this.publishOperation?.({ name, status: "running", phase: "verifying", message: "Verifying the committed runtime" });
       await options.afterRuntimeReady?.();
+      this.publishOperation?.({ name, status: "completed", phase: "committed", message: options.successMessage || "Completed" });
       return result;
     } catch (error) {
       const primary = error instanceof Error ? error.message : String(error);
+      this.publishOperation?.({ name, status: "running", phase: "rolling-back", message: "Restoring the previous runtime configuration" });
       const failures = [];
       let rolledBack = false;
       let checkpointChanged = false;
@@ -1756,10 +1898,15 @@ class RuntimeHost {
         ...failures,
       ].join("; ");
       const failure = new Error(message);
+      failure.lifecycle = {
+        candidate: "failed",
+        previousRuntime: recoveryError ? "failed" : previousRuntime.configured ? "ready" : "unconfigured",
+        rollback: recoveryError ? "failed" : "completed",
+      };
       if (!failures.length && error?.code) failure.code = error.code;
       const deferred = name === "bigger-context" && this.launcherProfile === "production"
         && ["RUNTIME_NOT_IDLE", "RUNTIME_BUSY"].includes(failure.code);
-      this.publishOperation?.({ name, status: deferred ? "completed" : "failed",
+      this.publishOperation?.({ name, status: deferred ? "completed" : "failed", phase: recoveryError ? "rollback-failed" : "rolled-back",
         message: deferred ? "Context change remains queued until active requests finish" : message });
       throw failure;
     } finally {

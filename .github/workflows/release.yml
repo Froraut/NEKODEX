@@ -114,7 +114,7 @@ jobs:
           bun run --cwd launcher build:renderer
           bun run --cwd launcher build:runtime
           bun run --cwd launcher scripts/package.cjs
-      - name: Verify Linux AppImage ABI on current Arch
+      - name: Check final AppImage libnotify and unresolved launcher symbols on current Arch
         if: runner.os == 'Linux'
         run: |
           artifact="$(find launcher/artifacts -maxdepth 1 -name '*-linux-x64.AppImage' -print -quit)"

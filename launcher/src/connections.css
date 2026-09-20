@@ -1,0 +1,223 @@
+.connections-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 20px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-background-control);
+}
+
+.connections-tabs > button {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  text-align: left;
+}
+
+.connections-tabs > button:hover,
+.connections-tabs > button.is-active {
+  border-color: var(--color-border-heavy);
+  background: var(--color-background-elevated);
+  color: var(--color-text-primary);
+}
+
+.connections-tabs > button > span {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connections-tabs > button > small,
+.connector-verification-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.connection-inline-failure,
+.route-diagnostics-summary {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 14px;
+  border: 1px solid rgb(244 144 160 / 30%);
+  border-radius: var(--radius-md);
+  background: var(--color-background-status-error);
+}
+
+.connection-inline-failure > svg,
+.route-diagnostics-summary > svg {
+  width: 18px;
+  color: var(--color-text-error);
+}
+
+.connection-inline-failure strong,
+.route-diagnostics-summary strong {
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+}
+
+.connection-inline-failure p,
+.route-diagnostics-summary p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.route-diagnostics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.connector-identity-card {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 0;
+  padding: 16px;
+  border: 1px solid var(--color-border-heavy);
+  border-radius: var(--radius-md);
+  background: var(--color-background-control);
+}
+
+.connector-upgrade-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border-heavy);
+  border-radius: var(--radius-md);
+  background: var(--color-background-brand);
+}
+
+.connector-upgrade-action p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.connector-identity-card > div,
+.connector-identity-card > label {
+  display: grid;
+  grid-template-columns: minmax(150px, .45fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.connector-identity-card span {
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+}
+
+.connector-identity-card code,
+.connector-identity-card input {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-background-surface-under);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.connector-identity-card input {
+  width: 100%;
+  outline: none;
+}
+
+.connector-identity-card input:focus-visible {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px rgb(181 170 255 / 18%);
+}
+
+.connector-identity-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-text-warning);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.connector-identity-warning svg {
+  width: 15px;
+  flex: none;
+}
+
+.connector-verification-status {
+  margin: 0;
+}
+
+.connector-verification-status.is-ready {
+  color: var(--color-text-success);
+}
+
+.connection-status.is-error {
+  color: var(--color-text-error);
+}
+
+@container workspace (max-width: 700px) {
+  .connections-tabs,
+  .connector-identity-card > div,
+  .connector-identity-card > label,
+  .connection-inline-failure,
+  .route-diagnostics-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .connector-upgrade-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .connection-inline-failure > svg,
+  .route-diagnostics-summary > svg {
+    display: none;
+  }
+
+  .route-diagnostics-actions {
+    justify-content: flex-start;
+  }
+}
+/* This remains visible across surfaces until the installed runtime is activated. */
+.workspace.has-runtime-notice { display: flex; flex-direction: column; padding-top: var(--height-titlebar); }
+.workspace.has-runtime-notice > .surface-transition { flex: 1; min-height: 0; height: auto; }
+.workspace.has-runtime-notice .content-surface,
+.workspace.has-runtime-notice .browser-surface { padding-top: 0; }
+.runtime-restart-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background-brand);
+  font-size: var(--text-xs);
+}
+.runtime-restart-notice div { flex: 1; min-width: 0; }
+.runtime-restart-notice p { margin: 4px 0 0; color: var(--color-text-secondary); line-height: 1.45; }
+.runtime-restart-notice button { flex-shrink: 0; }
+@container workspace (max-width: 600px) {
+  .runtime-restart-notice { align-items: stretch; flex-direction: column; }
+}

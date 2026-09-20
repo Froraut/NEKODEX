@@ -1207,6 +1207,18 @@ export class ChatGptBrowserObservationTimeoutError extends Error {
   }
 }
 
+export function isConfirmedLauncherCdpDisconnect(
+  error: unknown,
+  connection: Pick<Browser, "isConnected"> | undefined,
+  signal?: AbortSignal,
+): boolean {
+  if (signal?.aborted || !connection || connection.isConnected()) return false;
+  if (error instanceof LauncherBrowserTurnCancelledError) return false;
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  if (error instanceof ChatGptWebAdapterError && error.code === "client_cancelled") return false;
+  return error instanceof Error;
+}
+
 export async function withChatGptBrowserObservationTimeout<T>(
   operation: Promise<T>,
   timeoutMs = CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS,
@@ -1338,10 +1350,12 @@ interface ChatGptSubmissionObservationRecovery {
 
 type ChatGptObservationRecovery = (
   attempt: number,
-  cause: ChatGptBrowserObservationTimeoutError,
+  cause: Error,
   baseline: ChatGptSubmissionBaseline,
   abortSignal?: AbortSignal,
 ) => Promise<ChatGptSubmissionObservationRecovery>;
+
+type ChatGptObservationRecoverability = (error: unknown) => boolean;
 
 interface ChatGptAssistantTurnBinding {
   identity: string;
@@ -3084,6 +3098,7 @@ export class ChatGptBrowserWorker {
     graceMs: number = CHATGPT_RESPONSE_DOM_GRACE_MS,
     completionTracker?: ChatGptCompletionTracker,
     recoverObservation?: ChatGptObservationRecovery,
+    recoverableObservation?: ChatGptObservationRecoverability,
   ): Promise<ChatGptAssistantTurnBinding> {
     let observationPage = page;
     let observationBaseline = baseline;
@@ -3096,7 +3111,18 @@ export class ChatGptBrowserWorker {
     );
     for (;;) {
       if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      if (observationPage.isClosed()) throw chatGptBrowserTabClosedError();
+      if (observationPage.isClosed()) {
+        const error = chatGptBrowserTabClosedError();
+        if (!recoverObservation || !recoverableObservation?.(error)) throw error;
+        recoveryAttempts += 1;
+        if (recoveryAttempts > MAX_CHATGPT_BROWSER_PAGE_REBINDS) {
+          throw new Error("ChatGPT browser transport remained disconnected after exact-surface recovery", { cause: error });
+        }
+        const recovered = await recoverObservation(recoveryAttempts, error, observationBaseline, signal);
+        observationPage = recovered.page;
+        observationBaseline = recovered.baseline;
+        continue;
+      }
       let progress = externalProgress?.snapshot();
       if (progress?.lastProgressAt !== undefined) {
         responseDeadline = Math.min(
@@ -3124,7 +3150,8 @@ export class ChatGptBrowserWorker {
           await this.waitForLiveProbeRetry(externalProgress, liveProbeWaits++, signal);
           continue;
         }
-        if (error instanceof ChatGptBrowserObservationTimeoutError && recoverObservation) {
+        if ((error instanceof ChatGptBrowserObservationTimeoutError || recoverableObservation?.(error))
+          && recoverObservation) {
           recoveryAttempts += 1;
           if (recoveryAttempts > MAX_CHATGPT_BROWSER_PAGE_REBINDS) {
             throw new Error(
@@ -3134,7 +3161,7 @@ export class ChatGptBrowserWorker {
           }
           const recovered = await recoverObservation(
             recoveryAttempts,
-            error,
+            error instanceof Error ? error : new Error(String(error)),
             observationBaseline,
             signal,
           );
@@ -3699,6 +3726,7 @@ export class ChatGptBrowserWorker {
     initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0,
     completionTracker?: ChatGptCompletionTracker,
     recoverObservation?: ChatGptObservationRecovery,
+    recoverableObservation?: ChatGptObservationRecoverability,
   ): Promise<ChatGptSubmissionEvidence> {
     let observationPage = page;
     let observationBaseline = baseline;
@@ -3715,7 +3743,9 @@ export class ChatGptBrowserWorker {
         );
         return evidence;
       } catch (error) {
-        if (!(error instanceof ChatGptBrowserObservationTimeoutError) || !recoverObservation) throw error;
+        if (!(error instanceof ChatGptBrowserObservationTimeoutError)
+          && !recoverableObservation?.(error)) throw error;
+        if (!recoverObservation) throw error;
         recoveryAttempts += 1;
         if (recoveryAttempts > MAX_CHATGPT_BROWSER_PAGE_REBINDS) {
           throw new Error(
@@ -3725,7 +3755,7 @@ export class ChatGptBrowserWorker {
         }
         const recovered = await recoverObservation(
           recoveryAttempts,
-          error,
+          error instanceof Error ? error : new Error(String(error)),
           observationBaseline,
           abortSignal,
         );
@@ -3744,6 +3774,7 @@ export class ChatGptBrowserWorker {
     submissionLifecycle?: Pick<BrowserTurn, "onSendActivated" | "onSubmitted">,
     completionTracker?: ChatGptCompletionTracker,
     recoverObservation?: ChatGptObservationRecovery,
+    recoverableObservation?: ChatGptObservationRecoverability,
     expectedMode?: Pick<ChatGptWebModelMode, "modelVersion" | "effort" | "uiEffortIndex">,
     submissionRejection?: ChatGptSubmissionRejectionObserver,
   ): Promise<ChatGptSubmissionEvidence> {
@@ -3827,6 +3858,7 @@ export class ChatGptBrowserWorker {
       initialToolBatchRevision,
       completionTracker,
       recoverObservation,
+      recoverableObservation,
     );
     submissionLifecycle?.onSubmitted?.();
     return evidence;
@@ -4762,6 +4794,7 @@ export class ChatGptBrowserWorker {
         phase: "heartbeat",
         traceId: turn.traceId,
         helperPid: process.pid,
+        surfaceId,
       }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS).catch(error => {
         const now = Date.now();
         if (now - lastHeartbeatFailureAt < 30_000) return;
@@ -4888,6 +4921,8 @@ export class ChatGptBrowserWorker {
       this.config.appName,
     );
     let turnConnection: Browser | undefined;
+    const recoverableLauncherObservation = (error: unknown) => launcherSurfaceId !== undefined
+      && isConfirmedLauncherCdpDisconnect(error, turnConnection, turn.abortSignal);
     let managedPage: Page | undefined;
     let diagnosticPage: Page | undefined;
     const submissionRejection = new ChatGptSubmissionRejectionObserver();
@@ -4994,43 +5029,49 @@ export class ChatGptBrowserWorker {
       ): Promise<void> => {
         if (!launcherSurfaceId || !this.config.browserHostDescriptorPath) throw cause;
         console.warn(
-          `[chatgpt-web] browser turn ${turn.traceId} is rebinding its existing launcher page after a stalled DOM probe:`
+          `[chatgpt-web] browser turn ${turn.traceId} is rebinding its existing launcher page after an observation failure:`
           + ` ${redactChatGptUiDiagnostic(cause.message)}`,
         );
         for (let retry = 0; ; retry += 1) {
           let actionSettled = false;
           const previousConnection = turnConnection;
+          const previousConnectionAlreadyDisconnected = previousConnection?.isConnected() === false;
+          if (previousConnectionAlreadyDisconnected) turnConnection = undefined;
           try {
             // A failed disconnect is terminal: the old probe must lose its transport before a
             // replacement can acquire this same leased surface.
-            const connection = await connectAfterClosingBrowserConnection(previousConnection, () => {
-              turnConnection = undefined;
-              return this.runStage(
-                turn.traceId,
-                `response_page_rebind_${attempt}`,
-                browserStageTimeouts.browserPage,
-                async (stageSignal) => {
-                  try {
-                    const signal = AbortSignal.any([
-                      stageSignal,
-                      ...(callerSignal ? [callerSignal] : []),
-                      ...(turn.abortSignal ? [turn.abortSignal] : []),
-                    ]);
-                    await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
-                      phase: "heartbeat", traceId: turn.traceId, helperPid: process.pid, refreshViewport: true,
-                    });
-                    const rebound = await connectLauncherBrowserHost(
-                      this.config.browserHostDescriptorPath!, browserStageTimeouts.browserPage, launcherSurfaceId, signal,
-                    );
-                    // Own it before viewport validation so failed readiness has an exact cleanup handle.
-                    turnConnection = rebound.browser;
-                    diagnosticPage = rebound.page;
-                    await waitForOperationalChatGptViewport(rebound.page, signal);
-                    return rebound;
-                  } finally { actionSettled = true; }
-                },
-              );
-            });
+            const connection = await connectAfterClosingBrowserConnection(
+              previousConnectionAlreadyDisconnected ? undefined : previousConnection,
+              () => {
+                turnConnection = undefined;
+                return this.runStage(
+                  turn.traceId,
+                  `response_page_rebind_${attempt}`,
+                  browserStageTimeouts.browserPage,
+                  async (stageSignal) => {
+                    try {
+                      const signal = AbortSignal.any([
+                        stageSignal,
+                        ...(callerSignal ? [callerSignal] : []),
+                        ...(turn.abortSignal ? [turn.abortSignal] : []),
+                      ]);
+                      await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+                        phase: "heartbeat", traceId: turn.traceId, helperPid: process.pid,
+                        surfaceId: launcherSurfaceId, refreshViewport: true,
+                      });
+                      const rebound = await connectLauncherBrowserHost(
+                        this.config.browserHostDescriptorPath!, browserStageTimeouts.browserPage, launcherSurfaceId, signal,
+                      );
+                      // Own it before viewport validation so failed readiness has an exact cleanup handle.
+                      turnConnection = rebound.browser;
+                      diagnosticPage = rebound.page;
+                      await waitForOperationalChatGptViewport(rebound.page, signal);
+                      return rebound;
+                    } finally { actionSettled = true; }
+                  },
+                );
+              },
+            );
             turnConnection = connection.browser;
             page = connection.page;
             diagnosticPage = page;
@@ -5046,12 +5087,12 @@ export class ChatGptBrowserWorker {
           }
         }
         console.warn(
-          `[chatgpt-web] browser turn ${turn.traceId} rebound its existing launcher page after a stalled DOM probe`,
+          `[chatgpt-web] browser turn ${turn.traceId} rebound its exact launcher-owned page after an observation failure`,
         );
       };
       const recoverPageObservation = async (
         attempt: number,
-        cause: ChatGptBrowserObservationTimeoutError,
+        cause: Error,
         baseline: ChatGptSubmissionBaseline,
         checkpoint: "submission-page-rebound" | "assistant-page-rebound",
         abortSignal?: AbortSignal,
@@ -5169,6 +5210,7 @@ export class ChatGptBrowserWorker {
                   return recovered;
                 }
                 : undefined,
+              recoverableLauncherObservation,
               { ...stagingMode, modelVersion: requestedMode.modelVersion },
               submissionRejection,
             ),
@@ -5204,6 +5246,7 @@ export class ChatGptBrowserWorker {
                     return recovered;
                   }
                   : undefined,
+                recoverableLauncherObservation,
               );
               await this.waitForMultipartAcknowledgement(
                 page,
@@ -5339,6 +5382,7 @@ export class ChatGptBrowserWorker {
               return recovered;
             }
             : undefined,
+          recoverableLauncherObservation,
           requestedMode,
           submissionRejection,
         ),
@@ -5360,6 +5404,7 @@ export class ChatGptBrowserWorker {
             return recovered;
           }
           : undefined,
+        recoverableLauncherObservation,
       );
       await diagnostics.capture(page, "send-accepted");
 
@@ -5672,6 +5717,34 @@ export class ChatGptBrowserWorker {
         }
         await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
        } catch (error) {
+        if (launcherSurfaceId && recoverableLauncherObservation(error)) {
+          consecutiveObservationRebinds += 1;
+          if (consecutiveObservationRebinds > MAX_CHATGPT_BROWSER_PAGE_REBINDS) {
+            throw new Error(
+              `ChatGPT browser transport remained disconnected after ${MAX_CHATGPT_BROWSER_PAGE_REBINDS} exact-surface rebinds`,
+              { cause: error },
+            );
+          }
+          await rebindLauncherPage(
+            consecutiveObservationRebinds,
+            error instanceof Error ? error : new Error(String(error)),
+            turn.abortSignal,
+          );
+          submissionBaseline = {
+            ...submissionBaseline,
+            userTurns: page.locator(CHATGPT_USER_TURN_SELECTOR),
+            responseTurns: page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR),
+            domCache: {},
+          };
+          responseTurn = {
+            ...responseTurn,
+            locator: page.locator(`[data-turn-id=${JSON.stringify(responseTurn.identity)}]`),
+          };
+          responseDomCache.key = undefined;
+          responseDomCache.snapshot = undefined;
+          await diagnostics.capture(page, "response-transport-rebound");
+          continue;
+        }
         // Only a defect in this worker is retried here. Every deliberate signal — adapter errors,
         // aborts, closed tabs, DOM-health verdicts — still fails the turn immediately.
         // Retry only faults raised while reading the page. Once observation succeeded, a

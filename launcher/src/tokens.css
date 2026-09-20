@@ -29,6 +29,8 @@
   --color-background-control: rgb(255 255 255 / 3%);
   --color-background-control-hover: rgb(255 255 255 / 7%);
   --color-background-control-active: rgb(255 255 255 / 10%);
+  --color-background-panel: rgb(255 255 255 / 2%);
+  --color-background-panel-raised: rgb(255 255 255 / 4%);
   --color-background-button-secondary: rgb(255 255 255 / 5%);
   --color-background-button-secondary-hover: rgb(255 255 255 / 8%);
   --color-background-status-success: rgb(4 184 76 / 16%);
@@ -51,6 +53,7 @@
   --color-border-light: #ffffff0a;
   --color-border-heavy: #ffffff24;
   --color-border-focus: #b5aaff;
+  --color-border-accent: #c6bdff55;
 
   --font-ui: "Avenir Next", "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Yu Gothic UI", "Meiryo", "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
@@ -73,8 +76,14 @@
   --radius-lg: 18px;
   --radius-round: 999px;
 
+  --shadow-control: 0 1px 2px rgb(0 0 0 / 22%);
+  --shadow-panel: 0 16px 42px -30px rgb(0 0 0 / 68%);
+  --shadow-overlay: 0 24px 64px -28px rgb(0 0 0 / 88%);
+
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --duration-press: 90ms;
   --duration-micro: 140ms;
-  --duration-panel: 300ms;
+  --duration-control: 180ms;
+  --duration-panel: 260ms;
 }

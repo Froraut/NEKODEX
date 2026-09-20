@@ -1,5 +1,5 @@
 import type { CompactionModel } from "./types";
-import { setupNextStep } from "./setup-progress";
+import { modelConnectionReadiness, setupNextStep } from "./setup-progress";
 import languages from "../electron/languages.json";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
@@ -26,6 +26,7 @@ import { RouteDiagnostics } from "./RouteDiagnostics";
 import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
 import { ExistingChromeLoginGuide } from "./ExistingChromeLoginGuide";
 import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits, resolveChatGptWebTransportLimits } from "../../src/chatgpt-web-models";
+import "./connections.css";
 import type {
   BrowserCapacitySettings,
   BrowserInteractionMode,
@@ -41,7 +42,7 @@ import type {
 } from "./types";
 
 const api = window.codexWebLauncher;
-const COMPACT_SIDEBAR_QUERY = "(max-width: 820px)";
+const COMPACT_SIDEBAR_QUERY = "(max-width: 860px)";
 const MCP_GUIDE_MEDIA = [
   new URL("./assets/mcp-create-tunnel.mp4", import.meta.url).href,
   new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
@@ -57,9 +58,47 @@ function connectorProofMismatch(snapshot: LauncherSnapshot): boolean {
   return typeof verifiedName === "string" && verifiedName !== snapshot.connectorName;
 }
 
+type RuntimeCapabilitiesProjection = {
+  revision: number;
+  runtimeStatus: "unconfigured" | "starting" | "ready" | "degraded" | "recovering" | "failed" | "stopping" | string;
+  nativeAvailability: "ready" | "degraded" | "unavailable" | "unknown";
+  webAvailability: "ready" | "degraded" | "unavailable" | "unknown";
+  tunnelStatus: "absent" | "starting" | "ready" | "degraded" | "recovering" | "failed" | "stopping" | string;
+  releaseVersion: string | null;
+  daemonPid: number | null;
+  tunnelPid: number | null;
+  detail: string | null;
+};
+
+type LifecycleProjection = RuntimeCapabilitiesProjection & {
+  routeStatus: "unknown" | "direct" | "switching" | "managed" | "restoring" | "failed" | string;
+  catalog?: { status: string; request: number | null; at: string | null; failure: unknown };
+};
+
+type ProjectedLauncherSnapshot = LauncherSnapshot & {
+  runtimeCapabilities?: RuntimeCapabilitiesProjection | null;
+  runtimeStatus?: string;
+  lifecycle?: LifecycleProjection | null;
+  recommendedConnectorNames?: Partial<Record<BrowserInteractionMode, string>>;
+};
+
+type ProjectedLauncherApi = NonNullable<typeof api> & {
+  onLifecycle?: (listener: (projection: LifecycleProjection) => void) => () => void;
+};
+
+function runtimeCapabilities(snapshot: LauncherSnapshot): RuntimeCapabilitiesProjection | null {
+  const projected = snapshot as ProjectedLauncherSnapshot;
+  return projected.runtimeCapabilities ?? projected.lifecycle ?? null;
+}
+
+function localToolsRuntimeReady(snapshot: LauncherSnapshot): boolean {
+  return runtimeCapabilities(snapshot)?.tunnelStatus === "ready";
+}
+
 function currentToolProof(snapshot: LauncherSnapshot, operation: OperationState | null): boolean {
   return snapshot.state.mcpSetupComplete === true
     && !connectorProofMismatch(snapshot)
+    && localToolsRuntimeReady(snapshot)
     && !(snapshot.profile === "production"
       && snapshot.state.browserInteractionMode === "automatic"
       && operation?.name === "runtime-start" && operation.status === "failed");
@@ -69,8 +108,11 @@ function handleRadioGroupKeys(event: ReactKeyboardEvent<HTMLElement>) {
   if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
   const radios = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]:not([aria-disabled="true"]):not(:disabled)')];
   if (!radios.length) return;
-  const current = radios.indexOf(document.activeElement as HTMLElement);
-  let next = current < 0 ? 0 : current;
+  const target = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('[role="radio"]') : null;
+  if (!target || !event.currentTarget.contains(target)) return;
+  const current = radios.indexOf(target);
+  if (current < 0) return;
+  let next = current;
   if (event.key === "Home") next = 0;
   else if (event.key === "End") next = radios.length - 1;
   else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (next - 1 + radios.length) % radios.length;
@@ -80,9 +122,16 @@ function handleRadioGroupKeys(event: ReactKeyboardEvent<HTMLElement>) {
   radios[next]?.click();
 }
 
-function useModalFocus(active: boolean, container: RefObject<HTMLElement | null>, onClose: () => void) {
+function useModalFocus(
+  active: boolean,
+  container: RefObject<HTMLElement | null>,
+  onClose: () => void,
+  { closeAllowed = true, restoreFocus }: { closeAllowed?: boolean; restoreFocus?: RefObject<HTMLElement | null> } = {},
+) {
   const close = useRef(onClose);
+  const canClose = useRef(closeAllowed);
   close.current = onClose;
+  canClose.current = closeAllowed;
   useEffect(() => {
     if (!active || !container.current) return;
     const modal = container.current;
@@ -115,7 +164,7 @@ function useModalFocus(active: boolean, container: RefObject<HTMLElement | null>
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        close.current();
+        if (canClose.current) close.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -138,17 +187,25 @@ function useModalFocus(active: boolean, container: RefObject<HTMLElement | null>
       document.removeEventListener("keydown", keydown, true);
       document.removeEventListener("focusin", focusin, true);
       for (const [element, inert] of inerted) element.inert = inert;
-      if (previous?.isConnected) previous.focus();
+      const restore = restoreFocus?.current ?? previous;
+      requestAnimationFrame(() => {
+        const target = restore?.isConnected && !restore.closest("[inert]") && !restore.matches(":disabled")
+          ? restore
+          : document.querySelector<HTMLElement>('.sidebar-item[aria-current="page"]:not(:disabled)');
+        target?.focus();
+      });
     };
-  }, [active, container]);
+  }, [active, container, restoreFocus]);
 }
 
 export function App() {
-  const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<ProjectedLauncherSnapshot | null>(null);
   const [browser, setBrowser] = useState<BrowserState | null>(null);
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [logs, setLogs] = useState<LogRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [catalogFailure, setCatalogFailure] = useState<string | null>(null);
+  const catalogAlert = useRef<string | null>(null);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [startupAttempt, setStartupAttempt] = useState(0);
   const stateRevision = useRef(0);
@@ -190,24 +247,41 @@ export function App() {
     }
     const request = ++snapshotRefresh.current;
     const owner = refreshOwner.current;
-    const revision = stateRevision.current;
     const operation = operationRevision.current;
     refreshOperationRevision.current = operation;
-    const pending = api!.snapshot().then(fresh => {
+    const load = async (attempt: number): Promise<void> => {
+      const revision = stateRevision.current;
+      const fresh = await api!.snapshot() as ProjectedLauncherSnapshot;
       if (owner !== refreshOwner.current || request !== snapshotRefresh.current
         || operation !== operationRevision.current) return;
+      // Never pair identity/capability metadata from an older read with a newer
+      // state event. Retry once against the latest state revision instead.
+      if (revision !== stateRevision.current) {
+        if (attempt === 0) await load(1);
+        return;
+      }
       setSnapshot(current => {
         if (!current) return current;
-        const state = revision === stateRevision.current ? fresh.state : current.state;
+        const keepNewerLifecycle = (current.lifecycle?.revision ?? -1) > (fresh.lifecycle?.revision ?? -1);
         return {
           ...current,
-          state,
-          smokePassed: smokePassedForState(state, current.version),
-          mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
+          state: fresh.state,
+          smokePassed: smokePassedForState(fresh.state, fresh.version),
+          browserCapacity: fresh.browserCapacity,
+          proModelVersion: fresh.proModelVersion,
+          compactionModel: fresh.compactionModel,
           contextCapabilities: fresh.contextCapabilities,
+          connectorName: fresh.connectorName,
+          connectorNames: fresh.connectorNames,
+          mcpCredentialsConfigured: fresh.mcpCredentialsConfigured,
+          runtimeCapabilities: keepNewerLifecycle ? current.runtimeCapabilities : fresh.runtimeCapabilities,
+          runtimeStatus: keepNewerLifecycle ? current.runtimeStatus : fresh.runtimeStatus,
+          lifecycle: keepNewerLifecycle ? current.lifecycle : fresh.lifecycle,
+          recommendedConnectorNames: fresh.recommendedConnectorNames ?? current.recommendedConnectorNames,
         };
       });
-    });
+    };
+    const pending = load(0);
     refreshInFlight.current = pending;
     void pending.finally(() => {
       if (refreshInFlight.current === pending) refreshInFlight.current = null;
@@ -227,6 +301,7 @@ export function App() {
     let pendingBrowser: BrowserState | null = null;
     let pendingOperation: OperationState | null = null;
     let pendingUpdate: LauncherSnapshot["update"] | null = null;
+    let pendingLifecycle: LifecycleProjection | null = null;
     const pendingLogs: LogRecord[] = [];
     const refreshCompletedOperation = () => {
       // Collapse completion events in one turn; an explicit verification read can
@@ -239,6 +314,12 @@ export function App() {
     };
     const unsubscribeState = api.onStateChanged((state) => {
       stateRevision.current += 1;
+      if (state.codexCatalogVerified === true) {
+        const staleCatalogAlert = catalogAlert.current;
+        catalogAlert.current = null;
+        setCatalogFailure(null);
+        setError(current => current === staleCatalogAlert ? null : current);
+      }
       if (!initialized) pendingState = state;
       setSnapshot((current) => current
         ? {
@@ -258,8 +339,34 @@ export function App() {
       lastOperationName.current = next.name;
       if (!initialized) pendingOperation = next;
       else setOperation(next);
-      if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
+      if (initialized && next.status === "running" && ["runtime-start", "runtime-recovery"].includes(next.name)) {
+        setSnapshot(current => {
+          if (!current?.runtimeCapabilities) return current;
+          const status = next.name === "runtime-recovery" ? "recovering" : "starting";
+          return { ...current, runtimeStatus: status,
+            runtimeCapabilities: { ...current.runtimeCapabilities, runtimeStatus: status,
+              tunnelStatus: status } };
+        });
+      }
+      if (next.name === "catalog-verification") {
+        if (next.status === "failed") {
+          catalogAlert.current = next.message;
+          setCatalogFailure(next.message);
+          setError(next.message);
+        } else if (next.status === "completed") {
+          const staleCatalogAlert = catalogAlert.current;
+          catalogAlert.current = null;
+          setCatalogFailure(null);
+          setError(current => current === staleCatalogAlert ? null : current);
+        }
+      } else if (next.status === "failed" && next.name !== "mcp-verification") {
+        setError(next.message);
+      }
       if (next.status === "completed" && initialized) refreshCompletedOperation();
+      if (next.status === "failed" && initialized
+        && ["runtime-start", "runtime-recovery", "runtime-supervisor"].includes(next.name)) {
+        refreshCompletedOperation();
+      }
       if (next.status === "failed" && next.name === "mcp-setup" && initialized) {
         // Setup may report an earlier command completion before rollback finishes.
         // Its final failure needs the credentials and capabilities after recovery.
@@ -277,12 +384,35 @@ export function App() {
       if (!initialized) pendingUpdate = update;
       setSnapshot((current) => current ? { ...current, update } : current);
     });
-    void api.snapshot().then((next) => {
+    const unsubscribeLifecycle = (api as ProjectedLauncherApi).onLifecycle?.((next) => {
+      if (!initialized) pendingLifecycle = next;
+      else {
+        setSnapshot(current => {
+          if (!current || (current.lifecycle?.revision ?? -1) >= next.revision) return current;
+          return { ...current, lifecycle: next, runtimeStatus: next.runtimeStatus,
+            runtimeCapabilities: next };
+        });
+        if (next.catalog?.status === "failed") {
+          setCatalogFailure(copyFor(documentLanguage).catalogFailureKeptInstall);
+        } else if (next.catalog?.status === "ready") {
+          const staleCatalogAlert = catalogAlert.current;
+          catalogAlert.current = null;
+          setCatalogFailure(null);
+          setError(current => current === staleCatalogAlert ? null : current);
+        }
+      }
+    }) ?? (() => {});
+    void api.snapshot().then((rawNext) => {
       if (cancelled) return;
+      const next = rawNext as ProjectedLauncherSnapshot;
       const latestState = (pendingState as LauncherState | null) ?? next.state;
       const latestOperation = (pendingOperation as OperationState | null) ?? next.operation;
+      const lifecycle = pendingLifecycle && pendingLifecycle.revision > (next.lifecycle?.revision ?? -1)
+        ? pendingLifecycle : next.lifecycle;
       setSnapshot({
         ...next,
+        ...(lifecycle ? { lifecycle, runtimeStatus: lifecycle.runtimeStatus,
+          runtimeCapabilities: lifecycle } : {}),
         state: latestState,
         update: pendingUpdate ?? next.update,
         smokePassed: smokePassedForState(latestState, next.version),
@@ -293,7 +423,17 @@ export function App() {
           && JSON.stringify(existing.detail) === JSON.stringify(record.detail)));
       setLogs([...next.logs, ...unseenLogs].slice(-300));
       setOperation(latestOperation);
-      if (latestOperation?.status === "failed" && latestOperation.name !== "mcp-verification") {
+      if (latestState.codexCatalogVerified !== true && lifecycle?.catalog?.status === "failed") {
+        setCatalogFailure(copyFor(latestState.language ?? "en").catalogFailureKeptInstall);
+      }
+      if (latestOperation?.status === "failed" && latestOperation.name === "catalog-verification"
+        && latestState.codexCatalogVerified !== true) {
+        catalogAlert.current = latestOperation.message;
+        setCatalogFailure(latestOperation.message);
+        setError(latestOperation.message);
+      } else if (latestOperation?.status === "failed"
+        && latestOperation.name !== "mcp-verification"
+        && latestOperation.name !== "catalog-verification") {
         setError(latestOperation.message);
       }
       initialized = true;
@@ -317,11 +457,18 @@ export function App() {
       unsubscribeOperation();
       unsubscribeLog();
       unsubscribeUpdate();
+      unsubscribeLifecycle();
     };
   }, [startupAttempt, refreshMetadata]);
 
   const updateState = useCallback((state: LauncherState) => {
     stateRevision.current += 1;
+    if (state.codexCatalogVerified === true) {
+      const staleCatalogAlert = catalogAlert.current;
+      catalogAlert.current = null;
+      setCatalogFailure(null);
+      setError(current => current === staleCatalogAlert ? null : current);
+    }
     setSnapshot((current) => current
       ? {
           ...current,
@@ -390,6 +537,7 @@ export function App() {
         ) : (
           <LauncherShell
             browser={browser}
+            catalogFailure={catalogFailure}
             copy={copy}
             key="launcher"
             language={language}
@@ -553,6 +701,7 @@ function Onboarding({
 
 function LauncherShell({
   browser,
+  catalogFailure,
   copy,
   language,
   logs,
@@ -567,6 +716,7 @@ function LauncherShell({
   updatePanelRequest,
 }: {
   browser: BrowserState | null;
+  catalogFailure: string | null;
   copy: Copy;
   language: Language;
   logs: LogRecord[];
@@ -580,10 +730,16 @@ function LauncherShell({
   updateSnapshot: () => Promise<void>;
   updatePanelRequest: number;
 }) {
-  const interactionSetupComplete = snapshot.state.coreSetupComplete === true
-    && (snapshot.state.browserInteractionMode === "manual"
-      || snapshot.profile === "development"
-      || (snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true));
+  const manualInteraction = snapshot.state.browserInteractionMode === "manual";
+  const modelReadiness = modelConnectionReadiness({
+    manual: manualInteraction,
+    installed: snapshot.state.coreSetupComplete === true,
+    catalogVerified: snapshot.state.codexCatalogVerified === true,
+    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    development: snapshot.profile === "development",
+  });
+  const toolProof = currentToolProof(snapshot, operation);
+  const interactionSetupComplete = modelReadiness === "available" && (!manualInteraction || toolProof);
   const firstRunZeroRiskSetup = snapshot.state.browserInteractionMode === "manual"
     && snapshot.state.coreSetupComplete !== true;
   const [surface, setSurface] = useState<Surface>(
@@ -610,12 +766,14 @@ function LauncherShell({
   const needsSetup = !needsBrowser && !interactionSetupComplete;
   const mcpOptional = snapshot.state.browserInteractionMode === "automatic"
     && snapshot.state.codexCatalogVerified === true
-    && snapshot.state.mcpSetupComplete !== true;
+    && !toolProof;
   const updateCopy = updateCopyFor(language);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateCheckCooldown, setUpdateCheckCooldown] = useState(false);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [updateInstallPending, setUpdateInstallPending] = useState(false);
+  const [restartPending, setRestartPending] = useState(false);
+  const restartInFlight = useRef(false);
   const updateInstallPendingRef = useRef(false);
   const updateCheckTimer = useRef<number | undefined>(undefined);
   const updateCheckMounted = useRef(false);
@@ -902,28 +1060,18 @@ function LauncherShell({
                   label={copy.browser}
                   onClick={() => navigateSurface("browser")}
                 />
+                <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
               </SidebarGroup>
               <SidebarGroup label={copy.configuration}>
                 <SidebarItem
-                  active={surface === "setup"}
-                  badge={needsSetup ? <ActionDot pulse tone="required" /> : null}
+                  active={surface === "setup" || surface === "mcp"}
+                  badge={needsSetup
+                    ? <ActionDot pulse tone="required" />
+                    : mcpOptional ? <ActionDot tone="optional" /> : null}
                   icon="setup"
-                  label={copy.setup}
+                  label={copy.connectionsNav}
                   onClick={() => navigateSurface("setup")}
                 />
-                <SidebarItem
-                  active={surface === "mcp"}
-                  badge={mcpOptional ? <ActionDot tone="optional" /> : null}
-                  icon="mcp"
-                  label={copy.localTools}
-                  onClick={() => {
-                    setMcpTargetMode(null);
-                    navigateSurface("mcp");
-                  }}
-                />
-              </SidebarGroup>
-              <SidebarGroup label={copy.runtime}>
-                <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
               </SidebarGroup>
             </nav>
 
@@ -949,14 +1097,30 @@ function LauncherShell({
         </div>
       </aside>
 
-      <section className="workspace">
+      <section className={`workspace${snapshot.state.launcherRestartRequired ? " has-runtime-notice" : ""}`}>
+          {snapshot.state.launcherRestartRequired ? <div className="runtime-restart-notice" role="status">
+            <div><strong>{copy.launcherRuntimeRestartTitle}</strong><p>{copy.launcherRuntimeRestartBody}</p></div>
+            <button type="button" className="button-secondary" disabled={restartPending || updateBlocked || updateBusy}
+              onClick={() => {
+                if (restartInFlight.current) return;
+                restartInFlight.current = true;
+                setRestartPending(true);
+                void api!.restartLauncher().catch(cause => setError(messageOf(cause))).finally(() => {
+                  restartInFlight.current = false;
+                  setRestartPending(false);
+                });
+              }}>{copy.launcherRuntimeRestartAction}</button>
+          </div> : null}
           <div
             className="surface-transition"
             key={surface}
           >
-            {surface === "overview" ? <Overview copy={copy} browser={browser} snapshot={snapshot} toolsReady={browser?.authenticated === true && currentToolProof(snapshot, operation)} logs={logs} navigate={navigateSurface} openTab={(tabId) => void openBrowserTab(tabId)} /> : null}
+            {surface === "overview" ? <Overview copy={copy} browser={browser} catalogFailure={catalogFailure}
+              snapshot={snapshot} toolsReady={toolProof} logs={logs} navigate={navigateSurface}
+              openTab={(tabId) => void openBrowserTab(tabId)} /> : null}
             {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
-              <AccountSettings copy={copy} openBrowser={() => navigateSurface("browser")} setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} />
+              <AccountSettings copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
+                setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} />
             </ContentSurface> : null}
             {surface === "browser" ? (
               <BrowserSurface
@@ -974,6 +1138,7 @@ function LauncherShell({
                 activateBrowser={activateBrowser}
                 browser={browser}
                 copy={copy}
+                catalogFailure={catalogFailure}
                 devProfile={devProfile}
                 operation={operation}
                 setError={setError}
@@ -981,6 +1146,7 @@ function LauncherShell({
                   setMcpTargetMode(null);
                   setSurface("mcp");
                 }}
+                showActivity={() => setSurface("activity")}
                 snapshot={snapshot}
                 updateState={updateState}
               />
@@ -991,6 +1157,7 @@ function LauncherShell({
                 devProfile={devProfile}
                 interactionMode={mcpTargetMode ?? snapshot.state.browserInteractionMode}
                 language={language}
+                showSetup={() => setSurface("setup")}
                 onDone={() => {
                   setMcpTargetMode(null);
                   setSurface("browser");
@@ -1081,8 +1248,39 @@ function TitleBar({
         />
         {devProfile ? <span className="titlebar-dev-profile">{copy.devBadge}</span> : null}
       </div>
-      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, setup: copy.setup, mcp: copy.localTools, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface]}</strong></div>
+      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface]}</strong></div>
     </header>
+  );
+}
+
+function ConnectionsTabs({
+  active,
+  copy,
+  modelsReady,
+  onModels,
+  onTools,
+  toolsReady,
+}: {
+  active: "models" | "tools";
+  copy: Copy;
+  modelsReady: boolean;
+  onModels: () => void;
+  onTools: () => void;
+  toolsReady: boolean;
+}) {
+  const tab = (id: "models" | "tools", label: string, ready: boolean, onClick: () => void) => (
+    <button aria-current={active === id ? "page" : undefined}
+      className={active === id ? "is-active" : ""} onClick={onClick} type="button">
+      <span>{label}</span>
+      <small><StateDot state={ready ? "ready" : "idle"} />
+        {ready ? copy.connectionVerified : copy.connectionPending}</small>
+    </button>
+  );
+  return (
+    <nav aria-label={copy.connectionsNav} className="connections-tabs">
+      {tab("models", copy.modelsConnectionTab, modelsReady, onModels)}
+      {tab("tools", copy.toolsConnectionTab, toolsReady, onTools)}
+    </nav>
   );
 }
 
@@ -1477,20 +1675,24 @@ function ManualTurnGuide({
 function SetupSurface({
   activateBrowser,
   browser,
+  catalogFailure,
   copy,
   devProfile,
   operation,
   setError,
+  showActivity,
   showMcp,
   snapshot,
   updateState,
 }: {
   activateBrowser: (show?: boolean) => Promise<void>;
   browser: BrowserState | null;
+  catalogFailure: string | null;
   copy: Copy;
   devProfile: boolean;
   operation: OperationState | null;
   setError: (error: string | null) => void;
+  showActivity: () => void;
   showMcp: () => void;
   snapshot: LauncherSnapshot;
   updateState: (state: LauncherState) => void;
@@ -1498,10 +1700,14 @@ function SetupSurface({
   const [localBusy, setLocalBusy] = useState(false);
   const [hermesAdded, setHermesAdded] = useState(false);
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
-  const catalogPending = !devProfile && snapshot.state.coreSetupComplete === true
-    && snapshot.state.codexCatalogVerified !== true;
-  const pickerReady = snapshot.state.coreSetupComplete === true && (devProfile || (snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true));
-  const confirmPending = !devProfile && snapshot.state.coreSetupComplete === true && snapshot.state.codexCatalogVerified === true && !snapshot.state.codexPickerConfirmed;
+  const models = modelConnectionReadiness({ manual: manualInteraction,
+    installed: snapshot.state.coreSetupComplete === true,
+    catalogVerified: snapshot.state.codexCatalogVerified === true,
+    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    development: devProfile });
+  const catalogPending = models === "catalog-pending";
+  const pickerReady = models === "available";
+  const confirmPending = models === "picker-pending";
   const pendingContext = typeof snapshot.state.pendingBiggerContext === "boolean";
   const troubleshooting = useRef<HTMLDetailsElement>(null);
   const toolsVerified = currentToolProof(snapshot, operation);
@@ -1570,12 +1776,16 @@ function SetupSurface({
     troubleshooting.current.scrollIntoView({ block: "start" });
     troubleshooting.current.querySelector<HTMLButtonElement>("button")?.focus();
   };
+  const readyTitle = manualInteraction ? copy.manualSetupReady
+    : toolsVerified ? copy.setupChecksPassed : copy.setupReadyModels;
+  const readyBody = manualInteraction ? copy.manualSetupReadyBody
+    : toolsVerified ? copy.connectorAvailableNotExecuted : copy.setupUseCodex;
   const nextTitle = { "sign-in": copy.stepAccount, test: copy.stepSmoke, install: copy.stepInstall,
     catalog: copy.setupCatalogTitle, confirm: copy.setupConfirmTitle, tools: copy.localTools,
-    ready: toolsVerified ? copy.setupReadyFull : copy.setupReadyModels }[nextStep];
+    ready: readyTitle }[nextStep];
   const nextBody = { "sign-in": copy.stepAccountBody, test: copy.stepSmokeBody, install: copy.stepInstallBody,
     catalog: copy.setupCatalogBody, confirm: copy.setupConfirmBody, tools: copy.mcpBody,
-    ready: copy.setupUseCodex }[nextStep];
+    ready: readyBody }[nextStep];
   const nextLabel = { "sign-in": copy.signIn, test: copy.runSmoke, install: copy.install,
     catalog: copy.diagnostics, confirm: copy.confirmPicker, tools: copy.configureMcp,
     ready: copy.openWorkspace }[nextStep];
@@ -1597,6 +1807,16 @@ function SetupSurface({
         : manualInteraction ? copy.manualInteractionBody : copy.setupSubtitle}
       title={devProfile ? copy.devSetupTitle : copy.setupTitle}
     >
+      <ConnectionsTabs active="models" copy={copy} modelsReady={pickerReady}
+        onModels={() => {}} onTools={showMcp} toolsReady={toolsVerified} />
+      {manualInteraction ? <NoticeRow icon="info" tone="success">{copy.manualInteractionBody}</NoticeRow> : null}
+      {catalogFailure ? (
+        <section className="connection-inline-failure" aria-labelledby="catalog-failure-title">
+          <Icon name="alert" />
+          <div><strong id="catalog-failure-title">{copy.catalogUnavailable}</strong><p>{copy.catalogFailureKeptInstall}</p></div>
+          <button className="button-secondary" onClick={showTroubleshooting} type="button">{copy.openRoutingChecks}</button>
+        </section>
+      ) : null}
       <section className="setup-overview setup-next" aria-label={copy.setupNext}>
         <div><small>{copy.setupNext}</small><h2>{nextTitle}</h2><p>{nextBody}</p>
           {confirmPending && pendingContext ? <p role="status">{copy.contextWaiting}</p> : null}
@@ -1655,7 +1875,10 @@ function SetupSurface({
 
       <details className="setup-troubleshooting" ref={troubleshooting}>
         <summary>{copy.setupTroubleshooting}<Icon name="chevron" /></summary>
-        {!devProfile ? <RouteDiagnostics disabled={busy} language={snapshot.state.language ?? "en"} readReport={() => api!.routeDiagnostics()} /> : null}
+        <RouteDiagnostics disabled={busy} language={snapshot.state.language ?? "en"}
+          onActionError={cause => setError(messageOf(cause))}
+          onExport={() => api!.exportLogs()} onViewActivity={showActivity}
+          readReport={() => api!.routeDiagnostics()} />
         {snapshot.state.coreSetupComplete ? <button className="button-secondary" type="button" disabled={busy} onClick={() => void install()}>{copy.setupRepair}</button> : null}
       </details>
 
@@ -1704,6 +1927,7 @@ function McpSurface({
   onDone,
   operation,
   setError,
+  showSetup,
   snapshot,
   updateState,
   updateSnapshot,
@@ -1715,6 +1939,7 @@ function McpSurface({
   onDone: () => void;
   operation: OperationState | null;
   setError: (error: string | null) => void;
+  showSetup: () => void;
   snapshot: LauncherSnapshot;
   updateState: (state: LauncherState) => void;
   updateSnapshot: () => Promise<void>;
@@ -1754,6 +1979,34 @@ function McpSurface({
     },
   ], [copy, manualInteraction]);
   const guideMedia = MCP_GUIDE_MEDIA[step];
+  const recommendedConnectorName = (snapshot as ProjectedLauncherSnapshot)
+    .recommendedConnectorNames?.[interactionMode]?.trim() ?? "";
+  const retainedTargetName = snapshot.connectorNames[interactionMode]?.trim() ?? "";
+  const targetConnectorName = recommendedConnectorName
+    || (manualInteraction || snapshot.state.experimentalAsyncToolOperations ? retainedTargetName : "");
+  const currentConnectorName = retainedTargetName;
+  const connectorIdentityAvailable = targetConnectorName.length > 0;
+  const exactConnectorVerified = verified
+    && snapshot.state.setupConnectorName === targetConnectorName;
+  const native6UpgradeAvailable = !manualInteraction
+    && (recommendedConnectorName
+      ? currentConnectorName !== recommendedConnectorName
+      : snapshot.state.experimentalAsyncToolOperations !== true);
+  const connectorConfiguredForTarget = connectorIdentityAvailable && !native6UpgradeAvailable;
+
+  const setAsyncConnectorIdentity = async (enabled: boolean) => {
+    if (busy) return;
+    setLocalBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setAsyncToolOperations(enabled));
+      await updateSnapshot();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setLocalBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (previousStep.current === step) return;
@@ -1832,6 +2085,13 @@ function McpSurface({
       subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
       title={devProfile ? copy.devMcpTitle : copy.localTools}
     >
+      <ConnectionsTabs active="tools" copy={copy}
+        modelsReady={modelConnectionReadiness({ manual: manualInteraction,
+          installed: snapshot.state.coreSetupComplete === true,
+          catalogVerified: snapshot.state.codexCatalogVerified === true,
+          pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+          development: devProfile }) === "available"}
+        onModels={showSetup} onTools={() => {}} toolsReady={verified} />
       {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
         <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
       ) : null}
@@ -1954,7 +2214,7 @@ function McpSurface({
                   : copy.mcpCatalogRequired}
               </p>
             ) : null}
-            {step === 2 ? (
+        {step === 2 ? (
               <div className="connector-actions">
                 {!manualInteraction && !verified && ["Codex Native6", "Codex Native6 DEV"].includes(snapshot.connectorNames[interactionMode]) ? (
                   <NoticeRow icon="alert" tone="warning">
@@ -1964,16 +2224,45 @@ function McpSurface({
                   <NoticeRow icon="alert" tone="warning">
                     {manualInteraction ? copy.manualConnectorNotice : native6CopyFor(language).retained}
                   </NoticeRow>
+                  {!manualInteraction && snapshot.state.experimentalAsyncToolOperations ? (
+                    <button className="button-secondary" disabled={busy}
+                      onClick={() => void setAsyncConnectorIdentity(false)} type="button">
+                      {native6CopyFor(language).compatibility}
+                    </button>
+                  ) : null}
                 </details>}
-                {connectorProofMismatch(snapshot) ? <NoticeRow icon="alert" tone="warning">{native6CopyFor(language).mismatch}</NoticeRow> : null}
-                <div className="connector-name">
-                  <span>{copy.connectorName}</span>
-                  <code>{snapshot.connectorNames[interactionMode]}</code>
+                {!configuringInactiveMode && connectorProofMismatch(snapshot)
+                  ? <NoticeRow icon="alert" tone="warning">{native6CopyFor(language).mismatch}</NoticeRow> : null}
+                {native6UpgradeAvailable ? <div className="connector-upgrade-action">
+                  <p>{recommendedConnectorName
+                    ? native6CopyFor(language).body.replace("{connector}", recommendedConnectorName)
+                    : native6CopyFor(language).title}</p>
+                  <PrimaryButton disabled={busy} onClick={() => void setAsyncConnectorIdentity(true)}>
+                    {native6CopyFor(language).upgrade}
+                  </PrimaryButton>
+                </div> : null}
+                <div className="connector-identity-card">
+                  <div>
+                    <span>{copy.currentSavedConnector}</span>
+                    <code>{currentConnectorName || copy.connectorIdentityUnavailable}</code>
+                  </div>
+                  <label>
+                    <span>{copy.createConnectorIdentity}</span>
+                    <input aria-label={copy.createConnectorIdentity} readOnly
+                      onFocus={event => event.currentTarget.select()}
+                      value={targetConnectorName || copy.connectorIdentityUnavailable} />
+                  </label>
+                  <p className="connector-identity-warning"><Icon name="alert" />{copy.newConnectorRequired}</p>
+                  <p className={`connector-verification-status${exactConnectorVerified ? " is-ready" : ""}`} role="status">
+                    <StateDot state={exactConnectorVerified ? "ready" : "idle"} />
+                    {exactConnectorVerified ? copy.connectorVerified : copy.connectorNotVerified}
+                  </p>
                 </div>
                 <div className="inline-actions">
                   {snapshot.urls.developerMode ? <SecondaryButton icon="external"
                     onClick={() => void openExternal(snapshot.urls.developerMode!)}>{copy.openDeveloperMode}</SecondaryButton> : null}
                   <SecondaryButton
+                    disabled={!connectorConfiguredForTarget}
                     icon="external"
                     onClick={() => void (async () => {
                       setError(null);
@@ -2010,7 +2299,7 @@ function McpSurface({
             {busy ? copy.running : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
           </PrimaryButton>
         ) : null}
-        {step === 2 ? (
+            {step === 2 ? (
           <>
             {verified ? (
               <SecondaryButton disabled={busy} onClick={() => void verify()}>
@@ -2018,14 +2307,14 @@ function McpSurface({
               </SecondaryButton>
             ) : null}
             <PrimaryButton
-              disabled={busy}
+              disabled={busy || !connectorConfiguredForTarget}
               onClick={() => void (verified ? onDone() : verify())}
             >
               {busy
                 ? operation?.name === "mcp-verification" && operation.status === "running"
                   ? localizeRuntimeMessage(copy, operation.message, undefined, language)
                   : copy.running
-                : verified ? copy.done : copy.verifyRuntime}
+                : verified ? copy.done : native6CopyFor(language).verify}
             </PrimaryButton>
           </>
         ) : null}
@@ -2142,10 +2431,6 @@ function SettingsSurface({
   const proModelBusy = busy
     || operation?.status === "running"
     || browser?.tabs.some((tab) => tab.status === "running") === true;
-  const asyncToolOperationsBlocked = proModelBusy
-    || browser?.status === "running"
-    || browser?.status === "testing"
-    || browser?.navigationLocked === true;
 
   const savePreference = async (action: () => Promise<LauncherState>) => {
     if (busy) return;
@@ -2208,20 +2493,6 @@ function SettingsSurface({
       setBusy(false);
     }
   };
-  const setAsyncToolOperations = async (enabled: boolean) => {
-    if (asyncToolOperationsBlocked || snapshot.state.browserInteractionMode !== "automatic"
-      || snapshot.state.coreSetupComplete !== true || snapshot.state.mcpRuntimeInstalled !== true) return;
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setAsyncToolOperations(enabled));
-      configureInteractionMode("automatic");
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
   const setInteractionMode = async (mode: BrowserInteractionMode) => {
     setBusy(true);
     setError(null);
@@ -2265,16 +2536,8 @@ function SettingsSurface({
 
   return (
     <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle} subtitle={copy.settingsSubtitle}>
-      <SectionHeading label={copy.agentSettings} />
+      <SectionHeading label={copy.executionSettings} />
       <div className="settings-list">
-        {!devProfile ? <SettingRow body={copy.launchAtLoginBody} flushAfter label={copy.launchAtLogin}>
-          <Switch
-            label={copy.launchAtLogin}
-            checked={snapshot.state.autoStart}
-            disabled={busy}
-            onChange={(checked) => void savePreference(async () => (await api!.setAutostart(checked)).state)}
-          />
-        </SettingRow> : null}
         <InteractionModePicker
           copy={copy}
           disabled={busy}
@@ -2294,6 +2557,31 @@ function SettingsSurface({
             {capacity.restartRequired ? <p role="status">{copy.browserCapacityRestart}</p> : null}
           </div>
         </SettingRow>
+        <SettingRow body={copy.manualSubmitTimeBody} label={copy.manualSubmitTime}>
+          <select aria-label={copy.manualSubmitTime} disabled={busy}
+            value={snapshot.state.manualSubmitTimeoutSec ?? 120}
+            onChange={event => void savePreference(() => api!.setPreference("manualSubmitTimeoutSec", Number(event.target.value)))}>
+            {[30, 60, 120, 180, 300, 600].map(seconds => <option key={seconds} value={seconds}>{seconds} s</option>)}
+          </select>
+        </SettingRow>
+        <SettingRow body={copy.showDuringTurnsBody} label={copy.showDuringTurns}>
+          <Switch
+            label={copy.showDuringTurns}
+            checked={snapshot.state.showBrowserDuringTurns}
+            disabled={busy || snapshot.state.browserInteractionMode === "manual"}
+            onChange={(checked) => void savePreference(() => api!.setPreference("showBrowserDuringTurns", checked))}
+          />
+        </SettingRow>
+
+        <SectionHeading label={copy.connectionsNav} spaced />
+        <SettingRow label={copy.toolsConnectionTab} body={copy.mcpBody}>
+          <button className="button-primary" type="button" disabled={busy}
+            onClick={() => configureInteractionMode(snapshot.state.browserInteractionMode)}>
+            {copy.manageToolsConnection}
+          </button>
+        </SettingRow>
+
+        <SectionHeading label={copy.modelsAndContextSettings} spaced />
         <SettingRow body={copy.compactionModelBody} label={copy.compactionModel}>
           <select className="settings-select" aria-label={copy.compactionModel}
             disabled={proModelBusy || !snapshot.state.coreSetupComplete || snapshot.state.browserInteractionMode === "manual"}
@@ -2318,66 +2606,8 @@ function SettingsSurface({
             value={snapshot.proModelVersion}
           />
         </SettingRow>
-        <SectionHeading label={copy.appearanceLabel} spaced />
-        <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
-          <Switch
-            label={copy.keepRunningOnClose}
-            checked={snapshot.state.keepRunningOnClose}
-            disabled={busy}
-            onChange={(checked) => void savePreference(() => api!.setPreference("keepRunningOnClose", checked))}
-          />
-        </SettingRow>
-        <SettingRow body={copy.passkeyBrowserBody} label={copy.passkeyBrowser}>
-          <select className="settings-select" aria-label={copy.passkeyBrowser} value={snapshot.state.passkeyBrowser ?? "chrome"}
-            disabled={busy || operation?.status === "running"}
-            onChange={event => void savePreference(() => api!.setPreference("passkeyBrowser", event.target.value as "chrome" | "firefox"))}>
-            <option value="chrome">Google Chrome</option><option value="firefox">Firefox</option>
-          </select>
-        </SettingRow>
-        <SettingRow body={copy.manualSubmitTimeBody} label={copy.manualSubmitTime}>
-          <select aria-label={copy.manualSubmitTime} disabled={busy}
-            value={snapshot.state.manualSubmitTimeoutSec ?? 120}
-            onChange={event => void savePreference(() => api!.setPreference("manualSubmitTimeoutSec", Number(event.target.value)))}>
-            {[30, 60, 120, 180, 300, 600].map(seconds => <option key={seconds} value={seconds}>{seconds} s</option>)}
-          </select>
-        </SettingRow>
-        <SettingRow body={copy.showDuringTurnsBody} label={copy.showDuringTurns}>
-          <Switch
-            label={copy.showDuringTurns}
-            checked={snapshot.state.showBrowserDuringTurns}
-            disabled={busy || snapshot.state.browserInteractionMode === "manual"}
-            onChange={(checked) => void savePreference(() => api!.setPreference("showBrowserDuringTurns", checked))}
-          />
-        </SettingRow>
-        <SettingRow label={native6CopyFor(language).title}
-          body={native6CopyFor(language).body.replace("{connector}", devProfile ? "Codex Native6 DEV" : "Codex Native6")}>
-          {snapshot.state.mcpRuntimeInstalled ? <span>{native6CopyFor(language).current.replace("{connector}", snapshot.connectorName)}</span> : null}
-          <button className="button-primary" type="button"
-            disabled={asyncToolOperationsBlocked && snapshot.state.browserInteractionMode === "automatic"
-              && snapshot.state.mcpRuntimeInstalled === true
-              && snapshot.connectorName !== (devProfile ? "Codex Native6 DEV" : "Codex Native6")}
-            onClick={() => {
-              if (snapshot.state.coreSetupComplete !== true
-                || snapshot.state.browserInteractionMode !== "automatic" || !snapshot.state.mcpRuntimeInstalled
-                || snapshot.connectorName === (devProfile ? "Codex Native6 DEV" : "Codex Native6")) {
-                configureInteractionMode("automatic");
-              } else {
-                void setAsyncToolOperations(true);
-              }
-            }}>
-            {snapshot.state.browserInteractionMode !== "automatic" || !snapshot.state.mcpRuntimeInstalled
-              ? native6CopyFor(language).configure
-              : snapshot.connectorName === (devProfile ? "Codex Native6 DEV" : "Codex Native6")
-                ? native6CopyFor(language).verify : native6CopyFor(language).upgrade}
-          </button>
-        </SettingRow>
         <details className="advanced-settings" open={typeof snapshot.state.pendingBiggerContext === "boolean" ? true : undefined}>
         <summary>{copy.advancedContext}<Icon name="chevron" /></summary>
-        {snapshot.state.browserInteractionMode === "automatic" && snapshot.state.mcpRuntimeInstalled
-          && snapshot.connectorName !== (devProfile ? "Codex Native4 DEV" : "Codex Native4") ? (
-          <button className="text-button" type="button" disabled={asyncToolOperationsBlocked}
-            onClick={() => void setAsyncToolOperations(false)}>{native6CopyFor(language).compatibility}</button>
-        ) : null}
         <SettingRow
           body={snapshot.state.browserInteractionMode === "manual"
             ? copy.manualBiggerContextUnavailable
@@ -2426,6 +2656,31 @@ function SettingsSurface({
             onClick={() => void setBiggerContext(snapshot.state.pendingBiggerContext!)}>{copy.retryContextChange}</button> : null}
         </div> : null}
         </details>
+
+        <SectionHeading label={copy.applicationSettings} spaced />
+        {!devProfile ? <SettingRow body={copy.launchAtLoginBody} label={copy.launchAtLogin}>
+          <Switch
+            label={copy.launchAtLogin}
+            checked={snapshot.state.autoStart}
+            disabled={busy}
+            onChange={(checked) => void savePreference(async () => (await api!.setAutostart(checked)).state)}
+          />
+        </SettingRow> : null}
+        <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
+          <Switch
+            label={copy.keepRunningOnClose}
+            checked={snapshot.state.keepRunningOnClose}
+            disabled={busy}
+            onChange={(checked) => void savePreference(() => api!.setPreference("keepRunningOnClose", checked))}
+          />
+        </SettingRow>
+        <SettingRow body={copy.passkeyBrowserBody} label={copy.passkeyBrowser}>
+          <select className="settings-select" aria-label={copy.passkeyBrowser} value={snapshot.state.passkeyBrowser ?? "chrome"}
+            disabled={busy || operation?.status === "running"}
+            onChange={event => void savePreference(() => api!.setPreference("passkeyBrowser", event.target.value as "chrome" | "firefox"))}>
+            <option value="chrome">Google Chrome</option><option value="firefox">Firefox</option>
+          </select>
+        </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
           <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
@@ -3141,9 +3396,10 @@ function BiggerContextRecommendation({
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
-  useModalFocus(true, dialog, onClose);
-  return (
+  useModalFocus(true, dialog, onClose, { closeAllowed: !busy });
+  return createPortal(
     <div
+      aria-busy={busy}
       aria-describedby="bigger-context-recommendation-body"
       aria-labelledby="bigger-context-recommendation-title"
       aria-modal="true"
@@ -3172,7 +3428,8 @@ function BiggerContextRecommendation({
           <button className="button-secondary" data-modal-autofocus disabled={busy} onClick={onClose} type="button">{copy.close}</button>
         </footer>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

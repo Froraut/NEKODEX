@@ -1160,7 +1160,7 @@ export async function runChatGptMcpServer(options: {
       "codex_tool_status",
       {
         title: "Recover owned operation metadata",
-        description: "Native6 only. List up to 64 operation identities and states owned by this active turn, without delivery IDs. Returns metadata only and never acknowledges or restarts work. Poll a recovered terminal operation to receive its result and delivery_id before acknowledging that exact delivery_id. Expired payloads cannot be recovered and never authorize rerunning side effects.",
+        description: "Native6 only. List all live/unacknowledged operations plus the newest acknowledged guards, up to 64 identities, without delivery IDs. The truncated and omitted fields report older acknowledged guards that remain protected from replay until turn retirement. Returns metadata only and never acknowledges or restarts work. Poll a recovered terminal operation to receive its result and delivery_id before acknowledging that exact delivery_id. Expired payloads cannot be recovered and never authorize rerunning side effects.",
         inputSchema: { turn_token: turnTokenSchema },
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },

@@ -3,41 +3,64 @@ import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
 import { useId, type CSSProperties } from "react";
 import { Icon, type IconName } from "./icons";
 import type { Copy } from "./i18n";
+import { modelConnectionReadiness } from "./setup-progress";
 import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types";
 
 const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
 const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
 
-export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate, openTab }: {
+export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logs, navigate, openTab }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
+  catalogFailure: string | null;
   toolsReady: boolean;
   logs: LogRecord[]; navigate: (surface: Surface) => void; openTab: (tabId: string) => void;
 }) {
+  const manual = snapshot.state.browserInteractionMode === "manual";
   const signedIn = browser?.authenticated === true;
-  const modelsReady = snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true;
-  const ready = signedIn && modelsReady && toolsReady;
-  const workspaceReady = signedIn && modelsReady;
+  const models = modelConnectionReadiness({ manual,
+    installed: snapshot.state.coreSetupComplete === true,
+    catalogVerified: snapshot.state.codexCatalogVerified === true,
+    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    development: snapshot.profile === "development" });
+  const modelsReady = models === "available";
+  const ready = modelsReady && toolsReady && (manual || signedIn);
+  const workspaceReady = modelsReady && (manual || signedIn);
   const activeTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
-  const connections: Array<{ icon: IconName; label: string; ready: boolean; surface: Surface; pending: string }> = [
-    { icon: "accounts", label: copy.accountConnection, ready: signedIn, surface: "accounts", pending: copy.signInNeededShort },
-    { icon: "setup", label: copy.modelConnection, ready: modelsReady, surface: "setup", pending: snapshot.state.coreSetupComplete ? snapshot.state.codexCatalogVerified ? copy.modelsConfirmShort : copy.modelsWaitingShort : copy.connectionPending },
-    { icon: "mcp", label: copy.toolConnection, ready: toolsReady, surface: "mcp", pending: copy.notConnectedShort },
+  const modelStatus = catalogFailure ? copy.catalogUnavailable
+    : modelsReady ? (manual ? copy.setupInstalledTitle : copy.connectionVerified)
+      : models === "picker-pending" ? copy.modelsConfirmShort
+        : models === "catalog-pending" ? copy.modelsWaitingShort : copy.connectionPending;
+  const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [
+    { icon: "accounts", label: copy.accountConnection, ready: signedIn, surface: "accounts",
+      status: manual ? copy.manualShort : signedIn ? copy.connectionVerified : copy.signInNeededShort },
+    { error: Boolean(catalogFailure), icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogFailure,
+      surface: "setup", status: modelStatus },
+    { icon: "mcp", label: copy.toolsConnectionTab, ready: toolsReady, surface: "mcp",
+      status: toolsReady ? copy.connectorVerified : copy.connectorNotVerified },
   ];
+  const heroTitle = catalogFailure ? copy.catalogUnavailable
+    : ready ? copy.setupChecksPassed
+      : (manual || signedIn) && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle;
+  const heroBody = catalogFailure ? copy.catalogFailureKeptInstall
+    : ready ? copy.connectorAvailableNotExecuted
+      : (manual || signedIn) && snapshot.state.coreSetupComplete
+        ? snapshot.state.codexCatalogVerified || manual ? copy.setupConfirmTitle : copy.setupCatalogTitle
+        : copy.overviewBody;
   return <section className="content-surface overview-surface is-page-scroll">
     <div className="content-scroll overview-scroll">
       <header className="overview-heading"><div><h1>{copy.overview}</h1><p>{copy.overviewSubtitle}</p></div><span className="workspace-location"><Icon name="globe" />{copy.localWorkspace}</span></header>
       <section className="workspace-intro" aria-labelledby="overview-intro-heading">
-        <div className="intro-copy"><h2 id="overview-intro-heading">{ready ? copy.overviewReady : signedIn && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle}</h2>
-          <p>{ready ? copy.overviewReadyBody : signedIn && snapshot.state.coreSetupComplete ? snapshot.state.codexCatalogVerified ? copy.setupConfirmTitle : copy.setupCatalogTitle : copy.overviewBody}</p>
+        <div className="intro-copy"><h2 id="overview-intro-heading">{heroTitle}</h2>
+          <p>{heroBody}</p>
           <button className="button-primary" type="button" onClick={() => navigate(workspaceReady ? "browser" : "setup")}>{workspaceReady ? copy.openWorkspace : copy.finishSetup}<Icon name="forward" /></button>
         </div>
         <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>
       </section>
       <div className="workspace-metrics">
-        <button type="button" title={copy.capacityLink} onClick={() => navigate("settings")}><span className="metric-value"><strong>{snapshot.browserCapacity.active}</strong><span>{copy.capacityLabel}</span></span><small>{copy.capacityHint}</small></button>
+        <button type="button" title={copy.capacityLink} onClick={() => navigate("settings")}><span className="metric-value"><strong>{snapshot.browserCapacity.active}</strong><span>{copy.configuredLimit}</span></span><small>{copy.capacityNotMeasured}</small></button>
         <button type="button" title={copy.openWorkspace} onClick={() => navigate("browser")}><span className="metric-value"><strong>{active}</strong><span>{copy.overviewActiveRuns}</span></span><small>{copy.overviewActiveRunsBody}</small></button>
         <button type="button" title={copy.modeLink} onClick={() => navigate("settings")}><strong className="metric-mode">{snapshot.state.browserInteractionMode === "manual" ? copy.manualShort : copy.automaticShort}</strong><span className="metric-label">{copy.modeLabel}</span><small>{copy.workspaceTagline}</small></button>
       </div>
@@ -58,8 +81,8 @@ export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate, 
         <div className="overview-main-column">
           <section className="connection-section" aria-labelledby="connection-heading">
             <div className="overview-section-heading"><h2 id="connection-heading">{copy.connectionsShort}</h2><small>{copy.connectionsBody}</small></div>
-            <div className="connection-list">{connections.map(connection => <button type="button" key={connection.surface} aria-label={`${connection.label}: ${connection.ready ? copy.connectionVerified : connection.pending}. ${connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.setup : copy.connectShort}`} onClick={() => navigate(connection.surface)}>
-              <Icon name={connection.icon} /><strong>{connection.label}</strong><span className={`connection-status${connection.ready ? " is-ready" : ""}`} aria-live="polite" aria-atomic="true"><i className={`state-dot is-${connection.ready ? "ready" : "idle"}`} />{connection.ready ? copy.connectionVerified : connection.pending}</span><span className="connection-action" aria-hidden="true">{connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.setup : copy.connectShort}<Icon name="chevron" /></span>
+            <div className="connection-list">{connections.map(connection => <button type="button" key={connection.surface} aria-label={`${connection.label}: ${connection.status}. ${connection.ready ? copy.manageShort : copy.connectShort}`} onClick={() => navigate(connection.surface)}>
+              <Icon name={connection.icon} /><strong>{connection.label}</strong><span className={`connection-status${connection.ready ? " is-ready" : ""}${connection.error ? " is-error" : ""}`} aria-live="polite" aria-atomic="true"><i className={`state-dot is-${connection.error ? "error" : connection.ready ? "ready" : "idle"}`} />{connection.status}</span><span className="connection-action" aria-hidden="true">{connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.openRoutingChecks : copy.connectShort}<Icon name="chevron" /></span>
             </button>)}</div>
           </section>
           <section className="overview-activity" aria-live="polite" aria-atomic="false">
@@ -71,10 +94,6 @@ export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate, 
         <aside className="workspace-art-card">
           <div className="art-card-copy"><h2>{copy.artCardTitle}</h2><p>{copy.artCardBody}</p></div>
           <WorkspaceIllustration />
-          <div className="art-card-actions">
-            <button className="button-secondary" type="button" onClick={() => navigate("accounts")}><Icon name="accounts" />{copy.quickAccounts}</button>
-            <button className="button-secondary" type="button" onClick={() => navigate("browser")}><Icon name="browser" />{copy.openBrowserShort}</button>
-          </div>
         </aside>
       </div>
     </div>

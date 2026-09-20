@@ -288,8 +288,17 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
   return validateRuntimeBundle(destination, expectedIdentity);
 }
 
+function installedRuntimeRoot({ coreHome, version, platform = process.platform, arch = process.arch }) {
+  if (typeof version !== "string" || !version.trim() || /[\\/\0]/.test(version)) {
+    throw new Error("Installed runtime version is invalid");
+  }
+  const runtimeRoot = path.join(coreHome, "versions", `${version}-${platform}-${arch}`);
+  return validateRuntimeBundle(runtimeRoot, { version, platform, arch });
+}
+
 module.exports = {
   ensurePackagedRuntime,
+  installedRuntimeRoot,
   validateRuntimeBundle,
   waitForPackagedRuntimeSource,
 };

@@ -2,21 +2,39 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { AccountSafetySettings } from "./AccountSafetySettings";
 import { AccountProxySettings } from "./AccountProxySettings";
-import type { AccountPoolSnapshot } from "./types";
-import type { Copy } from "./i18n";
+import { AccountCodexControls } from "./AccountCodexControls";
+import { accountCodexCopyFor, type Copy } from "./i18n";
+import type { AccountPoolSnapshot, AccountQuotaSnapshot, CodexLoginProgress, Language } from "./types";
+import "./account-codex.css";
 
-export function AccountSettings({ copy, openBrowser, setError, manual }: {
-  manual: boolean; copy: Copy; openBrowser: () => void; setError: (message: string | null) => void;
+export function AccountSettings({ copy, language, openBrowser, setError, manual }: {
+  manual: boolean; copy: Copy; language: Language; openBrowser: () => void; setError: (message: string | null) => void;
 }) {
   const api = window.codexWebLauncher!;
+  const codexCopy = accountCodexCopyFor(language);
   const [state, setState] = useState<AccountPoolSnapshot | null>(null);
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [replacingId, setReplacingId] = useState<string | null>(null);
+  const actionInFlight = useRef(false);
   const retryRef = useRef<HTMLButtonElement | null>(null);
   const refreshRef = useRef<() => void>(() => {});
+  const [quotas, setQuotas] = useState<Map<string, AccountQuotaSnapshot | null>>(new Map());
+  const [quotaRefreshing, setQuotaRefreshing] = useState<Set<string>>(new Set());
+  const [refreshAllBusy, setRefreshAllBusy] = useState(false);
+  const [quotaClock, setQuotaClock] = useState(() => Date.now());
+  const quotaInFlight = useRef(new Set<string>());
+  const quotaRevisions = useRef(new Map<string, number>());
+  const quotaGlobalLock = useRef(false);
+  const [login, setLogin] = useState<CodexLoginProgress | null>(null);
+  const [loginSnapshotStatus, setLoginSnapshotStatus] = useState<"loading" | "ready" | "failed">("loading");
+  const [loginAttempt, setLoginAttempt] = useState(0);
+  const [startingAccountId, setStartingAccountId] = useState<string | null>(null);
+  const startingId = useRef<string | null>(null);
+  const loginRevision = useRef(0);
+  const loginActionInFlight = useRef(false);
+  const [loginAction, setLoginAction] = useState<{ accountId: string; kind: "open" | "copy" | "cancel" } | null>(null);
   useEffect(() => {
     let disposed = false;
     let timer: number | undefined;
@@ -64,18 +82,231 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
   useEffect(() => {
     if (loadFailed) retryRef.current?.focus();
   }, [loadFailed]);
+
+  const quotaEvidenceKey = state === null ? "" : JSON.stringify(state.accounts.map(account => [account.id, account.evidenceEpoch ?? null]));
+  useEffect(() => {
+    if (!state) return;
+    let disposed = false;
+    const accounts = state.accounts.map(account => account.id);
+    const activeIds = new Set(accounts);
+    setQuotas(current => {
+      const next = new Map([...current].filter(([id]) => activeIds.has(id)));
+      for (const id of accounts) next.set(id, null);
+      return next;
+    });
+    void (async () => {
+      for (const id of accounts) {
+        const revision = (quotaRevisions.current.get(id) ?? 0) + 1;
+        quotaRevisions.current.set(id, revision);
+        try {
+          const value = await api.accountCodexQuotaSnapshot(id);
+          if (disposed || quotaRevisions.current.get(id) !== revision) continue;
+          setQuotas(current => new Map(current).set(id, value));
+        } catch (error) {
+          if (!disposed && quotaRevisions.current.get(id) === revision) {
+            setError(error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
+    })();
+    return () => { disposed = true; };
+  }, [api, quotaEvidenceKey, setError]);
+
+  useEffect(() => {
+    const nextRetry = [...quotas.values()].reduce<number | null>((nearest, quota) => {
+      const retry = quota?.retryAt ? Date.parse(quota.retryAt) : Number.NaN;
+      if (!Number.isFinite(retry) || retry <= Date.now()) return nearest;
+      return nearest === null ? retry : Math.min(nearest, retry);
+    }, null);
+    if (nextRetry === null) return;
+    const timer = window.setTimeout(() => setQuotaClock(Date.now()), Math.min(2_147_483_647, nextRetry - Date.now() + 50));
+    return () => window.clearTimeout(timer);
+  }, [quotaClock, quotas]);
+
+  useEffect(() => {
+    let disposed = false;
+    const revision = ++loginRevision.current;
+    void api.codexLoginSnapshot().then(value => {
+      if (!disposed && loginRevision.current === revision) {
+        setLogin(value);
+        setLoginSnapshotStatus("ready");
+      }
+    }).catch(error => {
+      if (!disposed && loginRevision.current === revision) {
+        setLoginSnapshotStatus("failed");
+        setError(error instanceof Error ? error.message : String(error));
+      }
+    });
+    return () => {
+      disposed = true;
+      loginRevision.current += 1;
+    };
+  }, [api, setError, loginAttempt]);
+
+  useEffect(() => {
+    if (!login?.active || loginSnapshotStatus !== "ready") return;
+    const { flowId, accountId, deadlineAt } = login;
+    const revision = ++loginRevision.current;
+    const deadline = Date.parse(deadlineAt);
+    const remainingSeconds = Number.isFinite(deadline)
+      ? Math.max(0, Math.ceil((deadline - Date.now()) / 1_000)) : 600;
+    const maximumPolls = Math.min(660, remainingSeconds + 45);
+    let disposed = false;
+    let inFlight = false;
+    let polls = 0;
+    let timer: number | undefined;
+    let errorReported = false;
+    const schedule = () => {
+      if (disposed || loginRevision.current !== revision || timer !== undefined) return;
+      if (polls >= maximumPolls) { setLoginSnapshotStatus("failed"); return; }
+      timer = window.setTimeout(poll, 1_000);
+    };
+    const poll = () => {
+      timer = undefined;
+      if (disposed || inFlight || loginRevision.current !== revision || polls >= maximumPolls) return;
+      polls += 1;
+      inFlight = true;
+      void api.codexLoginStatus(flowId, accountId).then(next => {
+        if (disposed || loginRevision.current !== revision) return;
+        setLogin(next);
+        if (next.active) schedule();
+      }).catch(error => {
+        if (disposed || loginRevision.current !== revision) return;
+        setLoginSnapshotStatus("failed");
+        if (!errorReported) {
+          errorReported = true;
+          setError(error instanceof Error ? error.message : String(error));
+        }
+        schedule();
+      }).finally(() => { inFlight = false; });
+    };
+    schedule();
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      if (loginRevision.current === revision) loginRevision.current += 1;
+    };
+  }, [api, login?.active, login?.accountId, login?.deadlineAt, login?.flowId, login?.phase, loginSnapshotStatus, setError]);
+
+  const refreshQuota = async (id: string, fromRefreshAll = false) => {
+    if ((!fromRefreshAll && quotaGlobalLock.current) || quotaInFlight.current.has(id)) return;
+    quotaInFlight.current.add(id);
+    setQuotaRefreshing(current => new Set(current).add(id));
+    const revision = (quotaRevisions.current.get(id) ?? 0) + 1;
+    quotaRevisions.current.set(id, revision);
+    setError(null);
+    try {
+      const value = await api.refreshAccountCodexQuota(id);
+      if (quotaRevisions.current.get(id) === revision) {
+        setQuotas(current => new Map(current).set(id, value));
+      }
+    } catch (error) {
+      if (quotaRevisions.current.get(id) === revision) setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      quotaInFlight.current.delete(id);
+      setQuotaRefreshing(current => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const refreshAllQuotas = async () => {
+    if (!state || manual || quotaGlobalLock.current || quotaInFlight.current.size > 0) return;
+    quotaGlobalLock.current = true;
+    setRefreshAllBusy(true);
+    try {
+      for (const account of state.accounts) {
+        const retryAt = quotas.get(account.id)?.retryAt;
+        const retryBlocked = typeof retryAt === "string" && Number.isFinite(Date.parse(retryAt))
+          && Date.parse(retryAt) > Date.now();
+        if (account.authenticated && !retryBlocked) await refreshQuota(account.id, true);
+      }
+    } finally {
+      quotaGlobalLock.current = false;
+      setRefreshAllBusy(false);
+    }
+  };
+
+  const startCodexLogin = async (id: string) => {
+    if (startingId.current !== null || login?.active || loginSnapshotStatus !== "ready") return;
+    startingId.current = id;
+    setStartingAccountId(id);
+    setError(null);
+    const revision = ++loginRevision.current;
+    try {
+      const next = await api.startCodexLogin(id);
+      if (loginRevision.current === revision) setLogin(next);
+    } catch (error) {
+      if (loginRevision.current === revision) {
+        try {
+          const current = await api.codexLoginSnapshot();
+          if (loginRevision.current === revision) setLogin(current);
+        } catch { /* The original start error remains the actionable failure. */ }
+        if (loginRevision.current === revision) setError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (startingId.current === id) {
+        startingId.current = null;
+        setStartingAccountId(null);
+      }
+    }
+  };
+
+  const runLoginAction = async <T,>(accountId: string, kind: "open" | "copy" | "cancel", action: () => Promise<T>) => {
+    if (loginActionInFlight.current) return null;
+    loginActionInFlight.current = true;
+    setLoginAction({ accountId, kind });
+    setError(null);
+    try { return await action(); }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); return null; }
+    finally { loginActionInFlight.current = false; setLoginAction(null); }
+  };
+
+  const cancelCodexLogin = async (progress: CodexLoginProgress) => {
+    const next = await runLoginAction(progress.accountId, "cancel",
+      () => api.cancelCodexLogin(progress.flowId, progress.accountId));
+    if (next) {
+      loginRevision.current += 1;
+      setLogin(next);
+    }
+  };
+
   const run = async (action: () => Promise<AccountPoolSnapshot>) => {
-    if (busy) return;
+    if (actionInFlight.current) return false;
+    actionInFlight.current = true;
     setBusy(true); setError(null);
-    try { await action(); refreshRef.current(); }
-    catch (error) { setError(error instanceof Error ? error.message : String(error)); }
-    finally { setBusy(false); }
+    try {
+      const next = await action();
+      setState(next);
+      refreshRef.current();
+      return true;
+    }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); return false; }
+    finally { actionInFlight.current = false; setBusy(false); }
   };
   if (!state) return <div className="account-loading" role={loadFailed ? "alert" : "status"} aria-live="polite">{loadFailed
     ? <button ref={retryRef} type="button" className="button-secondary" onClick={() => setAttempt(value => value + 1)}>{copy.retry}</button>
     : copy.accountsLoading}</div>;
+  const authenticatedAccounts = state.accounts.filter(account => account.authenticated);
+  const refreshableAccounts = authenticatedAccounts.filter(account => {
+    const retryAt = quotas.get(account.id)?.retryAt;
+    return !(typeof retryAt === "string" && Number.isFinite(Date.parse(retryAt)) && Date.parse(retryAt) > quotaClock);
+  });
+  const refreshAllDisabledReason = manual ? codexCopy.quotaManualUnavailable
+    : authenticatedAccounts.length === 0 ? codexCopy.quotaSignedOut
+      : refreshAllBusy || quotaInFlight.current.size > 0 ? codexCopy.quotaChecking
+        : refreshableAccounts.length === 0 ? codexCopy.quotaRateLimited : undefined;
   return <section className="account-settings" aria-label={copy.accountsTitle} aria-busy={busy}>
     {manual ? <p>{copy.accountsManual}</p> : null}
+    {loginSnapshotStatus === "failed" ? <div className="account-codex-toolbar" role="alert">
+      <p>{codexCopy.loginUncertain}</p>
+      <button type="button" className="button-secondary" onClick={() => {
+        setLoginSnapshotStatus("loading");
+        setLoginAttempt(value => value + 1);
+      }}>{copy.retry}</button>
+    </div> : null}
     <div className="account-routing">
       <label htmlFor="account-routing">{copy.accountsRouting}</label>
       <select id="account-routing" className="settings-select" value={manual ? "selected" : state.mode} disabled={busy || manual}
@@ -84,12 +315,37 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
         <option value="balanced">{copy.accountsBalanced}</option>
       </select>
     </div>
+    <div className="account-codex-toolbar">
+      <p>{codexCopy.quotaReportedOnly}</p>
+      <button className="button-secondary" type="button"
+        disabled={Boolean(refreshAllDisabledReason)}
+        title={refreshAllDisabledReason}
+        onClick={() => void refreshAllQuotas()}>
+        {refreshAllBusy ? codexCopy.quotaChecking : codexCopy.quotaRefreshAll}
+      </button>
+    </div>
+    {refreshAllDisabledReason ? <p className="account-codex-disabled-reason">{refreshAllDisabledReason}</p> : null}
     {state.accounts.map(account => <article className={`account-card${account.id === state.selectedId ? " is-selected" : ""}`} key={account.id}>
       {(() => {
-        const verified = account.authenticated && account.checked && account.connectorReady;
-        const replacing = replacingId === account.id;
-        const locked = verified && !replacing;
-        const selectable = verified;
+        const credentialLabel = account.authenticated ? copy.replaceCredentials : copy.accountsSignIn;
+        const active = account.activeTurns > 0;
+        const blockedReason = active ? copy.accountsBusyTasks.replace("{count}", String(account.activeTurns)) : busy ? copy.loading : undefined;
+        const flowForAccount = login?.accountId === account.id ? login : null;
+        const flowAccount = login ? state.accounts.find(candidate => candidate.id === login.accountId) : null;
+        const loginBoundActive = startingAccountId === account.id || (flowForAccount?.active === true);
+        const loginBoundReason = loginBoundActive
+          ? codexCopy.loginCurrent.replace("{account}", account.label) : undefined;
+        const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id) || (login?.active && login.accountId !== account.id)
+          ? codexCopy.loginCurrent.replace("{account}", flowAccount?.label ?? login?.accountId ?? "Codex") : undefined;
+        const loginDisabledReason = !account.authenticated ? codexCopy.quotaSignedOut
+          : loginSnapshotStatus === "loading" ? codexCopy.loginStarting
+            : loginSnapshotStatus === "failed" ? codexCopy.loginFailed : anotherLoginReason;
+        const retryAt = quotas.get(account.id)?.retryAt;
+        const quotaRetryBlocked = typeof retryAt === "string" && Number.isFinite(Date.parse(retryAt)) && Date.parse(retryAt) > quotaClock;
+        const quotaDisabledReason = manual ? codexCopy.quotaManualUnavailable
+          : !account.authenticated ? codexCopy.quotaSignedOut
+            : refreshAllBusy ? codexCopy.quotaChecking
+              : quotaRetryBlocked ? codexCopy.quotaRateLimited : undefined;
         return <>
       <header className="account-card-header">
         <span className="account-avatar" aria-hidden="true">{account.label.trim().slice(0, 1).toLocaleUpperCase()}</span>
@@ -102,27 +358,42 @@ export function AccountSettings({ copy, openBrowser, setError, manual }: {
         <span className={account.connectorReady ? "is-ready" : ""}><i className={`state-dot is-${account.connectorReady ? "ready" : "idle"}`} />{copy.toolConnection}: {account.connectorReady ? copy.connectionVerified : copy.connectionPending}</span>
       </div>
       <div className="account-actions">
-        <label><input type="checkbox" checked={account.enabled} disabled={busy || locked}
+        <label><input type="checkbox" checked={account.enabled} disabled={busy}
           onChange={event => void run(() => api.setAccountEnabled(account.id, event.target.checked))} />{copy.accountsEnabled}</label>
-        <button type="button" className="button-primary" disabled={busy} aria-label={locked ? copy.replaceCredentials : copy.accountsSignIn} onClick={() => void run(async () => {
+        <button type="button" className="button-primary" disabled={busy || active || loginBoundActive} aria-label={credentialLabel}
+          title={loginBoundReason} onClick={() => void run(async () => {
           const next = await api.selectAccount(account.id);
-          if (verified) setReplacingId(account.id);
+          setState(next);
           openBrowser();
-          void api.openAccountLogin(account.id).catch(error => setError(String(error)));
-          return next;
-        })}><Icon name="browser" />{locked ? copy.replaceCredentials : copy.accountsSignIn}</button>
-        <button type="button" className="button-secondary" disabled={busy || account.id === state.selectedId || !selectable}
-          onClick={() => void run(() => api.selectAccount(account.id))}>{account.id === state.selectedId ? copy.accountsCurrent : copy.accountsSelect}</button>
-        <button type="button" className="text-button" disabled={busy || manual || locked} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
-        <button type="button" className="text-button" disabled={busy || manual || locked} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
+          await api.openAccountLogin(account.id);
+          return api.accounts();
+        })}><Icon name="browser" />{credentialLabel}</button>
+        {account.id !== state.selectedId ? <button type="button" className="button-secondary" disabled={busy || !account.authenticated || !account.checked || !account.connectorReady}
+          onClick={() => void run(() => api.selectAccount(account.id))}>{copy.accountsSelect}</button> : null}
+        <button type="button" className="text-button" disabled={busy || manual || active || !account.authenticated} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
+        <button type="button" className="text-button" disabled={busy || manual || active || !account.authenticated} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
       </div>
+      {active || loginBoundReason ? <p className="field-hint" role="status">{loginBoundReason ?? blockedReason}</p> : null}
       {account.safety ? <AccountSafetySettings id={account.id} safety={account.safety} copy={copy}
-        disabled={busy || account.activeTurns > 0}
-        save={policy => void run(() => api.setAccountSafety(account.id, policy))}
+        disabled={busy || active} blockedReason={blockedReason}
+        save={policy => run(() => api.setAccountSafety(account.id, policy))}
         resume={() => void run(() => api.resumeAccount(account.id))} /> : null}
       {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy}
-        disabled={busy || account.activeTurns > 0}
-        save={value => void run(() => api.setAccountProxy(account.id, value))} /> : null}
+        disabled={busy || active || loginBoundActive} blockedReason={loginBoundReason ?? blockedReason}
+        save={value => run(() => api.setAccountProxy(account.id, value))} /> : null}
+      <AccountCodexControls account={account} copy={codexCopy} language={language}
+        quota={quotas.has(account.id) ? quotas.get(account.id) : undefined}
+        quotaBusy={quotaRefreshing.has(account.id)} quotaDisabledReason={quotaDisabledReason}
+        onRefreshQuota={() => refreshQuota(account.id)}
+        login={flowForAccount} loginStarting={startingAccountId === account.id}
+        loginDisabledReason={loginDisabledReason}
+        loginAction={loginAction?.accountId === account.id ? loginAction.kind : null}
+        onStartLogin={() => startCodexLogin(account.id)}
+        onOpenLogin={async () => { if (flowForAccount) await runLoginAction(account.id, "open",
+          () => api.openCodexLogin(flowForAccount.flowId, account.id)); }}
+        onCopyCode={async () => flowForAccount ? (await runLoginAction(account.id, "copy",
+          () => api.copyCodexLoginCode(flowForAccount.flowId, account.id))) === true : false}
+        onCancelLogin={async () => { if (flowForAccount) await cancelCodexLogin(flowForAccount); }} />
         </>;
       })()}
     </article>)}

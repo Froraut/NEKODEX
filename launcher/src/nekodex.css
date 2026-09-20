@@ -44,13 +44,12 @@
 .sidebar-version > span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .brand-mark { color: var(--brand-accent); }
 .brand-mark { --neko-x: 0px; --neko-y: 0px; --neko-tilt: 0deg; user-select: none; }
-.brand-mark:focus-visible { outline: 2px solid var(--brand-accent); outline-offset: 7px; border-radius: 12px; }
 .brand-mark > svg { overflow: visible; }
-.neko-tracking { transform: rotate(var(--neko-tilt)); transform-origin: 32px 43px; transition: transform 180ms ease-out; }
+.neko-tracking { transform: rotate(var(--neko-tilt)); transform-origin: 32px 43px; transition: transform var(--duration-control) var(--ease-enter); }
 .neko-head { transform-origin: 32px 47px; }
 .neko-ear-left { transform-origin: 19px 29px; }
 .neko-ear-right { transform-origin: 45px 29px; }
-.neko-face { transform: translate(var(--neko-x), var(--neko-y)); transition: transform 160ms ease-out; }
+.neko-face { transform: translate(var(--neko-x), var(--neko-y)); transition: transform var(--duration-control) var(--ease-enter); }
 .neko-eye { transform-box: fill-box; transform-origin: center; }
 .neko-mouth { transform-box: fill-box; transform-origin: center; }
 .reaction-curious .neko-head { animation: neko-curious 900ms ease-in-out both; }
@@ -182,7 +181,7 @@
 .activity-filters input::placeholder { color: var(--color-text-tertiary); }
 .activity-table { border: 1px solid var(--color-border); border-radius: 12px; overflow: hidden; }
 .activity-row { padding-left: 14px; padding-right: 14px; }
-.account-card { background: var(--color-background-control); }
+.account-card { background: var(--color-background-panel); box-shadow: var(--shadow-panel); }
 .account-card-header h2 { letter-spacing: -.02em; }
 .diagnostic-row { padding: 10px 12px; border-radius: 9px; margin: 4px 0; }
 
@@ -274,10 +273,11 @@
 
 /* Dedicated account workspace. */
 .account-settings { padding: 0; border: 0; }
-.account-routing { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; background: var(--color-background-brand); border: 1px solid #c6bdff24; border-radius: 12px; padding: 18px; margin-bottom: 24px; }
+.account-routing { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; background: var(--color-background-brand); border: 1px solid #c6bdff24; border-radius: 12px; padding: 18px; margin-bottom: 24px; box-shadow: var(--shadow-panel); }
 .account-routing label { font-size: var(--text-sm); font-weight: 600; }
-.account-card { padding: 20px; border: 1px solid var(--color-border); border-radius: 14px; margin-bottom: 14px; }
+.account-card { padding: 20px; border: 1px solid var(--color-border); border-radius: 14px; margin-bottom: 14px; transition: border-color var(--duration-control) var(--ease-enter), background-color var(--duration-control) var(--ease-enter), box-shadow var(--duration-control) var(--ease-enter); }
 .account-card.is-selected { border-color: #c6bdff55; }
+.account-card:focus-within { border-color: var(--color-border-accent); background: var(--color-background-panel-raised); box-shadow: var(--shadow-panel), inset 2px 0 var(--brand-accent); }
 .account-card-header { display: flex; gap: 13px; align-items: center; margin-bottom: 16px; }
 .account-avatar { display: grid; place-items: center; width: 39px; height: 39px; flex-shrink: 0; border-radius: 12px; background: var(--color-background-brand); color: var(--brand-accent); font-size: 17px; font-weight: 600; }
 .account-card-header h2 { margin: 0; font-size: 15px; }
@@ -308,7 +308,7 @@
 .welcome-option.is-active { border-color: #c6bdff55; background: var(--color-background-brand); }
 .welcome-footer > .button-primary { min-width: 130px; }
 
-@media (max-width: 820px) {
+@media (max-width: 860px) {
   .titlebar-location { margin-left: 180px; }
   .app-root:not([data-platform="darwin"]) .titlebar-location { margin-left: 90px; }
   .app-shell.is-compact .app-sidebar { padding-top: 0; box-shadow: 20px 0 60px #0005; }
@@ -390,6 +390,9 @@
 .guide-media:not(.is-expanded) { aspect-ratio: auto; max-height: 280px; }
 .guide-media:not(.is-expanded) video { width: 100%; max-height: 280px; object-fit: contain; }
 @container workspace (max-width: 760px) {
+  .surface-header h1 { font-size: clamp(26px, 5cqi, var(--text-title)); }
+  .interaction-mode-picker { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .interaction-mode-picker > button { min-height: auto; padding: 16px; }
   .setup-next { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 18px; }
   .setup-next > .button-primary { justify-self: start; max-width: 100%; }
   .setup-row { grid-template-columns: 26px minmax(0, 1fr); padding: 14px 0; gap: 10px; }
@@ -411,35 +414,21 @@
   .next-surface-row { grid-template-columns: 22px minmax(0, 1fr) 16px; }
   .next-surface-row em { display: none; }
 }
-/* Motion is limited to cat anatomy; functional progress indicators stay alive. */
-.app-root *:not(.neko-tracking):not(.neko-head):not(.neko-ear):not(.neko-face):not(.neko-eye):not(.neko-mouth):not(.neko-tongue):not(.coding-cat-head):not(.coding-cat-paw):not(.coding-cat-tail),
-.app-root *::before, .app-root *::after {
-  animation: none !important;
-  transition: none !important;
-  scroll-behavior: auto !important;
-}
-.app-root .tab-spinner,
-.app-root .browser-loading-line::after,
-.app-root .state-dot.is-busy,
-.app-root .action-dot.is-pulse {
-  animation: none !important;
-}
-.app-root .tab-spinner { animation: spin 0.8s linear infinite !important; }
-.app-root .browser-loading-line::after { animation: browserProgress 1.25s var(--ease-enter) infinite !important; }
-.app-root .state-dot.is-busy,
-.app-root .action-dot.is-pulse { animation: statePulse 1.3s ease-in-out infinite !important; }
-.app-root .button-primary:active:not(:disabled) { transform: none; }
-/* Keep operational progress visible; the motion guard above is for decorative scene props. */
-.app-root .state-dot.is-busy { animation: statePulse 1.3s ease-in-out infinite !important; }
-.app-root .action-dot.is-pulse { animation: statePulse 1.3s ease-in-out infinite !important; }
-.app-root .tab-spinner { animation: spin 0.8s linear infinite !important; }
-.app-root .browser-loading-line::after { animation: browserProgress 1.25s var(--ease-enter) infinite !important; }
 .connection-list > button:focus-visible,
 .workspace-metrics > button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 .account-actions > button:disabled { opacity: .58; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .brand-mark .neko-tracking, .brand-mark .neko-face { transform: none; }
+}
+
+@media (max-height: 760px) {
+  .sidebar-brand-row { padding-bottom: 10px; }
+  .sidebar-group { margin-top: 12px; }
+  .sidebar-group h2 { padding-bottom: 4px; }
+  .sidebar-nav { padding-top: 4px; padding-bottom: 8px; }
+  .sidebar-session { padding-top: 8px; padding-bottom: 8px; }
+  .sidebar-version { padding-top: 8px; }
 }
 
 /* NEKODEX form language: shared surfaces, clear focus and readable feedback. */
@@ -502,3 +491,17 @@
 .updates-speed { display: block; min-height: 1.5em; }
 @keyframes update-transfer-pulse { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
 @media (prefers-reduced-motion: reduce) { .updates-meter.is-indeterminate .updates-meter-fill { animation: none; transform: translateX(90%); } }
+
+/* Actual updater phases explain indeterminate verification without inventing completion. */
+.updates-phases { display: flex; gap: 18px; list-style: none; margin: 0 0 20px; padding: 0; }
+.updates-phases li { display: flex; gap: 8px; align-items: center; color: var(--color-text-tertiary); font-size: var(--text-xs); }
+.updates-phases li > span { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 50%; border: 1px solid var(--color-border-heavy); font-variant-numeric: tabular-nums; }
+.updates-phases li svg { width: 14px; height: 14px; }
+.updates-phases li.is-current { color: var(--color-text-primary); }
+.updates-phases li.is-current > span { background: var(--color-background-brand); border-color: var(--brand-accent); }
+.updates-phases li.is-complete { color: var(--color-text-success); }
+.updates-phases li.is-complete > span { border-color: currentColor; }
+.updates-symbol.is-working svg { animation: update-status-breathe 1.8s ease-in-out infinite; }
+@keyframes update-status-breathe { 50% { opacity: .5; } }
+@container workspace (max-width: 580px) { .updates-phases { flex-wrap: wrap; gap: 10px 18px; } }
+@media (prefers-reduced-motion: reduce) { .updates-symbol.is-working svg { animation: none; } }

@@ -294,7 +294,7 @@ function buildJob({ version, platform, arch = process.arch, executablePath, asse
   runtimeExecutable, repository = REPOSITORY }) {
   const parentIdentity = processIdentity(process.pid);
   if (!parentIdentity) throw new Error("Could not establish the running launcher's process identity");
-  const common = { version, platform, arch, parentPid: process.pid, parentIdentity, tempRoot, logPath, runtimeExecutable,
+  const common = { version, platform, arch, readinessSchema: 2, parentPid: process.pid, parentIdentity, tempRoot, logPath, runtimeExecutable,
     identity: APPLICATION.identity, productName: APPLICATION.productName, packageName: BUILD.name, repository };
   if (platform === "darwin") {
     const target = macApplicationPath(executablePath);
