@@ -327,6 +327,11 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     ? (login?.settling ? codexCopy.loginSettlingCurrent : codexCopy.loginCurrent)
       .replace("{account}", loginLockedAccount)
     : undefined;
+  const startingAccount = startingAccountId
+    ? state.accounts.find(account => account.id === startingAccountId)?.label ?? startingAccountId : null;
+  const accountAddBlockedReason = startingAccount
+    ? codexCopy.loginCurrent.replace("{account}", startingAccount) : loginLockedReason;
+  const accountAddDisabled = mutationsDisabled || Boolean(accountAddBlockedReason);
   const refreshableAccounts = authenticatedAccounts.filter(account => {
     const retryAt = quotas.get(account.id)?.retryAt;
     return account.id !== loginLockedId
@@ -462,14 +467,19 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     </article>)}
     <form className="account-add" onSubmit={event => {
       event.preventDefault();
-      if (!mutationsDisabled && label.trim()) void run(async () => {
+      if (!accountAddDisabled && startingId.current === null && loginLockedIdRef.current === null
+        && label.trim()) void run(async () => {
         const next = await api.addAccount(label.trim()); setLabel(""); return next;
       });
     }}>
       <label htmlFor="account-name">{copy.accountsAdd}</label>
       <div><input id="account-name" type="text" aria-label={copy.accountsLabel} placeholder={copy.accountsLabel} maxLength={80}
-        autoComplete="off" value={label} disabled={mutationsDisabled} onChange={event => setLabel(event.target.value)} />
-        <button type="submit" className="button-secondary" disabled={mutationsDisabled || !label.trim()}><Icon name="plus" />{copy.accountsAdd}</button></div>
+        autoComplete="off" value={label} disabled={accountAddDisabled} title={accountAddBlockedReason}
+        onChange={event => setLabel(event.target.value)} />
+        <button type="submit" className="button-secondary" disabled={accountAddDisabled || !label.trim()}
+          title={accountAddBlockedReason}><Icon name="plus" />{copy.accountsAdd}</button></div>
+      {accountAddBlockedReason
+        ? <p className="account-codex-disabled-reason">{accountAddBlockedReason}</p> : null}
     </form>
   </section>;
 }
