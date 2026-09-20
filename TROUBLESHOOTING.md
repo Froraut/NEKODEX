@@ -5,13 +5,13 @@ editing Codex configuration, or opening a new issue.
 
 ## The first five minutes
 
-1. Install the [latest release](https://github.com/miuuyy/codex-chatgpt-web/releases/latest). Quit
-   **Codex Web GPT** before running the installer again; updating preserves its private ChatGPT
-   profile and launcher configuration.
-2. In the launcher, confirm that ChatGPT sign-in, the browser smoke test, and **Install models** (or
-   **Repair Codex setup**) are green.
-3. Fully quit Codex, including its background process, and reopen it. Signing out, closing only the
-   window, or starting another task does not reload the model catalog. Keep the launcher open.
+1. Use **Updates** in NEKODEX or the [fork's releases](https://github.com/Froraut/NEKODEX/releases).
+   Updates preserve the private ChatGPT profile and launcher configuration.
+2. In **Connections**, check sign-in, the model connection and any configured tools separately.
+   A successful catalog request and models visible in the Codex picker are separate observations.
+3. Open Codex's model picker or try a new task. If the intended models/settings are still missing
+   after checking the route, finish active work and fully quit/reopen the app hosting Codex.
+   Keep NEKODEX running. Restarting is a recovery step, not proof that setup succeeded.
 4. Select a **ChatGPT Web — …** model from Codex's model picker.
 5. Run **Settings → Run doctor**. If the problem remains, reproduce it once and immediately use
    **Activity → Export safe log**.
@@ -21,15 +21,25 @@ log are more useful than another reinstall.
 
 ## Models do not appear, or setup remains on step 3
 
-**Install models** updates the Codex route, but a running Codex process keeps its old model catalog.
-Fully quit every Codex Desktop window and Codex CLI process, then reopen Codex while the launcher is
-still running. The launcher should move from **Restart Codex** to a verified catalog state.
+**Install models** saves the Codex route. Follow the actual connection status:
+
+- **Waiting for Codex to load the models:** a successful request has not been observed. Open the
+  model picker and inspect **Check Codex routing**. If the client still has the old settings,
+  finish current work and fully quit/reopen that Codex client.
+- **Confirm your models in Codex:** the catalog has already been received. Confirm the picker only
+  after seeing the NEKODEX model rows. An unconfirmed picker does not establish a restart requirement.
+- **Model catalog unavailable:** inspect the reported catalog/route error; reinstalling or restarting
+  repeatedly is not a substitute for correcting it.
+
+The legacy `codexRestartRequired` field is a client-refresh hint. Older builds recreated it solely
+because picker confirmation was missing; it is not an observation of the Codex process or proof
+that a running task has loaded a new context limit.
 
 If the models still do not appear:
 
-- run **Repair Codex setup** once;
-- check **Settings → Run doctor**;
-- make sure another Codex wrapper is not replacing the route; and
+- check **Settings → Check Codex routing** and **Run doctor**;
+- make sure another Codex wrapper is not replacing the route;
+- use **Repair Codex setup** once only if the saved integration needs repair; and
 - export a safe log after the failed catalog check.
 
 A green step 3 followed by a browser-turn error means installation succeeded. Repeating step 3 will
@@ -313,8 +323,9 @@ To update, quit **Codex Web GPT** and run the same installer command from the RE
 replaces the application and runtime while preserving the launcher configuration and private
 ChatGPT profile.
 
-To repair a valid installation, use **Repair Codex setup** once and fully restart Codex. Avoid
-deleting configuration until **Run doctor** and a safe log identify which layer failed.
+Use **Repair Codex setup** only when diagnostics identify an integration problem. After repair,
+check the catalog and model picker; reopen Codex if it still uses the old settings. Avoid deleting
+configuration until **Run doctor** and a safe log identify which layer failed.
 
 To remove the integration safely:
 

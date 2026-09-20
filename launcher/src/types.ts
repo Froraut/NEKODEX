@@ -41,6 +41,7 @@ export interface LauncherState {
   setupIdentityHash?: string | null;
   mcpSetupComplete?: boolean;
   mcpRuntimeInstalled?: boolean;
+  /** Legacy name: client configuration refresh is pending, not proof that a restart is necessary. */
   codexRestartRequired?: boolean;
   runtimeMigrationPending?: boolean;
   launcherRestartRequired?: boolean;

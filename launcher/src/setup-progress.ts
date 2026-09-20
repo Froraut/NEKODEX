@@ -10,6 +10,21 @@ export interface SetupReadinessState {
   development: boolean;
 }
 
+export type CodexSettingsStatus = "catalog" | "catalog-error" | "picker" | "manual-refresh" | "removed";
+
+/** Report the evidence we have without treating missing picker confirmation as a restart requirement. */
+export function codexSettingsStatus(state: {
+  coreSetupComplete?: boolean; browserInteractionMode?: string; codexCatalogVerified?: boolean;
+  codexPickerConfirmed?: boolean; codexRestartRequired?: boolean; pendingBiggerContext?: boolean | null;
+}, development: boolean, catalogFailed = false): CodexSettingsStatus | null {
+  if (development || typeof state.pendingBiggerContext === "boolean") return null;
+  if (!state.coreSetupComplete) return state.codexRestartRequired ? "removed" : null;
+  if (state.browserInteractionMode === "manual") return state.codexRestartRequired ? "manual-refresh" : null;
+  if (catalogFailed) return "catalog-error";
+  if (!state.codexCatalogVerified) return "catalog";
+  return state.codexPickerConfirmed ? null : "picker";
+}
+
 /**
  * Manual mode does not inspect the automatic Codex model catalog or picker.
  * Its model-side setup is available once the isolated/core profile exists;

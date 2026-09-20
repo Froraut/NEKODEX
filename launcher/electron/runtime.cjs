@@ -1231,7 +1231,7 @@ class RuntimeHost {
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const result = await this.runSetup("bigger-context", args, {
       message: enabled ? "Enabling Bigger Context" : "Disabling Bigger Context",
-      successMessage: enabled ? "Bigger Context enabled; restart Codex" : "Standard context restored; restart Codex",
+      successMessage: enabled ? "Bigger Context enabled" : "Standard context restored",
       timeoutMs: CORE_SETUP_TIMEOUT_MS,
     });
     return { ...result, mode, enabled: enabled === true };

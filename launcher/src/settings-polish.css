@@ -1,4 +1,18 @@
-/* Focused layout polish for Connections and Settings. Imported by App.tsx. */
+/* Focused layout polish for Connections and Settings. Imported after shared styles by main.tsx. */
+
+.codex-settings-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+  padding: 18px 0;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+.codex-settings-status > div { min-width: 0; max-width: 680px; }
+.codex-settings-status strong { font-size: var(--text-base); font-weight: 550; }
+.codex-settings-status p { margin: 6px 0 0; color: var(--color-text-secondary); line-height: 1.5; }
+.codex-settings-status > button { flex: none; }
 
 .wizard-stepper button {
   min-height: 58px;
@@ -45,6 +59,7 @@
 }
 
 @container workspace (max-width: 860px) {
+  .codex-settings-status { flex-direction: column; align-items: flex-start; }
   .settings-list .setting-row {
     grid-template-columns: minmax(0, 1fr);
     justify-content: stretch;
