@@ -1524,6 +1524,14 @@ class RuntimeHost {
     }
     if (existing.config?.releaseVersion === currentVersion) return { updated: false };
 
+    if (this.supervisor.daemonInstanceId && this.supervisor.daemon) {
+      const live = await this.supervisor.runtimeSession(existing.config, "status");
+      if (live.active_http_turns > 0 || live.active_browser_turns > 0 || live.active_compaction_runs > 0) {
+        return { updated: false, repairRequired: true, deferredUntilCommittedRestart: true,
+          detail: "The existing runtime is serving active work. Finish those tasks, then restart NEKODEX to activate the new runtime." };
+      }
+    }
+
     // Ordinary release rebinding is local and preserves saved account capability evidence.
     // Browser/account inspection belongs to first setup or an explicit Repair action.
     this.commandForRelease(["--version"], existing.config.releaseVersion);

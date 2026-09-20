@@ -18,16 +18,16 @@
 
 ## Download
 
-**5.7.0-nekodex.3 · prerelease**
+**5.8.0-nekodex.1 · prerelease**
 
 | Platform | Package | Delivery |
 | --- | --- | --- |
-| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.7.0-nekodex.3/NEKODEX-5.7.0-nekodex.3-mac-arm64.dmg) | Developer ID signed and notarized |
-| macOS 13+ · Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.7.0-nekodex.3/NEKODEX-5.7.0-nekodex.3-mac-x64.dmg) | Developer ID signed and notarized |
-| Linux x64 | [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.7.0-nekodex.3/codex-web-gpt-5.7.0-nekodex.3-linux-x64.AppImage) | Authenticated release metadata |
+| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.1/NEKODEX-5.8.0-nekodex.1-mac-arm64.dmg) | Developer ID signed and notarized |
+| macOS 13+ · Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.1/NEKODEX-5.8.0-nekodex.1-mac-x64.dmg) | Developer ID signed and notarized |
+| Linux x64 | [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.1/codex-web-gpt-5.8.0-nekodex.1-linux-x64.AppImage) | Authenticated release metadata |
 | Windows x64 | [Preview artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml) | Unsigned preview; outside authenticated updates |
 
-[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v5.7.0-nekodex.3) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.7.0-nekodex.3/checksums.txt) · [Release authenticity](docs/release-signing.md)
+[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v5.8.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.1/checksums.txt) · [Release authenticity](docs/release-signing.md)
 
 On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later releases, use **Updates → Download and restart** inside the app. Account profiles and settings stay in place. Finish active tasks first.
 
@@ -50,7 +50,7 @@ On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later relea
   </tr>
 </table>
 
-New in 5.7: independent native/tunnel recovery, durable runtime-generation rollback, account-bound access controls, clearer action states and reduced-motion support. [Implementation and evidence](docs/reviews/resilience-20260920/summary.md)
+New in 5.8: native Codex keeps running after the interface exits, and reopening attaches to the existing runtime. Web tasks keep their guarded browser/tunnel lifecycle. [Architecture and evidence](docs/design/native-background-runtime.md)
 
 ## Get started
 
@@ -79,8 +79,9 @@ A saved configuration, a delivered model catalog and a verified connector are se
 - Allowances come from each account's provider response. Missing or unsupported values remain unavailable; local message counts are not subscription limits. Refresh is explicit and unavailable in Manual mode.
 - Quick sign-in opens the official OpenAI device authorization flow in the chosen account's session. It can update the shared Codex sign-in; an already-running Codex desktop may still need a profile check or restart.
 - Native requests remain usable when only the Web tool tunnel is unavailable. The UI reports those capabilities separately.
+- Closing the window keeps Web available. Quitting the interface preserves native Codex; **Stop connections and quit** stops the service after active work finishes. In the background, native uses its last validated network route; reopen NEKODEX after changing system proxy/PAC settings. The daemon is not an OS-managed restart service.
 - Tool execution, sandboxing and approvals stay with Codex. Native6 ownership is process-local; post-dispatch cancellation stops observation and cannot undo an external action.
-- Native statistics count only recorded requests. Bounded best-effort telemetry may miss events; missing token usage is not zero.
+- Native statistics count only recorded requests. Bounded best-effort telemetry may miss events, including while the interface is closed; missing token usage is not zero.
 - The default task ceiling is 16, configurable in Settings. This is not a measured concurrency guarantee or an increase in account allowance.
 - Manual input is text-only; attach images yourself in ChatGPT. Internal `zero-risk` names are compatibility identifiers, not a guarantee of no risk.
 

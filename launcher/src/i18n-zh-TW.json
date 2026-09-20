@@ -370,7 +370,7 @@
   "launchAtLogin": "登入時啟動",
   "launchAtLoginBody": "在 Codex 啟動前保持本機 Responses 路由可用。",
   "keepRunningOnClose": "關閉視窗後保持伺服器執行",
-  "keepRunningOnCloseBody": "將啟動器隱藏到系統托盤，使原生模型和 NEKODEX 模型保持可用。",
+  "keepRunningOnCloseBody": "將視窗隱藏到托盤；托盤無法使用時最小化，以保持 ChatGPT Web 可用。關閉介面後原生 Codex 仍會執行；選擇「停止連線並結束」可停止服務。",
   "showDuringTurns": "任務期間顯示瀏覽器",
   "showDuringTurnsBody": "瀏覽器任務活動時顯示內建 ChatGPT 頁面。",
   "manualBiggerContextUnavailable": "零風險模式已固定使用 3 倍壓縮間隔，提示仍保持單段並由使用者手動傳送。",

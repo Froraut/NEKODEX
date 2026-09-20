@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
 const { spawn } = require("node:child_process");
+const { EventEmitter } = require("node:events");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { redactText } = require("./logging.cjs");
 const {
@@ -376,6 +377,7 @@ class RuntimeSupervisor {
     this.configPath = path.join(coreHome, "config.json");
     this.statePath = path.join(coreHome, "runtime", "launcher-supervisor.json");
     this.daemon = null;
+    this.daemonInstanceId = null;
     this.tunnel = null;
     this.stopping = false;
     this.startPromise = null;
@@ -429,7 +431,7 @@ class RuntimeSupervisor {
         ? "unavailable" : nativeReady && this.nativeAccepting !== false ? "ready" : this.runtimeStatus === "starting" ? "unknown" : "unavailable",
       webAvailability: this.launcherProfile === "development"
         ? !tunnelRequired ? "ready" : tunnelReady ? "ready" : "degraded"
-        : !tunnelRequired ? nativeReady ? "ready" : "unavailable" : webReady ? "ready" : nativeReady ? "degraded" : "unavailable",
+        : !tunnelRequired ? nativeReady && this.webAccepting !== false ? "ready" : "unavailable" : webReady ? "ready" : nativeReady ? "degraded" : "unavailable",
       tunnelStatus: !tunnelRequired ? "absent" : tunnelReady ? "ready"
         : ["starting", "recovering", "stopping"].includes(this.runtimeStatus) ? this.runtimeStatus : "degraded",
       releaseVersion: current?.releaseVersion ?? null,
@@ -509,6 +511,7 @@ class RuntimeSupervisor {
       daemonPid: this.daemon?.pid ?? null,
       tunnelPid: this.tunnel?.pid ?? null,
       status,
+      ...(this.daemonInstanceId ? { daemonInstanceId: this.daemonInstanceId } : {}),
       ...(detail ? { detail } : {}),
       updatedAt: new Date().toISOString(),
     };
@@ -570,27 +573,32 @@ class RuntimeSupervisor {
 
   spawnChild(name, invocation, recoverySignal) {
     this.assertCanStart(recoverySignal);
+    const background = name === "daemon" && this.launcherProfile === "production";
+    if (name === "daemon") this.daemonInstanceId = null;
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
-      detached: DETACH_OWNED_CHILD,
+      detached: background || DETACH_OWNED_CHILD,
       env: {
         ...process.env,
         ...invocation.env,
         CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
+        ...(background ? { CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME: "1" } : {}),
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      // A GUI-owned pipe can close underneath a surviving daemon after an app crash.
+      // Lifecycle diagnostics stay in the launcher log and authenticated runtime status.
+      stdio: background ? "ignore" : ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
     this[name] = child;
     this.lastChildFailure[name] = null;
     this.lastChildOutput[name] = null;
-    collectLines(child.stdout, (line) => {
+    if (child.stdout) collectLines(child.stdout, (line) => {
       this.lastChildOutput[name] = redactText(line).slice(0, 1_000);
       this.logger.info(`runtime.${name}_stdout`, { line });
     }, (error) => {
       this.logger.warn(`runtime.${name}_stdout_unavailable`, { message: errorMessage(error) });
     });
-    collectLines(child.stderr, (line) => {
+    if (child.stderr) collectLines(child.stderr, (line) => {
       this.lastChildOutput[name] = redactText(line).slice(0, 1_000);
       this.logger.warn(`runtime.${name}_stderr`, { line });
     }, (error) => {
@@ -787,6 +795,9 @@ class RuntimeSupervisor {
       && body?.version === config.releaseVersion
       && (expectedPid === undefined || body?.pid === expectedPid);
     if (matches && expectedPid !== undefined && this.daemon?.pid === expectedPid) {
+      if (typeof body.instance_id === "string" && /^[a-f0-9-]{36}$/.test(body.instance_id)) {
+        this.daemonInstanceId = body.instance_id;
+      }
       if (Number.isSafeInteger(body.tunnel_status_revision) && body.tunnel_status_revision >= 0) {
         this.tunnelStatusRevision = Math.max(this.tunnelStatusRevision, body.tunnel_status_revision);
       }
@@ -1529,6 +1540,9 @@ class RuntimeSupervisor {
       });
     }
     if (!this.daemon && !this.tunnel) {
+      await this.adoptBackgroundDaemon(config, startSignal);
+    }
+    if (!this.daemon && !this.tunnel) {
       const healthyRuntime = tunnelOnly ? false : await this.proxyHealth(config);
       this.assertCanStart(startSignal);
       const ownershipState = this.readState();
@@ -2212,6 +2226,124 @@ class RuntimeSupervisor {
       if (!controlChild) {
         releaseControlOperation();
         releaseControl();
+      }
+      throw error;
+    }
+  }
+
+  async runtimeSession(config, action) {
+    const health = await this.proxyHealthPayload(config);
+    if (!health || health.pid !== this.daemon?.pid || health.version !== config.releaseVersion
+      || health.mode !== config.mode || health.service !== "codex-chatgpt-web"
+      || health.instance_id !== this.daemonInstanceId || !this.daemonInstanceId) {
+      throw new Error("Runtime session no longer matches the owned daemon");
+    }
+    const result = await this.control(config, "runtime-session", {
+      body: { action, instanceId: this.daemonInstanceId },
+    });
+    if (result.status !== "ok" || result.pid !== health.pid || result.instance_id !== this.daemonInstanceId
+      || result.version !== config.releaseVersion || result.mode !== config.mode) {
+      throw new Error("Runtime session did not acknowledge the exact daemon identity");
+    }
+    return result;
+  }
+
+  async adoptBackgroundDaemon(config, signal) {
+    if (this.launcherProfile !== "production" || this.daemon) return false;
+    const state = this.readState();
+    if (!state || runtimeOwnershipPredatesCurrentBoot(state)
+      || typeof state.daemonInstanceId !== "string"
+      || !/^[a-f0-9-]{36}$/.test(state.daemonInstanceId)) return false;
+    if (state.ownerPid !== process.pid && processRunning(state.ownerPid)) return false;
+    const health = await this.proxyHealthPayload(config);
+    this.assertCanStart(signal);
+    if (!health?.background_runtime || health.service !== "codex-chatgpt-web"
+      || health.version !== config.releaseVersion || health.mode !== config.mode
+      || health.pid !== state.daemonPid || health.instance_id !== state.daemonInstanceId) return false;
+    // Authenticate before accepting the persisted PID, never on public health alone.
+    const proof = await this.control(config, "runtime-session", {
+      body: { action: "status", instanceId: state.daemonInstanceId },
+    });
+    this.assertCanStart(signal);
+    if (proof.status !== "ok" || proof.pid !== state.daemonPid
+      || proof.instance_id !== state.daemonInstanceId || proof.background_runtime !== true) {
+      throw new Error("Background runtime ownership could not be authenticated");
+    }
+    const child = new EventEmitter();
+    Object.assign(child, { pid: state.daemonPid, exitCode: null, signalCode: null, background: true });
+    const timer = setInterval(() => {
+      if (processRunning(child.pid)) return;
+      clearInterval(timer);
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      if (this.daemon !== child) return;
+      this.daemon = null;
+      this.daemonInstanceId = null;
+      if (this.stopping || this.expectedExits.has(child)) return;
+      const detail = "Background native runtime exited";
+      if (this.tryWriteState("degraded", detail)) this.scheduleRecovery("daemon");
+      this.updateCapabilities("degraded", detail);
+    }, 250);
+    timer.unref();
+    child.disposeMonitor = () => clearInterval(timer);
+    child.unref = () => timer.unref();
+    this.daemon = child;
+    this.daemonInstanceId = state.daemonInstanceId;
+    this.writeState("starting");
+    await this.runtimeSession(config, "attach");
+    await this.proxyHealth(config, 2_000, child.pid);
+    this.logger.info("runtime.background_attached", { pid: child.pid });
+    return true;
+  }
+
+  async detachForQuit() {
+    const config = this.readConfig();
+    if (this.launcherProfile !== "production" || !config || !this.daemon) {
+      return this.shutdown({ cancelActiveTurns: false, force: false });
+    }
+    const health = await this.proxyHealthPayload(config);
+    // The first upgrade from a pre-background release retains its proven idle shutdown path.
+    if (health?.background_runtime !== true) return this.shutdown({ cancelActiveTurns: false, force: false });
+    const proof = await this.runtimeSession(config, "status");
+    if (!proof.background_network_ready) {
+      throw new Error("The native network route is not ready for background use. Keep NEKODEX open or choose Stop connections and quit.");
+    }
+    this.shutdownRequested = true;
+    this.shutdownResumeAllowed = false;
+    this.cancelRecoveries();
+    this.stopping = true;
+    let detached = false;
+    let settled = false;
+    try {
+      if (!await this.settleInitialStart() || !await this.settleRecoveryTasks()) {
+        throw new Error("Runtime work is still settling; retry closing NEKODEX shortly");
+      }
+      settled = true;
+      // The daemon atomically fences Web admission and checks every Web HTTP owner.
+      // This never drains or cancels an active native stream.
+      await this.runtimeSession(config, "detach");
+      detached = true;
+      this.stopTunnelMonitor();
+      if (this.tunnel) await this.stopTunnelGracefully(config);
+      this.writeState("background");
+      this.daemon.disposeMonitor?.();
+      this.daemon.unref?.();
+      this.webAccepting = false;
+      this.reportedTunnelReady = false;
+      this.updateCapabilities("ready", "Native Codex remains available; reopen NEKODEX for ChatGPT Web", config);
+      return { status: "background", daemonPid: this.daemon.pid };
+    } catch (error) {
+      if (detached) await this.runtimeSession(config, "attach").catch(failure => {
+        this.logger.error("runtime.background_detach_compensation_failed", { message: errorMessage(failure) });
+      });
+      this.stopping = false;
+      if (settled) {
+        this.shutdownRequested = false;
+        this.shutdownResumeAllowed = false;
+        if (config.mode === "full") {
+          if (this.tunnel) this.startTunnelMonitor(config);
+          else this.scheduleRecovery("tunnel");
+        }
       }
       throw error;
     }
