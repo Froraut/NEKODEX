@@ -211,7 +211,8 @@ test("a transient effort control does not turn a Luna-only account into Sol", as
   expect(visibilityReads).toBe(2);
 });
 
-function reasoningPicker(options: { max?: string; delay?: number; missing?: boolean } = {}) {
+function reasoningPicker(options: { max?: string; delay?: number; missing?: boolean; closed?: boolean } = {}) {
+  let opened = !options.closed;
   let value = 0;
   const keys: string[] = [];
   const hidden = {
@@ -232,7 +233,7 @@ function reasoningPicker(options: { max?: string; delay?: number; missing?: bool
   const container = {
     filter() { return this; }, last() { return this; },
     locator: () => slider,
-    isVisible: async () => true,
+    isVisible: async () => opened,
     waitFor: async ({ state }: { state: string }) => {
       expect(state).toBe("visible");
       if (options.missing) throw new Error("effort container never hydrated");
@@ -241,11 +242,13 @@ function reasoningPicker(options: { max?: string; delay?: number; missing?: bool
   };
   const control = {
     last() { return this; }, waitFor: async () => {}, isVisible: async () => true,
-    getAttribute: async (name: string) => name === "aria-expanded" ? "true" : null,
+    getAttribute: async (name: string) => name === "aria-expanded" ? String(opened) : null,
+    click: async () => { opened = true; keys.push("click"); },
+    press: async (key: string) => { keys.push(key); },
   };
   const composer = { filter() { return this; }, last() { return this; }, locator: () => ({ locator: () => control }) };
   const modelRows = { count: async () => 3, first() { return this; }, waitFor: async () => {}, nth: () => { throw new Error("Model rows are not effort choices"); } };
-  const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => true, locator: () => modelRows };
+  const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => opened, locator: () => modelRows };
   const page = {
     locator: (selector: string) => {
       if (selector === CHATGPT_COMPOSER_SELECTOR) return composer;
@@ -306,4 +309,12 @@ test("Pro selection changes the hidden slider through its visible owner, never t
   await select.call({ activeComposer: async () => fixture.composer }, fixture.page, "gpt-5.6-sol", "max", { localToolsEnabled: false, solAvailable: true, proAvailable: true });
   expect(fixture.keys).toEqual(["ArrowRight", "ArrowRight", "ArrowRight", "ArrowRight"]);
   expect(fixture.value()).toBe(4);
+});
+
+
+test("capability probe opens a closed picker with the shared activation path", async () => {
+  const fixture = reasoningPicker({ closed: true });
+  await expect(detectChatGptAccountCapabilities(fixture.page as never, { selectorTimeoutMs: 500 }))
+    .resolves.toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: true });
+  expect(fixture.keys).toEqual(["click"]);
 });
