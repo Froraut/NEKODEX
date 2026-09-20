@@ -88,7 +88,7 @@ export function AccountCodexControls({
     <section className="account-codex-login" aria-labelledby={loginHeadingId}>
       <header>
         <h3 id={loginHeadingId}>{copy.loginTitle}</h3>
-        {!login?.active ? <button className="button-secondary" type="button"
+        {!login?.active && !login?.settling ? <button className="button-secondary" type="button"
           disabled={loginStarting || Boolean(loginDisabledReason)}
           aria-busy={loginStarting || undefined}
           aria-describedby={loginDisabledReason ? (sharedDisabledReason ? quotaDisabledReasonId : loginDisabledReasonId) : undefined}
@@ -98,7 +98,7 @@ export function AccountCodexControls({
         </button> : null}
       </header>
       <p className="account-codex-login-body">{copy.loginBody}</p>
-      {loginDisabledReason && !login?.active && !sharedDisabledReason
+      {loginDisabledReason && !login?.active && !login?.settling && !sharedDisabledReason
         ? <p className="account-codex-disabled-reason" id={loginDisabledReasonId}>{loginDisabledReason}</p>
         : null}
       {login ? <LoginProgressView account={account} copy={copy} language={language} login={login}
@@ -195,7 +195,7 @@ function LoginProgressView({ account, action, copied, copy, language, login, onC
   const repeatsOpenAction = login.active && login.phase === "waiting" && login.canOpen && message === copy.loginOpen;
   return <div className={`account-codex-login-progress phase-${login.phase}`} aria-live="polite">
     {!repeatsOpenAction ? <p className="account-codex-status"><strong>{message}</strong></p> : null}
-    {login.active ? <p>{copy.loginCurrent.replace("{account}", account.label)}</p> : null}
+    {login.active || login.settling ? <p>{copy.loginCurrent.replace("{account}", account.label)}</p> : null}
     {login.active ? <p>{copy.loginDeadline.replace("{time}", formatDateTime(login.deadlineAt, language, copy.quotaUnknown))}</p> : null}
     {actual ? <p>{copy.loginActualAccount.replace("{account}", actual)}</p> : null}
     {login.userCode ? <div className="account-codex-device-code">
@@ -226,6 +226,7 @@ function quotaUnavailableMessage(copy: AccountCodexCopy, reason?: string) {
 }
 
 function loginMessage(copy: AccountCodexCopy, login: CodexLoginProgress, wrongIdentity: boolean) {
+  if (login.settling) return copy.loginConfirming;
   if (login.error?.code === "account_ownership_changed") return copy.loginAccountChanged;
   if (wrongIdentity) return copy.loginWrongAccount;
   if (login.phase === "starting") return copy.loginStarting;

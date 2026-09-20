@@ -35,6 +35,9 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
   const loginRevision = useRef(0);
   const loginActionInFlight = useRef(false);
   const [loginAction, setLoginAction] = useState<{ accountId: string; kind: "open" | "copy" | "cancel" } | null>(null);
+  const loginLockedId = login && (login.active || login.settling) ? login.accountId : null;
+  const loginLockedIdRef = useRef<string | null>(null);
+  loginLockedIdRef.current = loginLockedId;
   useEffect(() => {
     let disposed = false;
     let timer: number | undefined;
@@ -87,6 +90,14 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     let disposed = false;
     const accounts = state.accounts.map(account => account.id);
     const activeIds = new Set(accounts);
+    // Reserve every hydration revision before the sequential reads begin. A newer manual
+    // refresh can then supersede its account's reserved read even while an earlier account
+    // is still loading. evidenceEpoch remains part of the effect key for replacements.
+    const revisions = new Map(accounts.map(id => {
+      const revision = (quotaRevisions.current.get(id) ?? 0) + 1;
+      quotaRevisions.current.set(id, revision);
+      return [id, revision] as const;
+    }));
     setQuotas(current => {
       const next = new Map([...current].filter(([id]) => activeIds.has(id)));
       for (const id of accounts) next.set(id, null);
@@ -94,8 +105,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     });
     void (async () => {
       for (const id of accounts) {
-        const revision = (quotaRevisions.current.get(id) ?? 0) + 1;
-        quotaRevisions.current.set(id, revision);
+        const revision = revisions.get(id)!;
         try {
           const value = await api.accountCodexQuotaSnapshot(id);
           if (disposed || quotaRevisions.current.get(id) !== revision) continue;
@@ -142,13 +152,13 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
   }, [api, setError, loginAttempt]);
 
   useEffect(() => {
-    if (!login?.active || loginSnapshotStatus !== "ready") return;
+    if (!login || (!login.active && !login.settling) || loginSnapshotStatus !== "ready") return;
     const { flowId, accountId, deadlineAt } = login;
     const revision = ++loginRevision.current;
     const deadline = Date.parse(deadlineAt);
     const remainingSeconds = Number.isFinite(deadline)
       ? Math.max(0, Math.ceil((deadline - Date.now()) / 1_000)) : 600;
-    const maximumPolls = Math.min(660, remainingSeconds + 45);
+    const maximumPolls = login.settling ? 105 : Math.min(660, remainingSeconds + 45);
     let disposed = false;
     let inFlight = false;
     let polls = 0;
@@ -168,7 +178,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
         if (disposed || loginRevision.current !== revision) return;
         consecutiveFailures = 0;
         setLogin(next);
-        if (next.active) schedule();
+        if (next.active || next.settling) schedule();
       }).catch(() => {
         if (disposed || loginRevision.current !== revision) return;
         consecutiveFailures += 1;
@@ -182,10 +192,11 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
       window.clearTimeout(timer);
       if (loginRevision.current === revision) loginRevision.current += 1;
     };
-  }, [api, login?.active, login?.accountId, login?.deadlineAt, login?.flowId, login?.phase, loginSnapshotStatus]);
+  }, [api, login?.active, login?.accountId, login?.deadlineAt, login?.flowId, login?.phase, login?.settling, loginSnapshotStatus]);
 
   const refreshQuota = async (id: string, fromRefreshAll = false) => {
-    if (loadFailed || (!fromRefreshAll && quotaGlobalLock.current) || quotaInFlight.current.has(id)) return;
+    if (loadFailed || loginLockedIdRef.current === id
+      || (!fromRefreshAll && quotaGlobalLock.current) || quotaInFlight.current.has(id)) return;
     quotaInFlight.current.add(id);
     setQuotaRefreshing(current => new Set(current).add(id));
     const revision = (quotaRevisions.current.get(id) ?? 0) + 1;
@@ -214,6 +225,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     setRefreshAllBusy(true);
     try {
       for (const account of state.accounts) {
+        if (account.id === loginLockedIdRef.current) continue;
         const retryAt = quotas.get(account.id)?.retryAt;
         const retryBlocked = typeof retryAt === "string" && Number.isFinite(Date.parse(retryAt))
           && Date.parse(retryAt) > Date.now();
@@ -226,7 +238,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
   };
 
   const startCodexLogin = async (id: string) => {
-    if (loadFailed || startingId.current !== null || login?.active || loginSnapshotStatus !== "ready") return;
+    if (loadFailed || startingId.current !== null || login?.active || login?.settling || loginSnapshotStatus !== "ready") return;
     startingId.current = id;
     setStartingAccountId(id);
     setError(null);
@@ -293,13 +305,16 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
   const authenticatedAccounts = state.accounts.filter(account => account.authenticated);
   const refreshableAccounts = authenticatedAccounts.filter(account => {
     const retryAt = quotas.get(account.id)?.retryAt;
-    return !(typeof retryAt === "string" && Number.isFinite(Date.parse(retryAt)) && Date.parse(retryAt) > quotaClock);
+    return account.id !== loginLockedId
+      && !(typeof retryAt === "string" && Number.isFinite(Date.parse(retryAt)) && Date.parse(retryAt) > quotaClock);
   });
   const refreshAllDisabledReason = loadFailed ? copy.accountsRefreshFailed
     : manual ? codexCopy.quotaManualUnavailable
     : authenticatedAccounts.length === 0 ? codexCopy.quotaSignedOut
       : refreshAllBusy || quotaInFlight.current.size > 0 ? codexCopy.quotaChecking
-        : refreshableAccounts.length === 0 ? codexCopy.quotaRateLimited : undefined;
+      : refreshableAccounts.length === 0 ? (loginLockedId
+        ? codexCopy.loginCurrent.replace("{account}", state.accounts.find(account => account.id === loginLockedId)?.label ?? loginLockedId)
+        : codexCopy.quotaRateLimited) : undefined;
   return <section className="account-settings" aria-label={copy.accountsTitle} aria-busy={busy}>
     {manual ? <p>{copy.accountsManual}</p> : null}
     {loadFailed ? <div className="account-codex-toolbar account-stale-status" role="alert">
@@ -337,17 +352,20 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
       {(() => {
         const credentialLabel = account.authenticated ? copy.replaceCredentials : copy.accountsSignIn;
         const active = account.activeTurns > 0;
-        const blockedReason = loadFailed ? copy.accountsRefreshFailed
-          : active ? copy.accountsBusyTasks.replace("{count}", String(account.activeTurns)) : busy ? copy.loading : undefined;
         const flowForAccount = login?.accountId === account.id ? login : null;
         const flowAccount = login ? state.accounts.find(candidate => candidate.id === login.accountId) : null;
-        const loginBoundActive = startingAccountId === account.id || (flowForAccount?.active === true);
+        const loginBoundActive = startingAccountId === account.id
+          || flowForAccount?.active === true || flowForAccount?.settling === true;
         const loginBoundReason = loginBoundActive
           ? codexCopy.loginCurrent.replace("{account}", account.label) : undefined;
+        const blockedReason = loadFailed ? copy.accountsRefreshFailed
+          : loginBoundReason ?? (active ? copy.accountsBusyTasks.replace("{count}", String(account.activeTurns))
+            : busy ? copy.loading : undefined);
         // The adjacent login widget names this account once its flow is active.
         const actionHint = loginBoundReason && !flowForAccount?.active ? loginBoundReason
           : active ? blockedReason : undefined;
-        const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id) || (login?.active && login.accountId !== account.id)
+        const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id)
+          || Boolean(login && (login.active || login.settling) && login.accountId !== account.id)
           ? codexCopy.loginCurrent.replace("{account}", flowAccount?.label ?? login?.accountId ?? "Codex") : undefined;
         const loginDisabledReason = loadFailed ? copy.accountsRefreshFailed
           : !account.authenticated ? codexCopy.quotaSignedOut
@@ -359,7 +377,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
           : manual ? codexCopy.quotaManualUnavailable
           : !account.authenticated ? codexCopy.quotaSignedOut
             : refreshAllBusy ? codexCopy.quotaChecking
-              : quotaRetryBlocked ? codexCopy.quotaRateLimited : undefined;
+              : loginBoundReason ?? (quotaRetryBlocked ? codexCopy.quotaRateLimited : undefined);
         return <>
       <header className="account-card-header">
         <span className="account-avatar" aria-hidden="true">{account.label.trim().slice(0, 1).toLocaleUpperCase()}</span>
@@ -372,7 +390,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
         <span className={account.connectorReady ? "is-ready" : ""}><i className={`state-dot is-${account.connectorReady ? "ready" : "idle"}`} />{copy.toolConnection}: {account.connectorReady ? copy.connectionVerified : copy.connectionPending}</span>
       </div>
       <div className="account-actions">
-        <label><input type="checkbox" checked={account.enabled} disabled={mutationsDisabled}
+        <label title={loginBoundReason}><input type="checkbox" checked={account.enabled} disabled={mutationsDisabled || loginBoundActive}
           onChange={event => void run(() => api.setAccountEnabled(account.id, event.target.checked))} />{copy.accountsEnabled}</label>
         <button type="button" className={account.authenticated ? "button-secondary" : "button-primary"}
           disabled={mutationsDisabled || active || loginBoundActive} aria-label={credentialLabel}
@@ -383,10 +401,14 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
           await api.openAccountLogin(account.id);
           return api.accounts();
         })}><Icon name="browser" />{credentialLabel}</button>
-        {account.id !== state.selectedId ? <button type="button" className="button-secondary" disabled={mutationsDisabled || !account.authenticated || !account.checked || !account.connectorReady}
+        {account.id !== state.selectedId ? <button type="button" className="button-secondary"
+          disabled={mutationsDisabled || loginBoundActive || !account.authenticated || !account.checked || !account.connectorReady}
+          title={loginBoundReason}
           onClick={() => void run(() => api.selectAccount(account.id))}>{copy.accountsSelect}</button> : null}
-        <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || !account.authenticated} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
-        <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || !account.authenticated} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
+        <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || loginBoundActive || !account.authenticated}
+          title={loginBoundReason} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
+        <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || loginBoundActive || !account.authenticated}
+          title={loginBoundReason} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
       </div>
       {actionHint ? <p className="field-hint" role="status">{actionHint}</p> : null}
       <AccountCodexControls account={account} copy={codexCopy} language={language}
@@ -403,7 +425,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
           () => api.copyCodexLoginCode(flowForAccount.flowId, account.id))) === true : false}
         onCancelLogin={async () => { if (flowForAccount) await cancelCodexLogin(flowForAccount); }} />
       {account.safety ? <AccountSafetySettings id={account.id} safety={account.safety} copy={copy}
-        disabled={mutationsDisabled || active} blockedReason={blockedReason}
+        disabled={mutationsDisabled || active || loginBoundActive} blockedReason={blockedReason}
         save={policy => run(() => api.setAccountSafety(account.id, policy))}
         resume={() => void run(() => api.resumeAccount(account.id))} /> : null}
       {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy}

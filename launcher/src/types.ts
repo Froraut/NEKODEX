@@ -238,7 +238,7 @@ export interface AccountQuotaSnapshot {
 export interface CodexLoginProgress {
   flowId: string; accountId: string;
   phase: "starting" | "waiting" | "cancelling" | "confirming" | "needs-confirmation" | "completed" | "cancelled" | "failed";
-  active: boolean; startedAt: string; deadlineAt: string; completedAt: string | null;
+  active: boolean; settling: boolean; startedAt: string; deadlineAt: string; completedAt: string | null;
   ownershipCurrent: boolean; canOpen: boolean; canCancel: boolean;
   verificationUrl: string | null; userCode: string | null;
   error: { code: string; message: string } | null;

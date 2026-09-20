@@ -62,7 +62,11 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     const value = controller.status(owner);
     lastFlow = { flowId: value.flowId, accountId: value.accountId };
     if (!value.active) { closeWindows(); settleAccount(); }
-    return value;
+    return progress(value);
+  }
+  function progress(value) {
+    return { ...value, settling: !value.active && Boolean(releaseAccountOperation
+      && binding?.accountId === value.accountId) };
   }
   function settleAccount() {
     if (!releaseAccountOperation || settling) return;
@@ -70,8 +74,16 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     const id = binding.accountId;
     // A user may change the browser identity on the official authorization page.
     // Reconcile that exact session before accepting another turn for the account.
-    settling = Promise.resolve().then(() => getPool()?.getHost(id).probeAuthentication())
-      .catch(() => {})
+    settling = Promise.resolve().then(() => {
+      const currentPool = getPool();
+      if (!currentPool) return;
+      const host = currentPool.getHost(id);
+      // Reuse the host's bounded read-only inspection lease. Its abort path advances the
+      // authentication generation, so a timed-out read cannot commit a stale signed-in result.
+      return host.withReadOnlyInspection('Codex sign-in reconciliation', signal =>
+        host.probeAuthentication({ signal }));
+    })
+      .catch(error => logger.warn('codex.account_login_reconciliation_failed', { accountId: id, message: error.message }))
       .finally(() => {
         release();
         if (releaseAccountOperation === release) releaseAccountOperation = null;
@@ -89,7 +101,7 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     const value = controller.status({ flowId, accountId: id });
     lastFlow = { flowId, accountId: id };
     if (!value.active) { closeWindows(); settleAccount(); }
-    return value;
+    return progress(value);
   }
   function assertAccountMutable(id) {
     validateAccountId(id);
@@ -138,7 +150,7 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
       const result = await controller.start({ accountId: id, confirmed: true });
       lastFlow = { flowId: result.flowId, accountId: id };
       watch();
-      return result;
+      return progress(result);
     } catch (error) {
       if (!controller.selectionLock()) settleAccount();
       throw error;
@@ -194,7 +206,7 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     closeWindows();
     const result = await controller.cancel({ flowId, accountId: id });
     watch();
-    return result;
+    return progress(result);
   }
   function copyCode(flowId, id) {
     const value = requireOwner(flowId, id);
