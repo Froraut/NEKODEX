@@ -3,42 +3,53 @@
 function createContextChangeQueue({ read, write, ready, apply, onApplied,
   schedule = fn => setTimeout(fn, 2000), unschedule = clearTimeout }) {
   let timer = null;
+  let checking = false;
   let applying = false;
   let stopped = false;
+  let revision = 0;
   function wake() {
     if (stopped || timer || typeof read().pendingBiggerContext !== "boolean" || read().contextChangeError) return;
     timer = schedule(() => { timer = null; void flush(); });
     timer?.unref?.();
   }
   async function flush() {
-    if (stopped || applying) return;
+    if (stopped || checking || applying) return;
     const desired = read().pendingBiggerContext;
     if (typeof desired !== "boolean" || read().contextChangeError) return;
-    applying = true;
+    const requestedRevision = revision;
+    checking = true;
     try {
-      if (!await ready()) return;
+      const isReady = await ready();
+      if (stopped || requestedRevision !== revision || !isReady) return;
       if (read().pendingBiggerContext !== desired) return;
       if (read().experimentalBiggerContext === desired) {
         write({ pendingBiggerContext: null, contextChangeError: null });
         return;
       }
+      applying = true;
       write({ contextChangeApplying: true });
       await apply(desired);
+      if (stopped) return;
+      // Report the mode that actually committed, even if a newer choice is queued.
       onApplied(desired);
-      if (read().pendingBiggerContext === desired) write({ pendingBiggerContext: null });
+      if (requestedRevision === revision && read().pendingBiggerContext === desired) write({ pendingBiggerContext: null });
     } catch (error) {
-      if (!["RUNTIME_NOT_IDLE", "RUNTIME_BUSY"].includes(error?.code)) {
+      if (!stopped && requestedRevision === revision && read().pendingBiggerContext === desired
+        && !["RUNTIME_NOT_IDLE", "RUNTIME_BUSY"].includes(error?.code)) {
         write({ contextChangeError: String(error?.message || error).slice(0, 600) });
       }
     } finally {
+      checking = false;
       applying = false;
-      if (read().contextChangeApplying) write({ contextChangeApplying: false });
+      if (!stopped && read().contextChangeApplying) write({ contextChangeApplying: false });
       wake();
     }
   }
   return {
     request(enabled) {
       if (typeof enabled !== "boolean") throw new Error("Context mode must be a boolean");
+      if (stopped) throw new Error("Context change queue is stopped");
+      revision += 1;
       if (!applying && read().experimentalBiggerContext === enabled) {
         if (timer) unschedule(timer);
         timer = null;
@@ -51,6 +62,8 @@ function createContextChangeQueue({ read, write, ready, apply, onApplied,
     },
     cancel() {
       if (applying) throw new Error("Wait for the context change to finish");
+      if (stopped) throw new Error("Context change queue is stopped");
+      revision += 1;
       write({ pendingBiggerContext: null, contextChangeError: null });
       if (timer) unschedule(timer);
       timer = null;
@@ -58,7 +71,7 @@ function createContextChangeQueue({ read, write, ready, apply, onApplied,
     },
     start: wake,
     flush,
-    stop() { stopped = true; if (timer) unschedule(timer); timer = null; },
+    stop() { stopped = true; revision += 1; if (timer) unschedule(timer); timer = null; },
   };
 }
 module.exports = { createContextChangeQueue };

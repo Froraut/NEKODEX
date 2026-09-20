@@ -56,3 +56,22 @@ test("codex refresh: UI distinguishes pending catalog, picker review, Manual ref
   expect(codexSettingsStatus({ ...installed, pendingBiggerContext: true }, false)).toBeNull();
   expect(codexSettingsStatus(installed, true)).toBeNull();
 });
+
+test("context intent: Manual mode and removal retire incompatible queued changes across reopening", () => {
+  for (const transition of [{ browserInteractionMode: "manual" }, { coreSetupComplete: false }]) {
+    withState({ browserInteractionMode: "automatic", experimentalBiggerContext: false,
+      pendingBiggerContext: true, contextChangeError: "old attempt failed" }, file => {
+      const store = createStateStore(file);
+      store.update(transition);
+      const reopened = createStateStore(file).read();
+      expect(reopened.pendingBiggerContext).toBeNull();
+      expect(reopened.contextChangeError).toBeNull();
+      expect(reopened.contextChangeApplying).toBe(false);
+    });
+  }
+  withState({ browserInteractionMode: "manual", pendingBiggerContext: true,
+    contextChangeError: "persisted from an older launcher" }, file => {
+    expect(createStateStore(file).read().pendingBiggerContext).toBeNull();
+    expect(createStateStore(file).read().contextChangeError).toBeNull();
+  });
+});
