@@ -97,7 +97,7 @@ function createAccountRegistry(coreHome) {
 
   function save(next) {
     const config = validateConfig(next);
-    writePrivateFileAtomic(filename, `${JSON.stringify(config, null, 2)}\n`);
+    writePrivateFileAtomic(filename, `${JSON.stringify(config, null, 2)}\n`, { durable: true });
     state = config;
     return snapshot();
   }

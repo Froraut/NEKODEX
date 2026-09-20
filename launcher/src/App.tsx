@@ -34,11 +34,13 @@ import type {
   BrowserState,
   DoctorReport,
   Language,
+  LauncherLifecycle as LifecycleProjection,
   LauncherSnapshot,
   LauncherState,
   LogRecord,
   OperationState,
   ProModelVersion,
+  RuntimeCapabilities as RuntimeCapabilitiesProjection,
   Surface,
 } from "./types";
 
@@ -59,29 +61,7 @@ function connectorProofMismatch(snapshot: LauncherSnapshot): boolean {
   return typeof verifiedName === "string" && verifiedName !== snapshot.connectorName;
 }
 
-type RuntimeCapabilitiesProjection = {
-  revision: number;
-  runtimeStatus: "unconfigured" | "starting" | "ready" | "degraded" | "recovering" | "failed" | "stopping" | string;
-  nativeAvailability: "ready" | "degraded" | "unavailable" | "unknown";
-  webAvailability: "ready" | "degraded" | "unavailable" | "unknown";
-  tunnelStatus: "absent" | "starting" | "ready" | "degraded" | "recovering" | "failed" | "stopping" | string;
-  releaseVersion: string | null;
-  daemonPid: number | null;
-  tunnelPid: number | null;
-  detail: string | null;
-};
-
-type LifecycleProjection = RuntimeCapabilitiesProjection & {
-  routeStatus: "unknown" | "direct" | "switching" | "managed" | "restoring" | "failed" | string;
-  catalog?: { status: string; request: number | null; at: string | null; failure: unknown };
-};
-
-type ProjectedLauncherSnapshot = LauncherSnapshot & {
-  runtimeCapabilities?: RuntimeCapabilitiesProjection | null;
-  runtimeStatus?: string;
-  lifecycle?: LifecycleProjection | null;
-  recommendedConnectorNames?: Partial<Record<BrowserInteractionMode, string>>;
-};
+type ProjectedLauncherSnapshot = LauncherSnapshot;
 
 type ProjectedLauncherApi = NonNullable<typeof api> & {
   onLifecycle?: (listener: (projection: LifecycleProjection) => void) => () => void;
@@ -545,6 +525,9 @@ export function App() {
 
   const language = snapshot.state.language ?? "en";
   const copy = copyFor(language);
+  const visibleOperation: OperationState | null = snapshot.lifecycle?.transition && operation?.status !== "running"
+    ? { name: "launcher-transition", status: "running", message: copy.running }
+    : operation;
 
   return (
     <div
@@ -570,7 +553,7 @@ export function App() {
             key="launcher"
             language={language}
             logs={logs}
-            operation={operation}
+            operation={visibleOperation}
             setError={setError}
             snapshot={snapshot}
             updateBrowserCapacity={updateBrowserCapacity}
@@ -604,13 +587,15 @@ function Onboarding({
   const [selectedInteractionMode, setSelectedInteractionMode] = useState<BrowserInteractionMode>(
     snapshot.state.browserInteractionMode,
   );
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setBusy] = useState(false);
+  const busy = localBusy || Boolean(snapshot.lifecycle?.transition);
   const localized = copyFor(selectedLanguage);
   const isLanguage = stage === "language";
   const isInteraction = stage === "interaction";
   const stageIndex = isLanguage ? 0 : isInteraction ? 1 : 2;
 
   const chooseLanguage = async () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -625,6 +610,7 @@ function Onboarding({
 
 
   const finish = async () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -794,16 +780,20 @@ function LauncherShell({
   const mcpOptional = snapshot.state.browserInteractionMode === "automatic"
     && snapshot.state.codexCatalogVerified === true
     && !toolProof;
+  const transitionBusy = Boolean(snapshot.lifecycle?.transition);
   const updateCopy = updateCopyFor(language);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateCheckCooldown, setUpdateCheckCooldown] = useState(false);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [updateInstallPending, setUpdateInstallPending] = useState(false);
+  const [updateCancelPending, setUpdateCancelPending] = useState(false);
+  const updateCancelInFlight = useRef(false);
   const [restartPending, setRestartPending] = useState(false);
   const restartInFlight = useRef(false);
   const updateInstallPendingRef = useRef(false);
   const updateCheckTimer = useRef<number | undefined>(undefined);
   const updateCheckMounted = useRef(false);
+  const updateCheckPendingRef = useRef(false);
   useEffect(() => {
     updateCheckMounted.current = true;
     return () => {
@@ -812,7 +802,8 @@ function LauncherShell({
     };
   }, []);
   const recheckUpdate = async () => {
-    if (updateCheckCooldown || updateCheckBusy) return;
+    if (transitionBusy || updateCheckCooldown || updateCheckBusy || updateCheckPendingRef.current) return;
+    updateCheckPendingRef.current = true;
     setUpdateCheckBusy(true);
     setUpdateError(null);
     try {
@@ -825,10 +816,11 @@ function LauncherShell({
     } catch (error) {
       if (updateCheckMounted.current) setUpdateError(messageOf(error));
     } finally {
+      updateCheckPendingRef.current = false;
       if (updateCheckMounted.current) setUpdateCheckBusy(false);
     }
   };
-  const updateBusy = updateInstallPending || ["downloading", "verifying", "installing"].includes(snapshot.update.status);
+  const updateBusy = updateInstallPending || updateCancelPending || ["downloading", "verifying", "installing", "cancelling"].includes(snapshot.update.status);
   useEffect(() => {
     if (["downloading", "verifying", "installing"].includes(snapshot.update.status)) setUpdateError(null);
   }, [snapshot.update.status]);
@@ -990,6 +982,23 @@ function LauncherShell({
     }
   };
 
+  const cancelUpdate = async () => {
+    if (updateCancelInFlight.current) return;
+    updateCancelInFlight.current = true;
+    setUpdateCancelPending(true);
+    setUpdateError(null);
+    try {
+      const result = await api!.cancelUpdatePreparation();
+      if (result.status === "too-late") setUpdateError(updateCopy.cancelTooLate);
+      else if (result.status === "failed") setUpdateError(result.message || updateCopy.failed);
+    } catch (cause) {
+      setUpdateError(messageOf(cause));
+    } finally {
+      updateCancelInFlight.current = false;
+      setUpdateCancelPending(false);
+    }
+  };
+
   const dismissSessionReminder = async () => {
     if (sessionReminderBusy) return;
     setSessionReminderBusy(true);
@@ -1103,7 +1112,7 @@ function LauncherShell({
             </nav>
 
             <div className="sidebar-footer">
-              <div className="sidebar-session"><StateDot state={browser?.authenticated ? "ready" : "idle"} /><span>{browser?.authenticated ? copy.sessionConnected : copy.sessionDisconnected}</span></div>
+              <div className="sidebar-session"><StateDot state={manualInteraction ? "idle" : browser?.authenticated ? "ready" : "idle"} /><span>{manualInteraction ? copy.manualInteraction : browser?.authenticated ? copy.sessionConnected : copy.sessionDisconnected}</span></div>
               <SidebarItem
                 active={surface === "updates"}
                 icon="update"
@@ -1127,7 +1136,7 @@ function LauncherShell({
       <section className={`workspace${snapshot.state.launcherRestartRequired ? " has-runtime-notice" : ""}`}>
           {snapshot.state.launcherRestartRequired ? <div className="runtime-restart-notice" role="status">
             <div><strong>{copy.launcherRuntimeRestartTitle}</strong><p>{copy.launcherRuntimeRestartBody}</p></div>
-            <button type="button" className="button-secondary" disabled={restartPending || updateBusy}
+            <button type="button" className="button-secondary" disabled={restartPending || updateBusy || transitionBusy}
               aria-busy={restartPending}
               onClick={() => {
                 if (restartInFlight.current) return;
@@ -1150,7 +1159,7 @@ function LauncherShell({
               openTab={(tabId) => void openBrowserTab(tabId)} /> : null}
             {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
               <AccountSettings copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
-                setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} />
+                setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy} />
             </ContentSurface> : null}
             {surface === "browser" ? (
               <BrowserSurface
@@ -1158,6 +1167,7 @@ function LauncherShell({
                 browserSlotRef={browserSlotRef}
                 copy={copy}
                 interactionMode={snapshot.state.browserInteractionMode}
+                transitionBusy={transitionBusy}
                 operation={operation}
                 platform={snapshot.platform}
                 setError={setError}
@@ -1200,12 +1210,13 @@ function LauncherShell({
               />
             ) : null}
             {surface === "activity" ? (
-              <ActivitySurface copy={copy} language={language} logs={logs} setError={setError} />
+              <ActivitySurface transitionBusy={transitionBusy} copy={copy} language={language} logs={logs} setError={setError} />
             ) : null}
             {surface === "updates" ? <Updates language={language} currentVersion={snapshot.version}
               state={snapshot.update} busy={updateBusy} blocked={updateBlocked} checking={updateCheckBusy}
-              cooldown={updateCheckCooldown} error={updateError}
-              onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()} /> : null}
+              cooldown={updateCheckCooldown} error={updateError} transitionBusy={transitionBusy}
+              onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()}
+              cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} /> : null}
             {surface === "settings" ? (
               <SettingsSurface
                 browser={browser}
@@ -1243,7 +1254,7 @@ function LauncherShell({
 
         {sessionReminderDue && !biggerContextRecommendationOpen ? (
           <SessionRefreshReminder
-            busy={sessionReminderBusy}
+            busy={sessionReminderBusy || transitionBusy}
             copy={copy}
             onDismiss={() => void dismissSessionReminder()}
             onLogout={() => void logoutChatGpt()}
@@ -1362,6 +1373,7 @@ function BrowserSurface({
   browserSlotRef,
   copy,
   interactionMode,
+  transitionBusy,
   operation,
   platform,
   setError,
@@ -1370,6 +1382,7 @@ function BrowserSurface({
   browserSlotRef: (node: HTMLDivElement | null) => void;
   copy: Copy;
   interactionMode: BrowserInteractionMode;
+  transitionBusy: boolean;
   operation: OperationState | null;
   platform: string;
   setError: (error: string | null) => void;
@@ -1380,16 +1393,19 @@ function BrowserSurface({
   const [cancelTarget, setCancelTarget] = useState<{ id: string; traceId: string | null } | null>(null);
   const [closingTabs, setClosingTabs] = useState<Set<string>>(new Set());
   const closingTabRequests = useRef(new Set<string>());
+  const confirmingTabRequests = useRef(new Set<string>());
+  const [confirmingTabs, setConfirmingTabs] = useState<Set<string>>(new Set());
   const activeBrowserTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const cancelTab = browser?.tabs.find(tab => tab.id === cancelTarget?.id
     && tab.traceId === cancelTarget?.traceId && tab.status === "running");
   useEffect(() => { if (cancelTarget && !cancelTab) setCancelTarget(null); }, [cancelTarget, cancelTab]);
   const visible = browser?.visible === true;
   const manualInteraction = interactionMode === "manual";
-  const { navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked, passkeyCanImport,
+  const { navigationLocked: browserNavigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked, passkeyCanImport,
     existingChromeAvailable, existingChromeWaiting, existingChromeBlocked } = browserControls(
     browser, operation, platform, interactionMode,
   );
+  const navigationLocked = transitionBusy || browserNavigationLocked;
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
   const passkeyLabel = passkeyStarting || browser?.passkeyLogin?.phase === "starting" ? copy.passkeyStarting
     : !passkeyWaiting ? copy.passkeySignIn
@@ -1418,6 +1434,7 @@ function BrowserSurface({
     }
   };
   const toggle = async () => {
+    if (transitionBusy && !visible) return;
     try {
       if (visible) await api!.hideBrowser();
       else await api!.showBrowser();
@@ -1426,6 +1443,7 @@ function BrowserSurface({
     }
   };
   const selectTab = async (tabId: string) => {
+    if (transitionBusy) return;
     try {
       await api!.selectBrowserTab(tabId);
     } catch (cause) {
@@ -1433,6 +1451,7 @@ function BrowserSurface({
     }
   };
   const closeTab = async (tabId: string, expectedTraceId?: string | null) => {
+    if (transitionBusy) return;
     if (closingTabRequests.current.has(tabId)) return;
     closingTabRequests.current.add(tabId);
     setClosingTabs(new Set(closingTabRequests.current));
@@ -1479,6 +1498,7 @@ function BrowserSurface({
     }
   };
   const copyManualPrompt = async (tabId: string) => {
+    if (transitionBusy) return;
     try {
       await api!.copyManualPrompt(tabId);
     } catch (cause) {
@@ -1486,10 +1506,16 @@ function BrowserSurface({
     }
   };
   const confirmManualSent = async (tabId: string) => {
+    if (transitionBusy || confirmingTabRequests.current.has(tabId)) return;
+    confirmingTabRequests.current.add(tabId);
+    setConfirmingTabs(new Set(confirmingTabRequests.current));
     try {
       await api!.confirmManualSent(tabId);
     } catch (cause) {
       setError(messageOf(cause));
+    } finally {
+      confirmingTabRequests.current.delete(tabId);
+      setConfirmingTabs(new Set(confirmingTabRequests.current));
     }
   };
 
@@ -1521,6 +1547,7 @@ function BrowserSurface({
                 }
               }
             }}
+            aria-disabled={transitionBusy}
             role="tab"
             aria-selected={tab.active}
             aria-label={`${browserTabTitleFromTitle(tab.title, copy)} — ${tab.status === "running" ? copy.running
@@ -1536,7 +1563,7 @@ function BrowserSurface({
             {tab.closable ? (
               <button
                 aria-label={`${tab.status === "running" ? copy.manualPromptCancel : copy.hideTab}: ${browserTabTitleFromTitle(tab.title, copy)}`}
-                disabled={closingTabs.has(tab.id)}
+                disabled={transitionBusy || closingTabs.has(tab.id)}
                 className={tab.status === "running" ? "browser-tab-cancel" : undefined}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -1559,8 +1586,8 @@ function BrowserSurface({
           <p className="browser-cancel-target">{browserTabTitleFromTitle(cancelTab.title, copy)}</p>
           <p>{copy.browserCancelTaskBody}</p></div>
         <div className="browser-cancel-actions">
-          <button type="button" className="button-secondary" autoFocus disabled={closingTabs.has(cancelTab.id)} onClick={() => setCancelTarget(null)}>{copy.back}</button>
-          <button type="button" className="button-secondary browser-confirm-cancel" disabled={closingTabs.has(cancelTab.id)}
+          <button type="button" className="button-secondary" autoFocus disabled={transitionBusy || closingTabs.has(cancelTab.id)} onClick={() => setCancelTarget(null)}>{copy.back}</button>
+          <button type="button" className="button-secondary browser-confirm-cancel" disabled={transitionBusy || closingTabs.has(cancelTab.id)}
             aria-label={`${copy.manualPromptCancel}: ${browserTabTitleFromTitle(cancelTab.title, copy)}`}
             onClick={() => void closeTab(cancelTab.id, cancelTab.traceId)}>{closingTabs.has(cancelTab.id) ? copy.browserCancellingTask : copy.manualPromptCancel}</button>
         </div>
@@ -1613,15 +1640,15 @@ function BrowserSurface({
             {passkeyLabel}
           </button>
         ) : null}
-        <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
+        <button disabled={transitionBusy && !visible} className="toolbar-text-button" onClick={() => void toggle()} type="button">
           {visible ? copy.hideBrowser : copy.openChatgpt}
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
       {!manualInteraction && browser?.existingChromeLogin ? (
-        <ExistingChromeLoginGuide progress={browser.existingChromeLogin} copy={copy} onRetry={openExistingChromeLogin} setError={setError} />
+        <ExistingChromeLoginGuide transitionBusy={transitionBusy} progress={browser.existingChromeLogin} copy={copy} onRetry={openExistingChromeLogin} setError={setError} />
       ) : !manualInteraction && browser?.passkeyLogin && browser.passkeyLogin.phase !== "completed" ? (
-        <PasskeyLoginGuide progress={browser.passkeyLogin} copy={copy} onRetry={openPasskeyLogin} setError={setError} />
+        <PasskeyLoginGuide transitionBusy={transitionBusy} progress={browser.passkeyLogin} copy={copy} onRetry={openPasskeyLogin} setError={setError} />
       ) : browser?.loginKind === "embedded" ? (
         <div className="browser-login-guide" role="status">
           <p>{passkeyAvailable ? copy.embeddedLoginPasskeyBody : copy.embeddedLoginBody}</p>
@@ -1631,6 +1658,8 @@ function BrowserSurface({
         && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
         <ManualTurnGuide
           copy={copy}
+          confirmPending={confirmingTabs.has(selectedManualTab.id)}
+          transitionBusy={transitionBusy}
           onCancel={() => void closeTab(selectedManualTab.id, selectedManualTab.traceId)}
           onCopy={() => void copyManualPrompt(selectedManualTab.id)}
           onSent={() => void confirmManualSent(selectedManualTab.id)}
@@ -1650,11 +1679,11 @@ function BrowserSurface({
               ? copy.noActiveTaskBody
               : existingChromeWaiting ? copy.existingChromeBody : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
-              {activeBrowserTabs.length ? <PrimaryButton onClick={() => void selectTab(activeBrowserTabs[0].id)}>{copy.openWorkspace}</PrimaryButton> : null}
+              {activeBrowserTabs.length ? <PrimaryButton disabled={transitionBusy} onClick={() => void selectTab(activeBrowserTabs[0].id)}>{copy.openWorkspace}</PrimaryButton> : null}
               {existingChromeAvailable ? <PrimaryButton
                 disabled={existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
                 onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</PrimaryButton> : null}
-              <SecondaryButton disabled={passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
+              <SecondaryButton disabled={transitionBusy || passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
                 {manualInteraction || browser?.authenticated ? copy.openChatgpt : copy.signIn}
               </SecondaryButton>
               {passkeyAvailable ? (
@@ -1679,12 +1708,16 @@ function BrowserSurface({
 
 function ManualTurnGuide({
   copy,
+  confirmPending,
+  transitionBusy,
   onCancel,
   onCopy,
   onSent,
   tab,
 }: {
   copy: Copy;
+  confirmPending: boolean;
+  transitionBusy: boolean;
   onCancel: () => void;
   onCopy: () => void;
   onSent: () => void;
@@ -1731,9 +1764,9 @@ function ManualTurnGuide({
       <span className="manual-turn-status">{status}</span>
       <span className="visually-hidden" aria-live="polite">{waiting ? "" : status}</span>
       <div className="manual-turn-actions">
-        <SecondaryButton onClick={onCancel}>{copy.manualPromptCancel}</SecondaryButton>
-        <SecondaryButton disabled={!tab.canCopyPrompt} onClick={onCopy}>{copy.manualPromptCopy}</SecondaryButton>
-        <PrimaryButton disabled={!tab.canConfirmSent} onClick={onSent}>{waiting ? copy.manualPromptConfirmSent : copy.manualPromptSent}</PrimaryButton>
+        <SecondaryButton disabled={transitionBusy} onClick={onCancel}>{copy.manualPromptCancel}</SecondaryButton>
+        <SecondaryButton disabled={transitionBusy || !tab.canCopyPrompt} onClick={onCopy}>{copy.manualPromptCopy}</SecondaryButton>
+        <PrimaryButton disabled={transitionBusy || confirmPending || !tab.canConfirmSent} onClick={onSent}>{confirmPending ? copy.running : waiting ? copy.manualPromptConfirmSent : copy.manualPromptSent}</PrimaryButton>
       </div>
     </section>
   );
@@ -1766,6 +1799,7 @@ function SetupSurface({
 }) {
   const [localBusy, setLocalBusy] = useState(false);
   const [hermesAdded, setHermesAdded] = useState(false);
+  const verifiedAt = snapshot.state.setupVerifiedAt ? Date.parse(snapshot.state.setupVerifiedAt) : Number.NaN;
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
   const models = modelConnectionReadiness({ manual: manualInteraction,
     installed: snapshot.state.coreSetupComplete === true,
@@ -1950,8 +1984,8 @@ function SetupSurface({
       </details>
 
       <SectionHeading label={copy.localTools} meta={manualInteraction ? copy.required : copy.optional} spaced />
-      {snapshot.state.setupVerifiedAt ? (
-        <p>{`Last connector verification: ${new Date(snapshot.state.setupVerifiedAt).toLocaleString()}`}</p>
+      {Number.isFinite(verifiedAt) ? (
+        <p>{copy.lastConnectorVerification.replace("{time}", new Date(verifiedAt).toLocaleString(snapshot.state.language ?? "en"))}</p>
       ) : null}
       <button
         className="next-surface-row"
@@ -2398,11 +2432,13 @@ function McpSurface({
 
 function ActivitySurface({
   copy,
+  transitionBusy,
   language,
   logs,
   setError,
 }: {
   copy: Copy;
+  transitionBusy: boolean;
   language: Language;
   logs: LogRecord[];
   setError: (error: string | null) => void;
@@ -2418,6 +2454,7 @@ function ActivitySurface({
         <span>{copy.recentActivity}</span>
         <SecondaryButton
           icon="external"
+          disabled={transitionBusy}
           onClick={() => void api!.exportLogs().catch((cause) => setError(messageOf(cause)))}
         >
           {copy.exportSafeLog}
@@ -2502,7 +2539,8 @@ function SettingsSurface({
     finally { setBusy(false); }
   };
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setBusy] = useState(false);
+  const busy = localBusy || Boolean(snapshot.lifecycle?.transition);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
   const codexStatus = codexSettingsStatus(snapshot.state, devProfile, Boolean(catalogFailure));
@@ -2728,7 +2766,7 @@ function SettingsSurface({
         {typeof snapshot.state.pendingBiggerContext === "boolean" ? <div role="status">
           <p>{snapshot.state.contextChangeApplying ? copy.contextApplying : snapshot.state.contextChangeError ? copy.contextFailed : copy.contextWaiting}</p>
           {snapshot.state.contextChangeError ? <p>{snapshot.state.contextChangeError}</p> : null}
-          <button className="secondary-button" type="button" disabled={busy || snapshot.state.contextChangeApplying}
+          <button className="secondary-button" type="button" disabled={localBusy || snapshot.state.contextChangeApplying}
             onClick={() => void api!.cancelContextChange().then(updateState).catch(cause => setError(messageOf(cause)))}>{copy.cancelContextChange}</button>
           {snapshot.state.contextChangeError ? <button className="secondary-button" type="button" disabled={busy}
             onClick={() => void setBiggerContext(snapshot.state.pendingBiggerContext!)}>{copy.retryContextChange}</button> : null}
@@ -2760,7 +2798,7 @@ function SettingsSurface({
           </select>
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
-          <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
+          <LanguageMenu disabled={busy} copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
       </div>
 
@@ -2918,6 +2956,7 @@ function ZeroRiskModelMenu({
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const selectedRadio = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (busy) setOpen(false); }, [busy]);
   useEffect(() => {
     if (!open) return;
     const frame = requestAnimationFrame(() => selectedRadio.current?.focus());
@@ -2928,6 +2967,7 @@ function ZeroRiskModelMenu({
     requestAnimationFrame(() => trigger.current?.focus());
   };
   const choose = (enabled: boolean) => {
+    if (busy) return;
     closeMenu();
     if (enabled !== proEnabled) onChange(enabled);
   };
@@ -2973,6 +3013,7 @@ function ZeroRiskModelMenu({
               <button
                 aria-checked={!proEnabled}
                 className={!proEnabled ? "is-selected" : ""}
+                disabled={busy}
                 onClick={() => choose(false)}
                 ref={!proEnabled ? selectedRadio : undefined}
                 role="radio"
@@ -2990,6 +3031,7 @@ function ZeroRiskModelMenu({
               <button
                 aria-checked={proEnabled}
                 className={proEnabled ? "is-selected" : ""}
+                disabled={busy}
                 onClick={() => choose(true)}
                 ref={proEnabled ? selectedRadio : undefined}
                 role="radio"
@@ -3369,12 +3411,12 @@ function Switch({
   );
 }
 
-function LanguageMenu({ copy, language, onChange }: { copy: Copy; language: Language; onChange: (language: Language) => void }) {
+function LanguageMenu({ copy, language, onChange, disabled = false }: { disabled?: boolean; copy: Copy; language: Language; onChange: (language: Language) => void }) {
   const options: Array<{ label: string; value: Language }> =
     (Object.entries(languages) as Array<[Language, { label: string }]>).map(([value, { label }]) => ({ label, value }));
   return <label className="language-menu">
     <span className="visually-hidden">{copy.language}</span>
-    <select aria-label={copy.language} className="language-menu-trigger" value={language}
+    <select disabled={disabled} aria-label={copy.language} className="language-menu-trigger" value={language}
       onChange={event => onChange(event.target.value as Language)}>
       {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>

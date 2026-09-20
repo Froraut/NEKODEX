@@ -4,6 +4,7 @@ import russian from "./i18n-ru.json";
 import traditionalChinese from "./i18n-zh-TW.json";
 
 const en = {
+  lastConnectorVerification: "Last connector verification: {time}",
   passkeyBrowser: "Passkey browser",
   passkeyBrowserBody: "Choose the installed browser for an isolated temporary sign-in profile. Your normal profile is not read. The imported session must pass Launcher verification.",
   webSubagents: "Web subagents",
@@ -592,6 +593,7 @@ const en = {
 } as const;
 
 const zh: Record<keyof typeof en, string> = {
+  lastConnectorVerification: "最近一次连接器验证：{time}",
   passkeyBrowser: "登录浏览器",
   passkeyBrowserBody: "选择已安装的浏览器，使用独立临时配置登录。不读取日常配置，导入会话需通过验证。",
   webSubagents: "Web 子代理",
@@ -1138,6 +1140,7 @@ const zh: Record<keyof typeof en, string> = {
 };
 
 const ja: Record<keyof typeof en, string> = {
+  lastConnectorVerification: "前回のコネクター検証: {time}",
   passkeyBrowser: "ログイン用ブラウザー",
   passkeyBrowserBody: "一時プロファイルでログインします。通常のプロファイルは読みません。取得したセッションを検証します。",
   webSubagents: "Web サブエージェント",

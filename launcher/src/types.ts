@@ -140,11 +140,17 @@ export interface OperationState {
 
 export type UpdateState =
   | { status: "disabled" | "idle" | "checking" | "up-to-date" }
-  | { status: "available" | "downloading" | "verifying" | "installing"; version: string;
+  | { status: "available" | "downloading" | "verifying" | "installing" | "cancelling"; version: string;
       downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null }
   | { status: "error"; message: string };
 
 export type CompactionModel = "extra-high" | "5.6-pro" | "5.5-pro";
+
+export type CancelUpdatePreparationResult =
+  | { status: "cancelled"; version: string }
+  | { status: "too-late"; reason: "worker-handoff"; version?: string }
+  | { status: "not-active" }
+  | { status: "failed"; version: string; message: string };
 
 export interface UsageGroup {
   accountId?: string;
@@ -280,6 +286,7 @@ export interface RuntimeCapabilities {
 
 export interface LauncherLifecycle extends RuntimeCapabilities {
   routeStatus: string;
+  transition?: string | null;
   operation?: OperationState;
   catalog?: { status: string; request: number | null; at: string | null; failure: unknown };
 }
@@ -438,6 +445,7 @@ export interface LauncherApi {
   logs(limit?: number): Promise<LogRecord[]>;
   exportLogs(): Promise<string | null>;
   installUpdate(): Promise<boolean>;
+  cancelUpdatePreparation(): Promise<CancelUpdatePreparationResult>;
   recheckUpdate(): Promise<UpdateState>;
   readUpdateRequestRevision?(): Promise<number>;
   onOpenUpdates?(listener: () => void): () => void;

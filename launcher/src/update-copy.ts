@@ -1,6 +1,11 @@
 import type { Language } from "./types";
 
 const en = {
+  cancel: "Cancel update",
+  cancelling: "Cancelling update…",
+  cancellingBody: "Stopping preparation. Your installed app stays in place; downloaded data is kept for retry.",
+  cancelTooLate: "Installation has already started. Wait for NEKODEX to reopen.",
+
   stageDownload: "Download", stageVerify: "Verify", stageRestart: "Restart",
   title: "Updates", subtitle: "Keep NEKODEX up to date, right here.", current: "Installed version",
   available: "An update is ready", latest: "You're up to date", idle: "Check for a new version",
@@ -17,6 +22,11 @@ const en = {
 type UpdateCopy = { [K in keyof typeof en]: string };
 const copies: Record<Language, UpdateCopy> = {
   ru: {
+  cancel: "Отменить обновление",
+  cancelling: "Отмена обновления…",
+  cancellingBody: "Останавливаем подготовку. Установленное приложение остаётся на месте; загруженные данные сохраняются для повтора.",
+  cancelTooLate: "Установка уже началась. Дождитесь повторного открытия NEKODEX.",
+
   stageDownload: "Загрузка", stageVerify: "Проверка", stageRestart: "Перезапуск",
     title: "Обновления", subtitle: "Обновляйте NEKODEX прямо здесь.", current: "Установленная версия",
     available: "Доступно обновление", latest: "Установлена последняя версия", idle: "Проверить новую версию",
@@ -32,6 +42,11 @@ const copies: Record<Language, UpdateCopy> = {
   },
   en,
   "zh-CN": {
+  cancel: "取消更新",
+  cancelling: "正在取消更新…",
+  cancellingBody: "正在停止准备。已安装的应用保持不变；已下载的数据将保留以便重试。",
+  cancelTooLate: "安装已开始。请等待 NEKODEX 重新打开。",
+
   stageDownload: "下载", stageVerify: "验证", stageRestart: "重启",
     title: "更新", subtitle: "直接在这里更新 NEKODEX。", current: "已安装版本",
     available: "有新版本可用", latest: "已是最新版本", idle: "检查新版本", checking: "正在检查 GitHub…",
@@ -44,6 +59,11 @@ const copies: Record<Language, UpdateCopy> = {
     progress: "下载进度", source: "来源：GitHub 上的 Froraut/NEKODEX",
   },
   "zh-TW": {
+  cancel: "取消更新",
+  cancelling: "正在取消更新…",
+  cancellingBody: "正在停止準備。已安裝的應用程式保持不變；已下載的資料會保留以便重試。",
+  cancelTooLate: "安裝已開始。請等待 NEKODEX 重新開啟。",
+
   stageDownload: "下載", stageVerify: "驗證", stageRestart: "重新啟動",
     title: "更新", subtitle: "直接在這裡更新 NEKODEX。", current: "已安裝版本",
     available: "有新版本可用", latest: "已是最新版本", idle: "檢查新版本", checking: "正在檢查 GitHub…",
@@ -56,6 +76,11 @@ const copies: Record<Language, UpdateCopy> = {
     progress: "下載進度", source: "來源：GitHub 上的 Froraut/NEKODEX",
   },
   ja: {
+  cancel: "更新をキャンセル",
+  cancelling: "更新をキャンセル中…",
+  cancellingBody: "準備を停止しています。インストール済みアプリは変更されず、ダウンロード済みデータは再試行のために保持されます。",
+  cancelTooLate: "インストールはすでに開始されています。NEKODEX が再び開くまでお待ちください。",
+
   stageDownload: "ダウンロード", stageVerify: "検証", stageRestart: "再起動",
     title: "アップデート", subtitle: "NEKODEX をこの画面から更新できます。", current: "インストール済みバージョン",
     available: "新しいバージョンがあります", latest: "最新の状態です", idle: "新しいバージョンを確認",
@@ -70,6 +95,11 @@ const copies: Record<Language, UpdateCopy> = {
     progress: "ダウンロードの進行状況", source: "配信元：GitHub の Froraut/NEKODEX",
   },
   ko: {
+  cancel: "업데이트 취소",
+  cancelling: "업데이트 취소 중…",
+  cancellingBody: "준비를 중지하고 있습니다. 설치된 앱은 유지되며 다운로드한 데이터는 재시도를 위해 보관됩니다.",
+  cancelTooLate: "설치가 이미 시작되었습니다. NEKODEX가 다시 열릴 때까지 기다려 주세요.",
+
   stageDownload: "다운로드", stageVerify: "검증", stageRestart: "다시 시작",
     title: "업데이트", subtitle: "여기에서 NEKODEX를 최신 상태로 유지하세요.", current: "설치된 버전",
     available: "새 업데이트가 있습니다", latest: "최신 버전입니다", idle: "새 버전 확인",

@@ -27,8 +27,9 @@ function acknowledgeUpdateReady(handoff, { version, platform = process.platform,
   const next = `${handoff.filename}.next`;
   const fd = fs.openSync(next, "wx", 0o600);
   try {
-    fs.writeFileSync(fd, JSON.stringify({ token: handoff.token, version, platform, arch, pid, packageTarget,
-      ...lifecycle }));
+    // Lifecycle details are descriptive. They must never override the updater's
+    // authorization token or the package/process identity established above.
+    fs.writeFileSync(fd, JSON.stringify({ ...lifecycle, token: handoff.token, version, platform, arch, pid, packageTarget }));
     fs.fsyncSync(fd);
   } finally { fs.closeSync(fd); }
   fs.renameSync(next, handoff.filename);

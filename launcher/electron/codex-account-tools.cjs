@@ -24,12 +24,14 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
   let starting = false;
   let releaseAccountOperation = null;
   let settling = null;
+  let stopping = false;
   let destroyed = false;
   let monitor = null;
   let authWindow = null;
   const ownedClosures = new WeakSet();
   const authChildren = new Set();
   const quotaAccounts = new Set();
+  const activeQuotaReads = new Set();
 
   function pool() {
     if (destroyed) throw new Error('Codex account tools are closed');
@@ -123,6 +125,7 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     return quotaReader.snapshot(host.view.webContents.session, id, pool().evidenceEpoch(id));
   }
   async function refreshQuota(id) {
+    if (stopping) throw new Error('Codex account tools are closing');
     account(id);
     const currentPool = pool();
     if (getInteractionMode() === 'manual') {
@@ -130,16 +133,33 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     }
     const host = currentPool.getHost(id);
     await host.ready();
-    const epoch = currentPool.evidenceEpoch(id);
-    const identity = currentPool.accountIdentityLease(id);
-    quotaAccounts.add(id);
-    const result = await quotaReader.read(host.view.webContents.session, id, epoch, { refresh: true });
-    if (destroyed || getPool() !== currentPool || currentPool.evidenceEpoch(id) !== epoch
-      || !sameIdentity(identity, currentPool.accountIdentityLease(id))) {
-      quotaReader.clear(id);
+    if (stopping || destroyed || getPool() !== currentPool) {
       throw new Error('The account changed while its limits were being read; refresh again');
     }
-    return result;
+    const releaseOperation = currentPool.acquireAccountReadOperation(
+      id,
+      'Codex account limit refresh',
+      () => quotaReader.clear(id),
+    );
+    const operation = (async () => {
+      const epoch = currentPool.evidenceEpoch(id);
+      const identity = currentPool.accountIdentityLease(id);
+      quotaAccounts.add(id);
+      const result = await quotaReader.read(host.view.webContents.session, id, epoch, { refresh: true });
+      if (stopping || destroyed || getPool() !== currentPool || currentPool.evidenceEpoch(id) !== epoch
+        || !sameIdentity(identity, currentPool.accountIdentityLease(id))) {
+        quotaReader.clear(id);
+        throw new Error('The account changed while its limits were being read; refresh again');
+      }
+      return result;
+    })();
+    activeQuotaReads.add(operation);
+    try {
+      return await operation;
+    } finally {
+      activeQuotaReads.delete(operation);
+      releaseOperation();
+    }
   }
 
   async function start(id) {
@@ -223,9 +243,11 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     return true;
   }
   async function destroy() {
+    stopping = true;
     clearTimeout(monitor);
     closeWindows();
     for (const id of quotaAccounts) quotaReader.clear(id);
+    await Promise.allSettled([...activeQuotaReads]);
     await controller.destroy();
     settleAccount();
     if (settling) await settling;
@@ -233,7 +255,8 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
   }
   return Object.freeze({ quotaSnapshot, refreshQuota, start, snapshot,
     status: requireOwner, open, cancel, copyCode, assertAccountMutable,
-    currentOperation: () => starting || releaseAccountOperation || controller.selectionLock() ? 'Codex account sign-in' : null,
+    currentOperation: () => starting || releaseAccountOperation || controller.selectionLock()
+      ? 'Codex account sign-in' : null,
     destroy });
 }
 

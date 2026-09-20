@@ -45,7 +45,10 @@ function recoveryRegistration(transaction, { home = os.homedir(), env = process.
   if (transaction.job.platform === "linux") {
     const config = env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(home, ".config");
     // Desktop-entry Exec quoting also escapes expansion and field-code syntax.
-    const quote = value => `"${String(value).replace(/[\\"`$]/g, c => `\\${c}`).replace(/%/g, "%%")}"`;
+    const quote = value => {
+      if (/[\r\n\0]/.test(value)) throw new Error("Invalid update recovery argument");
+      return `"${String(value).replace(/[\\"`$]/g, c => `\\${c}`).replace(/%/g, "%%")}"`;
+    };
     return { type: "file", path: path.join(config, "autostart", `codex-web-gpt-update-recovery-${id}.desktop`),
       contents: `[Desktop Entry]\nType=Application\nName=NEKODEX update recovery\nExec=${args.map(quote).join(" ")}\nTerminal=false\nNoDisplay=true\n` };
   }

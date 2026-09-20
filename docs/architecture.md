@@ -52,9 +52,9 @@ DEV launchers can therefore run at the same time with different ChatGPT accounts
 
 The working-tree adapter attaches to a tab leased only from that DEV launcher. In Full mode the DEV
 launcher owns one persistent, isolated tunnel runtime; a named CLI chat owns only the private turn
-broker attached to that tunnel for the command's lifetime. The distinct `Codex Native4 DEV`
+broker attached to that tunnel for the command's lifetime. The distinct `Codex Native6 DEV`
 connector reaches the same MCP server and turn-token contract without requiring any Responses
-daemon or colliding with the production `Codex Native4` connector.
+daemon or colliding with the production `Codex Native6` connector.
 
 Only the responsibilities normally owned by native Codex are synthetic: named history storage,
 turn metadata, tool-result execution, context-threshold scheduling, and installation of compacted
@@ -70,9 +70,12 @@ probe. The DEV launcher supervisor owns only the isolated MCP tunnel. Browser di
 state, thread authority, checkpoints, and named chat state live
 under `~/.codex-chatgpt-web-dev` by default.
 
-The ChatGPT connector name is also the public MCP ABI identity. The #487 command-field contract
-uses `Codex Native4` for Automatic Full mode, `Codex Zero Risk4` for Manual mode, and
-`Codex Native4 DEV` for the isolated repository driver. `Codex Native3`, `Codex Native3 DEV`,
+The ChatGPT connector name is also the public MCP ABI identity. Automatic Full mode defaults to
+`Codex Native6`, with asynchronous tool operations, explicit result delivery and acknowledgement.
+The isolated repository driver uses `Codex Native6 DEV`. Synchronous mode retains the #487
+command-field contract under `Codex Native4` / `Codex Native4 DEV`; Manual uses
+`Codex Zero Risk4`. Supported saved identities, including Native5, remain valid during ordinary
+updates. `Codex Native3`, `Codex Native3 DEV`,
 and `Codex Zero Risk2` are legacy identities, alongside their older aliases. The unpublished
 `Codex Zero Risk3` name is recognized defensively as a local legacy alias. The new
 `codex_exec` contract specifies optional native sandbox-escalation fields; forwarding depends on the
@@ -126,7 +129,10 @@ the envelope. Attachment acceptance and send readiness are verified before the t
 
 Initial Launcher setup asks which interaction mode to install and defaults to With Automation. The
 same choice remains available in Settings; changing it uses the transactional setup path, replaces
-the installed catalog, and requires a Codex restart. Manual mode never reads or mutates the ChatGPT DOM.
+the installed catalog. Catalog delivery, visible picker confirmation, and the settings used by an
+already-running Codex task are separate observations. Refresh or restart the client only when it
+still uses the prior configuration; a saved restart hint is not proof that this is necessary.
+Manual mode never reads or mutates the ChatGPT DOM.
 For a new ChatGPT chat the adapter provides the complete compiled prompt; for an exactly retained
 chat it also provides an incremental prompt containing only the Codex suffix after the last assistant
 reply. The Launcher chooses between those two prompts from its own retained-tab ownership and writes
@@ -240,6 +246,25 @@ authenticated shutdown endpoint. If the contract is unavailable, malformed, non-
 be completed, the operation fails closed and restores the drained runtime when possible. An
 unexpected child exit is recovered with a bounded restart budget; a crash loop becomes an explicit
 launcher error.
+
+## Launcher transition ownership
+
+`main.cjs` composes runtime, browser, account and updater services. A small lifecycle-admission
+module owns startup, update preparation and exit transitions. New mutating IPC commands cannot
+race those transitions; read-only snapshots, layout updates and cancellation remain available.
+The exact owner is handed from update preparation into quit, and queued startup quit intent is
+retained. Account token reads have their own cancellable read leases, separate from leases that
+block browser turns or mutate credentials/proxies.
+
+The updater controller owns metadata/download/staging; `update-preparation.cjs` owns extractor
+processes and cancellation exit proof. A cancelled preparation retains authenticated download
+partials for retry and settles physical cleanup before releasing admission. Once the installer
+worker takes ownership, the existing journal/readiness/rollback transaction controls replacement.
+
+The frontend reads the same lifecycle transition from the shared snapshot contract. Busy controls
+therefore follow backend admission while navigation, status display and relevant cancellation stay
+usable. See the [integrated backend/frontend review](reviews/full-stack-20260921.md) for scoped
+evidence and platform limits.
 
 ## Security invariants
 

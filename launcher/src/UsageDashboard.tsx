@@ -142,6 +142,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const [result, setResult] = useState<{ key: string; report: UsageSnapshot } | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const [knownAccounts, setKnownAccounts] = useState<UsageSnapshot["accounts"]>([]);
   const [showTable, setShowTable] = useState(false);
   const rawVisible = result?.key === activeKey ? result.report : cache.current.get(activeKey) ?? null;
@@ -200,7 +201,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
       document.removeEventListener("visibilitychange", resume);
       window.removeEventListener("focus", resume);
     };
-  }, [filters.days, filters.source, filters.accountId, copy.usageUnavailable]);
+  }, [filters.days, filters.source, filters.accountId, copy.usageUnavailable, retryAttempt]);
 
   const groups = useMemo(() => aggregateUsageGroups(visible?.rows ?? [], visible?.source ?? filters.source,
     (row, source) => groupLabel(row, copy, source)), [visible, copy, filters.source]);
@@ -263,6 +264,10 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
 
     {visibleError ? <div className={`usage-notice${stale ? " is-stale" : " is-error"}`} role={stale ? "status" : "alert"}>
       <strong>{stale ? copy.usageStaleTitle : copy.usageUnavailable}</strong><span>{stale ? copy.usageStaleBody : visibleError}</span>
+      <button className="button-secondary" type="button" disabled={refreshing === activeKey} onClick={() => {
+        setRefreshing(activeKey);
+        setRetryAttempt(value => value + 1);
+      }}>{refreshing === activeKey ? copy.loading : copy.retry}</button>
     </div> : null}
 
     {!visible ? refreshing === activeKey ? <div className="usage-loading" role="status">{copy.loading}</div> : visibleError ? null : <div className="usage-loading" role="status">{emptyCopy}</div> : <>

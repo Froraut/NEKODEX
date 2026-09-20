@@ -27,7 +27,9 @@ function electronProxy(value) {
   return { mode: 'fixed_servers', proxyRules: proxy.url, proxyBypassRules: '<local>;localhost;127.0.0.1;[::1]' };
 }
 class AccountNetwork {
-  constructor(coreHome) {
+  constructor(coreHome, { writeFile = writePrivateFileAtomic } = {}) {
+    if (typeof writeFile !== 'function') throw new TypeError('Account network writer must be a function');
+    this.writeFile = writeFile;
     this.path = path.join(coreHome, 'account-network.json');
     this.state = {};
     try {
@@ -40,8 +42,9 @@ class AccountNetwork {
   save(id, value) {
     validateAccountId(id);
     const next = { ...this.state, [id]: validateProxy(value) };
-    writePrivateFileAtomic(this.path, JSON.stringify({ version: 1, accounts: next }) + '\n');
+    const receipt = this.writeFile(this.path, JSON.stringify({ version: 1, accounts: next }) + '\n', { durable: true });
     this.state = next;
+    return receipt;
   }
   async apply(session, value) {
     await session.setProxy(electronProxy(value));

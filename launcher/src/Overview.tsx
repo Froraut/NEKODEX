@@ -40,7 +40,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
       : models === "picker-pending" ? copy.modelsConfirmShort
         : models === "catalog-pending" ? copy.modelsWaitingShort : copy.connectionPending;
   const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [
-    { icon: "accounts", label: copy.accountConnection, ready: signedIn, surface: "accounts",
+    { icon: "accounts", label: copy.accountConnection, ready: manual || signedIn, surface: "accounts",
       status: manual ? copy.manualShort : signedIn ? copy.connectionVerified : copy.signInNeededShort },
     { error: catalogUnavailable, icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogUnavailable,
       surface: "setup", status: modelStatus },
@@ -139,7 +139,7 @@ function WorkspaceIllustration() {
   const pawReaction = reaction === "happy" || reaction === "surprised" || reaction === "stretch" ? 2
     : reaction === "wink" || reaction === "playful" || reaction === "peek" ? 1 : 0;
   return <div className={`workspace-illustration-stage${reaction === null ? "" : ` is-playing reaction-${reaction} illustration-reaction-${pawReaction}`}`}
-    role="img" aria-label="NEKODEX coding cat" tabIndex={0}
+    role="img" aria-label="NEKODEX" tabIndex={0}
     onPointerEnter={play} onPointerMove={follow} onPointerLeave={event => reset(event.currentTarget)} onPointerCancel={event => reset(event.currentTarget)} onFocus={play} onBlur={event => reset(event.currentTarget)}>
     <svg className="workspace-illustration" viewBox="0 0 1536 1024" aria-hidden="true">
       <defs>

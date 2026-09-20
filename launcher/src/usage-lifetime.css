@@ -52,6 +52,7 @@
 .usage-notice.is-stale { border-color: color-mix(in srgb, var(--color-text-warning) 34%, transparent); }
 .usage-notice.is-error { border-color: color-mix(in srgb, var(--color-text-error) 38%, transparent); }
 .usage-notice strong { color: var(--color-text-primary); }
+.usage-notice > .button-secondary { justify-self: start; margin-top: 7px; }
 .usage-loading { padding: 24px 4px; color: var(--color-text-secondary); }
 .usage-empty-state {
   display: grid;

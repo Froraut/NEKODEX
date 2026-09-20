@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   logs: (limit) => ipcRenderer.invoke("launcher:logs", limit),
   exportLogs: () => ipcRenderer.invoke("launcher:export-logs"),
   installUpdate: () => ipcRenderer.invoke("launcher:update-install"),
+  cancelUpdatePreparation: () => ipcRenderer.invoke("launcher:update-cancel"),
   restartLauncher: () => ipcRenderer.invoke("launcher:restart"),
   recheckUpdate: () => ipcRenderer.invoke("launcher:update-recheck"),
   readUpdateRequestRevision: () => ipcRenderer.invoke("launcher:update-request-revision"),

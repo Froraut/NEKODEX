@@ -1,4 +1,5 @@
 {
+  "lastConnectorVerification": "最近一次連接器驗證：{time}",
   "checkUpdates": "檢查更新",
   "updateCheckCooldown": "一分鐘後再次檢查",
   "setupNext": "下一步",

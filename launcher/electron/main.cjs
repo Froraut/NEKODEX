@@ -47,6 +47,7 @@ const { createUpdateController } = require("./update.cjs");
 const { SETUP_CONTRACT, setupIdentity, setupProofCurrent } = require("./upgrade-readiness.cjs");
 const { captureUpdateReadiness, proveUpdateReadiness } = require("./update-readiness.cjs");
 const { LauncherLifecycleProjection } = require("./lifecycle-projection.cjs");
+const { createLifecycleAdmission } = require("./lifecycle-admission.cjs");
 const updateReadinessHandoff = captureUpdateReadiness();
 const { recoverStartupFailure } = require("./startup-recovery.cjs");
 const { CHROME_SETTINGS_ADDRESS, confirmExistingChromeImport } = require("./existing-chrome-consent.cjs");
@@ -144,6 +145,23 @@ let contextChangeQueue = null;
 let startupPhase = "runtime-files";
 const lifecycleProjection = new LauncherLifecycleProjection(value => send("launcher:lifecycle", value));
 const additionalLifecycleParticipants = new Map();
+let deferredQuit = null;
+const lifecycleAdmission = createLifecycleAdmission(transition => {
+  lifecycleProjection.update({ transition });
+  if (transition === null && deferredQuit) {
+    const pending = deferredQuit;
+    deferredQuit = null;
+    queueMicrotask(() => {
+      void requestQuit(pending.options).then(result => {
+        for (const resolve of pending.waiters) resolve(result);
+      }, error => {
+        const message = error instanceof Error ? error.message : String(error);
+        publishOperation({ name: "launcher-quit", status: "failed", message });
+        for (const resolve of pending.waiters) resolve({ ok: false, message });
+      });
+    });
+  }
+});
 
 function registerLifecycleParticipant(name, participant) {
   if (typeof name !== "string" || !name.trim() || additionalLifecycleParticipants.has(name)
@@ -725,7 +743,7 @@ function rendererRecoveryCopy() {
 }
 
 function rendererRestartBlocked() {
-  return Boolean(currentGlobalOperation() || browserHost?.hasActiveTurns());
+  return Boolean(lifecycleAdmission.busy() || currentGlobalOperation() || browserHost?.hasActiveTurns());
 }
 
 async function promptRendererRecovery() {
@@ -885,7 +903,9 @@ function registerIpc({ logger, stateStore }) {
     getMainWindow: () => mainWindow,
     isRendererUrlAllowed: rendererNavigationAllowed,
   });
-  const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, handler, authorize);
+  const handle = (channel, handler) => registerLoggedIpc(
+    ipcMain, logger, channel, lifecycleAdmission.guard(channel, handler), authorize,
+  );
   handle("launcher:snapshot", async () => ({
     profile: LAUNCHER_PROFILE.kind,
     profilePaths: {
@@ -893,7 +913,7 @@ function registerIpc({ logger, stateStore }) {
       codexHome: LAUNCHER_PROFILE.codexHome,
       userData: launcherUserData,
     },
-    state: ensureRuntimeProofCurrent(stateStore),
+    state: lifecycleAdmission.busy() ? stateStore.read() : ensureRuntimeProofCurrent(stateStore),
     proModelVersion: runtimeHost.proModelVersion(),
     compactionModel: runtimeHost.compactionModel(),
     browserCapacity: browserCapacitySnapshot(),
@@ -1565,6 +1585,10 @@ function registerIpc({ logger, stateStore }) {
     return updateController.recheck();
   });
   handle("launcher:update-request-revision", () => updatesPanelRequestRevision);
+  handle("launcher:update-cancel", async () => {
+    if (!updateController) throw new Error("Launcher updates are unavailable");
+    return updateController.cancelPreparation();
+  });
   handle("launcher:restart", async () => {
     if (updateReadinessHandoff) {
       const journalPath = path.join(path.dirname(updateReadinessHandoff.filename), "transaction.json");
@@ -1579,14 +1603,15 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:update-install", async () => {
     if (!updateController) throw new Error("Launcher updates are unavailable");
+    const transitionOwner = lifecycleAdmission.acquire("the NEKODEX update");
     const updateBlocked = () => currentGlobalOperation()
       || browserHost?.hasActiveTurns();
-    browserHost.closeTurnAdmission("the launcher update");
     let launch;
     try {
+      browserHost.closeTurnAdmission("the launcher update");
       if (updateBlocked()) throw new Error("Finish active tasks and setup operations before updating NEKODEX");
       launch = await updateController.beginInstall();
-      const result = await requestQuit({ admissionHeld: true });
+      const result = await requestQuit({ admissionHeld: true, transitionOwner });
       if (!result.ok) {
         try {
           await updateController.cancelInstall(launch);
@@ -1600,7 +1625,10 @@ function registerIpc({ logger, stateStore }) {
       return true;
     } catch (error) {
       if (!exitCommitted) browserHost.openTurnAdmission();
+      if (error?.code === "UPDATE_PREPARATION_CANCELLED") return false;
       throw error;
+    } finally {
+      if (!exitCommitted) lifecycleAdmission.release(transitionOwner);
     }
   });
   handle("launcher:window-state", (event) => {
@@ -1616,9 +1644,25 @@ function registerIpc({ logger, stateStore }) {
   }, authorize);
 }
 
-async function requestQuit({ admissionHeld = false, restart = false, stopRuntime = false } = {}) {
+async function requestQuit({ admissionHeld = false, restart = false, stopRuntime = false, transitionOwner = null } = {}) {
+  if (!transitionOwner && lifecycleAdmission.currentLabel() === "local runtime startup") {
+    // Preserve a single native Quit/SIGTERM across the bounded startup owner.
+    // A full-stop intent dominates a plain quit or interface restart.
+    if (!deferredQuit) deferredQuit = { options: { restart, stopRuntime }, waiters: [] };
+    deferredQuit.options.stopRuntime ||= stopRuntime;
+    deferredQuit.options.restart = !deferredQuit.options.stopRuntime && (deferredQuit.options.restart || restart);
+    return new Promise(resolve => deferredQuit.waiters.push(resolve));
+  }
   if (shutdownInProgress || exitCommitted) {
     return { ok: false, message: "Launcher shutdown is already in progress" };
+  }
+  const borrowedTransition = transitionOwner !== null;
+  try {
+    if (borrowedTransition) lifecycleAdmission.assertOwner(transitionOwner);
+    else transitionOwner = lifecycleAdmission.acquire("NEKODEX shutdown");
+  } catch (error) {
+    publishOperation({ name: "launcher-quit", status: "failed", message: error.message });
+    return { ok: false, message: error.message };
   }
   shutdownInProgress = true;
   let shutdownResult;
@@ -1664,10 +1708,11 @@ async function requestQuit({ admissionHeld = false, restart = false, stopRuntime
     const message = error instanceof Error ? error.message : String(error);
     quitting = false;
     runtimeSupervisor?.allowRestartAfterQuitFailure();
-    browserHost?.openTurnAdmission();
+    if (!admissionHeld) browserHost?.openTurnAdmission();
     showMainWindow();
     publishOperation({ name: "launcher-quit", status: "failed", message });
     shutdownInProgress = false;
+    if (!borrowedTransition) lifecycleAdmission.release(transitionOwner);
     return { ok: false, message };
   }
 
@@ -1866,13 +1911,13 @@ async function start() {
     read: () => stateStore.read(),
     write: patch => { const state = stateStore.update(patch); send("launcher:state-changed", state); },
     ready: async () => {
-      if (quitting || shutdownInProgress || runtimeHost.currentOperation()) return false;
+      if (quitting || shutdownInProgress || lifecycleAdmission.busy() || runtimeHost.currentOperation()) return false;
       const current = runtimeHost.runtimeConfigSnapshot();
       if (!current.configured || current.config?.browserInteractionMode === "manual") {
         throw new Error("Pending context change requires an installed automatic model route");
       }
       const health = await runtimeSupervisor.proxyHealthPayload(current.config).catch(() => null);
-      if (quitting || shutdownInProgress || exitCommitted || runtimeHost.currentOperation()) return false;
+      if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy() || runtimeHost.currentOperation()) return false;
       const latest = runtimeHost.runtimeConfigSnapshot();
       if (!latest.configured || latest.owner !== current.owner || latest.serialized !== current.serialized) return false;
       return health?.status === "ok" && health.accepting_turns === true
@@ -1880,7 +1925,7 @@ async function start() {
         && health.active_compaction_runs === 0;
     },
     apply: enabled => {
-      if (quitting || shutdownInProgress || exitCommitted) {
+      if (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy()) {
         throw Object.assign(new Error("Context change deferred while NEKODEX is shutting down"), { code: "RUNTIME_BUSY" });
       }
       return runtimeHost.setBiggerContext(enabled);
@@ -1947,6 +1992,7 @@ async function start() {
     BrowserWindow, clipboard, codexHome: LAUNCHER_PROFILE.codexHome, logger,
   });
   registerLifecycleParticipant("Codex account sign-in", accountToolsService);
+  const startupOwner = lifecycleAdmission.acquire("local runtime startup");
   registerIpc({ logger, stateStore });
   const trayAvailable = createTray(logger, stateStore.read().language);
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
@@ -1959,8 +2005,17 @@ async function start() {
     });
   }
   void startupAuthenticationRefresh.then(() => {
-    if (!shutdownInProgress && !quitting && !exitCommitted) ensureRuntimeProofCurrent(stateStore);
+    if (!lifecycleAdmission.busy() && !shutdownInProgress && !quitting && !exitCommitted) ensureRuntimeProofCurrent(stateStore);
   });
+  const finishRuntimeStartup = () => {
+    try {
+      if (!shutdownInProgress && !quitting && !exitCommitted) ensureRuntimeProofCurrent(stateStore);
+    } catch (error) {
+      logger.warn("runtime.startup_proof_reconciliation_failed", { message: error.message });
+    } finally {
+      lifecycleAdmission.release(startupOwner);
+    }
+  };
   startupPhase = "renderer";
   await loadRenderer(mainWindow);
   rendererStartupComplete = true;
@@ -2046,8 +2101,8 @@ async function start() {
         logger.error("dev_profile.runtime_start_failed", { message });
         const failed = stateStore.update({ mcpSetupComplete: false });
         send("launcher:state-changed", failed);
-      });
-    }
+      }).finally(finishRuntimeStartup);
+    } else finishRuntimeStartup();
   } else void (async () => {
     if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
     retireAccountProof();
@@ -2270,7 +2325,7 @@ async function start() {
         : primary;
     logger.error("runtime.startup_failed", { message });
     publishOperation({ name: "runtime-start", status: "failed", message });
-  });
+  }).finally(finishRuntimeStartup);
 
   app.on("activate", () => showMainWindow({ activateApplication: true }));
   app.on("before-quit", (event) => {

@@ -405,7 +405,9 @@ class UsageStore {
       }
       try {
         if (loaded.legacyText) writeDurable(`${this.path}.v${loaded.legacyVersion}-${randomUUID()}.backup`, loaded.legacyText);
-        if (primaryError.code !== 'ENOENT') fs.renameSync(this.path, `${this.path}.corrupt-${Date.now()}-${randomUUID()}`);
+        if (primaryError.code !== 'ENOENT') {
+          renameAtomicFile(this.path, `${this.path}.corrupt-${Date.now()}-${randomUUID()}`);
+        }
         this.serializedState = JSON.stringify(this.state) + '\n';
         writeDurable(this.path, this.serializedState); this.primaryAvailable = true; this.recovered = true;
       } catch { this.error = 'Usage history could not be restored; the backup was preserved.'; return; }
