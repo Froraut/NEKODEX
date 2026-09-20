@@ -24,6 +24,7 @@ export type IconName =
   | "settings"
   | "setup"
   | "sidebar"
+  | "stop"
   | "update"
   | "x";
 
@@ -40,6 +41,7 @@ export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGEle
       {name === "check" ? <path {...common} d="m5 12.5 4.2 4.2L19 7" /> : null}
       {name === "chevron" ? <path {...common} d="m9 6 6 6-6 6" /> : null}
       {name === "close" ? <path {...common} d="m6 6 12 12M18 6 6 18" /> : null}
+      {name === "stop" ? <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" /> : null}
       {name === "external" ? <><path {...common} d="M14 5h5v5M19 5l-8 8" /><path {...common} d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></> : null}
       {name === "expand" ? <><path {...common} d="M8 3H3v5M3 3l6 6M16 3h5v5M21 3l-6 6M8 21H3v-5M3 21l6-6M16 21h5v-5M21 21l-6-6" /></> : null}
       {name === "forward" ? <path {...common} d="m9.5 6 6 6-6 6" /> : null}

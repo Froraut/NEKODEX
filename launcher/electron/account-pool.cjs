@@ -36,6 +36,7 @@ class AccountBrowserPool {
     this.destroyed = false;
     this.turnAdmission = { open: true, reason: null };
     this.turnAdmissionRevision = 0;
+    this.inspectionsPaused = false;
     this.addingAccount = false;
     this.initializingHosts = true;
     this.affinityPath = path.join(options.coreHome, 'account-affinity.json');
@@ -155,6 +156,7 @@ class AccountBrowserPool {
     return this.turnAdmission;
   }
   openTurnAdmission() {
+    this.inspectionsPaused = false;
     this.turnAdmission = { open: true, reason: null };
     this.turnAdmissionRevision++;
     return this.turnAdmission;
@@ -392,6 +394,7 @@ class AccountBrowserPool {
   }
   hide() { for (const host of this.hosts.values()) host.hide(); return this.snapshot(); }
   async checkAccount(id, connector = false) {
+    if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const host = this.getHost(id);
     this.assertAccountOperationAvailable(id);
     const epoch = this.invalidateEvidence(id);
@@ -420,6 +423,7 @@ class AccountBrowserPool {
     } finally { this.publish(); }
   }
   async verifyConnector(appName) {
+    if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const id = this.registry.snapshot().selectedId;
     const host = this.getHost(id);
     this.assertAccountOperationAvailable(id);
@@ -435,6 +439,7 @@ class AccountBrowserPool {
   async refreshAuthentication() {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
     for (const account of this.registry.snapshot().accounts.filter(account => account.enabled)) {
+      if (this.inspectionsPaused || this.destroyed) break;
       const reserved = this.accountOperations.get(account.id);
       if (reserved) {
         this.logger.info('browser.account_refresh_deferred', { accountId: account.id, operation: reserved.label });
@@ -444,11 +449,11 @@ class AccountBrowserPool {
       const epoch = this.invalidateEvidence(account.id);
       try {
         await host.refreshAuthentication();
-        if (host.state.authenticated && this.evidenceIsCurrent(account.id, epoch)) {
+        if (!this.inspectionsPaused && host.state.authenticated && this.evidenceIsCurrent(account.id, epoch)) {
           const evidence = await host.inspectSession(true);
           if (this.evidenceIsCurrent(account.id, epoch)) {
             this.capabilities.set(account.id, evidence);
-            if (account.id === 'default' && this.options.bootstrapPrimaryConnector?.() === true) {
+            if (!this.inspectionsPaused && account.id === 'default' && this.options.bootstrapPrimaryConnector?.() === true) {
               await host.verifyConnector(host.connectorName());
               if (!this.evidenceIsCurrent(account.id, epoch)) {
                 throw new Error('Primary account readiness changed while bootstrapping its connector');
@@ -464,6 +469,7 @@ class AccountBrowserPool {
     return this.snapshot();
   }
   async inspectSession(detectCapabilities, accountId) {
+    if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const id = accountId ?? this.registry.snapshot().selectedId;
     this.assertAccountOperationAvailable(id);
     const epoch = detectCapabilities ? this.invalidateEvidence(id) : null;
@@ -610,7 +616,7 @@ class AccountBrowserPool {
       throw error;
     }
   }
-  closeTab(tabId) { const result = this.ownerForTab(tabId).closeTab(tabId); this.publish(); return result; }
+  closeTab(tabId, expectedTraceId) { const result = this.ownerForTab(tabId).closeTab(tabId, expectedTraceId); this.publish(); return result; }
   removeTurnTab(tab, abortRunning) { this.ownerForTab(tab.id).removeTurnTab(tab, abortRunning); }
   copyManualPrompt(tabId) { return this.ownerForTab(tabId).copyManualPrompt(tabId); }
   confirmManualSent(tabId) {
@@ -887,6 +893,12 @@ class AccountBrowserPool {
     this.traceOwners.delete(args[0]); this.publish(); return result;
   }
   async persistSession() { await Promise.all([...this.hosts.values()].map(host => host.persistSession())); }
+  async cancelReadOnlyInspections() {
+    this.inspectionsPaused = true;
+    const results = await Promise.allSettled([...this.hosts.values()].map(host => host.cancelReadOnlyInspection()));
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure) throw failure.reason;
+  }
   destroy() {
     this.destroyed = true;
     this.existingChromeImportLease = null;

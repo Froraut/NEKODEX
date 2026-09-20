@@ -16,23 +16,33 @@
 }
 
 .account-codex-quota > header,
-.account-codex-login > header { flex-direction: column; gap: 10px; }
+.account-codex-login > header {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.account-codex-quota > header > h3,
+.account-codex-login > header > h3 {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
 .account-codex-quota > header > button,
-.account-codex-login > header > button { align-self: flex-start; flex: none; }
+.account-codex-login > header > button { flex: 0 1 auto; }
 
 .account-codex-toolbar p,
-.account-codex-quota header p,
-.account-codex-login header p {
+.account-codex-login-body {
   margin: 4px 0 0;
   color: var(--color-text-tertiary);
   font-size: var(--text-xs);
   line-height: 1.5;
 }
 
+.account-codex-login-body { margin-top: 8px; }
+
 .account-codex-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 18px;
   margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid var(--color-border-light);
@@ -41,15 +51,23 @@
 .account-codex-quota,
 .account-codex-login {
   min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-background-control);
+}
+
+.account-codex-login {
+  padding-left: 18px;
+  border-left: 1px solid var(--color-border-light);
+}
+
+.account-codex-controls + .account-form-panel {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-light);
 }
 
 .account-codex-quota h3,
 .account-codex-login h3,
 .account-codex-bucket h4,
+.account-codex-window h5,
 .account-codex-additional > summary {
   margin: 0;
   color: var(--color-text-primary);
@@ -72,6 +90,11 @@
 
 .account-codex-disabled-reason {
   color: var(--color-text-warning);
+}
+
+.account-codex-shared-reason {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .account-codex-status p {
@@ -106,10 +129,7 @@
 .account-codex-additional[open] > .account-codex-bucket { margin-top: 8px; }
 
 .account-codex-bucket {
-  padding: 10px;
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-sm);
-  background: var(--color-background-surface);
+  min-width: 0;
 }
 
 .account-codex-bucket h4 {
@@ -125,35 +145,47 @@
   margin-top: 8px;
 }
 
-.account-codex-windows > div {
+.account-codex-window {
   display: grid;
-  gap: 2px;
+  align-content: start;
+  gap: 4px;
   min-width: 0;
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--color-background-control);
+  padding: 3px 0 3px 10px;
+  border-left: 2px solid var(--color-border);
 }
 
-.account-codex-windows strong,
-.account-codex-windows span,
-.account-codex-windows small {
+.account-codex-window h5,
+.account-codex-window span,
+.account-codex-window small {
   overflow-wrap: anywhere;
 }
 
-.account-codex-windows strong {
+.account-codex-window h5 {
   color: var(--color-text-secondary);
   font-size: var(--text-xs);
+  font-weight: 600;
 }
 
-.account-codex-windows span {
+.account-codex-window-values {
+  display: grid;
+  gap: 2px;
+}
+
+.account-codex-window-values > span {
   color: var(--color-text-primary);
   font-size: var(--text-sm);
 }
 
-.account-codex-windows small,
+.account-codex-window-values > small,
+.account-codex-window-unknown,
 .account-codex-updated {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.account-codex-window.is-unreported {
+  border-left-color: var(--color-border-light);
 }
 
 .account-codex-login-progress {
@@ -161,6 +193,8 @@
   padding-top: 12px;
   border-top: 1px solid var(--color-border-light);
 }
+
+.account-codex-login-progress > p:first-child { margin-top: 0; }
 
 .account-codex-device-code {
   display: grid;
@@ -183,6 +217,21 @@
   font-size: var(--text-lg);
   font-weight: 650;
   letter-spacing: 0.08em;
+  overflow-wrap: anywhere;
+}
+
+.account-codex-device-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.account-codex-device-code-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .account-codex-login-actions {
@@ -193,9 +242,25 @@
   margin-top: 12px;
 }
 
+.account-codex-controls button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  height: auto;
+  padding-block: 8px;
+  line-height: 1.4;
+}
+
 @container workspace (max-width: 840px) {
   .account-codex-controls {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-codex-login {
+    padding-top: 18px;
+    padding-left: 0;
+    border-top: 1px solid var(--color-border-light);
+    border-left: 0;
   }
 }
 
@@ -210,4 +275,7 @@
   .account-codex-windows {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .account-codex-quota > header > h3,
+  .account-codex-login > header > h3 { flex: none; }
 }

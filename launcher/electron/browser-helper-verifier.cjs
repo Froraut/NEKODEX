@@ -1,6 +1,7 @@
 const { spawn } = require("node:child_process");
 const { randomBytes } = require("node:crypto");
 const { createInterface } = require("node:readline");
+const { awaitInspection, inspectionAbortError } = require("./inspection-control.cjs");
 const {
   isLegacyConnectorName,
   requireCurrentRuntimeConnectorName,
@@ -49,6 +50,15 @@ function reconcileUnsettledHelperChildren(scope) {
   if (scope.unsettledChildren.size > 0) {
     throw new Error("Browser helper verification cannot start while a previous helper process is still active");
   }
+}
+
+function hasUnsettledBrowserHelpers(descriptorPath) {
+  const scope = helperScopes.get(descriptorPath);
+  if (!scope) return false;
+  for (const child of scope.unsettledChildren) {
+    if (childIsSettled(child)) scope.unsettledChildren.delete(child);
+  }
+  return scope.unsettledChildren.size > 0;
 }
 
 function waitForExit(child, timeoutMs) {
@@ -114,7 +124,8 @@ async function stopChild(child, unsettledChildren, scope) {
   throw error;
 }
 
-async function runBrowserHelperOperationOnce({ helper, descriptorPath, appName, operation, payload = {}, logger }, scope) {
+async function runBrowserHelperOperationOnce({ helper, descriptorPath, appName, operation, payload = {}, logger, signal }, scope) {
+  signal?.throwIfAborted();
   if (!helper || typeof helper.executable !== "string" || typeof helper.script !== "string") {
     throw new Error("Browser helper verification command is invalid");
   }
@@ -141,6 +152,7 @@ async function runBrowserHelperOperationOnce({ helper, descriptorPath, appName, 
   let completed = false;
   let sent = false;
   let timer;
+  let removeAbort;
   const output = createInterface({ input: child.stdout });
   const errors = createInterface({ input: child.stderr });
   errors.on("line", (line) => logger?.info("browser.connector_helper", { message: line.slice(0, 2_000) }));
@@ -220,6 +232,10 @@ async function runBrowserHelperOperationOnce({ helper, descriptorPath, appName, 
       () => finish(new Error(`Browser helper ${operation} timed out`)),
       BROWSER_HELPER_OPERATION_TIMEOUT_MS,
     );
+    const onAbort = () => finish(inspectionAbortError(signal));
+    removeAbort = () => signal?.removeEventListener("abort", onAbort);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
   });
 
   let value;
@@ -234,12 +250,17 @@ async function runBrowserHelperOperationOnce({ helper, descriptorPath, appName, 
   } catch (cleanupError) {
     if (primaryError) {
       primaryError.cleanupError = cleanupError;
+      primaryError.helperCleanupIncomplete = true;
       primaryError.operationId = id;
       throw primaryError;
     }
-    if (cleanupError instanceof Error) cleanupError.operationId = id;
+    if (cleanupError instanceof Error) {
+      cleanupError.operationId = id;
+      cleanupError.helperCleanupIncomplete = true;
+    }
     throw cleanupError;
   } finally {
+    removeAbort?.();
     output.close();
     errors.close();
   }
@@ -259,7 +280,17 @@ async function runBrowserHelperOperation(options) {
   let releaseOperation;
   const operation = new Promise((resolve) => { releaseOperation = resolve; });
   scope.tail = operation;
-  await previousOperation;
+  try {
+    await awaitInspection(previousOperation, options.signal);
+  } catch (error) {
+    // Do not open a queue slot while its predecessor still owns a helper process.
+    void previousOperation.finally(() => {
+      releaseOperation();
+      scope.pendingOperations -= 1;
+      releaseHelperScope(descriptorPath, scope);
+    });
+    throw error;
+  }
   try {
     reconcileUnsettledHelperChildren(scope);
     return await runBrowserHelperOperationOnce(options, scope);
@@ -289,4 +320,4 @@ async function verifyConnectorWithBrowserHelper(options) {
   return { ok: true, appName: options.appName };
 }
 
-module.exports = { runBrowserHelperOperation, verifyConnectorWithBrowserHelper };
+module.exports = { hasUnsettledBrowserHelpers, runBrowserHelperOperation, verifyConnectorWithBrowserHelper };

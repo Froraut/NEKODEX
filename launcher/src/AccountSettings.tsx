@@ -344,6 +344,9 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
         const loginBoundActive = startingAccountId === account.id || (flowForAccount?.active === true);
         const loginBoundReason = loginBoundActive
           ? codexCopy.loginCurrent.replace("{account}", account.label) : undefined;
+        // The adjacent login widget names this account once its flow is active.
+        const actionHint = loginBoundReason && !flowForAccount?.active ? loginBoundReason
+          : active ? blockedReason : undefined;
         const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id) || (login?.active && login.accountId !== account.id)
           ? codexCopy.loginCurrent.replace("{account}", flowAccount?.label ?? login?.accountId ?? "Codex") : undefined;
         const loginDisabledReason = loadFailed ? copy.accountsRefreshFailed
@@ -371,7 +374,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
       <div className="account-actions">
         <label><input type="checkbox" checked={account.enabled} disabled={mutationsDisabled}
           onChange={event => void run(() => api.setAccountEnabled(account.id, event.target.checked))} />{copy.accountsEnabled}</label>
-        <button type="button" className="button-primary" disabled={mutationsDisabled || active || loginBoundActive} aria-label={credentialLabel}
+        <button type="button" className={account.authenticated ? "button-secondary" : "button-primary"}
+          disabled={mutationsDisabled || active || loginBoundActive} aria-label={credentialLabel}
           title={loginBoundReason} onClick={() => void run(async () => {
           const next = await api.selectAccount(account.id);
           setState(next);
@@ -384,14 +388,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
         <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || !account.authenticated} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
         <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || !account.authenticated} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
       </div>
-      {active || loginBoundReason ? <p className="field-hint" role="status">{loginBoundReason ?? blockedReason}</p> : null}
-      {account.safety ? <AccountSafetySettings id={account.id} safety={account.safety} copy={copy}
-        disabled={mutationsDisabled || active} blockedReason={blockedReason}
-        save={policy => run(() => api.setAccountSafety(account.id, policy))}
-        resume={() => void run(() => api.resumeAccount(account.id))} /> : null}
-      {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy}
-        disabled={mutationsDisabled || active || loginBoundActive} blockedReason={loginBoundReason ?? blockedReason}
-        save={value => run(() => api.setAccountProxy(account.id, value))} /> : null}
+      {actionHint ? <p className="field-hint" role="status">{actionHint}</p> : null}
       <AccountCodexControls account={account} copy={codexCopy} language={language}
         quota={quotas.has(account.id) ? quotas.get(account.id) : undefined}
         quotaBusy={quotaRefreshing.has(account.id)} quotaDisabledReason={quotaDisabledReason}
@@ -405,6 +402,13 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
         onCopyCode={async () => flowForAccount ? (await runLoginAction(account.id, "copy",
           () => api.copyCodexLoginCode(flowForAccount.flowId, account.id))) === true : false}
         onCancelLogin={async () => { if (flowForAccount) await cancelCodexLogin(flowForAccount); }} />
+      {account.safety ? <AccountSafetySettings id={account.id} safety={account.safety} copy={copy}
+        disabled={mutationsDisabled || active} blockedReason={blockedReason}
+        save={policy => run(() => api.setAccountSafety(account.id, policy))}
+        resume={() => void run(() => api.resumeAccount(account.id))} /> : null}
+      {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy}
+        disabled={mutationsDisabled || active || loginBoundActive} blockedReason={loginBoundReason ?? blockedReason}
+        save={value => run(() => api.setAccountProxy(account.id, value))} /> : null}
         </>;
       })()}
     </article>)}

@@ -972,7 +972,7 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-navigate", (_event, action) => browserHost.navigate(action));
   handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
-  handle("launcher:browser-tab-close", (_event, tabId) => browserHost.closeTab(tabId));
+  handle("launcher:browser-tab-close", (_event, tabId, expectedTraceId) => browserHost.closeTab(tabId, expectedTraceId));
   handle("launcher:manual-prompt-copy", (_event, tabId) => browserHost.copyManualPrompt(tabId));
   handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost.confirmManualSent(tabId));
   handle("launcher:browser-login", async () => {
@@ -1623,6 +1623,12 @@ async function requestQuit({ admissionHeld = false, restart = false, stopRuntime
   let shutdownResult;
   try {
     if (!admissionHeld) browserHost?.closeTurnAdmission("launcher shutdown");
+    if (browserHost?.hasActiveTurns()) {
+      throw new Error("Finish or cancel active tasks before quitting NEKODEX");
+    }
+    // Background account/connector checks are cancellable reads. Settle their exact
+    // navigation/helper owners before the normal mutation and active-work vetoes.
+    await browserHost?.cancelReadOnlyInspections();
     const activeOperation = currentGlobalOperation();
     if (activeOperation) {
       throw new Error(`Wait for ${activeOperation} to finish before quitting NEKODEX`);

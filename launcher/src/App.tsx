@@ -10,6 +10,7 @@ import { updateCopyFor } from "./update-copy";
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -638,7 +639,6 @@ function Onboarding({
               {(Object.entries(languages) as Array<[Language, { label: string; marker: string }]>).map(([code, option]) => (
                 <WelcomeOption
                   active={selectedLanguage === code}
-                  detail={option.label}
                   key={code}
                   label={option.label}
                   marker={option.marker}
@@ -1100,16 +1100,19 @@ function LauncherShell({
       <section className={`workspace${snapshot.state.launcherRestartRequired ? " has-runtime-notice" : ""}`}>
           {snapshot.state.launcherRestartRequired ? <div className="runtime-restart-notice" role="status">
             <div><strong>{copy.launcherRuntimeRestartTitle}</strong><p>{copy.launcherRuntimeRestartBody}</p></div>
-            <button type="button" className="button-secondary" disabled={restartPending || updateBlocked || updateBusy}
+            <button type="button" className="button-secondary" disabled={restartPending || updateBusy}
+              aria-busy={restartPending}
               onClick={() => {
                 if (restartInFlight.current) return;
                 restartInFlight.current = true;
                 setRestartPending(true);
-                void api!.restartLauncher().catch(cause => setError(messageOf(cause))).finally(() => {
+                setError(null);
+                void api!.restartLauncher().catch(cause => {
+                  setError(messageOf(cause));
                   restartInFlight.current = false;
                   setRestartPending(false);
                 });
-              }}>{copy.launcherRuntimeRestartAction}</button>
+              }}>{restartPending ? <><i className="tab-spinner" aria-hidden="true" />{updateCopy.installing}</> : copy.launcherRuntimeRestartAction}</button>
           </div> : null}
           <div
             className="surface-transition"
@@ -1345,6 +1348,13 @@ function BrowserSurface({
   const [passkeyStarting, setPasskeyStarting] = useState(false);
   const [passkeyRequestPending, setPasskeyRequestPending] = useState(false);
   const [existingChromeStarting, setExistingChromeStarting] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<{ id: string; traceId: string | null } | null>(null);
+  const [closingTabs, setClosingTabs] = useState<Set<string>>(new Set());
+  const closingTabRequests = useRef(new Set<string>());
+  const activeBrowserTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
+  const cancelTab = browser?.tabs.find(tab => tab.id === cancelTarget?.id
+    && tab.traceId === cancelTarget?.traceId && tab.status === "running");
+  useEffect(() => { if (cancelTarget && !cancelTab) setCancelTarget(null); }, [cancelTarget, cancelTab]);
   const visible = browser?.visible === true;
   const manualInteraction = interactionMode === "manual";
   const { navigationLocked, passkeyAvailable, passkeyWaiting, passkeyBlocked, passkeyCanImport,
@@ -1393,11 +1403,18 @@ function BrowserSurface({
       setError(messageOf(cause));
     }
   };
-  const closeTab = async (tabId: string) => {
+  const closeTab = async (tabId: string, expectedTraceId?: string | null) => {
+    if (closingTabRequests.current.has(tabId)) return;
+    closingTabRequests.current.add(tabId);
+    setClosingTabs(new Set(closingTabRequests.current));
     try {
-      await api!.closeBrowserTab(tabId);
+      await api!.closeBrowserTab(tabId, expectedTraceId);
+      setCancelTarget(current => current?.id === tabId && current.traceId === expectedTraceId ? null : current);
     } catch (cause) {
       setError(messageOf(cause));
+    } finally {
+      closingTabRequests.current.delete(tabId);
+      setClosingTabs(new Set(closingTabRequests.current));
     }
   };
   const openPasskeyLogin = async () => {
@@ -1477,6 +1494,9 @@ function BrowserSurface({
             }}
             role="tab"
             aria-selected={tab.active}
+            aria-label={`${browserTabTitleFromTitle(tab.title, copy)} — ${tab.status === "running" ? copy.running
+              : tab.status === "loading" ? copy.loading : tab.status === "testing" ? copy.overviewRunTesting
+                : tab.status === "error" ? copy.failed : tab.status === "ready" ? copy.complete : copy.noActiveTask}`}
             tabIndex={tab.active ? 0 : -1}
           >
             <BrandMark small />
@@ -1486,21 +1506,36 @@ function BrowserSurface({
             {tab.loading ? <i className="tab-spinner" /> : <StateDot state={browserTabTone(tab.status)} />}
             {tab.closable ? (
               <button
-                aria-label={copy.hideTab}
+                aria-label={`${tab.status === "running" ? copy.manualPromptCancel : copy.hideTab}: ${browserTabTitleFromTitle(tab.title, copy)}`}
+                disabled={closingTabs.has(tab.id)}
+                className={tab.status === "running" ? "browser-tab-cancel" : undefined}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void closeTab(tab.id);
+                  if (tab.status === "running") setCancelTarget({ id: tab.id, traceId: tab.traceId });
+                  else void closeTab(tab.id, tab.traceId);
                 }}
-                title={copy.hideTab}
+                title={tab.status === "running" ? copy.manualPromptCancel : copy.hideTab}
                 type="button"
               >
-                <Icon name="close" />
+                {closingTabs.has(tab.id) ? <i className="tab-spinner" aria-hidden="true" />
+                  : <Icon name={tab.status === "running" ? "stop" : "close"} />}
               </button>
             ) : null}
           </div>
         ))}
         <div className="browser-tab-drag draggable" />
       </div>
+      {cancelTab ? <div className="browser-cancel-confirm" role="alert">
+        <div><strong>{copy.browserCancelTaskTitle}</strong>
+          <p className="browser-cancel-target">{browserTabTitleFromTitle(cancelTab.title, copy)}</p>
+          <p>{copy.browserCancelTaskBody}</p></div>
+        <div className="browser-cancel-actions">
+          <button type="button" className="button-secondary" autoFocus disabled={closingTabs.has(cancelTab.id)} onClick={() => setCancelTarget(null)}>{copy.back}</button>
+          <button type="button" className="button-secondary browser-confirm-cancel" disabled={closingTabs.has(cancelTab.id)}
+            aria-label={`${copy.manualPromptCancel}: ${browserTabTitleFromTitle(cancelTab.title, copy)}`}
+            onClick={() => void closeTab(cancelTab.id, cancelTab.traceId)}>{closingTabs.has(cancelTab.id) ? copy.browserCancellingTask : copy.manualPromptCancel}</button>
+        </div>
+      </div> : null}
       <div className="browser-toolbar">
         <div className="browser-history">
           <IconButton
@@ -1567,7 +1602,7 @@ function BrowserSurface({
         && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
         <ManualTurnGuide
           copy={copy}
-          onCancel={() => void closeTab(selectedManualTab.id)}
+          onCancel={() => void closeTab(selectedManualTab.id, selectedManualTab.traceId)}
           onCopy={() => void copyManualPrompt(selectedManualTab.id)}
           onSent={() => void confirmManualSent(selectedManualTab.id)}
           tab={selectedManualTab}
@@ -1577,15 +1612,16 @@ function BrowserSurface({
         {!visible ? (
           <div className="browser-empty">
             <BrandMark />
-            <h1>{manualInteraction
+            <h1>{activeBrowserTabs.length ? `${activeBrowserTabs.length} · ${copy.overviewActiveRuns}` : manualInteraction
               ? copy.browserReady
               : browser?.authenticated ? copy.noActiveTask : copy.stepAccount}</h1>
-            <p>{manualInteraction
+            <p>{activeBrowserTabs.length ? copy.overviewActiveRunsBody : manualInteraction
               ? copy.stepAccountBody
               : browser?.authenticated
               ? copy.noActiveTaskBody
               : existingChromeWaiting ? copy.existingChromeBody : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
+              {activeBrowserTabs.length ? <PrimaryButton onClick={() => void selectTab(activeBrowserTabs[0].id)}>{copy.openWorkspace}</PrimaryButton> : null}
               {existingChromeAvailable ? <PrimaryButton
                 disabled={existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
                 onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</PrimaryButton> : null}
@@ -1625,6 +1661,7 @@ function ManualTurnGuide({
   onSent: () => void;
   tab: BrowserState["tabs"][number];
 }) {
+  const headingId = useId();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (tab.manualState !== "awaiting-user" || !tab.manualDeadlineAt) return;
@@ -1657,18 +1694,19 @@ function ManualTurnGuide({
           ? copy.complete
           : copy.failed;
   return (
-    <div className={`manual-turn-guide${waiting ? " is-waiting" : ""}`}>
+    <section className={`manual-turn-guide${waiting ? " is-waiting" : ""}`} aria-labelledby={headingId}>
       <div>
-        <strong>{waiting ? copy.manualPromptTitle : copy.manualPromptWaiting}</strong>
+        <strong id={headingId}>{waiting ? copy.manualPromptTitle : copy.manualPromptWaiting}</strong>
         {waiting ? <p>{copy.manualPromptInstruction}</p> : null}
       </div>
       <span className="manual-turn-status">{status}</span>
+      <span className="visually-hidden" aria-live="polite">{waiting ? "" : status}</span>
       <div className="manual-turn-actions">
         <SecondaryButton onClick={onCancel}>{copy.manualPromptCancel}</SecondaryButton>
         <SecondaryButton disabled={!tab.canCopyPrompt} onClick={onCopy}>{copy.manualPromptCopy}</SecondaryButton>
-        <PrimaryButton disabled={!tab.canConfirmSent} onClick={onSent}>{copy.manualPromptSent}</PrimaryButton>
+        <PrimaryButton disabled={!tab.canConfirmSent} onClick={onSent}>{waiting ? copy.manualPromptConfirmSent : copy.manualPromptSent}</PrimaryButton>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -1801,11 +1839,11 @@ function SetupSurface({
 
   return (
     <ContentSurface
-      eyebrow={copy.required}
+      eyebrow={nextStep === "ready" ? copy.connectionVerified : copy.required}
       subtitle={devProfile
         ? copy.devSetupSubtitle
         : manualInteraction ? copy.manualInteractionBody : copy.setupSubtitle}
-      title={devProfile ? copy.devSetupTitle : copy.setupTitle}
+      title={nextStep === "ready" ? copy.modelsConnectionTab : devProfile ? copy.devSetupTitle : copy.setupTitle}
     >
       <ConnectionsTabs active="models" copy={copy} modelsReady={pickerReady}
         onModels={() => {}} onTools={showMcp} toolsReady={toolsVerified} />
@@ -2564,7 +2602,7 @@ function SettingsSurface({
           </div>
         </SettingRow>
         <SettingRow body={copy.manualSubmitTimeBody} label={copy.manualSubmitTime}>
-          <select aria-label={copy.manualSubmitTime} disabled={busy}
+          <select className="settings-select" aria-label={copy.manualSubmitTime} disabled={busy}
             value={snapshot.state.manualSubmitTimeoutSec ?? 120}
             onChange={event => void savePreference(() => api!.setPreference("manualSubmitTimeoutSec", Number(event.target.value)))}>
             {[30, 60, 120, 180, 300, 600].map(seconds => <option key={seconds} value={seconds}>{seconds} s</option>)}
@@ -2835,6 +2873,7 @@ function ZeroRiskModelMenu({
   onChange: (enabled: boolean) => void;
   proEnabled: boolean;
 }) {
+  const panelId = useId();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const selectedRadio = useRef<HTMLButtonElement>(null);
@@ -2861,6 +2900,7 @@ function ZeroRiskModelMenu({
     >
       <button
         aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
         aria-label={copy.zeroRiskModelSettings}
         className="zero-risk-model-trigger"
         disabled={busy}
@@ -2883,6 +2923,7 @@ function ZeroRiskModelMenu({
           <div
             aria-label={copy.zeroRiskModelSettings}
             className="zero-risk-model-panel"
+            id={panelId}
             onKeyDown={handleRadioGroupKeys}
             role="radiogroup"
           >
@@ -3175,13 +3216,11 @@ function DoctorSummary({ copy, language, report }: { copy: Copy; language: Langu
 
 function WelcomeOption({
   active,
-  detail,
   label,
   marker,
   onClick,
 }: {
   active: boolean;
-  detail: string;
   label: string;
   marker: string;
   onClick: () => void;
@@ -3197,7 +3236,6 @@ function WelcomeOption({
     >
       <span>{marker}</span>
       <strong>{label}</strong>
-      <small>{detail}</small>
       {active ? <Icon name="check" /> : null}
     </button>
   );

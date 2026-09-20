@@ -365,7 +365,7 @@ export interface LauncherApi {
   navigateBrowser(action: "back" | "forward" | "reload"): Promise<BrowserState>;
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;
-  closeBrowserTab(tabId: string): Promise<BrowserState>;
+  closeBrowserTab(tabId: string, expectedTraceId?: string | null): Promise<BrowserState>;
   copyManualPrompt(tabId: string): Promise<BrowserState>;
   confirmManualSent(tabId: string): Promise<BrowserState>;
   openLogin(): Promise<BrowserState>;
