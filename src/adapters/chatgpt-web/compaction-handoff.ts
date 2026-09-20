@@ -183,7 +183,7 @@ export async function settleActiveCompactionSource(
     }
     let token: string | undefined;
     try {
-      token = await source.runtime.token;
+      token = await withCompactionAbort(source.runtime.token, signal);
       broker.requestCompaction(token, interruptedByActiveCompaction());
       for (const request of outstanding) {
         const result = results.get(request.callId)!;
@@ -239,7 +239,7 @@ export async function settleActiveZeroRiskCompactionSource(
     }
     let token: string | undefined;
     try {
-      token = await source.runtime.token;
+      token = await withCompactionAbort(source.runtime.token, signal);
       const interruptedQueued = await broker.requestCompaction(
         token,
         interruptedByZeroRiskCompaction(),

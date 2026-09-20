@@ -381,7 +381,9 @@ export async function connectLauncherBrowserHost(
     if (abortSignal?.aborted) throw launcherConnectionAborted();
     throw new Error(`Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const closeOnAbort = () => { void browser.close().catch(() => {}); };
+  let closePromise: Promise<void> | undefined;
+  const closeBrowser = () => closePromise ??= browser.close().catch(() => {});
+  const closeOnAbort = () => { void closeBrowser(); };
   abortSignal?.addEventListener("abort", closeOnAbort, { once: true });
   try {
     if (abortSignal?.aborted) {
@@ -396,7 +398,7 @@ export async function connectLauncherBrowserHost(
     );
     return { descriptor, browser, context, page };
   } catch (error) {
-    void browser.close().catch(() => {});
+    void closeBrowser();
     throw error;
   } finally {
     abortSignal?.removeEventListener("abort", closeOnAbort);

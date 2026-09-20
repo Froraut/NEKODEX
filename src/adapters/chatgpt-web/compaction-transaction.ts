@@ -56,8 +56,6 @@ export class CompactionTransactionStore {
     if (!normalized) throw new Error("compaction handoff summary is empty");
     transaction.summary = normalized;
     console.info(`[chatgpt-web] broker trace=${transaction.traceId} accepted structured compaction handoff`);
-    if (transaction.timer) clearTimeout(transaction.timer);
-    transaction.timer = undefined;
     if (transaction.waiter) this.consume(transaction);
   }
 
@@ -117,6 +115,8 @@ export class CompactionTransactionStore {
     const summary = transaction.summary;
     const waiter = transaction.waiter;
     this.transactions.delete(transaction.token);
+    if (transaction.timer) clearTimeout(transaction.timer);
+    transaction.timer = undefined;
     this.detachWaiter(transaction);
     transaction.waiter = undefined;
     waiter?.resolve(summary);

@@ -1285,6 +1285,10 @@ function withBrowserTurnAbort<T>(promise: Promise<T>, signal?: AbortSignal): Pro
   });
 }
 
+function browserStageAbortSignal(stageSignal: AbortSignal, turnSignal?: AbortSignal): AbortSignal {
+  return turnSignal ? AbortSignal.any([stageSignal, turnSignal]) : stageSignal;
+}
+
 export interface BrowserTurn {
   accountRoutingKey?: string;
   traceId: string;
@@ -2593,7 +2597,7 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
   ): Promise<ChatGptWebModelMode> {
     const mode = resolveChatGptWebModelMode(modelId, reasoning, capabilities, stageModelVersion);
-    const composer = await this.activeComposer(page);
+    const composer = await this.activeComposer(page, 30_000, abortSignal);
     const composerForm = composer.locator("xpath=ancestor::form[1]");
     const uiEffortIndex = mode.uiEffortIndex;
     if (uiEffortIndex === null) {
@@ -2612,13 +2616,15 @@ export class ChatGptBrowserWorker {
     }
     const currentEffort = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).last();
     const effortWaitAbort = new AbortController();
+    const effortWaitSignal = browserStageAbortSignal(effortWaitAbort.signal, abortSignal);
     try {
       const ready = await Promise.race([
-        currentEffort.waitFor({ state: "visible", timeout: 70_000, signal: effortWaitAbort.signal }).then(() => "effort" as const),
-        chatGptExpiredSessionAlert(page).waitFor({ state: "visible", timeout: 70_000, signal: effortWaitAbort.signal }).then(() => "session-expired" as const),
+        currentEffort.waitFor({ state: "visible", timeout: 70_000, signal: effortWaitSignal }).then(() => "effort" as const),
+        chatGptExpiredSessionAlert(page).waitFor({ state: "visible", timeout: 70_000, signal: effortWaitSignal }).then(() => "session-expired" as const),
       ]);
       if (ready === "session-expired") await throwIfChatGptSessionFailureAlert(page);
     } catch (error) {
+      if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       if (error instanceof ChatGptWebAdapterError) throw error;
       await throwIfChatGptSessionFailureAlert(page);
       throw chatGptModelControlUnavailableError(
@@ -2671,18 +2677,20 @@ export class ChatGptBrowserWorker {
     const effortSlider = activation.slider;
     const sliderContainer = activation.sliderContainer;
     const waitAbort = new AbortController();
+    const waitSignal = browserStageAbortSignal(waitAbort.signal, abortSignal);
     try {
       const ready = await Promise.race([
-        sliderContainer.waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
-          .then(() => effortSlider.waitFor({ state: "attached", timeout: 70_000, signal: waitAbort.signal }))
+        sliderContainer.waitFor({ state: "visible", timeout: 70_000, signal: waitSignal })
+          .then(() => effortSlider.waitFor({ state: "attached", timeout: 70_000, signal: waitSignal }))
           .then(() => "slider" as const),
-        chatGptRateLimitDialog(page).waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "rate-limit" as const),
-        chatGptExpiredSessionAlert(page).waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "session-expired" as const),
+        chatGptRateLimitDialog(page).waitFor({ state: "visible", timeout: 70_000, signal: waitSignal }).then(() => "rate-limit" as const),
+        chatGptExpiredSessionAlert(page).waitFor({ state: "visible", timeout: 70_000, signal: waitSignal }).then(() => "session-expired" as const),
       ]);
       if (ready === "rate-limit") await throwIfChatGptRateLimitDialog(page);
       if (ready === "session-expired") await throwIfChatGptSessionFailureAlert(page);
       await captureDiagnostic?.("effort-slider-visible");
     } catch (error) {
+      if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       if (error instanceof ChatGptWebAdapterError) throw error;
       await throwIfChatGptRateLimitDialog(page);
       await throwIfChatGptSessionFailureAlert(page);
@@ -2793,22 +2801,25 @@ export class ChatGptBrowserWorker {
   private async prepareTemporaryChatSurface(
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
+    abortSignal?: AbortSignal,
   ): Promise<Locator> {
+    if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     // Launcher verification refreshes its owned page before attaching Playwright so a newly added
     // connector is present in the catalog. Navigating again here destroys that freshly hydrated
     // document and made the first verification race a second SPA bootstrap. A leased turn starts on
     // about:blank and therefore still performs exactly one navigation through this same method.
     if (page.url() !== CHATGPT_TEMPORARY_CHAT_URL) {
-      await page.goto(CHATGPT_TEMPORARY_CHAT_URL, {
+      await withBrowserTurnAbort(page.goto(CHATGPT_TEMPORARY_CHAT_URL, {
         waitUntil: "domcontentloaded",
         timeout: 60_000,
-      });
+      }), abortSignal);
       await captureDiagnostic?.("temporary-chat-navigation-complete");
     }
     let composer: Locator;
     try {
-      composer = await this.activeComposer(page);
-    } catch {
+      composer = await this.activeComposer(page, 30_000, abortSignal);
+    } catch (error) {
+      if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       throw new Error("ChatGPT web login is expired or the Temporary Chat surface is unavailable");
     }
     if (await dismissChatGptTemporaryChatOnboarding(page)) {
@@ -3076,11 +3087,11 @@ export class ChatGptBrowserWorker {
     return (await this.responseDomSnapshot(locator, {}, signal)).visibleText;
   }
 
-  private async captureSubmissionBaseline(page: Page): Promise<ChatGptSubmissionBaseline> {
+  private async captureSubmissionBaseline(page: Page, abortSignal?: AbortSignal): Promise<ChatGptSubmissionBaseline> {
     const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
     const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
     const domCache: ChatGptSubmissionDomCache = {};
-    const state = await this.submissionDomState(page, domCache);
+    const state = await this.submissionDomState(page, domCache, abortSignal);
     return {
       userTurns,
       responseTurns,
@@ -4162,20 +4173,25 @@ export class ChatGptBrowserWorker {
     return { effort: mode.displayLabel, response: CHATGPT_SMOKE_EXPECTED };
   }
 
-  private async attachFiles(page: Page, prompt: CompiledChatGptWebPrompt): Promise<void> {
+  private async attachFiles(
+    page: Page,
+    prompt: CompiledChatGptWebPrompt,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
     const files = chatGptPromptFilePayloads(prompt);
     if (files.length === 0) return;
-    const composer = await this.activeComposer(page);
+    const composer = await this.activeComposer(page, 30_000, abortSignal);
     const composerForm = composer.locator("xpath=ancestor::form[1]");
     const input = page.locator('input[data-testid="upload-photos-input"]');
-    await input.waitFor({ state: "attached", timeout: 20_000 });
-    await input.setInputFiles(files);
+    await withBrowserTurnAbort(input.waitFor({ state: "attached", timeout: 20_000 }), abortSignal);
+    await withBrowserTurnAbort(input.setInputFiles(files), abortSignal);
     try {
-      await Promise.all(files.map(file => (
+      await withBrowserTurnAbort(Promise.all(files.map(file => (
         composerForm.getByRole("group", { name: file.name, exact: true })
           .waitFor({ state: "visible", timeout: 60_000 })
-      )));
-    } catch {
+      ))), abortSignal);
+    } catch (error) {
+      if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       const alerts = (await page.locator('[role="alert"]').allInnerTexts().catch(() => []))
         .map(text => text.replace(/\s+/g, " ").trim())
         .filter(Boolean);
@@ -4187,8 +4203,9 @@ export class ChatGptBrowserWorker {
     const send = composerForm.getByTestId("send-button");
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
+      if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       if (await send.isEnabled().catch(() => false)) return;
-      await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
+      await withBrowserTurnAbort(new Promise(resolveSleep => setTimeout(resolveSleep, 100)), abortSignal);
     }
     throw new Error("ChatGPT accepted the prompt attachments but did not make the message ready to send");
   }
@@ -4997,10 +5014,25 @@ export class ChatGptBrowserWorker {
         ? undefined
         : Date.now() + this.config.turnTimeoutMs;
       let page = await this.runStage(turn.traceId, "browser_page", browserStageTimeouts.browserPage, async (abortSignal) => {
+        const acquisitionSignal = browserStageAbortSignal(abortSignal, turn.abortSignal);
+        if (acquisitionSignal.aborted) {
+          throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
+        }
         if (maintenancePage) return maintenancePage;
         if (!launcherSurfaceId) {
-          const managed = await this.pageForNewTurn();
-          if (abortSignal.aborted) {
+          const managedPagePromise = this.pageForNewTurn();
+          let managed: Page;
+          try {
+            managed = await withBrowserTurnAbort(managedPagePromise, acquisitionSignal);
+          } catch (error) {
+            // Browser-context page creation has no AbortSignal. If cancellation wins first, close a
+            // page that materializes later so the detached acquisition cannot leak a hidden tab.
+            if (acquisitionSignal.aborted) {
+              void managedPagePromise.then(latePage => latePage.close().catch(() => {}), () => {});
+            }
+            throw error;
+          }
+          if (acquisitionSignal.aborted) {
             await managed.close().catch(() => {});
             throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
           }
@@ -5010,14 +5042,14 @@ export class ChatGptBrowserWorker {
           this.config.browserHostDescriptorPath!,
           browserStageTimeouts.browserPage,
           launcherSurfaceId,
-          abortSignal,
+          acquisitionSignal,
         );
-        if (abortSignal.aborted) {
+        if (acquisitionSignal.aborted) {
           await connection.browser.close().catch(() => {});
           throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
         }
         turnConnection = connection.browser;
-        await waitForOperationalChatGptViewport(connection.page, abortSignal);
+        await waitForOperationalChatGptViewport(connection.page, acquisitionSignal);
         return connection.page;
       });
       if (!maintenancePage && !launcherSurfaceId) managedPage = page;
@@ -5150,9 +5182,10 @@ export class ChatGptBrowserWorker {
           turn.traceId,
           "temporary_chat_preparation",
           browserStageTimeouts.temporaryChatPreparation,
-          () => this.prepareTemporaryChatSurface(
+          stageSignal => this.prepareTemporaryChatSurface(
             page,
             checkpoint => diagnostics.capture(page, checkpoint),
+            browserStageAbortSignal(stageSignal, turn.abortSignal),
           ),
         );
       }
@@ -5166,7 +5199,7 @@ export class ChatGptBrowserWorker {
           browserCapabilities,
           checkpoint => diagnostics.capture(page, checkpoint),
           requestedMode.modelVersion,
-          abortSignal,
+          browserStageAbortSignal(abortSignal, turn.abortSignal),
         )
       ));
       await diagnostics.capture(page, "effort-selection-complete");
@@ -5175,7 +5208,7 @@ export class ChatGptBrowserWorker {
       if (prepared.multipart && multipartStages && multipartTransactionId && multipartFinalPrompt) {
         for (let index = 0; index < multipartStages.length; index += 1) {
           const stage = multipartStages[index]!;
-          let stageBaseline = await this.captureSubmissionBaseline(page);
+          let stageBaseline = await this.captureSubmissionBaseline(page, turn.abortSignal);
           await this.runStage(
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
@@ -5280,7 +5313,7 @@ export class ChatGptBrowserWorker {
               browserCapabilities,
               checkpoint => diagnostics.capture(page, `final-part-${checkpoint}`),
               requestedMode.modelVersion,
-              abortSignal,
+              browserStageAbortSignal(abortSignal, turn.abortSignal),
             ),
           );
           await diagnostics.capture(page, "final-part-effort-selected");
@@ -5288,7 +5321,7 @@ export class ChatGptBrowserWorker {
         finalPrompt = multipartFinalPrompt;
       }
 
-      let submissionBaseline = await this.captureSubmissionBaseline(page);
+      let submissionBaseline = await this.captureSubmissionBaseline(page, turn.abortSignal);
       submissionBaseline.acknowledgedStages = multipartStages?.map(stage => stage.acknowledgement);
       let catalogRefreshAvailable = mode.localTools && !reuseConversation && !prepared.multipart;
       const connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
@@ -5329,10 +5362,15 @@ export class ChatGptBrowserWorker {
             "connector_catalog_refresh",
             browserStageTimeouts.temporaryChatPreparation,
             async (abortSignal) => {
-              await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
+              const refreshSignal = browserStageAbortSignal(abortSignal, turn.abortSignal);
+              await withBrowserTurnAbort(
+                page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 }),
+                refreshSignal,
+              );
               await this.prepareTemporaryChatSurface(
                 page,
                 checkpoint => diagnostics.capture(page, checkpoint),
+                refreshSignal,
               );
               mode = await this.selectModelAndEffort(
                 page,
@@ -5341,17 +5379,17 @@ export class ChatGptBrowserWorker {
                 turn.capabilities,
                 checkpoint => diagnostics.capture(page, checkpoint),
                 requestedMode.modelVersion,
-                abortSignal,
+                refreshSignal,
               );
-              submissionBaseline = await this.captureSubmissionBaseline(page);
+              submissionBaseline = await this.captureSubmissionBaseline(page, refreshSignal);
             },
           );
           await diagnostics.capture(page, "connector-catalog-refreshed");
         }
       }
       await diagnostics.capture(page, "prompt-attachment-complete");
-      await this.runStage(turn.traceId, "file_attachment", browserStageTimeouts.fileAttachment, () => (
-        this.attachFiles(page, prepared)
+      await this.runStage(turn.traceId, "file_attachment", browserStageTimeouts.fileAttachment, stageSignal => (
+        this.attachFiles(page, prepared, browserStageAbortSignal(stageSignal, turn.abortSignal))
       ));
       await diagnostics.capture(page, "file-attachment-complete");
       const completionTracker = new ChatGptCompletionTracker();

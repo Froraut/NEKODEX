@@ -89,7 +89,14 @@ export async function fetchNativeCodex(request: Request): Promise<Response> {
   // Keep Bun's explicit environment semantics, including NO_PROXY.
   if (EXPLICIT_PROXY_KEYS.some(key => process.env[key]?.trim())) return fetch(request);
   const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
-  if (!descriptorPath) return fetch(request);
+  if (!descriptorPath) {
+    if (backgroundProxy !== undefined || backgroundProxyError !== undefined) {
+      return fetchWithProxy(request, requireBackgroundProxy(
+        proxyError("Launcher native proxy descriptor path is unavailable"),
+      ));
+    }
+    return fetch(request);
+  }
   let descriptor;
   try {
     descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
