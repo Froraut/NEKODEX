@@ -195,7 +195,8 @@ function LoginProgressView({ account, action, copied, copy, language, login, onC
   const repeatsOpenAction = login.active && login.phase === "waiting" && login.canOpen && message === copy.loginOpen;
   return <div className={`account-codex-login-progress phase-${login.phase}`} aria-live="polite">
     {!repeatsOpenAction ? <p className="account-codex-status"><strong>{message}</strong></p> : null}
-    {login.active || login.settling ? <p>{copy.loginCurrent.replace("{account}", account.label)}</p> : null}
+    {login.settling ? <p>{copy.loginSettlingCurrent.replace("{account}", account.label)}</p>
+      : login.active ? <p>{copy.loginCurrent.replace("{account}", account.label)}</p> : null}
     {login.active ? <p>{copy.loginDeadline.replace("{time}", formatDateTime(login.deadlineAt, language, copy.quotaUnknown))}</p> : null}
     {actual ? <p>{copy.loginActualAccount.replace("{account}", actual)}</p> : null}
     {login.userCode ? <div className="account-codex-device-code">
@@ -226,7 +227,7 @@ function quotaUnavailableMessage(copy: AccountCodexCopy, reason?: string) {
 }
 
 function loginMessage(copy: AccountCodexCopy, login: CodexLoginProgress, wrongIdentity: boolean) {
-  if (login.settling) return copy.loginConfirming;
+  if (login.settling) return copy.loginSettling;
   if (login.error?.code === "account_ownership_changed") return copy.loginAccountChanged;
   if (wrongIdentity) return copy.loginWrongAccount;
   if (login.phase === "starting") return copy.loginStarting;

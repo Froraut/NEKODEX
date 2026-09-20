@@ -303,6 +303,12 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     : copy.accountsLoading}</div>;
   const mutationsDisabled = busy || loadFailed;
   const authenticatedAccounts = state.accounts.filter(account => account.authenticated);
+  const loginLockedAccount = loginLockedId
+    ? state.accounts.find(account => account.id === loginLockedId)?.label ?? loginLockedId : null;
+  const loginLockedReason = loginLockedAccount
+    ? (login?.settling ? codexCopy.loginSettlingCurrent : codexCopy.loginCurrent)
+      .replace("{account}", loginLockedAccount)
+    : undefined;
   const refreshableAccounts = authenticatedAccounts.filter(account => {
     const retryAt = quotas.get(account.id)?.retryAt;
     return account.id !== loginLockedId
@@ -313,7 +319,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     : authenticatedAccounts.length === 0 ? codexCopy.quotaSignedOut
       : refreshAllBusy || quotaInFlight.current.size > 0 ? codexCopy.quotaChecking
       : refreshableAccounts.length === 0 ? (loginLockedId
-        ? codexCopy.loginCurrent.replace("{account}", state.accounts.find(account => account.id === loginLockedId)?.label ?? loginLockedId)
+        ? loginLockedReason
         : codexCopy.quotaRateLimited) : undefined;
   return <section className="account-settings" aria-label={copy.accountsTitle} aria-busy={busy}>
     {manual ? <p>{copy.accountsManual}</p> : null}
@@ -356,17 +362,19 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
         const flowAccount = login ? state.accounts.find(candidate => candidate.id === login.accountId) : null;
         const loginBoundActive = startingAccountId === account.id
           || flowForAccount?.active === true || flowForAccount?.settling === true;
-        const loginBoundReason = loginBoundActive
-          ? codexCopy.loginCurrent.replace("{account}", account.label) : undefined;
+        const loginBoundReason = flowForAccount?.settling
+          ? codexCopy.loginSettlingCurrent.replace("{account}", account.label)
+          : loginBoundActive ? codexCopy.loginCurrent.replace("{account}", account.label) : undefined;
         const blockedReason = loadFailed ? copy.accountsRefreshFailed
           : loginBoundReason ?? (active ? copy.accountsBusyTasks.replace("{count}", String(account.activeTurns))
             : busy ? copy.loading : undefined);
-        // The adjacent login widget names this account once its flow is active.
-        const actionHint = loginBoundReason && !flowForAccount?.active ? loginBoundReason
+        // The adjacent login widget names this account while its flow is active or settling.
+        const actionHint = loginBoundReason && !flowForAccount?.active && !flowForAccount?.settling ? loginBoundReason
           : active ? blockedReason : undefined;
         const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id)
           || Boolean(login && (login.active || login.settling) && login.accountId !== account.id)
-          ? codexCopy.loginCurrent.replace("{account}", flowAccount?.label ?? login?.accountId ?? "Codex") : undefined;
+          ? (login?.settling ? codexCopy.loginSettlingCurrent : codexCopy.loginCurrent)
+            .replace("{account}", flowAccount?.label ?? login?.accountId ?? "Codex") : undefined;
         const loginDisabledReason = loadFailed ? copy.accountsRefreshFailed
           : !account.authenticated ? codexCopy.quotaSignedOut
           : loginSnapshotStatus === "loading" ? codexCopy.loginStarting
