@@ -1001,6 +1001,7 @@ export function startServer(
   // Standalone hosts retain their existing tunnel service contract.
   const requiresTunnelSignal = config.mode === "full" && config.browserHost === "launcher";
   let tunnelReady = !requiresTunnelSignal;
+  let tunnelStatusRevision = 0;
   const brokerReady = () => !turnBroker || brokerState === "ready";
   const acceptingNative = () => !draining;
   const acceptingTurns = () => !draining && brokerReady() && tunnelReady;
@@ -1088,6 +1089,7 @@ export function startServer(
           broker_ready: brokerReady(),
           broker_state: brokerState,
           tunnel_ready: tunnelReady,
+          tunnel_status_revision: tunnelStatusRevision,
           ...(brokerFailureCode ? { broker_failure_code: brokerFailureCode } : {}),
           browser_capacity: MAX_CHATGPT_BROWSER_TABS,
           model_catalog_requests: modelCatalogRequests,
@@ -1101,16 +1103,24 @@ export function startServer(
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let body: unknown;
         try { body = await readJsonRequestBody(req); } catch {
-          return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness must be a boolean");
+          return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness requires a boolean and a positive revision");
         }
         if (!body || typeof body !== "object" || Array.isArray(body)
-          || typeof (body as { ready?: unknown }).ready !== "boolean") {
-          return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness must be a boolean");
+          || typeof (body as { ready?: unknown }).ready !== "boolean"
+          || !Number.isSafeInteger((body as { revision?: unknown }).revision)
+          || ((body as { revision: number }).revision < 1)) {
+          return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness requires a boolean and a positive revision");
         }
-        tunnelReady = !requiresTunnelSignal || (body as { ready: boolean }).ready;
-        turnBroker?.setExternalOwnersAccepted(acceptingTurns());
+        const update = body as { ready: boolean; revision: number };
+        const applied = update.revision > tunnelStatusRevision;
+        if (applied) {
+          tunnelStatusRevision = update.revision;
+          tunnelReady = !requiresTunnelSignal || update.ready;
+          turnBroker?.setExternalOwnersAccepted(acceptingTurns());
+        }
         return Response.json({ status: "ok", native_accepting_turns: acceptingNative(),
-          web_accepting_turns: acceptingTurns(), tunnel_ready: tunnelReady, broker_ready: brokerReady() });
+          web_accepting_turns: acceptingTurns(), tunnel_ready: tunnelReady, broker_ready: brokerReady(),
+          applied, tunnel_status_revision: tunnelStatusRevision });
       }
       if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
@@ -1125,6 +1135,7 @@ export function startServer(
           broker_ready: brokerReady(),
           broker_state: brokerState,
           tunnel_ready: tunnelReady,
+          tunnel_status_revision: tunnelStatusRevision,
           ...activity(),
         });
       }

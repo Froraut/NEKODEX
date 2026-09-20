@@ -1975,7 +1975,7 @@ function McpSurface({
     { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
     {
       title: copy.mcpStepThree,
-      body: manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody,
+      body: manualInteraction ? copy.manualMcpStepThreeBody : null,
     },
   ], [copy, manualInteraction]);
   const guideMedia = MCP_GUIDE_MEDIA[step];
@@ -2131,7 +2131,13 @@ function McpSurface({
               <span>0{step + 1}</span>
               <div>
                 <h2 ref={wizardHeading} tabIndex={-1}>{steps[step]!.title}</h2>
-                <p>{steps[step]!.body}</p>
+                {step === 2 && !manualInteraction ? <div className="connector-instructions">
+                  <ol>
+                    {[copy.mcpStepThreeStepOne, copy.mcpStepThreeStepTwo, copy.mcpStepThreeStepThree]
+                      .map(instruction => <li key={instruction}>{instruction}</li>)}
+                  </ol>
+                  <p>{copy.mcpStepThreePermissions}</p>
+                </div> : <p>{steps[step]!.body}</p>}
               </div>
             </header>
 

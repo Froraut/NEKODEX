@@ -32,7 +32,7 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
             <span aria-hidden="true">{index < phase ? <Icon name="check" /> : index + 1}</span>{stage}
           </li>)}
         </ol> : null}
-        {busy ? <UpdateProgress key={candidate ?? "pending"} state={state} label={copy.progress} /> : null}
+        {busy && phase < 1 ? <UpdateProgress key={candidate ?? "pending"} state={state} label={copy.progress} /> : null}
         {failure ? <p className="updates-error" role="alert">{failure}</p> : null}
         {state.status === "disabled" ? <p>{copy.disabledBody}</p> : <>
           <p>{busy ? copy.restart : copy.automatic}</p>
