@@ -36,6 +36,7 @@ export interface LauncherState {
   codexPickerConfirmed?: boolean;
   setupContract?: number;
   setupVerifiedAt?: string;
+  setupConnectorName?: string | null;
   pickerVerifiedAt?: string;
   setupIdentityHash?: string | null;
   mcpSetupComplete?: boolean;

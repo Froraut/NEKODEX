@@ -14,13 +14,14 @@ export async function runChatGptMcpMain(args: string[]): Promise<void> {
   const remaining = [...args];
   const allow = remaining.includes("--allow-web-subagents");
   const deny = remaining.includes("--no-web-subagents");
+  const native6 = remaining.includes("--native6");
   const enableAsyncToolOperations = remaining.includes("--async-tool-operations");
   const disableAsyncToolOperations = remaining.includes("--synchronous-tool-operations");
   if (allow && deny) throw new Error("Conflicting Web subagent flags");
   if (enableAsyncToolOperations && disableAsyncToolOperations) {
     throw new Error("Conflicting async tool operation flags");
   }
-  for (const flag of ["--allow-web-subagents", "--no-web-subagents", "--async-tool-operations", "--synchronous-tool-operations"]) {
+  for (const flag of ["--native6", "--allow-web-subagents", "--no-web-subagents", "--async-tool-operations", "--synchronous-tool-operations"]) {
     const index = remaining.indexOf(flag); if (index >= 0) remaining.splice(index, 1);
   }
   const brokerSocketPath = resolveBrokerEndpoint(option(remaining, "--broker-socket", defaultBrokerEndpoint()));
@@ -28,11 +29,15 @@ export async function runChatGptMcpMain(args: string[]): Promise<void> {
   if (requestedContract !== "native" && requestedContract !== "safe") {
     throw new Error(`--contract must be native or safe, received ${requestedContract}`);
   }
+  if (native6 && (!enableAsyncToolOperations || disableAsyncToolOperations || requestedContract !== "native")) {
+    throw new Error("--native6 requires --async-tool-operations and --contract native");
+  }
   if (remaining.length > 0) throw new Error(`Unknown MCP arguments: ${remaining.join(" ")}`);
   await runChatGptMcpServer({
     brokerSocketPath,
     allowWebSubagents: !deny,
     contract: requestedContract as ChatGptMcpContract,
     asyncToolOperations: enableAsyncToolOperations && !disableAsyncToolOperations,
+    native6,
   });
 }

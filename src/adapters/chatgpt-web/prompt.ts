@@ -590,6 +590,7 @@ export function compileChatGptWebPrompt(
         : "For reading a referenced Codex task, use codex_read_thread with the task ID. It can only invoke the current outer read_thread tool; report an unavailable-tool error instead of trying a different action to bypass that limit.",
       ...(asyncToolOperations ? [
         "For a tool that can legitimately run longer than one MCP transport window, use codex_tool_start once with a stable operation_key, then call codex_tool_poll with bounded waits until it returns a terminal delivery_id.",
+        "If codex_tool_status is available, use it to recover this turn's operation IDs and states after context or transport loss. Status returns metadata without delivery IDs and does not acknowledge results: poll recovered operations to receive their results and delivery IDs before acknowledging. Never rerun side effects to recover an expired or lost result.",
         "After consuming a terminal owned-operation result, call codex_tool_poll once more with its exact ack_delivery_id. A poll timeout or disconnect never authorizes restarting codex_tool_start with a different operation_key.",
         "codex_tool_cancel cancels a queued invocation before dispatch. After dispatch it cancels only observation; the external tool and side effects may continue, and sibling calls remain owned by this turn.",
       ] : []),

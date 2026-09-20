@@ -138,9 +138,8 @@ export async function runDoctor(): Promise<DoctorReport> {
     checks.push({ id: "config", status: "error", message: "Configuration is invalid", detail: error instanceof Error ? error.message : String(error) });
     return { ok: false, build, checks };
   }
-  const expectedAutomaticConnector = config.experimentalAsyncToolOperations
-    ? config.purpose === "dev-harness" ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME : CHATGPT_ASYNC_CONNECTOR_NAME
-    : config.purpose === "dev-harness" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
+  // loadConfig validates generation/profile; a retained Native5 identity remains valid.
+  const expectedAutomaticConnector = config.automaticAppName;
   checks.push({
     id: "tool-operations",
     status: config.browserInteractionMode === "automatic" && config.appName !== expectedAutomaticConnector

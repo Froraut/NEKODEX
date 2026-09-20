@@ -67,7 +67,7 @@ Interactive commands:
 
 Experimental settings:
   Bigger Context       Enable in Settings; adapts context across 1, 2, or 3 messages
-  Async tool operations Automatic Full mode only; uses the separate Codex Native5 DEV connector
+  Async tool operations Automatic Full mode; new setups use Codex Native6 DEV
 `;
 
 function takeFlag(args: string[], name: string): boolean {
@@ -548,7 +548,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
   const config = loadConfig();
   const expectedConnector = config.browserInteractionMode === "manual"
     ? ZERO_RISK_CHATGPT_CONNECTOR_NAME
-    : config.experimentalAsyncToolOperations ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME : DEV_CHATGPT_CONNECTOR_NAME;
+    : config.automaticAppName;
   if (config.mode === "full" && config.appName !== expectedConnector) {
     throw new Error("DEV connector identity is outdated. Refresh the DEV profile in the launcher before starting a named chat");
   }

@@ -25,6 +25,21 @@ The interface uses a quiet graphite-and-lavender palette, responsive layouts and
 
 ### New in 5.5
 
+## Native6 in 5.6
+
+New Automatic Full setups now choose **Codex Native6** (DEV: **Codex Native6 DEV**).
+It combines the existing synchronous tools and owned asynchronous start/poll/cancel/ack flow
+with a metadata-only operation status tool for recovering operation IDs after context or
+transport loss. Status never executes or acknowledges a tool. Read each terminal result before
+acknowledging it; expired payloads are reported as lost and cannot silently replay the action.
+
+Existing Native4/5 routes retain their exact identity during an ordinary application update.
+Use the visible Native6 upgrade action, create a **new** ChatGPT connector with the exact name
+and corresponding tunnel, then verify it. Renaming an old connector does not replace its cached
+schema. Native4 remains an explicit synchronous compatibility option. Operation ownership is
+process-local; cancelling after dispatch stops observation, not external side effects.
+
+
 - **Web and Native statistics:** separate browser-message and proxied-model-request reports, Web
   account filters, full day calendars, outcome rates, observed median/p95 durations, and private
   aggregate CSV export. Native token values show reporting coverage; missing usage is never zero.
@@ -45,18 +60,18 @@ and the remaining external-service and verification limits.
 
 ## Download
 
-**NEKODEX 5.5.0-nekodex.1 · prerelease · macOS 13 or later / Linux x64**
+**NEKODEX 5.6.0-nekodex.1 · prerelease · macOS 13 or later / Linux x64**
 
 | Your Mac | Download |
 | --- | --- |
-| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/NEKODEX-5.5.0-nekodex.1-mac-arm64.dmg) |
-| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/NEKODEX-5.5.0-nekodex.1-mac-x64.dmg) |
+| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.1/NEKODEX-5.6.0-nekodex.1-mac-arm64.dmg) |
+| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.1/NEKODEX-5.6.0-nekodex.1-mac-x64.dmg) |
 
 Both macOS builds are **Developer ID signed and Apple notarized**, including the final DMGs with stapled notarization tickets.
 
-[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.5.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
+[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.6.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.1/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
 
-Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/codex-web-gpt-5.5.0-nekodex.1-linux-x64.AppImage).
+Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.1/codex-web-gpt-5.6.0-nekodex.1-linux-x64.AppImage).
 
 Windows x64 is built separately as an **unsigned preview** installer and ZIP in the
 [release workflow artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml).

@@ -69,6 +69,20 @@ export type BrokerOwnedOperationSnapshot =
       cancellationScope?: "queued" | "observation_only" }
   | { operationId: string; state: "acknowledged" };
 
+export type BrokerOwnedOperationStartResult = BrokerOwnedOperationSnapshot
+  | { state: "control"; result: BrokerToolResult };
+
+export interface BrokerOwnedOperationStatus {
+  operations: Array<{
+    operation_id: string;
+    state: OwnedOperationState | "acknowledged";
+    acknowledgement_required: boolean;
+    cancellation_scope?: "queued" | "observation_only";
+  }>;
+  limit: number;
+  truncated: false;
+}
+
 export type BrokerCompletionFenceStart =
   | { revision: number }
   | { blockedReason: "active_work" | "unacknowledged_async_result"; blockedCount: number };
@@ -133,6 +147,7 @@ interface BrokerRequest {
     | "release"
     | "invoke"
     | "invoke_async"
+    | "operation_status"
     | "operation_poll"
     | "operation_cancel"
     | "owner_status"
@@ -1037,7 +1052,7 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!request || typeof request !== "object" || typeof request.id !== "string" || request.id.length === 0 || request.id.length > 256) {
       throw new Error("turn broker request id is invalid");
     }
-    if (!["claim", "resolve", "release", "invoke", "invoke_async", "operation_poll", "operation_cancel", "owner_status", "owner_register", "owner_register_safe", "owner_update", "owner_safe_sent", "owner_next", "owner_complete", "owner_completion_fence_begin", "owner_completion_fence_commit", "owner_wait_retirement", "owner_revoke", "owner_safe_wait_start", "owner_safe_wait_completion", "owner_request_compaction", "owner_compaction_delivery_count", "safe_start", "safe_complete", "activity_complete", "submit_compaction_handoff"].includes(request.method)) {
+    if (!["claim", "resolve", "release", "invoke", "invoke_async", "operation_status", "operation_poll", "operation_cancel", "owner_status", "owner_register", "owner_register_safe", "owner_update", "owner_safe_sent", "owner_next", "owner_complete", "owner_completion_fence_begin", "owner_completion_fence_commit", "owner_wait_retirement", "owner_revoke", "owner_safe_wait_start", "owner_safe_wait_completion", "owner_request_compaction", "owner_compaction_delivery_count", "safe_start", "safe_complete", "activity_complete", "submit_compaction_handoff"].includes(request.method)) {
       throw new Error("turn broker method is invalid");
     }
   }
@@ -1259,6 +1274,35 @@ export class TurnBroker implements TurnBrokerOwner {
       return { completed: wasActive };
     }
 
+    if (request.method === "operation_status") {
+      const token = request.token;
+      const channel = token ? this.channels.get(token) : undefined;
+      if (!token || !channel || channel.completionCommitted || channel.safe) {
+        throw new Error("native turn token is invalid, expired, or retired");
+      }
+      // dispatch() prunes expiry before this synchronous projection.
+      // Do not expose delivery IDs: discovery must not supply an ack without its result.
+      // Project an explicit allowlist; never serialize stored requests, results or errors.
+      const operations: BrokerOwnedOperationStatus["operations"] = [];
+      for (const operation of this.ownedOperations.values()) {
+        if (operation.token !== token) continue;
+        operations.push({
+          operation_id: operation.id,
+          state: operation.state,
+          acknowledgement_required: operation.state !== "running",
+          ...(operation.cancellationScope ? { cancellation_scope: operation.cancellationScope } : {}),
+        });
+      }
+      for (const [id, operation] of this.acknowledgedOperations) {
+        if (operation.token === token) {
+          operations.push({ operation_id: id, state: "acknowledged", acknowledgement_required: false });
+        }
+      }
+      // Admission counts live records and acknowledged guards together, bounded at 64 per turn.
+      operations.sort((a, b) => a.operation_id < b.operation_id ? -1 : a.operation_id > b.operation_id ? 1 : 0);
+      return { operations, limit: MAX_OWNED_TOOL_OPERATIONS, truncated: false } satisfies BrokerOwnedOperationStatus;
+    }
+
     if (request.method === "operation_poll") {
       if (!request.token) throw new Error("turn token is required");
       if (!request.operationId) throw new Error("owned operation id is required");
@@ -1295,7 +1339,7 @@ export class TurnBroker implements TurnBrokerOwner {
       throw new Error(`${retiredTurnLabel(binding.channel.traceId)} has already finished; this Codex Native action can no longer run.`);
     }
     this.assertSafeHarnessRunning(binding.channel);
-    if (binding.channel.compactionRequested) {
+    if (binding.channel.compactionRequested && request.method !== "invoke_async") {
       const result = binding.channel.compactionResult;
       if (!result) throw new Error("Codex context compaction control result is unavailable");
       binding.channel.compactionDeliveryCount += 1;
@@ -1331,6 +1375,14 @@ export class TurnBroker implements TurnBrokerOwner {
           throw new Error("owned Codex tool operation key was reused with a different invocation");
         }
         return { operationId: request.operationId, state: "acknowledged" };
+      }
+      // Retries must recover their original identity even after compaction starts.
+      // A new request receives control instructions without claiming that its tool ran.
+      if (binding.channel.compactionRequested) {
+        const result = binding.channel.compactionResult;
+        if (!result) throw new Error("Codex context compaction control result is unavailable");
+        binding.channel.compactionDeliveryCount += 1;
+        return { state: "control", result: structuredClone(result) } satisfies BrokerOwnedOperationStartResult;
       }
       const ownedGuardCount = [...this.ownedOperations.values()]
         .filter(operation => operation.token === binding.token).length

@@ -288,6 +288,20 @@ function baseConfig(
   if (options.experimentalAsyncToolOperations !== undefined) {
     config.experimentalAsyncToolOperations = options.experimentalAsyncToolOperations;
   }
+  // Changing to a non-tool mode disables async transport; an explicit incompatible request still fails.
+  if (options.experimentalAsyncToolOperations === undefined
+    && (config.mode !== "full" || config.browserInteractionMode !== "automatic")) {
+    config.experimentalAsyncToolOperations = false;
+  }
+  if (options.experimentalAsyncToolOperations === undefined && existing?.browserInteractionMode === "manual"
+    && config.mode === "full" && config.browserInteractionMode === "automatic") {
+    config.experimentalAsyncToolOperations = /^(Codex Native5|Codex Native6)( DEV)?$/.test(existing.automaticAppName);
+  }
+  // A first Full setup defaults to Native6. Ordinary updates preserve an established schema.
+  if (options.experimentalAsyncToolOperations === undefined && config.mode === "full"
+    && config.browserInteractionMode === "automatic" && (!existing || existing.mode !== "full")) {
+    config.experimentalAsyncToolOperations = true;
+  }
   if (config.experimentalAsyncToolOperations
     && (config.mode !== "full" || config.browserInteractionMode !== "automatic")) {
     throw new Error(
@@ -298,6 +312,7 @@ function baseConfig(
     config.browserInteractionMode,
     profile,
     config.experimentalAsyncToolOperations,
+    options.experimentalAsyncToolOperations === undefined ? existing?.automaticAppName ?? config.automaticAppName : undefined,
   ));
   if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
   config.releaseVersion = VERSION;

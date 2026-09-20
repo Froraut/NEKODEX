@@ -19,7 +19,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { copyFor, localizeRuntimeMessage, localizeLauncherError, type Copy } from "./i18n";
+import { native6CopyFor, copyFor, localizeRuntimeMessage, localizeLauncherError, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import { browserControls } from "./browser-controls";
 import { RouteDiagnostics } from "./RouteDiagnostics";
@@ -52,8 +52,14 @@ function smokePassedForState(state: LauncherState, version: string): boolean {
   return state.browserSmokePassed === true && state.browserSmokeVersion === version;
 }
 
+function connectorProofMismatch(snapshot: LauncherSnapshot): boolean {
+  const verifiedName = snapshot.state.setupConnectorName;
+  return typeof verifiedName === "string" && verifiedName !== snapshot.connectorName;
+}
+
 function currentToolProof(snapshot: LauncherSnapshot, operation: OperationState | null): boolean {
   return snapshot.state.mcpSetupComplete === true
+    && !connectorProofMismatch(snapshot)
     && !(snapshot.profile === "production"
       && snapshot.state.browserInteractionMode === "automatic"
       && operation?.name === "runtime-start" && operation.status === "failed");
@@ -1950,13 +1956,16 @@ function McpSurface({
             ) : null}
             {step === 2 ? (
               <div className="connector-actions">
-                <details className="connector-upgrade-help"><summary>{copy.connectorUpgradeHelp}</summary><NoticeRow icon="alert" tone="warning">
-                  {manualInteraction
-                    ? copy.manualConnectorNotice
-                    : ["Codex Native5", "Codex Native5 DEV"].includes(snapshot.connectorNames[interactionMode])
-                      ? copy.asyncToolOperationsBody.replace("{connector}", snapshot.connectorNames[interactionMode])
-                      : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
-                </NoticeRow></details>
+                {!manualInteraction && !verified && ["Codex Native6", "Codex Native6 DEV"].includes(snapshot.connectorNames[interactionMode]) ? (
+                  <NoticeRow icon="alert" tone="warning">
+                    {native6CopyFor(language).body.replace("{connector}", snapshot.connectorNames[interactionMode])}
+                  </NoticeRow>
+                ) : <details className="connector-upgrade-help"><summary>{copy.connectorUpgradeHelp}</summary>
+                  <NoticeRow icon="alert" tone="warning">
+                    {manualInteraction ? copy.manualConnectorNotice : native6CopyFor(language).retained}
+                  </NoticeRow>
+                </details>}
+                {connectorProofMismatch(snapshot) ? <NoticeRow icon="alert" tone="warning">{native6CopyFor(language).mismatch}</NoticeRow> : null}
                 <div className="connector-name">
                   <span>{copy.connectorName}</span>
                   <code>{snapshot.connectorNames[interactionMode]}</code>
@@ -2206,6 +2215,7 @@ function SettingsSurface({
     setError(null);
     try {
       updateState(await api!.setAsyncToolOperations(enabled));
+      configureInteractionMode("automatic");
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -2339,8 +2349,34 @@ function SettingsSurface({
             onChange={(checked) => void savePreference(() => api!.setPreference("showBrowserDuringTurns", checked))}
           />
         </SettingRow>
+        <SettingRow label={native6CopyFor(language).title}
+          body={native6CopyFor(language).body.replace("{connector}", devProfile ? "Codex Native6 DEV" : "Codex Native6")}>
+          {snapshot.state.mcpRuntimeInstalled ? <span>{native6CopyFor(language).current.replace("{connector}", snapshot.connectorName)}</span> : null}
+          <button className="button-primary" type="button"
+            disabled={asyncToolOperationsBlocked && snapshot.state.browserInteractionMode === "automatic"
+              && snapshot.state.mcpRuntimeInstalled === true
+              && snapshot.connectorName !== (devProfile ? "Codex Native6 DEV" : "Codex Native6")}
+            onClick={() => {
+              if (snapshot.state.browserInteractionMode !== "automatic" || !snapshot.state.mcpRuntimeInstalled
+                || snapshot.connectorName === (devProfile ? "Codex Native6 DEV" : "Codex Native6")) {
+                configureInteractionMode("automatic");
+              } else {
+                void setAsyncToolOperations(true);
+              }
+            }}>
+            {snapshot.state.browserInteractionMode !== "automatic" || !snapshot.state.mcpRuntimeInstalled
+              ? native6CopyFor(language).configure
+              : snapshot.connectorName === (devProfile ? "Codex Native6 DEV" : "Codex Native6")
+                ? native6CopyFor(language).verify : native6CopyFor(language).upgrade}
+          </button>
+        </SettingRow>
         <details className="advanced-settings" open={typeof snapshot.state.pendingBiggerContext === "boolean" ? true : undefined}>
         <summary>{copy.advancedContext}<Icon name="chevron" /></summary>
+        {snapshot.state.browserInteractionMode === "automatic" && snapshot.state.mcpRuntimeInstalled
+          && snapshot.connectorName !== (devProfile ? "Codex Native4 DEV" : "Codex Native4") ? (
+          <button className="text-button" type="button" disabled={asyncToolOperationsBlocked}
+            onClick={() => void setAsyncToolOperations(false)}>{native6CopyFor(language).compatibility}</button>
+        ) : null}
         <SettingRow
           body={snapshot.state.browserInteractionMode === "manual"
             ? copy.manualBiggerContextUnavailable
@@ -2366,20 +2402,6 @@ function SettingsSurface({
             checked={snapshot.state.experimentalSkillAttachments}
             disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}
             onChange={(checked) => void setSkillAttachments(checked)}
-          />
-        </SettingRow>
-        <SettingRow
-          body={(snapshot.state.browserInteractionMode !== "automatic" || snapshot.state.coreSetupComplete !== true || snapshot.state.mcpRuntimeInstalled !== true)
-            ? copy.asyncToolOperationsUnavailable
-            : copy.asyncToolOperationsBody.replace("{connector}", devProfile ? "Codex Native5 DEV" : "Codex Native5")}
-          label={copy.asyncToolOperations}
-        >
-          <Switch
-            label={copy.asyncToolOperations}
-            checked={snapshot.state.experimentalAsyncToolOperations === true}
-            disabled={asyncToolOperationsBlocked || snapshot.state.browserInteractionMode !== "automatic"
-              || snapshot.state.coreSetupComplete !== true || snapshot.state.mcpRuntimeInstalled !== true}
-            onChange={enabled => void setAsyncToolOperations(enabled)}
           />
         </SettingRow>
         <SettingRow body={copy.webSubagentsBody} label={copy.webSubagents}>
