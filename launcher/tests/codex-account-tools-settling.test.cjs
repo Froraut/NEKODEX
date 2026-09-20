@@ -22,7 +22,7 @@ function loginProgress(active, phase = active ? 'waiting' : 'completed') {
 
 test('terminal Codex login remains settling until bounded account reconciliation releases its lease', async () => {
   const reconciliation = deferred();
-  let current = loginProgress(true);
+  let current = null;
   let leaseHeld = false;
   let inspectionSignal;
   const host = {
@@ -48,8 +48,8 @@ test('terminal Codex login remains settling until bounded account reconciliation
     getHost: () => host,
   };
   const controller = {
-    selectionLock: () => current.active ? { flowId: current.flowId, accountId: current.accountId } : null,
-    start: async () => current,
+    selectionLock: () => current?.active ? { flowId: current.flowId, accountId: current.accountId } : null,
+    start: async () => { current = loginProgress(true); return current; },
     status: () => current,
     destroy: async () => {},
   };
@@ -79,7 +79,7 @@ test('terminal Codex login remains settling until bounded account reconciliation
 });
 
 test('aborted reconciliation releases the account lease without waiting for its queued probe', async () => {
-  let current = loginProgress(true);
+  let current = null;
   let leaseHeld = false;
   let abortInspection;
   const pendingProbe = new Promise(() => {});
@@ -102,8 +102,8 @@ test('aborted reconciliation releases the account lease without waiting for its 
     getHost: () => host,
   };
   const controller = {
-    selectionLock: () => current.active ? { flowId: current.flowId, accountId: current.accountId } : null,
-    start: async () => current,
+    selectionLock: () => current?.active ? { flowId: current.flowId, accountId: current.accountId } : null,
+    start: async () => { current = loginProgress(true); return current; },
     status: () => current,
     destroy: async () => {},
   };
