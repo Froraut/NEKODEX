@@ -390,6 +390,8 @@ class RuntimeSupervisor {
     this.tunnelMonitorGeneration = 0;
     this.tunnelHealthBaseUrl = null;
     this.tunnelControlQueue = Promise.resolve();
+    this.tunnelStatusQueue = Promise.resolve();
+    this.tunnelStatusRevision = 0;
     this.tunnelControlChildren = new Set();
     this.tunnelControlControllers = new Map();
     this.recoveryTasks = new Set();
@@ -677,24 +679,62 @@ class RuntimeSupervisor {
       || (payload?.native_accepting_turns === undefined && payload?.accepting_turns === true);
   }
 
-  async reportTunnelStatus(config, ready, recoverySignal) {
+  reportTunnelStatus(config, ready, recoverySignal, isCurrent = () => true) {
+    const pending = this.tunnelStatusQueue.then(() =>
+      this.performReportTunnelStatus(config, ready, recoverySignal, isCurrent));
+    this.tunnelStatusQueue = pending.catch(() => {});
+    return pending;
+  }
+
+  async performReportTunnelStatus(config, ready, recoverySignal, isCurrent) {
     if (this.launcherProfile === "development" || config?.mode !== "full" || !this.daemon) return null;
     this.assertRecoveryActive(recoverySignal);
+    if (isCurrent() !== true) return { capabilityChanged: false, stale: true };
+    const revision = this.tunnelStatusRevision + 1;
+    if (!Number.isSafeInteger(revision) || revision < 1) {
+      throw new Error("Tunnel capability status revision is exhausted");
+    }
+    // Reserve before I/O. A timeout may hide an applied server mutation, so no later
+    // transition may reuse this revision even when this request rejects locally.
+    this.tunnelStatusRevision = revision;
     let result;
     try {
-      result = await this.control(config, "tunnel-status", { body: { ready: ready === true } });
+      result = await this.control(config, "tunnel-status", {
+        body: { ready: ready === true, revision },
+      });
     } catch (error) {
       if (config.releaseVersion !== this.app.getVersion() && /HTTP 404\b/.test(errorMessage(error))) return null;
       throw error;
     }
     this.assertRecoveryActive(recoverySignal);
+    if (isCurrent() !== true) return { ...result, capabilityChanged: false, stale: true };
     if (result === null) return null;
     if (result.status !== "ok"
-      || result.tunnel_ready !== (ready === true)
       || result.native_accepting_turns !== true
       || typeof result.web_accepting_turns !== "boolean"
-      || typeof result.broker_ready !== "boolean") {
+      || typeof result.broker_ready !== "boolean"
+      || typeof result.tunnel_ready !== "boolean") {
       throw new Error("Responses proxy did not acknowledge tunnel capability state");
+    }
+    const echoedRevision = result.tunnel_status_revision;
+    if (echoedRevision === undefined) {
+      if (config.releaseVersion === this.app.getVersion()) {
+        throw new Error("Responses proxy did not acknowledge the tunnel capability status revision");
+      }
+    } else {
+      if (!Number.isSafeInteger(echoedRevision) || echoedRevision < 1) {
+        throw new Error("Responses proxy returned an invalid tunnel capability status revision");
+      }
+      this.tunnelStatusRevision = Math.max(this.tunnelStatusRevision, echoedRevision);
+      if (echoedRevision > revision || this.tunnelStatusRevision > revision) {
+        return { ...result, capabilityChanged: false, stale: true };
+      }
+      if (echoedRevision < revision) {
+        throw new Error("Responses proxy returned an older tunnel capability status revision");
+      }
+    }
+    if (result.tunnel_ready !== (ready === true)) {
+      throw new Error("Responses proxy rejected a conflicting tunnel capability status revision");
     }
     const capabilityChanged = this.nativeAccepting !== result.native_accepting_turns
       || this.webAccepting !== result.web_accepting_turns
@@ -747,6 +787,9 @@ class RuntimeSupervisor {
       && body?.version === config.releaseVersion
       && (expectedPid === undefined || body?.pid === expectedPid);
     if (matches && expectedPid !== undefined && this.daemon?.pid === expectedPid) {
+      if (Number.isSafeInteger(body.tunnel_status_revision) && body.tunnel_status_revision >= 0) {
+        this.tunnelStatusRevision = Math.max(this.tunnelStatusRevision, body.tunnel_status_revision);
+      }
       this.nativeAccepting = this.nativeHealthAccepting(body);
       this.webAccepting = typeof body.web_accepting_turns === "boolean" ? body.web_accepting_turns : body.accepting_turns === true;
       this.brokerReady = typeof body.broker_ready === "boolean" ? body.broker_ready : null;
@@ -1313,23 +1356,29 @@ class RuntimeSupervisor {
         }
         if (health.ready) {
           this.tunnelMonitorFailures = 0;
-          void this.reportTunnelStatus(config, true).then((result) => {
-            if (result && result.capabilityChanged !== true) return;
+          const observedTunnelPid = health.pid;
+          const ownerChanged = this.tunnel?.pid !== observedTunnelPid;
+          if (ownerChanged) {
+            this.tunnel = {
+              pid: observedTunnelPid,
+              exitCode: null,
+              signalCode: null,
+              managed: true,
+            };
+            if (!this.tryWriteState("ready")) return;
+          }
+          const ownerIsCurrent = () => !this.stopping
+            && generation === this.tunnelMonitorGeneration
+            && this.tunnel?.pid === observedTunnelPid;
+          void this.reportTunnelStatus(config, true, undefined, ownerIsCurrent).then((result) => {
+            if (!ownerIsCurrent() || result?.stale === true) return;
+            if (!ownerChanged && result && result.capabilityChanged !== true) return;
             const available = this.webAccepting === true && this.brokerReady === true;
             this.updateCapabilities(available ? "ready" : "degraded",
               available ? null : "Tool tunnel is ready; local broker admission is still pending", config);
           }).catch((error) => {
             this.logger.warn("runtime.tunnel_status_report_failed", { message: errorMessage(error) });
           });
-          if (this.tunnel?.pid !== health.pid) {
-            this.tunnel = {
-              pid: health.pid,
-              exitCode: null,
-              signalCode: null,
-              managed: true,
-            };
-            this.tryWriteState("ready");
-          }
           return;
         }
         recordFailure(`Tunnel runtime lost readiness: ${health.detail}`, health.fatal === true);

@@ -47,13 +47,14 @@ export function UpdateProgress({ state, label }: { state: UpdateState; label: st
     ? Math.max(0, Math.min(total ?? Infinity, state.downloadedBytes!)) : 0;
   const speed = downloading && Number.isFinite(state.bytesPerSecond) ? Math.max(0, state.bytesPerSecond!) : 0;
   const reading = useTransferReading({ bytes, speed }, downloading);
-  const fraction = total ? Math.min(1, reading.bytes / total) : undefined;
+  // No reported total is not evidence that part of the file has arrived.
+  const fraction = total ? Math.min(1, reading.bytes / total) : 0;
   const mib = (value: number) => `${(value / 1024 / 1024).toFixed(1)} MiB`;
   return <div className="updates-download">
-    <div className={`updates-meter${fraction === undefined ? " is-indeterminate" : ""}`}
+    <div className="updates-meter"
       role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={total ? Math.min(100, bytes / total * 100) : undefined}>
-      <span aria-hidden="true" className="updates-meter-fill" style={fraction !== undefined ? { transform: `scaleX(${fraction})` } : undefined} />
+      <span aria-hidden="true" className="updates-meter-fill" style={{ transform: `scaleX(${fraction})` }} />
     </div>
     {downloading ? <div className="updates-transfer"><span>{mib(reading.bytes)}{total ? ` / ${mib(total)}` : ""}</span>
       {total ? <strong>{((fraction ?? 0) * 100).toFixed(1)}%</strong> : null}</div> : null}

@@ -63,9 +63,13 @@ const {
 } = require("./window-state.cjs");
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+const FOREGROUND_RELAUNCH_ENV = "CODEX_WEB_GPT_FOREGROUND_RELAUNCH";
+const foregroundRelaunchRequested = process.env[FOREGROUND_RELAUNCH_ENV] === "1";
+delete process.env[FOREGROUND_RELAUNCH_ENV];
 const launchEnvironment = {
   CODEX_CHATGPT_WEB_HOME: process.env.CODEX_CHATGPT_WEB_HOME,
   CODEX_HOME: process.env.CODEX_HOME,
+  [FOREGROUND_RELAUNCH_ENV]: "1",
 };
 const SOURCE_ROOT = path.resolve(__dirname, "../..");
 const LAUNCHER_PROFILE = resolveLauncherProfile({ appData: app.getPath("appData") });
@@ -110,6 +114,15 @@ installProcessDiagnosticGuards({
 let mainWindow = null;
 let mainWindowReadyToShow = false;
 let mainWindowShowRequested = false;
+let mainWindowActivationRequested = false;
+let rendererStartupComplete = false;
+let rendererReloadAttempted = false;
+let rendererRecoveryInFlight = false;
+let rendererRecoveryFollowup = null;
+let rendererUnavailable = false;
+let rendererRecoveryDialogInFlight = false;
+let launcherStateStore = null;
+let updateForegroundRequestPending = Boolean(updateReadinessHandoff);
 let browserHost = null;
 let accountToolsService = null;
 let runtimeHost = null;
@@ -168,7 +181,8 @@ function findFreePort() {
 }
 
 function send(channel, value) {
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+  if (!rendererUnavailable && mainWindow && !mainWindow.isDestroyed()
+    && !mainWindow.webContents.isDestroyed() && !mainWindow.webContents.isCrashed()) {
     mainWindow.webContents.send(channel, value);
   }
 }
@@ -443,7 +457,7 @@ function updateApplicationMenu(language) {
     checkLabel: labels[language] || labels.en,
     onCheck: () => {
       updatesPanelRequestRevision += 1;
-      showMainWindow();
+      showMainWindow({ activateApplication: true });
       send("launcher:open-updates");
     },
   })));
@@ -454,7 +468,7 @@ function updateTrayMenu(language) {
   if (!tray) return;
   const copy = nativeCopyFor(language);
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: copy.openLauncher, click: () => showMainWindow() },
+    { label: copy.openLauncher, click: () => showMainWindow({ activateApplication: true }) },
     { type: "separator" },
     { label: copy.quit, click: () => { void requestQuit(); } },
   ]));
@@ -465,7 +479,7 @@ function createTray(logger, language) {
     tray = new Tray(trayImage());
     tray.setToolTip(LAUNCHER_PROFILE.displayName);
     updateTrayMenu(language);
-    tray.on("click", () => showMainWindow());
+    tray.on("click", () => showMainWindow({ activateApplication: true }));
     return true;
   } catch (error) {
     tray = null;
@@ -474,14 +488,22 @@ function createTray(logger, language) {
   }
 }
 
-function showMainWindow() {
+function showMainWindow({ activateApplication = false } = {}) {
   // A Windows login launch may still be materializing the packaged runtime when the user opens
   // the desktop shortcut. Electron delivers `second-instance` immediately, before `createWindow`
   // has produced anything to show. Preserve that foreground request until the real window reaches
   // `ready-to-show`; otherwise the already-running `--hidden` instance silently consumes it.
   mainWindowShowRequested = true;
+  if (activateApplication) mainWindowActivationRequested = true;
+  if (rendererUnavailable) {
+    void promptRendererRecovery();
+    return;
+  }
   if (!mainWindowReadyToShow || !mainWindow || mainWindow.isDestroyed()) return;
   mainWindowShowRequested = false;
+  const shouldActivateApplication = mainWindowActivationRequested;
+  mainWindowActivationRequested = false;
+  if (process.platform === "darwin" && shouldActivateApplication) app.focus({ steal: true });
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -521,7 +543,7 @@ function windowStateSnapshot(window) {
   };
 }
 
-function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
+function createWindow({ logger, stateStore, windowStatePath, startHidden, foregroundOnReady }) {
   const isMac = process.platform === "darwin";
   const state = stateStore.read();
   const windowState = readWindowState(windowStatePath, screen.getAllDisplays());
@@ -568,6 +590,14 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
   };
   window.webContents.on("will-navigate", guardRendererNavigation);
   window.webContents.on("will-redirect", guardRendererNavigation);
+  window.webContents.on("did-fail-load", (_event, errorCode, _errorDescription, _validatedURL, isMainFrame) => {
+    if (isMainFrame !== true || errorCode === -3 || !rendererStartupComplete || quitting || exitCommitted) return;
+    void recoverMainRenderer(`main-frame-load-${errorCode}`);
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    if (!rendererStartupComplete || quitting || exitCommitted) return;
+    void recoverMainRenderer(`renderer-${details?.reason || "gone"}`);
+  });
   window.webContents.setWindowOpenHandler(({ url }) => {
     void openWebUrl(url).catch((error) => {
       logger.warn("launcher.external_url_rejected", {
@@ -586,6 +616,10 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
     if (mainWindow === window) {
       mainWindow = null;
       mainWindowReadyToShow = false;
+      if (!quitting && !exitCommitted && rendererStartupComplete) {
+        rendererUnavailable = true;
+        void promptRendererRecovery();
+      }
     }
   });
   for (const event of ["enter-full-screen", "leave-full-screen", "maximize", "unmaximize"]) {
@@ -596,7 +630,8 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
     if (windowState.maximized) window.maximize();
     if (windowState.fullscreen) window.setFullScreen(true);
     if (mainWindow === window) mainWindowReadyToShow = true;
-    if (mainWindowShowRequested) showMainWindow();
+    if (foregroundOnReady) mainWindowActivationRequested = true;
+    if (mainWindowShowRequested || foregroundOnReady) showMainWindow();
     else if (!startHidden) window.show();
   });
   trackWindowState(window, windowStatePath, (error) => {
@@ -614,6 +649,166 @@ async function loadRenderer(window) {
     return;
   }
   await window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+}
+
+function reloadOwnedRenderer(window) {
+  const contents = window.webContents;
+  if (!rendererNavigationAllowed(contents.getURL())) {
+    return Promise.reject(new Error("The failed renderer has no trusted reload destination"));
+  }
+  return new Promise((resolve, reject) => {
+    const finish = error => {
+      clearTimeout(timer);
+      contents.off("did-finish-load", loaded);
+      contents.off("did-fail-load", failed);
+      contents.off("destroyed", destroyed);
+      if (error) reject(error); else resolve();
+    };
+    const loaded = () => {
+      try {
+        const frame = contents.mainFrame;
+        if (!frame || frame.isDestroyed() || frame.detached !== false || !rendererNavigationAllowed(frame.url)) {
+          throw new Error("Reloaded renderer has not acquired a live trusted frame");
+        }
+        finish();
+      } catch (error) { finish(error); }
+    };
+    const failed = (_event, code, _description, _url, isMainFrame) => {
+      if (isMainFrame && code !== -3) finish(new Error(`Renderer reload failed (${code})`));
+    };
+    const destroyed = () => finish(new Error("Renderer closed during recovery"));
+    const timer = setTimeout(() => finish(new Error("Renderer reload timed out")), 10_000);
+    contents.once("did-finish-load", loaded);
+    contents.on("did-fail-load", failed);
+    contents.once("destroyed", destroyed);
+    // Electron documents reload() as the process-replacement path after a crash.
+    // Navigating the same file with loadFile() can retain a detached frame wrapper.
+    try { contents.reload(); } catch (error) { finish(error); }
+  });
+}
+
+const RENDERER_RECOVERY_COPY = Object.freeze({
+  en: Object.freeze({
+    title: "NEKODEX interface needs recovery",
+    message: "The launcher interface stopped unexpectedly.",
+    active: "An operation is still running. Keep NEKODEX open, let it finish, then open NEKODEX again to choose Restart. The local runtime stays available.",
+    idle: "The local runtime will be restarted only if you explicitly choose Restart NEKODEX.",
+    keep: "Keep running",
+    restart: "Restart NEKODEX",
+    retryFailed: "NEKODEX could not restart",
+  }),
+  ru: Object.freeze({
+    title: "Интерфейс NEKODEX нужно восстановить",
+    message: "Интерфейс приложения неожиданно остановился.",
+    active: "Операция ещё выполняется. Оставьте NEKODEX запущенным, дождитесь её завершения и снова откройте NEKODEX, чтобы выбрать перезапуск. Локальная среда остаётся доступной.",
+    idle: "Локальная среда будет перезапущена, только если вы явно выберете «Перезапустить NEKODEX».",
+    keep: "Оставить запущенным",
+    restart: "Перезапустить NEKODEX",
+    retryFailed: "Не удалось перезапустить NEKODEX",
+  }),
+});
+
+function rendererRecoveryCopy() {
+  const language = launcherStateStore?.read().language;
+  return RENDERER_RECOVERY_COPY[language] || RENDERER_RECOVERY_COPY.en;
+}
+
+function rendererRestartBlocked() {
+  return Boolean(currentGlobalOperation() || browserHost?.hasActiveTurns());
+}
+
+async function promptRendererRecovery() {
+  if (!rendererUnavailable || rendererRecoveryInFlight || rendererRecoveryDialogInFlight
+    || quitting || exitCommitted) return;
+  rendererRecoveryDialogInFlight = true;
+  try {
+    if (mainWindowActivationRequested) {
+      mainWindowActivationRequested = false;
+      if (process.platform === "darwin") app.focus({ steal: true });
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }
+    const copy = rendererRecoveryCopy();
+    const blocked = rendererRestartBlocked();
+    const options = {
+      type: "error",
+      title: copy.title,
+      message: copy.message,
+      detail: blocked ? copy.active : copy.idle,
+      buttons: blocked ? [copy.keep] : [copy.keep, copy.restart],
+      defaultId: blocked ? 0 : 1,
+      cancelId: 0,
+      noLink: true,
+    };
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+    if (result.response !== 1) return;
+    if (rendererRestartBlocked()) {
+      await dialog.showMessageBox({ ...options, buttons: [copy.keep], defaultId: 0, detail: copy.active });
+      return;
+    }
+    const restart = await requestQuit({ restart: true });
+    if (!restart.ok) dialog.showErrorBox(copy.retryFailed, restart.message || copy.active);
+  } catch (error) {
+    logger?.error("launcher.renderer_recovery_dialog_failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    rendererRecoveryDialogInFlight = false;
+  }
+}
+
+async function recoverMainRenderer(reason) {
+  if (!rendererStartupComplete || quitting || exitCommitted) return;
+  if (reason.startsWith("renderer-")) {
+    // On the pinned Electron build, reloading a crashed WebContents can retain a detached
+    // main-frame wrapper. Keep IPC closed and offer a guarded application restart instead.
+    rendererUnavailable = true;
+    logger?.error("launcher.renderer_restart_required", { reason });
+    await promptRendererRecovery();
+    return;
+  }
+  if (rendererRecoveryInFlight) {
+    rendererRecoveryFollowup = reason;
+    return;
+  }
+  rendererRecoveryInFlight = true;
+  rendererUnavailable = true;
+  const wasVisible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
+  let recovered = false;
+  try {
+    logger?.warn("launcher.renderer_recovery_started", { reason, reloadAttempted: rendererReloadAttempted });
+    if (!rendererReloadAttempted && mainWindow && !mainWindow.isDestroyed()) {
+      rendererReloadAttempted = true;
+      await reloadOwnedRenderer(mainWindow);
+      if (!quitting && !exitCommitted && mainWindow && !mainWindow.isDestroyed()) {
+        rendererUnavailable = false;
+        recovered = true;
+        logger?.info("launcher.renderer_recovery_completed", { reason });
+        if (mainWindowShowRequested) showMainWindow();
+        else if (wasVisible) mainWindow.show();
+      }
+    }
+  } catch (error) {
+    logger?.error("launcher.renderer_recovery_failed", {
+      reason,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    rendererRecoveryInFlight = false;
+  }
+  if (rendererRecoveryFollowup) {
+    const followup = rendererRecoveryFollowup;
+    rendererRecoveryFollowup = null;
+    rendererUnavailable = true;
+    logger?.error("launcher.renderer_recovery_recurred", { reason: followup });
+    void promptRendererRecovery();
+    return;
+  }
+  if (!recovered) void promptRendererRecovery();
 }
 
 function validateLanguage(value) {
@@ -1424,42 +1619,81 @@ async function requestQuit({ admissionHeld = false, restart = false } = {}) {
     if (browserHost?.hasActiveTurns()) {
       throw new Error("Finish or cancel active tasks before quitting NEKODEX");
     }
-    shutdownResult = await runtimeSupervisor?.shutdown({ cancelActiveTurns: false, force: false });
-    if (shutdownResult?.status === "forced-partial") {
-      const message = `Runtime cleanup was incomplete: ${shutdownResult.failures.join("; ")}. Check launcher diagnostics and the runtime ownership state before restarting.`;
-      logger?.error("launcher.quit_cleanup_incomplete", {
-        message,
-        shutdownDetail: shutdownResult.detail,
-        failures: shutdownResult.failures,
-        ownershipStatePath: runtimeSupervisor.statePath,
-      });
-      publishOperation({ name: "launcher-quit", status: "failed", message });
+    // Session persistence is a recoverable preflight. Keep every owner intact if it fails.
+    await browserHost?.persistSession();
+    const operationAfterPersistence = currentGlobalOperation();
+    if (operationAfterPersistence) {
+      throw new Error(`Wait for ${operationAfterPersistence} to finish before quitting NEKODEX`);
     }
+    if (browserHost?.hasActiveTurns()) {
+      throw new Error("Finish or cancel active tasks before quitting NEKODEX");
+    }
+
+    // Runtime shutdown owns the final native HTTP/compaction drain veto and compensates a
+    // refused stop. A rejection is still pre-commit: restore restart eligibility and keep the
+    // complete application graph available.
+    shutdownResult = await runtimeSupervisor?.shutdown({ cancelActiveTurns: false, force: false });
+
+    // A resolved shutdown result is terminal (stopped or an explicit terminal partial result).
+    // Commit only now; subsequent browser/account cleanup is best effort and cannot return the
+    // user to a partially dismantled launcher.
     stopCatalogVerificationMonitor();
     quitting = true;
-    await browserHost?.persistSession();
-    await closeBrowserResources();
     exitCommitted = true;
     contextChangeQueue?.stop();
-    if (restart) app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== "--hidden") });
-    app.quit();
-    return shutdownResult?.status === "forced-partial"
-      ? { ok: true, status: "forced-partial", failures: shutdownResult.failures }
-      : { ok: true };
   } catch (error) {
-    const primary = error instanceof Error ? error.message : String(error);
-    const message = shutdownResult?.status === "forced-partial"
-      ? `${primary}; runtime cleanup was incomplete: ${shutdownResult.failures.join("; ")}`
-      : primary;
+    const message = error instanceof Error ? error.message : String(error);
     quitting = false;
     runtimeSupervisor?.allowRestartAfterQuitFailure();
     browserHost?.openTurnAdmission();
     showMainWindow();
     publishOperation({ name: "launcher-quit", status: "failed", message });
-    return { ok: false, message };
-  } finally {
     shutdownInProgress = false;
+    return { ok: false, message };
   }
+
+  const cleanupFailures = [];
+  const recordCleanupFailure = (stage, error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    cleanupFailures.push(`${stage}: ${message}`);
+    logger?.error("launcher.quit_cleanup_failed", { stage, message });
+  };
+  if (shutdownResult?.status === "forced-partial") {
+    const message = `Runtime cleanup was incomplete: ${shutdownResult.failures.join("; ")}.`;
+    cleanupFailures.push(message);
+    logger?.error("launcher.quit_cleanup_incomplete", {
+      message,
+      shutdownDetail: shutdownResult.detail,
+      failures: shutdownResult.failures,
+      ownershipStatePath: runtimeSupervisor.statePath,
+    });
+  }
+  try {
+    await closeBrowserResources();
+  } catch (error) {
+    recordCleanupFailure("browser and account cleanup", error);
+  }
+  if (restart) {
+    process.env[FOREGROUND_RELAUNCH_ENV] = "1";
+    try {
+      app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== "--hidden") });
+    } catch (error) {
+      recordCleanupFailure("launcher relaunch", error);
+    }
+  }
+  try {
+    app.quit();
+  } catch (error) {
+    recordCleanupFailure("application quit", error);
+    app.exit(1);
+  }
+  shutdownInProgress = false;
+  if (shutdownResult?.status === "forced-partial") {
+    return { ok: true, status: "forced-partial", failures: shutdownResult.failures };
+  }
+  return cleanupFailures.length
+    ? { ok: true, status: "cleanup-incomplete", failures: cleanupFailures }
+    : { ok: true };
 }
 
 async function start() {
@@ -1468,7 +1702,7 @@ async function start() {
     app.quit();
     return;
   }
-  app.on("second-instance", () => showMainWindow());
+  app.on("second-instance", () => showMainWindow({ activateApplication: true }));
 
   await waitForPackagedRuntimeSource({ app, resourcesPath: process.resourcesPath });
   let installedRuntimeRoot = null;
@@ -1505,6 +1739,7 @@ async function start() {
   }
 
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
+  launcherStateStore = stateStore;
   updateApplicationMenu(stateStore.read().language);
   if (IS_DEV_PROFILE && !stateStore.read().onboardingComplete) {
     stateStore.update({
@@ -1535,7 +1770,19 @@ async function start() {
     filePath: path.join(app.getPath("logs"), "launcher.jsonl"),
     publish: (record) => send("launcher:log", record),
   });
-  const startHidden = process.argv.includes("--hidden") && stateStore.read().onboardingComplete;
+  const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
+  const hiddenLaunchRequested = process.argv.includes("--hidden");
+  const startHidden = hiddenLaunchRequested && stateStore.read().onboardingComplete;
+  const updateForegroundRequested = updateForegroundRequestPending;
+  updateForegroundRequestPending = false;
+  // The existing authenticated updater handoff is sufficient provenance for legacy workers.
+  // Ordinary visible launches and explicit relaunches also request foreground activation;
+  // a real --hidden autostart never does.
+  const foregroundOnReady = !launcherSmokeTest && (
+    updateForegroundRequested
+    || foregroundRelaunchRequested
+    || !hiddenLaunchRequested
+  );
   nativeTheme.themeSource = "system";
   startupPhase = "window";
   mainWindow = createWindow({
@@ -1543,6 +1790,7 @@ async function start() {
     stateStore,
     windowStatePath: path.join(app.getPath("userData"), "window-state.json"),
     startHidden,
+    foregroundOnReady,
   });
   startupPhase = "browser-control";
   browserControl = await new BrowserControlServer({
@@ -1612,7 +1860,6 @@ async function start() {
     stateStore.update({ browserInteractionMode: configuredInteractionMode });
   }
   startupPhase = "browser";
-  const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
   browserHost = new AccountBrowserPool({
     skipInitialNavigation: launcherSmokeTest,
     getManualSubmitTimeoutSec: () => stateStore.read().manualSubmitTimeoutSec,
@@ -1678,6 +1925,7 @@ async function start() {
   });
   startupPhase = "renderer";
   await loadRenderer(mainWindow);
+  rendererStartupComplete = true;
   startupPhase = "runtime";
   if (!launcherSmokeTest) void updateController.checkOnce();
   if (launcherSmokeTest) {
@@ -1980,7 +2228,7 @@ async function start() {
     publishOperation({ name: "runtime-start", status: "failed", message });
   });
 
-  app.on("activate", () => showMainWindow());
+  app.on("activate", () => showMainWindow({ activateApplication: true }));
   app.on("before-quit", (event) => {
     if (exitCommitted) return;
     event.preventDefault();

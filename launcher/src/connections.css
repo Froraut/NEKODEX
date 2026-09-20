@@ -45,6 +45,30 @@
   font-size: var(--text-xs);
 }
 
+.connector-instructions {
+  max-width: 680px;
+  margin-top: 10px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.connector-instructions ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.connector-instructions li {
+  padding-left: 3px;
+}
+
+.connector-instructions p {
+  margin: 10px 0 0;
+  color: var(--color-text-tertiary);
+}
+
 .connection-inline-failure,
 .route-diagnostics-summary {
   display: grid;
