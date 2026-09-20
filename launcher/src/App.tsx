@@ -2357,7 +2357,8 @@ function SettingsSurface({
               && snapshot.state.mcpRuntimeInstalled === true
               && snapshot.connectorName !== (devProfile ? "Codex Native6 DEV" : "Codex Native6")}
             onClick={() => {
-              if (snapshot.state.browserInteractionMode !== "automatic" || !snapshot.state.mcpRuntimeInstalled
+              if (snapshot.state.coreSetupComplete !== true
+                || snapshot.state.browserInteractionMode !== "automatic" || !snapshot.state.mcpRuntimeInstalled
                 || snapshot.connectorName === (devProfile ? "Codex Native6 DEV" : "Codex Native6")) {
                 configureInteractionMode("automatic");
               } else {

@@ -239,13 +239,11 @@ export async function detectChatGptAccountCapabilities(
     }
     await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
   }
-  const menu = page.locator(CHATGPT_EFFORT_MENU_SELECTOR).last();
-  const menuVisible = await menu.isVisible().catch(() => false);
-  const menuExpanded = await effortButton.getAttribute("aria-expanded").catch(() => null);
-  if (!menuVisible && menuExpanded !== "true") await effortButton.press("Enter");
   try {
-    const { sliderContainer, slider } = chatGptEffortSlider(page);
-    const timeout = options.selectorTimeoutMs ?? 70_000;
+    // Use the same owned-menu activation as task turns. Enter can leave Radix's
+    // expanded state set without mounting the slider after an application update.
+    const { sliderContainer, slider } = await activateChatGptEffortMenu(page, effortButton);
+    const timeout = options.selectorTimeoutMs ?? 15_000;
     // Model radio rows can hydrate before the effort control. They carry no evidence
     // of the account's reasoning range, so an absent slider must fail, not cache false.
     await sliderContainer.waitFor({ state: "visible", timeout });
