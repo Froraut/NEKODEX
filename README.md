@@ -60,18 +60,18 @@ and the remaining external-service and verification limits.
 
 ## Download
 
-**NEKODEX 5.6.0-nekodex.2 · prerelease · macOS 13 or later / Linux x64**
+**NEKODEX 5.6.0-nekodex.3 · prerelease · macOS 13 or later / Linux x64**
 
 | Your Mac | Download |
 | --- | --- |
-| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.2/NEKODEX-5.6.0-nekodex.2-mac-arm64.dmg) |
-| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.2/NEKODEX-5.6.0-nekodex.2-mac-x64.dmg) |
+| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.3/NEKODEX-5.6.0-nekodex.3-mac-arm64.dmg) |
+| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.3/NEKODEX-5.6.0-nekodex.3-mac-x64.dmg) |
 
 Both macOS builds are **Developer ID signed and Apple notarized**, including the final DMGs with stapled notarization tickets.
 
-[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.6.0-nekodex.2) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.2/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
+[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.6.0-nekodex.3) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.3/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
 
-Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.2/codex-web-gpt-5.6.0-nekodex.2-linux-x64.AppImage).
+Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.3/codex-web-gpt-5.6.0-nekodex.3-linux-x64.AppImage).
 
 Windows x64 is built separately as an **unsigned preview** installer and ZIP in the
 [release workflow artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml).

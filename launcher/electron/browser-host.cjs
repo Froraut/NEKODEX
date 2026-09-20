@@ -419,6 +419,9 @@ class BrowserHost {
     this.cloudflareChallengeRecoveryDelayMs = CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS;
     this.cloudflareChallengeRecoverySettleMs = CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS;
     this.viewportCssKey = null;
+    this.primaryRendererReady = false;
+    this.primaryDeviceEmulationViewport = null;
+    this.primaryDeviceEmulationDirty = true;
     this.shellZoomShortcutBindings = new Map();
     this.authView = null;
     this.authNavigationError = null;
@@ -1072,6 +1075,8 @@ class BrowserHost {
         this.setState({ url });
         return;
       }
+      this.primaryRendererReady = false;
+      this.primaryDeviceEmulationDirty = true;
       this.armHomeNavigationTimeout(contents, url);
       if (this.manualOperation === "ChatGPT login") {
         this.logger.info("browser.auth_navigation_started", {
@@ -1084,6 +1089,8 @@ class BrowserHost {
         : { status: "loading", message: "Opening ChatGPT", url, loading: true });
     });
     contents.on("did-finish-load", () => {
+      this.primaryRendererReady = true;
+      this.syncViewVisibility();
       this.clearHomeNavigationTimeout();
       if (this.manualOperation === "ChatGPT login") {
         this.logger.info("browser.auth_navigation_completed", {
@@ -1148,6 +1155,8 @@ class BrowserHost {
       this.setState({ status: "error", message: errorDescription, url, loading: false });
     });
     contents.on("render-process-gone", (_event, details) => {
+      this.primaryRendererReady = false;
+      this.primaryDeviceEmulationDirty = true;
       this.clearHomeNavigationTimeout();
       this.logger.error("browser.renderer_gone", { reason: details.reason, exitCode: details.exitCode });
       this.setState({ status: "error", message: `Browser renderer stopped: ${details.reason}`, loading: false });
@@ -1600,7 +1609,25 @@ class BrowserHost {
     // the native View can make Windows drop it from the remote-debugging target set, leaving a
     // live descriptor whose ownership id cannot be leased. Keep the View attached and drawable
     // offscreen; only its placement, never its ownership lifetime, follows the launcher UI.
-    this.view.setBounds(visible ? this.bounds : this.hiddenTurnBounds());
+    const bounds = visible ? this.bounds : this.hiddenTurnBounds();
+    const emulate = !visible && browserInteractionModeFor(this) === "automatic";
+    if (this.primaryRendererReady) {
+      if (emulate) {
+        if (this.primaryDeviceEmulationDirty
+          || this.primaryDeviceEmulationViewport?.width !== bounds.width
+          || this.primaryDeviceEmulationViewport?.height !== bounds.height) {
+          this.enableHiddenTurnViewport(this.view.webContents, bounds);
+          this.primaryDeviceEmulationViewport = { width: bounds.width, height: bounds.height };
+          this.primaryDeviceEmulationDirty = false;
+        }
+      } else if (this.primaryDeviceEmulationViewport) {
+        this.view.setBounds(bounds);
+        this.view.webContents.disableDeviceEmulation();
+        this.primaryDeviceEmulationViewport = null;
+        this.primaryDeviceEmulationDirty = false;
+      }
+    }
+    this.view.setBounds(bounds);
     this.view.setVisible(true);
   }
 
