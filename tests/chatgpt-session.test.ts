@@ -318,3 +318,19 @@ test("capability probe opens a closed picker with the shared activation path", a
     .resolves.toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: true });
   expect(fixture.keys).toEqual(["click"]);
 });
+
+
+test("effort activation handles the hidden viewport click failure without losing fallback", async () => {
+  let opened = false;
+  const surface = { filter() { return this; }, last() { return this; }, locator() { return this; }, isVisible: async () => opened };
+  const events: string[] = [];
+  const control = {
+    getAttribute: async (name: string) => name === "aria-expanded" ? String(opened) : null,
+    click: async () => { events.push("click"); throw new Error("Element is outside of the viewport"); },
+    dispatchEvent: async (name: string) => { events.push(name); opened = true; },
+  };
+  const page = { locator: () => surface, keyboard: { press: async () => {} } };
+  const activation = await activateChatGptEffortMenu(page as never, control as never, { settleMs: 0 });
+  expect(activation.method).toBe("pointerdown");
+  expect(events).toEqual(["click", "pointerdown"]);
+});

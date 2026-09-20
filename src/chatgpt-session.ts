@@ -115,8 +115,16 @@ export async function activateChatGptEffortMenu(
 
   const settleMs = options.settleMs ?? 3_000;
   await clearGhostEffortState(page, control);
-  await control.click({ force: true, timeout: Math.max(1, settleMs) });
-  const clickedSurface = await waitForEffortSurface(page, control, settleMs);
+  let clicked = false;
+  try {
+    await control.click({ force: true, timeout: Math.max(1, settleMs) });
+    clicked = true;
+  } catch (error) {
+    // Hidden Electron surfaces can reject physical clicks during a viewport transition.
+    // Only that specific failure uses the existing primary-pointer activation below.
+    if (!(error instanceof Error) || !/outside of the viewport/i.test(error.message)) throw error;
+  }
+  const clickedSurface = clicked ? await waitForEffortSurface(page, control, settleMs) : undefined;
   if (clickedSurface) return { method: "click", ...clickedSurface };
 
   await clearGhostEffortState(page, control);
