@@ -1,6 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { atomicWriteFile, getConfigDir } from "../config";
+import { readBoundedUtf8File } from "../read-bounded-file";
 
 const MAX_STORED_RESPONSES = 1_000;
 const RESPONSE_TTL_MS = 60 * 60 * 1_000;
@@ -12,6 +13,15 @@ const MAX_STORED_RESPONSE_BYTES = 64 * 1024 * 1024;
 const SNAPSHOT_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
 const SNAPSHOT_TOTAL_MAX_BYTES = 24 * 1024 * 1024;
 const MAX_DELTA_DEPTH = 7;
+const MAX_NONRETAINED_RESPONSES = 1_000;
+
+export type ResponseStateRetentionResult =
+  | { status: "retained" }
+  | { status: "not-retained"; reason: "too-large" | "unserializable" | "capacity" }
+  | { status: "skipped" };
+
+export type PreviousResponseStateStatus = "retained" | "not-retained-too-large"
+  | "not-retained-unserializable" | "not-retained-capacity" | "unavailable";
 
 interface StoredResponseState {
   createdAt: number;
@@ -25,15 +35,24 @@ interface StoredResponseState {
 }
 
 const states = new Map<string, StoredResponseState>();
+const nonretained = new Map<string, { createdAt: number; reason: Exclude<PreviousResponseStateStatus, "retained" | "unavailable"> }>();
 
-function measureItems(items: readonly unknown[]): number {
-  let sizeBytes = 0;
+export function serializedResponseStateBytes(items: readonly unknown[]): number | undefined {
   try {
-    sizeBytes = JSON.stringify(items).length;
+    return Buffer.byteLength(JSON.stringify(items), "utf8");
   } catch {
-    /* unserializable items: weightless rather than fatal */
+    return undefined;
   }
-  return sizeBytes;
+}
+
+function rememberNonretained(id: string, reason: "too-large" | "unserializable" | "capacity"): void {
+  nonretained.delete(id);
+  nonretained.set(id, { createdAt: now(), reason: `not-retained-${reason}` });
+  while (nonretained.size > MAX_NONRETAINED_RESPONSES) {
+    const oldest = nonretained.keys().next().value as string | undefined;
+    if (!oldest) break;
+    nonretained.delete(oldest);
+  }
 }
 
 function materialize(state: StoredResponseState): unknown[] {
@@ -100,7 +119,10 @@ function ensureLoaded(): void {
   try {
     const path = snapshotPath();
     if (!existsSync(path)) return;
-    const raw = JSON.parse(readFileSync(path, "utf-8")) as { version?: unknown; states?: unknown };
+    const raw = JSON.parse(readBoundedUtf8File(path, SNAPSHOT_TOTAL_MAX_BYTES + 1024 * 1024)) as {
+      version?: unknown;
+      states?: unknown;
+    };
     if (raw.version !== 1 || !Array.isArray(raw.states)) return;
     for (const entry of raw.states) {
       if (!Array.isArray(entry) || entry.length !== 2) continue;
@@ -114,7 +136,7 @@ function ensureLoaded(): void {
         items: rec.items,
         depth: 0,
         itemCount: rec.items.length,
-        sizeBytes: measureItems(rec.items),
+        sizeBytes: serializedResponseStateBytes(rec.items) ?? MAX_STORED_RESPONSE_BYTES + 1,
       });
     }
     pruneResponses();
@@ -139,7 +161,8 @@ function persistNow(path: string): void {
       // descendant, and older snapshots remain readable after this in-memory change.
       const persistEntry: [string, { createdAt: number; items: unknown[] }] =
         [id, { createdAt: state.createdAt, items: materialize(state) }];
-      const size = JSON.stringify(persistEntry).length;
+      const serialized = JSON.stringify(persistEntry);
+      const size = Buffer.byteLength(serialized, "utf8");
       if (size > SNAPSHOT_ENTRY_MAX_BYTES) continue;
       if (total + size > SNAPSHOT_TOTAL_MAX_BYTES) break;
       total += size;
@@ -184,17 +207,29 @@ function pruneResponses(at = now()): void {
   for (const [id, state] of states) {
     if (at - state.createdAt > RESPONSE_TTL_MS) states.delete(id);
   }
+  for (const [id, state] of nonretained) {
+    if (at - state.createdAt > RESPONSE_TTL_MS) nonretained.delete(id);
+  }
   while (states.size > MAX_STORED_RESPONSES) {
-    const oldest = states.keys().next().value;
+    const oldest = states.keys().next().value as string | undefined;
     if (!oldest) break;
     states.delete(oldest);
+    rememberNonretained(oldest, "capacity");
   }
   // Byte high-water eviction, oldest-first (Map preserves insertion order).
-  while (reachableBytes() > MAX_STORED_RESPONSE_BYTES && states.size > 1) {
-    const oldest = states.keys().next().value;
+  while (reachableBytes() > MAX_STORED_RESPONSE_BYTES && states.size > 0) {
+    const oldest = states.keys().next().value as string | undefined;
     if (!oldest) break;
     states.delete(oldest);
+    rememberNonretained(oldest, "capacity");
   }
+}
+
+export function previousResponseStateStatus(id: string): PreviousResponseStateStatus {
+  ensureLoaded();
+  pruneResponses();
+  if (states.has(id)) return "retained";
+  return nonretained.get(id)?.reason ?? "unavailable";
 }
 
 export function expandPreviousResponseInput(body: unknown): unknown {
@@ -229,21 +264,21 @@ export function rememberResponseState(
   requestBody: unknown,
   response: { id?: unknown; output?: unknown; status?: unknown; incomplete_details?: unknown },
   opts?: { force?: boolean },
-): void {
-  if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) return;
+): ResponseStateRetentionResult {
+  if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) return { status: "skipped" };
   const request = requestBody as Record<string, unknown>;
   // `force` bypasses only the store:false skip: Codex sends `store:false` on every non-Azure
   // HTTP request (and WS inherits it), yet its WS turns still chain with previous_response_id.
   // The passthrough branch records with force so those chains can be expanded locally; the
   // store stays in-memory with a 1h TTL, so this is a proxy-internal continuation cache, not
   // real server-side response storage.
-  if (request.store === false && !opts?.force) return;
-  if (typeof response.id !== "string" || !Array.isArray(response.output)) return;
+  if (request.store === false && !opts?.force) return { status: "skipped" };
+  if (typeof response.id !== "string" || !Array.isArray(response.output)) return { status: "skipped" };
   if (response.status === "incomplete") {
     const details = response.incomplete_details;
     if (!details || typeof details !== "object" || Array.isArray(details)
-      || (details as { reason?: unknown }).reason !== "max_output_tokens") return;
-  } else if (response.status !== undefined && response.status !== "completed") return;
+      || (details as { reason?: unknown }).reason !== "max_output_tokens") return { status: "skipped" };
+  } else if (response.status !== undefined && response.status !== "completed") return { status: "skipped" };
   ensureLoaded();
   const parent = replayedInputParents.get(requestBody);
   const input = inputItems(request.input);
@@ -252,14 +287,29 @@ export function rememberResponseState(
   const suffix = [...input.slice(prefix), ...response.output];
   const useDelta = !!parent && prefix > 0 && parent.depth < MAX_DELTA_DEPTH;
   const items = useDelta ? suffix : prefix > 0 ? [...input, ...response.output] : suffix;
+  const sizeBytes = serializedResponseStateBytes(items);
+  if (sizeBytes === undefined) {
+    rememberNonretained(response.id, "unserializable");
+    return { status: "not-retained", reason: "unserializable" };
+  }
+  if (sizeBytes > MAX_STORED_RESPONSE_BYTES) {
+    rememberNonretained(response.id, "too-large");
+    return { status: "not-retained", reason: "too-large" };
+  }
+  nonretained.delete(response.id);
   setEntry(response.id, {
     createdAt: now(),
     items,
     ...(useDelta ? { parent } : {}),
     depth: useDelta ? parent!.depth + 1 : 0,
     itemCount: (useDelta ? parent!.itemCount : 0) + items.length,
-    sizeBytes: measureItems(items),
+    sizeBytes,
   });
   pruneResponses();
+  if (!states.has(response.id)) {
+    rememberNonretained(response.id, "capacity");
+    return { status: "not-retained", reason: "capacity" };
+  }
   schedulePersist();
+  return { status: "retained" };
 }

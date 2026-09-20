@@ -14,8 +14,13 @@ export async function runChatGptMcpMain(args: string[]): Promise<void> {
   const remaining = [...args];
   const allow = remaining.includes("--allow-web-subagents");
   const deny = remaining.includes("--no-web-subagents");
+  const enableAsyncToolOperations = remaining.includes("--async-tool-operations");
+  const disableAsyncToolOperations = remaining.includes("--synchronous-tool-operations");
   if (allow && deny) throw new Error("Conflicting Web subagent flags");
-  for (const flag of ["--allow-web-subagents", "--no-web-subagents"]) {
+  if (enableAsyncToolOperations && disableAsyncToolOperations) {
+    throw new Error("Conflicting async tool operation flags");
+  }
+  for (const flag of ["--allow-web-subagents", "--no-web-subagents", "--async-tool-operations", "--synchronous-tool-operations"]) {
     const index = remaining.indexOf(flag); if (index >= 0) remaining.splice(index, 1);
   }
   const brokerSocketPath = resolveBrokerEndpoint(option(remaining, "--broker-socket", defaultBrokerEndpoint()));
@@ -28,5 +33,6 @@ export async function runChatGptMcpMain(args: string[]): Promise<void> {
     brokerSocketPath,
     allowWebSubagents: !deny,
     contract: requestedContract as ChatGptMcpContract,
+    asyncToolOperations: enableAsyncToolOperations && !disableAsyncToolOperations,
   });
 }

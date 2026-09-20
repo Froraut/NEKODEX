@@ -441,7 +441,10 @@ export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
 export type LauncherTurnActivity =
   | { phase: "usage"; traceId: string; helperPid: number; receipt: string;
-      effort: string; modelVersion: string; outcome?: "completed"; }
+      effort: string; modelVersion: string;
+      modelVersionSource?: "observed" | "pinned" | "unknown";
+      messageKind?: "task" | "context_stage" | "compaction";
+      outcome?: "completed"; }
   | {
       phase: "start";
       traceId: string;
@@ -467,7 +470,8 @@ export type LauncherTurnActivity =
       message?: string;
       retain?: boolean;
       connectorBound?: boolean;
-      failureCode?: "rate_limit_exceeded" | "account_safety_stop";
+      failureCode?: "rate_limit_exceeded" | "account_safety_stop" | "context_length_exceeded"
+        | "model_unavailable" | "tool_timeout" | "browser_failure" | "other";
     };
 
 export const LAUNCHER_TURN_START_TIMEOUT_MS = 5_000;

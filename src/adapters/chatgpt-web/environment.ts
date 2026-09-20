@@ -12,6 +12,7 @@ export type ChatGptSandboxPolicy =
   | { type: "workspaceWrite"; writableRoots: string[]; networkAccess: boolean };
 
 export interface ChatGptTurnEnvironment {
+  producer?: "codex" | "hermes";
   cwd: string;
   roots: string[];
   writableRoots: string[];

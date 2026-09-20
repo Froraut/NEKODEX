@@ -20,6 +20,7 @@ import {
   type ChatGptTurnEnvironment,
 } from "./environment";
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
+import { canonicalChatGptStatePath, withChatGptStateFileLock } from "./state-file-lock";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -36,6 +37,13 @@ interface StoredThreadEnvironmentFile {
 
 const MAX_THREAD_ENVIRONMENTS = 256;
 const THREAD_ENVIRONMENT_TTL_MS = 30 * 24 * 60 * 60_000;
+
+interface ThreadEnvironmentBackend {
+  loaded: boolean;
+  threads: Map<string, StoredThreadEnvironment>;
+}
+
+const threadEnvironmentBackends = new Map<string, ThreadEnvironmentBackend>();
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -137,20 +145,30 @@ function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironme
  * declarations are always taken from the current request and are never persisted.
  */
 export class ChatGptThreadEnvironmentStore {
-  private loaded = false;
-  private threads = new Map<string, StoredThreadEnvironment>();
+  private readonly path?: string;
+  private readonly backend: ThreadEnvironmentBackend;
 
   constructor(
-    private readonly path?: string,
+    path?: string,
     private readonly now: () => number = Date.now,
     private readonly codexHome: string = getCodexHome(),
     private readonly sqliteHome?: string,
-  ) {}
+  ) {
+    this.path = canonicalChatGptStatePath(path);
+    const key = this.path ?? `memory:${resolve(codexHome)}:${sqliteHome ? resolve(sqliteHome) : "default"}`;
+    let backend = threadEnvironmentBackends.get(key);
+    if (!backend) {
+      backend = { loaded: false, threads: new Map() };
+      threadEnvironmentBackends.set(key, backend);
+    }
+    this.backend = backend;
+  }
 
   resolve(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
     // Hermes owns execution and approvals. The bridge itself receives no filesystem authority,
     // and its producer scope never enters the persistent native Codex environment cache.
     if (parsed._hermesContext) return {
+      producer: "hermes",
       cwd: parsed._hermesContext.root, roots: [parsed._hermesContext.root], writableRoots: [],
       sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: parsed.context.tools ?? [],
     };
@@ -233,22 +251,21 @@ export class ChatGptThreadEnvironmentStore {
   }
 
   private get(threadId: string): StoredThreadEnvironment | undefined {
-    this.load();
-    const stored = this.threads.get(threadId);
+    this.load(true);
+    const stored = this.backend.threads.get(threadId);
     if (!stored) return undefined;
     if (this.now() - stored.updatedAt > THREAD_ENVIRONMENT_TTL_MS) {
-      const next = new Map(this.threads);
+      const next = new Map(this.backend.threads);
       next.delete(threadId);
       this.persist(next);
-      this.threads = next;
       return undefined;
     }
     return stored;
   }
 
   private set(threadId: string, environment: ChatGptTurnEnvironment): void {
-    this.load();
-    const next = new Map(this.threads);
+    this.load(true);
+    const next = new Map(this.backend.threads);
     next.delete(threadId);
     next.set(threadId, authority(environment, this.now()));
     while (next.size > MAX_THREAD_ENVIRONMENTS) {
@@ -257,15 +274,10 @@ export class ChatGptThreadEnvironmentStore {
       next.delete(oldest);
     }
     this.persist(next);
-    this.threads = next;
   }
 
-  private load(): void {
-    if (this.loaded) return;
-    if (!this.path || !existsSync(this.path)) {
-      this.loaded = true;
-      return;
-    }
+  private readFile(): Map<string, StoredThreadEnvironment> {
+    if (!this.path || !existsSync(this.path)) return new Map();
     const parsed = JSON.parse(readFileSync(this.path, "utf8")) as Partial<StoredThreadEnvironmentFile>;
     const rawThreads = record(parsed.threads);
     if (parsed.version !== 1 || !rawThreads) {
@@ -277,17 +289,42 @@ export class ChatGptThreadEnvironmentStore {
       .filter(([, environment]) => environment.updatedAt >= cutoff)
       .sort((left, right) => left[1].updatedAt - right[1].updatedAt)
       .slice(-MAX_THREAD_ENVIRONMENTS);
-    const loadedThreads = new Map<string, StoredThreadEnvironment>(entries);
-    this.threads = loadedThreads;
-    this.loaded = true;
+    return new Map<string, StoredThreadEnvironment>(entries);
+  }
+
+  private merge(...sources: ReadonlyMap<string, StoredThreadEnvironment>[]): Map<string, StoredThreadEnvironment> {
+    const cutoff = this.now() - THREAD_ENVIRONMENT_TTL_MS;
+    const merged = new Map<string, StoredThreadEnvironment>();
+    for (const source of sources) for (const [threadId, environment] of source) {
+      if (environment.updatedAt < cutoff) continue;
+      const current = merged.get(threadId);
+      if (!current || current.updatedAt <= environment.updatedAt) merged.set(threadId, environment);
+    }
+    return new Map([...merged].sort((left, right) => left[1].updatedAt - right[1].updatedAt)
+      .slice(-MAX_THREAD_ENVIRONMENTS));
+  }
+
+  private load(refresh = false): void {
+    if (this.backend.loaded && (!refresh || !this.path)) return;
+    this.backend.threads = this.merge(this.backend.threads, this.readFile());
+    this.backend.loaded = true;
   }
 
   private persist(threads: Map<string, StoredThreadEnvironment>): void {
-    if (!this.path) return;
-    const payload: StoredThreadEnvironmentFile = {
-      version: 1,
-      threads: Object.fromEntries(threads),
-    };
-    atomicWriteFile(this.path, `${JSON.stringify(payload, null, 2)}\n`);
+    if (!this.path) {
+      this.backend.threads = this.merge(threads);
+      this.backend.loaded = true;
+      return;
+    }
+    withChatGptStateFileLock(this.path, () => {
+      const merged = this.merge(this.readFile(), this.backend.threads, threads);
+      const payload: StoredThreadEnvironmentFile = {
+        version: 1,
+        threads: Object.fromEntries(merged),
+      };
+      atomicWriteFile(this.path!, `${JSON.stringify(payload, null, 2)}\n`);
+      this.backend.threads = merged;
+      this.backend.loaded = true;
+    });
   }
 }

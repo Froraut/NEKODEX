@@ -83,6 +83,9 @@ Setup options:
   --restart-service            Explicitly restart this project's daemon after an update
   --login                      Refresh the stored ChatGPT login even if one exists
   --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
+  --async-tool-operations      Automatic Full mode: opt in to the Codex Native5 async MCP schema
+  --synchronous-tool-operations
+                               Use the Codex Native4 synchronous MCP schema (default)
   --bigger-context             Enable experimental adaptive 1/2/3-message context
   --skill-attachments         Experimental selected skills as text attachments
   --inline-skills             Keep selected skills inline (default)
@@ -243,6 +246,14 @@ async function setupCommand(args: string[]): Promise<void> {
   if (automaticBrowserInteraction || manualBrowserInteraction) {
     options.browserInteractionMode = manualBrowserInteraction ? "manual" : "automatic";
   }
+  const asyncToolOperations = takeFlag(args, "--async-tool-operations");
+  const synchronousToolOperations = takeFlag(args, "--synchronous-tool-operations");
+  if (asyncToolOperations && synchronousToolOperations) {
+    throw new Error("Choose --async-tool-operations or --synchronous-tool-operations");
+  }
+  if (asyncToolOperations || synchronousToolOperations) {
+    options.experimentalAsyncToolOperations = asyncToolOperations;
+  }
   const subagentProtocol = takeOption(args, "--subagent-protocol");
   if (subagentProtocol !== undefined) {
     if (subagentProtocol !== "compatibility-v1" && subagentProtocol !== "native") {
@@ -326,9 +337,15 @@ async function setupCommand(args: string[]): Promise<void> {
   const result = await setup(options);
   stdout.write(`Setup complete: ${result.mode}\n`);
   stdout.write(`Config: ${result.configPath}\n`);
+  stdout.write(result.experimentalAsyncToolOperations
+    ? `Tool operations: asynchronous (experimental; connector ${JSON.stringify(result.connectorName)})\n`
+    : `Tool operations: synchronous (connector ${JSON.stringify(result.connectorName)})\n`);
+  if (result.connectorVerificationReset) {
+    stdout.write("Connector verification reset: verify the newly selected connector identity before tool use.\n");
+  }
   for (const warning of result.warnings ?? []) stdout.write(`Setup warning: ${warning}\n`);
   if (result.connectorSetupRequired) {
-    const connectorName = loadConfig().appName;
+    const connectorName = result.connectorName;
     stdout.write(
       `Attach the tunnel to a newly created ChatGPT connector named ${JSON.stringify(connectorName)}. `
       + "Keep the previous connector available for rollback; do not rename or refresh it.\n",

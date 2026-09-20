@@ -34,6 +34,45 @@ interface PendingInvocation {
   reject: (error: Error) => void;
 }
 
+type OwnedOperationState = "running" | "completed" | "failed" | "cancelled" | "expired";
+
+interface OwnedToolOperation {
+  id: string;
+  token: string;
+  bindingId: string;
+  callId: string;
+  channel?: TurnChannel;
+  requestFingerprint: string;
+  state: OwnedOperationState;
+  createdAt: number;
+  updatedAt: number;
+  result?: BrokerToolResult;
+  error?: string;
+  cancellationScope?: "queued" | "observation_only";
+  deliveryId?: string;
+  retainedBytes: number;
+  waiters: Set<SafeWaiter<void>>;
+}
+
+interface AcknowledgedOwnedOperation {
+  token: string;
+  bindingId: string;
+  requestFingerprint: string;
+  deliveryId: string;
+  updatedAt: number;
+}
+
+export type BrokerOwnedOperationSnapshot =
+  | { operationId: string; state: "running" }
+  | { operationId: string; state: "completed"; deliveryId: string; result: BrokerToolResult }
+  | { operationId: string; state: "failed" | "cancelled" | "expired"; deliveryId: string; error: string;
+      cancellationScope?: "queued" | "observation_only" }
+  | { operationId: string; state: "acknowledged" };
+
+export type BrokerCompletionFenceStart =
+  | { revision: number }
+  | { blockedReason: "active_work" | "unacknowledged_async_result"; blockedCount: number };
+
 interface ToolWaiter {
   resolve: (requests: BrokerToolRequest[]) => void;
   reject: (error: Error) => void;
@@ -93,6 +132,9 @@ interface BrokerRequest {
     | "resolve"
     | "release"
     | "invoke"
+    | "invoke_async"
+    | "operation_poll"
+    | "operation_cancel"
     | "owner_status"
     | "owner_register"
     | "owner_register_safe"
@@ -130,6 +172,9 @@ interface BrokerRequest {
   surfaceNonce?: string;
   finalAnswer?: string;
   contract?: "native" | "safe";
+  operationId?: string;
+  deliveryId?: string;
+  waitMs?: number;
 }
 
 interface BrokerResponse {
@@ -148,6 +193,9 @@ const MAX_PENDING_INVOCATIONS_PER_TURN = 64;
 // A live turn cannot discard completed IDs: an ambiguously delivered claim could arrive later
 // and reopen activity past the completion fence. Retire the entire capability at this limit.
 const MAX_COMPLETED_ACTIVITIES_PER_TURN = 4_096;
+const MAX_OWNED_TOOL_OPERATIONS = 64;
+const OWNED_TOOL_OPERATION_TTL_MS = 30 * 60_000;
+const MAX_OWNED_TOOL_OPERATION_BYTES = 128 * 1024 * 1024;
 
 export async function closeTurnBrokers(): Promise<void> {
   const active = [...brokers.values()];
@@ -168,6 +216,31 @@ function handleFingerprint(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
+function canonicalJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, entry]) => [key, canonicalJsonValue(entry)]));
+}
+
+function ownedInvocationFingerprint(request: {
+  bindingId: string;
+  wireName: string;
+  freeform: boolean;
+  input?: string;
+  arguments?: Record<string, unknown>;
+}): string {
+  return createHash("sha256").update(JSON.stringify({
+    bindingId: request.bindingId,
+    wireName: request.wireName,
+    freeform: request.freeform,
+    ...(request.freeform
+      ? { input: request.input ?? "" }
+      : { arguments: canonicalJsonValue(request.arguments ?? {}) }),
+  })).digest("hex");
+}
+
 function errorOf(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
@@ -182,6 +255,7 @@ function environmentIdentity(environment: ChatGptTurnEnvironment): string {
     roots: environment.roots,
     writableRoots: environment.writableRoots,
     sandboxPolicy: environment.sandboxPolicy,
+    producer: environment.producer ?? "codex",
   });
 }
 
@@ -199,6 +273,7 @@ function ownerEnvironment(value: unknown): ChatGptTurnEnvironment {
       return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
     })
     || !environment.sandboxPolicy || !["dangerFullAccess", "workspaceWrite", "readOnly"].includes(environment.sandboxPolicy.type)
+    || (environment.producer !== undefined && environment.producer !== "codex" && environment.producer !== "hermes")
     || !Array.isArray(environment.tools)
     || environment.tools.some(tool => !tool || typeof tool.name !== "string" || typeof tool.description !== "string"
       || !tool.parameters || typeof tool.parameters !== "object" || Array.isArray(tool.parameters))) {
@@ -232,7 +307,7 @@ export interface TurnBrokerOwner {
   waitForSafeCompletion(token: string, signal?: AbortSignal): Promise<string>;
   requestCompaction(token: string, queuedResult: BrokerToolResult): number | Promise<number>;
   compactionDeliveryCount(token: string): number | Promise<number>;
-  beginCompletionFence(token: string): number | undefined | Promise<number | undefined>;
+  beginCompletionFence(token: string): BrokerCompletionFenceStart | Promise<BrokerCompletionFenceStart>;
   commitCompletionFence(token: string, revision: number): boolean | Promise<boolean>;
   waitForRetirement(token: string, signal?: AbortSignal): Promise<void>;
   revoke(token: string, reason?: Error): void | Promise<void>;
@@ -258,6 +333,8 @@ export class TurnBroker implements TurnBrokerOwner {
   private readonly channels = new Map<string, TurnChannel>();
   private readonly pending = new Map<string, TurnChannel>();
   private readonly compactionTransactions = new CompactionTransactionStore();
+  private readonly ownedOperations = new Map<string, OwnedToolOperation>();
+  private readonly acknowledgedOperations = new Map<string, AcknowledgedOwnedOperation>();
   private readonly bindings = new Map<string, { token: string; channel: TurnChannel }>();
   // The Codex context replayed into ChatGPT still carries the handles of finished turns, so a model
   // can present one. Remembering which turn retired a handle is what separates "you are holding a
@@ -442,13 +519,22 @@ export class TurnBroker implements TurnBrokerOwner {
     invocation.resolve(result);
   }
 
-  beginCompletionFence(token: string): number | undefined {
+  beginCompletionFence(token: string): BrokerCompletionFenceStart {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
-    if (channel.completionCommitted) return channel.completionRevision;
-    if (channel.activities.size > 0 || channel.invocations.size > 0) return undefined;
-    return channel.activityRevision;
+    if (channel.completionCommitted) return { revision: channel.completionRevision! };
+    const runningWithoutInvocation = [...this.ownedOperations.values()].filter(operation => (
+      operation.token === token && operation.state === "running"
+      && !operation.channel?.invocations.has(operation.callId)
+    )).length;
+    const activeCount = channel.activities.size + channel.invocations.size + runningWithoutInvocation;
+    if (activeCount > 0) return { blockedReason: "active_work", blockedCount: activeCount };
+    const unacknowledged = this.ownedOperationCount(token, false);
+    if (unacknowledged > 0) {
+      return { blockedReason: "unacknowledged_async_result", blockedCount: unacknowledged };
+    }
+    return { revision: channel.activityRevision };
   }
 
   commitCompletionFence(token: string, revision: number): boolean {
@@ -461,7 +547,8 @@ export class TurnBroker implements TurnBrokerOwner {
     if (channel.completionCommitted) return channel.completionRevision === revision;
     if (channel.activityRevision !== revision
       || channel.activities.size > 0
-      || channel.invocations.size > 0) return false;
+      || channel.invocations.size > 0
+      || this.hasUnacknowledgedOwnedOperation(token)) return false;
     channel.completionCommitted = true;
     channel.completionRevision = revision;
     console.info(
@@ -629,6 +716,7 @@ export class TurnBroker implements TurnBrokerOwner {
     this.retire(this.retiredTokens, token, channel.traceId);
     this.resolveSafeWaiters(channel.retirementWaiters, undefined);
     this.rejectChannel(channel, reason);
+    this.releaseOwnedOperationGuards(token, reason);
   }
 
   externalOwnerActiveCount(): number {
@@ -729,6 +817,11 @@ export class TurnBroker implements TurnBrokerOwner {
 
   async close(): Promise<void> {
     this.compactionTransactions.close();
+    for (const operation of this.ownedOperations.values()) {
+      if (operation.state === "running") {
+        this.finishOwnedOperation(operation, "cancelled", undefined, "ChatGPT turn broker closed");
+      }
+    }
     for (const token of [...this.channels.keys()]) this.revoke(token);
     const server = this.server;
     this.server = undefined;
@@ -944,7 +1037,7 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!request || typeof request !== "object" || typeof request.id !== "string" || request.id.length === 0 || request.id.length > 256) {
       throw new Error("turn broker request id is invalid");
     }
-    if (!["claim", "resolve", "release", "invoke", "owner_status", "owner_register", "owner_register_safe", "owner_update", "owner_safe_sent", "owner_next", "owner_complete", "owner_completion_fence_begin", "owner_completion_fence_commit", "owner_wait_retirement", "owner_revoke", "owner_safe_wait_start", "owner_safe_wait_completion", "owner_request_compaction", "owner_compaction_delivery_count", "safe_start", "safe_complete", "activity_complete", "submit_compaction_handoff"].includes(request.method)) {
+    if (!["claim", "resolve", "release", "invoke", "invoke_async", "operation_poll", "operation_cancel", "owner_status", "owner_register", "owner_register_safe", "owner_update", "owner_safe_sent", "owner_next", "owner_complete", "owner_completion_fence_begin", "owner_completion_fence_commit", "owner_wait_retirement", "owner_revoke", "owner_safe_wait_start", "owner_safe_wait_completion", "owner_request_compaction", "owner_compaction_delivery_count", "safe_start", "safe_complete", "activity_complete", "submit_compaction_handoff"].includes(request.method)) {
       throw new Error("turn broker method is invalid");
     }
   }
@@ -1028,7 +1121,10 @@ export class TurnBroker implements TurnBrokerOwner {
     }
     if (request.method === "owner_completion_fence_begin") {
       if (!request.token) throw new Error("turn owner token is required");
-      return { revision: this.beginCompletionFence(request.token) ?? null };
+      const fence = this.beginCompletionFence(request.token);
+      return "revision" in fence
+        ? { revision: fence.revision }
+        : { revision: null, blockedReason: fence.blockedReason, blockedCount: fence.blockedCount };
     }
     if (request.method === "owner_completion_fence_commit") {
       if (!request.token) throw new Error("turn owner token is required");
@@ -1133,7 +1229,6 @@ export class TurnBroker implements TurnBrokerOwner {
       return { bindingId, activityId, environment: activeChannel.environment };
     }
 
-    const bindingId = request.bindingId;
     if (request.method === "activity_complete") {
       const token = request.token;
       if (typeof token !== "string" || token.length === 0) throw new Error("turn token is required");
@@ -1164,6 +1259,18 @@ export class TurnBroker implements TurnBrokerOwner {
       return { completed: wasActive };
     }
 
+    if (request.method === "operation_poll") {
+      if (!request.token) throw new Error("turn token is required");
+      if (!request.operationId) throw new Error("owned operation id is required");
+      return this.pollOwnedOperation(request.token, request.operationId, request.deliveryId, request.waitMs, socketSignal);
+    }
+    if (request.method === "operation_cancel") {
+      if (!request.token) throw new Error("turn token is required");
+      if (!request.operationId) throw new Error("owned operation id is required");
+      return this.cancelOwnedOperation(request.token, request.operationId);
+    }
+
+    const bindingId = request.bindingId;
     if (typeof bindingId !== "string" || bindingId.length === 0) throw new Error("binding id is required");
     const binding = this.bindings.get(bindingId);
     if (!binding) {
@@ -1200,6 +1307,39 @@ export class TurnBroker implements TurnBrokerOwner {
 
     const wireName = request.wireName?.trim();
     if (!wireName) throw new Error("wire tool name is required");
+    if (request.method === "invoke_async") {
+      this.pruneOwnedOperations();
+      if (!request.operationId || !/^operation_[A-Za-z0-9_-]{32,128}$/.test(request.operationId)) {
+        throw new Error("owned Codex tool operation id is invalid");
+      }
+      const requestFingerprint = ownedInvocationFingerprint({
+        bindingId, wireName, freeform: request.freeform === true,
+        input: request.input, arguments: request.arguments,
+      });
+      const existing = this.ownedOperations.get(request.operationId);
+      if (existing) {
+        if (existing.token !== binding.token || existing.bindingId !== bindingId
+          || existing.requestFingerprint !== requestFingerprint) {
+          throw new Error("owned Codex tool operation key was reused with a different invocation");
+        }
+        return this.ownedOperationSnapshot(existing);
+      }
+      const acknowledged = this.acknowledgedOperations.get(request.operationId);
+      if (acknowledged) {
+        if (acknowledged.token !== binding.token || acknowledged.bindingId !== bindingId
+          || acknowledged.requestFingerprint !== requestFingerprint) {
+          throw new Error("owned Codex tool operation key was reused with a different invocation");
+        }
+        return { operationId: request.operationId, state: "acknowledged" };
+      }
+      const ownedGuardCount = [...this.ownedOperations.values()]
+        .filter(operation => operation.token === binding.token).length
+        + [...this.acknowledgedOperations.values()]
+          .filter(operation => operation.token === binding.token).length;
+      if (ownedGuardCount >= MAX_OWNED_TOOL_OPERATIONS) {
+        throw new Error(`Codex turn owns ${MAX_OWNED_TOOL_OPERATIONS} unique async operation guards`);
+      }
+    }
     if (binding.channel.invocations.size >= MAX_PENDING_INVOCATIONS_PER_TURN) {
       const error = new Error(
         `Codex turn exceeded its ${MAX_PENDING_INVOCATIONS_PER_TURN} pending native tool invocation limit; turn binding retired`,
@@ -1214,14 +1354,160 @@ export class TurnBroker implements TurnBrokerOwner {
       freeform: request.freeform === true,
       ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
     };
-    return new Promise<BrokerToolResult>((resolveInvoke, rejectInvoke) => {
+    const invocation = new Promise<BrokerToolResult>((resolveInvoke, rejectInvoke) => {
       binding.channel.invocations.set(callId, { request: toolRequest, resolve: resolveInvoke, reject: rejectInvoke });
-      binding.channel.queuedCallIds.push(callId);
-      console.info(
-        `[chatgpt-web] broker trace=${binding.channel.traceId} queued call=${callId.slice(0, 17)} tool=${wireName} waiters=${binding.channel.waiters.size}`,
-      );
-      this.scheduleToolWaiters(binding.channel);
     });
+    binding.channel.queuedCallIds.push(callId);
+    console.info(
+      `[chatgpt-web] broker trace=${binding.channel.traceId} queued call=${callId.slice(0, 17)} tool=${wireName} waiters=${binding.channel.waiters.size}`,
+    );
+    this.scheduleToolWaiters(binding.channel);
+    if (request.method !== "invoke_async") return invocation;
+    const operation: OwnedToolOperation = {
+      id: request.operationId!, token: binding.token, bindingId, callId, channel: binding.channel,
+      requestFingerprint: ownedInvocationFingerprint({
+        bindingId, wireName, freeform: request.freeform === true,
+        input: request.input, arguments: request.arguments,
+      }), state: "running",
+      createdAt: Date.now(), updatedAt: Date.now(), retainedBytes: 0, waiters: new Set(),
+    };
+    this.ownedOperations.set(operation.id, operation);
+    binding.channel.activityRevision += 1;
+    void invocation.then(
+      result => this.finishOwnedOperation(operation, "completed", result),
+      error => this.finishOwnedOperation(operation, "failed", undefined, errorOf(error).message),
+    );
+    return { operationId: operation.id, state: "running" };
+  }
+
+  private finishOwnedOperation(
+    operation: OwnedToolOperation,
+    state: Exclude<OwnedOperationState, "running">,
+    result?: BrokerToolResult,
+    error?: string,
+  ): void {
+    if (operation.state !== "running" || this.ownedOperations.get(operation.id) !== operation) return;
+    const retained = Buffer.byteLength(JSON.stringify(result ?? error ?? ""), "utf8");
+    const existingBytes = [...this.ownedOperations.values()].reduce((sum, value) => sum + value.retainedBytes, 0);
+    if (existingBytes + retained > MAX_OWNED_TOOL_OPERATION_BYTES) {
+      state = "failed";
+      result = undefined;
+      error = "Owned Codex tool results exceeded the broker retention budget";
+    }
+    operation.state = state;
+    operation.updatedAt = Date.now();
+    operation.deliveryId = opaqueId("delivery");
+    operation.result = result === undefined ? undefined : structuredClone(result);
+    operation.error = error;
+    operation.retainedBytes = Buffer.byteLength(JSON.stringify(operation.result ?? operation.error ?? ""), "utf8");
+    this.advanceOwnedOperationRevision(operation.token);
+    operation.channel = undefined;
+    this.resolveSafeWaiters(operation.waiters, undefined);
+  }
+
+  private ownedOperationSnapshot(operation: OwnedToolOperation): BrokerOwnedOperationSnapshot {
+    if (operation.state === "running") return { operationId: operation.id, state: "running" };
+    if (!operation.deliveryId) throw new Error("Owned Codex tool operation has no delivery identity");
+    if (operation.state === "completed") {
+      if (!operation.result) throw new Error("Completed owned Codex tool operation has no result");
+      return { operationId: operation.id, state: "completed", deliveryId: operation.deliveryId,
+        result: structuredClone(operation.result) };
+    }
+    return { operationId: operation.id, state: operation.state, deliveryId: operation.deliveryId,
+      error: operation.error ?? `Owned Codex tool operation ${operation.state}`,
+      ...(operation.cancellationScope ? { cancellationScope: operation.cancellationScope } : {}) };
+  }
+
+  private async pollOwnedOperation(
+    token: string,
+    operationId: string,
+    deliveryId?: string,
+    waitMs = 0,
+    signal?: AbortSignal,
+  ): Promise<BrokerOwnedOperationSnapshot> {
+    this.pruneOwnedOperations();
+    const operation = this.ownedOperations.get(operationId);
+    if (!operation) {
+      const acknowledged = this.acknowledgedOperations.get(operationId);
+      if (acknowledged?.token === token
+        && (deliveryId === undefined || acknowledged.deliveryId === deliveryId)) {
+        return { operationId, state: "acknowledged" };
+      }
+      throw new Error("owned Codex tool operation is invalid or expired");
+    }
+    if (operation.token !== token) throw new Error("owned Codex tool operation is invalid or expired");
+    if (deliveryId !== undefined) {
+      if (operation.state === "running" || operation.deliveryId !== deliveryId) {
+        throw new Error("owned Codex tool delivery acknowledgement is invalid");
+      }
+      this.acknowledgedOperations.delete(operation.id);
+      this.acknowledgedOperations.set(operation.id, {
+        token: operation.token,
+        bindingId: operation.bindingId,
+        requestFingerprint: operation.requestFingerprint,
+        deliveryId,
+        updatedAt: Date.now(),
+      });
+      this.ownedOperations.delete(operation.id);
+      this.advanceOwnedOperationRevision(operation.token);
+      return { operationId, state: "acknowledged" };
+    }
+    if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 30_000) {
+      throw new Error("owned Codex tool poll wait must be between 0 and 30000ms");
+    }
+    if (operation.state === "running" && waitMs > 0) {
+      if (signal?.aborted) throw new DOMException("owned operation poll aborted", "AbortError");
+      await new Promise<void>((resolveWait, rejectWait) => {
+        const waiter: SafeWaiter<void> = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
+        const cleanup = () => {
+          clearTimeout(timer);
+          operation.waiters.delete(waiter);
+          if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
+        };
+        const timer = setTimeout(() => { cleanup(); resolveWait(); }, waitMs);
+        timer.unref?.();
+        waiter.resolve = () => { cleanup(); resolveWait(); };
+        waiter.reject = pollError => { cleanup(); rejectWait(pollError); };
+        if (signal) {
+          waiter.onAbort = () => { cleanup(); rejectWait(new DOMException("owned operation poll aborted", "AbortError")); };
+          signal.addEventListener("abort", waiter.onAbort, { once: true });
+        }
+        operation.waiters.add(waiter);
+      });
+    }
+    return this.ownedOperationSnapshot(operation);
+  }
+
+  private cancelOwnedOperation(token: string, operationId: string): BrokerOwnedOperationSnapshot {
+    this.pruneOwnedOperations();
+    const operation = this.ownedOperations.get(operationId);
+    if (!operation) {
+      const acknowledged = this.acknowledgedOperations.get(operationId);
+      if (acknowledged?.token === token) return { operationId, state: "acknowledged" };
+      throw new Error("owned Codex tool operation is invalid or expired");
+    }
+    if (operation.token !== token) throw new Error("owned Codex tool operation is invalid or expired");
+    if (operation.state === "running") {
+      const channel = operation.channel;
+      if (!channel) throw new Error("running owned Codex tool operation lost its broker channel");
+      const delivered = channel.deliveredCallIds.has(operation.callId);
+      operation.cancellationScope = delivered ? "observation_only" : "queued";
+      if (!delivered) {
+        channel.queuedCallIds = channel.queuedCallIds.filter(id => id !== operation.callId);
+        const invocation = channel.invocations.get(operation.callId);
+        channel.invocations.delete(operation.callId);
+        invocation?.reject(new Error("Owned Codex tool operation was cancelled before dispatch"));
+      }
+      this.finishOwnedOperation(
+        operation,
+        "cancelled",
+        undefined,
+        delivered
+          ? "Owned Codex tool observation was cancelled; the dispatched external tool may still complete or cause side effects"
+          : "Owned Codex tool operation was cancelled before dispatch",
+      );
+    }
+    return this.ownedOperationSnapshot(operation);
   }
 
   private takeQueued(channel: TurnChannel): BrokerToolRequest[] {
@@ -1274,8 +1560,48 @@ export class TurnBroker implements TurnBrokerOwner {
     channel.deliveredCallIds.clear();
   }
 
+  private pruneOwnedOperations(now = Date.now()): void {
+    const cutoff = now - OWNED_TOOL_OPERATION_TTL_MS;
+    for (const operation of this.ownedOperations.values()) {
+      if (operation.state !== "running" && operation.state !== "expired" && operation.updatedAt < cutoff) {
+        operation.state = "expired";
+        operation.result = undefined;
+        operation.error = "Owned Codex tool result payload expired before acknowledgement";
+        operation.retainedBytes = 0;
+        this.advanceOwnedOperationRevision(operation.token);
+      }
+    }
+  }
+
+  private hasUnacknowledgedOwnedOperation(token: string): boolean {
+    return [...this.ownedOperations.values()].some(operation => operation.token === token);
+  }
+
+  private ownedOperationCount(token: string, running: boolean): number {
+    return [...this.ownedOperations.values()].filter(operation => (
+      operation.token === token && (running ? operation.state === "running" : operation.state !== "running")
+    )).length;
+  }
+
+  private advanceOwnedOperationRevision(token: string): void {
+    const channel = this.channels.get(token);
+    if (channel) channel.activityRevision += 1;
+  }
+
+  private releaseOwnedOperationGuards(token: string, reason: Error): void {
+    for (const [operationId, operation] of this.ownedOperations) {
+      if (operation.token !== token) continue;
+      this.rejectSafeWaiters(operation.waiters, reason);
+      this.ownedOperations.delete(operationId);
+    }
+    for (const [operationId, operation] of this.acknowledgedOperations) {
+      if (operation.token === token) this.acknowledgedOperations.delete(operationId);
+    }
+  }
+
   private prune(): void {
     const now = Date.now();
+    this.pruneOwnedOperations(now);
     for (const [token, channel] of this.channels) {
       if (channel.environment.expiresAt === undefined || channel.environment.expiresAt > now) continue;
       this.revoke(token);
@@ -1538,16 +1864,35 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     return Number(response.count);
   }
 
-  async beginCompletionFence(token: string): Promise<number | undefined> {
-    const response = await callTurnBroker<{ revision?: unknown }>(this.socketPath, {
+  async beginCompletionFence(token: string): Promise<BrokerCompletionFenceStart> {
+    const response = await callTurnBroker<{
+      revision?: unknown;
+      blockedReason?: unknown;
+      blockedCount?: unknown;
+    }>(this.socketPath, {
       method: "owner_completion_fence_begin",
       token,
     });
-    if (response.revision === null) return undefined;
+    if (response.revision === null) {
+      // Protocol-v5 runtimes returned only null for ordinary active work. Native5 cannot exist on
+      // those runtimes, so this compatibility shape is safely the non-terminal active-work case.
+      if (response.blockedReason === undefined && response.blockedCount === undefined) {
+        return { blockedReason: "active_work", blockedCount: 1 };
+      }
+      if ((response.blockedReason !== "active_work"
+        && response.blockedReason !== "unacknowledged_async_result")
+        || !Number.isSafeInteger(response.blockedCount) || Number(response.blockedCount) <= 0) {
+        throw new Error("DEV turn owner received an invalid completion fence block reason");
+      }
+      return {
+        blockedReason: response.blockedReason,
+        blockedCount: Number(response.blockedCount),
+      };
+    }
     if (!Number.isSafeInteger(response.revision) || (response.revision as number) < 0) {
       throw new Error("DEV turn owner received an invalid completion fence revision");
     }
-    return response.revision as number;
+    return { revision: response.revision as number };
   }
 
   async commitCompletionFence(token: string, revision: number): Promise<boolean> {

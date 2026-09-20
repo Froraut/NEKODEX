@@ -20,6 +20,7 @@ export interface LauncherState {
   browserInteractionMode: BrowserInteractionMode;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
+  experimentalAsyncToolOperations: boolean;
   allowWebSubagents: boolean;
   experimentalFreshConversationPerTurn: boolean;
   pendingBiggerContext?: boolean | null;
@@ -142,14 +143,62 @@ export type UpdateState =
 export type CompactionModel = "extra-high" | "5.6-pro" | "5.5-pro";
 
 export interface UsageGroup {
-  effort: string; modelVersion: string; mode: string;
-  accepted: number; completed: number; failed: number; aborted: number;
+  accountId?: string;
+  effort?: string; modelVersion?: string; mode?: string;
+  modelId?: string;
+  modelIdSource?: "reported" | "requested" | "unknown";
+  endpoint?: "responses" | "responses/compact";
+  modelVersionSource?: "observed" | "pinned" | "unknown";
+  messageKind?: "task" | "context_stage" | "compaction" | "unknown";
+  accepted: number; completed: number; failed: number; aborted: number; incomplete?: number;
+}
+
+export type UsageRangeDays = 1 | 7 | 30 | 90;
+export type UsageSource = "web" | "native";
+export interface UsageQuery { days: UsageRangeDays; source: UsageSource; accountId?: string | null; }
+export interface UsageAccountOption { id: string; label: string; available: boolean; }
+export interface UsageMetrics {
+  total: number; completed: number; failed: number; cancelled: number; incomplete?: number; unrecorded: number;
+  knownOutcomeTotal: number; knownOutcomeCompletionRate: number | null;
+  messageCount?: number;
+  observedRunCount?: number;
+  messageKinds?: Record<string, number>;
+  runCountCoverage?: { observedMessages: number; totalMessages: number; complete: boolean };
+}
+export interface UsageDurations {
+  observedSamples: number; medianMs: number | null; p95Ms: number | null;
+}
+export type UsageFailureCode = "rate_limit" | "safety_stop" | "timeout" | "browser_failure" | "other" | "unknown"
+  | "http-auth" | "http-rate-limit" | "http-client" | "http-server" | "transport" | "stream" | "protocol" | "aborted";
+export interface UsageFailure { code: UsageFailureCode; count: number; }
+export interface UsageCalendarDay {
+  day: string; total: number; completed: number; failed: number; cancelled: number; incomplete?: number; unrecorded: number;
+}
+export interface UsageTokenReport {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedInputTokens?: number | null;
+  reasoningTokens?: number | null;
+  reportedSamples: number;
+  unreportedSamples: number;
+  cachedInputReportedSamples?: number;
+  reasoningReportedSamples?: number;
 }
 export interface UsageSnapshot {
   available: boolean; error?: string; startedAt?: string; lifetime?: number;
   lifetimeGroups?: UsageGroup[]; lifetimeUnclassified?: number;
   recovered?: boolean; backupAvailable?: boolean;
   rows: Array<UsageGroup & { day: string }>;
+  generatedAt: string; timeZone: string;
+  source: UsageSource;
+  period: { startDay: string; endDay: string; days: UsageRangeDays };
+  selectedAccountId: string | null;
+  accounts: UsageAccountOption[];
+  metrics: UsageMetrics;
+  durations: UsageDurations;
+  failures: UsageFailure[];
+  calendar: UsageCalendarDay[];
+  tokens?: UsageTokenReport;
 }
 export interface AccountProxy { mode: "system" | "direct" | "http" | "https" | "socks5" | "pac"; url?: string; }
 
@@ -288,6 +337,7 @@ export interface LauncherApi {
   setFreshConversation(enabled: boolean): Promise<LauncherState>;
   setWebSubagents(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
+  setAsyncToolOperations(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   accounts(): Promise<AccountPoolSnapshot>;
   addAccount(label: string): Promise<AccountPoolSnapshot>;
@@ -314,7 +364,7 @@ export interface LauncherApi {
     value: boolean,
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
-  usage(days: 7 | 30 | 90): Promise<UsageSnapshot>;
+  usage(query: number | UsageQuery): Promise<UsageSnapshot>;
   logs(limit?: number): Promise<LogRecord[]>;
   exportLogs(): Promise<string | null>;
   installUpdate(): Promise<boolean>;

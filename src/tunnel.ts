@@ -3,7 +3,12 @@ import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, open
 import { basename, dirname, join } from "node:path";
 import { unzipSync } from "fflate";
 import type { AppConfig, BrowserInteractionMode, TunnelConfig } from "./config";
-import { atomicWriteFile, getConfigDir } from "./config";
+import {
+  CHATGPT_ASYNC_CONNECTOR_NAME,
+  DEV_CHATGPT_ASYNC_CONNECTOR_NAME,
+  atomicWriteFile,
+  getConfigDir,
+} from "./config";
 import { runCommand, runChecked } from "./process";
 
 export const TUNNEL_VERSION = "0.0.12";
@@ -434,9 +439,15 @@ function tunnelCommandQuoted(value: string): string {
 
 export function mcpCommand(config: AppConfig, platform = process.platform): string {
   const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
+  const asyncConnector = config.experimentalAsyncToolOperations === true
+    && config.browserInteractionMode === "automatic"
+    && config.mode === "full"
+    && (config.appName === CHATGPT_ASYNC_CONNECTOR_NAME
+      || config.appName === DEV_CHATGPT_ASYNC_CONNECTOR_NAME);
   const command = [
     ...config.runtimeCommand,
     "mcp",
+    ...(asyncConnector ? ["--async-tool-operations"] : []),
     config.allowWebSubagents === false ? "--no-web-subagents" : "--allow-web-subagents",
     "--contract",
     contract,

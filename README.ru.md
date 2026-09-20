@@ -8,17 +8,17 @@ NEKODEX объединяет отдельные профили ChatGPT, встр
 
 ## Скачать
 
-**NEKODEX 5.4.0-nekodex.1 — предварительный выпуск для macOS 13 и новее и Linux x64.**
+**NEKODEX 5.5.0-nekodex.1 — предварительный выпуск для macOS 13 и новее и Linux x64.**
 
 | Компьютер | Установщик |
 | --- | --- |
-| Apple Silicon — M1 и новее | [DMG для ARM64](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/NEKODEX-5.4.0-nekodex.1-mac-arm64.dmg) |
-| Intel | [DMG для Intel](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/NEKODEX-5.4.0-nekodex.1-mac-x64.dmg) |
+| Apple Silicon — M1 и новее | [DMG для ARM64](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/NEKODEX-5.5.0-nekodex.1-mac-arm64.dmg) |
+| Intel | [DMG для Intel](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/NEKODEX-5.5.0-nekodex.1-mac-x64.dmg) |
 
-[Страница выпуска](https://github.com/Froraut/NEKODEX/releases/tag/v5.4.0-nekodex.1) ·
-[Контрольные суммы](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/checksums.txt)
+[Страница выпуска](https://github.com/Froraut/NEKODEX/releases/tag/v5.5.0-nekodex.1) ·
+[Контрольные суммы](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/checksums.txt)
 
-Для Linux x64 доступен [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/codex-web-gpt-5.4.0-nekodex.1-linux-x64.AppImage).
+Для Linux x64 доступен [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/codex-web-gpt-5.5.0-nekodex.1-linux-x64.AppImage).
 
 Windows x64 собирается отдельно как **unsigned preview**: установщик и ZIP находятся в
 [артефактах сборки](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml).
@@ -44,6 +44,18 @@ Windows x64 собирается отдельно как **unsigned preview**: �
 подтверждаете отправку. Название Zero Risk не означает отсутствия рисков использования сервиса.
 
 ## Возможности
+
+В версии 5.5 появились раздельные отчёты Web и Native: фильтр браузерных аккаунтов, календарь
+с нулевыми днями, результаты запросов, медиана и 95-й процентиль наблюдаемой длительности,
+токены с указанием полноты данных и CSV без приватного содержимого. Неизвестные значения
+не подменяются нулями, а браузерные сообщения не смешиваются с native-запросами.
+
+Для долгих инструментов в автоматическом Full-режиме можно отдельно включить **Native5**.
+Создайте и проверьте **Codex Native5** (для DEV — **Codex Native5 DEV**), сохранив Native4.
+Новый протокол позволяет ожидать результат без повторного запуска той же операции.
+После отправки отменяется только наблюдение: внешнее действие может продолжиться.
+Перезапуск broker не восстанавливает незавершённые операции. Native4 остаётся режимом по умолчанию,
+а ручной режим продолжает использовать Zero Risk4.
 
 - Отдельные аккаунты, сохранение принадлежности задачи аккаунту, настройки proxy и темпа запросов.
 - Явный выбор Pro-версии и отдельной модели для автоматического резюме контекста.

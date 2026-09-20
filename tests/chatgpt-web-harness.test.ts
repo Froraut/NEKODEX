@@ -2144,12 +2144,15 @@ describe("ChatGPT outer-native harness v4", () => {
       "terminal-fence",
     );
 
-    expect(broker.beginCompletionFence(token)).toBe(0);
+    expect(broker.beginCompletionFence(token)).toEqual({ revision: 0 });
     const first = await callTurnBroker<{ bindingId: string; activityId: string }>(socketPath, {
       method: "claim",
       token,
     });
-    expect(broker.beginCompletionFence(token)).toBeUndefined();
+    expect(broker.beginCompletionFence(token)).toEqual({
+      blockedReason: "active_work",
+      blockedCount: 1,
+    });
     expect(broker.commitCompletionFence(token, 0)).toBeFalse();
     await callTurnBroker(socketPath, {
       method: "activity_complete",
@@ -2158,7 +2161,8 @@ describe("ChatGPT outer-native harness v4", () => {
     });
 
     const revision = broker.beginCompletionFence(token);
-    expect(revision).toBe(2);
+    expect(revision).toEqual({ revision: 2 });
+    if (!("revision" in revision)) throw new Error("completion fence remained blocked after activity cleanup");
     const crossing = await callTurnBroker<{ bindingId: string; activityId: string }>(socketPath, {
       method: "claim",
       token,
@@ -2168,11 +2172,12 @@ describe("ChatGPT outer-native harness v4", () => {
       token,
       activityId: crossing.activityId,
     });
-    expect(broker.commitCompletionFence(token, revision!)).toBeFalse();
+    expect(broker.commitCompletionFence(token, revision.revision)).toBeFalse();
 
     const finalRevision = broker.beginCompletionFence(token);
-    expect(finalRevision).toBe(4);
-    expect(broker.commitCompletionFence(token, finalRevision!)).toBeTrue();
+    expect(finalRevision).toEqual({ revision: 4 });
+    if (!("revision" in finalRevision)) throw new Error("final completion fence remained blocked");
+    expect(broker.commitCompletionFence(token, finalRevision.revision)).toBeTrue();
     await expect(callTurnBroker(socketPath, { method: "claim", token }))
       .rejects.toThrow("has already finished");
     await broker.close();
@@ -2189,7 +2194,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const delayed = "activity_delayed_claim_00000001";
     await callTurnBroker(socketPath, { method: "activity_complete", token, activityId: delayed });
     await callTurnBroker(socketPath, { method: "activity_complete", token, activityId: delayed });
-    expect(broker.beginCompletionFence(token)).toBe(1);
+    expect(broker.beginCompletionFence(token)).toEqual({ revision: 1 });
     await expect(callTurnBroker(socketPath, { method: "claim", token, activityId: delayed }))
       .rejects.toThrow("already completed");
 
@@ -2197,7 +2202,7 @@ describe("ChatGPT outer-native harness v4", () => {
     await callTurnBroker(socketPath, { method: "claim", token, activityId: ordinary });
     await callTurnBroker(socketPath, { method: "activity_complete", token, activityId: ordinary });
     await callTurnBroker(socketPath, { method: "activity_complete", token, activityId: ordinary });
-    expect(broker.beginCompletionFence(token)).toBe(3);
+    expect(broker.beginCompletionFence(token)).toEqual({ revision: 3 });
     await broker.close();
   });
 
@@ -3177,7 +3182,7 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(JSON.stringify(inventory)).not.toContain("binding_");
       // A fully local inventory lookup still crosses the broker's activity fence even though it
       // does not enqueue an outer Codex tool call.
-      expect(broker.beginCompletionFence(token)).toBe(2);
+      expect(broker.beginCompletionFence(token)).toEqual({ revision: 2 });
 
       const exec = call("codex_exec", {
         turn_token: token,
@@ -3321,7 +3326,7 @@ describe("ChatGPT outer-native harness v4", () => {
       });
       expect(rejected.isError).toBe(true);
       expect(JSON.stringify(rejected.content)).toContain("JSON schema does not support sandbox_permissions");
-      expect(typeof broker.beginCompletionFence(unsupportedToken)).toBe("number");
+      expect(broker.beginCompletionFence(unsupportedToken)).toEqual({ revision: 2 });
     } finally {
       await client.close().catch(() => {});
       broker.revoke(supportedToken);

@@ -27,6 +27,8 @@ export type SubagentProtocol = "compatibility-v1" | "native";
  */
 export const CHATGPT_CONNECTOR_NAME = "Codex Native4";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
+export const CHATGPT_ASYNC_CONNECTOR_NAME = "Codex Native5";
+export const DEV_CHATGPT_ASYNC_CONNECTOR_NAME = `${CHATGPT_ASYNC_CONNECTOR_NAME} DEV`;
 export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk4";
 export const LEGACY_CHATGPT_CONNECTOR_NAMES = [
   "Codex Native", "Codex Native DEV", "Codex Native2", "Codex Native2 DEV", "Codex Zero Risk",
@@ -66,8 +68,11 @@ export interface InteractionConnectorIdentities {
 export function resolveInteractionConnectorIdentities(
   interactionMode: BrowserInteractionMode,
   profile: "production" | "development" = "production",
+  experimentalAsyncToolOperations = false,
 ): InteractionConnectorIdentities {
-  const automaticAppName = profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
+  const automaticAppName = experimentalAsyncToolOperations
+    ? profile === "development" ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME : CHATGPT_ASYNC_CONNECTOR_NAME
+    : profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
   return {
     appName: interactionMode === "manual" ? ZERO_RISK_CHATGPT_CONNECTOR_NAME : automaticAppName,
     automaticAppName,
@@ -114,6 +119,8 @@ export interface AppConfig {
   experimentalSkillAttachments: boolean;
   allowWebSubagents: boolean;
   experimentalFreshConversationPerTurn: boolean;
+  /** Opt-in async connector schema. Valid only for automatic Full mode and a Native5 identity. */
+  experimentalAsyncToolOperations: boolean;
   /** Explicitly install the additional Pro-sized model row while Manual mode is active. */
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
@@ -246,6 +253,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     experimentalSkillAttachments: false,
     allowWebSubagents: false,
     experimentalFreshConversationPerTurn: false,
+    experimentalAsyncToolOperations: false,
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -594,7 +602,31 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.experimentalFreshConversationPerTurn !== undefined && typeof parsed.experimentalFreshConversationPerTurn !== "boolean") {
     throw new Error(`Invalid experimentalFreshConversationPerTurn in ${path}`);
   }
+  if (parsed.experimentalAsyncToolOperations !== undefined
+    && typeof parsed.experimentalAsyncToolOperations !== "boolean") {
+    throw new Error(`Invalid experimentalAsyncToolOperations in ${path}`);
+  }
   const experimentalFreshConversationPerTurn = browserInteractionMode !== "manual" && parsed.experimentalFreshConversationPerTurn === true;
+  const experimentalAsyncToolOperations = parsed.experimentalAsyncToolOperations === true;
+  if (experimentalAsyncToolOperations && (parsed.mode !== "full" || browserInteractionMode !== "automatic")) {
+    throw new Error(`experimentalAsyncToolOperations requires automatic Full mode in ${path}`);
+  }
+  const expectedAsyncConnectorName = parsed.purpose === "dev-harness"
+    ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME
+    : CHATGPT_ASYNC_CONNECTOR_NAME;
+  const expectedSynchronousConnectorName = parsed.purpose === "dev-harness"
+    ? DEV_CHATGPT_CONNECTOR_NAME
+    : CHATGPT_CONNECTOR_NAME;
+  if (experimentalAsyncToolOperations && automaticAppName !== expectedAsyncConnectorName) {
+    throw new Error(
+      `experimentalAsyncToolOperations requires automaticAppName ${JSON.stringify(expectedAsyncConnectorName)} in ${path}; rerun setup explicitly`,
+    );
+  }
+  if (!experimentalAsyncToolOperations && automaticAppName !== expectedSynchronousConnectorName) {
+    throw new Error(
+      `Synchronous tool operations require automaticAppName ${JSON.stringify(expectedSynchronousConnectorName)} in ${path}; rerun setup explicitly`,
+    );
+  }
   if (parsed.allowWebSubagents !== undefined && typeof parsed.allowWebSubagents !== "boolean") {
     throw new Error(`Invalid allowWebSubagents in ${path}`);
   }
@@ -634,6 +666,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     experimentalSkillAttachments,
     allowWebSubagents,
     experimentalFreshConversationPerTurn,
+    experimentalAsyncToolOperations,
     zeroRiskProEnabled,
   } as AppConfig;
 }
@@ -696,6 +729,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       allowWebSubagents: config.allowWebSubagents,
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       experimentalFreshConversationPerTurn: manual ? false : config.experimentalFreshConversationPerTurn,
+      experimentalAsyncToolOperations: manual ? false : config.experimentalAsyncToolOperations,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },

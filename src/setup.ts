@@ -9,7 +9,6 @@ import {
   defaultBrokerEndpoint,
   defaultConfig,
   getConfigPath,
-  isLegacyChatGptConnectorName,
   loadConfigForSetup,
   preserveUtf8Bom,
   resolveInteractionConnectorIdentities,
@@ -19,6 +18,7 @@ import {
 } from "./config";
 import {
   browserLoginStateExists,
+  browserLoginStateNeedsReverification,
   inspectBrowserLoginCapabilities,
   loginToChatGpt,
   storedBrowserLoginCapabilities,
@@ -64,6 +64,7 @@ export interface SetupOptions {
   experimentalSkillAttachments?: boolean;
   allowWebSubagents?: boolean;
   experimentalFreshConversationPerTurn?: boolean;
+  experimentalAsyncToolOperations?: boolean;
   zeroRiskProEnabled?: boolean;
   replaceCodexRoute?: boolean;
   restartService?: boolean;
@@ -81,6 +82,9 @@ export interface SetupResult {
   tunnelReady: boolean | null;
   codexRestartRequired: true;
   connectorSetupRequired: boolean;
+  connectorName: string;
+  experimentalAsyncToolOperations: boolean;
+  connectorVerificationReset: boolean;
   warnings?: string[];
 }
 
@@ -95,6 +99,9 @@ export interface DevProfileSetupResult {
   configPath: string;
   tunnelReady: boolean | null;
   connectorSetupRequired: boolean;
+  connectorName: string;
+  experimentalAsyncToolOperations: boolean;
+  connectorVerificationReset: boolean;
 }
 
 export interface ExistingFullSetupCredentials {
@@ -140,9 +147,7 @@ function activeConnectorIdentityMigrationRequired(config: AppConfig): boolean {
   const path = getConfigPath();
   if (!existsSync(path)) return false;
   const raw = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, "")) as Record<string, unknown>;
-  return typeof raw.appName === "string"
-    && isLegacyChatGptConnectorName(raw.appName)
-    && raw.appName !== config.appName;
+  return typeof raw.appName === "string" && raw.appName !== config.appName;
 }
 
 function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
@@ -170,6 +175,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     allowWebSubagents: before.allowWebSubagents,
     experimentalSkillAttachments: before.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: before.experimentalFreshConversationPerTurn,
+    experimentalAsyncToolOperations: before.experimentalAsyncToolOperations,
     zeroRiskProEnabled: before.zeroRiskProEnabled,
     autoApproveToolCalls: before.autoApproveToolCalls,
     controlToken: before.controlToken,
@@ -201,6 +207,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     allowWebSubagents: after.allowWebSubagents,
     experimentalSkillAttachments: after.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: after.experimentalFreshConversationPerTurn,
+    experimentalAsyncToolOperations: after.experimentalAsyncToolOperations,
     zeroRiskProEnabled: after.zeroRiskProEnabled,
     autoApproveToolCalls: after.autoApproveToolCalls,
     controlToken: after.controlToken,
@@ -216,6 +223,7 @@ export function tunnelWorkerRuntimeChanged(before: AppConfig | undefined, after:
   return before.releaseVersion !== after.releaseVersion
     || JSON.stringify(before.runtimeCommand) !== JSON.stringify(after.runtimeCommand)
     || before.allowWebSubagents !== after.allowWebSubagents
+    || before.experimentalAsyncToolOperations !== after.experimentalAsyncToolOperations
     || before.brokerSocketPath !== after.brokerSocketPath
     || before.browserInteractionMode !== after.browserInteractionMode
     || JSON.stringify(before.tunnel) !== JSON.stringify(after.tunnel);
@@ -238,7 +246,8 @@ export function setupProxyIsReady(
     && health.status === "ok"
     && health.mode === config.mode
     && health.version === config.releaseVersion
-    && health.accepting_turns === true;
+    && health.accepting_turns === true
+    && (config.mode !== "full" || health.broker_ready === true);
 }
 
 async function waitForProxy(config: AppConfig, timeoutMs = 10_000): Promise<void> {
@@ -276,9 +285,19 @@ function baseConfig(
   const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
   config.mode = options.mode;
   if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
+  if (options.experimentalAsyncToolOperations !== undefined) {
+    config.experimentalAsyncToolOperations = options.experimentalAsyncToolOperations;
+  }
+  if (config.experimentalAsyncToolOperations
+    && (config.mode !== "full" || config.browserInteractionMode !== "automatic")) {
+    throw new Error(
+      "Async tool operations require automatic Full mode; pass --synchronous-tool-operations before switching mode",
+    );
+  }
   Object.assign(config, resolveInteractionConnectorIdentities(
     config.browserInteractionMode,
     profile,
+    config.experimentalAsyncToolOperations,
   ));
   if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
   config.releaseVersion = VERSION;
@@ -562,6 +581,9 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   });
   const connectorIdentityMigrating = config.mode === "full"
     && activeConnectorIdentityMigrationRequired(config);
+  const connectorVerificationReset = Boolean(existing
+    && (existing.appName !== config.appName
+      || existing.experimentalAsyncToolOperations !== config.experimentalAsyncToolOperations));
   const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config)
     || connectorIdentityMigrating;
   if (existing && options.restartService) config.controlToken = randomBytes(32).toString("base64url");
@@ -604,9 +626,12 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     solAvailable = stored.solAvailable;
     extraHighAvailable = stored.extraHighAvailable;
     proAvailable = stored.proAvailable;
-    const loginRequired = options.forceLogin || !browserLoginStateExists(config);
+    const verifiedLogin = browserLoginStateExists(config);
+    const legacyLoginNeedsReverification = !verifiedLogin && browserLoginStateNeedsReverification(config);
+    const loginRequired = options.forceLogin || (!verifiedLogin && !legacyLoginNeedsReverification);
     const capabilityProbeRequired = !loginRequired
       && (options.refreshAccountCapabilities === true
+        || legacyLoginNeedsReverification
         || existing?.browserInteractionMode === "manual"
         || solAvailable === undefined
         || extraHighAvailable === undefined
@@ -1027,6 +1052,9 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     tunnelReady,
     codexRestartRequired: true,
     connectorSetupRequired: config.mode === "full",
+    connectorName: config.appName,
+    experimentalAsyncToolOperations: config.experimentalAsyncToolOperations,
+    connectorVerificationReset,
     ...(warnings.length ? { warnings } : {}),
   };
 }
@@ -1045,6 +1073,9 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     throw new Error("DEV profile setup requires the isolated launcher browser descriptor");
   }
   const config = baseConfig(existing, options, DEV_LAUNCHER_PROFILE);
+  const connectorVerificationReset = Boolean(existing
+    && (existing.appName !== config.appName
+      || existing.experimentalAsyncToolOperations !== config.experimentalAsyncToolOperations));
   if (config.browserHost !== "launcher") {
     throw new Error("DEV profile setup requires the desktop launcher browser host");
   }
@@ -1186,5 +1217,8 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     configPath: getConfigPath(),
     tunnelReady,
     connectorSetupRequired: config.mode === "full",
+    connectorName: config.appName,
+    experimentalAsyncToolOperations: config.experimentalAsyncToolOperations,
+    connectorVerificationReset,
   };
 }

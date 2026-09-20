@@ -5,10 +5,10 @@ const { randomBytes } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const {
+  automaticConnectorName,
   connectorNameForDevSetup,
   connectorNameForSetup,
   CURRENT_CONNECTOR_NAME,
-  DEV_CONNECTOR_NAME,
   isLegacyConnectorName,
   requireCurrentRuntimeConnectorName,
   validateConnectorName,
@@ -1032,22 +1032,25 @@ class RuntimeHost {
       requireCurrentRuntimeConnectorName(current.persistedLegacyConnectorNames[0]);
     }
     const runtimeName = requireCurrentRuntimeConnectorName(current.config?.appName);
+    const asyncToolOperations = current.config?.experimentalAsyncToolOperations === true;
     return this.launcherProfile === "development"
-      ? connectorNameForDevSetup(runtimeName)
-      : runtimeName;
+      ? connectorNameForDevSetup(runtimeName, asyncToolOperations)
+      : connectorNameForSetup(runtimeName, asyncToolOperations);
   }
 
   browserConnectorName() {
     const current = this.runtimeConfigSnapshot();
+    const asyncToolOperations = current.config?.experimentalAsyncToolOperations === true;
     if (this.launcherProfile === "development") {
-      return connectorNameForDevSetup(current.config?.appName);
+      return connectorNameForDevSetup(current.config?.appName, asyncToolOperations);
     }
     if (!current.configured || current.mode !== "full") return CURRENT_CONNECTOR_NAME;
-    return connectorNameForSetup(current.config?.appName);
+    return connectorNameForSetup(current.config?.appName, asyncToolOperations);
   }
 
   setupConnectorName() {
-    return this.launcherProfile === "development" ? DEV_CONNECTOR_NAME : CURRENT_CONNECTOR_NAME;
+    const enabled = this.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true;
+    return automaticConnectorName({ development: this.launcherProfile === "development", asyncToolOperations: enabled });
   }
 
   cancelActiveTurns() {
@@ -1327,6 +1330,55 @@ class RuntimeHost {
     return { ...result, enabled: enabled === true };
   }
 
+  async setAsyncToolOperations(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Asynchronous tool operations must be a boolean");
+    const desired = enabled === true;
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) {
+      throw new Error("Install the Full automatic Codex integration before changing asynchronous tool operations");
+    }
+    if (current.mode !== "full") {
+      throw new Error("Asynchronous tool operations require the Full MCP harness; connect Full mode first");
+    }
+    if (current.config?.browserInteractionMode !== "automatic") {
+      throw new Error("Asynchronous tool operations are unavailable in Manual mode; switch to Automatic mode first");
+    }
+    const persisted = current.config?.experimentalAsyncToolOperations === true;
+    if (persisted === desired) {
+      return { enabled: persisted, changed: false, connectorName: this.browserConnectorName() };
+    }
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      "--full",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs({ mode: "automatic" }),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      desired ? "--async-tool-operations" : "--synchronous-tool-operations",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: desired ? "Enabling asynchronous tool operations" : "Restoring synchronous tool operations",
+      successMessage: desired
+        ? `Asynchronous tool operations enabled${development ? "" : "; restart Codex"}`
+        : `Synchronous tool operations restored${development ? "" : "; restart Codex"}`,
+      timeoutMs: MCP_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("async-tool-operations", args, options)
+      : await this.runSetup("async-tool-operations", args, options);
+    const saved = this.runtimeConfigSnapshot();
+    if ((saved.config?.experimentalAsyncToolOperations === true) !== desired) {
+      throw new Error("Runtime configuration did not persist the requested asynchronous tool operation mode");
+    }
+    const expectedConnector = automaticConnectorName({ development, asyncToolOperations: desired });
+    if (this.browserConnectorName() !== expectedConnector) {
+      throw new Error(`Runtime configuration did not select ${JSON.stringify(expectedConnector)}`);
+    }
+    return { ...result, enabled: desired, changed: true, connectorName: expectedConnector };
+  }
+
   async setWebSubagents(enabled) {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) throw new Error("Initialize the runtime before changing Web subagents");
@@ -1493,6 +1545,9 @@ class RuntimeHost {
       this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: targetMode }),
       "--replace-codex-route",
+      targetMode === "automatic" && this.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true
+        ? "--async-tool-operations"
+        : "--synchronous-tool-operations",
     ];
     if (reuseSavedCredentials) {
       args.push("--acknowledge-unofficial", "--restart-service");
@@ -1545,6 +1600,9 @@ class RuntimeHost {
       this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: targetMode }),
       "--acknowledge-unofficial",
+      targetMode === "automatic" && this.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true
+        ? "--async-tool-operations"
+        : "--synchronous-tool-operations",
     ];
     if (reuseSavedCredentials) {
       return this.runDevSetup("dev-mcp-setup", args, {
@@ -1590,6 +1648,9 @@ class RuntimeHost {
       mode === "automatic" && current.config?.experimentalBiggerContext === true
         ? "--bigger-context"
         : "--standard-context",
+      mode === "automatic" && current.config?.experimentalAsyncToolOperations === true
+        ? "--async-tool-operations"
+        : "--synchronous-tool-operations",
     ];
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {

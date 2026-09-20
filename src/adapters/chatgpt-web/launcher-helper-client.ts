@@ -281,6 +281,11 @@ export class LauncherBrowserHelperClient {
         "Launcher browser helper does not support the MCP completion fence; update or restart the launcher",
       );
     }
+    if (turn.asyncToolOperations && !this.helperFeatures.has("completion-fence-reasons")) {
+      throw new Error(
+        "Launcher browser helper does not support Native5 completion-fence diagnostics; update or restart the launcher",
+      );
+    }
     const compactionExecution = validateCompactionExecution(turn);
     if (compactionExecution && !this.helperFeatures.has("compaction-execution")) {
       throw new ChatGptWebAdapterError(
@@ -536,13 +541,19 @@ export class LauncherBrowserHelperClient {
             );
             return;
           }
-          void fence.begin().then(revision => {
+          void fence.begin().then(result => {
             if (this.pending.get(message.id) !== pending || pending.localFailure || pending.turn.abortSignal?.aborted) return;
             return this.send({
               type: "completion_fence_begin_ack",
               id: message.id,
               requestId: message.requestId,
-              revision: revision ?? null,
+              ...("revision" in result
+                ? { revision: result.revision }
+                : {
+                  revision: null,
+                  blockedReason: result.blockedReason,
+                  blockedCount: result.blockedCount,
+                }),
             });
           }).catch(error => this.abortWithLocalFailure(
             message.id,

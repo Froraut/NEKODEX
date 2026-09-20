@@ -2,7 +2,7 @@ import { test, expect, afterAll } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { forwardNativeCodexRequest } from "../src/native-passthrough";
+import { forwardNativeCodexRequest, observeNativeResponseBody } from "../src/native-passthrough";
 import { rememberResponseState, flushResponseState } from "../src/responses/state";
 import { HttpTurnCounter } from "../src/server";
 import { LauncherBrowserHelperClient } from "../src/adapters/chatgpt-web/launcher-helper-client";
@@ -36,6 +36,66 @@ test("review: native continuation expands a locally owned Web response only", as
   expect(forwarded.input[0].content).toBe("original question");
   expect(forwarded.input[1].id).toBeUndefined();
   expect(forwarded.input[2].content).toBe("continue");
+});
+
+test("review: chunk-split oversized native terminal stays completed across early delivery cancellation", async () => {
+  const encoder = new TextEncoder();
+  const terminalWire = encoder.encode(
+    `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        status: "completed",
+        model: "gpt-5.6-sol",
+        usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
+        output: "x".repeat(70 * 1024),
+      },
+    })}\n\n`,
+  );
+  const doneWire = encoder.encode("data: [DONE]\n\n");
+  const wire = new Uint8Array(terminalWire.byteLength + doneWire.byteLength);
+  wire.set(terminalWire);
+  wire.set(doneWire, terminalWire.byteLength);
+  const cuts = [47, 4096, 32 * 1024, 66 * 1024, terminalWire.byteLength, wire.byteLength];
+  let offset = 0;
+  const source = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const end = cuts.shift();
+      if (end === undefined) return controller.close();
+      controller.enqueue(wire.subarray(offset, end));
+      offset = end;
+    },
+  });
+  const events: Array<Record<string, unknown>> = [];
+  const observed = observeNativeResponseBody(source, {
+    endpoint: "responses",
+    requestedModelId: "gpt-5.6-sol",
+    startedAt: new Date().toISOString(),
+    startedAtMs: Date.now(),
+    httpStatus: 200,
+    eventStream: true,
+    signal: new AbortController().signal,
+  }, event => { events.push(event); });
+  const reader = observed.getReader();
+  let forwardedBytes = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    forwardedBytes += chunk.value.byteLength;
+    if (forwardedBytes === terminalWire.byteLength) {
+      await reader.cancel("consumer stops after response.completed");
+      break;
+    }
+  }
+  expect(forwardedBytes).toBe(terminalWire.byteLength);
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({
+    endpoint: "responses",
+    requestedModelId: "gpt-5.6-sol",
+    reportedModelId: null,
+    outcome: "completed",
+    usageStatus: "unreported",
+    usage: null,
+  });
 });
 
 test("review: Windows-shaped delivery stays bounded until consumer demand", async () => {

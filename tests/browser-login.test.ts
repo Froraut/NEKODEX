@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   browserLoginStateExists,
+  browserLoginStateNeedsReverification,
   captureSystemBrowserLogin,
   loginToChatGpt,
   loginVerificationMarkerPath,
   sanitizeBrowserLoginStorageState,
   storedBrowserLoginCapabilities,
+  writeBrowserLoginVerificationMarker,
 } from "../src/browser-login";
 import { CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
 import { defaultConfig } from "../src/config";
@@ -160,12 +162,12 @@ test("passkey storage capture excludes identity-provider and partitioned state",
   ]);
 });
 
-test("a storage-state file is not trusted without a verification marker", () => {
+test("legacy login evidence requires live reverification without deleting stored state", () => {
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-login-state-"));
   try {
     const config = defaultConfig("browser-only");
     config.storageStatePath = join(root, "storage-state.json");
-    writeFileSync(config.storageStatePath, "{}\n", { mode: 0o600 });
+    writeFileSync(config.storageStatePath, '{"cookies":[],"origins":[]}\n', { mode: 0o600 });
     expect(browserLoginStateExists(config)).toBe(false);
 
     writeFileSync(
@@ -173,7 +175,9 @@ test("a storage-state file is not trusted without a verification marker", () => 
       `${JSON.stringify({ version: 1, authenticated: true, verifiedAt: "2026-07-26T00:00:00.000Z" })}\n`,
       { mode: 0o600 },
     );
-    expect(browserLoginStateExists(config)).toBe(true);
+    expect(browserLoginStateExists(config)).toBe(false);
+    expect(browserLoginStateNeedsReverification(config)).toBe(true);
+    expect(existsSync(config.storageStatePath)).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -184,12 +188,9 @@ test("stored login capabilities retain Extra High independently and only infer l
   try {
     const config = defaultConfig("browser-only");
     config.storageStatePath = join(root, "storage-state.json");
-    writeFileSync(config.storageStatePath, "{}\n", { mode: 0o600 });
-    const writeMarker = (capabilities: Record<string, unknown>) => writeFileSync(
-      loginVerificationMarkerPath(config.storageStatePath),
-      JSON.stringify({ version: 1, authenticated: true, verifiedAt: "2026-09-11T00:00:00.000Z", ...capabilities }),
-      { mode: 0o600 },
-    );
+    writeFileSync(config.storageStatePath, '{"cookies":[],"origins":[]}\n', { mode: 0o600 });
+    const writeMarker = (capabilities: { solAvailable: boolean; extraHighAvailable?: boolean; proAvailable: boolean }) =>
+      writeBrowserLoginVerificationMarker(config.storageStatePath, capabilities);
     writeMarker({ solAvailable: true, extraHighAvailable: true, proAvailable: false });
     expect(storedBrowserLoginCapabilities(config)).toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: false });
     writeMarker({ solAvailable: true, extraHighAvailable: false, proAvailable: false });
@@ -207,7 +208,10 @@ test("stored login capabilities retain Extra High independently and only infer l
       { solAvailable: "true", extraHighAvailable: true, proAvailable: false },
       { solAvailable: true, extraHighAvailable: true, proAvailable: "false" },
     ]) {
-      writeMarker(invalid);
+      writeMarker({ solAvailable: true, extraHighAvailable: true, proAvailable: false });
+      const markerPath = loginVerificationMarkerPath(config.storageStatePath);
+      const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+      writeFileSync(markerPath, JSON.stringify({ ...marker, ...invalid }), { mode: 0o600 });
       expect(storedBrowserLoginCapabilities(config)).toEqual({});
     }
   } finally {

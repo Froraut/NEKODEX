@@ -150,6 +150,10 @@ if [ "$OS" = "Darwin" ]; then
     echo "Launcher archive is incomplete" >&2
     exit 1
   fi
+  # A matching download hash alone is not a native publisher signature. Verify before
+  # moving the installed app; the standalone preview path must not weaken this installer.
+  codesign --verify --deep --strict "$SOURCE_APP"
+  spctl --assess --type execute "$SOURCE_APP"
   if [ ! -w "$INSTALL_DIR" ]; then
     INSTALL_DIR="$HOME/Applications"
     mkdir -p "$INSTALL_DIR"

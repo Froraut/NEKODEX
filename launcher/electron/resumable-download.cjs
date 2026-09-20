@@ -37,7 +37,7 @@ async function downloadAuthenticatedAsset(url, destination, {
     clearTimeout(idle);
     idle = setTimeout(() => controller.abort(new Error('Update download made no progress; partial retained for retry')), idleTimeoutMs);
     const speed = Math.max(0, bytes - startBytes) / Math.max(0.001, (Date.now() - startedAt) / 1000);
-    if (Date.now() - lastPublishedAt >= 250 || bytes === expectedBytes) {
+    if (Date.now() - lastPublishedAt >= 100 || bytes === expectedBytes) {
       lastPublishedAt = Date.now();
       onProgress?.({ downloadedBytes: bytes, totalBytes: expectedBytes, bytesPerSecond: speed,
         remainingSeconds: speed > 0 ? Math.ceil((expectedBytes - bytes) / speed) : null });

@@ -16,9 +16,14 @@ function processAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
 }
-async function waitForParent(pid, timeoutMs = 120_000) {
+async function waitForParent(pid, identity, timeoutMs = 120_000, identityOf = processIdentity, isAlive = processAlive) {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || typeof identity !== "string" || !identity || identity.length > 512) {
+    throw new Error("Update worker requires the exact parent process identity");
+  }
   const deadline = Date.now() + timeoutMs;
-  while (processAlive(pid)) {
+  for (;;) {
+    const observed = identityOf(pid);
+    if (observed !== identity && (observed !== null || !isAlive(pid))) return;
     if (Date.now() >= deadline) throw new Error(`Launcher process ${pid} did not exit in time`);
     await sleep(100);
   }
@@ -392,8 +397,8 @@ async function main() {
     return;
   }
   const job = JSON.parse(fs.readFileSync(jobPath, "utf8"));
-  appendLog(job, `waiting for launcher PID ${job.parentPid} before installing v${job.version}`);
-  await waitForParent(job.parentPid);
+  appendLog(job, `waiting for exact launcher process ${job.parentPid} before installing v${job.version}`);
+  await waitForParent(job.parentPid, job.parentIdentity);
   let transaction;
   try {
     transaction = prepareTransaction(job);
@@ -411,6 +416,6 @@ async function main() {
     throw error;
   }
 }
-module.exports = { cleanup, commit, executableFor, launch, main, operation, prepareTransaction, processAlive,
+module.exports = { cleanup, commit, executableFor, launch, main, operation, prepareTransaction, processAlive, waitForParent,
   recover, replace, rollback, runTransaction, stopReplacement, waitForReadiness, writeJournal };
 if (require.main === module) void main().catch(() => process.exit(1));

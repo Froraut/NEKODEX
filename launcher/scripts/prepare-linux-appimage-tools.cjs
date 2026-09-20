@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { beginDirectoryBuild } = require("../../scripts/build-output.cjs");
 const { Arch } = require("builder-util");
 const { getAppImageTools } = require("app-builder-lib/out/toolsets/linux.js");
 
@@ -65,14 +66,17 @@ async function main() {
       || path.join(__dirname, "..", "build", "appimage-tools"),
   );
   if (downloadedRoot === outputRoot) throw new Error("AppImage toolset output must not replace the shared download cache");
-  fs.rmSync(outputRoot, { recursive: true, force: true });
-  fs.cpSync(downloadedRoot, outputRoot, {
+  const transaction = beginDirectoryBuild(outputRoot, { repositoryRoot: path.resolve(__dirname, "../.."), kind: "appimage-tools" });
+  try {
+  fs.cpSync(downloadedRoot, transaction.staging, {
     recursive: true,
     force: true,
     dereference: false,
     verbatimSymlinks: true,
   });
-  replaceToolsetLibnotify(outputRoot, source);
+  replaceToolsetLibnotify(transaction.staging, source);
+  transaction.commit();
+  } finally { transaction.dispose(); }
 
   if (process.env.GITHUB_ENV) {
     fs.appendFileSync(process.env.GITHUB_ENV, `APPIMAGE_TOOLS_PATH=${outputRoot}\n`);

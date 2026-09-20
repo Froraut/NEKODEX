@@ -32,6 +32,7 @@ const DEFAULT_STATE = Object.freeze({
   manualSubmitTimeoutSec: 120,
   passkeyBrowser: "chrome",
   browserInteractionMode: "automatic",
+  experimentalAsyncToolOperations: false,
   experimentalBiggerContext: false,
   experimentalSkillAttachments: false,
   allowWebSubagents: false,
@@ -81,6 +82,7 @@ function readState(filePath) {
       "autoStart",
       "keepRunningOnClose",
       "showBrowserDuringTurns",
+      "experimentalAsyncToolOperations",
       "experimentalBiggerContext",
       "experimentalSkillAttachments",
       "allowWebSubagents",
@@ -96,6 +98,7 @@ function readState(filePath) {
     }
     if (state.coreSetupComplete !== true) {
       if (state.onboardingComplete !== true) state.browserInteractionMode = "automatic";
+      state.experimentalAsyncToolOperations = false;
       state.zeroRiskProEnabled = false;
     }
     if (state.browserSmokeVersion !== null
@@ -192,6 +195,7 @@ function createStateStore(filePath) {
         next.codexCatalogVerified = false;
         next.codexPickerConfirmed = false;
         next.mcpSetupComplete = false;
+        next.experimentalAsyncToolOperations = false;
       } else if (patch.codexCatalogVerified === false) {
         next.codexPickerConfirmed = false;
       }

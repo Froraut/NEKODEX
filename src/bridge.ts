@@ -13,8 +13,10 @@ function sseEvent(name: string, data: Record<string, unknown>): string {
   return `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-function responsesUsage(usage: CodexUsage | undefined): Record<string, unknown> {
-  if (!usage) return { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+function responsesUsage(usage: CodexUsage | undefined): Record<string, unknown> | null {
+  // Responses permits null usage while a stream is in progress. Keep that same compatible shape
+  // when this provider never reports usage; zero is a measured value and must not mean unknown.
+  if (!usage) return null;
   // inputTokens is already inclusive of cache read/write (types.ts convention).
   const inputTokens = usage.inputTokens;
   const out: Record<string, unknown> = {

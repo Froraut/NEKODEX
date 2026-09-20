@@ -2,10 +2,20 @@
 set -eu
 
 REPOSITORY="${CODEX_CHATGPT_WEB_REPOSITORY:-Froraut/NEKODEX}"
-VERSION="${CODEX_CHATGPT_WEB_VERSION:-5.4.0-nekodex.1}"
+VERSION="${CODEX_CHATGPT_WEB_VERSION:-5.5.0-nekodex.1}"
 BIN_DIR="${CODEX_CHATGPT_WEB_BIN_DIR:-$HOME/.local/bin}"
 LIB_DIR="${CODEX_CHATGPT_WEB_LIB_DIR:-$HOME/.local/lib/codex-chatgpt-web}"
 DOC_DIR="${CODEX_CHATGPT_WEB_DOC_DIR:-$HOME/.local/share/doc/codex-chatgpt-web}"
+
+# Validate before constructing staging/backup paths or registering recursive cleanup.
+if ! printf '%s\n' "$REPOSITORY" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+  echo "Invalid GitHub repository" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+([.-][A-Za-z0-9]+)*)?$'; then
+  echo "Invalid release version" >&2
+  exit 1
+fi
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "The terminal-only installer supports macOS only; use the desktop launcher on Windows or Linux" >&2

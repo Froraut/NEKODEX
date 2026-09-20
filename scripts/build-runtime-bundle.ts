@@ -9,13 +9,13 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../src/version";
 import { createRequire } from "node:module";
+const { beginDirectoryBuild } = createRequire(import.meta.url)("./build-output.cjs");
 const { signEmbeddedRuntime } = createRequire(import.meta.url)("../launcher/scripts/release-signing.cjs");
 
 const root = resolve(import.meta.dir, "..");
@@ -46,12 +46,14 @@ function embeddedBunExecutable(): string {
   }
   return executable;
 }
-const output = resolve(process.argv[2] ?? join(root, "dist", "runtime"));
+const destination = resolve(process.argv[2] ?? join(root, "dist", "runtime"));
+const transaction = beginDirectoryBuild(destination, { repositoryRoot: root, kind: "runtime" });
+const output: string = transaction.staging;
+try {
 const appDir = join(output, "app");
 const runtimeDir = join(output, "runtime");
 const binDir = join(output, "bin");
 
-rmSync(output, { recursive: true, force: true });
 mkdirSync(appDir, { recursive: true });
 mkdirSync(runtimeDir, { recursive: true });
 mkdirSync(binDir, { recursive: true });
@@ -224,4 +226,6 @@ writeFileSync(join(output, "manifest.json"), `${JSON.stringify({
   files,
 }, null, 2)}\n`);
 
-process.stdout.write(`${output}\n`);
+transaction.commit();
+process.stdout.write(`${destination}\n`);
+} finally { transaction.dispose(); }

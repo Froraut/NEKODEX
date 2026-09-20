@@ -14,7 +14,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { copyFor, localizeRuntimeMessage, localizeLauncherError, type Copy } from "./i18n";
@@ -55,6 +57,84 @@ function currentToolProof(snapshot: LauncherSnapshot, operation: OperationState 
     && !(snapshot.profile === "production"
       && snapshot.state.browserInteractionMode === "automatic"
       && operation?.name === "runtime-start" && operation.status === "failed");
+}
+
+function handleRadioGroupKeys(event: ReactKeyboardEvent<HTMLElement>) {
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+  const radios = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]:not([aria-disabled="true"]):not(:disabled)')];
+  if (!radios.length) return;
+  const current = radios.indexOf(document.activeElement as HTMLElement);
+  let next = current < 0 ? 0 : current;
+  if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = radios.length - 1;
+  else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (next - 1 + radios.length) % radios.length;
+  else next = (next + 1) % radios.length;
+  event.preventDefault();
+  radios[next]?.focus();
+  radios[next]?.click();
+}
+
+function useModalFocus(active: boolean, container: RefObject<HTMLElement | null>, onClose: () => void) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    if (!active || !container.current) return;
+    const modal = container.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const inerted = new Map<HTMLElement, boolean>();
+    let branch: HTMLElement = modal;
+    let parent = branch.parentElement;
+    while (parent) {
+      for (const element of parent.children) {
+        if (element instanceof HTMLElement && element !== branch && !inerted.has(element)) {
+          inerted.set(element, element.inert);
+          element.inert = true;
+        }
+      }
+      if (parent === document.body) break;
+      branch = parent;
+      parent = branch.parentElement;
+    }
+    const visible = (element: HTMLElement) => {
+      if (element.hidden || element.closest("[inert]")) return false;
+      const style = window.getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+    };
+    const focusable = () => [...modal.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled), video[controls], [href], [tabindex]:not([tabindex="-1"])')].filter(visible);
+    const focusFirst = () => {
+      const preferred = modal.querySelector<HTMLElement>("[data-modal-autofocus]");
+      (preferred && visible(preferred) && !preferred.matches(":disabled") ? preferred : focusable()[0] ?? modal).focus();
+    };
+    const frame = requestAnimationFrame(focusFirst);
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = focusable();
+      if (!controls.length) { event.preventDefault(); modal.focus(); return; }
+      const first = controls[0]!;
+      const last = controls.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    const focusin = (event: FocusEvent) => {
+      if (event.target instanceof Node && modal.contains(event.target)) return;
+      event.stopPropagation();
+      focusFirst();
+    };
+    document.addEventListener("keydown", keydown, true);
+    document.addEventListener("focusin", focusin, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", keydown, true);
+      document.removeEventListener("focusin", focusin, true);
+      for (const [element, inert] of inerted) element.inert = inert;
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [active, container]);
 }
 
 export function App() {
@@ -400,7 +480,7 @@ function Onboarding({
             : isInteraction ? localized.interactionModeOnboardingBody : localized.welcomeReadyBody}</p>
 
           {isLanguage ? (
-            <div className="welcome-options" role="radiogroup" aria-label={localized.chooseLanguage}>
+            <div className="welcome-options" role="radiogroup" aria-label={localized.chooseLanguage} onKeyDown={handleRadioGroupKeys}>
               {(Object.entries(languages) as Array<[Language, { label: string; marker: string }]>).map(([code, option]) => (
                 <WelcomeOption
                   active={selectedLanguage === code}
@@ -529,6 +609,8 @@ function LauncherShell({
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateCheckCooldown, setUpdateCheckCooldown] = useState(false);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
+  const [updateInstallPending, setUpdateInstallPending] = useState(false);
+  const updateInstallPendingRef = useRef(false);
   const updateCheckTimer = useRef<number | undefined>(undefined);
   const updateCheckMounted = useRef(false);
   useEffect(() => {
@@ -555,7 +637,10 @@ function LauncherShell({
       if (updateCheckMounted.current) setUpdateCheckBusy(false);
     }
   };
-  const updateBusy = ["downloading", "verifying", "installing"].includes(snapshot.update.status);
+  const updateBusy = updateInstallPending || ["downloading", "verifying", "installing"].includes(snapshot.update.status);
+  useEffect(() => {
+    if (["downloading", "verifying", "installing"].includes(snapshot.update.status)) setUpdateError(null);
+  }, [snapshot.update.status]);
   const handledUpdatePanelRequest = useRef(0);
   useEffect(() => {
     if (updatePanelRequest <= handledUpdatePanelRequest.current) return;
@@ -668,6 +753,15 @@ function LauncherShell({
     await enqueueBrowserSurface(true, intent, show);
   }, [enqueueBrowserSurface]);
 
+  const openBrowserTab = async (tabId: string) => {
+    try {
+      await api!.selectBrowserTab(tabId);
+      await activateBrowser();
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+  };
+
   const toggleSidebar = () => {
     const next = !sidebarOpen;
     if (compactSidebar && next && surface === "browser") {
@@ -691,11 +785,17 @@ function LauncherShell({
   };
 
   const installUpdate = async () => {
+    if (updateInstallPendingRef.current) return;
+    updateInstallPendingRef.current = true;
+    setUpdateInstallPending(true);
     setUpdateError(null);
     try {
       await api!.installUpdate();
     } catch (cause) {
       setUpdateError(messageOf(cause));
+    } finally {
+      updateInstallPendingRef.current = false;
+      setUpdateInstallPending(false);
     }
   };
 
@@ -848,7 +948,7 @@ function LauncherShell({
             className="surface-transition"
             key={surface}
           >
-            {surface === "overview" ? <Overview copy={copy} browser={browser} snapshot={snapshot} toolsReady={browser?.authenticated === true && currentToolProof(snapshot, operation)} logs={logs} navigate={navigateSurface} /> : null}
+            {surface === "overview" ? <Overview copy={copy} browser={browser} snapshot={snapshot} toolsReady={browser?.authenticated === true && currentToolProof(snapshot, operation)} logs={logs} navigate={navigateSurface} openTab={(tabId) => void openBrowserTab(tabId)} /> : null}
             {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
               <AccountSettings copy={copy} openBrowser={() => navigateSurface("browser")} setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} />
             </ContentSurface> : null}
@@ -1853,7 +1953,9 @@ function McpSurface({
                 <details className="connector-upgrade-help"><summary>{copy.connectorUpgradeHelp}</summary><NoticeRow icon="alert" tone="warning">
                   {manualInteraction
                     ? copy.manualConnectorNotice
-                    : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
+                    : ["Codex Native5", "Codex Native5 DEV"].includes(snapshot.connectorNames[interactionMode])
+                      ? copy.asyncToolOperationsBody.replace("{connector}", snapshot.connectorNames[interactionMode])
+                      : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
                 </NoticeRow></details>
                 <div className="connector-name">
                   <span>{copy.connectorName}</span>
@@ -1940,7 +2042,7 @@ function ActivitySurface({
     && `${humanEvent(record.event)} ${logDetail(record.detail)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return (
     <ContentSurface subtitle={copy.activitySubtitle} title={copy.activityTitle}>
-      <UsageDashboard copy={copy} />
+      <UsageDashboard copy={copy} language={language} />
       <div className="section-heading activity-heading">
         <span>{copy.recentActivity}</span>
         <SecondaryButton
@@ -2031,6 +2133,10 @@ function SettingsSurface({
   const proModelBusy = busy
     || operation?.status === "running"
     || browser?.tabs.some((tab) => tab.status === "running") === true;
+  const asyncToolOperationsBlocked = proModelBusy
+    || browser?.status === "running"
+    || browser?.status === "testing"
+    || browser?.navigationLocked === true;
 
   const savePreference = async (action: () => Promise<LauncherState>) => {
     if (busy) return;
@@ -2087,6 +2193,19 @@ function SettingsSurface({
     setError(null);
     try {
       updateState(await api!.setSkillAttachments(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const setAsyncToolOperations = async (enabled: boolean) => {
+    if (asyncToolOperationsBlocked || snapshot.state.browserInteractionMode !== "automatic"
+      || snapshot.state.coreSetupComplete !== true || snapshot.state.mcpRuntimeInstalled !== true) return;
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setAsyncToolOperations(enabled));
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -2247,6 +2366,20 @@ function SettingsSurface({
             checked={snapshot.state.experimentalSkillAttachments}
             disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}
             onChange={(checked) => void setSkillAttachments(checked)}
+          />
+        </SettingRow>
+        <SettingRow
+          body={(snapshot.state.browserInteractionMode !== "automatic" || snapshot.state.coreSetupComplete !== true || snapshot.state.mcpRuntimeInstalled !== true)
+            ? copy.asyncToolOperationsUnavailable
+            : copy.asyncToolOperationsBody.replace("{connector}", devProfile ? "Codex Native5 DEV" : "Codex Native5")}
+          label={copy.asyncToolOperations}
+        >
+          <Switch
+            label={copy.asyncToolOperations}
+            checked={snapshot.state.experimentalAsyncToolOperations === true}
+            disabled={asyncToolOperationsBlocked || snapshot.state.browserInteractionMode !== "automatic"
+              || snapshot.state.coreSetupComplete !== true || snapshot.state.mcpRuntimeInstalled !== true}
+            onChange={enabled => void setAsyncToolOperations(enabled)}
           />
         </SettingRow>
         <SettingRow body={copy.webSubagentsBody} label={copy.webSubagents}>
@@ -2419,8 +2552,19 @@ function ZeroRiskModelMenu({
   proEnabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const choose = (enabled: boolean) => {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const selectedRadio = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => selectedRadio.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+  const closeMenu = () => {
     setOpen(false);
+    requestAnimationFrame(() => trigger.current?.focus());
+  };
+  const choose = (enabled: boolean) => {
+    closeMenu();
     if (enabled !== proEnabled) onChange(enabled);
   };
 
@@ -2428,16 +2572,16 @@ function ZeroRiskModelMenu({
     <div
       className={`zero-risk-model-menu${open ? " is-open" : ""}`}
       onKeyDown={(event) => {
-        if (event.key === "Escape") setOpen(false);
+        if (event.key === "Escape") closeMenu();
       }}
     >
       <button
         aria-expanded={open}
-        aria-haspopup="dialog"
         aria-label={copy.zeroRiskModelSettings}
         className="zero-risk-model-trigger"
         disabled={busy}
         onClick={() => setOpen((current) => !current)}
+        ref={trigger}
         title={copy.zeroRiskModelSettings}
         type="button"
       >
@@ -2448,12 +2592,14 @@ function ZeroRiskModelMenu({
           <button
             aria-label={`${copy.close}: ${copy.zeroRiskModelSettings}`}
             className="zero-risk-model-scrim"
-            onClick={() => setOpen(false)}
+            onClick={closeMenu}
+            tabIndex={-1}
             type="button"
           />
           <div
             aria-label={copy.zeroRiskModelSettings}
             className="zero-risk-model-panel"
+            onKeyDown={handleRadioGroupKeys}
             role="radiogroup"
           >
             <p>{copy.zeroRiskModelSettingsBody}</p>
@@ -2462,7 +2608,9 @@ function ZeroRiskModelMenu({
                 aria-checked={!proEnabled}
                 className={!proEnabled ? "is-selected" : ""}
                 onClick={() => choose(false)}
+                ref={!proEnabled ? selectedRadio : undefined}
                 role="radio"
+                tabIndex={!proEnabled ? 0 : -1}
                 type="button"
               >
                 {!proEnabled ? <span className="zero-risk-model-radio"><Icon name="check" /></span> : null}
@@ -2477,7 +2625,9 @@ function ZeroRiskModelMenu({
                 aria-checked={proEnabled}
                 className={proEnabled ? "is-selected" : ""}
                 onClick={() => choose(true)}
+                ref={proEnabled ? selectedRadio : undefined}
                 role="radio"
+                tabIndex={proEnabled ? 0 : -1}
                 type="button"
               >
                 {proEnabled ? <span className="zero-risk-model-radio"><Icon name="check" /></span> : null}
@@ -2509,7 +2659,7 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
   const [expanded, setExpanded] = useState(false);
   const inlineVideo = useRef<HTMLVideoElement>(null);
   const expandedVideo = useRef<HTMLVideoElement>(null);
-  const opener = useRef<HTMLButtonElement>(null);
+  const expandedDialog = useRef<HTMLDivElement>(null);
   const expandedAt = useRef(0);
 
   const closeExpanded = () => {
@@ -2518,17 +2668,8 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
       inlineVideo.current.currentTime = currentTime ?? 0;
     }
     setExpanded(false);
-    requestAnimationFrame(() => opener.current?.focus());
   };
-
-  useEffect(() => {
-    if (!expanded) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeExpanded();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [expanded]);
+  useModalFocus(expanded, expandedDialog, closeExpanded);
 
   return (
     <>
@@ -2537,8 +2678,7 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
         <button
           aria-label={copy.expandGuideVideo}
           className="guide-media-expand"
-          onClick={(event) => {
-            opener.current = event.currentTarget;
+          onClick={() => {
             expandedAt.current = inlineVideo.current?.currentTime ?? 0;
             inlineVideo.current?.pause();
             setExpanded(true);
@@ -2553,6 +2693,7 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
           aria-label={label}
           aria-modal="true"
           className="guide-media is-expanded"
+          ref={expandedDialog}
           role="dialog"
           tabIndex={-1}
         >
@@ -2570,8 +2711,8 @@ function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: s
           />
           <button
             aria-label={copy.closeGuideVideo}
-            autoFocus
             className="guide-media-close"
+            data-modal-autofocus
             onClick={closeExpanded}
             type="button"
           >
@@ -2627,6 +2768,7 @@ function InteractionModePicker({
     <div
       aria-label={copy.interactionMode}
       className={`interaction-mode-picker${className ? ` ${className}` : ""}`}
+      onKeyDown={handleRadioGroupKeys}
       role="radiogroup"
     >
       <button
@@ -2635,6 +2777,7 @@ function InteractionModePicker({
         disabled={disabled}
         onClick={() => onChange("automatic")}
         role="radio"
+        tabIndex={mode === "automatic" ? 0 : -1}
         type="button"
       >
         {mode === "automatic" ? (
@@ -2651,6 +2794,7 @@ function InteractionModePicker({
         disabled={disabled}
         onClick={() => onChange("manual")}
         role="radio"
+        tabIndex={mode === "manual" ? 0 : -1}
         type="button"
       >
         {mode === "manual" ? (
@@ -2764,6 +2908,7 @@ function WelcomeOption({
       className={`welcome-option${active ? " is-active" : ""}`}
       onClick={onClick}
       role="radio"
+      tabIndex={active ? 0 : -1}
       type="button"
     >
       <span>{marker}</span>
@@ -2862,58 +3007,15 @@ function Switch({
 }
 
 function LanguageMenu({ copy, language, onChange }: { copy: Copy; language: Language; onChange: (language: Language) => void }) {
-  const [open, setOpen] = useState(false);
   const options: Array<{ label: string; value: Language }> =
     (Object.entries(languages) as Array<[Language, { label: string }]>).map(([value, { label }]) => ({ label, value }));
-  const selected = options.find((option) => option.value === language) ?? options[0];
-
-  return (
-    <div
-      className={`language-menu${open ? " is-open" : ""}`}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") setOpen(false);
-      }}
-    >
-      <button
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        className="language-menu-trigger"
-        onClick={() => setOpen((current) => !current)}
-        type="button"
-      >
-        <span>{selected.label}</span>
-        <Icon name="chevron" />
-      </button>
-      {open ? (
-        <>
-          <button
-            aria-label={`${copy.close}: ${copy.language}`}
-            className="language-menu-scrim"
-            onClick={() => setOpen(false)}
-            type="button"
-          />
-          <div aria-label={copy.language} className="language-menu-panel" role="listbox">
-            {options.map((option) => (
-              <button
-                aria-selected={option.value === language}
-                className={option.value === language ? "is-selected" : ""}
-                key={option.value}
-                onClick={() => {
-                  setOpen(false);
-                  if (option.value !== language) onChange(option.value);
-                }}
-                role="option"
-                type="button"
-              >
-                <span>{option.label}</span>
-                {option.value === language ? <Icon name="check" /> : null}
-              </button>
-            ))}
-          </div>
-        </>
-      ) : null}
-    </div>
-  );
+  return <label className="language-menu">
+    <span className="visually-hidden">{copy.language}</span>
+    <select aria-label={copy.language} className="language-menu-trigger" value={language}
+      onChange={event => onChange(event.target.value as Language)}>
+      {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+  </label>;
 }
 
 function ProModelVersionMenu({
@@ -3015,13 +3117,17 @@ function BiggerContextRecommendation({
   onChange: (checked: boolean) => void;
   onClose: () => void;
 }) {
+  const dialog = useRef<HTMLDivElement>(null);
+  useModalFocus(true, dialog, onClose);
   return (
     <div
       aria-describedby="bigger-context-recommendation-body"
       aria-labelledby="bigger-context-recommendation-title"
       aria-modal="true"
       className="bigger-context-recommendation-backdrop"
+      ref={dialog}
       role="dialog"
+      tabIndex={-1}
     >
       <section
         className="bigger-context-recommendation"
@@ -3040,7 +3146,7 @@ function BiggerContextRecommendation({
         </div>
         {checked ? <p className="bigger-context-recommendation-restart">{copy.restartCodex}</p> : null}
         <footer>
-          <SecondaryButton disabled={busy} onClick={onClose}>{copy.close}</SecondaryButton>
+          <button className="button-secondary" data-modal-autofocus disabled={busy} onClick={onClose} type="button">{copy.close}</button>
         </footer>
       </section>
     </div>

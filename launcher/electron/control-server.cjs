@@ -1,6 +1,7 @@
 const { createServer } = require("node:http");
 const { randomBytes, timingSafeEqual } = require("node:crypto");
 const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
+const { validateNativeUsageSample } = require("./usage-store.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
@@ -95,6 +96,7 @@ class BrowserControlServer {
       return;
     }
     const isNativeProxy = request.url === "/v1/network/resolve-proxy";
+    const isNativeUsage = request.url === "/v1/usage/native";
     const isTurn = request.url === "/v1/turn/start"
       || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/heartbeat"
@@ -109,7 +111,7 @@ class BrowserControlServer {
       ["/v1/manual/end", "end"],
       ["/v1/manual/cancel", "cancel"],
     ]).get(request.url);
-    if (request.method !== "POST" || (!isNativeProxy && !isTurn && !isTurnRelease && !isSessionInspect && !manualAction)) {
+    if (request.method !== "POST" || (!isNativeProxy && !isNativeUsage && !isTurn && !isTurnRelease && !isSessionInspect && !manualAction)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -131,6 +133,12 @@ class BrowserControlServer {
       const preferences = this.getPreferences();
       const host = this.getBrowserHost();
       if (!host) throw new Error("browser host is not ready");
+      if (isNativeUsage) {
+        validateNativeUsageSample(body);
+        const result = host.recordNativeUsage(body);
+        writeJson(response, 200, { ok: true, recorded: result.recorded === true, duplicate: result.duplicate === true });
+        return;
+      }
       if (isSessionInspect) {
         if (host.browserInteractionMode() === "manual") {
           const error = new Error(
@@ -293,7 +301,20 @@ class BrowserControlServer {
       if (body.requestedEffort !== undefined && !["luna", "low", "medium", "high", "xhigh", "max"].includes(body.requestedEffort)) throw new Error("Invalid requested effort");
       if (request.url === "/v1/turn/usage") {
         if (body.outcome !== undefined && body.outcome !== "completed") throw new Error("Invalid usage outcome");
-        host.usageObservation(body.traceId, body.helperPid, body.receipt, body.effort, body.modelVersion, body.outcome);
+        if (!['luna', 'low', 'medium', 'high', 'xhigh', 'max', 'unknown'].includes(body.effort)) {
+          throw new Error("Invalid usage effort");
+        }
+        if (!['5.5', '5.6', '6', 'unknown'].includes(body.modelVersion)) {
+          throw new Error("Invalid usage model version");
+        }
+        if (body.modelVersionSource !== undefined && !['observed', 'pinned', 'unknown'].includes(body.modelVersionSource)) {
+          throw new Error("Invalid usage model version source");
+        }
+        if (body.messageKind !== undefined && !['task', 'context_stage', 'compaction', 'unknown'].includes(body.messageKind)) {
+          throw new Error("Invalid usage message kind");
+        }
+        host.usageObservation(body.traceId, body.helperPid, body.receipt, body.effort, body.modelVersion, body.outcome,
+          body.modelVersionSource ?? 'unknown', body.messageKind ?? 'unknown');
         writeJson(response, 200, { ok: true }); return;
       }
       if (request.url === "/v1/turn/start") {
@@ -319,7 +340,10 @@ class BrowserControlServer {
         return;
       } else {
         if (!['completed', 'failed', 'aborted'].includes(body.status)) throw new Error("turn status is invalid");
-        if (body.failureCode !== undefined && !['rate_limit_exceeded', 'account_safety_stop'].includes(body.failureCode)) throw new Error("Invalid account failure code");
+        if (body.failureCode !== undefined && !['rate_limit_exceeded', 'account_safety_stop', 'context_length_exceeded',
+          'model_unavailable', 'tool_timeout', 'browser_failure', 'other'].includes(body.failureCode)) {
+          throw new Error("Invalid account failure code");
+        }
         const release = await host.endTurn(
           body.traceId,
           body.helperPid,
