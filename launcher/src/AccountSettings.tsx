@@ -303,6 +303,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual 
     {loginSnapshotStatus === "failed" ? <div className="account-codex-toolbar" role="alert">
       <p>{codexCopy.loginUncertain}</p>
       <button type="button" className="button-secondary" onClick={() => {
+        setError(null);
         setLoginSnapshotStatus("loading");
         setLoginAttempt(value => value + 1);
       }}>{copy.retry}</button>

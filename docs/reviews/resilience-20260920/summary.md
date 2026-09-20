@@ -1,6 +1,6 @@
 # Resilience and UI implementation
 
-Baseline: installed/released 5.6.0-nekodex.3. Implementation release: 5.7.0-nekodex.1.
+Baseline: installed/released 5.6.0-nekodex.3. Implementation release: 5.7.0-nekodex.2.
 
 The requested review completed 15 bounded Sol code lanes and 16 Sol UI lanes. One actual Daybreak
 Blue counter-review completed through the official app-server, using Sol and the explicit per-turn
@@ -73,3 +73,14 @@ Reduced motion disabled the progress animation. The changed UI build/typecheck p
 See [the five-step design review](product-design-audit.md) for accepted screenshots and limits.
 The global maintain-learned-skills skill was created and enabled in first-party discovery, with a
 narrow global AGENTS trigger. Existing failure guidance gained six confirmed lessons from this work.
+
+
+## Final README and retry correction
+
+The README was reduced from 230 lines to a compact current guide with accepted renderer images,
+correct Native6 defaults, Connections navigation, platform delivery and account/update boundaries.
+The initial .1 packaging run was cancelled before publication. The .2 follow-up clears the obsolete
+login failure toast on explicit retry; that exact scenario passed after the correction.
+An earlier synthetic connector capture omitted browserInteractionMode. Setting the required fixture
+mode restored the expected Native6 identity; this was a fixture defect, not a product defect. The
+corrected exact-identity field and current README screenshots were inspected before publication.
