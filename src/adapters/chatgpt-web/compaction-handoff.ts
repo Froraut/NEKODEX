@@ -323,7 +323,8 @@ export async function requestRetainedCompactionHandoff(
       // not receive an ordinary Codex tool environment for this checkpoint message.
       capabilities: { ...capabilities, localToolsEnabled: false },
       nativeConnector: true,
-      ...(compactionExecution ? { compaction: true, compactionExecution } : {}),
+      compaction: true,
+      ...(compactionExecution ? { compactionExecution } : {}),
       prepare,
       prepareResume: prepare,
       conversationKey,

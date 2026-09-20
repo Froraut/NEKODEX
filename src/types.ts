@@ -319,5 +319,7 @@ export interface CodexProviderConfig {
     experimentalSkillAttachments?: boolean;
     allowWebSubagents?: boolean;
     experimentalFreshConversationPerTurn?: boolean;
+    /** Use the opt-in Native5 MCP schema with asynchronous tool-operation delivery. */
+    experimentalAsyncToolOperations?: boolean;
   };
 }

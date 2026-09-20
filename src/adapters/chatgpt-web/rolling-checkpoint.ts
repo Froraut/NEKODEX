@@ -6,6 +6,7 @@ import { parseRequest } from "../../responses/parser";
 import type { CodexParsedRequest } from "../../types";
 import * as z from "zod/v4";
 import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision } from "./environment";
+import { canonicalChatGptStatePath, withChatGptStateFileLock } from "./state-file-lock";
 
 // Alphanumeric by design: ChatGPT's DOM-to-Markdown serializer escapes `_`, `*`, and brackets.
 export const CHATGPT_LUNA_CHECKPOINT_MARKER = "CODEXLUNAPRIVATECHECKPOINTV1A7F3C9D2";
@@ -53,6 +54,13 @@ interface StoredChatGptLunaCheckpointFile {
 const MAX_STORED_CHECKPOINTS = 512;
 const CHECKPOINT_TTL_MS = 30 * 24 * 60 * 60_000;
 const VISIBLE_MARKER_RESERVE_CHARS = CHATGPT_LUNA_CHECKPOINT_MARKER.length + 16;
+
+interface LunaCheckpointBackend {
+  loaded: boolean;
+  checkpoints: Map<string, StoredChatGptLunaCheckpoint>;
+}
+
+const lunaCheckpointBackends = new Map<string, LunaCheckpointBackend>();
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -260,13 +268,22 @@ function validateStoredCheckpoint(value: unknown): StoredChatGptLunaCheckpoint {
 
 /** Exact-parent, per-thread checkpoint store. Full Codex history remains canonical on mismatch. */
 export class ChatGptLunaCheckpointStore {
-  private loaded = false;
-  private checkpoints = new Map<string, StoredChatGptLunaCheckpoint>();
+  private readonly path?: string;
+  private readonly backend: LunaCheckpointBackend;
 
   constructor(
-    private readonly path?: string,
+    path?: string,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.path = canonicalChatGptStatePath(path);
+    const key = this.path ?? "memory:luna-checkpoints";
+    let backend = lunaCheckpointBackends.get(key);
+    if (!backend) {
+      backend = { loaded: false, checkpoints: new Map() };
+      lunaCheckpointBackends.set(key, backend);
+    }
+    this.backend = backend;
+  }
 
   apply(parsed: CodexParsedRequest): { parsed: CodexParsedRequest; applied: boolean; reason?: string } {
     const identity = extractChatGptTurnIdentity(parsed);
@@ -321,7 +338,7 @@ export class ChatGptLunaCheckpointStore {
     if (captured.answerHash !== answerHash) {
       throw new Error("ChatGPT Luna rolling checkpoint answer hash does not match the completed browser answer");
     }
-    this.load();
+    this.load(true);
     const stored: StoredChatGptLunaCheckpoint = {
       threadId: identity.threadId,
       sourceTurnId: identity.turnId,
@@ -330,36 +347,32 @@ export class ChatGptLunaCheckpointStore {
       updatedAt: this.now(),
     };
     const key = checkpointKey(identity.threadId, answerHash);
-    this.checkpoints.delete(key);
-    this.checkpoints.set(key, stored);
+    this.backend.checkpoints.delete(key);
+    this.backend.checkpoints.set(key, stored);
     this.prune();
     this.persist();
   }
 
   private get(threadId: string, answerHash: string): StoredChatGptLunaCheckpoint | undefined {
-    this.load();
+    this.load(true);
     this.prune();
-    return this.checkpoints.get(checkpointKey(threadId, answerHash));
+    return this.backend.checkpoints.get(checkpointKey(threadId, answerHash));
   }
 
   private prune(): void {
     const cutoff = this.now() - CHECKPOINT_TTL_MS;
-    for (const [key, checkpoint] of this.checkpoints) {
-      if (checkpoint.updatedAt < cutoff) this.checkpoints.delete(key);
+    for (const [key, checkpoint] of this.backend.checkpoints) {
+      if (checkpoint.updatedAt < cutoff) this.backend.checkpoints.delete(key);
     }
-    while (this.checkpoints.size > MAX_STORED_CHECKPOINTS) {
-      const oldest = this.checkpoints.keys().next().value as string | undefined;
+    while (this.backend.checkpoints.size > MAX_STORED_CHECKPOINTS) {
+      const oldest = this.backend.checkpoints.keys().next().value as string | undefined;
       if (!oldest) break;
-      this.checkpoints.delete(oldest);
+      this.backend.checkpoints.delete(oldest);
     }
   }
 
-  private load(): void {
-    if (this.loaded) return;
-    if (!this.path || !existsSync(this.path)) {
-      this.loaded = true;
-      return;
-    }
+  private readFile(): Map<string, StoredChatGptLunaCheckpoint> {
+    if (!this.path || !existsSync(this.path)) return new Map();
     const payload = JSON.parse(readFileSync(this.path, "utf8")) as Partial<StoredChatGptLunaCheckpointFile>;
     if (!payload || payload.version !== 1 || !Array.isArray(payload.checkpoints)) {
       throw new Error(`Invalid ChatGPT Luna checkpoint store: ${this.path}`);
@@ -372,17 +385,43 @@ export class ChatGptLunaCheckpointStore {
     for (const checkpoint of checkpoints) {
       loadedCheckpoints.set(checkpointKey(checkpoint.threadId, checkpoint.answerHash), checkpoint);
     }
-    this.checkpoints = loadedCheckpoints;
-    this.loaded = true;
+    return loadedCheckpoints;
+  }
+
+  private merge(...sources: ReadonlyMap<string, StoredChatGptLunaCheckpoint>[]): Map<string, StoredChatGptLunaCheckpoint> {
+    const cutoff = this.now() - CHECKPOINT_TTL_MS;
+    const merged = new Map<string, StoredChatGptLunaCheckpoint>();
+    for (const source of sources) for (const [key, checkpoint] of source) {
+      if (checkpoint.updatedAt < cutoff) continue;
+      const current = merged.get(key);
+      if (!current || current.updatedAt <= checkpoint.updatedAt) merged.set(key, checkpoint);
+    }
+    return new Map([...merged].sort((left, right) => left[1].updatedAt - right[1].updatedAt)
+      .slice(-MAX_STORED_CHECKPOINTS));
+  }
+
+  private load(refresh = false): void {
+    if (this.backend.loaded && (!refresh || !this.path)) return;
+    this.backend.checkpoints = this.merge(this.backend.checkpoints, this.readFile());
+    this.backend.loaded = true;
     this.prune();
   }
 
   private persist(): void {
-    if (!this.path) return;
-    const payload: StoredChatGptLunaCheckpointFile = {
-      version: 1,
-      checkpoints: [...this.checkpoints.values()],
-    };
-    atomicWriteFile(this.path, `${JSON.stringify(payload, null, 2)}\n`);
+    if (!this.path) {
+      this.backend.checkpoints = this.merge(this.backend.checkpoints);
+      this.backend.loaded = true;
+      return;
+    }
+    withChatGptStateFileLock(this.path, () => {
+      const merged = this.merge(this.readFile(), this.backend.checkpoints);
+      const payload: StoredChatGptLunaCheckpointFile = {
+        version: 1,
+        checkpoints: [...merged.values()],
+      };
+      atomicWriteFile(this.path!, `${JSON.stringify(payload, null, 2)}\n`);
+      this.backend.checkpoints = merged;
+      this.backend.loaded = true;
+    });
   }
 }

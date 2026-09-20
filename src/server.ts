@@ -53,7 +53,12 @@ import {
   extractCompactUserMessages,
 } from "./responses/compaction";
 import { parseRequest } from "./responses/parser";
-import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
+import {
+  expandPreviousResponseInput,
+  flushResponseState,
+  previousResponseStateStatus,
+  rememberResponseState,
+} from "./responses/state";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
@@ -555,10 +560,20 @@ export async function responseRequest(
     );
   }
   if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
+    const stateStatus = previousResponseStateStatus(requestedPreviousResponseId);
+    const nonretained = stateStatus === "not-retained-too-large"
+      ? " The bridge did not retain it because its continuation state exceeded the memory limit."
+      : stateStatus === "not-retained-unserializable"
+        ? " The bridge did not retain it because its continuation state was not serializable."
+        : stateStatus === "not-retained-capacity"
+          ? " The bridge did not retain it because the bounded continuation cache had no capacity."
+          : "";
     return formatErrorResponse(
       409,
       "invalid_request_error",
-      "Local continuation state for previous_response_id is unavailable; refusing to run ChatGPT Web with partial Codex context. Compact the Codex task or start a new task before retrying.",
+      "Local continuation state for previous_response_id is unavailable; refusing to run ChatGPT Web with partial Codex context."
+        + nonretained
+        + " Compact the Codex task or start a new task before retrying.",
     );
   }
 
@@ -576,7 +591,12 @@ export async function responseRequest(
   const rememberCompletedResponse = (response: Record<string, unknown>): void => {
     options.onCompletedResponse?.(response);
     if (!compaction) {
-      if (options.rememberState !== false) rememberResponseState(parsed._rawBody, response, { force: true });
+      if (options.rememberState !== false) {
+        const retention = rememberResponseState(parsed._rawBody, response, { force: true });
+        if (retention.status === "not-retained") {
+          console.warn(`[codex-chatgpt-web] continuation_state_not_retained reason=${retention.reason}`);
+        }
+      }
       return;
     }
     if (response.status !== "completed") return;
@@ -959,14 +979,37 @@ export function startServer(
   }
   const startedAt = Date.now();
   const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;
+  let brokerState: "not-required" | "starting" | "ready" | "failed" = turnBroker
+    ? "starting"
+    : "not-required";
+  let brokerFailureCode: string | undefined;
+  let draining = false;
+  const brokerReady = () => !turnBroker || brokerState === "ready";
+  const acceptingTurns = () => !draining && brokerReady();
+  const admissionFailure = () => formatErrorResponse(
+    503,
+    "server_error",
+    draining
+      ? "NEKODEX is restarting; retry after it is ready."
+      : "NEKODEX local-tool broker is not ready; repair or restart the runtime before retrying.",
+  );
   if (config.mode === "full") {
-    void turnBroker!.listen().catch(error => {
+    turnBroker!.setExternalOwnersAccepted(false);
+    void turnBroker!.listen().then(() => {
+      brokerState = "ready";
+      turnBroker!.setExternalOwnersAccepted(!draining);
+    }, error => {
+      brokerState = "failed";
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      brokerFailureCode = typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code)
+        ? code
+        : "broker_listen_failed";
+      turnBroker!.setExternalOwnersAccepted(false);
       console.error(
         `[chatgpt-web] turn broker endpoint is unavailable: ${error instanceof Error ? error.message : String(error)}`,
       );
     });
   }
-  let draining = false;
   let shutdownPromise: Promise<void> | undefined;
   let successfulModelCatalogRequests = 0;
   let lastSuccessfulModelCatalogRequestAt: string | null = null;
@@ -999,7 +1042,7 @@ export function startServer(
         if (!hermes.authorized(req)) return formatErrorResponse(401, "authentication_error", "Add the Hermes provider from Setup to authorize this local connection.");
         if (req.method === "GET" && url.pathname === "/hermes/v1/models") return hermes.models(config);
         if (req.method === "POST" && url.pathname === "/hermes/v1/responses") {
-          if (draining) return formatErrorResponse(503, "server_error", "NEKODEX is restarting; retry after it is ready.");
+          if (!acceptingTurns()) return admissionFailure();
           return httpTurns.track(signal => hermes.respond(new Request(req, { signal }), config,
             (request, hermesContext, onCompletedResponse) => responseRequest(request, config, dependencies.adapterFactory, {
               hermesContext, onCompletedResponse, rememberState: false,
@@ -1018,7 +1061,10 @@ export function startServer(
           pid: process.pid,
           port: config.port,
           uptime: (Date.now() - startedAt) / 1_000,
-          accepting_turns: !draining,
+          accepting_turns: acceptingTurns(),
+          broker_ready: brokerReady(),
+          broker_state: brokerState,
+          ...(brokerFailureCode ? { broker_failure_code: brokerFailureCode } : {}),
           browser_capacity: MAX_CHATGPT_BROWSER_TABS,
           model_catalog_requests: modelCatalogRequests,
           last_model_catalog_result: lastModelCatalogResult,
@@ -1030,8 +1076,14 @@ export function startServer(
       if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         draining = url.pathname === "/admin/drain";
-        turnBroker?.setExternalOwnersAccepted(!draining);
-        return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
+        turnBroker?.setExternalOwnersAccepted(acceptingTurns());
+        return Response.json({
+          status: "ok",
+          accepting_turns: acceptingTurns(),
+          broker_ready: brokerReady(),
+          broker_state: brokerState,
+          ...activity(),
+        });
       }
       if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
@@ -1167,13 +1219,7 @@ export function startServer(
         return Response.json({ status: "ok", accepting_turns: false, ...current });
       }
       if (req.method === "GET" && url.pathname === "/v1/models") {
-        if (draining) {
-          return formatErrorResponse(
-            503,
-            "server_error",
-            "codex-chatgpt-web is draining for a requested service operation",
-          );
-        }
+        if (!acceptingTurns()) return admissionFailure();
         return httpTurns.track(async signal => {
           const request = ++modelCatalogRequests;
           const recordResult = (response: Response, failure?: ModelCatalogFailure): Response => {
@@ -1217,7 +1263,7 @@ export function startServer(
         });
       }
       if (req.method === "POST" && url.pathname === "/v1/responses") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (!acceptingTurns()) return admissionFailure();
         return httpTurns.track(
           (signal, bindIdentity) => responseRequest(
             new Request(req, { signal }),
@@ -1235,7 +1281,7 @@ export function startServer(
         );
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (!acceptingTurns()) return admissionFailure();
         return httpTurns.track(
           (signal, bindIdentity) => compactRequest(
             new Request(req, { signal }),
@@ -1253,7 +1299,7 @@ export function startServer(
         );
       }
       if (req.method === "POST" && url.pathname === "/v1/alpha/search") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (!acceptingTurns()) return admissionFailure();
         return httpTurns.track(
           signal => nativeSearchRequest(new Request(req, { signal }), dependencies.fetchUpstream),
           req.signal,
@@ -1263,7 +1309,7 @@ export function startServer(
       }
       if (req.method === "POST"
         && (url.pathname === "/v1/images/generations" || url.pathname === "/v1/images/edits")) {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (!acceptingTurns()) return admissionFailure();
         const endpoint: NativeImageEndpoint = url.pathname === "/v1/images/generations"
           ? "images/generations"
           : "images/edits";

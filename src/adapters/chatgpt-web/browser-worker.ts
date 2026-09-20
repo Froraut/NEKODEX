@@ -69,7 +69,11 @@ import {
   parseChatGptEffortSliderState,
   chatGptModelStateMatches,
 } from "../../chatgpt-session";
-import { loginVerificationMarkerPath, sanitizeBrowserLoginStorageState } from "../../browser-login";
+import {
+  loginVerificationMarkerPath,
+  sanitizeBrowserLoginStorageState,
+  writeBrowserLoginVerificationMarker,
+} from "../../browser-login";
 import {
   connectLauncherBrowserHost,
   LauncherBrowserTurnCancelledError,
@@ -1299,9 +1303,11 @@ export interface BrowserTurn {
   onTextDelta: (delta: string) => void;
   /** Proven current-turn MCP activity; never response content or completion. */
   externalProgress?: ChatGptTurnProgressReader;
+  /** Require the Native5 completion-fence reason protocol from the launcher helper. */
+  asyncToolOperations?: boolean;
   /** Atomically fences browser completion against concurrent MCP claims in the turn broker. */
   completionFence?: {
-    begin(): Promise<number | undefined>;
+    begin(): Promise<ChatGptCompletionFenceStart>;
     commit(revision: number): Promise<boolean>;
   };
   /** Allow one clean pre-submit composer retry for isolated history compaction only. */
@@ -1312,6 +1318,10 @@ export interface BrowserTurn {
   captureLunaCheckpoint?: boolean;
   onLunaCheckpoint?: (captured: CapturedChatGptLunaCheckpoint) => void;
 }
+
+export type ChatGptCompletionFenceStart =
+  | { revision: number }
+  | { blockedReason: "active_work" | "unacknowledged_async_result"; blockedCount: number };
 
 interface ChatGptSubmissionBaseline {
   userTurns: Locator;
@@ -2227,6 +2237,7 @@ export function insertPlainTextIntoComposer(element: HTMLElement, value: string)
 export class ChatGptBrowserWorker {
   private readonly effortSelections = new WeakMap<Page, { label: string; url: string; effort: ChatGptWebModelMode["effort"] }>();
   private readonly observedProVersions = new WeakMap<Page, ChatGptWebProModelVersion>();
+  private readonly validatedPinnedVersions = new WeakMap<Page, ChatGptWebProModelVersion>();
 
   private async observeSelectedProVersion(page: Page, slider: Locator): Promise<void> {
     this.observedProVersions.delete(page);
@@ -3765,7 +3776,12 @@ export class ChatGptBrowserWorker {
       let verificationError: ChatGptWebAdapterError | undefined;
       try {
         const { slider } = await activateChatGptEffortMenu(page, control);
-        if (expectedMode.modelVersion) await assertChatGptSelectedModelVersion(page, slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort);
+        if (expectedMode.modelVersion) {
+          await assertChatGptSelectedModelVersion(page, slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort);
+          this.validatedPinnedVersions.set(page, expectedMode.modelVersion);
+        } else {
+          this.validatedPinnedVersions.delete(page);
+        }
         const state = parseChatGptEffortSliderState(
           await slider.getAttribute("aria-valuemin"), await slider.getAttribute("aria-valuemax"),
           await slider.getAttribute("aria-valuenow"),
@@ -4726,6 +4742,16 @@ export class ChatGptBrowserWorker {
     let terminal: "completed" | "failed" | "aborted" = "completed";
     let terminalMessage: string | undefined;
     let originalError: unknown;
+    const normalizedFailureCode = (error: unknown):
+      "rate_limit_exceeded" | "account_safety_stop" | "context_length_exceeded"
+      | "model_unavailable" | "tool_timeout" | "browser_failure" | "other" => {
+      if (!(error instanceof ChatGptWebAdapterError)) return "browser_failure";
+      if (error.code === "rate_limit_exceeded" || error.code === "account_safety_stop"
+        || error.code === "context_length_exceeded") return error.code;
+      if (error.code === "model_version_unavailable") return "model_unavailable";
+      if (error.code === "codex_tool_timeout") return "tool_timeout";
+      return "other";
+    };
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
     let heartbeatInFlight = false;
     let lastHeartbeatFailureAt = 0;
@@ -4777,9 +4803,7 @@ export class ChatGptBrowserWorker {
           traceId: turn.traceId,
           helperPid: process.pid,
           status: terminal,
-          ...(originalError instanceof ChatGptWebAdapterError
-            && (originalError.code === "rate_limit_exceeded" || originalError.code === "account_safety_stop")
-            ? { failureCode: originalError.code } : {}),
+          ...(terminal === "failed" ? { failureCode: normalizedFailureCode(originalError) } : {}),
           ...(terminalMessage ? { message: terminalMessage } : {}),
           ...(terminal === "completed" && turn.retainConversation ? { retain: true } : {}),
           ...(terminal === "completed" && (turn.nativeConnector || turn.capabilities.localToolsEnabled)
@@ -4800,15 +4824,20 @@ export class ChatGptBrowserWorker {
   }
 
   private async recordAcceptedUsage(turn: BrowserTurn, mode: Pick<ChatGptWebModelMode, "effort" | "modelVersion">,
-    receipt: string = randomUUID(), outcome?: "completed", page?: Page): Promise<string> {
+    receipt: string = randomUUID(), outcome?: "completed", page?: Page,
+    messageKind: "task" | "context_stage" | "compaction" = turn.compaction ? "compaction" : "task"): Promise<string> {
     const selected = page && this.effortSelections.get(page);
     if (selected && page) selected.url = page.url();
+    const observedVersion = page ? this.observedProVersions.get(page) : undefined;
+    const pinnedVersion = page ? this.validatedPinnedVersions.get(page) : undefined;
+    const modelVersion = observedVersion ?? pinnedVersion ?? "unknown";
+    const modelVersionSource = observedVersion ? "observed" : pinnedVersion ? "pinned" : "unknown";
     if (this.config.browserHost === "launcher") {
       try {
         await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
           phase: "usage", traceId: turn.traceId, helperPid: process.pid, receipt,
           effort: turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? "luna" : mode.effort,
-          modelVersion: mode.effort === "max" && page ? this.observedProVersions.get(page) ?? "unknown" : "unknown", ...(outcome ? { outcome } : {}),
+          modelVersion, modelVersionSource, messageKind, ...(outcome ? { outcome } : {}),
         }, 2_000);
       } catch { console.warn("[chatgpt-web] local usage observation unavailable; totals may be incomplete"); }
     }
@@ -5144,7 +5173,9 @@ export class ChatGptBrowserWorker {
               submissionRejection,
             ),
           );
-          const stageUsageReceipt = await this.recordAcceptedUsage(turn, { ...stagingMode, modelVersion: requestedMode.modelVersion }, undefined, undefined, page);
+          const stageUsageReceipt = await this.recordAcceptedUsage(
+            turn, { ...stagingMode, modelVersion: requestedMode.modelVersion }, undefined, undefined, page, "context_stage",
+          );
           console.info(
             `[chatgpt-web] browser turn ${turn.traceId} multipart part ${index + 1}/${prepared.multipart.parts.length} submission accepted evidence=${evidence}`,
           );
@@ -5189,7 +5220,9 @@ export class ChatGptBrowserWorker {
           const stageRejection = await submissionRejection.failure();
           if (stageRejection) throw stageRejection;
           await diagnostics.capture(page, `multipart-stage-${index + 1}-acknowledged`);
-          await this.recordAcceptedUsage(turn, { ...stagingMode, modelVersion: requestedMode.modelVersion }, stageUsageReceipt, "completed", page);
+          await this.recordAcceptedUsage(
+            turn, { ...stagingMode, modelVersion: requestedMode.modelVersion }, stageUsageReceipt, "completed", page, "context_stage",
+          );
           await turn.onMultipartStageAcknowledged?.(index + 1);
         }
         if (mode.effort !== requestedMode.effort) {
@@ -5367,6 +5400,7 @@ export class ChatGptBrowserWorker {
       let internalObservationFaults = 0;
       let observedThisIteration = false;
       let completionFenceRevision: number | undefined;
+      let unacknowledgedAsyncResultSince: number | undefined;
       for (;;) {
         // The heartbeat is a consumer callback, so it stays outside the observation-fault region:
         // a defect in the caller must not be retried as though the page could not be read.
@@ -5543,16 +5577,37 @@ export class ChatGptBrowserWorker {
             completionActionVisible: snapshot.completionActionVisible,
             externalToolCallsInFlight,
           });
-          if (!completionReady) completionFenceRevision = undefined;
+          if (!completionReady) {
+            completionFenceRevision = undefined;
+            unacknowledgedAsyncResultSince = undefined;
+          }
           if (completionReady) {
             if (turn.completionFence) {
               if (completionFenceRevision === undefined) {
-                const revision = await turn.completionFence.begin();
-                if (revision === undefined) {
+                const fence = await turn.completionFence.begin();
+                if (!("revision" in fence)) {
+                  completionFenceRevision = undefined;
+                  if (fence.blockedReason === "active_work") {
+                    unacknowledgedAsyncResultSince = undefined;
+                  } else {
+                    unacknowledgedAsyncResultSince ??= Date.now();
+                    if (Date.now() - unacknowledgedAsyncResultSince >= CHATGPT_COMPLETION_ACTION_GRACE_MS) {
+                      throw new ChatGptWebAdapterError(
+                        `ChatGPT completed while ${fence.blockedCount} owned Codex tool result(s) remained unacknowledged. Poll the terminal operation result and acknowledge its delivery before completing the response.`,
+                        {
+                          status: 409,
+                          errorType: "invalid_request_error",
+                          code: "unacknowledged_async_result",
+                          retryable: false,
+                        },
+                      );
+                    }
+                  }
                   await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
                   continue;
                 }
-                completionFenceRevision = revision;
+                unacknowledgedAsyncResultSince = undefined;
+                completionFenceRevision = fence.revision;
                 // The fence revision is captured after this DOM projection. Force one fresh read
                 // before commit so an MCP activity that just settled cannot disappear between a
                 // stale cached completion and the broker's terminal decision.
@@ -5563,6 +5618,7 @@ export class ChatGptBrowserWorker {
               }
               if (!await turn.completionFence.commit(completionFenceRevision)) {
                 completionFenceRevision = undefined;
+                unacknowledgedAsyncResultSince = undefined;
                 responseDomCache.key = undefined;
                 responseDomCache.snapshot = undefined;
                 await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
@@ -5644,6 +5700,13 @@ export class ChatGptBrowserWorker {
         try {
           const state = sanitizeBrowserLoginStorageState(await this.context.storageState());
           atomicWriteFile(this.config.storageStatePath, `${JSON.stringify(state)}\n`);
+          writeBrowserLoginVerificationMarker(this.config.storageStatePath, {
+            solAvailable: browserCapabilities.solAvailable,
+            ...(browserCapabilities.extraHighAvailable !== undefined
+              ? { extraHighAvailable: browserCapabilities.extraHighAvailable }
+              : {}),
+            proAvailable: browserCapabilities.proAvailable,
+          });
         } catch (error) {
           // The answer is already complete. A failed disk snapshot must not discard it or the
           // live context, which can still serve this session until the worker is closed.

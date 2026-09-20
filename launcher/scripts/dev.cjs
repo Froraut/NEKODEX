@@ -2,8 +2,6 @@ const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const vitePackage = require.resolve("vite/package.json", { paths: [root] });
-const viteBin = path.join(path.dirname(vitePackage), "bin", "vite.js");
 const electronBin = require("electron");
 const bun = process.env.CODEX_WEB_GPT_BUN || process.execPath;
 
@@ -15,9 +13,9 @@ const helperBuild = spawnSync(bun, ["run", "scripts/build-browser-helper.ts"], {
 if (helperBuild.error) throw helperBuild.error;
 if (helperBuild.status !== 0) process.exit(helperBuild.status ?? 1);
 
-const vite = spawn(process.execPath, [viteBin], {
+const vite = spawn(process.env.CODEX_WEB_GPT_NODE || "node", [path.join(__dirname, "vite-dev-host.cjs")], {
   cwd: root,
-  stdio: "inherit",
+  stdio: ["ignore", "inherit", "inherit", "ipc"],
   env: process.env,
 });
 
@@ -31,25 +29,36 @@ const stop = () => {
   vite.kill("SIGTERM");
 };
 
-const waitForVite = async () => {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
+const waitForVite = () => new Promise((resolveReady, reject) => {
+  const timer = setTimeout(() => finish(new Error("Owned development server did not become ready")), 30_000);
+  const onError = error => finish(error);
+  const onExit = () => finish(new Error("Owned development server exited before readiness"));
+  const onMessage = message => {
+    if (message?.type !== "vite-ready") return;
     try {
-      const response = await fetch("http://127.0.0.1:4178");
-      if (response.ok) return;
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 150));
+      const url = new URL(message.url);
+      if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port
+        || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("Invalid development server address");
+      finish(null, url.origin);
+    } catch (error) { finish(error); }
+  };
+  function finish(error, url) {
+    clearTimeout(timer);
+    vite.off("message", onMessage); vite.off("error", onError); vite.off("exit", onExit);
+    if (error) reject(error); else resolveReady(url);
   }
-  throw new Error("Vite did not become ready on 127.0.0.1:4178");
-};
+  vite.on("message", onMessage); vite.once("error", onError); vite.once("exit", onExit);
+  if (stopped || vite.exitCode !== null || vite.signalCode !== null) onExit();
+});
 
-void waitForVite().then(() => {
+void waitForVite().then(url => {
+  if (stopped || vite.exitCode !== null || vite.signalCode !== null) return;
   electron = spawn(electronBin, [root, "--dev-profile"], {
     cwd: root,
     stdio: "inherit",
     env: {
       ...process.env,
-      VITE_DEV_SERVER_URL: "http://127.0.0.1:4178",
+      VITE_DEV_SERVER_URL: url,
       CODEX_WEB_GPT_BUN: bun,
       CODEX_CHATGPT_WEB_BUN: bun,
     },
@@ -70,10 +79,10 @@ void waitForVite().then(() => {
 });
 
 vite.once("exit", (code) => {
-  if (!stopped && code !== 0) {
+  if (!stopped) {
     console.error(`Vite exited with code ${code}`);
     stop();
-    process.exitCode = code ?? 1;
+    process.exitCode = code || 1;
   }
 });
 

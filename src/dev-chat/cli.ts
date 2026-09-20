@@ -1,7 +1,12 @@
 import { createInterface } from "node:readline/promises";
 import { existsSync } from "node:fs";
 import { stdin, stdout } from "node:process";
-import { DEV_CHATGPT_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME, loadConfig } from "../config";
+import {
+  DEV_CHATGPT_ASYNC_CONNECTOR_NAME,
+  DEV_CHATGPT_CONNECTOR_NAME,
+  ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+  loadConfig,
+} from "../config";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
@@ -62,6 +67,7 @@ Interactive commands:
 
 Experimental settings:
   Bigger Context       Enable in Settings; adapts context across 1, 2, or 3 messages
+  Async tool operations Automatic Full mode only; uses the separate Codex Native5 DEV connector
 `;
 
 function takeFlag(args: string[], name: string): boolean {
@@ -486,6 +492,11 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (automaticBrowserInteraction && manualBrowserInteraction) {
       throw new Error("Choose at most one browser interaction mode");
     }
+    const asyncToolOperations = takeFlag(args, "--async-tool-operations");
+    const synchronousToolOperations = takeFlag(args, "--synchronous-tool-operations");
+    if (asyncToolOperations && synchronousToolOperations) {
+      throw new Error("Choose --async-tool-operations or --synchronous-tool-operations");
+    }
     const biggerContext = takeFlag(args, "--bigger-context");
     const standardContext = takeFlag(args, "--standard-context");
     if (biggerContext && standardContext) {
@@ -501,11 +512,20 @@ export async function runDevCommand(args: string[]): Promise<void> {
         ? { browserInteractionMode: manualBrowserInteraction ? "manual" : "automatic" }
         : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
+      ...(asyncToolOperations || synchronousToolOperations
+        ? { experimentalAsyncToolOperations: asyncToolOperations }
+        : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
     });
     stdout.write(
       `Isolated DEV profile configured (${result.mode}) at ${result.configPath}.\n`
+      + (result.experimentalAsyncToolOperations
+        ? `Tool operations: asynchronous (experimental; connector ${JSON.stringify(result.connectorName)}).\n`
+        : `Tool operations: synchronous (connector ${JSON.stringify(result.connectorName)}).\n`)
+      + (result.connectorVerificationReset
+        ? "Connector verification reset: verify the newly selected DEV connector identity before tool use.\n"
+        : "")
       + "No Codex route, Responses listener, or system service was installed."
       + " In Full mode, the DEV launcher owns the isolated MCP tunnel.\n",
     );
@@ -527,7 +547,8 @@ export async function runDevCommand(args: string[]): Promise<void> {
   }
   const config = loadConfig();
   const expectedConnector = config.browserInteractionMode === "manual"
-    ? ZERO_RISK_CHATGPT_CONNECTOR_NAME : DEV_CHATGPT_CONNECTOR_NAME;
+    ? ZERO_RISK_CHATGPT_CONNECTOR_NAME
+    : config.experimentalAsyncToolOperations ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME : DEV_CHATGPT_CONNECTOR_NAME;
   if (config.mode === "full" && config.appName !== expectedConnector) {
     throw new Error("DEV connector identity is outdated. Refresh the DEV profile in the launcher before starting a named chat");
   }

@@ -7,6 +7,12 @@ import {
   decodeCompactionSummary,
 } from "./responses/compaction";
 import { BRIDGE_REASONING_PREFIX } from "./responses/reasoning-envelope";
+import {
+  enqueueNativeUsageTelemetry,
+  type NativeReportedUsage,
+  type NativeUsageFailureCategory,
+  type NativeUsageOutcome,
+} from "./native-usage-telemetry";
 
 const CODEX_BACKEND = "https://chatgpt.com/backend-api/codex";
 const FIRST_PARTY_CODEX_ORIGINATORS = new Set([
@@ -141,6 +147,289 @@ function endToEndHeaders(source: Headers): Headers {
 
 /** Terminator every Responses SSE stream ends with; nothing after it carries meaning. */
 const SSE_TERMINATOR = "data: [DONE]";
+const MAX_TELEMETRY_SSE_FRAME_BYTES = 64 * 1024;
+const MAX_TELEMETRY_JSON_BYTES = 256 * 1024;
+
+interface NativeTerminalObservation {
+  outcome: NativeUsageOutcome;
+  reportedModelId: string | null;
+  usage: NativeReportedUsage | null;
+  failureCategory: NativeUsageFailureCategory | null;
+}
+
+function safeNativeModelId(value: unknown): string | null {
+  return typeof value === "string"
+    && value.length <= 128
+    && /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.-]*)*$/.test(value)
+    ? value
+    : null;
+}
+
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function nativeReportedUsage(value: unknown): NativeReportedUsage | null {
+  if (!isObject(value)) return null;
+  const inputTokens = tokenCount(value.input_tokens);
+  const outputTokens = tokenCount(value.output_tokens);
+  const totalTokens = tokenCount(value.total_tokens);
+  if (inputTokens === undefined || outputTokens === undefined || totalTokens === undefined
+    || totalTokens < inputTokens + outputTokens) return null;
+  const inputDetails = isObject(value.input_tokens_details) ? value.input_tokens_details : undefined;
+  const outputDetails = isObject(value.output_tokens_details) ? value.output_tokens_details : undefined;
+  const cachedRaw = inputDetails?.cached_tokens;
+  const reasoningRaw = outputDetails?.reasoning_tokens;
+  const cachedInputTokens = tokenCount(cachedRaw);
+  const reasoningOutputTokens = tokenCount(reasoningRaw);
+  if ((cachedRaw !== undefined && cachedInputTokens === undefined)
+    || (reasoningRaw !== undefined && reasoningOutputTokens === undefined)) return null;
+  if ((cachedInputTokens !== undefined && cachedInputTokens > inputTokens)
+    || (reasoningOutputTokens !== undefined && reasoningOutputTokens > outputTokens)) return null;
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(reasoningOutputTokens === undefined ? {} : { reasoningOutputTokens }),
+  };
+}
+
+function failureCategoryForHttp(status: number): NativeUsageFailureCategory | null {
+  if (status === 401 || status === 403) return "http-auth";
+  if (status === 429) return "http-rate-limit";
+  if (status >= 500) return "http-server";
+  if (status >= 300) return "http-client";
+  return null;
+}
+
+function observeNativeTerminal(
+  value: unknown,
+  eventName?: string,
+  standaloneJson = false,
+): NativeTerminalObservation | undefined {
+  if (!isObject(value)) return undefined;
+  const response = isObject(value.response) ? value.response : value;
+  const type = typeof value.type === "string" ? value.type : eventName;
+  const rawStatus = typeof response.status === "string" ? response.status : undefined;
+  const eventOutcome = type === "response.completed"
+    ? "completed"
+    : type === "response.incomplete"
+      ? "incomplete"
+      : type === "response.failed" || type === "error"
+        ? "failed"
+        : undefined;
+  const outcome = eventOutcome ?? (standaloneJson
+    ? rawStatus === "completed" ? "completed"
+      : rawStatus === "incomplete" || rawStatus === "queued" || rawStatus === "in_progress" ? "incomplete"
+        : rawStatus === "failed" ? "failed" : undefined
+    : undefined);
+  if (!outcome) return undefined;
+  return {
+    outcome,
+    reportedModelId: safeNativeModelId(response.model),
+    usage: nativeReportedUsage(response.usage),
+    failureCategory: outcome === "failed" ? "protocol" : null,
+  };
+}
+
+type NativeTelemetrySink = typeof enqueueNativeUsageTelemetry;
+
+export function observeNativeResponseBody(
+  body: ReadableStream<Uint8Array>,
+  options: {
+    endpoint: "responses" | "responses/compact";
+    requestedModelId: string | null;
+    startedAt: string;
+    startedAtMs: number;
+    httpStatus: number;
+    eventStream: boolean;
+    signal: AbortSignal;
+  },
+  report: NativeTelemetrySink = enqueueNativeUsageTelemetry,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let terminal: NativeTerminalObservation | undefined;
+  let finalized = false;
+  let inspectionDisabled = false;
+  let lineBuffer = "";
+  let lineCharacterCount = 0;
+  let lineIsSingleCarriageReturn = false;
+  let frameEvent: string | undefined;
+  let frameData = "";
+  let frameOversized = false;
+  let jsonText = "";
+  let jsonOversized = false;
+
+  const finalize = (
+    outcome: NativeUsageOutcome,
+    category: NativeUsageFailureCategory | null,
+  ): void => {
+    if (finalized) return;
+    finalized = true;
+    const observation = terminal;
+    try {
+      report({
+        endpoint: options.endpoint,
+        requestedModelId: options.requestedModelId,
+        reportedModelId: observation?.reportedModelId ?? null,
+        startedAt: options.startedAt,
+        durationMs: Math.max(0, Math.round(Date.now() - options.startedAtMs)),
+        outcome,
+        httpStatus: options.httpStatus,
+        failureCategory: category,
+        usageStatus: observation?.usage ? "reported" : "unreported",
+        usage: observation?.usage ?? null,
+      });
+    } catch {
+      // Telemetry reporting is isolated from native byte delivery.
+    }
+  };
+
+  const finishFrame = (): void => {
+    if (frameOversized && frameEvent) {
+      terminal ??= observeNativeTerminal({ type: frameEvent }, frameEvent);
+    } else if (frameData && frameData !== "[DONE]") {
+      try {
+        terminal ??= observeNativeTerminal(JSON.parse(frameData), frameEvent);
+      } catch {
+        // Unknown or partial frames carry no telemetry authority.
+      }
+    }
+    frameEvent = undefined;
+    frameData = "";
+    frameOversized = false;
+  };
+
+  const inspectSseText = (text: string): void => {
+    let offset = 0;
+    while (offset < text.length) {
+      const newline = text.indexOf("\n", offset);
+      const end = newline < 0 ? text.length : newline;
+      const segmentLength = end - offset;
+      if (segmentLength > 0) {
+        if (lineCharacterCount === 0 && segmentLength === 1 && text[offset] === "\r") {
+          lineCharacterCount = 1;
+          lineIsSingleCarriageReturn = true;
+        } else {
+          lineCharacterCount = 2;
+          lineIsSingleCarriageReturn = false;
+        }
+      }
+      if (!frameOversized) {
+        const definitelyOversized = lineBuffer.length + segmentLength > MAX_TELEMETRY_SSE_FRAME_BYTES;
+        const segment = definitelyOversized ? "" : text.slice(offset, end);
+        if (definitelyOversized
+          || Buffer.byteLength(lineBuffer, "utf8") + Buffer.byteLength(segment, "utf8")
+            > MAX_TELEMETRY_SSE_FRAME_BYTES) {
+          lineBuffer = "";
+          frameOversized = true;
+        } else lineBuffer += segment;
+      }
+      if (newline < 0) return;
+      const blankLine = lineCharacterCount === 0 || lineIsSingleCarriageReturn;
+      const line = frameOversized ? "" : lineBuffer.replace(/\r$/, "");
+      lineBuffer = "";
+      lineCharacterCount = 0;
+      lineIsSingleCarriageReturn = false;
+      offset = newline + 1;
+      if (blankLine) {
+        finishFrame();
+        continue;
+      }
+      if (frameOversized) continue;
+      if (line.startsWith("event:")) {
+        if (!frameOversized) frameEvent = line.slice(6).trim().slice(0, 128);
+        continue;
+      }
+      if (!line.startsWith("data:") || frameOversized) continue;
+      const value = line.slice(5).trimStart();
+      const next = frameData ? `${frameData}\n${value}` : value;
+      if (Buffer.byteLength(next, "utf8") > MAX_TELEMETRY_SSE_FRAME_BYTES) {
+        frameData = "";
+        frameOversized = true;
+      } else frameData = next;
+    }
+  };
+
+  const inspectJsonText = (text: string): void => {
+    if (jsonOversized) return;
+    if (jsonText.length + text.length > MAX_TELEMETRY_JSON_BYTES) {
+      jsonText = "";
+      jsonOversized = true;
+      return;
+    }
+    const next = jsonText + text;
+    if (Buffer.byteLength(next, "utf8") > MAX_TELEMETRY_JSON_BYTES) {
+      jsonText = "";
+      jsonOversized = true;
+    } else jsonText = next;
+  };
+
+  const finishInspection = (): void => {
+    const trailing = decoder.decode();
+    if (options.eventStream) {
+      inspectSseText(trailing);
+      if (lineBuffer) inspectSseText("\n");
+      finishFrame();
+    } else {
+      inspectJsonText(trailing);
+      if (!jsonOversized && jsonText) {
+        try { terminal ??= observeNativeTerminal(JSON.parse(jsonText), undefined, true); }
+        catch { /* Large/unrecognized JSON is deliberately not retained or interpreted. */ }
+      }
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        if (terminal) finalize(terminal.outcome, terminal.failureCategory);
+        else {
+          const aborted = options.signal.aborted
+            || (error instanceof DOMException && error.name === "AbortError");
+          finalize(aborted ? "aborted" : "failed", aborted ? "aborted" : "stream");
+        }
+        controller.error(error);
+        return;
+      }
+      if (chunk.done) {
+        if (!inspectionDisabled) {
+          try { finishInspection(); }
+          catch { terminal = undefined; inspectionDisabled = true; }
+        }
+        const httpFailure = failureCategoryForHttp(options.httpStatus);
+        const outcome = terminal?.outcome ?? (httpFailure ? "failed"
+          : options.eventStream || inspectionDisabled ? "incomplete" : "completed");
+        finalize(outcome, terminal?.failureCategory ?? httpFailure
+          ?? ((options.eventStream || inspectionDisabled) ? "protocol" : null));
+        controller.close();
+        return;
+      }
+      if (!inspectionDisabled) {
+        try {
+          const text = decoder.decode(chunk.value, { stream: true });
+          if (options.eventStream) inspectSseText(text);
+          else inspectJsonText(text);
+        } catch {
+          // Disable authority from a broken inspector while forwarding this and all later bytes.
+          terminal = undefined;
+          inspectionDisabled = true;
+        }
+      }
+      controller.enqueue(chunk.value);
+    },
+    async cancel(reason) {
+      if (terminal) finalize(terminal.outcome, terminal.failureCategory);
+      else finalize("aborted", "aborted");
+      await reader.cancel(reason);
+    },
+  });
+}
 
 /**
  * ChatGPT's backend routinely resets the native Codex connection instead of closing it cleanly,
@@ -224,6 +513,8 @@ export async function forwardNativeCodexRequest(
   fetchUpstream: NativeFetch = fetchNativeCodex,
   decodedBody?: unknown,
 ): Promise<Response> {
+  const telemetryStartedAtMs = Date.now();
+  const telemetryStartedAt = new Date(telemetryStartedAtMs).toISOString();
   const authorization = request.headers.get("authorization") ?? "";
   if (!authorization.startsWith("Bearer ") || authorization.length <= "Bearer ".length) {
     throw new Error("Native Codex passthrough requires the incoming Bearer authorization");
@@ -257,9 +548,7 @@ export async function forwardNativeCodexRequest(
       void parseRequest?.body?.cancel().catch(() => {});
     }
     if (isObject(parsedBody)) {
-      if (typeof parsedBody.model === "string" && /^[A-Za-z0-9_./:-]{1,128}$/.test(parsedBody.model)) {
-        model = parsedBody.model;
-      }
+      model = safeNativeModelId(parsedBody.model) ?? undefined;
       const tail = Array.isArray(parsedBody.input) ? parsedBody.input.at(-1) : undefined;
       compactionRequest ||= endpoint === "responses" && isObject(tail) && tail.type === "compaction_trigger";
     }
@@ -296,7 +585,31 @@ export async function forwardNativeCodexRequest(
     // forwarding account headers to a redirect destination.
     redirect: imageRequest ? "manual" : "follow",
   });
-  const upstream = await fetchUpstream(upstreamRequest);
+  const telemetryEndpoint = endpoint === "responses" || endpoint === "responses/compact"
+    ? (compactionRequest ? "responses/compact" : endpoint)
+    : undefined;
+  let upstream: Response;
+  try {
+    upstream = await fetchUpstream(upstreamRequest);
+  } catch (error) {
+    if (telemetryEndpoint) {
+      const aborted = request.signal.aborted
+        || (error instanceof DOMException && error.name === "AbortError");
+      enqueueNativeUsageTelemetry({
+        endpoint: telemetryEndpoint,
+        requestedModelId: model ?? null,
+        reportedModelId: null,
+        startedAt: telemetryStartedAt,
+        durationMs: Math.max(0, Math.round(Date.now() - telemetryStartedAtMs)),
+        outcome: aborted ? "aborted" : "failed",
+        httpStatus: 0,
+        failureCategory: aborted ? "aborted" : "transport",
+        usageStatus: "unreported",
+        usage: null,
+      });
+    }
+    throw error;
+  }
   if (compactionRequest && !upstream.ok) {
     console.warn(`[codex-chatgpt-web] native_compaction_upstream_failed ${JSON.stringify({
       endpoint, model, status: upstream.status,
@@ -310,15 +623,44 @@ export async function forwardNativeCodexRequest(
   const isEventStream = (upstream.headers.get("content-type") ?? "")
     .toLowerCase()
     .includes("text/event-stream");
-  return new Response(
-    upstream.body
-      ? withUncleanCloseTolerance(upstream.body, isEventStream, bytes => {
+  const tolerantBody = upstream.body
+    ? withUncleanCloseTolerance(upstream.body, isEventStream, bytes => {
         console.warn(
           `[codex-chatgpt-web] native_upstream_unclean_close endpoint=${endpoint} bytes=${bytes}`
           + " (turn had already completed; closing the client stream normally)",
         );
       })
-      : upstream.body,
+    : upstream.body;
+  let responseBody = tolerantBody;
+  if (telemetryEndpoint) {
+    if (tolerantBody) {
+      responseBody = observeNativeResponseBody(tolerantBody, {
+        endpoint: telemetryEndpoint,
+        requestedModelId: model ?? null,
+        startedAt: telemetryStartedAt,
+        startedAtMs: telemetryStartedAtMs,
+        httpStatus: upstream.status,
+        eventStream: isEventStream,
+        signal: request.signal,
+      });
+    } else {
+      const failureCategory = failureCategoryForHttp(upstream.status);
+      enqueueNativeUsageTelemetry({
+        endpoint: telemetryEndpoint,
+        requestedModelId: model ?? null,
+        reportedModelId: null,
+        startedAt: telemetryStartedAt,
+        durationMs: Math.max(0, Math.round(Date.now() - telemetryStartedAtMs)),
+        outcome: failureCategory ? "failed" : "completed",
+        httpStatus: upstream.status,
+        failureCategory,
+        usageStatus: "unreported",
+        usage: null,
+      });
+    }
+  }
+  return new Response(
+    responseBody,
     {
       status: upstream.status,
       statusText: upstream.statusText,

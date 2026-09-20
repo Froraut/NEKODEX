@@ -3,7 +3,12 @@ import { createProcessLineReader } from "./process-line-reader";
 import { CHATGPT_HELPER_DIAGNOSTIC_BYTES } from "./resource-budgets";
 import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
-import { ChatGptBrowserWorker, closeChatGptBrowserWorkers, type BrowserTurn } from "./browser-worker";
+import {
+  ChatGptBrowserWorker,
+  closeChatGptBrowserWorkers,
+  type BrowserTurn,
+  type ChatGptCompletionFenceStart,
+} from "./browser-worker";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptWebCapabilities } from "./model";
 import { createProcessLineWriter } from "./process-line-writer";
@@ -72,7 +77,8 @@ type InputMessage = RunMessage
   | MaintenanceMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
   | { type: "send_activation_ack"; id: string; requestId?: number }
-  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }
+  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null;
+      blockedReason?: "active_work" | "unacknowledged_async_result"; blockedCount?: number }
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
   | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
   | { type: "abort"; id: string; reason?: "compaction_handoff_accepted" }
@@ -110,7 +116,7 @@ const sendActivationWaiters = new Map<string, {
 let sendActivationRequestId = 0;
 const completionFenceBeginWaiters = new Map<string, {
   requestId: number;
-  resolve: (revision: number | undefined) => void;
+  resolve: (fence: ChatGptCompletionFenceStart) => void;
   reject: (error: Error) => void;
 }>();
 const completionFenceCommitWaiters = new Map<string, {
@@ -257,7 +263,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(progress ? {
       externalProgress: progress,
       completionFence: {
-        begin: () => new Promise<number | undefined>((resolve, reject) => {
+        begin: () => new Promise<ChatGptCompletionFenceStart>((resolve, reject) => {
           if (completionFenceBeginWaiters.has(message.id)) {
             reject(new Error("Browser helper completion fence already awaits a begin result"));
             return;
@@ -477,8 +483,14 @@ const input = createProcessLineReader(stdin, line => {
     sendActivationWaiters.delete(message.id);
     waiter.resolve();
   } else if (message.type === "completion_fence_begin_ack") {
+    const legacyActiveWork = message.revision === null
+      && message.blockedReason === undefined && message.blockedCount === undefined;
     if (!Number.isSafeInteger(message.requestId) || message.requestId <= 0
-      || (message.revision !== null && (!Number.isSafeInteger(message.revision) || message.revision < 0))) {
+      || (message.revision !== null && (!Number.isSafeInteger(message.revision) || message.revision < 0))
+      || (message.revision === null && !legacyActiveWork && (
+        (message.blockedReason !== "active_work" && message.blockedReason !== "unacknowledged_async_result")
+        || !Number.isSafeInteger(message.blockedCount) || message.blockedCount! <= 0
+      ))) {
       writeProtocol({ type: "error", id: message.id, message: "Browser helper completion fence revision is invalid" });
       abortControllers.get(message.id)?.abort();
       return;
@@ -486,7 +498,11 @@ const input = createProcessLineReader(stdin, line => {
     const waiter = completionFenceBeginWaiters.get(message.id);
     if (!waiter || waiter.requestId !== message.requestId) return;
     completionFenceBeginWaiters.delete(message.id);
-    waiter.resolve(message.revision ?? undefined);
+    waiter.resolve(message.revision === null
+      ? legacyActiveWork
+        ? { blockedReason: "active_work", blockedCount: 1 }
+        : { blockedReason: message.blockedReason!, blockedCount: message.blockedCount! }
+      : { revision: message.revision });
   } else if (message.type === "completion_fence_commit_ack") {
     if (!Number.isSafeInteger(message.requestId) || message.requestId <= 0
       || typeof message.committed !== "boolean") {
@@ -569,4 +585,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "compaction-execution"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-reasons", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "compaction-execution"] });

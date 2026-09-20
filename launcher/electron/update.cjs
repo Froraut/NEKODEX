@@ -9,6 +9,7 @@ const { pipeline } = require("node:stream/promises");
 const { validateStagedApplication } = require("./update-validation.cjs");
 const { verifyReleaseMetadata } = require("./release-trust.cjs");
 const { downloadAuthenticatedAsset } = require("./resumable-download.cjs");
+const { processIdentity } = require("./update-recovery.cjs");
 const BUILD = require("../package.json");
 const APPLICATION = applicationIdentity(BUILD);
 
@@ -291,7 +292,9 @@ function findMacApplication(root) {
 
 function buildJob({ version, platform, arch = process.arch, executablePath, assetPath, stagingRoot, tempRoot, logPath,
   runtimeExecutable, repository = REPOSITORY }) {
-  const common = { version, platform, arch, parentPid: process.pid, tempRoot, logPath, runtimeExecutable,
+  const parentIdentity = processIdentity(process.pid);
+  if (!parentIdentity) throw new Error("Could not establish the running launcher's process identity");
+  const common = { version, platform, arch, parentPid: process.pid, parentIdentity, tempRoot, logPath, runtimeExecutable,
     identity: APPLICATION.identity, productName: APPLICATION.productName, packageName: BUILD.name, repository };
   if (platform === "darwin") {
     const target = macApplicationPath(executablePath);

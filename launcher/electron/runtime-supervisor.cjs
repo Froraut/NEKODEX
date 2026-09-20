@@ -12,6 +12,7 @@ const {
   terminateOwnedProcessTree,
 } = require("./process-tree.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
+const { ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME } = require("./connector-identity.cjs");
 
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
@@ -1140,8 +1141,15 @@ class RuntimeSupervisor {
 
   async runTunnelConnectCommand(config, recoverySignal) {
     const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
+    const asyncTools = config.experimentalAsyncToolOperations === true;
+    const asyncIdentity = [ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME].includes(config.appName);
+    if (asyncTools !== asyncIdentity || asyncTools && (contract !== "native" || config.mode !== "full")) {
+      throw new Error("Async tool operations require Automatic Full mode and its separate Native5 connector");
+    }
     const invocation = this.runtimeCommand([
       "mcp",
+      asyncTools ? "--async-tool-operations" : "--synchronous-tool-operations",
+      config.allowWebSubagents === false ? "--no-web-subagents" : "--allow-web-subagents",
       "--contract",
       contract,
       "--broker-socket",

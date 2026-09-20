@@ -262,19 +262,36 @@ export function chatGptTurnRetryKey(parsed: CodexParsedRequest): string {
     threadId: identity.threadId,
     turnId: identity.turnId,
     purpose: parsed._compactionRequest ? "compaction" : "response",
+    ...(!parsed._compactionRequest ? { instruction: chatGptInstructionLineage(parsed).current } : {}),
   })).digest("hex");
 }
 
-/** One native Codex thread may own at most one live ChatGPT browser surface. */
-export function chatGptThreadOwnershipKey(parsed: CodexParsedRequest): string {
+function chatGptStableOwnerIdentity(parsed: CodexParsedRequest): { kind: string; id: string } | undefined {
   const identity = extractChatGptTurnIdentity(parsed);
-  const owner = identity.threadId
+  return identity.threadId
     ? { kind: "thread", id: identity.threadId }
     : identity.promptCacheKey
       ? { kind: "prompt_cache", id: identity.promptCacheKey }
       : identity.turnId
         ? { kind: "turn", id: identity.turnId }
         : undefined;
+}
+
+/** Keep every browser acquisition for one supported logical owner on the same launcher account. */
+export function chatGptAccountRoutingKey(parsed: CodexParsedRequest): string {
+  const owner = chatGptStableOwnerIdentity(parsed);
+  if (!owner) throw new Error("ChatGPT web requires native Codex turn identity metadata for account routing");
+  // Preserve the exact key already persisted by the multi-account launcher. Changing existing
+  // thread affinity during an upgrade could silently move a retained task to another account.
+  if (owner.kind === "thread") {
+    return createHash("sha256").update(`account-thread:${owner.id}`).digest("hex");
+  }
+  return createHash("sha256").update(JSON.stringify({ scope: "account", ...owner })).digest("hex");
+}
+
+/** One native Codex thread may own at most one live ChatGPT browser surface. */
+export function chatGptThreadOwnershipKey(parsed: CodexParsedRequest): string {
+  const owner = chatGptStableOwnerIdentity(parsed);
   if (!owner) throw new Error("ChatGPT web requires native Codex turn identity metadata for browser ownership");
   return createHash("sha256").update(JSON.stringify(owner)).digest("hex");
 }

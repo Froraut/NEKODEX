@@ -35,6 +35,8 @@ export interface CompiledChatGptWebPrompt {
 export interface CompileChatGptWebPromptOptions {
   captureLunaCheckpoint?: boolean;
   experimentalSkillAttachments?: boolean;
+  /** Native5-only contract for owned start/poll/ack tool operations. */
+  experimentalAsyncToolOperations?: boolean;
   allowProStaging?: boolean;
   experimentalMultipartParts?: ChatGptWebMultipartPartCount;
   /**
@@ -149,9 +151,9 @@ export function formatChatGptWebMultipartCommit(
   ].join("\n");
 }
 
-const RETIRED_HANDLE_KIND = "turn|binding|call|request|control|handoff";
+const RETIRED_HANDLE_KIND = "turn|binding|call|request|control|handoff|operation|delivery";
 const RETIRED_TURN_HANDLE = new RegExp(
-  `(?<![A-Za-z0-9_-])(${RETIRED_HANDLE_KIND})_[A-Za-z0-9_-]{32}(?![A-Za-z0-9_-])`,
+  `(?<![A-Za-z0-9_-])(${RETIRED_HANDLE_KIND})_[A-Za-z0-9_-]{32,64}(?![A-Za-z0-9_-])`,
   "g",
 );
 
@@ -503,6 +505,8 @@ export function compileChatGptWebPrompt(
   options?: CompileChatGptWebPromptOptions,
 ): CompiledChatGptWebPrompt {
   const manualControl = options?.manualControl === true;
+  const asyncToolOperations = options?.experimentalAsyncToolOperations === true
+    && !manualControl && !parsed._hermesContext;
   const attachSkills = options?.experimentalSkillAttachments === true;
   if (attachSkills && (manualControl || isChatGptWebZeroRiskBackendModel(parsed.modelId))) {
     throw new Error("Skills as files is unavailable in manual mode");
@@ -584,6 +588,11 @@ export function compileChatGptWebPrompt(
       parsed._hermesContext
         ? "Use codex_tool_inventory to discover the supplied Hermes functions and codex_tool_call to invoke their exact structured schemas. Use Hermes terminal/read_file/memory/delegate_task only when advertised. Do not use Codex-specific command, thread or compaction shortcuts. The bridge's read-only transport root is not the Hermes workspace or its permission policy."
         : "For reading a referenced Codex task, use codex_read_thread with the task ID. It can only invoke the current outer read_thread tool; report an unavailable-tool error instead of trying a different action to bypass that limit.",
+      ...(asyncToolOperations ? [
+        "For a tool that can legitimately run longer than one MCP transport window, use codex_tool_start once with a stable operation_key, then call codex_tool_poll with bounded waits until it returns a terminal delivery_id.",
+        "After consuming a terminal owned-operation result, call codex_tool_poll once more with its exact ack_delivery_id. A poll timeout or disconnect never authorizes restarting codex_tool_start with a different operation_key.",
+        "codex_tool_cancel cancels a queued invocation before dispatch. After dispatch it cancels only observation; the external tool and side effects may continue, and sibling calls remain owned by this turn.",
+      ] : []),
       "A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
       "Continue using the available tools until the requested work is complete and verified.",

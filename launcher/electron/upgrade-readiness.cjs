@@ -7,7 +7,7 @@ function setupIdentity(config, account) {
   if (!config || typeof account !== 'string' || !account) return null;
   const keys = ['mode', 'browserInteractionMode', 'appName', 'port', 'solAvailable',
     'extraHighAvailable', 'proAvailable', 'experimentalBiggerContext', 'zeroRiskProEnabled',
-    'subagentProtocol', 'tunnel', 'automaticTunnel', 'manualTunnel'];
+    'experimentalAsyncToolOperations', 'subagentProtocol', 'tunnel', 'automaticTunnel', 'manualTunnel'];
   return createHash('sha256').update(JSON.stringify({ account,
     config: Object.fromEntries(keys.map(key => [key, config[key] ?? null])) })).digest('hex');
 }

@@ -82,6 +82,10 @@ try {
   $Expected = ($ExpectedLine -split "\s+")[0].ToLowerInvariant()
   $Actual = (Get-FileHash -Algorithm SHA256 $Installer).Hash.ToLowerInvariant()
   if ($Actual -ne $Expected) { throw "SHA-256 verification failed for $Asset" }
+  $Signature = Get-AuthenticodeSignature -LiteralPath $Installer
+  if ($Signature.Status -ne 'Valid' -or -not $Signature.SignerCertificate) {
+    throw "Windows installer has no valid Authenticode signature. Unsigned previews must be handled separately."
+  }
   $Process = Start-Process -FilePath $Installer -ArgumentList "/S", "/currentuser" -Wait -PassThru
   if ($Process.ExitCode -ne 0) { throw "Installer exited with code $($Process.ExitCode)" }
   $InstallRegistry = "HKCU:\Software\d1a6026a-6210-588e-9a2b-da3936f94e02"

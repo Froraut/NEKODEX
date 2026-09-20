@@ -916,6 +916,7 @@ function registerIpc({ logger, stateStore }) {
       mcpGuideStep: 0,
       codexRestartRequired: true,
       browserInteractionMode: "automatic",
+      experimentalAsyncToolOperations: false,
       experimentalBiggerContext: false,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
@@ -955,6 +956,7 @@ function registerIpc({ logger, stateStore }) {
       coreSetupComplete: true,
       codexCatalogVerified: IS_DEV_PROFILE ? true : false,
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
+      experimentalAsyncToolOperations: runtimeHost.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true,
       zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
       ...(result.mode === "full" ? {
         mcpRuntimeInstalled: true,
@@ -1002,6 +1004,7 @@ function registerIpc({ logger, stateStore }) {
       : await runSetup();
     const state = stateStore.update({
       browserInteractionMode: interactionMode,
+      experimentalAsyncToolOperations: runtimeHost.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true,
       ...(interactionMode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false, experimentalFreshConversationPerTurn: false } : {}),
       zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
       coreSetupComplete: true,
@@ -1049,6 +1052,37 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:state-changed", state);
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return state;
+  });
+  handle("launcher:async-tool-operations", async (_event, enabled) => {
+    if (typeof enabled !== "boolean") throw new Error("Asynchronous tool operations must be a boolean");
+    if (shutdownInProgress || quitting || exitCommitted) throw new Error("NEKODEX is shutting down");
+    browserHost.closeTurnAdmission("the asynchronous tool operation change");
+    try {
+      if (browserHost.hasActiveTurns() || browserHost.currentOperation() || runtimeHost.currentOperation()) {
+        throw new Error("Finish active tasks and setup operations before changing asynchronous tool operations");
+      }
+      const result = await runtimeHost.setAsyncToolOperations(enabled);
+      if (!result.changed) {
+        const current = stateStore.read();
+        if (current.experimentalAsyncToolOperations === result.enabled) return current;
+        const state = stateStore.update({ experimentalAsyncToolOperations: result.enabled });
+        send("launcher:state-changed", state);
+        return state;
+      }
+      browserHost.invalidateAllEvidence();
+      invalidateAccountProof(stateStore);
+      const state = stateStore.update({
+        experimentalAsyncToolOperations: result.enabled,
+        codexCatalogVerified: IS_DEV_PROFILE,
+        codexRestartRequired: !IS_DEV_PROFILE,
+      });
+      send("launcher:state-changed", state);
+      send("launcher:browser-state", browserHost.snapshot());
+      if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
+      return state;
+    } finally {
+      if (!exitCommitted) browserHost.openTurnAdmission();
+    }
   });
   handle("launcher:skill-attachments", async (_event, enabled) => {
     if (typeof enabled !== "boolean") throw new Error("Skills as files must be a boolean");
@@ -1137,6 +1171,7 @@ function registerIpc({ logger, stateStore }) {
     );
     const state = stateStore.update({
       browserInteractionMode: mode,
+      experimentalAsyncToolOperations: runtimeHost.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true,
       ...(mode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false, experimentalFreshConversationPerTurn: false } : {}),
       ...(result.configured ? {
         codexCatalogVerified: IS_DEV_PROFILE,
@@ -1216,7 +1251,19 @@ function registerIpc({ logger, stateStore }) {
     return stateStore.update({ [key]: value === true });
   });
   handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
-  handle("launcher:usage", (_event, days) => browserHost.usage.snapshot(days));
+  handle("launcher:usage", (_event, query) => {
+    if (typeof query === "number") return browserHost.usageSnapshot(query);
+    if (!query || typeof query !== "object" || Array.isArray(query)
+      || Object.keys(query).some(key => !["days", "accountId", "source"].includes(key))
+      || ![1, 7, 30, 90].includes(query.days)
+      || (query.source !== undefined && !["web", "native"].includes(query.source))
+      || (query.accountId !== undefined && query.accountId !== null
+        && (typeof query.accountId !== "string" || query.accountId.length > 36))
+      || (query.source === "native" && query.accountId !== undefined && query.accountId !== null)) {
+      throw new Error("Usage query is invalid");
+    }
+    return browserHost.usageSnapshot({ days: query.days, source: query.source ?? "web", accountId: query.accountId ?? null });
+  });
   handle("launcher:logs", (_event, limit) => logger.recent(limit));
   handle("launcher:export-logs", async () => {
     const date = new Date().toISOString().slice(0, 10);
@@ -1242,25 +1289,28 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:update-install", async () => {
     if (!updateController) throw new Error("Launcher updates are unavailable");
     const updateBlocked = () => runtimeHost?.currentOperation() || browserHost?.currentOperation()
-      || [...(browserHost?.turnTabs?.values() ?? [])].some(tab => tab.status === "running");
-    if (updateBlocked()) throw new Error("Finish active tasks and setup operations before updating NEKODEX");
-    const launch = await updateController.beginInstall();
-    if (updateBlocked()) {
-      await updateController.cancelInstall(launch);
-      throw new Error("A task started while the update was downloading. Finish it, then retry the update");
-    }
-    const result = await requestQuit();
-    if (!result.ok) {
-      try {
-        await updateController.cancelInstall(launch);
-      } catch (cleanupError) {
-        const primaryError = new Error(result.message);
-        primaryError.cause = cleanupError;
-        throw primaryError;
+      || browserHost?.hasActiveTurns();
+    browserHost.closeTurnAdmission("the launcher update");
+    let launch;
+    try {
+      if (updateBlocked()) throw new Error("Finish active tasks and setup operations before updating NEKODEX");
+      launch = await updateController.beginInstall();
+      const result = await requestQuit({ admissionHeld: true });
+      if (!result.ok) {
+        try {
+          await updateController.cancelInstall(launch);
+        } catch (cleanupError) {
+          const primaryError = new Error(result.message);
+          primaryError.cause = cleanupError;
+          throw primaryError;
+        }
+        throw new Error(result.message);
       }
-      throw new Error(result.message);
+      return true;
+    } catch (error) {
+      if (!exitCommitted) browserHost.openTurnAdmission();
+      throw error;
     }
-    return true;
   });
   handle("launcher:window-state", (event) => {
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -1275,18 +1325,22 @@ function registerIpc({ logger, stateStore }) {
   }, authorize);
 }
 
-async function requestQuit() {
+async function requestQuit({ admissionHeld = false } = {}) {
   if (shutdownInProgress || exitCommitted) {
     return { ok: false, message: "Launcher shutdown is already in progress" };
   }
   shutdownInProgress = true;
   let shutdownResult;
   try {
+    if (!admissionHeld) browserHost?.closeTurnAdmission("launcher shutdown");
     const activeOperation = runtimeHost?.currentOperation() || browserHost?.currentOperation();
     if (activeOperation) {
       throw new Error(`Wait for ${activeOperation} to finish before quitting NEKODEX`);
     }
-    shutdownResult = await runtimeSupervisor?.shutdown({ cancelActiveTurns: true, force: true });
+    if (browserHost?.hasActiveTurns()) {
+      throw new Error("Finish or cancel active tasks before quitting NEKODEX");
+    }
+    shutdownResult = await runtimeSupervisor?.shutdown({ cancelActiveTurns: false, force: false });
     if (shutdownResult?.status === "forced-partial") {
       const message = `Runtime cleanup was incomplete: ${shutdownResult.failures.join("; ")}. Check launcher diagnostics and the runtime ownership state before restarting.`;
       logger?.error("launcher.quit_cleanup_incomplete", {
@@ -1314,6 +1368,7 @@ async function requestQuit() {
       : primary;
     quitting = false;
     runtimeSupervisor?.allowRestartAfterQuitFailure();
+    browserHost?.openTurnAdmission();
     showMainWindow();
     publishOperation({ name: "launcher-quit", status: "failed", message });
     return { ok: false, message };
@@ -1489,6 +1544,12 @@ async function start() {
     publishState: (state) => send("launcher:browser-state", state),
     showWindow: showMainWindow,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
+    bootstrapPrimaryConnector: () => {
+      const runtime = runtimeHost.runtimeConfigSnapshot();
+      return stateStore.read().browserInteractionMode === "automatic"
+        && runtime.configured && runtime.config?.mode === "full"
+        && runtime.config?.browserInteractionMode === "automatic";
+    },
   });
   await browserHost.ready();
   if (!IS_DEV_PROFILE) contextChangeQueue.start();
@@ -1583,6 +1644,7 @@ async function start() {
       ...(config?.mode !== "full" ? { mcpSetupComplete: false, mcpGuideStep: 0 } : {}),
       codexRestartRequired: false,
       autoStart: false,
+      experimentalAsyncToolOperations: config?.experimentalAsyncToolOperations === true,
       experimentalBiggerContext: config?.experimentalBiggerContext === true,
       experimentalSkillAttachments: config?.experimentalSkillAttachments === true,
       allowWebSubagents: config?.allowWebSubagents !== false,
@@ -1625,6 +1687,7 @@ async function start() {
         coreSetupComplete: true,
         ...(upgrade.connectorMigrated ? { browserSmokePassed: false, browserSmokeVersion: null } : {}),
         ...(!preserve ? { codexCatalogVerified: false, codexRestartRequired: true } : {}),
+        experimentalAsyncToolOperations: runtimeHost.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true,
         experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
         experimentalSkillAttachments: runtimeHost.runtimeConfigSnapshot().config?.experimentalSkillAttachments === true,
         experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
@@ -1650,17 +1713,20 @@ async function start() {
     const configuredRuntime = runtimeHost.runtimeConfigSnapshot();
     if (configuredRuntime.configured) {
       const enabled = configuredRuntime.config?.experimentalBiggerContext === true;
+      const experimentalAsyncToolOperations = configuredRuntime.config?.experimentalAsyncToolOperations === true;
       const experimentalSkillAttachments = configuredRuntime.config?.experimentalSkillAttachments === true;
       const allowWebSubagents = configuredRuntime.config?.allowWebSubagents !== false;
       const experimentalFreshConversationPerTurn = configuredRuntime.config?.experimentalFreshConversationPerTurn === true;
       const zeroRiskProEnabled = configuredRuntime.config?.zeroRiskProEnabled === true;
       const saved = stateStore.read();
-      if (saved.allowWebSubagents !== allowWebSubagents
+      if (saved.experimentalAsyncToolOperations !== experimentalAsyncToolOperations
+        || saved.allowWebSubagents !== allowWebSubagents
         || saved.experimentalFreshConversationPerTurn !== experimentalFreshConversationPerTurn
         || saved.experimentalSkillAttachments !== experimentalSkillAttachments
         || saved.experimentalBiggerContext !== enabled
         || saved.zeroRiskProEnabled !== zeroRiskProEnabled) {
-        const state = stateStore.update({ experimentalBiggerContext: enabled, experimentalSkillAttachments, experimentalFreshConversationPerTurn, allowWebSubagents, zeroRiskProEnabled });
+        const state = stateStore.update({ experimentalAsyncToolOperations, experimentalBiggerContext: enabled,
+          experimentalSkillAttachments, experimentalFreshConversationPerTurn, allowWebSubagents, zeroRiskProEnabled });
         send("launcher:state-changed", state);
       }
     }
@@ -1680,6 +1746,7 @@ async function start() {
       const patch = {
         coreSetupComplete: true,
         mcpRuntimeInstalled: config.mode === "full",
+        experimentalAsyncToolOperations: config.experimentalAsyncToolOperations === true,
         experimentalBiggerContext: config.experimentalBiggerContext === true,
         experimentalSkillAttachments: config.experimentalSkillAttachments === true,
         experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn === true,

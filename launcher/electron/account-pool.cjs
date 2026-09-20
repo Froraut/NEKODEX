@@ -31,6 +31,8 @@ class AccountBrowserPool {
     this.loginOperation = null;
     this.surfaceActive = true;
     this.destroyed = false;
+    this.turnAdmission = { open: true, reason: null };
+    this.turnAdmissionRevision = 0;
     this.addingAccount = false;
     this.initializingHosts = true;
     this.affinityPath = path.join(options.coreHome, 'account-affinity.json');
@@ -97,6 +99,25 @@ class AccountBrowserPool {
     if (this.loginOperation) return 'ChatGPT account login';
     return [...this.hosts.values()].map(host => host.currentOperation()).find(Boolean) || null;
   }
+  closeTurnAdmission(reason = 'launcher shutdown') {
+    if (typeof reason !== 'string' || !reason || reason.length > 80) throw new Error('Turn admission reason is invalid');
+    this.turnAdmission = { open: false, reason };
+    this.turnAdmissionRevision++;
+    return this.turnAdmission;
+  }
+  openTurnAdmission() {
+    this.turnAdmission = { open: true, reason: null };
+    this.turnAdmissionRevision++;
+    return this.turnAdmission;
+  }
+  assertTurnAdmission() {
+    if (!this.turnAdmission.open) throw new Error(`NEKODEX is preparing ${this.turnAdmission.reason}; retry after it finishes`);
+    return this.turnAdmissionRevision;
+  }
+  hasActiveTurns() {
+    return this.reservations.size > 0
+      || [...this.turnTabs.values()].some(tab => tab.status === 'running');
+  }
   accountSnapshot() {
     const config = this.registry.snapshot();
     return { ...config, accounts: config.accounts.map(account => {
@@ -112,16 +133,22 @@ class AccountBrowserPool {
     try { action(); }
     catch { this.usage.error = 'Usage recording failed; stored history was preserved and totals may be incomplete.'; }
   }
-  usageObservation(traceId, helperPid, receipt, effort, modelVersion, outcome) {
+  usageObservation(traceId, helperPid, receipt, effort, modelVersion, outcome, modelVersionSource, messageKind) {
     const host = this.ownerForTrace(traceId);
     const tab = [...host.turnTabs.values()].find(tab => tab.traceId === traceId && tab.helperPid === helperPid);
     if (!tab || tab.status !== 'running') throw new Error('Usage observation has no active owner');
     if (typeof receipt !== 'string' || !/^[a-f0-9-]{36}$/.test(receipt)) throw new Error('Invalid usage receipt');
     this.recordUsage(() => {
-      this.usage.accept(traceId, helperPid, receipt, effort, modelVersion);
+      this.usage.accept(traceId, helperPid, receipt, effort, modelVersion, 'automatic', host.accountId,
+        { modelVersionSource, messageKind });
       if (outcome === 'completed') this.usage.finish(traceId, helperPid, outcome, receipt);
     });
   }
+  usageSnapshot(query) {
+    const accounts = this.registry.snapshot().accounts.map(({ id, label }) => ({ id, label }));
+    return this.usage.snapshot(query, accounts);
+  }
+  recordNativeUsage(value) { return this.usage.recordNative(value); }
   async setAccountProxy(id, value) {
     const proxy = validateProxy(value);
     const host = this.getHost(id);
@@ -159,6 +186,11 @@ class AccountBrowserPool {
     const epoch = this.evidenceEpoch(id) + 1;
     this.evidenceEpochs.set(id, epoch);
     return epoch;
+  }
+  invalidateAllEvidence() {
+    for (const account of this.registry.snapshot().accounts) this.invalidateEvidence(account.id);
+    this.publish();
+    return this.accountSnapshot();
   }
   evidenceIsCurrent(id, epoch) {
     return this.evidenceEpoch(id) === epoch;
@@ -312,6 +344,18 @@ class AccountBrowserPool {
       throw error;
     } finally { this.publish(); }
   }
+  async verifyConnector(appName) {
+    const id = this.registry.snapshot().selectedId;
+    const host = this.getHost(id);
+    const epoch = this.evidenceEpoch(id);
+    const result = await host.verifyConnector(appName);
+    if (!this.evidenceIsCurrent(id, epoch) || this.registry.snapshot().selectedId !== id) {
+      throw new Error('ChatGPT account readiness changed while verifying its connector');
+    }
+    this.connectors.set(id, host.connectorName());
+    this.publish();
+    return result;
+  }
   async refreshAuthentication() {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
     for (const account of this.registry.snapshot().accounts.filter(account => account.enabled)) {
@@ -323,6 +367,13 @@ class AccountBrowserPool {
           const evidence = await host.inspectSession(true);
           if (this.evidenceIsCurrent(account.id, epoch)) {
             this.capabilities.set(account.id, evidence);
+            if (account.id === 'default' && this.options.bootstrapPrimaryConnector?.() === true) {
+              await host.verifyConnector(host.connectorName());
+              if (!this.evidenceIsCurrent(account.id, epoch)) {
+                throw new Error('Primary account readiness changed while bootstrapping its connector');
+              }
+              this.connectors.set(account.id, host.connectorName());
+            }
           }
         }
       }
@@ -445,7 +496,8 @@ class AccountBrowserPool {
   confirmManualSent(tabId) {
     const host = this.ownerForTab(tabId), tab = host.turnTabs.get(tabId);
     const result = host.confirmManualSent(tabId);
-    if (tab) this.recordUsage(() => this.usage.accept(tab.traceId, tab.helperPid, 'manual', 'unknown', 'unknown', 'manual'));
+    if (tab) this.recordUsage(() => this.usage.accept(tab.traceId, tab.helperPid, 'manual', 'unknown', 'unknown',
+      'manual', host.accountId, { modelVersionSource: 'unknown', messageKind: 'task' }));
     return result;
   }
   async withInteractionModeChange(mode, action) {
@@ -469,7 +521,6 @@ class AccountBrowserPool {
     const eligible = account => {
       const host = this.hosts.get(account.id);
       if (!account.enabled || host?.currentOperation()) return false;
-      if (config.mode === 'selected' && account.id === 'default') return true;
       if (host?.state.authenticated !== true) return false;
       const caps = this.capabilities.get(account.id);
       if (config.mode === 'balanced' && account.id !== 'default' && !caps) return false;
@@ -477,7 +528,7 @@ class AccountBrowserPool {
       if (requirement?.effort === 'max' && caps?.proAvailable !== true) return false;
       if (requirement?.effort === 'xhigh' && caps?.extraHighAvailable !== true) return false;
       if (requirement?.effort && requirement.effort !== 'max' && requirement.effort !== 'luna' && caps?.solAvailable !== true) return false;
-      if (requirement?.connector && account.id !== 'default' && this.connectors.get(account.id) !== requirement.connector) return false;
+      if (requirement?.connector && this.connectors.get(account.id) !== requirement.connector) return false;
       return true;
     };
     // Exact retained/running continuations can finish on a disabled account.
@@ -536,6 +587,7 @@ class AccountBrowserPool {
     this.affinity = next;
   }
   async beginTurn(traceId, reveal, helperPid, key, connector, retained, requirement) {
+    const admissionRevision = this.assertTurnAdmission();
     if (this.networkOperation) throw new Error('Account network settings are changing; retry after they finish');
     if (this.reservations.has(traceId)) throw new Error('Browser turn is already acquiring its account');
     const active = [...this.turnTabs.values()].filter(tab => tab.status === 'running');
@@ -564,6 +616,9 @@ class AccountBrowserPool {
       const newKeys = [...new Set(keys)].filter(binding => !this.affinity.has(binding));
       if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
       await host.ready();
+      if (!this.turnAdmission.open || this.turnAdmissionRevision !== admissionRevision) {
+        throw new Error('NEKODEX turn admission changed while acquiring this task; retry after launcher activity finishes');
+      }
       const account = this.registry.snapshot().accounts.find(candidate => candidate.id === id);
       const exactContinuation = retained || [...host.turnTabs.values()].some(tab => tab.traceId === traceId
         && tab.status === 'running' && tab.interactionMode === 'automatic'
@@ -609,12 +664,13 @@ class AccountBrowserPool {
     const id = this.traceOwners.get(traceId) ?? owner.accountId;
     // Host validates trace/helper ownership before account-wide state can change.
     const result = await owner.endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound);
-    this.recordUsage(() => this.usage.finish(traceId, helperPid, status));
+    this.recordUsage(() => this.usage.finish(traceId, helperPid, status, undefined, failureCode));
     try { if (id && status === 'failed') this.safety.fail(id, failureCode); }
     finally { this.traceOwners.delete(traceId); this.publish(); }
     return result;
   }
   beginManualTurn(...args) {
+    this.assertTurnAdmission();
     // Manual submission is deliberately tied to the profile visible to the user.
     const [traceId, , , key] = args;
     const traceOwner = this.traceOwners.get(traceId) ?? [...this.hosts].find(([, host]) =>

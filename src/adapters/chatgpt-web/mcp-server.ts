@@ -12,7 +12,12 @@ import { VERSION } from "../../version";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import { assertCommandEscalationSchema, hasCommandEscalation } from "./command-escalation";
-import { callTurnBroker, TurnBrokerTimeoutError, type BrokerToolResult } from "./turn-broker";
+import {
+  callTurnBroker,
+  TurnBrokerTimeoutError,
+  type BrokerOwnedOperationSnapshot,
+  type BrokerToolResult,
+} from "./turn-broker";
 
 interface ClaimedTurn {
   bindingId: string;
@@ -31,6 +36,9 @@ const BRIDGE_TOOL_NAMES = new Set([
   "codex_read_thread",
   "codex_tool_inventory",
   "codex_tool_call",
+  "codex_tool_start",
+  "codex_tool_poll",
+  "codex_tool_cancel",
   "codex_turn_complete",
 ]);
 
@@ -243,6 +251,43 @@ function asMcpResult(value: BrokerToolResult) {
       ? { _meta: value._meta as Record<string, unknown> }
       : {}),
   };
+}
+
+function asOwnedOperationResult(value: BrokerOwnedOperationSnapshot) {
+  if (value.state === "completed") {
+    const metadata = {
+      operation_id: value.operationId,
+      state: value.state,
+      delivery_id: value.deliveryId,
+      acknowledgement_required: true,
+    };
+    return {
+      ...asMcpResult(value.result),
+      content: [
+        ...(value.result.content as never[]),
+        { type: "text" as const, text: JSON.stringify(metadata) },
+      ] as never,
+      structuredContent: {
+        ...metadata,
+        ...(value.result.structuredContent !== undefined ? { result: value.result.structuredContent } : {}),
+      },
+    };
+  }
+  if (value.state === "failed" || value.state === "cancelled" || value.state === "expired") {
+    return result({
+      operation_id: value.operationId,
+      state: value.state,
+      delivery_id: value.deliveryId,
+      acknowledgement_required: true,
+      message: value.error,
+      ...(value.cancellationScope ? { cancellation_scope: value.cancellationScope } : {}),
+    }, true);
+  }
+  return result({
+    operation_id: value.operationId,
+    state: value.state,
+    ...(value.state === "running" ? { poll_again: true } : {}),
+  });
 }
 
 function execGateway(environment: ChatGptTurnEnvironment): CodexTool | undefined {
@@ -499,8 +544,13 @@ export async function runChatGptMcpServer(options: {
   brokerSocketPath: string;
   contract?: ChatGptMcpContract;
   allowWebSubagents?: boolean;
+  /** Native5-only schema. Native4 and Manual mode must leave this disabled. */
+  asyncToolOperations?: boolean;
 }): Promise<void> {
   const contract = options.contract ?? "native";
+  if (options.asyncToolOperations && contract !== "native") {
+    throw new Error("Owned async tool operations are unavailable in the Manual mode MCP contract");
+  }
   const spawnExclusions = options.allowWebSubagents !== false ? [] : chatgptWebBlockedGatewayWireNames();
   const server = new McpServer(
     { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
@@ -691,6 +741,59 @@ export async function runChatGptMcpServer(options: {
         ...spawnExclusions,
       ]),
     }, signal);
+  };
+
+  const resolveBrowserInvocation = (
+    bound: ChatGptTurnEnvironment & { expiresAt?: number },
+    wireNameValue: string,
+    args: Record<string, unknown> | undefined,
+    input: string | undefined,
+  ): { tool: CodexTool; payload: { arguments?: Record<string, unknown>; input?: string } } => {
+    const tool = safeVisibleTools(bound, contract).find(candidate => wireName(candidate) === wireNameValue);
+    if (!tool) {
+      const gateway = execGateway(bound);
+      const hiddenOuterTool = bound.tools.some(candidate => wireName(candidate) === wireNameValue);
+      if ((options.allowWebSubagents === false && isSpawnCollaborationWireName(wireNameValue))
+        || !gateway || hiddenOuterTool || !gatewayToolNameIsValid(wireNameValue)) {
+        throw new Error(
+          options.allowWebSubagents === false && isSpawnCollaborationWireName(wireNameValue)
+            ? `ChatGPT Web cannot run Codex ${wireNameValue}`
+            : `Codex tool is not available in this turn: ${wireNameValue}`,
+        );
+      }
+      if (input !== undefined && args && Object.keys(args).length > 0) {
+        throw new Error(`Codex nested tool ${wireNameValue} accepts either arguments or freeform input, not both`);
+      }
+      if (isGatewayAgentWaitTool(wireNameValue) && input !== undefined) {
+        throw new Error(`ChatGPT Web wait_agent requires structured arguments and timeout_ms=${CHATGPT_WEB_AGENT_WAIT_POLL_MS}`);
+      }
+      const invocationArguments = args ?? {};
+      assertGatewayToolArguments(wireNameValue, invocationArguments);
+      return {
+        tool: gateway,
+        payload: {
+          input: execGatewayProgram(wireNameValue, input !== undefined, {
+            ...(input !== undefined ? { input } : { arguments: invocationArguments }),
+          }, [...bound.tools.map(wireName), ...spawnExclusions]),
+        },
+      };
+    }
+    if (tool.freeform) {
+      if (input === undefined) throw new Error(`Freeform Codex tool ${wireNameValue} requires input`);
+      if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wireNameValue} does not accept arguments`);
+      return {
+        tool,
+        payload: {
+          input: tool === execGateway(bound)
+            ? transportBoundRawExecProgram(input, wireName(tool), spawnExclusions)
+            : input,
+        },
+      };
+    }
+    if (input !== undefined) throw new Error(`Function Codex tool ${wireNameValue} does not accept freeform input`);
+    const invocationArguments = args ?? {};
+    assertBrowserToolArguments(tool, invocationArguments);
+    return { tool, payload: { arguments: invocationArguments } };
   };
 
   server.registerTool(
@@ -1038,50 +1141,106 @@ export async function runChatGptMcpServer(options: {
         return result({ submitted: true });
       }
       return withClaimedTurn("codex_tool_call", requestId, extra, async claimed => {
-        const bound = claimed.environment;
-        const tool = safeVisibleTools(bound, contract)
-          .find(candidate => wireName(candidate) === wire_name);
-        if (!tool) {
-          const gateway = execGateway(bound);
-          const hiddenOuterTool = bound.tools.some(candidate => wireName(candidate) === wire_name);
-          if ((options.allowWebSubagents === false && isSpawnCollaborationWireName(wire_name))
-            || !gateway || hiddenOuterTool || !gatewayToolNameIsValid(wire_name)) {
-            throw new Error(
-              options.allowWebSubagents === false && isSpawnCollaborationWireName(wire_name)
-                ? `ChatGPT Web cannot run Codex ${wire_name}`
-                : `Codex tool is not available in this turn: ${wire_name}`,
-            );
-          }
-          if (input !== undefined && args && Object.keys(args).length > 0) {
-            throw new Error(`Codex nested tool ${wire_name} accepts either arguments or freeform input, not both`);
-          }
-          if (isGatewayAgentWaitTool(wire_name) && input !== undefined) {
-            throw new Error(`ChatGPT Web wait_agent requires structured arguments and timeout_ms=${CHATGPT_WEB_AGENT_WAIT_POLL_MS}`);
-          }
-          const invocationArguments = args ?? {};
-          assertGatewayToolArguments(wire_name, invocationArguments);
-          return invoke(claimed.bindingId, bound, gateway, {
-            input: execGatewayProgram(wire_name, input !== undefined, {
-              ...(input !== undefined ? { input } : { arguments: invocationArguments }),
-            }, [...bound.tools.map(wireName), ...spawnExclusions]),
-          }, extra.signal);
-        }
-        if (tool.freeform) {
-          if (input === undefined) throw new Error(`Freeform Codex tool ${wire_name} requires input`);
-          if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wire_name} does not accept arguments`);
-          return invoke(claimed.bindingId, bound, tool, {
-            input: tool === execGateway(bound)
-              ? transportBoundRawExecProgram(input, wireName(tool), spawnExclusions)
-              : input,
-          }, extra.signal);
-        }
-        if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
-        const invocationArguments = args ?? {};
-        assertBrowserToolArguments(tool, invocationArguments);
-        return invoke(claimed.bindingId, bound, tool, { arguments: invocationArguments }, extra.signal);
+        const invocation = resolveBrowserInvocation(claimed.environment, wire_name, args, input);
+        return invoke(claimed.bindingId, claimed.environment, invocation.tool, invocation.payload, extra.signal);
       });
     },
   );
+
+  if (options.asyncToolOperations) {
+    server.registerTool(
+      "codex_tool_start",
+      {
+        title: "Start a long native Codex tool operation",
+        description: "Native5 only. Start an exact wire_name once under operation_key. Reuse the same operation_key after an ambiguous transport failure, then use codex_tool_poll until terminal and acknowledge its delivery_id.",
+        inputSchema: {
+          turn_token: turnTokenSchema,
+          operation_key: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/),
+          wire_name: z.string().min(1).max(1_000),
+          arguments: jsonArgumentsSchema.optional(),
+          input: z.string().max(5_000_000).optional(),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      },
+      async (toolInput, extra) => {
+        const { turn_token, operation_key, wire_name, arguments: args, input } = toolInput;
+        if (options.allowWebSubagents === false && isSpawnCollaborationWireName(wire_name)) {
+          throw new Error(`Web subagents are disabled: ${wire_name}`);
+        }
+        const operationId = `operation_${createHash("sha256")
+          .update(`${turn_token}\0${operation_key}`)
+          .digest("base64url")}`;
+        return withClaimedTurn("codex_tool_start", turn_token, extra, async claimed => {
+          if (claimed.environment.producer === "hermes") {
+            throw new Error("Owned async Codex operations are unavailable for Hermes-origin turns");
+          }
+          const invocation = resolveBrowserInvocation(claimed.environment, wire_name, args, input);
+          const snapshot = await callTurnBroker<BrokerOwnedOperationSnapshot>(options.brokerSocketPath, {
+            method: "invoke_async",
+            token: turn_token,
+            bindingId: claimed.bindingId,
+            operationId,
+            wireName: wireName(invocation.tool),
+            freeform: invocation.tool.freeform === true,
+            ...(invocation.tool.freeform
+              ? { input: invocation.payload.input ?? "" }
+              : { arguments: invocation.payload.arguments ?? {} }),
+          }, 5_000, extra.signal);
+          return asOwnedOperationResult(snapshot);
+        });
+      },
+    );
+
+    server.registerTool(
+      "codex_tool_poll",
+      {
+        title: "Poll or acknowledge a long native Codex tool operation",
+        description: "Native5 only. Wait at most 30 seconds for an owned operation. A poll timeout or disconnect never restarts or retires it. After receiving a terminal result, call again with its exact delivery_id to acknowledge and release it.",
+        inputSchema: {
+          turn_token: turnTokenSchema,
+          operation_id: z.string().regex(/^operation_[A-Za-z0-9_-]{32,128}$/),
+          wait_ms: z.number().int().min(0).max(30_000).default(30_000),
+          ack_delivery_id: z.string().regex(/^delivery_[A-Za-z0-9_-]{32,128}$/).optional(),
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ turn_token, operation_id, wait_ms, ack_delivery_id }, extra) => {
+        return withClaimedTurn("codex_tool_poll", turn_token, extra, async () => {
+          const snapshot = await callTurnBroker<BrokerOwnedOperationSnapshot>(options.brokerSocketPath, {
+            method: "operation_poll",
+            token: turn_token,
+            operationId: operation_id,
+            waitMs: wait_ms,
+            ...(ack_delivery_id ? { deliveryId: ack_delivery_id } : {}),
+          }, wait_ms + 5_000, extra.signal);
+          return asOwnedOperationResult(snapshot);
+        });
+      },
+    );
+
+    server.registerTool(
+      "codex_tool_cancel",
+      {
+        title: "Cancel observation of one long native Codex tool operation",
+        description: "Native5 only. Cancels a queued call before dispatch. After dispatch it cancels only this operation's observation; the external tool and side effects may continue. Sibling calls and the owning turn remain active. Acknowledge the returned delivery_id with codex_tool_poll.",
+        inputSchema: {
+          turn_token: turnTokenSchema,
+          operation_id: z.string().regex(/^operation_[A-Za-z0-9_-]{32,128}$/),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      },
+      async ({ turn_token, operation_id }, extra) => {
+        return withClaimedTurn("codex_tool_cancel", turn_token, extra, async () => {
+          const snapshot = await callTurnBroker<BrokerOwnedOperationSnapshot>(options.brokerSocketPath, {
+            method: "operation_cancel",
+            token: turn_token,
+            operationId: operation_id,
+          }, 5_000, extra.signal);
+          return asOwnedOperationResult(snapshot);
+        });
+      },
+    );
+  }
 
   if (contract === "safe") {
     server.registerTool(

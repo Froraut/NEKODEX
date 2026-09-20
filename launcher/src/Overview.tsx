@@ -8,16 +8,19 @@ import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types
 const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
 const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
 
-export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate }: {
+export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate, openTab }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
   toolsReady: boolean;
-  logs: LogRecord[]; navigate: (surface: Surface) => void;
+  logs: LogRecord[]; navigate: (surface: Surface) => void; openTab: (tabId: string) => void;
 }) {
   const signedIn = browser?.authenticated === true;
   const modelsReady = snapshot.state.codexCatalogVerified === true && snapshot.state.codexPickerConfirmed === true;
   const ready = signedIn && modelsReady && toolsReady;
   const workspaceReady = signedIn && modelsReady;
-  const active = browser?.tabs.filter(tab => tab.status === "running").length ?? 0;
+  const activeTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
+  const active = activeTabs.length;
+  const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
+    ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
   const connections: Array<{ icon: IconName; label: string; ready: boolean; surface: Surface; pending: string }> = [
     { icon: "accounts", label: copy.accountConnection, ready: signedIn, surface: "accounts", pending: copy.signInNeededShort },
     { icon: "setup", label: copy.modelConnection, ready: modelsReady, surface: "setup", pending: snapshot.state.coreSetupComplete ? snapshot.state.codexCatalogVerified ? copy.modelsConfirmShort : copy.modelsWaitingShort : copy.connectionPending },
@@ -35,9 +38,22 @@ export function Overview({ copy, browser, snapshot, toolsReady, logs, navigate }
       </section>
       <div className="workspace-metrics">
         <button type="button" title={copy.capacityLink} onClick={() => navigate("settings")}><span className="metric-value"><strong>{snapshot.browserCapacity.active}</strong><span>{copy.capacityLabel}</span></span><small>{copy.capacityHint}</small></button>
-        <button type="button" title={copy.openWorkspace} onClick={() => navigate("browser")}><span className="metric-value"><strong>{active}</strong><span>{copy.runningLabel}</span></span><small>{copy.runningHint}</small></button>
+        <button type="button" title={copy.openWorkspace} onClick={() => navigate("browser")}><span className="metric-value"><strong>{active}</strong><span>{copy.overviewActiveRuns}</span></span><small>{copy.overviewActiveRunsBody}</small></button>
         <button type="button" title={copy.modeLink} onClick={() => navigate("settings")}><strong className="metric-mode">{snapshot.state.browserInteractionMode === "manual" ? copy.manualShort : copy.automaticShort}</strong><span className="metric-label">{copy.modeLabel}</span><small>{copy.workspaceTagline}</small></button>
       </div>
+      {activeTabs.length ? <section className="overview-runs" aria-labelledby="overview-runs-heading">
+        <div className="overview-section-heading"><h2 id="overview-runs-heading">{copy.overviewActiveRuns}</h2><small>{copy.overviewActiveRunsBody}</small></div>
+        <ul>{activeTabs.map(tab => {
+          const status = runStatus(tab.status);
+          const mode = tab.interactionMode === "manual" ? copy.manualShort
+            : tab.interactionMode === "automatic" ? copy.automaticShort : copy.usageUnknown;
+          return <li key={tab.id}><button type="button" onClick={() => openTab(tab.id)} aria-label={`${tab.title}. ${status}. ${mode}. ${copy.overviewOpenRun}`}>
+            <i className="state-dot is-busy" aria-hidden="true" />
+            <span><strong>{tab.title}</strong><small>{status} · {mode}</small></span>
+            <span className="overview-run-action" aria-hidden="true">{copy.overviewOpenRun}<Icon name="chevron" /></span>
+          </button></li>;
+        })}</ul>
+      </section> : null}
       <div className="overview-grid">
         <div className="overview-main-column">
           <section className="connection-section" aria-labelledby="connection-heading">

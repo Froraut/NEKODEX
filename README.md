@@ -23,22 +23,40 @@ NEKODEX brings separate account profiles, an embedded browser, model setup, MCP 
 
 The interface uses a quiet graphite-and-lavender palette, responsive layouts and an interactive coding cat.
 
+### New in 5.5
+
+- **Web and Native statistics:** separate browser-message and proxied-model-request reports, Web
+  account filters, full day calendars, outcome rates, observed median/p95 durations, and private
+  aggregate CSV export. Native token values show reporting coverage; missing usage is never zero.
+- **Long-running tools:** opt into a separately created and verified **Codex Native5** connector
+  in Automatic Full mode. Start/poll/ack keeps one operation owned while waiting; Native4 remains
+  the synchronous default and Zero Risk4 is unchanged. Pending operations do not survive a broker
+  restart, and post-dispatch cancellation stops observation rather than reversing external work.
+- **Safer recovery:** parallel checkpoints preserve each other's records, routing keeps task/account
+  ownership, login evidence matches its exact state, and exit/update drain protects active work.
+- **More usable controls:** active-tab quick access, keyboard-contained dialogs, correct selectors,
+  stable statistics during refresh failures and guarded update installation.
+
+See the [hardening scope and evidence](docs/reviews/product-hardening-20260920/plan.md).
+The comparison baseline is upstream `eaf4f09`; the report records the implemented capabilities
+and the remaining external-service and verification limits.
+
 ![NEKODEX](docs/design/screenshots/overview.png)
 
 ## Download
 
-**NEKODEX 5.4.0-nekodex.1 · prerelease · macOS 13 or later / Linux x64**
+**NEKODEX 5.5.0-nekodex.1 · prerelease · macOS 13 or later / Linux x64**
 
 | Your Mac | Download |
 | --- | --- |
-| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/NEKODEX-5.4.0-nekodex.1-mac-arm64.dmg) |
-| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/NEKODEX-5.4.0-nekodex.1-mac-x64.dmg) |
+| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/NEKODEX-5.5.0-nekodex.1-mac-arm64.dmg) |
+| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/NEKODEX-5.5.0-nekodex.1-mac-x64.dmg) |
 
 Both macOS builds are **Developer ID signed and Apple notarized**, including the final DMGs with stapled notarization tickets.
 
-[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.4.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
+[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.5.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
 
-Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.4.0-nekodex.1/codex-web-gpt-5.4.0-nekodex.1-linux-x64.AppImage).
+Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.5.0-nekodex.1/codex-web-gpt-5.5.0-nekodex.1-linux-x64.AppImage).
 
 Windows x64 is built separately as an **unsigned preview** installer and ZIP in the
 [release workflow artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml).
@@ -149,6 +167,10 @@ NEKODEX is an unofficial integration and does not bypass ChatGPT account or work
 ## Development
 
 Development requires Bun 1.4.0. Packaging requires a native host for the target operating system and architecture.
+
+The development launcher also requires Node.js for Vite's native dependencies. Its private Vite
+child selects an available loopback port and reports readiness over IPC, so it cannot accidentally
+attach to an older server on port 4178. Stopping the runner closes its own Electron and Vite processes.
 
 ```bash
 git clone https://github.com/Froraut/NEKODEX.git nekodex

@@ -15,6 +15,7 @@ const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { initialPasskeyProgress, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
 const { publicExistingChromeProgress, openExistingChromeLogin, cancelExistingChromeLogin } = require("./existing-chrome-login.cjs");
 const { createRemotePermissionPolicy, httpsOrigin } = require("./remote-permissions.cjs");
+const { createExternalLinkBroker } = require("./external-links.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -458,13 +459,14 @@ class BrowserHost {
         webSecurity: true,
       },
     });
+    const remoteContentsVisible = contents => this.window.isVisible() && !this.window.isMinimized()
+      && this.isAccountVisible() && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady)
+      && this.activeView().webContents === contents;
     this.permissionPolicy = createRemotePermissionPolicy({
       session: this.view.webContents.session,
       isAllowedPage: (url, kind) => httpsOrigin(url) === CHATGPT_ORIGIN
         || (kind === "auth" && httpsOrigin(url) !== null && allowedAuthUrl(url)),
-      isVisible: contents => this.window.isVisible() && !this.window.isMinimized()
-        && this.isAccountVisible() && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady)
-        && this.activeView().webContents === contents,
+      isVisible: remoteContentsVisible,
       requestConsent: async ({ permission, origin, signal }) => {
         const reading = permission === "clipboard-read";
         const { response } = await dialogApi.showMessageBox(this.window, {
@@ -482,6 +484,11 @@ class BrowserHost {
         });
         return response === 1;
       },
+    });
+    this.externalLinkBroker = createExternalLinkBroker({
+      shell,
+      logger: this.logger,
+      isVisible: remoteContentsVisible,
     });
     window.contentView.addChildView(this.view);
     this.windowVisibilityListener = () => this.syncViewVisibility();
@@ -845,14 +852,13 @@ class BrowserHost {
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
     this.permissionPolicy?.register(contents);
+    this.externalLinkBroker?.register(contents);
     contents.setWindowOpenHandler(({ url }) => {
       if (allowedAuthUrl(url)) {
         this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
         return { action: "deny" };
       }
-      let parsed;
-      try { parsed = new URL(url); } catch { return { action: "deny" }; }
-      if (parsed.protocol === "https:" || parsed.protocol === "http:") void shell.openExternal(parsed.toString());
+      void this.externalLinkBroker?.open(contents, url, "turn").catch(() => {});
       return { action: "deny" };
     });
     const blockAuthenticationNavigation = (event, url) => {
@@ -966,6 +972,7 @@ class BrowserHost {
   bindManualTurnContents(tab) {
     const contents = tab.view.webContents;
     this.permissionPolicy?.register(contents);
+    this.externalLinkBroker?.register(contents);
     const invalidateConversation = (url, inPlace) => {
       // History state updates and anchor scrolling keep the same document/context.
       if (inPlace && url.split("#", 1)[0] === tab.url?.split("#", 1)[0]) return;
@@ -985,16 +992,7 @@ class BrowserHost {
       });
     };
     contents.setWindowOpenHandler(({ url }) => {
-      let parsed;
-      try { parsed = new URL(url); } catch { return { action: "deny" }; }
-      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
-        void shell.openExternal(parsed.toString()).catch((error) => {
-          this.logger.warn("browser.manual_external_url_failed", {
-            origin: parsed.origin,
-            errorType: error?.name || "Error",
-          });
-        });
-      }
+      void this.externalLinkBroker?.open(contents, url, "manual").catch(() => {});
       return { action: "deny" };
     });
     contents.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
@@ -1057,6 +1055,7 @@ class BrowserHost {
   bindWebContents() {
     const contents = this.view.webContents;
     this.permissionPolicy?.register(contents, "auth");
+    this.externalLinkBroker?.register(contents);
     contents.setWindowOpenHandler(({ url, referrer, postBody }) => {
       if (allowedAuthUrl(url)) {
         return {
@@ -1064,17 +1063,7 @@ class BrowserHost {
           createWindow: (options) => this.createAuthView(options, url, { referrer, postBody }),
         };
       }
-      let parsed;
-      try { parsed = new URL(url); } catch { return { action: "deny" }; }
-      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
-        void shell.openExternal(parsed.toString()).catch((error) => {
-          const message = `Could not open the external link: ${error instanceof Error ? error.message : String(error)}`;
-          this.logger.error("browser.external_url_open_failed", { url: parsed.toString(), message });
-          this.setState({ status: "error", message, loading: false });
-        });
-      } else {
-        this.logger.warn("browser.external_url_rejected", { protocol: parsed.protocol });
-      }
+      void this.externalLinkBroker?.open(contents, url, "home").catch(() => {});
       return { action: "deny" };
     });
     contents.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
@@ -1738,6 +1727,7 @@ class BrowserHost {
     this.bindShellZoomShortcuts(authView.webContents);
     const contents = authView.webContents;
     this.permissionPolicy?.register(contents, "auth");
+    this.externalLinkBroker?.register(contents);
     const clearNavigationTimeout = () => {
       if (!authView.navigationTimeout) return;
       clearTimeout(authView.navigationTimeout);
@@ -1835,15 +1825,7 @@ class BrowserHost {
           this.setState({ status: "error", message, url, loading: false });
         });
       } else {
-        let parsed;
-        try { parsed = new URL(url); } catch { return { action: "deny" }; }
-        if (parsed.protocol === "https:" || parsed.protocol === "http:") {
-          void shell.openExternal(parsed.toString()).catch((error) => {
-            const message = `Could not open the external link: ${error instanceof Error ? error.message : String(error)}`;
-            this.logger.error("browser.external_url_open_failed", { url: parsed.toString(), message });
-            this.setState({ status: "error", message, loading: false });
-          });
-        }
+        void this.externalLinkBroker?.open(contents, url, "auth").catch(() => {});
       }
       return { action: "deny" };
     });
@@ -3338,6 +3320,7 @@ class BrowserHost {
     this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));
     this.existingChromeLoginController?.abort(new Error("Existing Chrome sign-in cancelled during launcher shutdown"));
     this.permissionPolicy?.destroy();
+    this.externalLinkBroker?.destroy();
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     try {
       const current = JSON.parse(fs.readFileSync(this.descriptorPath, "utf8"));

@@ -1,6 +1,14 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { AppConfig } from "./config";
-import { getConfigDir, getConfigPath, loadConfig } from "./config";
+import {
+  CHATGPT_ASYNC_CONNECTOR_NAME,
+  CHATGPT_CONNECTOR_NAME,
+  DEV_CHATGPT_ASYNC_CONNECTOR_NAME,
+  DEV_CHATGPT_CONNECTOR_NAME,
+  getConfigDir,
+  getConfigPath,
+  loadConfig,
+} from "./config";
 import { join } from "node:path";
 import { inspectCodexIntegration } from "./codex-integration";
 import { browserLoginStateExists, loginVerificationMarkerPath } from "./browser-login";
@@ -84,6 +92,16 @@ async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
     if (body.version !== config.releaseVersion) {
       return { id: "proxy", status: "error", message: `Daemon version is ${String(body.version)}; config requires ${config.releaseVersion}` };
     }
+    if (config.mode === "full" && body.broker_ready !== true) {
+      return {
+        id: "proxy",
+        status: "error",
+        message: "Responses proxy local-tool broker is not ready",
+        detail: typeof body.broker_failure_code === "string"
+          ? body.broker_failure_code
+          : `broker state: ${String(body.broker_state ?? "unknown")}`,
+      };
+    }
     if (body.accepting_turns !== true) {
       return {
         id: "proxy",
@@ -120,6 +138,21 @@ export async function runDoctor(): Promise<DoctorReport> {
     checks.push({ id: "config", status: "error", message: "Configuration is invalid", detail: error instanceof Error ? error.message : String(error) });
     return { ok: false, build, checks };
   }
+  const expectedAutomaticConnector = config.experimentalAsyncToolOperations
+    ? config.purpose === "dev-harness" ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME : CHATGPT_ASYNC_CONNECTOR_NAME
+    : config.purpose === "dev-harness" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
+  checks.push({
+    id: "tool-operations",
+    status: config.browserInteractionMode === "automatic" && config.appName !== expectedAutomaticConnector
+      ? "error"
+      : "ok",
+    message: config.experimentalAsyncToolOperations
+      ? `Async tool operations use connector ${JSON.stringify(config.appName)}`
+      : `Synchronous tool operations use connector ${JSON.stringify(config.appName)}`,
+    ...(config.browserInteractionMode === "automatic" && config.appName !== expectedAutomaticConnector
+      ? { detail: `Expected ${JSON.stringify(expectedAutomaticConnector)} for this configuration` }
+      : {}),
+  });
 
   if (config.browserHost === "launcher") {
     try {
@@ -171,8 +204,15 @@ export async function runDoctor(): Promise<DoctorReport> {
       checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
     } else if (codex.errors.length > 0) {
       checks.push({ id: "codex", status: "error", message: "Codex integration is inconsistent", detail: codex.errors.join("; ") });
+    } else if (!codex.active) {
+      checks.push({
+        id: "codex",
+        status: "error",
+        message: "NEKODEX Codex route is disconnected",
+        detail: "The reversible integration is installed, but Codex is currently using its restored route.",
+      });
     } else {
-      checks.push({ id: "codex", status: "ok", message: "Codex native model route is installed" });
+      checks.push({ id: "codex", status: "ok", message: "NEKODEX Codex route is installed and active" });
     }
   } catch (error) {
     checks.push({ id: "codex", status: "error", message: "Codex integration could not be determined", detail: errorDetail(error) });
