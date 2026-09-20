@@ -5,7 +5,9 @@ const { createHash, randomBytes } = require("node:crypto");
 const { setTimeout: delay } = require("node:timers/promises");
 const { clipboard, dialog, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { awaitInspection, inspectionAbortError } = require("./inspection-control.cjs");
 const {
+  hasUnsettledBrowserHelpers,
   runBrowserHelperOperation,
   verifyConnectorWithBrowserHelper,
 } = require("./browser-helper-verifier.cjs");
@@ -525,6 +527,7 @@ class BrowserHost {
 
   async initializePrimaryView() {
     await this.configureAccountSession(this.view.webContents.session, this.accountId);
+    if (this.destroyed || this.view.webContents.isDestroyed()) throw new Error("Browser initialization was cancelled");
     this.view.setBounds(this.hiddenTurnBounds());
     this.view.setVisible(true);
     try {
@@ -537,12 +540,57 @@ class BrowserHost {
     } finally {
       this.syncViewVisibility();
     }
+    if (this.destroyed || this.view.webContents.isDestroyed()) throw new Error("Browser initialization was cancelled");
     this.writeDescriptor();
     this.logger.info("browser.initialized", { url: this.view.webContents.getURL() });
   }
 
   currentOperation() {
-    return this.manualOperation || (this.loginOperation ? "ChatGPT login" : null);
+    return this.manualOperation || this.readOnlyInspection?.name || (this.loginOperation ? "ChatGPT login" : null)
+      || (hasUnsettledBrowserHelpers?.(this.descriptorPath) ? "browser helper cleanup" : null);
+  }
+
+  withReadOnlyInspection(name, action) {
+    if (this.activeTraceId || this.currentOperation()) {
+      return Promise.reject(new Error("Finish the account's active task or operation before checking it"));
+    }
+    const controller = new AbortController();
+    const contents = this.view?.webContents;
+    const inspection = { name, controller, done: null };
+    this.readOnlyInspection = inspection;
+    const onAbort = () => {
+      // Retire pending authentication reads before releasing the inspection lease.
+      this.authGeneration = (this.authGeneration ?? 0) + 1;
+      this.authProbeRevision += 1;
+      if (this.view?.webContents === contents && !contents?.isDestroyed() && !this.activeTraceId) {
+        try { contents.stop(); } catch {}
+      }
+    };
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    const deadline = setTimeout(() => controller.abort(new Error("Browser check timed out")), 90_000);
+    deadline.unref?.();
+    inspection.done = this.withManualOperation(name, () => action(controller.signal), controller.signal)
+      .finally(() => {
+        clearTimeout(deadline);
+        controller.signal.removeEventListener("abort", onAbort);
+        if (this.readOnlyInspection === inspection) {
+          this.readOnlyInspection = null;
+          this.publishState?.(this.snapshot());
+        }
+      });
+    return inspection.done;
+  }
+
+  async cancelReadOnlyInspection() {
+    const inspection = this.readOnlyInspection;
+    if (!inspection) return;
+    if (this.activeTraceId) throw new Error("An active task must finish before cancelling its browser check");
+    inspection.controller.abort(Object.assign(new Error("Browser check cancelled for restart"), { name: "AbortError" }));
+    // Helper cancellation owns and joins its exact child before this lease is released.
+    await awaitInspection(inspection.done.catch(error => {
+      if (error?.helperCleanupIncomplete) throw error;
+    }), AbortSignal.timeout(12_000));
+    if (this.readOnlyInspection === inspection) throw new Error("Browser check cancellation did not settle");
   }
 
   assertTurnTabsCanResetForInteractionModeChange() {
@@ -1189,7 +1237,8 @@ class BrowserHost {
     this.homeNavigationTimeout = null;
   }
 
-  async hardRefreshHome(timeoutMs = BROWSER_NAVIGATION_TIMEOUT_MS) {
+  async hardRefreshHome(timeoutMs = BROWSER_NAVIGATION_TIMEOUT_MS, signal) {
+    signal?.throwIfAborted();
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) {
       throw new Error("The managed ChatGPT page is not available for connector verification");
@@ -1204,6 +1253,7 @@ class BrowserHost {
       let mainNavigationStarted = false;
       const cleanup = () => {
         clearTimeout(timeout);
+        signal?.removeEventListener("abort", onAbort);
         contents.off("did-start-navigation", onStarted);
         contents.off("did-stop-loading", onStopped);
         contents.off("did-finish-load", onFinished);
@@ -1231,6 +1281,7 @@ class BrowserHost {
         finish(new Error(`ChatGPT renderer stopped during hard refresh: ${details.reason}`));
       };
       const onDestroyed = () => finish(new Error("ChatGPT closed during hard refresh"));
+      const onAbort = () => finish(inspectionAbortError(signal));
       const timeout = setTimeout(() => {
         finish(new Error("ChatGPT hard refresh did not finish within 60 seconds"));
         if (!contents.isDestroyed()) contents.stop();
@@ -1242,6 +1293,7 @@ class BrowserHost {
       contents.on("did-fail-load", onFailed);
       contents.on("render-process-gone", onRendererGone);
       contents.on("destroyed", onDestroyed);
+      signal?.addEventListener("abort", onAbort, { once: true });
       try {
         contents.reloadIgnoringCache();
       } catch (error) {
@@ -1250,15 +1302,16 @@ class BrowserHost {
     });
   }
 
-  async refreshChatGptHomeDocument() {
+  async refreshChatGptHomeDocument(signal) {
+    signal?.throwIfAborted();
     // A navigation from the idle host already creates a fresh ChatGPT document. Reload only an
     // existing Temporary Chat document so the helper observes one authoritative SPA bootstrap.
     if (isTemporaryChatUrl(this.view.webContents.getURL())) {
-      await this.hardRefreshHome();
+      await this.hardRefreshHome(BROWSER_NAVIGATION_TIMEOUT_MS, signal);
     } else {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), signal);
     }
-    await this.waitForAuthenticated(60_000);
+    await this.waitForAuthenticated(60_000, signal);
   }
 
   bindChatGptBackendRecovery() {
@@ -1737,9 +1790,13 @@ class BrowserHost {
     }
   }
 
-  async closeTab(tabId) {
+  async closeTab(tabId, expectedTraceId) {
     const tab = this.turnTabs.get(tabId);
     if (!tab) throw new Error("Browser tab does not exist");
+    if (expectedTraceId !== undefined && ((expectedTraceId !== null && typeof expectedTraceId !== "string")
+      || (typeof expectedTraceId === "string" && expectedTraceId.length > 128) || expectedTraceId !== tab.traceId)) {
+      throw new Error("The task in this tab changed; review the current task before closing it");
+    }
     const running = tab.status === "running";
     if (tab.interactionMode === "manual") {
       if (running) await this.cancelManualTab(tab, "tab-close");
@@ -2959,13 +3016,14 @@ class BrowserHost {
   refreshAuthentication() {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication refresh");
     if (this.sessionRefreshOperation) return this.sessionRefreshOperation;
-    const operation = this.withManualOperation("session refresh", async () => {
+    const operation = this.withReadOnlyInspection("session refresh", async signal => {
       this.authGeneration = (this.authGeneration ?? 0) + 1;
       this.setState({ status: "loading", message: "Checking saved ChatGPT session" });
       if (!isTemporaryChatUrl(this.view.webContents.getURL())) {
-        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+        await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), signal);
       }
-      const state = await this.probeAuthentication();
+      const state = await awaitInspection(this.probeAuthentication({ signal }), signal);
+      signal.throwIfAborted();
       if (state.authenticated) {
         this.setState({ status: "ready", message: "ChatGPT is ready" });
       }
@@ -2988,7 +3046,8 @@ class BrowserHost {
     return operation;
   }
 
-  async runAuthenticationProbe({ forSetup = false } = {}) {
+  async runAuthenticationProbe({ forSetup = false, signal } = {}) {
+    signal?.throwIfAborted();
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
     if (!this.view || this.view.webContents.isDestroyed()) {
       if (forSetup) throw new Error("ChatGPT session verification is unavailable: embedded browser is not ready");
@@ -3001,7 +3060,7 @@ class BrowserHost {
     let authView = this.authView;
     // Page-load event probes run independently of the tracked login operation.
     // A response from an old session or a replaced popup must not alter the new one.
-    const isCurrent = () => (this.authGeneration ?? 0) === generation
+    const isCurrent = () => !signal?.aborted && (this.authGeneration ?? 0) === generation
       && this.authProbeRevision === probeRevision
       && this.view === primaryView
       && !primaryContents.isDestroyed()
@@ -3009,7 +3068,7 @@ class BrowserHost {
       && (!authView || !authView.webContents.isDestroyed());
     const loadPrimary = async () => {
       try {
-        await primaryContents.loadURL(TEMPORARY_CHAT_URL);
+        await awaitInspection(primaryContents.loadURL(TEMPORARY_CHAT_URL), signal);
       } catch (error) {
         if (!isCurrent()) return false;
         throw error;
@@ -3031,7 +3090,7 @@ class BrowserHost {
       this.setState({ status: "signed-out", message: "Sign in to ChatGPT", authenticated: false, url });
       return this.snapshot();
     }
-    const probe = (contents) => contents.executeJavaScript(`(async () => {
+    const probe = (contents) => awaitInspection(contents.executeJavaScript(`(async () => {
       const expectedUrl = new URL(${JSON.stringify(TEMPORARY_CHAT_URL)});
       const readSurface = () => {
         const composer = ${visibleElementScript(COMPOSER_SELECTOR)};
@@ -3124,7 +3183,9 @@ class BrowserHost {
       }
       return { ...readSurface(), sessionAuthenticated, sessionVerification, verificationFailure,
         accountLabel, principalFingerprint, sessionFingerprint };
-    })()`, true).catch(() => ({
+    })()`, true), signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(CHATGPT_AUTH_SESSION_TIMEOUT_MS + 3_000)])
+      : AbortSignal.timeout(CHATGPT_AUTH_SESSION_TIMEOUT_MS + 3_000)).catch(() => ({
       url: "",
       composer: false,
       temporary: false,
@@ -3240,7 +3301,7 @@ class BrowserHost {
         this.authNavigationError = null;
         throw error;
       }
-      const state = await this.probeAuthentication();
+      const state = await awaitInspection(this.probeAuthentication({ signal }), signal);
       signal?.throwIfAborted();
       if (state.authenticated) return state;
       await delay(750, undefined, { signal });
@@ -3288,21 +3349,23 @@ class BrowserHost {
 
   async verifyConnector(appName) {
     requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
-    return await this.withManualOperation("connector verification", () => this.runConnectorVerification(appName));
+    return await this.withReadOnlyInspection("connector verification", signal => this.runConnectorVerification(appName, signal));
   }
 
-  async runConnectorVerification(appName) {
+  async runConnectorVerification(appName, signal) {
     requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
     const connectorName = validateConnectorName(appName);
     this.setState({ status: "testing", message: "Checking ChatGPT connector" });
-    await this.refreshChatGptHomeDocument();
+    await this.refreshChatGptHomeDocument(signal);
     try {
       const result = await this.verifyConnectorWithBrowserHelper({
         helper: this.helper,
         descriptorPath: this.descriptorPath,
         appName: connectorName,
         logger: this.logger,
+        signal,
       });
+      signal?.throwIfAborted();
       this.logger.info("connector.verified", { appName: connectorName });
       this.setState({ status: "ready", message: "ChatGPT connector is available", authenticated: true });
       return result;
@@ -3322,15 +3385,16 @@ class BrowserHost {
     if (this.manualOperation === INTERACTION_MODE_CHANGE_OPERATION) {
       return await this.runSessionInspection(detectCapabilities);
     }
-    return await this.withManualOperation("session inspection", () => this.runSessionInspection(detectCapabilities));
+    return await this.withReadOnlyInspection("session inspection", signal => this.runSessionInspection(detectCapabilities, signal));
   }
 
-  async runSessionInspection(detectCapabilities = false) {
+  async runSessionInspection(detectCapabilities = false, signal) {
     requireAutomaticBrowserInspection(this, "ChatGPT session and capability inspection");
     const connectorName = this.connectorName();
     const initialUrl = this.view.webContents.getURL();
     const startedIdle = initialUrl === IDLE_BROWSER_URL;
-    if (detectCapabilities) await this.refreshChatGptHomeDocument();
+    if (detectCapabilities) await this.refreshChatGptHomeDocument(signal);
+    signal?.throwIfAborted();
     const result = await this.runBrowserHelperOperation({
       helper: this.helper,
       descriptorPath: this.descriptorPath,
@@ -3338,7 +3402,9 @@ class BrowserHost {
       operation: "inspect",
       payload: { detectCapabilities },
       logger: this.logger,
+      signal,
     });
+    signal?.throwIfAborted();
     const inspected = result?.value;
     if (!inspected || inspected.authenticated !== true || inspected.temporary !== true || typeof inspected.url !== "string") {
       throw new Error("Browser helper returned invalid ChatGPT session evidence");
@@ -3352,34 +3418,41 @@ class BrowserHost {
       || inspected.proAvailable && inspected.extraHighAvailable === false)) {
       throw new Error("Browser helper returned contradictory ChatGPT capability evidence");
     }
-    if (startedIdle) await this.returnToIdle();
+    if (startedIdle) await awaitInspection(this.returnToIdle(), signal);
     else this.setState({ status: "ready", message: "ChatGPT is ready", authenticated: true, loading: false });
     return inspected;
   }
 
-  async withManualOperation(name, action) {
-    await this.ready();
+  async withManualOperation(name, action, signal) {
+    await awaitInspection(this.ready(), signal);
+    signal?.throwIfAborted();
     if (this.activeTraceId) {
       throw new Error(`ChatGPT browser is running Codex turn ${this.activeTraceId}`);
     }
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is already busy with ${this.manualOperation}`);
     }
+    if (this.readOnlyInspection && this.readOnlyInspection.controller.signal !== signal) {
+      throw new Error("ChatGPT browser is already checking the account");
+    }
     this.activateHomeSurface();
     this.manualOperation = name;
-    this.publishState?.(this.snapshot());
     const contents = this.view?.webContents;
-    if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(false);
     try {
+      this.publishState?.(this.snapshot());
+      if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(false);
       return await action();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.setState({ status: "error", message });
+      this.setState(signal?.aborted
+        ? { status: this.state.authenticated ? "ready" : "idle", message, loading: false }
+        : { status: "error", message });
       throw error;
     } finally {
-      if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true);
+      // Native renderer bookkeeping must not retain the operation lease if it throws.
       this.manualOperation = null;
-      this.publishState?.(this.snapshot());
+      try { if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true); }
+      finally { this.publishState?.(this.snapshot()); }
     }
   }
 
@@ -3422,6 +3495,8 @@ class BrowserHost {
   }
 
   destroy() {
+    this.destroyed = true;
+    this.readOnlyInspection?.controller.abort(new Error("Browser host closed"));
     this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));
     this.existingChromeLoginController?.abort(new Error("Existing Chrome sign-in cancelled during launcher shutdown"));
     this.permissionPolicy?.destroy();

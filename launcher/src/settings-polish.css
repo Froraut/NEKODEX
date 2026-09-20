@@ -1,0 +1,88 @@
+/* Focused layout polish for Connections and Settings. Imported by App.tsx. */
+
+.wizard-stepper button {
+  min-height: 58px;
+  align-items: flex-start;
+  padding-block: 9px;
+}
+
+.wizard-stepper button > span {
+  margin-top: 1px;
+}
+
+.wizard-stepper em {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.3;
+  text-overflow: clip;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.zero-risk-model-trigger,
+.zero-risk-model-info {
+  width: 44px;
+  height: 44px;
+}
+
+.zero-risk-model-option-row {
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+
+.zero-risk-model-option-row.has-info > button {
+  padding-right: 52px;
+}
+
+.settings-list .setting-row {
+  grid-template-columns: minmax(0, 560px) minmax(178px, 280px);
+  justify-content: space-between;
+}
+
+.settings-list .setting-row > :last-child {
+  max-width: 100%;
+  justify-self: end;
+}
+
+@container workspace (max-width: 860px) {
+  .settings-list .setting-row {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+  }
+
+  .settings-list .setting-row:has(> .switch) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .settings-list .setting-row > :last-child {
+    justify-self: stretch;
+  }
+
+  .settings-list .setting-row > .switch {
+    justify-self: end;
+  }
+}
+
+@container workspace (max-width: 760px) {
+  .wizard-stepper {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .wizard-stepper button {
+    min-height: 44px;
+    align-items: center;
+    padding-block: 7px;
+  }
+
+  .wizard-stepper button > span {
+    margin-top: 0;
+  }
+
+  .wizard-stepper em {
+    display: block;
+    overflow: visible;
+    white-space: normal;
+    -webkit-line-clamp: unset;
+  }
+}

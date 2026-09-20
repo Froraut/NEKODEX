@@ -1,0 +1,82 @@
+.browser-surface .browser-tab > button {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: var(--radius-sm);
+}
+
+.browser-surface .browser-tab > .browser-tab-cancel,
+.browser-surface .browser-tab > button:disabled {
+  opacity: 1;
+}
+
+.browser-surface .browser-tab > .browser-tab-cancel {
+  color: var(--color-text-secondary);
+}
+
+.browser-surface .browser-tab > .browser-tab-cancel:hover {
+  color: var(--color-text-error);
+  background: var(--color-background-status-error);
+}
+
+.browser-cancel-confirm {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background-panel-raised);
+}
+
+.browser-cancel-confirm p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
+.browser-cancel-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.browser-cancel-confirm > div:first-child { min-width: 0; }
+.browser-cancel-confirm .browser-cancel-target {
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+.browser-cancel-actions .browser-confirm-cancel {
+  color: var(--color-text-error);
+  border-color: var(--color-text-error);
+}
+.browser-cancel-actions .browser-confirm-cancel:hover:not(:disabled) {
+  background: var(--color-background-status-error);
+}
+
+.browser-surface .browser-address,
+.browser-surface .browser-address:hover {
+  cursor: default;
+  background: var(--color-background-control);
+}
+
+.browser-surface .manual-turn-guide {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 20px;
+  padding: 16px 20px;
+}
+.browser-surface .manual-turn-guide p { max-width: 880px; }
+.browser-surface .manual-turn-status { align-self: start; }
+.browser-surface .manual-turn-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 800px) {
+  .browser-cancel-confirm { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .browser-cancel-actions { align-self: flex-end; }
+  .browser-surface .manual-turn-guide { grid-template-columns: minmax(0, 1fr); }
+  .browser-surface .manual-turn-status { text-align: left; }
+}

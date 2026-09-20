@@ -8,6 +8,7 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
   checking: boolean; cooldown: boolean; error: string | null; onCheck: () => void; onInstall: () => void;
 }) {
   const copy = updateCopyFor(language);
+  const failedReleaseCheck = state.status === "error";
   const failure = error || (state.status === "error" ? state.message : null);
   const title = failure ? copy.failed : {
     disabled: copy.disabled, idle: copy.idle, checking: copy.checking, "up-to-date": copy.latest,
@@ -42,7 +43,7 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
               <Icon name="update" />{copy.install}
             </button> : null}
             {!busy ? <button type="button" className={state.status === "available" ? "button-secondary" : "button-primary"} disabled={checking || cooldown || state.status === "checking"} onClick={onCheck}>
-              <Icon name="update" />{checking || state.status === "checking" ? copy.checking : copy.check}
+              <Icon name="update" />{checking || state.status === "checking" ? copy.checking : failedReleaseCheck ? copy.retryCheck : copy.check}
             </button> : null}
             {cooldown && !busy ? <span>{copy.cooldown}</span> : null}
           </div>

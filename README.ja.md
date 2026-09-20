@@ -5,14 +5,14 @@ NEKODEX は独自の猫アイコン、概要画面、独立したアカウント
 グラファイトとラベンダーの配色を備えています。
 [デザインと互換性の説明](docs/design/nekodex.md)を参照してください。
 
-**ダウンロード版：** `5.8.0-nekodex.2`。macOS 13 以降に対応しています。
+**ダウンロード版：** `5.8.0-nekodex.3`。macOS 13 以降に対応しています。
 
 | Mac | ダウンロード |
 | --- | --- |
-| Apple Silicon（M1 以降） | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.2/NEKODEX-5.8.0-nekodex.2-mac-arm64.dmg) |
-| Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.2/NEKODEX-5.8.0-nekodex.2-mac-x64.dmg) |
+| Apple Silicon（M1 以降） | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.3/NEKODEX-5.8.0-nekodex.3-mac-arm64.dmg) |
+| Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.3/NEKODEX-5.8.0-nekodex.3-mac-x64.dmg) |
 
-[リリースページ](https://github.com/Froraut/NEKODEX/releases/tag/v5.8.0-nekodex.2) · [チェックサム](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.2/checksums.txt)。macOS と Linux x64 に対応しています。未署名の Windows プレビューは別途提供します。
+[リリースページ](https://github.com/Froraut/NEKODEX/releases/tag/v5.8.0-nekodex.3) · [チェックサム](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.3/checksums.txt)。macOS と Linux x64 に対応しています。未署名の Windows プレビューは別途提供します。
 旧アップデーターは以前の実行ファイル名を検証するため、初回は手動での移行が必要です。
 アカウント状態を保持するため、既存のブラウザープロファイルとデータ識別子を維持します。
 

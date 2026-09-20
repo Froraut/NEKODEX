@@ -1,0 +1,304 @@
+/* Overview owns its composition; scope overrides so shared styles stay intact. */
+.overview-surface .overview-heading {
+  margin-bottom: 20px;
+}
+
+.overview-surface .workspace-intro {
+  margin-bottom: 0;
+}
+
+.overview-surface .overview-work {
+  padding: 24px 0;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.overview-surface .overview-work-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+}
+
+.overview-surface .overview-work-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.overview-surface .overview-work-count {
+  flex: none;
+  font-size: 44px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-surface .overview-work-copy {
+  min-width: 0;
+}
+
+.overview-surface .overview-work-copy h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: 1.4;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.overview-surface .overview-inline-action,
+.overview-surface .overview-preference {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  max-width: 100%;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-align: left;
+}
+
+.overview-surface .overview-inline-action {
+  color: var(--brand-accent);
+}
+
+.overview-surface .overview-inline-action svg,
+.overview-surface .overview-preference svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.overview-surface .overview-work-preferences {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.overview-surface .overview-work-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 24px;
+}
+
+.overview-surface .overview-capacity-control {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.overview-surface .overview-preference {
+  flex-wrap: wrap;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.overview-surface .overview-preference strong {
+  color: var(--color-text-primary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-surface .overview-preference:hover,
+.overview-surface .overview-preference:hover strong {
+  color: var(--brand-accent);
+}
+
+.overview-surface .overview-inline-action:hover,
+.overview-surface .overview-preference:hover strong {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.overview-surface .overview-capacity-note {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.overview-surface .overview-live-runs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 8px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.overview-surface .overview-live-runs li {
+  min-width: 0;
+}
+
+.overview-surface .overview-live-runs button {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-primary);
+  text-align: left;
+}
+
+.overview-surface .overview-live-runs button:hover {
+  background: var(--color-background-control-hover);
+}
+
+.overview-surface .overview-live-runs button > span {
+  min-width: 0;
+}
+
+.overview-surface .overview-live-runs strong,
+.overview-surface .overview-live-runs small {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.overview-surface .overview-live-runs strong {
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.overview-surface .overview-live-runs small {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.overview-surface .overview-run-action {
+  font-size: var(--text-sm);
+}
+
+.overview-surface .overview-grid {
+  gap: 24px;
+}
+
+.overview-surface .overview-main-column {
+  gap: 28px;
+}
+
+.overview-surface .connection-section,
+.overview-surface .overview-activity {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.overview-surface .connection-list {
+  display: grid;
+  gap: 4px;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.overview-surface .connection-list > button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 8px;
+}
+
+.overview-surface .overview-connection-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.overview-surface .connection-status {
+  grid-column: auto;
+  grid-row: auto;
+  margin-left: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.overview-surface .connection-action {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  text-align: right;
+}
+
+.overview-surface .overview-section-heading,
+.overview-surface .overview-section-heading .text-button {
+  min-height: 36px;
+}
+
+.overview-surface .overview-empty {
+  align-items: flex-start;
+  flex-direction: row;
+  justify-content: flex-start;
+  padding: 16px 0;
+  border: 0;
+  text-align: left;
+}
+
+.overview-surface .overview-empty > svg {
+  flex: none;
+}
+
+.overview-surface .overview-inline-action:focus-visible,
+.overview-surface .overview-preference:focus-visible,
+.overview-surface .overview-live-runs button:focus-visible,
+.overview-surface .connection-list > button:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 3px;
+}
+
+@container workspace (max-width: 760px) {
+  .overview-surface .overview-work-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .overview-surface .overview-work-preferences {
+    width: 100%;
+  }
+}
+
+@container workspace (max-width: 480px) {
+  .overview-surface .overview-work-actions {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .overview-surface .overview-work-count {
+    font-size: 36px;
+  }
+
+  .overview-surface .connection-list > button {
+    grid-template-columns: 18px minmax(0, 1fr);
+    row-gap: 4px;
+  }
+
+  .overview-surface .connection-action {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+}

@@ -48,8 +48,13 @@ export function AccountCodexControls({
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | undefined>(undefined);
   const quotaHeadingId = useId();
+  const quotaDisabledReasonId = useId();
   const loginHeadingId = useId();
+  const loginDisabledReasonId = useId();
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+
+  const sharedDisabledReason = !login?.active && quotaDisabledReason === loginDisabledReason
+    ? quotaDisabledReason : undefined;
 
   const copyCode = async () => {
     if (loginAction !== null) return;
@@ -60,52 +65,61 @@ export function AccountCodexControls({
   };
 
   return <div className="account-codex-controls">
+    {sharedDisabledReason ? <p className="account-codex-disabled-reason account-codex-shared-reason"
+      id={quotaDisabledReasonId}>{sharedDisabledReason}</p> : null}
     <section className="account-codex-quota" aria-labelledby={quotaHeadingId}>
       <header>
-        <div>
-          <h3 id={quotaHeadingId}>{copy.quotaTitle}</h3>
-        </div>
+        <h3 id={quotaHeadingId}>{copy.quotaTitle}</h3>
         <button className="button-secondary" type="button"
           disabled={quotaBusy || Boolean(quotaDisabledReason)}
+          aria-busy={quotaBusy || undefined}
+          aria-describedby={quotaDisabledReason ? quotaDisabledReasonId : undefined}
           title={quotaDisabledReason}
           onClick={() => void onRefreshQuota()}>
           {quotaBusy ? copy.quotaChecking : copy.quotaRefresh}
         </button>
       </header>
-      {quotaDisabledReason ? <p className="account-codex-disabled-reason">{quotaDisabledReason}</p> : null}
-      <QuotaContent copy={copy} language={language} quota={quota} />
+      {quotaDisabledReason && !sharedDisabledReason
+        ? <p className="account-codex-disabled-reason" id={quotaDisabledReasonId}>{quotaDisabledReason}</p>
+        : null}
+      <QuotaContent copy={copy} language={language} quota={quota} disabledReason={quotaDisabledReason} />
     </section>
 
     <section className="account-codex-login" aria-labelledby={loginHeadingId}>
       <header>
-        <div>
-          <h3 id={loginHeadingId}>{copy.loginTitle}</h3>
-          <p>{copy.loginBody}</p>
-        </div>
+        <h3 id={loginHeadingId}>{copy.loginTitle}</h3>
         {!login?.active ? <button className="button-secondary" type="button"
           disabled={loginStarting || Boolean(loginDisabledReason)}
+          aria-busy={loginStarting || undefined}
+          aria-describedby={loginDisabledReason ? (sharedDisabledReason ? quotaDisabledReasonId : loginDisabledReasonId) : undefined}
           title={loginDisabledReason}
           onClick={() => void onStartLogin()}>
           {loginStarting ? copy.loginStarting : copy.loginAction}
         </button> : null}
       </header>
-      {loginDisabledReason && !login?.active ? <p className="account-codex-disabled-reason">{loginDisabledReason}</p> : null}
+      <p className="account-codex-login-body">{copy.loginBody}</p>
+      {loginDisabledReason && !login?.active && !sharedDisabledReason
+        ? <p className="account-codex-disabled-reason" id={loginDisabledReasonId}>{loginDisabledReason}</p>
+        : null}
       {login ? <LoginProgressView account={account} copy={copy} language={language} login={login}
         action={loginAction} copied={copied} onCancel={onCancelLogin} onCopy={copyCode} onOpen={onOpenLogin} /> : null}
     </section>
   </div>;
 }
 
-function QuotaContent({ copy, language, quota }: {
+function QuotaContent({ copy, disabledReason, language, quota }: {
   copy: AccountCodexCopy;
+  disabledReason?: string;
   language: Language;
   quota: AccountQuotaSnapshot | null | undefined;
 }) {
-  if (quota === undefined) return <p className="account-codex-status" role="status">{copy.quotaChecking}</p>;
-  if (quota === null) return <p className="account-codex-status">{copy.quotaNotChecked}</p>;
+  if (quota === undefined) return disabledReason ? null : <p className="account-codex-status" role="status">{copy.quotaChecking}</p>;
+  if (quota === null) return disabledReason ? null : <p className="account-codex-status">{copy.quotaNotChecked}</p>;
   if (quota.availability !== "available" || quota.coverage !== "reported_buckets") {
+    const message = quotaUnavailableMessage(copy, quota.reason);
+    if (message === disabledReason && !quota.checkedAt && !quota.retryAt) return null;
     return <div className="account-codex-status" role="status">
-      <p>{quotaUnavailableMessage(copy, quota.reason)}</p>
+      {message !== disabledReason ? <p>{message}</p> : null}
       {quota.checkedAt ? <small>{copy.quotaUpdated.replace("{time}", formatDateTime(quota.checkedAt, language, copy.quotaUnknown))}</small> : null}
       {quota.retryAt ? <small>{copy.quotaResets.replace("{time}", formatDateTime(quota.retryAt, language, copy.quotaUnknown))}</small> : null}
     </div>;
@@ -145,19 +159,21 @@ function QuotaWindowView({ copy, label, language, value }: {
   language: Language;
   value: AccountQuotaWindow;
 }) {
-  const remaining = value.remainingPercent === null
-    ? copy.quotaUnknown
+  const remaining = value.remainingPercent === null ? null
     : copy.quotaRemaining.replace("{value}", formatPercent(value.remainingPercent, language));
-  const duration = formatDuration(value.windowDurationMins, copy, language);
-  const reset = value.resetsAt === null
-    ? copy.quotaUnknown
+  const duration = value.windowDurationMins === null ? null
+    : formatDuration(value.windowDurationMins, copy, language);
+  const reset = value.resetsAt === null ? null
     : copy.quotaResets.replace("{time}", formatDateTime(value.resetsAt * 1_000, language, copy.quotaUnknown));
-  return <div>
-    <strong>{label}</strong>
-    <span>{remaining}</span>
-    <small>{duration}</small>
-    <small>{reset}</small>
-  </div>;
+  const reported = remaining !== null || duration !== null || reset !== null;
+  return <section className={`account-codex-window${reported ? "" : " is-unreported"}`}>
+    <h5>{label}</h5>
+    {reported ? <div className="account-codex-window-values">
+      {remaining ? <span>{remaining}</span> : null}
+      {duration ? <small>{duration}</small> : null}
+      {reset ? <small>{reset}</small> : null}
+    </div> : <span className="account-codex-window-unknown">{copy.quotaUnknown}</span>}
+  </section>;
 }
 
 function LoginProgressView({ account, action, copied, copy, language, login, onCancel, onCopy, onOpen }: {
@@ -176,22 +192,27 @@ function LoginProgressView({ account, action, copied, copy, language, login, onC
   const wrongIdentity = Boolean(actual && login.actualAccount?.email && expected?.includes("@")
     && login.actualAccount.email.toLocaleLowerCase() !== expected);
   const message = loginMessage(copy, login, wrongIdentity);
+  const repeatsOpenAction = login.active && login.phase === "waiting" && login.canOpen && message === copy.loginOpen;
   return <div className={`account-codex-login-progress phase-${login.phase}`} aria-live="polite">
-    <p className="account-codex-status"><strong>{message}</strong></p>
+    {!repeatsOpenAction ? <p className="account-codex-status"><strong>{message}</strong></p> : null}
     {login.active ? <p>{copy.loginCurrent.replace("{account}", account.label)}</p> : null}
     {login.active ? <p>{copy.loginDeadline.replace("{time}", formatDateTime(login.deadlineAt, language, copy.quotaUnknown))}</p> : null}
     {actual ? <p>{copy.loginActualAccount.replace("{account}", actual)}</p> : null}
     {login.userCode ? <div className="account-codex-device-code">
-      <span>{copy.loginCode}</span>
-      <code>{login.userCode}</code>
+      <div className="account-codex-device-code-row">
+        <div><span>{copy.loginCode}</span><code>{login.userCode}</code></div>
+        {login.active ? <button className="button-secondary" type="button" disabled={action !== null}
+          aria-busy={action === "copy" || undefined}
+          onClick={() => void onCopy()}>{copied ? copy.Copied : copy.copyCode}</button> : null}
+      </div>
       <small>{copy.loginCodeHint}</small>
     </div> : null}
     {login.active ? <div className="account-codex-login-actions">
       {login.canOpen ? <button className="button-primary" type="button" disabled={action !== null}
+        aria-busy={action === "open" || undefined}
         onClick={() => void onOpen()}>{copy.loginOpen}</button> : null}
-      {login.userCode ? <button className="button-secondary" type="button" disabled={action !== null}
-        onClick={() => void onCopy()}>{copied ? copy.Copied : copy.copyCode}</button> : null}
       {login.canCancel ? <button className="text-button" type="button" disabled={action !== null}
+        aria-busy={action === "cancel" || undefined}
         onClick={() => void onCancel()}>{login.phase === "cancelling" ? copy.loginCancelling : copy.loginCancel}</button> : null}
     </div> : null}
   </div>;

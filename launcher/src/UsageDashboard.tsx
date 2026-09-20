@@ -242,7 +242,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   return <section className="usage-dashboard" aria-labelledby="usage-title">
     <div className="usage-heading">
       <div><h2 id="usage-title">{copy.usageTitle}</h2><p>{sourceBody}</p></div>
-      <button className="button-secondary" type="button" disabled={!visible} onClick={() => visible && exportReport({ ...visible, calendar })}>{copy.usageExportCsv}</button>
+      <button className="button-secondary" type="button" disabled={!visible || visible.metrics.total === 0} onClick={() => visible && exportReport({ ...visible, calendar })}>{copy.usageExportCsv}</button>
     </div>
     <div className="usage-filters" aria-label={copy.usageFilters}>
       <label>{copy.usageSource}<select aria-label={copy.usageSource} className="settings-select" value={filters.source} onChange={event => {
@@ -271,6 +271,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
         <span>{copy.usageUpdated.replace("{time}", generatedAt && Number.isFinite(generatedAt.getTime()) ? generatedAt.toLocaleString(language) : copy.usageUnknown)}</span>
       </div>
       {visible.metrics.total === 0 ? <section className="usage-empty-state" role="status"><strong>{emptyCopy}</strong>
+        <span>{copy.usageEmptyHelp}</span>
         <span>{calendarSummary.replace("{total}", "0").replace("{active}", "0").replace("{days}", number(visible.period.days, language))}</span>
       </section> : <>
       <div className={`usage-metrics${web ? "" : " is-native"}`}>
