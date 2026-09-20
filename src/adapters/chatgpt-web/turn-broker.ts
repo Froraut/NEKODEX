@@ -80,7 +80,8 @@ export interface BrokerOwnedOperationStatus {
     cancellation_scope?: "queued" | "observation_only";
   }>;
   limit: number;
-  truncated: false;
+  truncated: boolean;
+  omitted?: number;
 }
 
 export type BrokerCompletionFenceStart =
@@ -121,6 +122,8 @@ interface TurnChannel {
   bindingId?: string;
   queuedCallIds: string[];
   deliveredCallIds: Set<string>;
+  /** Dispatched calls whose observation was cancelled; late owner completions are accepted and ignored. */
+  detachedInvocationCallIds: Set<string>;
   invocations: Map<string, PendingInvocation>;
   waiters: Set<ToolWaiter>;
   compactionRequested: boolean;
@@ -200,6 +203,7 @@ interface BrokerResponse {
 
 const brokers = new Map<string, TurnBroker>();
 const MAX_BROKER_LINE_CHARS = 67_108_864;
+const MAX_BROKER_REQUEST_ID_CHARS = 256;
 const MAX_RETIRED_TURN_HANDLES = 64;
 // These bounds cover live work, which cannot be reclaimed until its MCP handler or native
 // invocation settles. Overflow retires the capability so outstanding work fails explicitly.
@@ -208,9 +212,20 @@ const MAX_PENDING_INVOCATIONS_PER_TURN = 64;
 // A live turn cannot discard completed IDs: an ambiguously delivered claim could arrive later
 // and reopen activity past the completion fence. Retire the entire capability at this limit.
 const MAX_COMPLETED_ACTIVITIES_PER_TURN = 4_096;
-const MAX_OWNED_TOOL_OPERATIONS = 64;
+const MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS = 64;
+// Acknowledged identities are compact replay guards rather than active work. Keep them until turn
+// retirement, but fail new unique starts at a clear bound instead of evicting a guard and allowing
+// an already-consumed side effect to execute again.
+const MAX_OWNED_TOOL_OPERATION_GUARDS_PER_TURN = 4_096;
 const OWNED_TOOL_OPERATION_TTL_MS = 30 * 60_000;
-const MAX_OWNED_TOOL_OPERATION_BYTES = 128 * 1024 * 1024;
+const MAX_OWNED_TOOL_OPERATION_BYTES_PER_TURN = 128 * 1024 * 1024;
+
+function brokerResponseLineChars(result: unknown): number {
+  // A request id is arbitrary validated text. NUL forces JSON's longest six-character escape, so
+  // this envelope is at least as large as any accepted id and the same serializer is used on write.
+  const worstCaseId = "\0".repeat(MAX_BROKER_REQUEST_ID_CHARS);
+  return `${JSON.stringify({ id: worstCaseId, result } satisfies BrokerResponse)}\n`.length;
+}
 
 export async function closeTurnBrokers(): Promise<void> {
   const active = [...brokers.values()];
@@ -399,6 +414,7 @@ export class TurnBroker implements TurnBrokerOwner {
       },
       queuedCallIds: [],
       deliveredCallIds: new Set(),
+      detachedInvocationCallIds: new Set(),
       invocations: new Map(),
       waiters: new Set(),
       compactionRequested: false,
@@ -525,7 +541,15 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!channel) throw new Error("turn token is invalid or expired");
     this.assertSafeHarnessRunning(channel, true);
     const invocation = channel.invocations.get(callId);
-    if (!invocation) throw new Error(`tool call is not pending: ${callId}`);
+    if (!invocation) {
+      if (channel.detachedInvocationCallIds.has(callId)) {
+        console.info(
+          `[chatgpt-web] broker trace=${channel.traceId} ignored late completion for observation-cancelled call=${callId.slice(0, 17)}`,
+        );
+        return;
+      }
+      throw new Error(`tool call is not pending: ${callId}`);
+    }
     if (!channel.deliveredCallIds.delete(callId)) {
       throw new Error(`tool call was completed before it was delivered: ${callId}`);
     }
@@ -1049,7 +1073,8 @@ export class TurnBroker implements TurnBrokerOwner {
   }
 
   private validateRequest(request: BrokerRequest): void {
-    if (!request || typeof request !== "object" || typeof request.id !== "string" || request.id.length === 0 || request.id.length > 256) {
+    if (!request || typeof request !== "object" || typeof request.id !== "string"
+      || request.id.length === 0 || request.id.length > MAX_BROKER_REQUEST_ID_CHARS) {
       throw new Error("turn broker request id is invalid");
     }
     if (!["claim", "resolve", "release", "invoke", "invoke_async", "operation_status", "operation_poll", "operation_cancel", "owner_status", "owner_register", "owner_register_safe", "owner_update", "owner_safe_sent", "owner_next", "owner_complete", "owner_completion_fence_begin", "owner_completion_fence_commit", "owner_wait_retirement", "owner_revoke", "owner_safe_wait_start", "owner_safe_wait_completion", "owner_request_compaction", "owner_compaction_delivery_count", "safe_start", "safe_complete", "activity_complete", "submit_compaction_handoff"].includes(request.method)) {
@@ -1283,24 +1308,31 @@ export class TurnBroker implements TurnBrokerOwner {
       // dispatch() prunes expiry before this synchronous projection.
       // Do not expose delivery IDs: discovery must not supply an ack without its result.
       // Project an explicit allowlist; never serialize stored requests, results or errors.
-      const operations: BrokerOwnedOperationStatus["operations"] = [];
+      const liveOperations: BrokerOwnedOperationStatus["operations"] = [];
       for (const operation of this.ownedOperations.values()) {
         if (operation.token !== token) continue;
-        operations.push({
+        liveOperations.push({
           operation_id: operation.id,
           state: operation.state,
           acknowledgement_required: operation.state !== "running",
           ...(operation.cancellationScope ? { cancellation_scope: operation.cancellationScope } : {}),
         });
       }
-      for (const [id, operation] of this.acknowledgedOperations) {
-        if (operation.token === token) {
-          operations.push({ operation_id: id, state: "acknowledged", acknowledgement_required: false });
-        }
-      }
-      // Admission counts live records and acknowledged guards together, bounded at 64 per turn.
-      operations.sort((a, b) => a.operation_id < b.operation_id ? -1 : a.operation_id > b.operation_id ? 1 : 0);
-      return { operations, limit: MAX_OWNED_TOOL_OPERATIONS, truncated: false } satisfies BrokerOwnedOperationStatus;
+      liveOperations.sort((a, b) => a.operation_id < b.operation_id ? -1 : a.operation_id > b.operation_id ? 1 : 0);
+      const acknowledged = [...this.acknowledgedOperations]
+        .filter(([, operation]) => operation.token === token)
+        .sort(([, left], [, right]) => right.updatedAt - left.updatedAt);
+      const acknowledgedSlots = Math.max(0, MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS - liveOperations.length);
+      const visibleAcknowledged = acknowledged.slice(0, acknowledgedSlots)
+        .map(([id]) => ({ operation_id: id, state: "acknowledged" as const, acknowledgement_required: false }));
+      const operations = [...liveOperations, ...visibleAcknowledged];
+      const omitted = Math.max(0, liveOperations.length + acknowledged.length - operations.length);
+      return {
+        operations,
+        limit: MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS,
+        truncated: omitted > 0,
+        ...(omitted > 0 ? { omitted } : {}),
+      } satisfies BrokerOwnedOperationStatus;
     }
 
     if (request.method === "operation_poll") {
@@ -1384,12 +1416,18 @@ export class TurnBroker implements TurnBrokerOwner {
         binding.channel.compactionDeliveryCount += 1;
         return { state: "control", result: structuredClone(result) } satisfies BrokerOwnedOperationStartResult;
       }
-      const ownedGuardCount = [...this.ownedOperations.values()]
-        .filter(operation => operation.token === binding.token).length
-        + [...this.acknowledgedOperations.values()]
-          .filter(operation => operation.token === binding.token).length;
-      if (ownedGuardCount >= MAX_OWNED_TOOL_OPERATIONS) {
-        throw new Error(`Codex turn owns ${MAX_OWNED_TOOL_OPERATIONS} unique async operation guards`);
+      const liveOperationCount = [...this.ownedOperations.values()]
+        .filter(operation => operation.token === binding.token).length;
+      const acknowledgedGuardCount = [...this.acknowledgedOperations.values()]
+        .filter(operation => operation.token === binding.token).length;
+      if (liveOperationCount >= MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS) {
+        throw new Error(`Codex turn owns ${MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS} live or unacknowledged async operations`);
+      }
+      if (liveOperationCount + acknowledgedGuardCount >= MAX_OWNED_TOOL_OPERATION_GUARDS_PER_TURN) {
+        throw new Error(
+          `Codex turn reached its ${MAX_OWNED_TOOL_OPERATION_GUARDS_PER_TURN} unique async operation guard limit;`
+          + " retire the turn instead of reusing or evicting an acknowledged operation key",
+        );
       }
     }
     if (binding.channel.invocations.size >= MAX_PENDING_INVOCATIONS_PER_TURN) {
@@ -1439,16 +1477,31 @@ export class TurnBroker implements TurnBrokerOwner {
     error?: string,
   ): void {
     if (operation.state !== "running" || this.ownedOperations.get(operation.id) !== operation) return;
+    if (state === "completed" && result === undefined) {
+      state = "failed";
+      error = "Owned Codex tool operation completed without a result";
+    }
+    const deliveryId = opaqueId("delivery");
     const retained = Buffer.byteLength(JSON.stringify(result ?? error ?? ""), "utf8");
-    const existingBytes = [...this.ownedOperations.values()].reduce((sum, value) => sum + value.retainedBytes, 0);
-    if (existingBytes + retained > MAX_OWNED_TOOL_OPERATION_BYTES) {
+    const existingOwnerBytes = [...this.ownedOperations.values()]
+      .filter(value => value.token === operation.token)
+      .reduce((sum, value) => sum + value.retainedBytes, 0);
+    const candidateSnapshot: BrokerOwnedOperationSnapshot = state === "completed" && result
+      ? { operationId: operation.id, state, deliveryId, result }
+      : { operationId: operation.id, state: state === "completed" ? "failed" : state, deliveryId,
+          error: error ?? `Owned Codex tool operation ${state}`,
+          ...(operation.cancellationScope ? { cancellationScope: operation.cancellationScope } : {}) };
+    const exceedsTransport = brokerResponseLineChars(candidateSnapshot) > MAX_BROKER_LINE_CHARS;
+    if (exceedsTransport || existingOwnerBytes + retained > MAX_OWNED_TOOL_OPERATION_BYTES_PER_TURN) {
       state = "failed";
       result = undefined;
-      error = "Owned Codex tool results exceeded the broker retention budget";
+      error = exceedsTransport
+        ? "Owned Codex tool result exceeded the broker transport envelope and was not retained; the external tool may already have completed or caused side effects"
+        : "Owned Codex tool results exceeded this turn's retention budget; the external tool may already have completed or caused side effects";
     }
     operation.state = state;
     operation.updatedAt = Date.now();
-    operation.deliveryId = opaqueId("delivery");
+    operation.deliveryId = deliveryId;
     operation.result = result === undefined ? undefined : structuredClone(result);
     operation.error = error;
     operation.retainedBytes = Buffer.byteLength(JSON.stringify(operation.result ?? operation.error ?? ""), "utf8");
@@ -1544,9 +1597,19 @@ export class TurnBroker implements TurnBrokerOwner {
       if (!channel) throw new Error("running owned Codex tool operation lost its broker channel");
       const delivered = channel.deliveredCallIds.has(operation.callId);
       operation.cancellationScope = delivered ? "observation_only" : "queued";
-      if (!delivered) {
+      const invocation = channel.invocations.get(operation.callId);
+      if (delivered) {
+        // Observation cancellation does not undo the external action. It only removes this call
+        // from at-least-once redelivery and the turn fence; a late owner completion is swallowed by
+        // the detached-call tombstone so it cannot resurrect or duplicate the invocation.
+        channel.deliveredCallIds.delete(operation.callId);
+        channel.invocations.delete(operation.callId);
+        channel.detachedInvocationCallIds.add(operation.callId);
+        invocation?.reject(new Error(
+          "Owned Codex tool observation was cancelled after dispatch; the external tool may still complete or cause side effects",
+        ));
+      } else {
         channel.queuedCallIds = channel.queuedCallIds.filter(id => id !== operation.callId);
-        const invocation = channel.invocations.get(operation.callId);
         channel.invocations.delete(operation.callId);
         invocation?.reject(new Error("Owned Codex tool operation was cancelled before dispatch"));
       }
@@ -1610,6 +1673,7 @@ export class TurnBroker implements TurnBrokerOwner {
     channel.invocations.clear();
     channel.queuedCallIds = [];
     channel.deliveredCallIds.clear();
+    channel.detachedInvocationCallIds.clear();
   }
 
   private pruneOwnedOperations(now = Date.now()): void {

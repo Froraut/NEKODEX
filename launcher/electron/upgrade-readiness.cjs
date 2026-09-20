@@ -15,4 +15,13 @@ function preserveSetup(previous, current, state, migration) {
   return !migration && state.setupContract === SETUP_CONTRACT && previous !== null
     && previous === current && state.coreSetupComplete === true;
 }
-module.exports = { SETUP_CONTRACT, setupIdentity, preserveSetup };
+function setupProofCurrent(state, identity, connectorName) {
+  return state?.mcpSetupComplete === true
+    && state.setupContract === SETUP_CONTRACT
+    && identity !== null
+    && state.setupIdentityHash === identity
+    && state.setupConnectorName === connectorName
+    && typeof state.setupVerifiedAt === "string"
+    && Number.isFinite(Date.parse(state.setupVerifiedAt));
+}
+module.exports = { SETUP_CONTRACT, setupIdentity, preserveSetup, setupProofCurrent };

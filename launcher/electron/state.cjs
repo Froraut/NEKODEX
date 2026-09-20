@@ -125,6 +125,8 @@ function readState(filePath) {
       "mcpSetupComplete",
       "mcpRuntimeInstalled",
       "codexRestartRequired",
+      "runtimeMigrationPending",
+      "launcherRestartRequired",
     ]) {
       if (state[key] !== undefined && typeof state[key] !== "boolean") delete state[key];
     }
@@ -151,8 +153,7 @@ function readState(filePath) {
         || typeof state.setupIdentityHash !== "string"
         || !/^[a-f0-9]{64}$/.test(state.setupIdentityHash)
         || typeof state.setupVerifiedAt !== "string"
-        || !Number.isFinite(Date.parse(state.setupVerifiedAt))
-        || typeof state.setupRuntimeIdentity !== "string")) {
+        || !Number.isFinite(Date.parse(state.setupVerifiedAt)))) {
       Object.assign(state, MCP_PROOF_INVALIDATION);
     }
     return state;

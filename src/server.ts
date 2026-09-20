@@ -53,6 +53,7 @@ import {
   extractCompactUserMessages,
 } from "./responses/compaction";
 import { parseRequest } from "./responses/parser";
+import { createResponseContinuationScopeFromBody } from "./responses/continuation-owner";
 import {
   expandPreviousResponseInput,
   flushResponseState,
@@ -348,6 +349,9 @@ export class HttpTurnCounter {
 type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 
 export interface ResponseRequestOptions {
+  /** Native passthrough remains available independently of the browser/tool broker. */
+  webAdmission?: () => Response | undefined;
+  fetchUpstream?: NativeFetch;
   hermesContext?: HermesContext;
   onCompletedResponse?: (response: Record<string, unknown>) => void;
   /** DEV and other in-process harnesses can keep continuation state in their own canonical store. */
@@ -510,7 +514,7 @@ export async function responseRequest(
   }
   if (typeof requestedModel === "string" && !isChatGptWebModelSlug(requestedModel)) {
     try {
-      return await forwardNativeCodexRequest(nativeRequest, "responses", undefined, raw);
+      return await forwardNativeCodexRequest(nativeRequest, "responses", options.fetchUpstream, raw);
     } catch (error) {
       return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
     }
@@ -518,10 +522,13 @@ export async function responseRequest(
   // The native byte-for-byte replay branch is unused for a Web request. Release its tee buffer
   // before the browser turn, which may stay active for minutes.
   void nativeRequest.body?.cancel().catch(() => {});
+  const webRejection = options.webAdmission?.();
+  if (webRejection) return webRejection;
   const requestedPreviousResponseId = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { previous_response_id?: unknown }).previous_response_id
     : undefined;
-  const expanded = expandPreviousResponseInput(raw);
+  const continuationScope = createResponseContinuationScopeFromBody(raw);
+  const expanded = expandPreviousResponseInput(raw, { scope: continuationScope });
   let parsed: CodexParsedRequest;
   let route: ChatGptWebModelRoute;
   try {
@@ -560,13 +567,17 @@ export async function responseRequest(
     );
   }
   if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
-    const stateStatus = previousResponseStateStatus(requestedPreviousResponseId);
+    const stateStatus = previousResponseStateStatus(requestedPreviousResponseId, { scope: continuationScope });
     const nonretained = stateStatus === "not-retained-too-large"
       ? " The bridge did not retain it because its continuation state exceeded the memory limit."
       : stateStatus === "not-retained-unserializable"
         ? " The bridge did not retain it because its continuation state was not serializable."
         : stateStatus === "not-retained-capacity"
           ? " The bridge did not retain it because the bounded continuation cache had no capacity."
+          : stateStatus === "not-retained-snapshot-capacity"
+            ? " The bridge could not retain it within the durable history limit."
+          : stateStatus === "owner-mismatch" || stateStatus === "owner-unavailable"
+            ? " Its saved ownership does not match this task."
           : "";
     return formatErrorResponse(
       409,
@@ -592,7 +603,7 @@ export async function responseRequest(
     options.onCompletedResponse?.(response);
     if (!compaction) {
       if (options.rememberState !== false) {
-        const retention = rememberResponseState(parsed._rawBody, response, { force: true });
+        const retention = rememberResponseState(parsed._rawBody, response, { force: true, scope: continuationScope });
         if (retention.status === "not-retained") {
           console.warn(`[codex-chatgpt-web] continuation_state_not_retained reason=${retention.reason}`);
         }
@@ -806,7 +817,7 @@ export async function compactRequest(
   req: Request,
   config: AppConfig,
   adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter,
-  options: Pick<ResponseRequestOptions, "onTurnIdentity" | "readProModelVersion" | "readCompactionModel"> = {},
+  options: Pick<ResponseRequestOptions, "onTurnIdentity" | "readProModelVersion" | "readCompactionModel" | "webAdmission" | "fetchUpstream"> = {},
 ): Promise<Response> {
   const nativeRequest = req.clone();
   let raw: Record<string, unknown>;
@@ -852,12 +863,14 @@ export async function compactRequest(
   }
   if (!isChatGptWebModelSlug(raw.model)) {
     try {
-      return await forwardNativeCodexRequest(nativeRequest, "responses/compact", undefined, raw);
+      return await forwardNativeCodexRequest(nativeRequest, "responses/compact", options.fetchUpstream, raw);
     } catch (error) {
       return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
     }
   }
   void nativeRequest.body?.cancel().catch(() => {});
+  const webRejection = options.webAdmission?.();
+  if (webRejection) return webRejection;
   let route: ChatGptWebModelRoute;
   try {
     route = requireChatGptWebModelRoute(raw.model, config);
@@ -984,20 +997,27 @@ export function startServer(
     : "not-required";
   let brokerFailureCode: string | undefined;
   let draining = false;
+  // Launcher-owned Full mode reports tunnel readiness separately from the local listener.
+  // Standalone hosts retain their existing tunnel service contract.
+  const requiresTunnelSignal = config.mode === "full" && config.browserHost === "launcher";
+  let tunnelReady = !requiresTunnelSignal;
   const brokerReady = () => !turnBroker || brokerState === "ready";
-  const acceptingTurns = () => !draining && brokerReady();
+  const acceptingNative = () => !draining;
+  const acceptingTurns = () => !draining && brokerReady() && tunnelReady;
   const admissionFailure = () => formatErrorResponse(
     503,
     "server_error",
     draining
       ? "NEKODEX is restarting; retry after it is ready."
-      : "NEKODEX local-tool broker is not ready; repair or restart the runtime before retrying.",
+      : !brokerReady()
+        ? "NEKODEX local-tool broker is not ready; native models remain available. Repair the tool connection before retrying this Web request."
+        : "NEKODEX tool tunnel is not ready; native models remain available. Reconnect the tunnel before retrying this Web request.",
   );
   if (config.mode === "full") {
     turnBroker!.setExternalOwnersAccepted(false);
     void turnBroker!.listen().then(() => {
       brokerState = "ready";
-      turnBroker!.setExternalOwnersAccepted(!draining);
+      turnBroker!.setExternalOwnersAccepted(acceptingTurns());
     }, error => {
       brokerState = "failed";
       const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
@@ -1062,8 +1082,12 @@ export function startServer(
           port: config.port,
           uptime: (Date.now() - startedAt) / 1_000,
           accepting_turns: acceptingTurns(),
+          native_accepting_turns: acceptingNative(),
+          web_accepting_turns: acceptingTurns(),
+          draining,
           broker_ready: brokerReady(),
           broker_state: brokerState,
+          tunnel_ready: tunnelReady,
           ...(brokerFailureCode ? { broker_failure_code: brokerFailureCode } : {}),
           browser_capacity: MAX_CHATGPT_BROWSER_TABS,
           model_catalog_requests: modelCatalogRequests,
@@ -1073,6 +1097,21 @@ export function startServer(
           ...activity(),
         });
       }
+      if (req.method === "POST" && url.pathname === "/admin/tunnel-status") {
+        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        let body: unknown;
+        try { body = await readJsonRequestBody(req); } catch {
+          return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness must be a boolean");
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)
+          || typeof (body as { ready?: unknown }).ready !== "boolean") {
+          return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness must be a boolean");
+        }
+        tunnelReady = !requiresTunnelSignal || (body as { ready: boolean }).ready;
+        turnBroker?.setExternalOwnersAccepted(acceptingTurns());
+        return Response.json({ status: "ok", native_accepting_turns: acceptingNative(),
+          web_accepting_turns: acceptingTurns(), tunnel_ready: tunnelReady, broker_ready: brokerReady() });
+      }
       if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         draining = url.pathname === "/admin/drain";
@@ -1080,8 +1119,12 @@ export function startServer(
         return Response.json({
           status: "ok",
           accepting_turns: acceptingTurns(),
+          native_accepting_turns: acceptingNative(),
+          web_accepting_turns: acceptingTurns(),
+          draining,
           broker_ready: brokerReady(),
           broker_state: brokerState,
+          tunnel_ready: tunnelReady,
           ...activity(),
         });
       }
@@ -1219,7 +1262,7 @@ export function startServer(
         return Response.json({ status: "ok", accepting_turns: false, ...current });
       }
       if (req.method === "GET" && url.pathname === "/v1/models") {
-        if (!acceptingTurns()) return admissionFailure();
+        if (!acceptingNative()) return admissionFailure();
         return httpTurns.track(async signal => {
           const request = ++modelCatalogRequests;
           const recordResult = (response: Response, failure?: ModelCatalogFailure): Response => {
@@ -1263,7 +1306,7 @@ export function startServer(
         });
       }
       if (req.method === "POST" && url.pathname === "/v1/responses") {
-        if (!acceptingTurns()) return admissionFailure();
+        if (!acceptingNative()) return admissionFailure();
         return httpTurns.track(
           (signal, bindIdentity) => responseRequest(
             new Request(req, { signal }),
@@ -1271,6 +1314,8 @@ export function startServer(
             dependencies.adapterFactory,
             {
               onTurnIdentity: bindIdentity,
+              webAdmission: () => acceptingTurns() ? undefined : admissionFailure(),
+              fetchUpstream: dependencies.fetchUpstream,
               ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
               ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
             },
@@ -1281,7 +1326,7 @@ export function startServer(
         );
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
-        if (!acceptingTurns()) return admissionFailure();
+        if (!acceptingNative()) return admissionFailure();
         return httpTurns.track(
           (signal, bindIdentity) => compactRequest(
             new Request(req, { signal }),
@@ -1289,6 +1334,8 @@ export function startServer(
             dependencies.adapterFactory,
             {
               onTurnIdentity: bindIdentity,
+              webAdmission: () => acceptingTurns() ? undefined : admissionFailure(),
+              fetchUpstream: dependencies.fetchUpstream,
               ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
               ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
             },
@@ -1299,7 +1346,7 @@ export function startServer(
         );
       }
       if (req.method === "POST" && url.pathname === "/v1/alpha/search") {
-        if (!acceptingTurns()) return admissionFailure();
+        if (!acceptingNative()) return admissionFailure();
         return httpTurns.track(
           signal => nativeSearchRequest(new Request(req, { signal }), dependencies.fetchUpstream),
           req.signal,
@@ -1309,7 +1356,7 @@ export function startServer(
       }
       if (req.method === "POST"
         && (url.pathname === "/v1/images/generations" || url.pathname === "/v1/images/edits")) {
-        if (!acceptingTurns()) return admissionFailure();
+        if (!acceptingNative()) return admissionFailure();
         const endpoint: NativeImageEndpoint = url.pathname === "/v1/images/generations"
           ? "images/generations"
           : "images/edits";

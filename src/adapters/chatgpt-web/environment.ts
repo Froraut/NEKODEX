@@ -5,6 +5,14 @@ import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../r
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { isAcceptedCompactionContinuation } from "./compaction-continuation";
 import { clearRetryableTurnHandoff, isAcceptedRetryContinuation } from "./retry-continuation";
+import {
+  clientTurnMetadataFromBody,
+  extractCodexTurnIdentityFromBody,
+  type ChatGptTurnIdentity,
+} from "./browser-request-contract";
+
+export { extractCodexTurnIdentityFromBody } from "./browser-request-contract";
+export type { ChatGptTurnIdentity } from "./browser-request-contract";
 
 export type ChatGptSandboxPolicy =
   | { type: "dangerFullAccess" }
@@ -18,15 +26,6 @@ export interface ChatGptTurnEnvironment {
   writableRoots: string[];
   sandboxPolicy: ChatGptSandboxPolicy;
   tools: CodexTool[];
-}
-
-export interface ChatGptTurnIdentity {
-  threadId?: string;
-  turnId?: string;
-  parentThreadId?: string;
-  agentName?: string;
-  subagentKind?: string;
-  promptCacheKey?: string;
 }
 
 export interface ChatGptThreadSpawnLineage {
@@ -73,17 +72,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
 function pathIdentity(value: string): string {
   const normalized = resolve(value);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function clientTurnMetadataFromBody(value: unknown): Record<string, unknown> | undefined {
-  const body = record(value);
-  const metadata = record(body?.client_metadata);
-  const raw = metadata?.["x-codex-turn-metadata"];
-  if (typeof raw === "string") {
-    try { return record(JSON.parse(raw)); }
-    catch { return undefined; }
-  }
-  return record(raw);
 }
 
 function clientTurnMetadata(parsed: CodexParsedRequest): Record<string, unknown> | undefined {
@@ -797,18 +785,6 @@ export function extractChatGptTurnIdentity(parsed: CodexParsedRequest): ChatGptT
   return {
     ...extractCodexTurnIdentityFromBody(body),
     ...(typeof body?.prompt_cache_key === "string" ? { promptCacheKey: body.prompt_cache_key } : {}),
-  };
-}
-
-/** Read only Codex-owned lifecycle identity without interpreting or rewriting the provider body. */
-export function extractCodexTurnIdentityFromBody(value: unknown): ChatGptTurnIdentity {
-  const metadata = clientTurnMetadataFromBody(value);
-  return {
-    ...(typeof metadata?.thread_id === "string" ? { threadId: metadata.thread_id } : {}),
-    ...(typeof metadata?.turn_id === "string" ? { turnId: metadata.turn_id } : {}),
-    ...(typeof metadata?.parent_thread_id === "string" ? { parentThreadId: metadata.parent_thread_id } : {}),
-    ...(typeof metadata?.agent_name === "string" ? { agentName: metadata.agent_name } : {}),
-    ...(typeof metadata?.subagent_kind === "string" ? { subagentKind: metadata.subagent_kind } : {}),
   };
 }
 

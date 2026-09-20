@@ -1,9 +1,10 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { validateStagedApplication } = require("./update-validation.cjs");
-const { processIdentity, registerRecovery, unregisterRecovery } = require("./update-recovery.cjs");
+const { processIdentity, recoveryRegistration, registerRecovery, unregisterRecovery } = require("./update-recovery.cjs");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function appendLog(job, message) {
@@ -58,6 +59,71 @@ function requireFile(filePath, label) {
     throw new Error(`${label} is missing: ${filePath || "unknown"}`);
   }
 }
+function samePath(left, right) {
+  const normalize = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+  return normalize(left) === normalize(right);
+}
+function privateDirectory(directory) {
+  const stat = fs.lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Update transaction root is not a private directory");
+  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) throw new Error("Update transaction root has another owner");
+  if (process.platform !== "win32" && (stat.mode & 0o022) !== 0) throw new Error("Update transaction root is writable by another user");
+}
+function expectedTransactionRoot(job) {
+  return `${job.platform === "linux" ? job.wrapper : job.target}.update-recovery`;
+}
+function validateJob(job) {
+  if (!job || !["darwin", "win32", "linux"].includes(job.platform)
+    || typeof job.version !== "string" || !job.version.trim()
+    || ![job.target, job.tempRoot, job.logPath, job.runtimeExecutable, job.transactionRoot].every(value => typeof value === "string" && path.isAbsolute(value))
+    || !samePath(job.transactionRoot, expectedTransactionRoot(job))) {
+    throw new Error("Invalid update job identity or paths");
+  }
+  const tempRoot = path.resolve(job.tempRoot);
+  const systemTemp = path.resolve(os.tmpdir());
+  if (tempRoot !== systemTemp && !tempRoot.startsWith(`${systemTemp}${path.sep}`)) {
+    throw new Error("Update temp root is outside the private temporary namespace");
+  }
+  if (path.basename(job.logPath) !== "update-worker.log") throw new Error("Update log path is invalid");
+  for (const candidate of [job.source, job.stagedApplication, job.runnerSource].filter(Boolean)) {
+    const resolved = path.resolve(candidate);
+    if (resolved !== tempRoot && !resolved.startsWith(`${tempRoot}${path.sep}`)) {
+      throw new Error("Update staged input is outside the private temporary namespace");
+    }
+  }
+  return job;
+}
+function stagedIdentity(pathname) {
+  const stat = fs.lstatSync(pathname);
+  if (stat.isSymbolicLink()) throw new Error("Staged update path became a symbolic link");
+  return { dev: stat.dev, ino: stat.ino, type: stat.isDirectory() ? "directory" : stat.isFile() ? "file" : "other" };
+}
+function validateTransaction(transaction, transactionPath = path.join(transaction?.root || "", "transaction.json")) {
+  if (!transaction || transaction.schemaVersion !== 1 || !path.isAbsolute(transaction.root)
+    || !samePath(transactionPath, path.join(transaction.root, "transaction.json"))) {
+    throw new Error("Invalid update recovery journal");
+  }
+  validateJob(transaction.job);
+  if (!samePath(transaction.root, transaction.job.transactionRoot)) throw new Error("Update journal root does not match the job");
+  privateDirectory(transaction.root);
+  if (!Array.isArray(transaction.operations) || transaction.operations.length > 2) throw new Error("Invalid update operation journal");
+  for (const [index, op] of transaction.operations.entries()) {
+    const expectedTarget = transaction.job.platform === "linux" ? transaction.job.wrapper : transaction.job.target;
+    const expectedNext = path.join(path.dirname(expectedTarget), `.${path.basename(expectedTarget)}.next-${path.basename(transaction.root)}`);
+    const expectedPrevious = path.join(path.dirname(expectedTarget), `.${path.basename(expectedTarget)}.previous-${path.basename(transaction.root)}-${index}`);
+    if (!samePath(op.target, expectedTarget) || !samePath(op.next, expectedNext)
+      || !samePath(op.previous, expectedPrevious) || !samePath(op.failed, `${expectedPrevious}.failed`)) {
+      throw new Error("Update journal contains an unexpected filesystem target");
+    }
+  }
+  if (transaction.recovery) {
+    const expected = recoveryRegistration(transaction);
+    if (JSON.stringify(transaction.recovery) !== JSON.stringify(expected)) {
+      throw new Error("Update recovery registration does not match this transaction");
+    }
+  }
+  return transaction;
+}
 function shellQuote(value) { return `'${String(value).replace(/'/g, `'\\''`)}'`; }
 function launch(bin, args = [], env = process.env) {
   return new Promise((resolve, reject) => {
@@ -86,20 +152,26 @@ function operation(target, next, root, index) {
   return { target, next, previous, failed: `${previous}.failed`, hadOriginal: fs.existsSync(target), state: "prepared" };
 }
 function prepareTransaction(job, deps = {}) {
+  validateJob(job);
   const root = job.transactionRoot;
   if (!root || !path.isAbsolute(root)) throw new Error("Update requires a durable transaction directory");
-  if (fs.existsSync(root) && fs.readdirSync(root).length === 0) fs.rmdirSync(root);
   if (fs.existsSync(root)) {
-    const existing = JSON.parse(fs.readFileSync(path.join(root, "transaction.json"), "utf8"));
-    if (existing.phase === "preparing" && (!existing.workerIdentity || processIdentity(existing.workerPid) !== existing.workerIdentity)) {
-      // Preparation has not renamed any installed path, so an abandoned copy can
-      // be discarded without needing to stop or relaunch an application.
-      rollback(existing);
-      cleanup(existing, deps);
-      existing.phase = "rolled-back";
+    privateDirectory(root);
+    if (fs.readdirSync(root).length === 0) {
+      fs.rmdirSync(root);
+    } else {
+      const transactionPath = path.join(root, "transaction.json");
+      const existing = validateTransaction(JSON.parse(fs.readFileSync(transactionPath, "utf8")), transactionPath);
+      if (existing.phase === "preparing" && (!existing.workerIdentity || processIdentity(existing.workerPid) !== existing.workerIdentity)) {
+        // Preparation has not renamed any installed path, so an abandoned copy can
+        // be discarded without needing to stop or relaunch an application.
+        rollback(existing);
+        cleanup(existing, deps);
+        existing.phase = "rolled-back";
+      }
+      if (!["committed", "rolled-back"].includes(existing.phase)) throw new Error("An interrupted update must finish recovery before another update");
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
-    if (!["committed", "rolled-back"].includes(existing.phase)) throw new Error("An interrupted update must finish recovery before another update");
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
   fs.mkdirSync(root, { mode: 0o700 });
   const transaction = { schemaVersion: 1, root, job, workerPid: process.pid,
@@ -157,7 +229,10 @@ function prepareTransaction(job, deps = {}) {
       validate(next, job);
       transaction.packageTarget = job.target;
     }
-    for (const op of transaction.operations) syncTree(op.next);
+    for (const op of transaction.operations) {
+      syncTree(op.next);
+      op.stagedIdentity = stagedIdentity(op.next);
+    }
     transaction.phase = "prepared";
     writeJournal(transaction);
     syncTree(root);
@@ -171,6 +246,7 @@ function prepareTransaction(job, deps = {}) {
   }
 }
 function replace(transaction, checkpoint = () => {}) {
+  validateTransaction(transaction);
   transaction.phase = "replacing";
   writeJournal(transaction);
   for (const [index, op] of transaction.operations.entries()) {
@@ -182,6 +258,12 @@ function replace(transaction, checkpoint = () => {}) {
     checkpoint("after-backup", index);
     op.state = "backed-up";
     writeJournal(transaction);
+    if (transaction.job.platform !== "linux") validateStagedApplication(op.next, transaction.job);
+    const currentIdentity = stagedIdentity(op.next);
+    if (!op.stagedIdentity || currentIdentity.dev !== op.stagedIdentity.dev
+      || currentIdentity.ino !== op.stagedIdentity.ino || currentIdentity.type !== op.stagedIdentity.type) {
+      throw new Error("Validated staged application identity changed before final rename");
+    }
     fs.renameSync(op.next, op.target);
     syncDirectory(path.dirname(op.target));
     checkpoint("after-replace", index);
@@ -192,6 +274,7 @@ function replace(transaction, checkpoint = () => {}) {
   writeJournal(transaction);
 }
 function rollback(transaction, checkpoint = () => {}) {
+  validateTransaction(transaction);
   if (transaction.phase === "committed") return false;
   for (const [index, op] of [...transaction.operations].reverse().entries()) {
     if (fs.existsSync(op.previous)) {
@@ -294,6 +377,15 @@ async function waitForReadiness(transaction, { timeoutMs = 90_000, graceMs = 1_0
         || (job.platform !== "linux" && ready.pid !== JSON.parse(fs.readFileSync(path.join(transaction.root, "launched.json"), "utf8")).pid)) {
         throw new Error("Replacement readiness proof does not match the staged launcher");
       }
+      if (job.readinessSchema === 2 && (ready.readinessSchema !== 2
+        || !["local-usable", "not-configured"].includes(ready.lifecycleStatus)
+        || !Number.isSafeInteger(ready.lifecycleRevision)
+        || ready.lifecycleRevision < 0
+        || (ready.lifecycleStatus === "local-usable" && (ready.nativeAvailability !== "ready"
+          || typeof ready.configVersion !== "string" || !ready.configVersion
+          || (ready.configVersion !== job.version && ready.legacyCommittedRuntime !== true))))) {
+        throw new Error("Replacement launcher did not prove local lifecycle readiness");
+      }
       await sleep(graceMs);
       if (!isAlive(ready.pid) || !isAlive(transaction.candidatePid)) throw new Error("Replacement launcher exited after its readiness signal");
       return ready;
@@ -310,6 +402,7 @@ function commit(transaction) {
   // Linux retains the old version and old runner for a separate explicit cleanup.
 }
 function cleanup(transaction, deps = {}) {
+  validateTransaction(transaction);
   if (transaction.phase === "committed") {
     for (const op of transaction.operations) fs.rmSync(op.previous, { recursive: true, force: true });
   }
@@ -343,7 +436,15 @@ async function runTransaction(transaction, deps = {}) {
     appendLog(transaction.job, `v${transaction.job.version} committed after launcher and runtime readiness`);
   } catch (error) {
     if (transaction.phase === "committed") throw error;
-    await (deps.stopReplacement || stopReplacement)(transaction);
+    transaction.phase = "rollback-pending-stop";
+    transaction.rollbackReason = String(error?.message || error).slice(0, 2_000);
+    writeJournal(transaction);
+    try {
+      await (deps.stopReplacement || stopReplacement)(transaction);
+    } catch (stopError) {
+      appendLog(transaction.job, `rollback pending: replacement ownership is ambiguous: ${stopError.message}`);
+      throw new Error(`${error.message}; rollback remains pending until replacement ownership is proven: ${stopError.message}`);
+    }
     rollback(transaction);
     await launchProcess(executableFor(transaction.job));
     appendLog(transaction.job, `update rolled back: ${error.message}`);
@@ -353,10 +454,7 @@ async function runTransaction(transaction, deps = {}) {
   }
 }
 async function recover(transactionPath, deps = {}) {
-  const transaction = JSON.parse(fs.readFileSync(transactionPath, "utf8"));
-  if (transaction.schemaVersion !== 1 || path.join(transaction.root, "transaction.json") !== transactionPath) {
-    throw new Error("Invalid update recovery journal");
-  }
+  const transaction = validateTransaction(JSON.parse(fs.readFileSync(transactionPath, "utf8")), transactionPath);
   if (transaction.workerIdentity && processIdentity(transaction.workerPid) === transaction.workerIdentity) return;
   const lock = path.join(transaction.root, "recovery.lock");
   try {
@@ -371,13 +469,20 @@ async function recover(transactionPath, deps = {}) {
     return recover(transactionPath, deps);
   }
   try {
-  if (!["committed", "rolled-back"].includes(transaction.phase)) {
-    await (deps.stopReplacement || stopReplacement)(transaction);
-    rollback(transaction);
-    await (deps.launch || launch)(executableFor(transaction.job));
-    appendLog(transaction.job, "Recovered interrupted update; relaunched the previous installation");
-  }
-  cleanup(transaction, deps);
+    if (!["committed", "rolled-back"].includes(transaction.phase)) {
+      transaction.phase = "rollback-pending-stop";
+      writeJournal(transaction);
+      try {
+        await (deps.stopReplacement || stopReplacement)(transaction);
+      } catch (error) {
+        appendLog(transaction.job, `recovery remains rollback-pending-stop: ${error.message}`);
+        return;
+      }
+      rollback(transaction);
+      await (deps.launch || launch)(executableFor(transaction.job));
+      appendLog(transaction.job, "Recovered interrupted update; relaunched the previous installation");
+    }
+    cleanup(transaction, deps);
   } finally {
     try { fs.unlinkSync(lock); } catch (error) { if (error.code !== "ENOENT") throw error; }
   }
@@ -396,7 +501,7 @@ async function main() {
     }
     return;
   }
-  const job = JSON.parse(fs.readFileSync(jobPath, "utf8"));
+  const job = validateJob(JSON.parse(fs.readFileSync(jobPath, "utf8")));
   appendLog(job, `waiting for exact launcher process ${job.parentPid} before installing v${job.version}`);
   await waitForParent(job.parentPid, job.parentIdentity);
   let transaction;

@@ -174,7 +174,7 @@ test("readiness rejects absent, stale, mismatched, dead and oversized proofs", a
   } finally { f.close(); }
 });
 
-test("readiness credentials are consumed before subprocesses and only executable runtime success creates proof", () => {
+test("readiness credentials require executable runtime and usable lifecycle proof", () => {
   const f = fixture("linux");
   try {
     const env = { CODEX_WEB_GPT_UPDATE_READY_FILE: f.transaction.readyFile, CODEX_WEB_GPT_UPDATE_READY_TOKEN: f.transaction.readyToken };
@@ -185,6 +185,9 @@ test("readiness credentials are consumed before subprocesses and only executable
     assert.throws(() => proveUpdateReadiness(handoff, options, invocation, () => ({ status: 1, stdout: "2.0.0" })), /did not report/);
     assert.equal(fs.existsSync(handoff.filename), false);
     assert.throws(() => proveUpdateReadiness(handoff, options, invocation, () => ({ status: 0, stdout: "1.0.0" })), /did not report/);
+    assert.throws(() => proveUpdateReadiness(handoff, options, invocation, () => ({ status: 0, stdout: "2.0.0" })), /locally usable/);
+    assert.equal(fs.existsSync(handoff.filename), false);
+    Object.assign(options, { readinessSchema: 2, lifecycleStatus: "local-usable", nativeAvailability: "ready", configVersion: "2.0.0", lifecycleRevision: 1 });
     proveUpdateReadiness(handoff, options, invocation, () => ({ status: 0, stdout: "2.0.0\n" }));
     assert.equal(JSON.parse(fs.readFileSync(handoff.filename)).token, f.transaction.readyToken);
     assert.equal(proveUpdateReadiness(null, options, null), false);

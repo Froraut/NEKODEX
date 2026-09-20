@@ -28,13 +28,26 @@ function Test-IsFullyQualifiedWindowsPath {
 }
 
 $Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "Froraut/NEKODEX" }
+$TrustedRepository = "Froraut/NEKODEX"
+# Windows releases remain unsigned previews until a real Authenticode publisher
+# certificate is provisioned and its public thumbprint is committed here.
+$TrustedPublisherThumbprints = @()
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   throw "Invalid GitHub repository: $Repository"
+}
+if ($Repository -cne $TrustedRepository) {
+  throw "The standalone installer trusts releases from $TrustedRepository only"
 }
 if (-not [Environment]::Is64BitOperatingSystem) {
   throw "The packaged Windows launcher requires 64-bit Windows"
 }
 $Arch = "x64"
+if ($TrustedPublisherThumbprints.Count -eq 0) {
+  throw "Authenticated Windows standalone installation is unavailable because NEKODEX has no provisioned Authenticode publisher identity. Unsigned preview artifacts are not accepted by this installer."
+}
+foreach ($Thumbprint in $TrustedPublisherThumbprints) {
+  if ($Thumbprint -notmatch '^[A-Fa-f0-9]{40}$') { throw "Invalid packaged NEKODEX publisher thumbprint" }
+}
 
 $Version = $env:CODEX_WEB_GPT_VERSION
 if (-not $Version) {
@@ -83,8 +96,12 @@ try {
   $Actual = (Get-FileHash -Algorithm SHA256 $Installer).Hash.ToLowerInvariant()
   if ($Actual -ne $Expected) { throw "SHA-256 verification failed for $Asset" }
   $Signature = Get-AuthenticodeSignature -LiteralPath $Installer
-  if ($Signature.Status -ne 'Valid' -or -not $Signature.SignerCertificate) {
-    throw "Windows installer has no valid Authenticode signature. Unsigned previews must be handled separately."
+  if ($Signature.Status -ne 'Valid' -or -not $Signature.SignerCertificate -or -not $Signature.TimeStamperCertificate) {
+    throw "Windows installer has no valid timestamped Authenticode signature. Unsigned previews are not accepted."
+  }
+  $SignerThumbprint = $Signature.SignerCertificate.Thumbprint.ToUpperInvariant()
+  if ($TrustedPublisherThumbprints -notcontains $SignerThumbprint) {
+    throw "Windows installer publisher identity does not match NEKODEX"
   }
   $Process = Start-Process -FilePath $Installer -ArgumentList "/S", "/currentuser" -Wait -PassThru
   if ($Process.ExitCode -ne 0) { throw "Installer exited with code $($Process.ExitCode)" }

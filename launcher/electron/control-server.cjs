@@ -1,11 +1,11 @@
 const { createServer } = require("node:http");
-const { randomBytes, timingSafeEqual } = require("node:crypto");
-const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
+const { createHash, randomBytes, timingSafeEqual } = require("node:crypto");
 const { validateNativeUsageSample } = require("./usage-store.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
 const MANUAL_SENT_OBSERVER_TIMEOUT_MS = 35_000;
+const MAX_AUTOMATIC_MUTATION_RECEIPTS = 4096;
 
 function secureTokenMatches(expected, authorization) {
   const prefix = "Bearer ";
@@ -45,6 +45,7 @@ class BrowserControlServer {
     this.getPreferences = getPreferences;
     this.resolveNativeProxy = resolveNativeProxy;
     this.token = randomBytes(32).toString("base64url");
+    this.automaticMutationReceipts = new Map();
     this.port = 0;
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch((error) => {
@@ -88,6 +89,38 @@ class BrowserControlServer {
   descriptor() {
     if (!this.port) throw new Error("Browser control server is not started");
     return { endpoint: `http://127.0.0.1:${this.port}`, token: this.token };
+  }
+
+  async reconcileAutomaticMutation(action, body, mutation) {
+    const mutationId = body.mutationId ?? randomBytes(12).toString("base64url");
+    const key = `${action}:${body.traceId}:${body.helperPid}:${mutationId}`;
+    const fingerprint = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+    const existing = this.automaticMutationReceipts.get(key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        const error = new Error(`Automatic browser ${action} payload changed for the same turn owner`);
+        error.code = "turn_owner_conflict";
+        throw error;
+      }
+      return existing.promise;
+    }
+    while (this.automaticMutationReceipts.size >= MAX_AUTOMATIC_MUTATION_RECEIPTS) {
+      const oldest = [...this.automaticMutationReceipts].find(([, receipt]) => receipt.settled === true);
+      if (!oldest) throw new Error("Automatic browser mutation receipt capacity is full");
+      this.automaticMutationReceipts.delete(oldest[0]);
+    }
+    const receipt = { fingerprint, settled: false, promise: null };
+    receipt.promise = Promise.resolve().then(mutation).then(result => {
+      receipt.settled = true;
+      return result;
+    }, error => {
+      if (this.automaticMutationReceipts.get(key) === receipt) {
+        this.automaticMutationReceipts.delete(key);
+      }
+      throw error;
+    });
+    this.automaticMutationReceipts.set(key, receipt);
+    return receipt.promise;
   }
 
   async handle(request, response) {
@@ -155,7 +188,7 @@ class BrowserControlServer {
         if (typeof body?.conversationKey !== "string" || !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
           throw new Error("conversationKey is invalid");
         }
-        const released = releaseRetainedConversation(host, body.conversationKey);
+        const released = host.releaseRetainedConversation(body.conversationKey);
         this.logger.info("browser.retained_conversation_released", { released });
         writeJson(response, 200, { ok: true, released });
         return;
@@ -196,6 +229,12 @@ class BrowserControlServer {
       }
       if (body.refreshViewport !== undefined && request.url !== "/v1/turn/heartbeat") {
         throw new Error("refreshViewport is only valid for a turn heartbeat");
+      }
+      if (body.surfaceId !== undefined
+        && (request.url !== "/v1/turn/heartbeat"
+          || typeof body.surfaceId !== "string"
+          || !/^[A-Za-z0-9_-]{32}$/.test(body.surfaceId))) {
+        throw new Error("surfaceId is only valid for a turn heartbeat and must identify an owned surface");
       }
       if (manualAction) {
         if (manualAction === "start") {
@@ -297,6 +336,11 @@ class BrowserControlServer {
         writeJson(response, 200, { ok: true, ...release });
         return;
       }
+      if (request.url !== "/v1/turn/usage" && body.mutationId !== undefined
+        && (typeof body.mutationId !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(body.mutationId))) {
+        throw new Error("automatic turn mutationId is invalid");
+      }
       if (body.accountRoutingKey !== undefined && !/^[a-f0-9]{64}$/.test(body.accountRoutingKey)) throw new Error("Invalid account routing key");
       if (body.requestedEffort !== undefined && !["luna", "low", "medium", "high", "xhigh", "max"].includes(body.requestedEffort)) throw new Error("Invalid requested effort");
       if (request.url === "/v1/turn/usage") {
@@ -321,22 +365,28 @@ class BrowserControlServer {
         if (host.browserInteractionMode() === "manual") {
           throw new Error("Automatic browser interaction is disabled");
         }
-        const lease = await host.beginTurn(
-          body.traceId,
-          preferences.showBrowserDuringTurns === true,
-          body.helperPid,
-          body.conversationKey,
-          body.connectorIdentity,
-          body.requireRetainedConversation === true,
-          { effort: body.requestedEffort, routingKey: body.accountRoutingKey },
-        );
-        this.logger.info("browser.turn_started", { traceId: body.traceId });
-        writeJson(response, 200, { ok: true, ...lease });
+        const result = await this.reconcileAutomaticMutation("start", body, async () => {
+          const lease = await host.beginTurn(
+            body.traceId,
+            preferences.showBrowserDuringTurns === true,
+            body.helperPid,
+            body.conversationKey,
+            body.connectorIdentity,
+            body.requireRetainedConversation === true,
+            { effort: body.requestedEffort, routingKey: body.accountRoutingKey },
+          );
+          this.logger.info("browser.turn_started", { traceId: body.traceId });
+          return { ok: true, ...lease };
+        });
+        writeJson(response, 200, result);
         return;
       } else if (request.url === "/v1/turn/heartbeat") {
-        host.heartbeatTurn(body.traceId, body.helperPid, body.refreshViewport === true);
-        this.logger.debug?.("browser.turn_heartbeat", { traceId: body.traceId });
-        writeJson(response, 200, { ok: true });
+        const result = await this.reconcileAutomaticMutation("heartbeat", body, () => {
+          host.heartbeatTurn(body.traceId, body.helperPid, body.refreshViewport === true, body.surfaceId);
+          this.logger.debug?.("browser.turn_heartbeat", { traceId: body.traceId });
+          return { ok: true };
+        });
+        writeJson(response, 200, result);
         return;
       } else {
         if (!['completed', 'failed', 'aborted'].includes(body.status)) throw new Error("turn status is invalid");
@@ -344,18 +394,21 @@ class BrowserControlServer {
           'model_unavailable', 'tool_timeout', 'browser_failure', 'other'].includes(body.failureCode)) {
           throw new Error("Invalid account failure code");
         }
-        const release = await host.endTurn(
-          body.traceId,
-          body.helperPid,
-          body.status,
-          preferences.showBrowserDuringTurns === true,
-          body.message,
-          body.retain === true,
-          body.connectorBound === true,
-          body.failureCode,
-        );
-        this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
-        writeJson(response, 200, { ok: true, ...release });
+        const result = await this.reconcileAutomaticMutation("end", body, async () => {
+          const release = await host.endTurn(
+            body.traceId,
+            body.helperPid,
+            body.status,
+            preferences.showBrowserDuringTurns === true,
+            body.message,
+            body.retain === true,
+            body.connectorBound === true,
+            body.failureCode,
+          );
+          this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
+          return { ok: true, ...release };
+        });
+        writeJson(response, 200, result);
         return;
       }
     } catch (error) {

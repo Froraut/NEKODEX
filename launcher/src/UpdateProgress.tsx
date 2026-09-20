@@ -43,18 +43,20 @@ function useTransferReading(target: Reading, enabled: boolean): Reading {
 export function UpdateProgress({ state, label }: { state: UpdateState; label: string }) {
   const downloading = state.status === "downloading";
   const total = downloading && Number.isFinite(state.totalBytes) && state.totalBytes! > 0 ? state.totalBytes : undefined;
-  const bytes = downloading ? Math.max(0, Math.min(total ?? Infinity, state.downloadedBytes ?? 0)) : 0;
-  const speed = downloading ? Math.max(0, state.bytesPerSecond ?? 0) : 0;
+  const bytes = downloading && Number.isFinite(state.downloadedBytes)
+    ? Math.max(0, Math.min(total ?? Infinity, state.downloadedBytes!)) : 0;
+  const speed = downloading && Number.isFinite(state.bytesPerSecond) ? Math.max(0, state.bytesPerSecond!) : 0;
   const reading = useTransferReading({ bytes, speed }, downloading);
   const fraction = total ? Math.min(1, reading.bytes / total) : undefined;
-  const mib = (value: number) => `${(value / 1024 / 1024).toFixed(1)} MB`;
+  const mib = (value: number) => `${(value / 1024 / 1024).toFixed(1)} MiB`;
   return <div className="updates-download">
     <div className={`updates-meter${fraction === undefined ? " is-indeterminate" : ""}`}
       role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={total ? Math.min(100, bytes / total * 100) : undefined}>
       <span aria-hidden="true" className="updates-meter-fill" style={fraction !== undefined ? { transform: `scaleX(${fraction})` } : undefined} />
     </div>
-    {downloading && total ? <div className="updates-transfer"><span>{mib(reading.bytes)} / {mib(total)}</span><strong>{((fraction ?? 0) * 100).toFixed(1)}%</strong></div> : null}
+    {downloading ? <div className="updates-transfer"><span>{mib(reading.bytes)}{total ? ` / ${mib(total)}` : ""}</span>
+      {total ? <strong>{((fraction ?? 0) * 100).toFixed(1)}%</strong> : null}</div> : null}
     {downloading ? <small className="updates-speed">{mib(reading.speed)}/s</small> : null}
   </div>;
 }

@@ -10,6 +10,7 @@ import type {
   UsageSource,
   UsageSnapshot,
 } from "./types";
+import { aggregateUsageGroups, normalizedUsageSnapshot, type UsageDisplayGroup } from "./usage-statistics";
 import "./usage-lifetime.css";
 
 const ranges: UsageRangeDays[] = [1, 7, 30, 90];
@@ -22,14 +23,14 @@ const groupLabel = (row: UsageGroup, copy: Copy, source: UsageSource) => {
   return `${row.mode ?? copy.usageUnknown} · ${effort} · ${!row.modelVersion || row.modelVersion === "unknown" ? copy.usageUnknown : `GPT-${row.modelVersion}`}`;
 };
 
-function UsageTable({ caption, groups, copy, language, showIncomplete, totalLabel }: { caption: string; groups: Array<[string, Pick<UsageGroup, "accepted" | "completed" | "failed" | "aborted" | "incomplete">]>; copy: Copy; language: Language; showIncomplete: boolean; totalLabel: string }) {
+function UsageTable({ caption, groups, copy, language, showIncomplete, showUnrecorded, totalLabel }: { caption: string; groups: UsageDisplayGroup[]; copy: Copy; language: Language; showIncomplete: boolean; showUnrecorded: boolean; totalLabel: string }) {
   return <div className="usage-table-scroll"><table>
     <caption>{caption}</caption>
-    <thead><tr><th scope="col">{copy.usageModel}</th><th scope="col">{totalLabel}</th><th scope="col">{copy.usageCompleted}</th><th scope="col">{copy.usageFailed}</th><th scope="col">{copy.usageAborted}</th>{showIncomplete ? <th scope="col">{copy.usageIncomplete}</th> : null}<th scope="col">{copy.usageUnrecorded}</th></tr></thead>
-    <tbody>{[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, row]) => <tr key={name}>
-      <th scope="row">{name}</th><td>{number(row.accepted, language)}</td><td>{number(row.completed, language)}</td><td>{number(row.failed, language)}</td><td>{number(row.aborted, language)}</td>
+    <thead><tr><th scope="col">{copy.usageModel}</th><th scope="col">{totalLabel}</th><th scope="col">{copy.usageCompleted}</th><th scope="col">{copy.usageFailed}</th><th scope="col">{copy.usageAborted}</th>{showIncomplete ? <th scope="col">{copy.usageIncomplete}</th> : null}{showUnrecorded ? <th scope="col">{copy.usageUnrecorded}</th> : null}</tr></thead>
+    <tbody>{groups.map(({ key, label, row }) => <tr key={key}>
+      <th scope="row">{label}</th><td>{number(row.accepted, language)}</td><td>{number(row.completed, language)}</td><td>{number(row.failed, language)}</td><td>{number(row.aborted, language)}</td>
       {showIncomplete ? <td>{number(row.incomplete ?? 0, language)}</td> : null}
-      <td>{number(Math.max(0, row.accepted - row.completed - row.failed - row.aborted - (row.incomplete ?? 0)), language)}</td>
+      {showUnrecorded ? <td>{number(Math.max(0, row.accepted - row.completed - row.failed - row.aborted - (row.incomplete ?? 0)), language)}</td> : null}
     </tr>)}</tbody>
   </table></div>;
 }
@@ -64,24 +65,38 @@ function csvCell(value: string | number | null) {
 }
 
 function exportReport(report: UsageSnapshot) {
-  const scope = report.source === "web" && report.selectedAccountId !== null ? "selected-account" : "all";
-  const modelCounts = new Map<string, { total: number; completed: number; failed: number; cancelled: number; incomplete: number; unrecorded: number }>();
-  for (const row of report.rows) {
-    const model = report.source === "native" ? row.modelId?.trim() || "unknown"
-      : !row.modelVersion || row.modelVersion === "unknown" ? "unknown" : `GPT-${row.modelVersion}`;
-    const current = modelCounts.get(model) ?? { total: 0, completed: 0, failed: 0, cancelled: 0, incomplete: 0, unrecorded: 0 };
-    current.total += row.accepted; current.completed += row.completed; current.failed += row.failed; current.cancelled += row.aborted;
-    current.incomplete += row.incomplete ?? 0;
-    current.unrecorded += Math.max(0, row.accepted - row.completed - row.failed - row.aborted - (row.incomplete ?? 0));
-    modelCounts.set(model, current);
-  }
-  const header = ["record_type", "source", "scope", "period_start", "period_end", "time_zone", "day", "model", "total_count", "completed_count", "failed_count", "cancelled_count", "incomplete_count", "unrecorded_count", "known_outcome_count", "known_outcome_completion_rate", "duration_samples", "median_accept_to_outcome_ms", "p95_accept_to_outcome_ms", "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "reported_token_samples", "unreported_token_samples", "failure_code", "failure_count"];
+  const scope = report.source === "native" ? "native-recorded-only"
+    : report.selectedAccountId !== null ? "selected-account" : "all-accounts";
+  const header = ["record_type", "source", "scope", "period_start", "period_end", "time_zone", "day", "account_id", "mode", "effort", "model_version", "model_version_source", "message_kind", "endpoint", "model_id", "model_id_source", "total_count", "completed_count", "failed_count", "cancelled_count", "incomplete_count", "unrecorded_count", "known_outcome_count", "known_outcome_completion_rate", "duration_samples", "median_accept_to_outcome_ms", "p95_accept_to_outcome_ms", "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "reported_token_samples", "unreported_token_samples", "failure_code", "failure_count"];
   const token = report.tokens;
-  const summary = ["summary", report.source, scope, report.period.startDay, report.period.endDay, report.timeZone, "", "", report.metrics.total, report.metrics.completed, report.metrics.failed, report.metrics.cancelled, report.metrics.incomplete ?? 0, report.metrics.unrecorded, report.metrics.knownOutcomeTotal, report.metrics.knownOutcomeCompletionRate, report.durations.observedSamples, report.durations.medianMs, report.durations.p95Ms, token?.inputTokens ?? null, token?.outputTokens ?? null, token?.cachedInputTokens ?? null, token?.reasoningTokens ?? null, token?.reportedSamples ?? null, token?.unreportedSamples ?? null, "", ""];
-  const days = report.calendar.map(day => ["day", report.source, scope, report.period.startDay, report.period.endDay, report.timeZone, day.day, "", day.total, day.completed, day.failed, day.cancelled, day.incomplete ?? 0, day.unrecorded, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
-  const models = [...modelCounts].sort(([a], [b]) => a.localeCompare(b)).map(([model, counts]) => ["model", report.source, scope, report.period.startDay, report.period.endDay, report.timeZone, "", model, counts.total, counts.completed, counts.failed, counts.cancelled, counts.incomplete, counts.unrecorded, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
-  const failures = report.failures.map(failure => ["failure", report.source, scope, report.period.startDay, report.period.endDay, report.timeZone, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", failure.code, failure.count]);
-  const csv = [header, summary, ...days, ...models, ...failures].map(row => row.map(csvCell).join(",")).join("\n") + "\n";
+  type CsvValue = string | number | null | undefined;
+  const base = { source: report.source, scope, period_start: report.period.startDay, period_end: report.period.endDay,
+    time_zone: report.timeZone };
+  const records: Array<Record<string, CsvValue>> = [{ ...base, record_type: "summary",
+    total_count: report.metrics.total, completed_count: report.metrics.completed, failed_count: report.metrics.failed,
+    cancelled_count: report.metrics.cancelled, incomplete_count: report.metrics.incomplete ?? 0,
+    unrecorded_count: report.source === "web" ? report.metrics.unrecorded : null,
+    known_outcome_count: report.metrics.knownOutcomeTotal,
+    known_outcome_completion_rate: report.metrics.knownOutcomeCompletionRate,
+    duration_samples: report.durations.observedSamples, median_accept_to_outcome_ms: report.durations.medianMs,
+    p95_accept_to_outcome_ms: report.durations.p95Ms, input_tokens: token?.inputTokens,
+    output_tokens: token?.outputTokens, cached_input_tokens: token?.cachedInputTokens,
+    reasoning_tokens: token?.reasoningTokens, reported_token_samples: token?.reportedSamples,
+    unreported_token_samples: token?.unreportedSamples }];
+  for (const day of report.calendar) records.push({ ...base, record_type: "day", day: day.day, total_count: day.total,
+    completed_count: day.completed, failed_count: day.failed, cancelled_count: day.cancelled,
+    incomplete_count: day.incomplete ?? 0, unrecorded_count: report.source === "web" ? day.unrecorded : null });
+  for (const row of report.rows) records.push({ ...base, record_type: "group", account_id: row.accountId,
+    mode: row.mode, effort: row.effort, model_version: row.modelVersion, model_version_source: row.modelVersionSource,
+    message_kind: row.messageKind, endpoint: row.endpoint, model_id: row.modelId, model_id_source: row.modelIdSource,
+    total_count: row.accepted, completed_count: row.completed, failed_count: row.failed, cancelled_count: row.aborted,
+    incomplete_count: row.incomplete ?? 0,
+    unrecorded_count: report.source === "web"
+      ? Math.max(0, row.accepted - row.completed - row.failed - row.aborted - (row.incomplete ?? 0)) : null });
+  for (const failure of report.failures) records.push({ ...base, record_type: "failure",
+    failure_code: failure.code, failure_count: failure.count });
+  const csv = [header, ...records.map(record => header.map(column => record[column] ?? ""))]
+    .map(row => row.map(csvCell).join(",")).join("\n") + "\n";
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -112,11 +127,11 @@ function CalendarChart({ calendar, language, totalLabel }: { calendar: UsageCale
   </div>;
 }
 
-function CalendarTable({ calendar, copy, language, showIncomplete, totalLabel }: { calendar: UsageCalendarDay[]; copy: Copy; language: Language; showIncomplete: boolean; totalLabel: string }) {
+function CalendarTable({ calendar, copy, language, showIncomplete, showUnrecorded, totalLabel }: { calendar: UsageCalendarDay[]; copy: Copy; language: Language; showIncomplete: boolean; showUnrecorded: boolean; totalLabel: string }) {
   return <div className="usage-table-scroll"><table className="usage-calendar-table">
     <caption>{copy.usageCalendarTable}</caption>
-    <thead><tr><th scope="col">{copy.usageDate}</th><th scope="col">{totalLabel}</th><th scope="col">{copy.usageCompleted}</th><th scope="col">{copy.usageFailed}</th><th scope="col">{copy.usageAborted}</th>{showIncomplete ? <th scope="col">{copy.usageIncomplete}</th> : null}<th scope="col">{copy.usageUnrecorded}</th></tr></thead>
-    <tbody>{calendar.map(day => <tr key={day.day}><th scope="row">{dateLabel(day.day, language, { year: "numeric", month: "short", day: "numeric" })}</th><td>{number(day.total, language)}</td><td>{number(day.completed, language)}</td><td>{number(day.failed, language)}</td><td>{number(day.cancelled, language)}</td>{showIncomplete ? <td>{number(day.incomplete ?? 0, language)}</td> : null}<td>{number(day.unrecorded, language)}</td></tr>)}</tbody>
+    <thead><tr><th scope="col">{copy.usageDate}</th><th scope="col">{totalLabel}</th><th scope="col">{copy.usageCompleted}</th><th scope="col">{copy.usageFailed}</th><th scope="col">{copy.usageAborted}</th>{showIncomplete ? <th scope="col">{copy.usageIncomplete}</th> : null}{showUnrecorded ? <th scope="col">{copy.usageUnrecorded}</th> : null}</tr></thead>
+    <tbody>{calendar.map(day => <tr key={day.day}><th scope="row">{dateLabel(day.day, language, { year: "numeric", month: "short", day: "numeric" })}</th><td>{number(day.total, language)}</td><td>{number(day.completed, language)}</td><td>{number(day.failed, language)}</td><td>{number(day.cancelled, language)}</td>{showIncomplete ? <td>{number(day.incomplete ?? 0, language)}</td> : null}{showUnrecorded ? <td>{number(day.unrecorded, language)}</td> : null}</tr>)}</tbody>
   </table></div>;
 }
 
@@ -129,7 +144,8 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [knownAccounts, setKnownAccounts] = useState<UsageSnapshot["accounts"]>([]);
   const [showTable, setShowTable] = useState(false);
-  const visible = result?.key === activeKey ? result.report : cache.current.get(activeKey) ?? null;
+  const rawVisible = result?.key === activeKey ? result.report : cache.current.get(activeKey) ?? null;
+  const visible = useMemo(() => normalizedUsageSnapshot(rawVisible), [rawVisible]);
   const visibleError = error?.key === activeKey ? error.message : null;
   const changeFilters = (next: UsageQuery) => {
     setError(current => current?.key === filterKey(next) ? current : null);
@@ -186,17 +202,10 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
     };
   }, [filters.days, filters.source, filters.accountId, copy.usageUnavailable]);
 
-  const groups = useMemo(() => {
-    const grouped = new Map<string, { accepted: number; completed: number; failed: number; aborted: number; incomplete: number }>();
-    for (const row of visible?.rows ?? []) {
-      const key = groupLabel(row, copy, visible?.source ?? filters.source);
-      const group = grouped.get(key) ?? { accepted: 0, completed: 0, failed: 0, aborted: 0, incomplete: 0 };
-      group.accepted += row.accepted; group.completed += row.completed; group.failed += row.failed; group.aborted += row.aborted;
-      group.incomplete += row.incomplete ?? 0;
-      grouped.set(key, group);
-    }
-    return grouped;
-  }, [visible, copy, filters.source]);
+  const groups = useMemo(() => aggregateUsageGroups(visible?.rows ?? [], visible?.source ?? filters.source,
+    (row, source) => groupLabel(row, copy, source)), [visible, copy, filters.source]);
+  const lifetimeGroups = useMemo(() => aggregateUsageGroups(visible?.lifetimeGroups ?? [], visible?.source ?? filters.source,
+    (row, source) => groupLabel(row, copy, source)), [visible, copy, filters.source]);
 
   const failureLabels: Record<UsageFailureCode, string> = {
     rate_limit: copy.usageFailureRateLimit,
@@ -228,6 +237,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const durationSamples = web ? copy.usageDurationSamples : copy.usageNativeDurationSamples;
   const noDurations = web ? copy.usageNoDurations : copy.usageNativeNoDurations;
   const knownRateBody = web ? copy.usageWebKnownRateBody : copy.usageNativeKnownRateBody;
+  const nativeRecordedOnly = copy.usageNativeRecordedOnly;
 
   return <section className="usage-dashboard" aria-labelledby="usage-title">
     <div className="usage-heading">
@@ -239,12 +249,12 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
         const nextSource = event.target.value as UsageSource;
         changeFilters({ ...filters, source: nextSource, accountId: null });
       }}><option value="web">{copy.usageSourceWeb}</option><option value="native">{copy.usageSourceNative}</option></select></label>
-      <label>{copy.usageAccount}<select aria-label={copy.usageAccount} className="settings-select" value={filters.source === "web" ? filters.accountId ?? "" : ""}
-        disabled={filters.source === "native"} onChange={event => changeFilters({ ...filters, accountId: event.target.value || null })}>
+      {filters.source === "web" ? <label>{copy.usageAccount}<select aria-label={copy.usageAccount} className="settings-select" value={filters.accountId ?? ""}
+        onChange={event => changeFilters({ ...filters, accountId: event.target.value || null })}>
         <option value="">{copy.usageAllAccounts}</option>
         {knownAccounts.map(account => <option key={account.id} value={account.id}>{account.label}{account.available ? "" : ` · ${copy.usageAccountUnavailable}`}</option>)}
-      </select></label>
-      {filters.source === "native" ? <span className="usage-account-note">{copy.usageNativeAccountUnavailable}</span> : null}
+      </select></label> : <div className="usage-account-boundary"><span>{copy.usageAccount}</span><strong>{copy.usageAccountUnavailable}</strong>
+        <small>{copy.usageNativeAccountUnavailable}</small></div>}
       <label>{copy.usageRange}<select aria-label={copy.usageRange} className="settings-select" value={filters.days} onChange={event => changeFilters({ ...filters, days: Number(event.target.value) as UsageRangeDays })}>
         {ranges.map(value => <option key={value} value={value}>{value === 1 ? copy.usageOneDay : `${value} ${copy.usageDays}`}</option>)}
       </select></label>
@@ -260,16 +270,20 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
         <span>{copy.usagePeriod.replace("{start}", dateLabel(visible.period.startDay, language)).replace("{end}", dateLabel(visible.period.endDay, language))}</span>
         <span>{copy.usageUpdated.replace("{time}", generatedAt && Number.isFinite(generatedAt.getTime()) ? generatedAt.toLocaleString(language) : copy.usageUnknown)}</span>
       </div>
-      <div className="usage-metrics">
+      {visible.metrics.total === 0 ? <section className="usage-empty-state" role="status"><strong>{emptyCopy}</strong>
+        <span>{calendarSummary.replace("{total}", "0").replace("{active}", "0").replace("{days}", number(visible.period.days, language))}</span>
+      </section> : <>
+      <div className={`usage-metrics${web ? "" : " is-native"}`}>
         {([
           [totalLabel, visible.metrics.total, "is-total"],
           [copy.usageCompleted, visible.metrics.completed, "is-completed"],
           [copy.usageFailed, visible.metrics.failed, "is-failed"],
           [copy.usageAborted, visible.metrics.cancelled, "is-cancelled"],
           ...(!web ? [[copy.usageIncomplete, visible.metrics.incomplete ?? 0, "is-incomplete"] as const] : []),
-          [copy.usageUnrecorded, visible.metrics.unrecorded, "is-unrecorded"],
+          ...(web ? [[copy.usageUnrecorded, visible.metrics.unrecorded, "is-unrecorded"] as const] : []),
         ] as const).map(([label, value, tone]) => <div className={`usage-metric ${tone}`} key={tone}><span>{label}</span><strong>{number(value, language)}</strong></div>)}
       </div>
+      {!web ? <p className="usage-recorded-only-note">{nativeRecordedOnly}</p> : null}
 
       <div className="usage-insights">
         <section><span>{copy.usageKnownRate}</span><strong>{rate === null || rate === undefined ? copy.usageNotAvailable : new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 1 }).format(rate)}</strong>
@@ -298,17 +312,17 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
           <button className="text-button" type="button" aria-expanded={showTable} onClick={() => setShowTable(value => !value)}>{showTable ? copy.usageHideTable : copy.usageShowTable}</button>
         </div>
         <CalendarChart calendar={calendar} language={language} totalLabel={totalLabel} />
-        {showTable ? <CalendarTable calendar={calendar} copy={copy} language={language} showIncomplete={!web} totalLabel={totalLabel} /> : null}
+        {showTable ? <CalendarTable calendar={calendar} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
       </section>
 
       <section className="usage-failures" aria-labelledby="usage-failures-title"><h3 id="usage-failures-title">{copy.usageFailures}</h3>
         {visible.failures.some(item => item.count > 0) ? <ul>{visible.failures.filter(item => item.count > 0).map(item => <li key={item.code}><span>{failureLabels[item.code]}</span><strong>{number(item.count, language)}</strong></li>)}</ul> : <p>{copy.usageNoFailures}</p>}
       </section>
+      </>}
 
-      {visible.metrics.total === 0 ? <p className="usage-empty-period">{emptyCopy}</p> : null}
-      {(groups.size > 0 || visible.lifetimeGroups?.length) ? <details className="usage-breakdown"><summary>{copy.usageDetailedBreakdown}</summary>
-        {groups.size > 0 ? <UsageTable caption={copy.usageGroups} groups={[...groups]} copy={copy} language={language} showIncomplete={!web} totalLabel={totalLabel} /> : null}
-        {visible.lifetimeGroups?.length ? <UsageTable caption={copy.usageLifetimeGroups} groups={visible.lifetimeGroups.map(row => [groupLabel(row, copy, source), row])} copy={copy} language={language} showIncomplete={!web} totalLabel={totalLabel} /> : null}
+      {(groups.length > 0 || lifetimeGroups.length > 0) ? <details className="usage-breakdown"><summary>{copy.usageDetailedBreakdown}</summary>
+        {groups.length > 0 ? <UsageTable caption={copy.usageGroups} groups={groups} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
+        {lifetimeGroups.length > 0 ? <UsageTable caption={copy.usageLifetimeGroups} groups={lifetimeGroups} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
         <p>{copy.usageLifetime}: {number(visible.lifetime ?? 0, language)} · {copy.usageSince}: {visible.startedAt ? new Date(visible.startedAt).toLocaleDateString(language) : copy.usageUnknown}</p>
         {!!visible.lifetimeUnclassified && <p>{copy.usageLifetimeUnclassified}: {number(visible.lifetimeUnclassified, language)}</p>}
       </details> : null}

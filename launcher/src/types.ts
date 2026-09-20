@@ -42,6 +42,8 @@ export interface LauncherState {
   mcpSetupComplete?: boolean;
   mcpRuntimeInstalled?: boolean;
   codexRestartRequired?: boolean;
+  runtimeMigrationPending?: boolean;
+  launcherRestartRequired?: boolean;
   mcpGuideStep: number;
   sessionRefreshReminderAt: string | null;
 }
@@ -212,13 +214,48 @@ export interface AccountSafetyPolicy {
   maxSessionMinutes: number;
   cooldownMinutes: number;
 }
+export interface AccountQuotaWindow {
+  usedPercent: number | null;
+  remainingPercent: number | null;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+export interface AccountQuotaBucket {
+  id: string; name: string | null; normalModelSlug: string | null;
+  allowed: boolean | null; limitReached: boolean | null;
+  primary: AccountQuotaWindow; secondary: AccountQuotaWindow;
+}
+export interface AccountQuotaSnapshot {
+  availability: "available" | "unavailable";
+  coverage: "reported_buckets" | "none";
+  accountId: string; fetchedAt?: string; checkedAt?: string;
+  reason?: string; retryAt?: string | null; planType: string | null;
+  accountBucket: AccountQuotaBucket;
+  additionalBuckets: AccountQuotaBucket[];
+  additionalBucketsTruncated: boolean;
+}
+export interface CodexLoginProgress {
+  flowId: string; accountId: string;
+  phase: "starting" | "waiting" | "cancelling" | "confirming" | "needs-confirmation" | "completed" | "cancelled" | "failed";
+  active: boolean; startedAt: string; deadlineAt: string; completedAt: string | null;
+  ownershipCurrent: boolean; canOpen: boolean; canCancel: boolean;
+  verificationUrl: string | null; userCode: string | null;
+  error: { code: string; message: string } | null;
+  scope: "shared-codex-auth-store";
+  authOutcome: string; cancelStatus: "canceled" | "notFound" | null;
+  actualAccount: { type: "chatgpt"; email: string | null; planType: string } | null;
+  requiresOpenaiAuth: boolean | null; requiresIdentityConfirmation: boolean;
+  desktopAccountChange: "not_performed";
+  selectionLock: { flowId: string; accountId: string } | null;
+}
+
 export interface AccountPoolSnapshot {
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
     proxy: AccountProxy;
     safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean };
-    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean }>;
+    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number }>;
 }
 
 export interface BrowserCapacitySettings {
@@ -226,6 +263,24 @@ export interface BrowserCapacitySettings {
   active: number;
   maximum: number;
   restartRequired: boolean;
+}
+
+export interface RuntimeCapabilities {
+  revision: number;
+  runtimeStatus: string;
+  nativeAvailability: "unknown" | "ready" | "degraded" | "unavailable";
+  webAvailability: "unknown" | "ready" | "degraded" | "unavailable";
+  tunnelStatus: string;
+  releaseVersion: string | null;
+  daemonPid: number | null;
+  tunnelPid: number | null;
+  detail: string | null;
+}
+
+export interface LauncherLifecycle extends RuntimeCapabilities {
+  routeStatus: string;
+  operation?: OperationState;
+  catalog?: { status: string; request: number | null; at: string | null; failure: unknown };
 }
 
 export interface LauncherSnapshot {
@@ -243,6 +298,10 @@ export interface LauncherSnapshot {
   browser: BrowserState | null;
   connectorName: string;
   connectorNames: Record<BrowserInteractionMode, string>;
+  recommendedConnectorNames?: Partial<Record<BrowserInteractionMode, string>>;
+  runtimeStatus?: string;
+  runtimeCapabilities?: RuntimeCapabilities | null;
+  lifecycle?: LauncherLifecycle | null;
   mcpCredentialsConfigured: boolean;
   logs: LogRecord[];
   urls: {
@@ -290,6 +349,7 @@ export interface RouteDiagnosticsReport {
 }
 
 export interface LauncherApi {
+  restartLauncher(): Promise<boolean>;
   cancelContextChange(): Promise<LauncherState>;
   confirmCodexModels(): Promise<LauncherState>;
   setupHermes(input?: { runtime: "codex_responses" | "codex_app_server"; makeDefault?: boolean }): Promise<{ provider: string; configPath: string; backupPath: string; baseUrl: string; defaultChanged: boolean }>;
@@ -341,6 +401,14 @@ export interface LauncherApi {
   setAsyncToolOperations(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   accounts(): Promise<AccountPoolSnapshot>;
+  accountCodexQuotaSnapshot(id: string): Promise<AccountQuotaSnapshot | null>;
+  refreshAccountCodexQuota(id: string): Promise<AccountQuotaSnapshot>;
+  codexLoginSnapshot(): Promise<CodexLoginProgress | null>;
+  startCodexLogin(id: string): Promise<CodexLoginProgress>;
+  codexLoginStatus(flowId: string, id: string): Promise<CodexLoginProgress>;
+  openCodexLogin(flowId: string, id: string): Promise<boolean>;
+  cancelCodexLogin(flowId: string, id: string): Promise<CodexLoginProgress>;
+  copyCodexLoginCode(flowId: string, id: string): Promise<boolean>;
   addAccount(label: string): Promise<AccountPoolSnapshot>;
   selectAccount(id: string): Promise<AccountPoolSnapshot>;
   setAccountEnabled(id: string, enabled: boolean): Promise<AccountPoolSnapshot>;
@@ -378,6 +446,7 @@ export interface LauncherApi {
   onStateChanged(listener: (state: LauncherState) => void): () => void;
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;
+  onLifecycle(listener: (state: LauncherLifecycle) => void): () => void;
   onLog(listener: (record: LogRecord) => void): () => void;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
 }

@@ -11,6 +11,9 @@ const FAILURE_CODES = new Set(['rate_limit', 'safety_stop', 'timeout', 'browser_
 const MODEL_VERSION_SOURCES = new Set(['observed', 'pinned', 'unknown']);
 const MESSAGE_KINDS = new Set(['task', 'context_stage', 'compaction', 'unknown']);
 const MAX_BYTES = 20_000_000;
+const RECEIPT_HIGH_WATER_BYTES = 16_000_000;
+const RECEIPT_TARGET_BYTES = 14_000_000;
+const MAX_WEB_RECEIPTS = 50_000;
 const MAX_OBSERVED_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_NATIVE_RECEIPTS = 10_000;
 const MAX_NATIVE_GROUPS = 4_096;
@@ -75,7 +78,9 @@ function validNativeAggregate(row) {
 }
 
 function addNativeAggregate(target, key, row) {
-  const group = target[key] ?? { ...(row.day ? { day: row.day } : {}), ...emptyNativeGroup(row) };
+  const saved = target[key];
+  const group = saved ? { ...saved, failures: { ...saved.failures }, httpStatuses: { ...saved.httpStatuses } }
+    : { ...(row.day ? { day: row.day } : {}), ...emptyNativeGroup(row) };
   for (const field of [...NATIVE_COUNTERS, 'inputTokens', 'outputTokens', 'totalTokens', 'cachedInputTokens',
     'reasoningOutputTokens', 'reportedSamples', 'unreportedSamples', 'cachedInputReportedSamples',
     'reasoningOutputReportedSamples']) {
@@ -174,6 +179,65 @@ function writeDurable(file, text) {
       try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
     }
   } finally { fs.rmSync(temporary, { force: true }); }
+}
+
+function replaceBackupWithClone(primary, backup, fallbackText) {
+  const temporary = `${backup}.clone-${process.pid}-${randomUUID()}`;
+  try {
+    fs.copyFileSync(primary, temporary, fs.constants.COPYFILE_FICLONE);
+    try { fs.chmodSync(temporary, 0o600); } catch {}
+    const fd = fs.openSync(temporary, 'r');
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    renameAtomicFile(temporary, backup);
+    if (process.platform !== 'win32') {
+      const directory = fs.openSync(path.dirname(backup), 'r');
+      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+    }
+  } catch {
+    fs.rmSync(temporary, { force: true });
+    writeDurable(backup, fallbackText);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+function receiptCandidates(state, kind) {
+  if (kind === 'web') return Object.entries(state.receipts).map(([id, receipt]) => ({
+    kind, id, at: receipt.at, pending: receipt.outcome === null,
+  }));
+  return Object.entries(state.native.receipts).map(([id, receipt]) => ({
+    kind, id, at: receipt.finishedAt, pending: false,
+  }));
+}
+
+function deleteReceipt(state, candidate) {
+  if (candidate.kind === 'web') delete state.receipts[candidate.id];
+  else delete state.native.receipts[candidate.id];
+}
+
+function preparePersistedState(next) {
+  next = { ...next, receipts: { ...next.receipts }, native: { ...next.native, receipts: { ...next.native.receipts } } };
+  const web = receiptCandidates(next, 'web').sort((a, b) => Number(a.pending) - Number(b.pending) || a.at - b.at);
+  const native = receiptCandidates(next, 'native').sort((a, b) => a.at - b.at);
+  while (web.length > MAX_WEB_RECEIPTS) deleteReceipt(next, web.shift());
+  while (native.length > MAX_NATIVE_RECEIPTS) deleteReceipt(next, native.shift());
+
+  let text = JSON.stringify(next) + '\n';
+  if (Buffer.byteLength(text) > RECEIPT_HIGH_WATER_BYTES) {
+    const remaining = [...web, ...native]
+      .sort((a, b) => Number(a.pending) - Number(b.pending) || a.at - b.at);
+    while (remaining.length && Buffer.byteLength(text) > RECEIPT_TARGET_BYTES) {
+      const batchSize = Math.min(512, remaining.length);
+      for (let index = 0; index < batchSize; index++) deleteReceipt(next, remaining.shift());
+      text = JSON.stringify(next) + '\n';
+    }
+  }
+  if (Buffer.byteLength(text) > MAX_BYTES) {
+    const error = new Error('Usage aggregates exceed their storage limit');
+    error.code = 'USAGE_CAPACITY';
+    throw error;
+  }
+  return { state: next, text };
 }
 
 function legacyClassification(saved) {
@@ -323,9 +387,13 @@ class UsageStore {
     this.path = path.join(coreHome, 'local-usage.json'); this.backupPath = `${this.path}.backup`; this.clock = clock;
     this.state = { version: 3, startedAt: new Date(clock()).toISOString(), rows: {}, receipts: {}, lifetime: 0,
       lifetimeGroups: {}, lifetimeUnclassified: 0, native: emptyNativeState() };
+    this.serializedState = JSON.stringify(this.state) + '\n'; this.primaryAvailable = false;
     this.error = null; this.recovered = false; this.backupAvailable = false;
     let primaryError, loaded;
-    try { loaded = readState(this.path); this.state = loaded.state; } catch (error) { primaryError = error; }
+    try {
+      loaded = readState(this.path); this.state = loaded.state;
+      this.serializedState = JSON.stringify(this.state) + '\n'; this.primaryAvailable = true;
+    } catch (error) { primaryError = error; }
     if (primaryError) {
       if (primaryError.code && primaryError.code !== 'ENOENT') {
         this.error = 'Usage history is unreadable; existing data was preserved.'; return;
@@ -338,23 +406,29 @@ class UsageStore {
       try {
         if (loaded.legacyText) writeDurable(`${this.path}.v${loaded.legacyVersion}-${randomUUID()}.backup`, loaded.legacyText);
         if (primaryError.code !== 'ENOENT') fs.renameSync(this.path, `${this.path}.corrupt-${Date.now()}-${randomUUID()}`);
-        writeDurable(this.path, JSON.stringify(this.state) + '\n'); this.recovered = true;
+        this.serializedState = JSON.stringify(this.state) + '\n';
+        writeDurable(this.path, this.serializedState); this.primaryAvailable = true; this.recovered = true;
       } catch { this.error = 'Usage history could not be restored; the backup was preserved.'; return; }
     }
     try {
       if (!this.recovered && loaded.legacyText) writeDurable(`${this.path}.v${loaded.legacyVersion}-${randomUUID()}.backup`, loaded.legacyText);
-      this.persist(this.state);
+      if (loaded.legacyText) this.persist(this.state);
+      else if (this.primaryAvailable) {
+        replaceBackupWithClone(this.path, this.backupPath, this.serializedState);
+        this.backupAvailable = true;
+      }
     } catch { this.error = 'Usage history could not be saved; existing data was preserved.'; }
   }
 
   persist(next) {
-    const text = JSON.stringify(next) + '\n';
-    if (Buffer.byteLength(text) > MAX_BYTES) throw new Error('Usage history exceeds its storage limit');
-    if (!this.backupAvailable) { writeDurable(this.backupPath, JSON.stringify(this.state) + '\n'); this.backupAvailable = true; }
-    try { writeDurable(this.path, text); }
+    const prepared = preparePersistedState(next);
+    try { writeDurable(this.path, prepared.text); }
     catch (error) { this.error = 'Usage history could not be saved; restart to reload the preserved history.'; throw error; }
-    this.state = next;
-    try { writeDurable(this.backupPath, text); this.backupAvailable = true; } catch { this.backupAvailable = false; }
+    this.state = prepared.state; this.serializedState = prepared.text; this.primaryAvailable = true;
+    try {
+      replaceBackupWithClone(this.path, this.backupPath, this.serializedState);
+      this.backupAvailable = true;
+    } catch { this.backupAvailable = false; }
   }
 
   accept(trace, pid, receipt, effort, modelVersion, mode = 'automatic', accountId = UNKNOWN_ACCOUNT_ID, metadata = {}) {
@@ -365,13 +439,15 @@ class UsageStore {
       modelVersionSource: metadata.modelVersionSource ?? 'unknown', messageKind: metadata.messageKind ?? 'unknown' };
     if (!validClassification(classification)) throw new Error('Invalid usage classification');
     const now = this.clock(), day = dayOf(new Date(now)), key = rowKey({ day, ...classification });
-    const next = structuredClone(this.state), cutoff = dayOf(new Date(now - 90 * 86400_000));
+    const next = { ...this.state, rows: { ...this.state.rows }, receipts: { ...this.state.receipts },
+      lifetimeGroups: { ...this.state.lifetimeGroups } };
+    const cutoff = dayOf(new Date(now - 90 * 86400_000));
     for (const [name, row] of Object.entries(next.rows)) if (row.day < cutoff) delete next.rows[name];
     for (const [name, saved] of Object.entries(next.receipts)) if (!next.rows[saved.key]) delete next.receipts[name];
-    if (Object.keys(next.receipts).length >= 100_000 || next.lifetime >= Number.MAX_SAFE_INTEGER) throw new Error('Usage receipt capacity reached; history was preserved');
-    const row = next.rows[key] ?? { day, ...emptyGroup(classification) };
+    if (next.lifetime >= Number.MAX_SAFE_INTEGER) throw new Error('Usage lifetime capacity reached; history was preserved');
+    const row = next.rows[key] ? { ...next.rows[key] } : { day, ...emptyGroup(classification) };
     row.accepted++; next.rows[key] = row; next.lifetime++;
-    const name = classificationKey(row), group = next.lifetimeGroups[name] ?? emptyGroup(row);
+    const name = classificationKey(row), group = next.lifetimeGroups[name] ? { ...next.lifetimeGroups[name] } : emptyGroup(row);
     group.accepted++; next.lifetimeGroups[name] = group;
     next.receipts[id] = { owner: digest(`${trace}:${pid}`), key, at: now, outcome: null };
     this.persist(next);
@@ -380,14 +456,22 @@ class UsageStore {
   finish(trace, pid, outcome, receipt, failureCode, finishedAt = this.clock()) {
     if (this.error || !OUTCOMES.includes(outcome)) return;
     const owner = digest(`${trace}:${pid}`), wanted = receipt && digest(`${trace}:${pid}:${receipt}`);
-    const next = structuredClone(this.state); let changed = false;
-    for (const [id, saved] of Object.entries(next.receipts)) {
+    const next = { ...this.state, rows: { ...this.state.rows }, receipts: { ...this.state.receipts },
+      lifetimeGroups: { ...this.state.lifetimeGroups } };
+    const clonedRows = new Set(), clonedGroups = new Set(); let changed = false;
+    for (const [id, original] of Object.entries(next.receipts)) {
+      const saved = original;
       if (saved.owner !== owner || saved.outcome !== null || (wanted && id !== wanted)) continue;
-      const row = next.rows[saved.key];
-      saved.outcome = outcome; row[outcome]++; next.lifetimeGroups[classificationKey(row)][outcome]++;
-      const duration = finishedAt - saved.at;
-      if (Number.isSafeInteger(duration) && duration >= 0 && duration <= MAX_OBSERVED_DURATION_MS) saved.durationMs = duration;
-      if (outcome === 'failed') saved.failureCode = normalizedFailureCode(failureCode);
+      const receiptCopy = { ...saved }; next.receipts[id] = receiptCopy;
+      if (!clonedRows.has(saved.key)) { next.rows[saved.key] = { ...next.rows[saved.key] }; clonedRows.add(saved.key); }
+      const row = next.rows[saved.key], groupKey = classificationKey(row);
+      if (!clonedGroups.has(groupKey)) {
+        next.lifetimeGroups[groupKey] = { ...next.lifetimeGroups[groupKey] }; clonedGroups.add(groupKey);
+      }
+      receiptCopy.outcome = outcome; row[outcome]++; next.lifetimeGroups[groupKey][outcome]++;
+      const duration = finishedAt - receiptCopy.at;
+      if (Number.isSafeInteger(duration) && duration >= 0 && duration <= MAX_OBSERVED_DURATION_MS) receiptCopy.durationMs = duration;
+      if (outcome === 'failed') receiptCopy.failureCode = normalizedFailureCode(failureCode);
       changed = true;
     }
     if (changed) this.persist(next);
@@ -402,7 +486,9 @@ class UsageStore {
     }
     const id = digest(`native:${sample.eventId}`);
     if (this.state.native.receipts[id]) return { recorded: false, duplicate: true };
-    const next = structuredClone(this.state), day = dayOf(new Date(sample.finishedAt));
+    const next = { ...this.state, native: { ...this.state.native, rows: { ...this.state.native.rows },
+      receipts: { ...this.state.native.receipts }, lifetimeGroups: { ...this.state.native.lifetimeGroups } } };
+    const day = dayOf(new Date(sample.finishedAt));
     const cutoff = dayOf(new Date(this.clock() - 90 * 86400_000));
     for (const [key, row] of Object.entries(next.native.rows)) if (row.day < cutoff) delete next.native.rows[key];
     for (const [key, receipt] of Object.entries(next.native.receipts)) {

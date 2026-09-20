@@ -1,5 +1,6 @@
 import { fetchNativeCodex } from "./native-network";
-import { expandPreviousResponseInput, previousResponseReplayPrefixLength } from "./responses/state";
+import { createResponseContinuationScopeFromBody } from "./responses/continuation-owner";
+import { previousResponseReplayPrefixLength, resolvePreviousResponseInput } from "./responses/state";
 import { readJsonRequestBody, readRequestBodyBytes } from "./http-body";
 import {
   BRIDGE_COMPACTION_PREFIX,
@@ -41,6 +42,23 @@ export type NativeCodexEndpoint = "models" | "responses" | "responses/compact" |
 
 type JsonObject = Record<string, unknown>;
 type BridgeCompactionItem = JsonObject & { type: "compaction"; encrypted_content: string };
+
+function localContinuationFailure(reason: string): Response {
+  return new Response(JSON.stringify({
+    error: {
+      type: "invalid_request_error",
+      code: `local_continuation_${reason.replaceAll("-", "_")}`,
+      message: reason === "owner-mismatch"
+        ? "Local continuation state belongs to a different Codex task or local response namespace."
+        : reason === "owner-unavailable"
+          ? "Local continuation ownership is unavailable; legacy state cannot be assigned to this Codex task."
+          : "Local continuation state is no longer available; compact the Codex task or start a new task.",
+    },
+  }), {
+    status: 409,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 function firstPartyCodexOriginator(value: string): boolean {
   return FIRST_PARTY_CODEX_ORIGINATORS.has(value)
@@ -554,8 +572,17 @@ export async function forwardNativeCodexRequest(
     }
     // The local cache contains Web-owned responses only. Native-owned IDs that are not
     // present retain their original upstream continuation and byte-for-byte request.
-    const expanded = endpoint === "responses" || endpoint === "responses/compact"
-      ? expandPreviousResponseInput(parsedBody) : parsedBody;
+    const continuation = endpoint === "responses" || endpoint === "responses/compact"
+      ? resolvePreviousResponseInput(parsedBody, {
+          scope: createResponseContinuationScopeFromBody(parsedBody),
+        })
+      : { body: parsedBody, status: "not-requested" as const };
+    // Unknown IDs may be genuine native-upstream responses and retain byte-for-byte passthrough.
+    // Every more specific reason is local authority to fail closed before sending a naked delta.
+    if (continuation.status === "unavailable" && continuation.reason !== "unavailable") {
+      return localContinuationFailure(continuation.reason ?? "unavailable");
+    }
+    const expanded = continuation.body;
     const localContinuation = expanded !== parsedBody;
     const replayBody = localContinuation && isObject(expanded) ? { ...expanded } : expanded;
     if (localContinuation && isObject(replayBody)) {

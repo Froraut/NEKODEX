@@ -1,0 +1,1470 @@
+{
+  "schemaVersion": 1,
+  "upstream": "miuuyy/codex-chatgpt-web",
+  "fork": "Froraut/NEKODEX",
+  "updatedAt": "2026-09-20T12:13:35.453817+00:00",
+  "lastCompleteScan": null,
+  "lastReviewed": {
+    "pull": null,
+    "issue": null
+  },
+  "maxReviewedNumber": {
+    "pull": 590,
+    "issue": 570
+  },
+  "notes": [
+    "Historical assessment import only; no new upstream PR/issue reviewed in this task.",
+    "The exact last chronological PR and issue reviews are unknown. Highest documented reviewed numbers are stored separately.",
+    "All historical records need a current fingerprint before unchanged items can be skipped."
+  ],
+  "items": {
+    "issue:339": {
+      "kind": "issue",
+      "number": 339,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/339",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:374": {
+      "kind": "issue",
+      "number": 374,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/374",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:405": {
+      "kind": "issue",
+      "number": 405,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/405",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:407": {
+      "kind": "issue",
+      "number": 407,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/407",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:408": {
+      "kind": "issue",
+      "number": 408,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/408",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:410": {
+      "kind": "issue",
+      "number": 410,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/410",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:411": {
+      "kind": "issue",
+      "number": 411,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/411",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:414": {
+      "kind": "issue",
+      "number": 414,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/414",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:416": {
+      "kind": "issue",
+      "number": 416,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/416",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:418": {
+      "kind": "issue",
+      "number": 418,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/418",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:420": {
+      "kind": "issue",
+      "number": 420,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/420",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:422": {
+      "kind": "issue",
+      "number": 422,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/422",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:423": {
+      "kind": "issue",
+      "number": 423,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/423",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:424": {
+      "kind": "issue",
+      "number": 424,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/424",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:425": {
+      "kind": "issue",
+      "number": 425,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/425",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:426": {
+      "kind": "issue",
+      "number": 426,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/426",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:427": {
+      "kind": "issue",
+      "number": 427,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/427",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:428": {
+      "kind": "issue",
+      "number": 428,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/428",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:431": {
+      "kind": "issue",
+      "number": 431,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/431",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:434": {
+      "kind": "issue",
+      "number": 434,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/434",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:436": {
+      "kind": "issue",
+      "number": 436,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/436",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:437": {
+      "kind": "issue",
+      "number": 437,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/437",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:438": {
+      "kind": "issue",
+      "number": 438,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/438",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:441": {
+      "kind": "issue",
+      "number": 441,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/441",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:443": {
+      "kind": "issue",
+      "number": 443,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/443",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:444": {
+      "kind": "issue",
+      "number": 444,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/444",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:445": {
+      "kind": "issue",
+      "number": 445,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/445",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:446": {
+      "kind": "issue",
+      "number": 446,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/446",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:447": {
+      "kind": "issue",
+      "number": 447,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/447",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:449": {
+      "kind": "issue",
+      "number": 449,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/449",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:452": {
+      "kind": "issue",
+      "number": 452,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/452",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:457": {
+      "kind": "issue",
+      "number": 457,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/457",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:458": {
+      "kind": "issue",
+      "number": 458,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/458",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:466": {
+      "kind": "issue",
+      "number": 466,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/466",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:467": {
+      "kind": "issue",
+      "number": 467,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/467",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:471": {
+      "kind": "issue",
+      "number": 471,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/471",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:476": {
+      "kind": "issue",
+      "number": 476,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/476",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:479": {
+      "kind": "issue",
+      "number": 479,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/479",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:480": {
+      "kind": "issue",
+      "number": 480,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/480",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:484": {
+      "kind": "issue",
+      "number": 484,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/484",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:485": {
+      "kind": "issue",
+      "number": 485,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/485",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:489": {
+      "kind": "issue",
+      "number": 489,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/489",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:541": {
+      "kind": "issue",
+      "number": 541,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/541",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:542": {
+      "kind": "issue",
+      "number": 542,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/542",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:543": {
+      "kind": "issue",
+      "number": 543,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/543",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:545": {
+      "kind": "issue",
+      "number": 545,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/545",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:546": {
+      "kind": "issue",
+      "number": 546,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/546",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:547": {
+      "kind": "issue",
+      "number": 547,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/547",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:549": {
+      "kind": "issue",
+      "number": 549,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/549",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:551": {
+      "kind": "issue",
+      "number": 551,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/551",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:552": {
+      "kind": "issue",
+      "number": 552,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/552",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:556": {
+      "kind": "issue",
+      "number": 556,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/556",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:557": {
+      "kind": "issue",
+      "number": 557,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/557",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:561": {
+      "kind": "issue",
+      "number": 561,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/561",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:564": {
+      "kind": "issue",
+      "number": 564,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/564",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "issue:570": {
+      "kind": "issue",
+      "number": 570,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/570",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:412": {
+      "kind": "pull",
+      "number": 412,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/412",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:413": {
+      "kind": "pull",
+      "number": 413,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/413",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:415": {
+      "kind": "pull",
+      "number": 415,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/415",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:430": {
+      "kind": "pull",
+      "number": 430,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/430",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:432": {
+      "kind": "pull",
+      "number": 432,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/432",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:435": {
+      "kind": "pull",
+      "number": 435,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/435",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:439": {
+      "kind": "pull",
+      "number": 439,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/439",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:442": {
+      "kind": "pull",
+      "number": 442,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/442",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:448": {
+      "kind": "pull",
+      "number": 448,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/448",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:450": {
+      "kind": "pull",
+      "number": 450,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/450",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:451": {
+      "kind": "pull",
+      "number": 451,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/451",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:459": {
+      "kind": "pull",
+      "number": 459,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/459",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:460": {
+      "kind": "pull",
+      "number": 460,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/460",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:461": {
+      "kind": "pull",
+      "number": 461,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/461",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:462": {
+      "kind": "pull",
+      "number": 462,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/462",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:463": {
+      "kind": "pull",
+      "number": 463,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/463",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:464": {
+      "kind": "pull",
+      "number": 464,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/464",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:465": {
+      "kind": "pull",
+      "number": 465,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/465",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:468": {
+      "kind": "pull",
+      "number": 468,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/468",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:469": {
+      "kind": "pull",
+      "number": 469,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/469",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:470": {
+      "kind": "pull",
+      "number": 470,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/470",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:472": {
+      "kind": "pull",
+      "number": 472,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/472",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:473": {
+      "kind": "pull",
+      "number": 473,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/473",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:474": {
+      "kind": "pull",
+      "number": 474,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/474",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md",
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:477": {
+      "kind": "pull",
+      "number": 477,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/477",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:478": {
+      "kind": "pull",
+      "number": 478,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/478",
+      "reviewedAt": "2026-09-14",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-14-investigation.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:553": {
+      "kind": "pull",
+      "number": 553,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/553",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:555": {
+      "kind": "pull",
+      "number": 555,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/555",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:560": {
+      "kind": "pull",
+      "number": 560,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/560",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:577": {
+      "kind": "pull",
+      "number": 577,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/577",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:578": {
+      "kind": "pull",
+      "number": 578,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/578",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:579": {
+      "kind": "pull",
+      "number": 579,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/579",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:580": {
+      "kind": "pull",
+      "number": 580,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/580",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:581": {
+      "kind": "pull",
+      "number": 581,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/581",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:582": {
+      "kind": "pull",
+      "number": 582,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/582",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:583": {
+      "kind": "pull",
+      "number": 583,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/583",
+      "reviewedAt": "2026-09-19",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-19-upstream-assessment.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:584": {
+      "kind": "pull",
+      "number": 584,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/584",
+      "reviewedAt": "2026-09-20",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-20-new-pr-release.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+    },
+    "pull:589": {
+      "kind": "pull",
+      "number": 589,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/589",
+      "reviewedAt": "2026-09-20",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-20-new-pr-release.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained.",
+      "historicalHeadAbbreviation": "534fbefa"
+    },
+    "pull:590": {
+      "kind": "pull",
+      "number": 590,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/590",
+      "reviewedAt": "2026-09-20",
+      "sourceUpdatedAt": null,
+      "headSha": null,
+      "status": "historical_review",
+      "decision": "See retained assessment; not a fresh review.",
+      "evidence": [
+        "docs/reviews/2026-09-20-new-pr-release.md"
+      ],
+      "recheckRequired": true,
+      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained.",
+      "historicalHeadAbbreviation": "913f8281"
+    }
+  }
+}

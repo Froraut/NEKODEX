@@ -1,6 +1,7 @@
 import type { Language } from "./types";
 
 const en = {
+  stageDownload: "Download", stageVerify: "Verify", stageRestart: "Restart",
   title: "Updates", subtitle: "Keep NEKODEX up to date, right here.", current: "Installed version",
   available: "An update is ready", latest: "You're up to date", idle: "Check for a new version",
   checking: "Checking GitHub…", downloading: "Downloading update…", verifying: "Checking the update package…",
@@ -16,6 +17,7 @@ const en = {
 type UpdateCopy = { [K in keyof typeof en]: string };
 const copies: Record<Language, UpdateCopy> = {
   ru: {
+  stageDownload: "Загрузка", stageVerify: "Проверка", stageRestart: "Перезапуск",
     title: "Обновления", subtitle: "Обновляйте NEKODEX прямо здесь.", current: "Установленная версия",
     available: "Доступно обновление", latest: "Установлена последняя версия", idle: "Проверить новую версию",
     checking: "Проверка GitHub…", downloading: "Загрузка обновления…", verifying: "Проверка пакета обновления…",
@@ -30,6 +32,7 @@ const copies: Record<Language, UpdateCopy> = {
   },
   en,
   "zh-CN": {
+  stageDownload: "下载", stageVerify: "验证", stageRestart: "重启",
     title: "更新", subtitle: "直接在这里更新 NEKODEX。", current: "已安装版本",
     available: "有新版本可用", latest: "已是最新版本", idle: "检查新版本", checking: "正在检查 GitHub…",
     downloading: "正在下载更新…", verifying: "正在验证更新包…", installing: "正在重启以完成更新…",
@@ -41,6 +44,7 @@ const copies: Record<Language, UpdateCopy> = {
     progress: "下载进度", source: "来源：GitHub 上的 Froraut/NEKODEX",
   },
   "zh-TW": {
+  stageDownload: "下載", stageVerify: "驗證", stageRestart: "重新啟動",
     title: "更新", subtitle: "直接在這裡更新 NEKODEX。", current: "已安裝版本",
     available: "有新版本可用", latest: "已是最新版本", idle: "檢查新版本", checking: "正在檢查 GitHub…",
     downloading: "正在下載更新…", verifying: "正在驗證更新套件…", installing: "正在重新啟動以完成更新…",
@@ -52,6 +56,7 @@ const copies: Record<Language, UpdateCopy> = {
     progress: "下載進度", source: "來源：GitHub 上的 Froraut/NEKODEX",
   },
   ja: {
+  stageDownload: "ダウンロード", stageVerify: "検証", stageRestart: "再起動",
     title: "アップデート", subtitle: "NEKODEX をこの画面から更新できます。", current: "インストール済みバージョン",
     available: "新しいバージョンがあります", latest: "最新の状態です", idle: "新しいバージョンを確認",
     checking: "GitHub を確認中…", downloading: "更新をダウンロード中…", verifying: "更新パッケージを検証中…",
@@ -65,6 +70,7 @@ const copies: Record<Language, UpdateCopy> = {
     progress: "ダウンロードの進行状況", source: "配信元：GitHub の Froraut/NEKODEX",
   },
   ko: {
+  stageDownload: "다운로드", stageVerify: "검증", stageRestart: "다시 시작",
     title: "업데이트", subtitle: "여기에서 NEKODEX를 최신 상태로 유지하세요.", current: "설치된 버전",
     available: "새 업데이트가 있습니다", latest: "최신 버전입니다", idle: "새 버전 확인",
     checking: "GitHub 확인 중…", downloading: "업데이트 다운로드 중…", verifying: "업데이트 패키지 확인 중…",

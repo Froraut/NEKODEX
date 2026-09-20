@@ -23,55 +23,50 @@ NEKODEX brings separate account profiles, an embedded browser, model setup, MCP 
 
 The interface uses a quiet graphite-and-lavender palette, responsive layouts and an interactive coding cat.
 
-### New in 5.5
+## New in 5.7
 
-## Native6 in 5.6
+- **Account controls:** read provider-reported Codex allowance separately for each saved ChatGPT
+  session, with explicit refresh, remaining percentages and reset times. Missing or unsupported
+  information is shown as unavailable. This is separate from local usage history.
+- **Official Codex sign-in:** start the official device login in the chosen account's browser
+  session. Confirm the account on OpenAI's page. The shared Codex sign-in changes only after
+  authorization; the running Codex desktop app may need a profile check or restart.
+- **Independent recovery:** ordinary native requests remain available when the Web tool tunnel is
+  unavailable. Runtime transitions retain the previous configuration and durable runtime, and
+  reject rollback over a concurrent user edit.
+- **Connections and statistics:** one Connections entry groups models and local tools, failures
+  remain visible, account forms explain disabled actions, and Statistics groups and CSV preserve
+  their account/model meaning. The cat and controls respect reduced motion.
 
-New Automatic Full setups now choose **Codex Native6** (DEV: **Codex Native6 DEV**).
-It combines the existing synchronous tools and owned asynchronous start/poll/cancel/ack flow
-with a metadata-only operation status tool for recovering operation IDs after context or
-transport loss. Status never executes or acknowledges a tool. Read each terminal result before
-acknowledging it; expired payloads are reported as lost and cannot silently replay the action.
+New Automatic Full setups use **Codex Native6** (DEV: **Codex Native6 DEV**). Native6 combines
+synchronous tools with owned asynchronous start/poll/cancel/ack and metadata-only operation
+recovery. Read terminal output before acknowledging it. Cancellation after dispatch stops
+observation; it cannot reverse the external action. Ownership remains process-local.
 
-Existing Native4/5 routes retain their exact identity during an ordinary application update.
-Use the visible Native6 upgrade action, create a **new** ChatGPT connector with the exact name
-and corresponding tunnel, then verify it. Renaming an old connector does not replace its cached
-schema. Native4 remains an explicit synchronous compatibility option. Operation ownership is
-process-local; cancelling after dispatch stops observation, not external side effects.
+Existing Native4/5 identities are retained. The Native6 upgrade in Connections requires a **new**
+ChatGPT connector with the exact displayed name and tunnel; renaming an existing connector cannot
+replace its cached schema. Native4 remains the explicit synchronous compatibility option.
 
-
-- **Web and Native statistics:** separate browser-message and proxied-model-request reports, Web
-  account filters, full day calendars, outcome rates, observed median/p95 durations, and private
-  aggregate CSV export. Native token values show reporting coverage; missing usage is never zero.
-- **Long-running tools:** opt into a separately created and verified **Codex Native5** connector
-  in Automatic Full mode. Start/poll/ack keeps one operation owned while waiting; Native4 remains
-  the synchronous default and Zero Risk4 is unchanged. Pending operations do not survive a broker
-  restart, and post-dispatch cancellation stops observation rather than reversing external work.
-- **Safer recovery:** parallel checkpoints preserve each other's records, routing keeps task/account
-  ownership, login evidence matches its exact state, and exit/update drain protects active work.
-- **More usable controls:** active-tab quick access, keyboard-contained dialogs, correct selectors,
-  stable statistics during refresh failures and guarded update installation.
-
-See the [hardening scope and evidence](docs/reviews/product-hardening-20260920/plan.md).
-The comparison baseline is upstream `eaf4f09`; the report records the implemented capabilities
-and the remaining external-service and verification limits.
+When upgrading through an older updater, the new app first keeps the previous working runtime.
+Use its visible **Restart NEKODEX** action after active tasks finish to activate the new runtime.
+See the [scope, development evidence and limits](docs/reviews/resilience-20260920/summary.md).
 
 ![NEKODEX](docs/design/screenshots/overview.png)
 
 ## Download
 
-**NEKODEX 5.6.0-nekodex.3 · prerelease · macOS 13 or later / Linux x64**
+**NEKODEX 5.7.0-nekodex.1 · prerelease · macOS 13 or later / Linux x64**
 
 | Your Mac | Download |
 | --- | --- |
-| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.3/NEKODEX-5.6.0-nekodex.3-mac-arm64.dmg) |
-| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.3/NEKODEX-5.6.0-nekodex.3-mac-x64.dmg) |
+| **Apple Silicon** — M1 and later | [Download ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.7.0-nekodex.1/NEKODEX-5.7.0-nekodex.1-mac-arm64.dmg) |
+| **Intel** | [Download Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.7.0-nekodex.1/NEKODEX-5.7.0-nekodex.1-mac-x64.dmg) |
 
 Both macOS builds are **Developer ID signed and Apple notarized**, including the final DMGs with stapled notarization tickets.
 
-[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.6.0-nekodex.3) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.3/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
+[Release page](https://github.com/Froraut/NEKODEX/releases/tag/v5.7.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.7.0-nekodex.1/checksums.txt) · [Build and signing record](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml)
 
-Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.6.0-nekodex.3/codex-web-gpt-5.6.0-nekodex.3-linux-x64.AppImage).
+Linux x64: [Download AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.7.0-nekodex.1/codex-web-gpt-5.7.0-nekodex.1-linux-x64.AppImage).
 
 Windows x64 is built separately as an **unsigned preview** installer and ZIP in the
 [release workflow artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml).

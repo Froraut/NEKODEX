@@ -1,6 +1,7 @@
 const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
-const { MANUAL_CONNECTOR_NAME, isLegacyConnectorName } = require("./connector-identity.cjs");
+const { createCodexAccountTools } = require("./codex-account-tools.cjs");
+const { MANUAL_CONNECTOR_NAME, automaticConnectorName, isLegacyConnectorName } = require("./connector-identity.cjs");
 const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapacity } = require("./browser-capacity.cjs");
 const fs = require("node:fs");
 const net = require("node:net");
@@ -38,13 +39,14 @@ const {
 } = require("./logging.cjs");
 const { RuntimeHost } = require("./runtime.cjs");
 const { createContextChangeQueue } = require("./context-change-queue.cjs");
-const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime-install.cjs");
+const { ensurePackagedRuntime, installedRuntimeRoot: resolveInstalledRuntimeRoot, waitForPackagedRuntimeSource } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { DEVELOPMENT_PROFILE, resolveLauncherProfile } = require("./profile.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
 const { createUpdateController } = require("./update.cjs");
-const { SETUP_CONTRACT, setupIdentity, preserveSetup } = require("./upgrade-readiness.cjs");
+const { SETUP_CONTRACT, setupIdentity, setupProofCurrent } = require("./upgrade-readiness.cjs");
 const { captureUpdateReadiness, proveUpdateReadiness } = require("./update-readiness.cjs");
+const { LauncherLifecycleProjection } = require("./lifecycle-projection.cjs");
 const updateReadinessHandoff = captureUpdateReadiness();
 const { recoverStartupFailure } = require("./startup-recovery.cjs");
 const { CHROME_SETTINGS_ADDRESS, confirmExistingChromeImport } = require("./existing-chrome-consent.cjs");
@@ -109,6 +111,7 @@ let mainWindow = null;
 let mainWindowReadyToShow = false;
 let mainWindowShowRequested = false;
 let browserHost = null;
+let accountToolsService = null;
 let runtimeHost = null;
 let browserControl = null;
 let runtimeSupervisor = null;
@@ -126,6 +129,30 @@ let updateController = null;
 let updatesPanelRequestRevision = 0;
 let contextChangeQueue = null;
 let startupPhase = "runtime-files";
+const lifecycleProjection = new LauncherLifecycleProjection(value => send("launcher:lifecycle", value));
+const additionalLifecycleParticipants = new Map();
+
+function registerLifecycleParticipant(name, participant) {
+  if (typeof name !== "string" || !name.trim() || additionalLifecycleParticipants.has(name)
+    || !participant || typeof participant.currentOperation !== "function"
+    || typeof participant.destroy !== "function") {
+    throw new Error("Launcher lifecycle participant is invalid or already registered");
+  }
+  additionalLifecycleParticipants.set(name, participant);
+  return () => {
+    if (additionalLifecycleParticipants.get(name) === participant) additionalLifecycleParticipants.delete(name);
+  };
+}
+
+function currentGlobalOperation() {
+  const primary = runtimeHost?.currentOperation() || browserHost?.currentOperation();
+  if (primary) return primary;
+  for (const participant of additionalLifecycleParticipants.values()) {
+    const operation = participant.currentOperation();
+    if (operation) return operation;
+  }
+  return null;
+}
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -147,8 +174,8 @@ function send(channel, value) {
 }
 
 function publishOperation(operation) {
-  lastOperation = operation;
-  send("launcher:operation", operation);
+  lastOperation = lifecycleProjection.recordOperation(operation);
+  send("launcher:operation", lastOperation);
 }
 
 function retireAccountProof() {
@@ -204,8 +231,8 @@ function ensureRuntimeProofCurrent(stateStore) {
   // Account identity may still be loading; absence is not evidence of a changed setup.
   const identityChanged = currentIdentity !== null && state.setupIdentityHash !== currentIdentity;
   const connectorChanged = state.setupConnectorName != null && state.setupConnectorName !== config?.appName;
-  if (state.mcpSetupComplete === true && (state.setupRuntimeIdentity !== currentRuntimeIdentity()
-    || identityChanged || connectorChanged)) {
+  if (state.mcpSetupComplete === true && (identityChanged || connectorChanged
+    || (currentIdentity !== null && !setupProofCurrent(state, currentIdentity, config?.appName)))) {
     return invalidateAccountProof(stateStore);
   }
   return state;
@@ -219,6 +246,7 @@ function stopCatalogVerificationMonitor() {
 
 function startCatalogVerificationMonitor({ logger, stateStore }) {
   stopCatalogVerificationMonitor();
+  lifecycleProjection.update({ catalog: { status: "pending", request: null, at: null, failure: null } });
   const epoch = catalogVerificationEpoch;
   const supervisor = runtimeSupervisor;
   let inFlight = false;
@@ -253,6 +281,8 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
         send("launcher:state-changed", state);
         const reason = result.failure.code ? `${result.failure.stage}/${result.failure.code}` : result.failure.stage;
         logger.warn("codex.model_catalog_failed", result);
+        lifecycleProjection.update({ catalog: { status: "failed", request: result.request, at: result.at,
+          failure: result.failure } });
         publishOperation({
           name: "catalog-verification", status: "failed",
           message: nativeCopyFor(latest.language).catalogFailure
@@ -272,6 +302,8 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
         requests: health.successful_model_catalog_requests,
         at: health.last_successful_model_catalog_request_at,
       });
+      lifecycleProjection.update({ catalog: { status: "ready", request: result?.request ?? null,
+        at: health.last_successful_model_catalog_request_at ?? result?.at ?? null, failure: null } });
       send("launcher:state-changed", state);
       if (lastOperation?.name === "catalog-verification" && lastOperation.status === "failed") {
         publishOperation({ name: "catalog-verification", status: "completed", message: "" });
@@ -297,9 +329,13 @@ async function restoreCodexRouteAfterRuntimeFailure({ logger, stateStore }) {
   // either observes that operation or owns shutdown before we can start it.
   if (shutdownInProgress || quitting || exitCommitted) return { restored: false, skipped: true };
   try {
+    lifecycleProjection.update({ routeStatus: "restoring" });
     const route = await runtimeHost.restoreBridgeRoute("runtime-start-fail-safe");
     if (shutdownInProgress || quitting || exitCommitted) return { restored: false, skipped: true };
-    if (!route.installed || route.active) return { restored: false };
+    if (!route.installed || route.active) {
+      lifecycleProjection.update({ routeStatus: route.active ? "managed" : "direct" });
+      return { restored: false };
+    }
     const state = stateStore.update({
       codexCatalogVerified: false,
       codexRestartRequired: true,
@@ -309,10 +345,12 @@ async function restoreCodexRouteAfterRuntimeFailure({ logger, stateStore }) {
     logger.warn("bridge.route_restored_after_runtime_failure", {
       changed: route.changed === true,
     });
+    lifecycleProjection.update({ routeStatus: "direct" });
     return { restored: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error("bridge.route_restore_after_runtime_failure_failed", { message });
+    lifecycleProjection.update({ routeStatus: "failed", detail: message });
     return { restored: false, error: message };
   }
 }
@@ -613,10 +651,18 @@ function smokePassedForCurrentVersion(state) {
 
 async function closeBrowserResources() {
   let cleanupError = null;
+  // Stop official account flows while their bound browser sessions still exist.
+  for (const [name, participant] of additionalLifecycleParticipants) {
+    try { await participant.destroy(); }
+    catch (error) {
+      const detail = `${name} cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+      cleanupError = new Error(cleanupError ? `${cleanupError.message}; ${detail}` : detail);
+    }
+  }
   try {
     browserHost?.destroy();
   } catch (error) {
-    cleanupError = error;
+    cleanupError = cleanupError ? new Error(`${cleanupError.message}; browser cleanup failed`) : error;
   }
   try {
     await browserControl?.close();
@@ -656,6 +702,10 @@ function registerIpc({ logger, stateStore }) {
       automatic: runtimeHost.setupConnectorName(),
       manual: MANUAL_CONNECTOR_NAME,
     },
+    recommendedConnectorNames: {
+      automatic: automaticConnectorName({ development: IS_DEV_PROFILE, asyncToolOperations: true }),
+      manual: MANUAL_CONNECTOR_NAME,
+    },
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
     logs: logger.recent(),
     urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, developerMode: DEVELOPER_MODE_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
@@ -664,6 +714,9 @@ function registerIpc({ logger, stateStore }) {
     version: app.getVersion(),
     smokePassed: smokePassedForCurrentVersion(stateStore.read()),
     operation: lastOperation,
+    lifecycle: lifecycleProjection.snapshot(),
+    runtimeStatus: runtimeSupervisor?.capabilitySnapshot?.().runtimeStatus ?? lifecycleProjection.snapshot().runtimeStatus,
+    runtimeCapabilities: runtimeSupervisor?.capabilitySnapshot?.() ?? null,
     update: updateController?.getState() ?? { status: "disabled" },
   }));
 
@@ -1190,23 +1243,36 @@ function registerIpc({ logger, stateStore }) {
     return { state, credentialsRequired: false, targetMode: mode };
   });
   handle("launcher:accounts", () => browserHost.accountSnapshot());
+  handle("launcher:account-codex-quota-snapshot", (_event, id) => accountToolsService.quotaSnapshot(id));
+  handle("launcher:account-codex-quota-refresh", (_event, id) => accountToolsService.refreshQuota(id));
+  handle("launcher:codex-login-snapshot", () => accountToolsService.snapshot());
+  handle("launcher:codex-login-start", (_event, id) => {
+    if (quitting || shutdownInProgress || runtimeHost.currentOperation()) throw new Error("Finish the current runtime operation before Codex sign-in");
+    return accountToolsService.start(id);
+  });
+  handle("launcher:codex-login-status", (_event, flowId, id) => accountToolsService.status(flowId, id));
+  handle("launcher:codex-login-open", (_event, flowId, id) => accountToolsService.open(flowId, id));
+  handle("launcher:codex-login-cancel", (_event, flowId, id) => accountToolsService.cancel(flowId, id));
+  handle("launcher:codex-login-copy-code", (_event, flowId, id) => accountToolsService.copyCode(flowId, id));
   handle("launcher:account-add", (_event, label) => browserHost.addAccount(label));
   handle("launcher:account-select", async (_event, id) => {
     invalidateAccountProof(stateStore);
     return browserHost.selectAccount(id);
   });
   handle("launcher:account-enabled", (_event, id, enabled) => {
-    const result = browserHost.setAccountEnabled(id, enabled);
-    invalidateAccountProof(stateStore);
-    const state = stateStore.read();
-    send("launcher:state-changed", state);
-    return result;
+    return browserHost.setAccountEnabled(id, enabled);
   });
-  handle("launcher:account-proxy", (_event, id, value) => browserHost.setAccountProxy(id, value));
+  handle("launcher:account-proxy", (_event, id, value) => {
+    accountToolsService.assertAccountMutable(id);
+    return browserHost.setAccountProxy(id, value);
+  });
   handle("launcher:account-safety", (_event, id, policy) => browserHost.setAccountSafety(id, policy));
   handle("launcher:account-resume", (_event, id) => browserHost.resumeAccount(id));
   handle("launcher:account-mode", (_event, mode) => browserHost.setAccountMode(mode));
-  handle("launcher:account-login", (_event, id) => browserHost.openAccountLogin(id));
+  handle("launcher:account-login", (_event, id) => {
+    accountToolsService.assertAccountMutable(id);
+    return browserHost.openAccountLogin(id);
+  });
   handle("launcher:account-check", async (_event, id, connector) => {
     const selectedAccountId = browserHost.snapshot().accountId;
     try {
@@ -1292,9 +1358,21 @@ function registerIpc({ logger, stateStore }) {
     return updateController.recheck();
   });
   handle("launcher:update-request-revision", () => updatesPanelRequestRevision);
+  handle("launcher:restart", async () => {
+    if (updateReadinessHandoff) {
+      const journalPath = path.join(path.dirname(updateReadinessHandoff.filename), "transaction.json");
+      try {
+        const journal = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+        if (journal.phase !== "committed") throw new Error("The update is still being committed; try restarting in a moment");
+      } catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
+    const result = await requestQuit({ restart: true });
+    if (!result.ok) throw new Error(result.message || "NEKODEX could not restart");
+    return true;
+  });
   handle("launcher:update-install", async () => {
     if (!updateController) throw new Error("Launcher updates are unavailable");
-    const updateBlocked = () => runtimeHost?.currentOperation() || browserHost?.currentOperation()
+    const updateBlocked = () => currentGlobalOperation()
       || browserHost?.hasActiveTurns();
     browserHost.closeTurnAdmission("the launcher update");
     let launch;
@@ -1331,7 +1409,7 @@ function registerIpc({ logger, stateStore }) {
   }, authorize);
 }
 
-async function requestQuit({ admissionHeld = false } = {}) {
+async function requestQuit({ admissionHeld = false, restart = false } = {}) {
   if (shutdownInProgress || exitCommitted) {
     return { ok: false, message: "Launcher shutdown is already in progress" };
   }
@@ -1339,7 +1417,7 @@ async function requestQuit({ admissionHeld = false } = {}) {
   let shutdownResult;
   try {
     if (!admissionHeld) browserHost?.closeTurnAdmission("launcher shutdown");
-    const activeOperation = runtimeHost?.currentOperation() || browserHost?.currentOperation();
+    const activeOperation = currentGlobalOperation();
     if (activeOperation) {
       throw new Error(`Wait for ${activeOperation} to finish before quitting NEKODEX`);
     }
@@ -1363,6 +1441,7 @@ async function requestQuit({ admissionHeld = false } = {}) {
     await closeBrowserResources();
     exitCommitted = true;
     contextChangeQueue?.stop();
+    if (restart) app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== "--hidden") });
     app.quit();
     return shutdownResult?.status === "forced-partial"
       ? { ok: true, status: "forced-partial", failures: shutdownResult.failures }
@@ -1394,7 +1473,10 @@ async function start() {
   await waitForPackagedRuntimeSource({ app, resourcesPath: process.resourcesPath });
   let installedRuntimeRoot = null;
   let runtimeRootResolved = false;
-  const runtimeRootProvider = () => {
+  const runtimeRootProvider = (releaseVersion = app.getVersion()) => {
+    if (app.isPackaged && releaseVersion !== app.getVersion()) {
+      return resolveInstalledRuntimeRoot({ coreHome: CORE_HOME, version: releaseVersion });
+    }
     const packagedRuntimeWasRemoved = app.isPackaged
       && (!installedRuntimeRoot || !fs.existsSync(installedRuntimeRoot));
     if (!runtimeRootResolved || packagedRuntimeWasRemoved) {
@@ -1481,6 +1563,7 @@ async function start() {
     browserDescriptorPath: BROWSER_DESCRIPTOR_PATH,
     launcherProfile: LAUNCHER_PROFILE.kind,
     publishOperation,
+    publishCapabilities: capability => lifecycleProjection.update(capability),
     // Native requests resolve the current OS route through the authenticated control channel.
     nativeProxyEnvironmentProvider: async () => ({}),
     tunnelProxyEnvironmentProvider: () => resolveTunnelProxyEnvironment(session.fromPartition(LAUNCHER_PROFILE.browserPartition)),
@@ -1573,6 +1656,12 @@ async function start() {
     publish: (state) => send("launcher:update-state", state),
     logger,
   });
+  accountToolsService = createCodexAccountTools({
+    getPool: () => browserHost,
+    getInteractionMode: () => stateStore.read().browserInteractionMode,
+    BrowserWindow, clipboard, codexHome: LAUNCHER_PROFILE.codexHome, logger,
+  });
+  registerLifecycleParticipant("Codex account sign-in", accountToolsService);
   registerIpc({ logger, stateStore });
   const trayAvailable = createTray(logger, stateStore.read().language);
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
@@ -1584,13 +1673,12 @@ async function start() {
       });
     });
   }
+  void startupAuthenticationRefresh.then(() => {
+    if (!shutdownInProgress && !quitting && !exitCommitted) ensureRuntimeProofCurrent(stateStore);
+  });
   startupPhase = "renderer";
   await loadRenderer(mainWindow);
   startupPhase = "runtime";
-  // Signal only after the main renderer, browser control, packaged runtime and
-  // host bootstrap succeeded; the worker retains the old app until this proof.
-  proveUpdateReadiness(updateReadinessHandoff, { version: app.getVersion() },
-    updateReadinessHandoff ? runtimeSupervisor.runtimeCommand(["--version"]) : null);
   if (!launcherSmokeTest) void updateController.checkOnce();
   if (launcherSmokeTest) {
     const smokeRuntimeRoot = runtimeRootProvider();
@@ -1630,7 +1718,7 @@ async function start() {
     return;
   }
   if (IS_DEV_PROFILE) {
-    invalidateAccountProof(stateStore);
+    retireAccountProof();
     let config = null;
     try {
       config = runtimeSupervisor.readConfig();
@@ -1665,11 +1753,7 @@ async function start() {
       userData: launcherUserData,
     });
     if (config?.mode === "full" && !legacyConnector) {
-      void startupAuthenticationRefresh.then(() => {
-        if (shutdownInProgress || quitting || exitCommitted) return;
-        invalidateAccountProof(stateStore);
-        return runtimeSupervisor.startIfConfigured();
-      }).catch((error) => {
+      void runtimeSupervisor.startIfConfigured().catch((error) => {
         if (shutdownInProgress || quitting || exitCommitted) return;
         const message = error instanceof Error ? error.message : String(error);
         retireAccountProof();
@@ -1679,43 +1763,21 @@ async function start() {
       });
     }
   } else void (async () => {
-    const previousSetupIdentity = stateStore.read().setupIdentityHash ?? null;
-    await startupAuthenticationRefresh;
     if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
-    invalidateAccountProof(stateStore);
-    const upgrade = await runtimeHost.upgradeManagedRuntime();
+    retireAccountProof();
+    const recoveredGeneration = await runtimeHost.recoverManagedRuntimeGeneration();
+    if (recoveredGeneration.status !== "none") logger.warn("runtime.startup_generation_recovered", recoveredGeneration);
+    const before = runtimeHost.runtimeConfigSnapshot();
+    const legacyUpdateBootstrap = Boolean(updateReadinessHandoff
+      && before.configured && before.owner === "launcher"
+      && before.config?.releaseVersion !== app.getVersion());
+    const upgrade = legacyUpdateBootstrap
+      ? { updated: false, deferredUntilCommittedRestart: true }
+      : await runtimeHost.upgradeManagedRuntime();
     if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
-    if (upgrade.updated) {
-      const preserve = preserveSetup(previousSetupIdentity,
-        setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
-        stateStore.read(), upgrade.connectorMigrated || upgrade.tunnelProfileMigrated);
-      const state = stateStore.update({
-        coreSetupComplete: true,
-        ...(upgrade.connectorMigrated ? { browserSmokePassed: false, browserSmokeVersion: null } : {}),
-        ...(!preserve ? { codexCatalogVerified: false, codexRestartRequired: true } : {}),
-        experimentalAsyncToolOperations: runtimeHost.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true,
-        experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
-        experimentalSkillAttachments: runtimeHost.runtimeConfigSnapshot().config?.experimentalSkillAttachments === true,
-        experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
-        zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
-        ...(upgrade.mode === "full" ? {
-          mcpRuntimeInstalled: true,
-          ...(!preserve ? { mcpSetupComplete: false, mcpGuideStep: 2 } : {}),
-        } : {
-          mcpRuntimeInstalled: false,
-          mcpSetupComplete: false,
-          mcpGuideStep: 0,
-        }),
-      });
-      if (upgrade.connectorMigrated || !preserve) retireAccountProof();
-      send("launcher:state-changed", state);
-      logger.info("runtime.release_upgraded", {
-        fromVersion: upgrade.fromVersion,
-        toVersion: upgrade.toVersion,
-        mode: upgrade.mode,
-        connectorMigrated: upgrade.connectorMigrated,
-      });
-    }
+    if (upgrade.updated) logger.info("runtime.release_generation_staged", {
+      fromVersion: upgrade.fromVersion, toVersion: upgrade.toVersion, generationId: upgrade.generationId,
+    });
     const configuredRuntime = runtimeHost.runtimeConfigSnapshot();
     if (configuredRuntime.configured) {
       const enabled = configuredRuntime.config?.experimentalBiggerContext === true;
@@ -1737,12 +1799,57 @@ async function start() {
       }
     }
     if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled" };
-    invalidateAccountProof(stateStore);
-    const runtime = await runtimeSupervisor.startIfConfigured();
-    if (runtime.status !== "ready") return runtime;
-    if (shutdownInProgress || quitting || exitCommitted) return runtime;
-    const route = await runtimeHost.connectBridgeRoute();
-    return { ...runtime, bridgeRouteChanged: route.changed === true };
+    const allowCommittedVersion = legacyUpdateBootstrap || upgrade.repairRequired === true;
+    const generationId = typeof upgrade.generationId === "string" ? upgrade.generationId : null;
+    let generationCommitted = false;
+    let fallbackAttempted = false;
+    const restorePreviousGeneration = async failure => {
+      fallbackAttempted = true;
+      const fallback = await runtimeHost.rollbackManagedRuntimeUpgrade(generationId);
+      lifecycleProjection.update({ routeStatus: "switching" });
+      const route = await runtimeHost.connectBridgeRoute();
+      lifecycleProjection.update({ routeStatus: "managed" });
+      return { ...fallback.runtime, status: "ready", bridgeRouteChanged: route.changed === true,
+        candidateUpgradeError: failure instanceof Error ? failure.message : String(failure),
+        upgrade: { ...upgrade, rolledBack: true } };
+    };
+    try {
+      const runtime = await runtimeSupervisor.startIfConfigured({ allowCommittedVersion });
+      if (runtime.status === "not-configured") {
+        proveUpdateReadiness(updateReadinessHandoff, {
+          version: app.getVersion(), readinessSchema: 2, lifecycleStatus: "not-configured",
+          nativeAvailability: "unavailable", webAvailability: "unavailable", configVersion: null,
+          lifecycleRevision: runtimeSupervisor.capabilitySnapshot().revision,
+        }, updateReadinessHandoff ? runtimeSupervisor.runtimeCommand(["--version"]) : null);
+        return { ...runtime, upgrade };
+      }
+      if (runtime.status !== "ready") {
+        if (generationId) return await restorePreviousGeneration(new Error(runtime.detail || `Candidate runtime returned ${runtime.status}`));
+        return { ...runtime, upgrade };
+      }
+      if (shutdownInProgress || quitting || exitCommitted) return { status: "cancelled", upgrade };
+      lifecycleProjection.update({ routeStatus: "switching" });
+      const route = await runtimeHost.connectBridgeRoute();
+      lifecycleProjection.update({ routeStatus: "managed" });
+      if (generationId) {
+        runtimeHost.commitManagedRuntimeUpgrade(generationId);
+        generationCommitted = true;
+        logger.info("runtime.release_upgraded", { fromVersion: upgrade.fromVersion,
+          toVersion: upgrade.toVersion, mode: upgrade.mode, generationId });
+      }
+      const config = runtimeSupervisor.readConfig();
+      const capabilities = runtimeSupervisor.capabilitySnapshot(config);
+      proveUpdateReadiness(updateReadinessHandoff, {
+        version: app.getVersion(), readinessSchema: 2, lifecycleStatus: "local-usable",
+        nativeAvailability: capabilities.nativeAvailability, webAvailability: capabilities.webAvailability,
+        configVersion: config.releaseVersion, lifecycleRevision: capabilities.revision,
+        legacyCommittedRuntime: config.releaseVersion !== app.getVersion(),
+      }, updateReadinessHandoff ? runtimeSupervisor.runtimeCommand(["--version"]) : null);
+      return { ...runtime, upgrade, bridgeRouteChanged: route.changed === true };
+    } catch (error) {
+      if (!generationId || generationCommitted || fallbackAttempted) throw error;
+      return await restorePreviousGeneration(error);
+    }
   })().then(async (runtime) => {
     if (shutdownInProgress || quitting || exitCommitted) return;
     if (runtime.status === "cancelled") return;
@@ -1751,6 +1858,8 @@ async function start() {
       const current = stateStore.read();
       const patch = {
         coreSetupComplete: true,
+        runtimeMigrationPending: config.releaseVersion !== app.getVersion(),
+        launcherRestartRequired: runtime.upgrade?.deferredUntilCommittedRestart === true,
         mcpRuntimeInstalled: config.mode === "full",
         experimentalAsyncToolOperations: config.experimentalAsyncToolOperations === true,
         experimentalBiggerContext: config.experimentalBiggerContext === true,
@@ -1771,6 +1880,17 @@ async function start() {
         send("launcher:state-changed", state);
       }
       startCatalogVerificationMonitor({ logger, stateStore });
+      if (runtime.upgrade?.deferredUntilCommittedRestart) {
+        publishOperation({ name: "runtime-migration", status: "completed",
+          message: "The app update is installed. Restart NEKODEX to activate the new local runtime." });
+      }
+      if (runtime.candidateUpgradeError) {
+        publishOperation({ name: "runtime-upgrade", status: "failed",
+          message: `${runtime.candidateUpgradeError}; the previous verified runtime was restored` });
+      }
+      if (runtime.upgrade?.repairRequired) {
+        publishOperation({ name: "runtime-repair", status: "failed", message: runtime.upgrade.detail });
+      }
       return;
     }
     if (runtime.status === "not-configured") {
@@ -1796,11 +1916,22 @@ async function start() {
       return;
     }
     stopCatalogVerificationMonitor();
-    retireAccountProof();
-    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
-      mcpSetupComplete: false });
-    send("launcher:state-changed", state);
-    const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
+    const capabilities = runtimeSupervisor.capabilitySnapshot();
+    const priorRuntimeUsable = capabilities.nativeAvailability === "ready";
+    if (!priorRuntimeUsable) {
+      retireAccountProof();
+      const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
+        mcpSetupComplete: false });
+      send("launcher:state-changed", state);
+    }
+    const routeRecovery = priorRuntimeUsable
+      ? { restored: false, skipped: true }
+      : await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
+    if (priorRuntimeUsable) {
+      publishOperation({ name: "runtime-start", status: "failed",
+        message: `${runtime.detail || "Candidate runtime transition failed"}; the previous verified runtime remains available` });
+      return;
+    }
     if (routeRecovery.skipped || shutdownInProgress || quitting || exitCommitted) return;
     if (runtime.status === "external" || runtime.status === "needs-setup") {
       const detail = runtime.detail || (
@@ -1822,11 +1953,23 @@ async function start() {
     if (shutdownInProgress || quitting || exitCommitted) return;
     const primary = error instanceof Error ? error.message : String(error);
     stopCatalogVerificationMonitor();
-    retireAccountProof();
-    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
-      mcpSetupComplete: false });
-    send("launcher:state-changed", state);
-    const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
+    const capabilities = runtimeSupervisor.capabilitySnapshot();
+    const priorRuntimeUsable = capabilities.nativeAvailability === "ready";
+    if (!priorRuntimeUsable) {
+      retireAccountProof();
+      const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
+        mcpSetupComplete: false });
+      send("launcher:state-changed", state);
+    }
+    const routeRecovery = priorRuntimeUsable
+      ? { restored: false, skipped: true }
+      : await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
+    if (priorRuntimeUsable) {
+      const message = `${primary}; the previous verified runtime remains available`;
+      logger.error("runtime.startup_candidate_failed", { message });
+      publishOperation({ name: "runtime-start", status: "failed", message });
+      return;
+    }
     if (routeRecovery.skipped || shutdownInProgress || quitting || exitCommitted) return;
     const message = routeRecovery.error
       ? `${primary}; restoring the previous Codex route also failed: ${routeRecovery.error}`

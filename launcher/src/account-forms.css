@@ -1,0 +1,12 @@
+.account-form-panel > summary { min-height: 42px; display: flex; align-items: center; cursor: pointer; gap: 8px; font-weight: 600; }
+.account-form-panel > summary::before { content: "›"; transition: transform 160ms ease; transform-origin: center; }
+.account-form-panel[open] > summary::before { transform: rotate(90deg); }
+.account-form-panel > summary::-webkit-details-marker { display: none; }
+.account-form-panel fieldset { border: 0; padding: 0; margin: 0; display: flex; gap: 12px; flex-wrap: wrap; align-items: end; min-width: 0; }
+.account-form-panel fieldset > label { display: grid; gap: 6px; flex: 1 1 190px; min-width: 0; }
+.account-form-panel input[type="url"] { width: 100%; min-width: 0; }
+.account-form-panel .field-hint, .account-form-panel .field-error { margin: 8px 0 0; }
+.account-form-panel input[aria-invalid="true"] { border-color: var(--color-danger, #ed899a); }
+.account-form-panel fieldset:disabled { opacity: .65; }
+.account-form-panel fieldset:disabled + p { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .account-form-panel > summary::before { transition: none; } }

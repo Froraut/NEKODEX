@@ -1,18 +1,50 @@
-import { useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 
 const reactions = ["curious", "wink", "happy", "surprised", "sleepy", "yawn", "sneeze", "stretch", "playful", "purr", "peek", "wiggle"] as const;
 export type CatReaction = typeof reactions[number];
 type Reaction = CatReaction;
 
+function clearTracking(element: HTMLElement | null) {
+  element?.style.removeProperty("--neko-x");
+  element?.style.removeProperty("--neko-y");
+  element?.style.removeProperty("--neko-tilt");
+}
+
 // The desktop icon stays still. In-app cats react without changing page state.
 export function useCatReaction() {
   const [reaction, setReaction] = useState<Reaction | null>(null);
+  const target = useRef<HTMLElement | null>(null);
   const previous = useRef<Reaction | null>(null);
   const queue = useRef<Reaction[]>([]);
   const active = useRef(false);
+  const reduced = useRef(false);
+  const bounds = useRef<DOMRect | null>(null);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const frame = useRef(0);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncMotionPreference = () => {
+      reduced.current = media.matches;
+      if (!media.matches) return;
+      cancelAnimationFrame(frame.current);
+      frame.current = 0;
+      bounds.current = null;
+      pointer.current = null;
+      active.current = false;
+      clearTracking(target.current);
+      setReaction(null);
+    };
+    syncMotionPreference();
+    media.addEventListener("change", syncMotionPreference);
+    return () => {
+      cancelAnimationFrame(frame.current);
+      media.removeEventListener("change", syncMotionPreference);
+    };
+  }, []);
+
   const play = () => {
-    // Pointer entry followed by focus is one interaction, not two reactions.
-    if (active.current) return;
+    if (reduced.current || active.current) return;
     active.current = true;
     if (!queue.current.length) {
       const nextCycle: Reaction[] = [...reactions];
@@ -28,37 +60,57 @@ export function useCatReaction() {
     previous.current = next;
     setReaction(next);
   };
+
+  const flushPointer = () => {
+    frame.current = 0;
+    const element = target.current;
+    const rect = bounds.current;
+    const latest = pointer.current;
+    if (reduced.current || !element || !rect || !latest) return;
+    const x = Math.max(-1, Math.min(1, (latest.x - rect.left) / Math.max(1, rect.width) * 2 - 1));
+    const y = Math.max(-1, Math.min(1, (latest.y - rect.top) / Math.max(1, rect.height) * 2 - 1));
+    element.style.setProperty("--neko-x", `${x * 2.5}px`);
+    element.style.setProperty("--neko-y", `${y * 1.8}px`);
+    element.style.setProperty("--neko-tilt", `${x * 5}deg`);
+  };
+
   const follow = (event: PointerEvent<HTMLElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(-1, Math.min(1, (event.clientX - bounds.left) / Math.max(1, bounds.width) * 2 - 1));
-    const y = Math.max(-1, Math.min(1, (event.clientY - bounds.top) / Math.max(1, bounds.height) * 2 - 1));
-    event.currentTarget.style.setProperty("--neko-x", `${x * 2.5}px`);
-    event.currentTarget.style.setProperty("--neko-y", `${y * 1.8}px`);
-    event.currentTarget.style.setProperty("--neko-tilt", `${x * 5}deg`);
+    if (reduced.current) return;
+    target.current = event.currentTarget;
+    bounds.current ??= event.currentTarget.getBoundingClientRect();
+    pointer.current = { x: event.clientX, y: event.clientY };
+    if (!frame.current) frame.current = requestAnimationFrame(flushPointer);
+  };
+  const begin = (event: PointerEvent<HTMLElement>) => {
+    if (reduced.current) return;
+    target.current = event.currentTarget;
+    bounds.current = event.currentTarget.getBoundingClientRect();
+    play();
+    follow(event);
   };
   const reset = (element: HTMLElement) => {
+    cancelAnimationFrame(frame.current);
+    frame.current = 0;
+    bounds.current = null;
+    pointer.current = null;
+    target.current = null;
     active.current = false;
     setReaction(null);
-    element.style.removeProperty("--neko-x");
-    element.style.removeProperty("--neko-y");
-    element.style.removeProperty("--neko-tilt");
+    clearTracking(element);
   };
-  return { reaction, play, follow, reset };
+  return { reaction, play, begin, follow, reset };
 }
 
 export function BrandMark({ small = false }: { small?: boolean }) {
-  const { reaction, play, follow, reset } = useCatReaction();
+  const { reaction, begin, follow, reset } = useCatReaction();
   return <span
     className={`brand-mark${small ? " is-small" : ""}${reaction ? ` is-reacting reaction-${reaction}` : ""}`}
-    tabIndex={small ? undefined : 0}
     role={small ? undefined : "img"}
     aria-label={small ? undefined : "NEKODEX cat"}
-    onPointerEnter={play}
+    onPointerEnter={begin}
     onPointerMove={follow}
     onPointerLeave={event => reset(event.currentTarget)}
     onPointerCancel={event => reset(event.currentTarget)}
-    onFocus={play}
-    onBlur={event => reset(event.currentTarget)}
   >
     <svg aria-hidden="true" viewBox="0 0 64 64">
       <CatHead reaction={reaction} />
