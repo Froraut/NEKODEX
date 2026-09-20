@@ -5,6 +5,8 @@ import { unzipSync } from "fflate";
 import type { AppConfig, BrowserInteractionMode, TunnelConfig } from "./config";
 import {
   CHATGPT_ASYNC_CONNECTOR_NAME,
+  PREVIOUS_ASYNC_CONNECTOR_NAME,
+  PREVIOUS_ASYNC_DEV_CONNECTOR_NAME,
   DEV_CHATGPT_ASYNC_CONNECTOR_NAME,
   atomicWriteFile,
   getConfigDir,
@@ -443,11 +445,14 @@ export function mcpCommand(config: AppConfig, platform = process.platform): stri
     && config.browserInteractionMode === "automatic"
     && config.mode === "full"
     && (config.appName === CHATGPT_ASYNC_CONNECTOR_NAME
-      || config.appName === DEV_CHATGPT_ASYNC_CONNECTOR_NAME);
+      || config.appName === DEV_CHATGPT_ASYNC_CONNECTOR_NAME
+      || config.appName === PREVIOUS_ASYNC_CONNECTOR_NAME
+      || config.appName === PREVIOUS_ASYNC_DEV_CONNECTOR_NAME);
   const command = [
     ...config.runtimeCommand,
     "mcp",
-    ...(asyncConnector ? ["--async-tool-operations"] : []),
+    ...(asyncConnector ? ["--async-tool-operations",
+      ...([CHATGPT_ASYNC_CONNECTOR_NAME, DEV_CHATGPT_ASYNC_CONNECTOR_NAME].includes(config.appName) ? ["--native6"] : [])] : []),
     config.allowWebSubagents === false ? "--no-web-subagents" : "--allow-web-subagents",
     "--contract",
     contract,

@@ -83,9 +83,9 @@ Setup options:
   --restart-service            Explicitly restart this project's daemon after an update
   --login                      Refresh the stored ChatGPT login even if one exists
   --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
-  --async-tool-operations      Automatic Full mode: opt in to the Codex Native5 async MCP schema
+  --async-tool-operations      Select Codex Native6 (default for new Automatic Full setups)
   --synchronous-tool-operations
-                               Use the Codex Native4 synchronous MCP schema (default)
+                               Use the Codex Native4 synchronous compatibility schema
   --bigger-context             Enable experimental adaptive 1/2/3-message context
   --skill-attachments         Experimental selected skills as text attachments
   --inline-skills             Keep selected skills inline (default)

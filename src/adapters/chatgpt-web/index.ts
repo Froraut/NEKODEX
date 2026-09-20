@@ -406,7 +406,7 @@ export function createChatGptWebAdapter(
       throw new Error("ChatGPT Manual mode requires the Launcher browser host");
     }
     if (experimentalAsyncToolOperations) {
-      throw new Error("ChatGPT async tool operations require the automatic Native5 connector");
+      throw new Error("ChatGPT async tool operations require an automatic Native5 or Native6 connector");
     }
   }
   const environmentStore = new ChatGptThreadEnvironmentStore(

@@ -1142,13 +1142,14 @@ class RuntimeSupervisor {
   async runTunnelConnectCommand(config, recoverySignal) {
     const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
     const asyncTools = config.experimentalAsyncToolOperations === true;
-    const asyncIdentity = [ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME].includes(config.appName);
+    const asyncIdentity = [ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME, "Codex Native5", "Codex Native5 DEV"].includes(config.appName);
     if (asyncTools !== asyncIdentity || asyncTools && (contract !== "native" || config.mode !== "full")) {
-      throw new Error("Async tool operations require Automatic Full mode and its separate Native5 connector");
+      throw new Error("Async tool operations require Automatic Full mode and its separate Native5 or Native6 connector");
     }
     const invocation = this.runtimeCommand([
       "mcp",
       asyncTools ? "--async-tool-operations" : "--synchronous-tool-operations",
+      ...([ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME].includes(config.appName) ? ["--native6"] : []),
       config.allowWebSubagents === false ? "--no-web-subagents" : "--allow-web-subagents",
       "--contract",
       contract,

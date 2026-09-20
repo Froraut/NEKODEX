@@ -16,6 +16,8 @@ import {
   callTurnBroker,
   TurnBrokerTimeoutError,
   type BrokerOwnedOperationSnapshot,
+  type BrokerOwnedOperationStartResult,
+  type BrokerOwnedOperationStatus,
   type BrokerToolResult,
 } from "./turn-broker";
 
@@ -39,6 +41,7 @@ const BRIDGE_TOOL_NAMES = new Set([
   "codex_tool_start",
   "codex_tool_poll",
   "codex_tool_cancel",
+  "codex_tool_status",
   "codex_turn_complete",
 ]);
 
@@ -546,10 +549,15 @@ export async function runChatGptMcpServer(options: {
   allowWebSubagents?: boolean;
   /** Native5-only schema. Native4 and Manual mode must leave this disabled. */
   asyncToolOperations?: boolean;
+  /** Adds the Native6 metadata recovery tool without changing Native4/5 schemas. */
+  native6?: boolean;
 }): Promise<void> {
   const contract = options.contract ?? "native";
   if (options.asyncToolOperations && contract !== "native") {
     throw new Error("Owned async tool operations are unavailable in the Manual mode MCP contract");
+  }
+  if (options.native6 && (!options.asyncToolOperations || contract !== "native")) {
+    throw new Error("Native6 requires async tool operations and the native MCP contract");
   }
   const spawnExclusions = options.allowWebSubagents !== false ? [] : chatgptWebBlockedGatewayWireNames();
   const server = new McpServer(
@@ -1147,12 +1155,32 @@ export async function runChatGptMcpServer(options: {
     },
   );
 
+  if (options.native6) {
+    server.registerTool(
+      "codex_tool_status",
+      {
+        title: "Recover owned operation metadata",
+        description: "Native6 only. List up to 64 operation identities and states owned by this active turn, without delivery IDs. Returns metadata only and never acknowledges or restarts work. Poll a recovered terminal operation to receive its result and delivery_id before acknowledging that exact delivery_id. Expired payloads cannot be recovered and never authorize rerunning side effects.",
+        inputSchema: { turn_token: turnTokenSchema },
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ turn_token }, extra) => withClaimedTurn("codex_tool_status", turn_token, extra, async () => {
+        const status = await callTurnBroker<BrokerOwnedOperationStatus>(options.brokerSocketPath, {
+          method: "operation_status", token: turn_token,
+        }, 5_000, extra.signal);
+        return result({ ...status });
+      }),
+    );
+  }
+
   if (options.asyncToolOperations) {
     server.registerTool(
       "codex_tool_start",
       {
         title: "Start a long native Codex tool operation",
-        description: "Native5 only. Start an exact wire_name once under operation_key. Reuse the same operation_key after an ambiguous transport failure, then use codex_tool_poll until terminal and acknowledge its delivery_id.",
+        description: options.native6
+          ? "Native6 only. Start an exact wire_name once under operation_key. Reuse the same operation_key after an ambiguous transport failure, then use codex_tool_poll until terminal and acknowledge its delivery_id."
+          : "Native5 only. Start an exact wire_name once under operation_key. Reuse the same operation_key after an ambiguous transport failure, then use codex_tool_poll until terminal and acknowledge its delivery_id.",
         inputSchema: {
           turn_token: turnTokenSchema,
           operation_key: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/),
@@ -1175,7 +1203,7 @@ export async function runChatGptMcpServer(options: {
             throw new Error("Owned async Codex operations are unavailable for Hermes-origin turns");
           }
           const invocation = resolveBrowserInvocation(claimed.environment, wire_name, args, input);
-          const snapshot = await callTurnBroker<BrokerOwnedOperationSnapshot>(options.brokerSocketPath, {
+          const snapshot = await callTurnBroker<BrokerOwnedOperationStartResult>(options.brokerSocketPath, {
             method: "invoke_async",
             token: turn_token,
             bindingId: claimed.bindingId,
@@ -1186,7 +1214,7 @@ export async function runChatGptMcpServer(options: {
               ? { input: invocation.payload.input ?? "" }
               : { arguments: invocation.payload.arguments ?? {} }),
           }, 5_000, extra.signal);
-          return asOwnedOperationResult(snapshot);
+          return snapshot.state === "control" ? asMcpResult(snapshot.result) : asOwnedOperationResult(snapshot);
         });
       },
     );
@@ -1195,7 +1223,9 @@ export async function runChatGptMcpServer(options: {
       "codex_tool_poll",
       {
         title: "Poll or acknowledge a long native Codex tool operation",
-        description: "Native5 only. Wait at most 30 seconds for an owned operation. A poll timeout or disconnect never restarts or retires it. After receiving a terminal result, call again with its exact delivery_id to acknowledge and release it.",
+        description: options.native6
+          ? "Native6 only. Wait at most 30 seconds for an owned operation. A poll timeout or disconnect never restarts or retires it. After receiving a terminal result, call again with its exact delivery_id to acknowledge and release it."
+          : "Native5 only. Wait at most 30 seconds for an owned operation. A poll timeout or disconnect never restarts or retires it. After receiving a terminal result, call again with its exact delivery_id to acknowledge and release it.",
         inputSchema: {
           turn_token: turnTokenSchema,
           operation_id: z.string().regex(/^operation_[A-Za-z0-9_-]{32,128}$/),
@@ -1222,7 +1252,9 @@ export async function runChatGptMcpServer(options: {
       "codex_tool_cancel",
       {
         title: "Cancel observation of one long native Codex tool operation",
-        description: "Native5 only. Cancels a queued call before dispatch. After dispatch it cancels only this operation's observation; the external tool and side effects may continue. Sibling calls and the owning turn remain active. Acknowledge the returned delivery_id with codex_tool_poll.",
+        description: options.native6
+          ? "Native6 only. Cancels a queued call before dispatch. After dispatch it cancels only this operation's observation; the external tool and side effects may continue. Sibling calls and the owning turn remain active. Acknowledge the returned delivery_id with codex_tool_poll."
+          : "Native5 only. Cancels a queued call before dispatch. After dispatch it cancels only this operation's observation; the external tool and side effects may continue. Sibling calls and the owning turn remain active. Acknowledge the returned delivery_id with codex_tool_poll.",
         inputSchema: {
           turn_token: turnTokenSchema,
           operation_id: z.string().regex(/^operation_[A-Za-z0-9_-]{32,128}$/),

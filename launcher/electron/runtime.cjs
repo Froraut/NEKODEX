@@ -6,8 +6,6 @@ const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const {
   automaticConnectorName,
-  connectorNameForDevSetup,
-  connectorNameForSetup,
   CURRENT_CONNECTOR_NAME,
   isLegacyConnectorName,
   requireCurrentRuntimeConnectorName,
@@ -1032,25 +1030,24 @@ class RuntimeHost {
       requireCurrentRuntimeConnectorName(current.persistedLegacyConnectorNames[0]);
     }
     const runtimeName = requireCurrentRuntimeConnectorName(current.config?.appName);
-    const asyncToolOperations = current.config?.experimentalAsyncToolOperations === true;
-    return this.launcherProfile === "development"
-      ? connectorNameForDevSetup(runtimeName, asyncToolOperations)
-      : connectorNameForSetup(runtimeName, asyncToolOperations);
+    return runtimeName;
   }
 
   browserConnectorName() {
     const current = this.runtimeConfigSnapshot();
-    const asyncToolOperations = current.config?.experimentalAsyncToolOperations === true;
-    if (this.launcherProfile === "development") {
-      return connectorNameForDevSetup(current.config?.appName, asyncToolOperations);
+    if (!current.configured || current.mode !== "full") {
+      return automaticConnectorName({ development: this.launcherProfile === "development" });
     }
-    if (!current.configured || current.mode !== "full") return CURRENT_CONNECTOR_NAME;
-    return connectorNameForSetup(current.config?.appName, asyncToolOperations);
+    // Never project a supported saved connector onto a newer identity.
+    return validateConnectorName(current.config?.appName);
   }
 
   setupConnectorName() {
-    const enabled = this.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true;
-    return automaticConnectorName({ development: this.launcherProfile === "development", asyncToolOperations: enabled });
+    const current = this.runtimeConfigSnapshot();
+    const saved = current.config?.automaticAppName
+      ?? (current.config?.browserInteractionMode === "automatic" ? current.config?.appName : undefined);
+    return saved ? validateConnectorName(saved)
+      : automaticConnectorName({ development: this.launcherProfile === "development" });
   }
 
   cancelActiveTurns() {
@@ -1344,10 +1341,11 @@ class RuntimeHost {
       throw new Error("Asynchronous tool operations are unavailable in Manual mode; switch to Automatic mode first");
     }
     const persisted = current.config?.experimentalAsyncToolOperations === true;
-    if (persisted === desired) {
+    const development = this.launcherProfile === "development";
+    const expectedConnector = automaticConnectorName({ development, asyncToolOperations: desired });
+    if (persisted === desired && this.browserConnectorName() === expectedConnector) {
       return { enabled: persisted, changed: false, connectorName: this.browserConnectorName() };
     }
-    const development = this.launcherProfile === "development";
     const args = [
       ...(development ? ["dev", "setup"] : ["setup"]),
       "--full",
@@ -1359,9 +1357,9 @@ class RuntimeHost {
     ];
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {
-      message: desired ? "Enabling asynchronous tool operations" : "Restoring synchronous tool operations",
+      message: desired ? "Upgrading to Native6" : "Restoring synchronous tool operations",
       successMessage: desired
-        ? `Asynchronous tool operations enabled${development ? "" : "; restart Codex"}`
+        ? `Native6 configured; create and verify the new ChatGPT connector${development ? "" : "; restart Codex"}`
         : `Synchronous tool operations restored${development ? "" : "; restart Codex"}`,
       timeoutMs: MCP_SETUP_TIMEOUT_MS,
     };
@@ -1372,7 +1370,6 @@ class RuntimeHost {
     if ((saved.config?.experimentalAsyncToolOperations === true) !== desired) {
       throw new Error("Runtime configuration did not persist the requested asynchronous tool operation mode");
     }
-    const expectedConnector = automaticConnectorName({ development, asyncToolOperations: desired });
     if (this.browserConnectorName() !== expectedConnector) {
       throw new Error(`Runtime configuration did not select ${JSON.stringify(expectedConnector)}`);
     }
@@ -1545,9 +1542,9 @@ class RuntimeHost {
       this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: targetMode }),
       "--replace-codex-route",
-      targetMode === "automatic" && this.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true
-        ? "--async-tool-operations"
-        : "--synchronous-tool-operations",
+      ...(targetMode === "automatic" && this.runtimeConfigSnapshot().mode !== "full"
+        && !this.mcpCredentialsConfigured(targetMode)
+        ? ["--async-tool-operations"] : []),
     ];
     if (reuseSavedCredentials) {
       args.push("--acknowledge-unofficial", "--restart-service");
@@ -1600,9 +1597,9 @@ class RuntimeHost {
       this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: targetMode }),
       "--acknowledge-unofficial",
-      targetMode === "automatic" && this.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true
-        ? "--async-tool-operations"
-        : "--synchronous-tool-operations",
+      ...(targetMode === "automatic" && this.runtimeConfigSnapshot().mode !== "full"
+        && !this.mcpCredentialsConfigured(targetMode)
+        ? ["--async-tool-operations"] : []),
     ];
     if (reuseSavedCredentials) {
       return this.runDevSetup("dev-mcp-setup", args, {
@@ -1648,9 +1645,7 @@ class RuntimeHost {
       mode === "automatic" && current.config?.experimentalBiggerContext === true
         ? "--bigger-context"
         : "--standard-context",
-      mode === "automatic" && current.config?.experimentalAsyncToolOperations === true
-        ? "--async-tool-operations"
-        : "--synchronous-tool-operations",
+      // No explicit async flag: retain the saved Automatic connector identity.
     ];
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {

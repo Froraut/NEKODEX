@@ -1586,3 +1586,28 @@ export function localizeRuntimeMessage(
   }
   return message;
 }
+
+// Kept separate from the historical async preference copy: this is an explicit identity upgrade.
+export function native6CopyFor(language: Language) {
+  return language === "ru" ? {
+    title: "Native6 · Рекомендуется",
+    current: "Текущий коннектор: {connector}",
+    upgrade: "Перейти на Native6",
+    configure: "Настроить Native6",
+    verify: "Проверить коннектор",
+    compatibility: "Использовать Native4 (совместимость)",
+    retained: "Используйте точное имя коннектора ниже. Сохранённые Native4/5 поддерживаются; переход на Native6 доступен в настройках.",
+    body: "Для первой настройки или перехода создайте новый коннектор {connector} в ChatGPT с новым App ID и прежним туннелем этого режима. Не переименовывайте старый коннектор. Затем проверьте подключение в NEKODEX. Сохранённые Native4/5 продолжают работать до явного перехода.",
+    mismatch: "Сохранённая проверка относится к другому коннектору. Проверьте текущий коннектор заново.",
+  } : {
+    title: "Native6 · Recommended",
+    current: "Current connector: {connector}",
+    upgrade: "Upgrade to Native6",
+    configure: "Set up Native6",
+    verify: "Verify connector",
+    compatibility: "Use Native4 (compatibility)",
+    retained: "Use the exact connector name below. Saved Native4/5 remain supported; upgrade to Native6 in Settings.",
+    body: "For first-time setup or an upgrade, create a new {connector} connector in ChatGPT with a new App ID and this mode's existing tunnel. Do not rename the old connector. Then verify the connection in NEKODEX. Saved Native4/5 connectors remain supported until an explicit upgrade.",
+    mismatch: "The saved verification belongs to a different connector. Verify the current connector again.",
+  };
+}

@@ -27,7 +27,9 @@ export type SubagentProtocol = "compatibility-v1" | "native";
  */
 export const CHATGPT_CONNECTOR_NAME = "Codex Native4";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
-export const CHATGPT_ASYNC_CONNECTOR_NAME = "Codex Native5";
+export const CHATGPT_ASYNC_CONNECTOR_NAME = "Codex Native6";
+export const PREVIOUS_ASYNC_CONNECTOR_NAME = "Codex Native5";
+export const PREVIOUS_ASYNC_DEV_CONNECTOR_NAME = `${PREVIOUS_ASYNC_CONNECTOR_NAME} DEV`;
 export const DEV_CHATGPT_ASYNC_CONNECTOR_NAME = `${CHATGPT_ASYNC_CONNECTOR_NAME} DEV`;
 export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk4";
 export const LEGACY_CHATGPT_CONNECTOR_NAMES = [
@@ -68,9 +70,18 @@ export interface InteractionConnectorIdentities {
 export function resolveInteractionConnectorIdentities(
   interactionMode: BrowserInteractionMode,
   profile: "production" | "development" = "production",
-  experimentalAsyncToolOperations = false,
+  experimentalAsyncToolOperations = true,
+  retainedAutomaticName?: string,
 ): InteractionConnectorIdentities {
-  const automaticAppName = experimentalAsyncToolOperations
+  const allowedRetained = profile === "development"
+    ? [DEV_CHATGPT_CONNECTOR_NAME, PREVIOUS_ASYNC_DEV_CONNECTOR_NAME, DEV_CHATGPT_ASYNC_CONNECTOR_NAME]
+    : [CHATGPT_CONNECTOR_NAME, PREVIOUS_ASYNC_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME];
+  // Manual transport is synchronous but retains the separate Automatic connector identity.
+  const preserveInactive = interactionMode === "manual" && retainedAutomaticName !== undefined
+    && allowedRetained.includes(retainedAutomaticName);
+  const preserveNative5 = experimentalAsyncToolOperations && retainedAutomaticName === (profile === "development"
+    ? PREVIOUS_ASYNC_DEV_CONNECTOR_NAME : PREVIOUS_ASYNC_CONNECTOR_NAME);
+  const automaticAppName = preserveInactive || preserveNative5 ? retainedAutomaticName! : experimentalAsyncToolOperations
     ? profile === "development" ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME : CHATGPT_ASYNC_CONNECTOR_NAME
     : profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
   return {
@@ -119,7 +130,7 @@ export interface AppConfig {
   experimentalSkillAttachments: boolean;
   allowWebSubagents: boolean;
   experimentalFreshConversationPerTurn: boolean;
-  /** Opt-in async connector schema. Valid only for automatic Full mode and a Native5 identity. */
+  /** Owned async connector schema. New Automatic Full setups use Native6; saved Native5 remains supported. */
   experimentalAsyncToolOperations: boolean;
   /** Explicitly install the additional Pro-sized model row while Manual mode is active. */
   zeroRiskProEnabled: boolean;
@@ -237,8 +248,8 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     host: "127.0.0.1",
     port: 17841,
     contextWindow: 256_000,
-    appName: CHATGPT_CONNECTOR_NAME,
-    automaticAppName: CHATGPT_CONNECTOR_NAME,
+    appName: mode === "full" ? CHATGPT_ASYNC_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME,
+    automaticAppName: mode === "full" ? CHATGPT_ASYNC_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME,
     manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
     browserHost: "managed-chrome",
     browserInteractionMode: "automatic",
@@ -253,7 +264,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     experimentalSkillAttachments: false,
     allowWebSubagents: false,
     experimentalFreshConversationPerTurn: false,
-    experimentalAsyncToolOperations: false,
+    experimentalAsyncToolOperations: mode === "full",
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -617,12 +628,15 @@ function parseConfig(value: unknown, path: string): AppConfig {
   const expectedSynchronousConnectorName = parsed.purpose === "dev-harness"
     ? DEV_CHATGPT_CONNECTOR_NAME
     : CHATGPT_CONNECTOR_NAME;
-  if (experimentalAsyncToolOperations && automaticAppName !== expectedAsyncConnectorName) {
+  const previousAsyncConnectorName = parsed.purpose === "dev-harness"
+    ? PREVIOUS_ASYNC_DEV_CONNECTOR_NAME : PREVIOUS_ASYNC_CONNECTOR_NAME;
+  if (experimentalAsyncToolOperations && ![expectedAsyncConnectorName, previousAsyncConnectorName].includes(automaticAppName)) {
     throw new Error(
       `experimentalAsyncToolOperations requires automaticAppName ${JSON.stringify(expectedAsyncConnectorName)} in ${path}; rerun setup explicitly`,
     );
   }
-  if (!experimentalAsyncToolOperations && automaticAppName !== expectedSynchronousConnectorName) {
+  if (!experimentalAsyncToolOperations && automaticAppName !== expectedSynchronousConnectorName
+    && !(browserInteractionMode === "manual" && [expectedAsyncConnectorName, previousAsyncConnectorName].includes(automaticAppName))) {
     throw new Error(
       `Synchronous tool operations require automaticAppName ${JSON.stringify(expectedSynchronousConnectorName)} in ${path}; rerun setup explicitly`,
     );

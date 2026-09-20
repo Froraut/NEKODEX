@@ -133,6 +133,10 @@ function readState(filePath) {
       state.codexPickerConfirmed = false;
       state.mcpSetupComplete = false;
     }
+    if (state.setupConnectorName != null
+      && (typeof state.setupConnectorName !== "string" || !state.setupConnectorName.trim() || state.setupConnectorName.length > 80)) {
+      delete state.setupConnectorName;
+    }
     if (!Number.isSafeInteger(state.setupContract) || state.setupContract < 1) delete state.setupContract;
     if (typeof state.setupIdentityHash !== "string" || !/^[a-f0-9]{64}$/.test(state.setupIdentityHash)) delete state.setupIdentityHash;
     for (const key of ["setupVerifiedAt", "pickerVerifiedAt"]) {

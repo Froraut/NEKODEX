@@ -1,3 +1,20 @@
+# Native6 migration in 5.6
+
+New Automatic Full setup selects `Codex Native6` (`Codex Native6 DEV` in an isolated DEV profile).
+This identity includes the Native5 asynchronous operation tools and the Native6 metadata-only
+`codex_tool_status` recovery tool. Native4 and Native5 configurations remain readable and keep
+their existing public schemas during ordinary runtime upgrades.
+
+To migrate, choose the visible Native6 upgrade action while idle, create a new ChatGPT connector
+with its own App ID, exact displayed name and existing mode tunnel, then run Verify. Never rename
+or refresh a cached Native4/5 connector to claim Native6. A local migration invalidates the old
+verification proof; it does not prove that ChatGPT has loaded the new schema.
+
+Native6 is the default for new setups, not an automatic replacement of an active user's connection.
+The synchronous Native4 compatibility mode and Manual Zero Risk4 remain available.
+
+## Historical Native4 migration reference
+
 # Connector identity migration for native command fields
 
 [#487](https://github.com/miuuyy/codex-chatgpt-web/issues/487) reports that the Full-mode

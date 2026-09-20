@@ -199,7 +199,13 @@ function invalidateAccountProof(stateStore) {
 
 function ensureRuntimeProofCurrent(stateStore) {
   const state = stateStore.read();
-  if (state.mcpSetupComplete === true && state.setupRuntimeIdentity !== currentRuntimeIdentity()) {
+  const config = runtimeHost.runtimeConfigSnapshot().config;
+  const currentIdentity = setupIdentity(config, browserHost?.snapshot().accountLabel ?? null);
+  // Account identity may still be loading; absence is not evidence of a changed setup.
+  const identityChanged = currentIdentity !== null && state.setupIdentityHash !== currentIdentity;
+  const connectorChanged = state.setupConnectorName != null && state.setupConnectorName !== config?.appName;
+  if (state.mcpSetupComplete === true && (state.setupRuntimeIdentity !== currentRuntimeIdentity()
+    || identityChanged || connectorChanged)) {
     return invalidateAccountProof(stateStore);
   }
   return state;
@@ -827,7 +833,7 @@ function registerIpc({ logger, stateStore }) {
       }
       const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
         setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
-        setupRuntimeIdentity: currentRuntimeIdentity() });
+        setupRuntimeIdentity: currentRuntimeIdentity(), setupConnectorName: runtimeHost.mcpConnectorName() });
       send("launcher:state-changed", state);
       const successMessage = "Local Manual mode runtime is healthy; connector selection remains a manual turn step";
       publishOperation({ name: operationName, status: "completed", message: successMessage });
@@ -851,7 +857,7 @@ function registerIpc({ logger, stateStore }) {
       }
       const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
         setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
-        setupRuntimeIdentity: currentRuntimeIdentity() });
+        setupRuntimeIdentity: currentRuntimeIdentity(), setupConnectorName: runtimeHost.mcpConnectorName() });
       send("launcher:state-changed", state);
       const successMessage = IS_DEV_PROFILE
         ? "DEV harness and connector verified"
