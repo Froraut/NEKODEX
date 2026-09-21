@@ -311,6 +311,12 @@ function hookTextPattern(text: string): string {
     .join("(?:\\r\\n|\\n|\\r)");
 }
 
+function trimBoundaryLineEndings(text: string): string {
+  return text
+    .replace(/^(?:(?:\r\n|\n|\r))+/, "")
+    .replace(/(?:(?:\r\n|\n|\r))+$/, "");
+}
+
 /** Decode only the header spelling; callers still prove ownership of the complete document. */
 function equivalentTrustStateHeaders(text: string, stateKey: string): string[] {
   return [...new Set([...text.matchAll(/^\[hooks\.state\.[^\r\n]+$/gm)].flatMap(match => {
@@ -348,24 +354,55 @@ function locateInterleavedCodexInterruptHook(
   const stateOffset = ownedPrefix.indexOf(stateHeader);
   if (stateOffset < 0 || ownedPrefix.indexOf(stateHeader, stateOffset + 1) !== -1) throw changed();
   const uniqueRange = (fragment: string): { start: number; end: number } => {
-    const pattern = new RegExp(ownedHookTextPattern(fragment, text, installed.stateKey), "g");
-    const match = pattern.exec(text);
-    if (!match || pattern.exec(text)) throw changed();
-    return { start: match.index, end: match.index + match[0].length };
+    const ranges = (candidate: string): Array<{ start: number; end: number }> => {
+      const pattern = new RegExp(ownedHookTextPattern(candidate, text, installed.stateKey), "g");
+      return [...text.matchAll(pattern)].map(match => ({
+        start: match.index!,
+        end: match.index! + match[0].length,
+      }));
+    };
+    const exact = ranges(fragment);
+    const normalizedFragment = trimBoundaryLineEndings(fragment);
+    const normalized = normalizedFragment === fragment ? exact : ranges(normalizedFragment);
+    if (exact.length > 1 || normalized.length !== 1) throw changed();
+    if (exact.length === 0) return normalized[0]!;
+    const [exactRange] = exact;
+    const [normalizedRange] = normalized;
+    if (!exactRange || !normalizedRange
+      || normalizedRange.start < exactRange.start || normalizedRange.end > exactRange.end) throw changed();
+    return exactRange;
   };
   const command = uniqueRange(ownedPrefix.slice(0, stateOffset));
   const state = uniqueRange(ownedPrefix.slice(stateOffset));
-  if (state.start <= command.end) throw changed();
-  const intervening = text.slice(command.end, state.start);
+  const [earlier, later] = [command, state].sort((left, right) => left.start - right.start);
+  if (earlier.end > later.start) {
+    const sharedBoundary = text.slice(later.start, earlier.end);
+    if (!sharedBoundary || /[^\r\n]/.test(sharedBoundary)) throw changed();
+    // Exact journal fragments can both capture the same blank-line boundary after Codex moves
+    // the trust table. Keep the complete source union, but assign those owned newline bytes to
+    // the later range only so restoration removes every owned byte exactly once.
+    earlier.end = later.start;
+  }
+  const intervening = text.slice(earlier.end, later.start);
   const firstAssignment = intervening.split(/\r\n|\n|\r/)
     .map(line => line.trim()).find(line => line && !line.startsWith("#"));
-  if (!firstAssignment || !/^\[\[?.+\]\]?(?:\s*#.*)?$/.test(firstAssignment)) throw changed();
+  if (firstAssignment && !/^\[\[?.+\]\]?(?:\s*#.*)?$/.test(firstAssignment)) throw changed();
 
-  // Codex Desktop can insert an unrelated table before the owned trust state. Relocate only
-  // in memory, proving that table order is semantically irrelevant before reusing the strict
-  // contiguous locator. This does not rewrite user tables or accept changed owned fields.
-  const reordered = text.slice(0, command.end) + text.slice(state.start, state.end)
-    + intervening + text.slice(state.end);
+  // Codex can regroup the trust-state table before the hook or insert unrelated tables between
+  // the two definitions. Rebuild only an in-memory validation document with the exact journaled
+  // definitions contiguous, then map the strict locator's marker range back to the source text.
+  // The source definitions themselves are removed through their independently proven ranges.
+  let reordered = "";
+  const sourceSegments: Array<{ start: number; end: number; originalStart: number }> = [];
+  const appendSource = (start: number, end: number): void => {
+    const rebuiltStart = reordered.length;
+    reordered += text.slice(start, end);
+    sourceSegments.push({ start: rebuiltStart, end: reordered.length, originalStart: start });
+  };
+  appendSource(0, earlier.start);
+  reordered += ownedPrefix;
+  appendSource(earlier.end, later.start);
+  appendSource(later.end, text.length);
   try {
     const original = Bun.TOML.parse(text) as {
       hooks?: { Interrupt?: unknown[]; state?: Record<string, unknown> };
@@ -383,15 +420,7 @@ function locateInterleavedCodexInterruptHook(
     throw changed();
   }
   const owned = locateCodexInterruptHook(reordered, installed, false);
-  const stateLength = state.end - state.start;
-  // Translate the strict locator's ranges back through the two exchanged source segments.
-  const segments = [
-    { start: 0, end: command.end, originalStart: 0 },
-    { start: command.end, end: command.end + stateLength, originalStart: state.start },
-    { start: command.end + stateLength, end: state.end, originalStart: command.end },
-    { start: state.end, end: text.length, originalStart: state.end },
-  ];
-  const ranges = owned.flatMap(range => segments.flatMap(segment => {
+  const markerRanges = owned.flatMap(range => sourceSegments.flatMap(segment => {
     const start = Math.max(range.start, segment.start);
     const end = Math.min(range.end, segment.end);
     return start < end ? [{
@@ -399,6 +428,7 @@ function locateInterleavedCodexInterruptHook(
       end: segment.originalStart + end - segment.start,
     }] : [];
   }));
+  const ranges = [command, state, ...markerRanges];
   const removedCommand = ranges.find(range => range.start === command.start);
   if (removedCommand && command.start > 0 && !/[\r\n]/.test(text[command.start - 1]!)) {
     // The installed fragment owns its leading separator. Keep one of its trailing line
@@ -429,12 +459,13 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
     throw new Error("Codex interrupt lifecycle hook order changed after setup; refusing to overwrite it");
   }
   const endMarker = text.indexOf(MANAGED_INTERRUPT_HOOK_END);
-  if (managedMarkerCount(text) !== 1 || endMarker < 0
-    || (endMarker >= first && endMarker < ownedEnd)
-    || text.split(MANAGED_INTERRUPT_HOOK_END).length !== 2) {
+  const endMarkerMissing = endMarker < 0;
+  if (managedMarkerCount(text) !== 1
+    || (!endMarkerMissing && ((endMarker >= first && endMarker < ownedEnd)
+      || text.split(MANAGED_INTERRUPT_HOOK_END).length !== 2))) {
     throw new Error("Codex interrupt lifecycle hook markers changed after setup; refusing to overwrite them");
   }
-  if (endMarker < first) {
+  if (!endMarkerMissing && endMarker < first) {
     // A moved comment is independent of the owned definitions. Prove it is still a comment,
     // rather than matching text inside an unrelated TOML value, before removing it separately.
     const precedingConfig = text.slice(0, first);
@@ -471,7 +502,10 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   }
   // Codex's TOML editor inserts new tables before trailing comments. The end marker can therefore
   // move past unrelated config even though the owned hook fields remain unchanged.
-  const appendedConfig = text.slice(ownedEnd, endMarker < first ? undefined : endMarker);
+  const appendedConfig = text.slice(
+    ownedEnd,
+    endMarkerMissing || endMarker < first ? undefined : endMarker,
+  );
   const firstAssignment = appendedConfig.split(/\r\n|\n|\r/)
     .map(line => line.trim()).find(line => line && !line.startsWith("#"));
   if (firstAssignment && !/^\[\[?.+\]\]?(?:\s*#.*)?$/.test(firstAssignment)) {
@@ -494,6 +528,7 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
       throw new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
     }
   }
+  if (endMarkerMissing) return [{ start: first, end: ownedEnd }];
   const end = endMarker + MANAGED_INTERRUPT_HOOK_END.length;
   const trailing = installed.fragment.slice(marker + MANAGED_INTERRUPT_HOOK_END.length);
   const trailingLength = new RegExp("^" + hookTextPattern(trailing)).exec(text.slice(end))?.[0].length ?? 0;

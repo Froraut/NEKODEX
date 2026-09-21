@@ -228,6 +228,27 @@ function chatGptModelControlUnavailableAdapterError(diagnostic: string, userVisi
   );
 }
 
+export function chatGptProUnavailableAdapterError(
+  diagnostic: string,
+  userVisibleDetail?: string,
+): ChatGptWebAdapterError {
+  const explicitRetryDate = userVisibleDetail?.startsWith("Try again after ") === true;
+  const message = userVisibleDetail
+    ? `ChatGPT Pro is currently unavailable. ChatGPT: ${userVisibleDetail} No lower-effort fallback was used.`
+    : "ChatGPT Pro is currently unavailable in the model picker. This can happen when its usage limit is reached "
+      + "or the account capability changes. Wait for Pro to reappear, then retry or run Repair. "
+      + "No lower-effort fallback was used.";
+  return new ChatGptWebAdapterError(message, {
+    // A linked explicit retry date establishes a temporary allowance limit. A missing Pro row by
+    // itself cannot distinguish that from an entitlement/capability change, so keep it a conflict.
+    status: explicitRetryDate ? 429 : 409,
+    errorType: explicitRetryDate ? "rate_limit_error" : "invalid_request_error",
+    code: "chatgpt_pro_unavailable",
+    retryable: false,
+    cause: new Error(diagnostic),
+  });
+}
+
 function chatGptPinnedModelError(version: ChatGptWebProModelVersion, cause?: unknown): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(
     `ChatGPT Pro model version ${version} could not be selected and verified. The pending prompt was not sent; check that this version is available in ChatGPT.`,
@@ -793,6 +814,30 @@ export async function throwIfChatGptSubmissionDialog(page: Page): Promise<void> 
   );
 }
 
+export async function throwIfChatGptEffortCapabilityDialog(
+  page: Page,
+  mode: Pick<ChatGptWebModelMode, "displayLabel">,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  throwIfPromptAttachmentAborted(abortSignal);
+  const dialogs = page.locator('[role="dialog"], [role="alertdialog"]').filter({ visible: true });
+  const count = await dialogs.count();
+  throwIfPromptAttachmentAborted(abortSignal);
+  if (count === 0) return;
+  throw new ChatGptWebAdapterError(
+    `ChatGPT blocked the requested ${mode.displayLabel} effort with an account-capability dialog. `
+    + "The pending prompt was not sent. Run Repair to refresh account capabilities or choose an effort the account exposes. "
+    + "No lower-effort fallback was used.",
+    {
+      status: 403,
+      errorType: "permission_error",
+      code: "model_effort_unavailable",
+      retryable: false,
+      cause: new Error(`ChatGPT exposed ${count} blocking dialog(s) immediately after effort selection`),
+    },
+  );
+}
+
 const chatGptTemporaryChatOnboardingDialog = (page: Page): Locator => page
   .locator('[role="dialog"]')
   .filter({ hasText: "Not in history" })
@@ -850,6 +895,12 @@ const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
   .getByText(/Something went wrong[\s\S]*help\.openai\.com/i)
   .last();
 
+const chatGptThinkingFailedAlert = (scope: ChatGptTextScope): Locator => scope
+  // Exact collapsed status only, with its optional textual disclosure chevron. Substrings in
+  // answers or quoted diagnostics are ordinary content.
+  .getByText(/^Thinking failed(?:\s*[>›])?\s*$/i)
+  .last();
+
 // The current UI renders message_length_exceeds_limit as an ordinary response error.
 // Observe only browser-issued submissions from this owned page after Send is activated;
 // an old response, another tab, or a background endpoint cannot classify this turn.
@@ -900,6 +951,12 @@ export class ChatGptSubmissionRejectionObserver {
 }
 
 export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
+  if (await chatGptThinkingFailedAlert(scope).isVisible().catch(() => false)) {
+    throw new ChatGptWebAdapterError(
+      "ChatGPT ended the turn with 'Thinking failed'. Retry the turn.",
+      { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
+    );
+  }
   if (await scope.getByTestId("regenerate-thread-error-button").last().isVisible().catch(() => false)) {
     throw new ChatGptWebAdapterError(
       "ChatGPT displayed an error for this response. Check the ChatGPT tab for the exact error, then retry the turn.",
@@ -2715,17 +2772,25 @@ export class ChatGptBrowserWorker {
     if (targetValue > sliderState.max) {
       const proMayBeLimited = uiEffortIndex === 4 && sliderState.min === 0 && sliderState.max === 3;
       const proRetryHint = proMayBeLimited ? await chatGptProUsageLimitTooltip(activation.menu) : undefined;
-      const proUsageLimitHint = proMayBeLimited
-        ? " If you have made many Pro requests recently, ChatGPT may have temporarily hidden Pro because you reached its usage limit."
-        : "";
+      if (proMayBeLimited) {
+        throw chatGptProUnavailableAdapterError(
+          `ChatGPT effort slider does not expose Pro item index ${uiEffortIndex}`
+          + ` (min=${sliderState.min}; max=${sliderState.max})`,
+          proRetryHint,
+        );
+      }
       throw chatGptModelControlUnavailableAdapterError(
         `ChatGPT effort slider does not expose item index ${uiEffortIndex}`
-        + ` (min=${sliderState.min}; max=${sliderState.max})`
-        + proUsageLimitHint,
+        + ` (min=${sliderState.min}; max=${sliderState.max})`,
         proRetryHint,
       );
     }
     const sliderControl = effortSlider.locator("xpath=ancestor::*[@role='menuitem'][1]");
+    // Establish that any blocking dialog observed after the keypress was caused by this selection,
+    // rather than misclassifying an unrelated dialog that was already present on the page.
+    throwIfPromptAttachmentAborted(abortSignal);
+    await throwIfChatGptSubmissionDialog(page);
+    throwIfPromptAttachmentAborted(abortSignal);
     try {
       await stabilizeEffortSlider({
         target: targetValue,
@@ -2740,8 +2805,17 @@ export class ChatGptBrowserWorker {
         },
         press: (key, options) => sliderControl.press(key, options),
       });
+      await settleChatGptUi();
+      await throwIfChatGptSessionFailureAlert(page);
+      await throwIfChatGptRateLimitDialog(page);
+      await throwIfChatGptEffortCapabilityDialog(page, mode, abortSignal);
     } catch (error) {
       if (abortSignal?.aborted || error instanceof ChatGptWebAdapterError) throw error;
+      // A capability modal can replace or detach the slider before stabilization finishes. Preserve
+      // known session/cooldown classifications, then classify the remaining newly triggered dialog.
+      await throwIfChatGptSessionFailureAlert(page);
+      await throwIfChatGptRateLimitDialog(page);
+      await throwIfChatGptEffortCapabilityDialog(page, mode, abortSignal);
       throw chatGptModelControlUnavailableError(
         error instanceof Error ? error.message : "ChatGPT effort selection failed",
       );
@@ -4061,6 +4135,26 @@ export class ChatGptBrowserWorker {
     }
   }
 
+  private async attachMultipartStagePrompt(
+    page: Page,
+    prompt: string,
+    captureDiagnostic?: (checkpoint: string) => Promise<void>,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
+    // A cooldown dialog can appear only after ChatGPT accepted the preceding part. Detect it before
+    // editing the next composer so the account limit cannot be misreported as attachment corruption.
+    await this.throwIfMultipartStageBlocked(page, abortSignal);
+    await this.attachPrompt(page, prompt, false, captureDiagnostic, abortSignal);
+  }
+
+  private async throwIfMultipartStageBlocked(page: Page, abortSignal?: AbortSignal): Promise<void> {
+    throwIfPromptAttachmentAborted(abortSignal);
+    // Keep this owned observation settled before returning. Racing it against cancellation could
+    // leave its dialog acknowledgement running against a page already released to another turn.
+    await throwIfChatGptRateLimitDialog(page);
+    throwIfPromptAttachmentAborted(abortSignal);
+  }
+
   private async insertPromptText(page: Page, text: string, abortSignal?: AbortSignal): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     const composer = await this.activeComposer(page, 30_000, abortSignal);
@@ -4797,7 +4891,8 @@ export class ChatGptBrowserWorker {
       if (!(error instanceof ChatGptWebAdapterError)) return "browser_failure";
       if (error.code === "rate_limit_exceeded" || error.code === "account_safety_stop"
         || error.code === "context_length_exceeded") return error.code;
-      if (error.code === "model_version_unavailable") return "model_unavailable";
+      if (error.code === "model_version_unavailable" || error.code === "model_effort_unavailable"
+        || error.code === "chatgpt_pro_unavailable") return "model_unavailable";
       if (error.code === "codex_tool_timeout") return "tool_timeout";
       return "other";
     };
@@ -5207,16 +5302,45 @@ export class ChatGptBrowserWorker {
       let finalPrompt = prepared.text;
       if (prepared.multipart && multipartStages && multipartTransactionId && multipartFinalPrompt) {
         for (let index = 0; index < multipartStages.length; index += 1) {
+          // ChatGPT may rewrite or reset the effort control after accepting a staged message. Reopen
+          // the semantic slider and prove the requested state before mutating the next composer.
+          if (index > 0) {
+            await this.runStage(
+              turn.traceId,
+              `multipart_stage_${index + 1}_preflight`,
+              browserStageTimeouts.promptAttachment,
+              stageSignal => this.throwIfMultipartStageBlocked(
+                page,
+                browserStageAbortSignal(stageSignal, turn.abortSignal),
+              ),
+              chatGptSuspensionClock,
+              true,
+            );
+            mode = await this.runStage(
+              turn.traceId,
+              `multipart_stage_${index + 1}_effort_selection`,
+              browserStageTimeouts.effortSelection,
+              stageSignal => this.selectModelAndEffort(
+                page,
+                turn.modelId,
+                stagingMode.effort,
+                browserCapabilities,
+                checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
+                requestedMode.modelVersion,
+                browserStageAbortSignal(stageSignal, turn.abortSignal),
+              ),
+            );
+            await diagnostics.capture(page, `multipart-stage-${index + 1}-effort-selected`);
+          }
           const stage = multipartStages[index]!;
           let stageBaseline = await this.captureSubmissionBaseline(page, turn.abortSignal);
           await this.runStage(
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
             browserStageTimeouts.promptAttachment,
-            (stageSignal) => this.attachPrompt(
+            (stageSignal) => this.attachMultipartStagePrompt(
               page,
               stage.text,
-              false,
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
             ),

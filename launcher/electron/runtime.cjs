@@ -1905,7 +1905,7 @@ class RuntimeHost {
         ...(rolledBack ? ["incomplete first-time setup was rolled back"] : []),
         ...failures,
       ].join("; ");
-      const failure = new Error(message);
+      const failure = new Error(message, { cause: error });
       failure.lifecycle = {
         candidate: "failed",
         previousRuntime: recoveryError ? "failed" : previousRuntime.configured ? "ready" : "unconfigured",

@@ -220,6 +220,14 @@ export interface AccountSafetyPolicy {
   breakMinutes: number;
   maxSessionMinutes: number;
   cooldownMinutes: number;
+  newSessionWindow: { limit: number; minutes: number } | null;
+}
+export interface AccountNewSessionWindowStatus {
+  used: number;
+  remaining: number;
+  limit: number;
+  windowMinutes: number;
+  resetsAt: number | null;
 }
 export interface AccountQuotaWindow {
   usedPercent: number | null;
@@ -261,7 +269,8 @@ export interface AccountPoolSnapshot {
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
     proxy: AccountProxy;
-    safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean };
+    safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
+      newSessionWindow: AccountNewSessionWindowStatus | null };
     accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number }>;
 }
 

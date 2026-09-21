@@ -48,6 +48,17 @@ export interface ChatGptTurnUserRevision {
   itemId?: string;
 }
 
+/**
+ * A pathless environment delta can corroborate one current native turn, but can never provide
+ * filesystem authority. Its caller must resolve cwd/roots from that exact turn's canonical rollout.
+ */
+export interface ChatGptTrailingEnvironmentDeltaClaim {
+  threadId: string;
+  turnId: string;
+  sandboxType: ChatGptSandboxPolicy["type"];
+  networkAccess?: boolean;
+}
+
 export const CHATGPT_TURN_REVISION_CONFLICT_MESSAGE =
   "ChatGPT web current user message conflicts with native Codex turn_id metadata";
 
@@ -346,6 +357,98 @@ export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedReques
     if (text) return parseChatGptEnvironmentText(parsed, text);
   }
   return undefined;
+}
+
+/**
+ * Recognize Codex's same-turn date/time refresh when it trails the active instruction and tool
+ * rounds. This is only a corroborating claim: it deliberately carries no cwd or roots, and must
+ * never be answered from cached authority.
+ */
+export function extractChatGptTrailingEnvironmentDeltaClaim(
+  parsed: CodexParsedRequest,
+): ChatGptTrailingEnvironmentDeltaClaim | undefined {
+  if (parsed._compactionRequest) return undefined;
+  const metadata = clientTurnMetadata(parsed);
+  if (!metadata || metadata.request_kind !== "turn") return undefined;
+  const identity = extractChatGptTurnIdentity(parsed);
+  const threadId = typeof metadata.thread_id === "string" ? metadata.thread_id.trim() : "";
+  const turnId = typeof metadata.turn_id === "string" ? metadata.turn_id.trim() : "";
+  if (!threadId || !turnId || identity.threadId !== threadId || identity.turnId !== turnId) return undefined;
+
+  const rolloutIdentity = extractChatGptThreadSpawnLineage(parsed) ?? extractChatGptRootThreadMetadata(parsed);
+  if (!rolloutIdentity || rolloutIdentity.threadId !== threadId) return undefined;
+
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const trailingIndex = input.length - 1;
+  const trailing = record(input[trailingIndex]);
+  if (!trailing || trailing.type !== "message" || trailing.role !== "user"
+    || typeof trailing.id !== "string" || !trailing.id || itemTurnId(trailing) !== turnId
+    || !Array.isArray(trailing.content) || trailing.content.length !== 1) return undefined;
+  const part = record(trailing.content[0]);
+  const text = typeof part?.text === "string" ? part.text.trim() : "";
+  if (part?.type !== "input_text" || !/^<environment_context>[\s\S]*<\/environment_context>$/.test(text)) {
+    return undefined;
+  }
+  if ([...text.matchAll(/<environment_context>/g)].length !== 1
+    || [...text.matchAll(/<\/environment_context>/g)].length !== 1) return undefined;
+
+  // A trailing refresh may describe policy, never paths or writable entries. Filesystem authority
+  // comes exclusively from the exact current rollout selected by the caller.
+  if (/<\/?(?:cwd|root|workspace_roots|path)\b/i.test(text)) return undefined;
+  const entryTags = [...text.matchAll(/<entry\b[^>]*>/gi)];
+  if (entryTags.some(tag => {
+    const access = /\baccess\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1]?.toLowerCase();
+    return access !== "read" && access !== "deny";
+  })) return undefined;
+  const profileTags = [...text.matchAll(/<permission_profile\b[^>]*>/gi)];
+  const modeTags = [...text.matchAll(/<sandbox_mode\b[^>]*>/gi)];
+  const fileSystems = [...text.matchAll(/<file_system\b[^>]*>/gi)];
+  if (profileTags.length + modeTags.length !== 1) return undefined;
+  if (profileTags.length === 1) {
+    const profileType = /\btype=["']([^"']+)["']/i.exec(profileTags[0]![0])?.[1]?.toLowerCase();
+    const fileSystemType = fileSystems.length === 1
+      ? /\btype=["']([^"']+)["']/i.exec(fileSystems[0]![0])?.[1]?.toLowerCase()
+      : undefined;
+    if (!((profileType === "disabled" && fileSystemType === "unrestricted")
+      || (profileType === "managed" && fileSystemType === "restricted"))) return undefined;
+  } else if (fileSystems.length > 0) return undefined;
+
+  const sandboxType = sandboxTypeFromEnvironment(text);
+  if (!sandboxType) return undefined;
+  if (rolloutIdentity.sandboxType !== "platform" && rolloutIdentity.sandboxType !== sandboxType) return undefined;
+
+  const networkTags = [...text.matchAll(/<network_access\b[^>]*>([^<]*)<\/network_access>/gi)];
+  if (/<\/?network_access\b/i.test(text) && networkTags.length !== 1) return undefined;
+  const networkValue = networkTags[0]?.[1]?.trim().toLowerCase();
+  if (networkValue !== undefined && networkValue !== "enabled" && networkValue !== "disabled") return undefined;
+  // Restricted policies must state network authority rather than asking a caller to infer it from
+  // omission. Danger-full-access has no separate network bit in ChatGptSandboxPolicy.
+  if ((sandboxType === "dangerFullAccess") !== (networkValue === undefined)) return undefined;
+
+  let activeInstructionIndex = -1;
+  for (let index = trailingIndex - 1; index >= 0; index -= 1) {
+    const item = record(input[index]);
+    if (!isUserOrParentInstruction(item, metadata)) continue;
+    if (typeof item.id !== "string" || !item.id || itemTurnId(item) !== turnId) return undefined;
+    activeInstructionIndex = index;
+    break;
+  }
+  if (activeInstructionIndex < 0) return undefined;
+  for (let index = activeInstructionIndex + 1; index < trailingIndex; index += 1) {
+    const item = record(input[index]);
+    if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== turnId) return undefined;
+    if (item.type === "message" && item.role !== "assistant") return undefined;
+    if (item.type !== "message" && item.type !== "reasoning"
+      && item.type !== "function_call" && item.type !== "function_call_output") return undefined;
+  }
+
+  return {
+    threadId,
+    turnId,
+    sandboxType,
+    ...(networkValue !== undefined ? { networkAccess: networkValue === "enabled" } : {}),
+  };
 }
 
 function environmentBeforeUser(input: unknown[], userIndex: number, expectedTurnId?: string, metadata?: Record<string, unknown>): string | undefined {

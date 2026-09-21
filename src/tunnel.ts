@@ -22,6 +22,7 @@ const MAX_ZIP_ENTRIES = 128;
 const MAX_BINARY_BYTES = 100 * 1024 * 1024;
 export const TUNNEL_READY_TIMEOUT_MS = 120_000;
 const TUNNEL_STATUS_POLL_INTERVAL_MS = 1_000;
+const WINDOWS_REMOVE_RETRY_DELAYS_MS = [100, 200, 500, 1_000, 2_000] as const;
 
 interface TunnelInstallManifest {
   version: 1;
@@ -245,6 +246,42 @@ function acquireTunnelInstallLock(lockPath: string): () => Error | undefined {
   };
 }
 
+export async function removeTunnelInstallFile(
+  path: string,
+  options: {
+    platform?: NodeJS.Platform;
+    remove?: (path: string) => void;
+    wait?: (delayMs: number) => Promise<void>;
+    retryDelaysMs?: readonly number[];
+  } = {},
+): Promise<void> {
+  const platform = options.platform ?? process.platform;
+  const remove = options.remove ?? (target => rmSync(target, { force: true }));
+  const wait = options.wait ?? (delayMs => new Promise(resolve => setTimeout(resolve, delayMs)));
+  const retryDelays = options.retryDelaysMs ?? WINDOWS_REMOVE_RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      remove(path);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const retryable = platform === "win32" && (code === "EBUSY" || code === "EPERM");
+      if (!retryable || attempt >= retryDelays.length) throw error;
+      await wait(retryDelays[attempt]!);
+    }
+  }
+}
+
+function tunnelInstallCleanupError(primary: unknown, cleanup: unknown): Error {
+  const primaryMessage = primary instanceof Error ? primary.message : String(primary);
+  const cleanupMessage = cleanup instanceof Error ? cleanup.message : String(cleanup);
+  return new AggregateError(
+    [primary, cleanup],
+    `${primaryMessage}; temporary tunnel-client cleanup also failed: ${cleanupMessage}`,
+    { cause: primary },
+  );
+}
+
 export async function installTunnelClient(
   expectedBefore?: TunnelClientInstallSnapshot,
   onInstalled?: (owned: TunnelClientInstallSnapshot) => void,
@@ -297,16 +334,23 @@ export async function installTunnelClient(
   mkdirSync(dirname(executable), { recursive: true, mode: 0o700 });
   const stagedExecutable = `${executable}.install-${process.pid}-${randomUUID()}${process.platform === "win32" ? ".exe" : ""}`;
   atomicWriteFile(stagedExecutable, binary);
-  let version: ReturnType<typeof runChecked>;
+  let verificationError: unknown;
   try {
     if (process.platform !== "win32") chmodSync(stagedExecutable, 0o700);
-    version = runChecked(stagedExecutable, ["--version"], { timeout: 10_000 });
+    const version = runChecked(stagedExecutable, ["--version"], { timeout: 10_000 });
     if (!version.stdout.includes(TUNNEL_VERSION) && !version.stderr.includes(TUNNEL_VERSION)) {
       throw new Error(`Installed tunnel-client did not report version ${TUNNEL_VERSION}`);
     }
-  } finally {
-    rmSync(stagedExecutable, { force: true });
+  } catch (error) {
+    verificationError = error;
   }
+  try {
+    await removeTunnelInstallFile(stagedExecutable);
+  } catch (cleanupError) {
+    if (verificationError) throw tunnelInstallCleanupError(verificationError, cleanupError);
+    throw cleanupError;
+  }
+  if (verificationError) throw verificationError;
   const manifest: TunnelInstallManifest = {
     version: 1,
     tunnelClientVersion: TUNNEL_VERSION,

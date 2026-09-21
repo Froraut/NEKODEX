@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash, randomUUID } = require('node:crypto');
 const { BrowserHost } = require('./browser-host.cjs');
 const { AccountSafety } = require('./account-safety.cjs');
 const { AccountNetwork, validateProxy } = require('./account-network.cjs');
@@ -8,6 +9,19 @@ const { createAccountRegistry, validateAccountId } = require('./account-registry
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 
 const ACCOUNT_READ_SETTLEMENT_TIMEOUT_MS = 10_000;
+
+function newWebSessionReservationId(accountId, traceId, nonce = randomUUID()) {
+  validateAccountId(accountId);
+  if (typeof traceId !== 'string' || !/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) {
+    throw new Error('New Web session trace identity is invalid');
+  }
+  if (typeof nonce !== 'string' || !nonce || nonce.length > 128) {
+    throw new Error('New Web session reservation nonce is invalid');
+  }
+  return createHash('sha256')
+    .update(`nekodex-new-web-session\0${accountId}\0${traceId}\0${nonce}`)
+    .digest('hex');
+}
 
 /** One browser session per account; shared global capacity and sticky conversation routing. */
 class AccountBrowserPool {
@@ -819,15 +833,12 @@ class AccountBrowserPool {
     const admissionEpoch = this.evidenceEpoch(id);
     const revealRevision = this.selectionRevision;
     const keys = [key, requirement?.routingKey].filter(Boolean);
-    if (!activeTraces.has(traceId)) {
-      const accountActive = active.filter(tab => this.traceOwners.get(tab.traceId) === id).length
-        + [...this.reservations.values()].filter(owner => owner === id).length;
-      this.safety.admit(id, accountActive);
-    }
     this.reservations.set(traceId, id);
     this.pendingAffinity.set(traceId, { id, keys });
     this.traceOwners.set(traceId, id);
     this.lastAssigned.set(id, ++this.sequence);
+    let newSessionReservation;
+    let newSessionRecorded = false;
     try {
       const host = this.getHost(id);
       if (keys.some(binding => this.affinity.has(binding) && this.affinity.get(binding) !== id)) {
@@ -840,10 +851,12 @@ class AccountBrowserPool {
         throw new Error('NEKODEX turn admission changed while acquiring this task; retry after launcher activity finishes');
       }
       const account = this.registry.snapshot().accounts.find(candidate => candidate.id === id);
-      const exactContinuation = retained || [...host.turnTabs.values()].some(tab => tab.traceId === traceId
+      const runningSession = [...host.turnTabs.values()].find(tab => tab.traceId === traceId
         && tab.status === 'running' && tab.interactionMode === 'automatic'
-        && tab.conversationKey === key && tab.connectorIdentity === connector)
-        || Boolean(host.exactRetainedTurnTab(key, connector));
+        && tab.conversationKey === key && tab.connectorIdentity === connector);
+      const retainedSession = host.exactRetainedTurnTab(key, connector);
+      const reusesWebSession = Boolean(runningSession || retainedSession);
+      const exactContinuation = retained || reusesWebSession;
       if (!exactContinuation) {
         if (!account || !account.enabled) throw new Error('ChatGPT account is no longer enabled for this turn');
         if (this.evidenceEpoch(id) !== admissionEpoch) {
@@ -854,11 +867,27 @@ class AccountBrowserPool {
         }
       }
       if (retained) host.precheckRetainedTurn(traceId, key, connector);
+      if (!activeTraces.has(traceId)) {
+        const accountActive = [...this.turnTabs.values()].filter(tab => tab.status === 'running'
+          && this.traceOwners.get(tab.traceId) === id).length
+          + [...this.reservations].filter(([reservedTrace, owner]) => reservedTrace !== traceId && owner === id).length;
+        const createsNewSession = !reusesWebSession;
+        newSessionReservation = createsNewSession ? newWebSessionReservationId(id, traceId) : undefined;
+        const admission = this.safety.admit(id, accountActive, {
+          createsNewSession,
+          ...(newSessionReservation ? { sessionId: newSessionReservation } : {}),
+        });
+        newSessionRecorded = admission.newSessionRecorded;
+      }
       host.assertLiveConversationOwner(traceId, key);
       this.ensureTabCapacity(host, traceId, key, connector);
       // Keep the turn owner and its tab independent from visible selection. The
       // automatic reveal owns the selection only while its revision is current.
       const lease = await host.beginTurn(traceId, false, helperPid, key, connector, retained);
+      if (newSessionRecorded && lease.reused) {
+        this.safety.rollbackNewSession(id, newSessionReservation);
+        newSessionRecorded = false;
+      }
       if (reveal && !this.accountOperationLabel(id) && this.selectionRevision === revealRevision) {
         this.registry.select(id);
         this.selectionRevision++;
@@ -871,7 +900,17 @@ class AccountBrowserPool {
       return { ...lease, accountId: id };
     } catch (error) {
       // No other account is tried here: even a failed acquisition can own a live tab.
-      if ([...this.getHost(id).turnTabs.values()].some(tab => tab.traceId === traceId)) {
+      const ownsTab = [...this.getHost(id).turnTabs.values()].some(tab => tab.traceId === traceId);
+      if (newSessionRecorded && !ownsTab) {
+        try { this.safety.rollbackNewSession(id, newSessionReservation); }
+        catch (rollbackError) {
+          this.logger.warn('browser.account_new_session_rollback_failed', {
+            accountId: id,
+            message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          });
+        }
+      }
+      if (ownsTab) {
         try { this.persistAffinity(keys, id); }
         catch (affinityError) { this.logger.warn('browser.account_affinity_write_failed', { accountId: id, message: affinityError.message }); }
       } else this.traceOwners.delete(traceId);
@@ -980,4 +1019,4 @@ class AccountBrowserPool {
     try { if (JSON.parse(fs.readFileSync(this.options.descriptorPath, 'utf8')).pid === process.pid) fs.rmSync(this.options.descriptorPath); } catch {}
   }
 }
-module.exports = { AccountBrowserPool };
+module.exports = { AccountBrowserPool, newWebSessionReservationId };

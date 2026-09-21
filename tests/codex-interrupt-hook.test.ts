@@ -318,6 +318,50 @@ test("preserves foreign tables inserted between the managed command and trust st
   }
 });
 
+test("restores a managed trust state moved before its hook with normalized boundary whitespace", () => {
+  for (const ending of ["\n", "\r\n"]) {
+    const original = [
+      'model = "gpt-5.6-sol"',
+      "",
+      "[mcp_servers.user_owned]",
+      'command = "user-tool"',
+      "",
+    ].join(ending);
+    const installed = installCodexInterruptHook(original, "/Users/test/.codex/config.toml", {
+      runtimeCommand: ["/opt/runtime"],
+    });
+    const state = [
+      `[hooks.state.${JSON.stringify(installed.installed.stateKey)}]`,
+      `trusted_hash = ${JSON.stringify(installed.installed.trustedHash)}`,
+      "",
+    ].join(ending);
+    const reordered = installed.text
+      .replace(state, "")
+      .replace(MANAGED_INTERRUPT_HOOK_START, state + MANAGED_INTERRUPT_HOOK_START)
+      .replace(
+        `timeout = 3${ending}${ending}${MANAGED_INTERRUPT_HOOK_END}`,
+        `timeout = 3${ending}${MANAGED_INTERRUPT_HOOK_END}`,
+      );
+
+    expect(Bun.TOML.parse(reordered)).toEqual(Bun.TOML.parse(installed.text));
+    verifyCodexInterruptHook(reordered, installed.installed);
+    const restored = restoreCodexInterruptHook(reordered, installed.installed);
+    expect(Bun.TOML.parse(restored)).toEqual(Bun.TOML.parse(original));
+    expect(restored).toContain('[mcp_servers.user_owned]');
+    expect(restored).toContain('command = "user-tool"');
+    verifyCodexInterruptHookRestored(restored);
+
+    for (const changed of [
+      reordered.replace("timeout = 3", "timeout = 2"),
+      reordered.replace(installed.installed.trustedHash, "sha256:" + "a".repeat(64)),
+      reordered + state,
+    ]) {
+      expect(() => verifyCodexInterruptHook(changed, installed.installed)).toThrow("changed after setup");
+      expect(() => restoreCodexInterruptHook(changed, installed.installed)).toThrow("changed after setup");
+    }
+  }
+});
+
 test("foreign table interleaving does not permit changed or ambiguous hook ownership", () => {
   const installed = installCodexInterruptHook('model = "gpt-5.6-sol"\n', "/Users/test/.codex/config.toml", {
     runtimeCommand: ["/opt/runtime"],
@@ -394,5 +438,27 @@ test("restores a hook whose end comment moved before unchanged definitions witho
       const markerInsideValue = original + 'description = """\n' + movedComment + '"""\n' + mcp + definitions;
       expect(() => restoreCodexInterruptHook(markerInsideValue, installed.installed)).toThrow("markers changed after setup");
     }
+  }
+});
+
+test("restores an unchanged legacy hook after native formatting removes its end marker", () => {
+  const original = 'model = "gpt-5.6-sol"\n';
+  const installed = installCodexInterruptHook(original, "/Users/test/.codex/config.toml", {
+    runtimeCommand: ["/opt/runtime"],
+  });
+  const foreign = '\n[mcp_servers.user_owned]\ncommand = "user-tool"\n';
+  const rewritten = installed.text.replace(`${MANAGED_INTERRUPT_HOOK_END}\n`, "") + foreign;
+
+  verifyCodexInterruptHook(rewritten, installed.installed);
+  const restored = restoreCodexInterruptHook(rewritten, installed.installed);
+  expect(restored).toBe(original + foreign);
+  verifyCodexInterruptHookRestored(restored);
+
+  for (const changed of [
+    rewritten.replace("timeout = 3", "timeout = 2"),
+    rewritten.replace(installed.installed.trustedHash, "sha256:" + "a".repeat(64)),
+    rewritten + `\n${MANAGED_INTERRUPT_HOOK_START}\n`,
+  ]) {
+    expect(() => verifyCodexInterruptHook(changed, installed.installed)).toThrow("changed after setup");
   }
 });

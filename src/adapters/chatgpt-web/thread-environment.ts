@@ -2,12 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { atomicWriteFile } from "../../config";
 import { getCodexHome } from "../../codex-integration-shared";
+import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import type { CodexParsedRequest } from "../../types";
 import {
   extractChatGptTurnEnvironment,
   extractChatGptCompactionSourceRevision,
   extractChatGptContinuationEnvironmentClaim,
   extractChatGptSteeringEnvironmentClaim,
+  extractChatGptTrailingEnvironmentDeltaClaim,
   extractChatGptTurnIdentity,
   extractChatGptThreadSpawnLineage,
   extractChatGptRootThreadMetadata,
@@ -49,6 +51,107 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function itemTurnId(value: unknown): string | undefined {
+  const turnId = record(record(value)?.internal_chat_message_metadata_passthrough)?.turn_id;
+  return typeof turnId === "string" ? turnId : undefined;
+}
+
+function messageText(item: Record<string, unknown>): string {
+  if (typeof item.content === "string") return item.content;
+  if (!Array.isArray(item.content)) return "";
+  return item.content
+    .map(part => record(part)?.text)
+    .filter((text): text is string => typeof text === "string")
+    .join("\n");
+}
+
+function messageHoldsEnvironmentEnvelope(item: Record<string, unknown>): boolean {
+  if (item.type !== "message" || item.role !== "user" || !Array.isArray(item.content)) return false;
+  const environmentParts = item.content.flatMap(part => {
+    const text = record(part)?.text;
+    return typeof text === "string" && /<\/?environment_context\b/i.test(text) ? [text.trim()] : [];
+  });
+  return environmentParts.length === 1
+    && /^<environment_context>[\s\S]*<\/environment_context>$/.test(environmentParts[0]!);
+}
+
+function isCompactionSummaryMessage(item: Record<string, unknown>): boolean {
+  if (item.type !== "message" || item.role !== "user") return false;
+  const text = messageText(item).trim();
+  return isReadableCompactionSummaryText(text) || text === OPAQUE_COMPACTION_NOTE;
+}
+
+function skippedMessageHasBoundedShape(item: Record<string, unknown>, turnId: string): boolean {
+  const owner = itemTurnId(item);
+  // An untagged item ID is only a structural bound for the observed Codex wire shape. It grants no
+  // authority: resolve() accepts the projection only after matching the current native rollout.
+  return owner === undefined
+    ? typeof item.id === "string" && item.id.length > 0
+    : owner === turnId;
+}
+
+/**
+ * Codex 0.155 can place its summary between the current environment envelope and instruction, or
+ * make that summary the final input item. Build only the adjacency projection consumed by the
+ * existing trusted-environment parser; metadata and sandbox validation remain unchanged there.
+ */
+function environmentRequestAcrossCompactionSummary(parsed: CodexParsedRequest): CodexParsedRequest | undefined {
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : undefined;
+  const turnId = extractChatGptTurnIdentity(parsed).turnId;
+  if (!body || !input || !turnId) return undefined;
+
+  const envelopeIndexes = input.flatMap((value, index) => {
+    const item = record(value);
+    return item && messageHoldsEnvironmentEnvelope(item) ? [index] : [];
+  });
+  if (envelopeIndexes.length !== 1) return undefined;
+  const envelopeIndex = envelopeIndexes[0]!;
+  const envelope = record(input[envelopeIndex]);
+  if (!envelope || typeof envelope.id !== "string" || !envelope.id
+    || (itemTurnId(envelope) !== undefined && itemTurnId(envelope) !== turnId)) return undefined;
+
+  let activeInstructionIndex = -1;
+  let sawSummary = false;
+  let lastSummary: Record<string, unknown> | undefined;
+  for (let index = input.length - 1; index > envelopeIndex; index -= 1) {
+    const item = record(input[index]);
+    if (!item || item.type !== "message") return undefined;
+    if (isCompactionSummaryMessage(item)) {
+      if (!skippedMessageHasBoundedShape(item, turnId)) return undefined;
+      sawSummary = true;
+      lastSummary ??= item;
+      continue;
+    }
+    if (item.role === "developer") {
+      if (!skippedMessageHasBoundedShape(item, turnId)) return undefined;
+      continue;
+    }
+    if (item.role === "user") {
+      if (activeInstructionIndex >= 0) return undefined;
+      activeInstructionIndex = index;
+      continue;
+    }
+    return undefined;
+  }
+  if (!sawSummary) return undefined;
+
+  const normalized = input.filter((value, index) => {
+    if (index <= envelopeIndex || (activeInstructionIndex >= 0 && index >= activeInstructionIndex)) return true;
+    const item = record(value);
+    return !item || !isCompactionSummaryMessage(item);
+  });
+  if (activeInstructionIndex < 0) {
+    if (!lastSummary) return undefined;
+    normalized.push({
+      ...lastSummary,
+      role: "user",
+      content: [{ type: "input_text", text: "Continue after the native compaction summary." }],
+    });
+  }
+  return { ...parsed, _rawBody: { ...body, input: normalized } };
 }
 
 function pathIdentity(value: string): string {
@@ -179,6 +282,49 @@ export class ChatGptThreadEnvironmentStore {
       return environment;
     } catch (error) {
       if (!(error instanceof MissingTrustedCodexEnvironmentError) || !identity.threadId) throw error;
+      const trailingDelta = extractChatGptTrailingEnvironmentDeltaClaim(parsed);
+      if (trailingDelta) {
+        const rolloutIdentity = extractChatGptThreadSpawnLineage(parsed) ?? extractChatGptRootThreadMetadata(parsed);
+        if (!rolloutIdentity || rolloutIdentity.threadId !== trailingDelta.threadId
+          || identity.turnId !== trailingDelta.turnId) throw error;
+        const nativeEnvironment = resolveCurrentCodexRolloutEnvironment({
+          codexHome: this.codexHome,
+          ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
+          lineage: rolloutIdentity,
+          turnId: trailingDelta.turnId,
+          tools: parsed.context.tools,
+        });
+        if (!nativeEnvironment) throw error;
+        if (trailingDelta.sandboxType !== nativeEnvironment.sandboxPolicy.type
+          || (nativeEnvironment.sandboxPolicy.type === "dangerFullAccess"
+            ? trailingDelta.networkAccess !== undefined
+            : trailingDelta.networkAccess === undefined
+              || trailingDelta.networkAccess !== nativeEnvironment.sandboxPolicy.networkAccess)) {
+          throw new Error("Trailing environment delta conflicts with its current Codex rollout");
+        }
+        this.set(identity.threadId, nativeEnvironment);
+        return nativeEnvironment;
+      }
+      const compactedRequest = environmentRequestAcrossCompactionSummary(parsed);
+      if (compactedRequest) {
+        const claim = extractChatGptTurnEnvironment(compactedRequest);
+        const rolloutIdentity = extractChatGptThreadSpawnLineage(parsed) ?? extractChatGptRootThreadMetadata(parsed);
+        const nativeEnvironment = rolloutIdentity && identity.turnId
+          ? resolveCurrentCodexRolloutEnvironment({
+            codexHome: this.codexHome,
+            ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
+            lineage: rolloutIdentity,
+            turnId: identity.turnId,
+            tools: parsed.context.tools,
+          })
+          : undefined;
+        if (!nativeEnvironment) throw error;
+        if (!sameAuthority(claim, nativeEnvironment)) {
+          throw new Error("Compacted environment conflicts with its current Codex rollout");
+        }
+        this.set(identity.threadId, nativeEnvironment);
+        return nativeEnvironment;
+      }
       const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
       const lineage = extractChatGptThreadSpawnLineage(parsed);
       const currentCompaction = hasCurrentContext && isChatGptCompactionContinuation(parsed);

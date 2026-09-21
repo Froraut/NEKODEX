@@ -290,7 +290,10 @@ section of `~/.codex/config.toml`:
 max_concurrent_threads_per_session = 1
 ```
 
-If the table already exists, add or change only the key; do not create a second `[agents]` table.
+If the table already contains the older `max_threads` name, replace that assignment rather than
+adding the new name beside it. Codex treats `max_threads` and `max_concurrent_threads_per_session`
+as aliases, so defining both can make `codex exec` fail with a duplicate-field error. Otherwise,
+add or change only `max_concurrent_threads_per_session`; do not create a second `[agents]` table.
 Bigger Context can make one turn larger and longer, but does not increase safe account concurrency.
 
 ## Images from earlier turns are attached again
