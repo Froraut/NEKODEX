@@ -1,3 +1,4 @@
+import { browserWindowCopy } from "./browser-window-copy";
 import { sessionIssueCopy } from "./session-issue-copy";
 import type { CompactionModel } from "./types";
 import { codexSettingsStatus, modelConnectionReadiness, setupNextStep } from "./setup-progress";
@@ -554,6 +555,7 @@ export function App() {
           <LauncherShell
             browser={browser}
             catalogFailure={catalogFailure}
+            error={error}
             copy={copy}
             key="launcher"
             language={language}
@@ -569,7 +571,7 @@ export function App() {
             updatePanelRequest={updatePanelRequest}
           />
         )}
-        {error ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
+        {error && !snapshot.state.onboardingComplete ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
     </div>
   );
 }
@@ -720,6 +722,7 @@ function Onboarding({
 function LauncherShell({
   browser,
   catalogFailure,
+  error,
   copy,
   language,
   logs,
@@ -735,6 +738,7 @@ function LauncherShell({
 }: {
   browser: BrowserState | null;
   catalogFailure: string | null;
+  error: string | null;
   copy: Copy;
   language: Language;
   logs: LogRecord[];
@@ -1222,6 +1226,7 @@ function LauncherShell({
         </div>
       </aside>
 
+      {error && surface !== "browser" ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
       <section className={`workspace${snapshot.state.launcherRestartRequired ? " has-runtime-notice" : ""}`}>
           {snapshot.state.launcherRestartRequired ? <div className="runtime-restart-notice" role="status">
             <div><strong>{copy.launcherRuntimeRestartTitle}</strong><p>{copy.launcherRuntimeRestartBody}</p></div>
@@ -1253,6 +1258,7 @@ function LauncherShell({
             {surface === "browser" ? (
               <BrowserSurface
                 browser={browser}
+                error={error}
                 browserSlotRef={browserSlotRef}
                 copy={copy}
                 interactionMode={snapshot.state.browserInteractionMode}
@@ -1468,6 +1474,7 @@ function SidebarItem({
 
 function BrowserSurface({
   browser,
+  error,
   browserSlotRef,
   copy,
   interactionMode,
@@ -1479,6 +1486,7 @@ function BrowserSurface({
   setError,
 }: {
   browser: BrowserState | null;
+  error: string | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
   copy: Copy;
   interactionMode: BrowserInteractionMode;
@@ -1491,6 +1499,7 @@ function BrowserSurface({
 }) {
   const [passkeyStarting, setPasskeyStarting] = useState(false);
   const workflow = workflowCopy(language);
+  const windowCopy = browserWindowCopy(language);
   const [passkeyRequestPending, setPasskeyRequestPending] = useState(false);
   const [existingChromeStarting, setExistingChromeStarting] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<{ id: string; traceId: string | null } | null>(null);
@@ -1519,7 +1528,7 @@ function BrowserSurface({
     : browser?.passkeyLogin?.phase === "verifying" ? copy.passkeyVerifying
     : browser?.passkeyLogin?.phase === "cancelling" ? copy.passkeyCancelling
     : copy.passkeyImporting;
-  const passkeyActionDisabled = passkeyBlocked || passkeyRequestPending
+  const passkeyActionDisabled = transitionBusy || passkeyBlocked || passkeyRequestPending
     || (passkeyWaiting ? !passkeyCanImport : passkeyStarting);
   useEffect(() => {
     if (passkeyWaiting) setPasskeyStarting(false);
@@ -1644,6 +1653,10 @@ function BrowserSurface({
 
   return (
     <section className="browser-surface">
+      {error ? <div className="browser-inline-error" role="alert">
+        <p>{localizeLauncherError(copy, error)}</p>
+        <button type="button" className="text-button" onClick={() => setError(null)}>{copy.dismiss}</button>
+      </div> : null}
       {browser?.accountName ? <div className="browser-account-label">{copy.accountsCurrent}: {browser.accountName}</div> : null}
       <div className="browser-tab-strip" role="tablist" aria-label={copy.browser} title={copy.browserTabLimit}>
         {(browser?.tabs ?? []).map((tab) => (
@@ -1679,10 +1692,10 @@ function BrowserSurface({
               type="button"
             >
               <BrandMark small />
+              {tab.loading ? <i className="tab-spinner" aria-hidden="true" /> : <StateDot state={browserTabTone(tab.status)} />}
               <span className="browser-tab-title" title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
                 {browserTabTitleFromTitle(tab.title, copy)}
               </span>
-              {tab.loading ? <i className="tab-spinner" /> : <StateDot state={browserTabTone(tab.status)} />}
             </button>
             {tab.closable ? (
               <button
@@ -1715,6 +1728,13 @@ function BrowserSurface({
             onClick={() => void closeTab(cancelTab.id, cancelTab.traceId)}>{closingTabs.has(cancelTab.id) ? copy.browserCancellingTask : copy.manualPromptCancel}</button>
         </div>
       </div> : null}
+      <div className="browser-workspace-actions">
+        <button type="button" className="text-button" disabled={transitionBusy}
+          onClick={() => void api!.openBrowserWindow(false).catch(cause => setError(messageOf(cause)))}>{windowCopy.newWindow}</button>
+        <button type="button" className="text-button" disabled={transitionBusy}
+          onClick={() => void api!.openBrowserWindow(true).catch(cause => setError(messageOf(cause)))}>{windowCopy.newTab}</button>
+        <span>{windowCopy.hint}</span>
+      </div>
       <div className="browser-toolbar">
         <div className="browser-history">
           <IconButton

@@ -120,6 +120,7 @@ class AccountBrowserPool {
     return [...this.hosts.values()].map(host => host.activeTraceId).find(Boolean) || null;
   }
   currentOperation() {
+    if (this.passkeyImportLease) return 'ChatGPT passkey login';
     if (this.networkOperation) return 'Account network configuration';
     if (this.addingAccount) return 'ChatGPT account addition';
     if (this.loginOperation) return 'ChatGPT account login';
@@ -135,6 +136,7 @@ class AccountBrowserPool {
   }
   accountMutationOperationLabel(id) {
     validateAccountId(id);
+    if (this.passkeyImportLease?.id === id) return 'ChatGPT passkey login';
     const reserved = this.accountOperations.get(id);
     if (reserved) return reserved.label;
     if (this.networkOperation === id) return 'Account network configuration';
@@ -419,6 +421,7 @@ class AccountBrowserPool {
     return this.accountSnapshot();
   }
   async selectAccount(id) {
+    if (this.passkeyImportLease && this.passkeyImportLease.id !== id) throw new Error('Finish or cancel passkey sign-in before switching accounts');
     if (this.addingAccount) throw new Error('Finish adding the ChatGPT account before switching accounts');
     const host = this.getHost(id);
     this.assertAccountOperationAvailable(id);
@@ -613,6 +616,8 @@ class AccountBrowserPool {
     const revision = this.selectionRevision;
     const operation = { id, revision };
     this.loginOperation = operation;
+    this.embeddedLoginLeases ??= new Map();
+    this.embeddedLoginLeases.set(id, releaseOperation);
     try {
       if (this.selectionRevision !== revision || this.registry.snapshot().selectedId !== id) {
         throw new Error('Account selection changed before login started');
@@ -624,6 +629,7 @@ class AccountBrowserPool {
       return this.snapshot();
     } finally {
       if (this.loginOperation === operation) this.loginOperation = null;
+      if (this.embeddedLoginLeases?.get(id) === releaseOperation) this.embeddedLoginLeases.delete(id);
       releaseOperation();
     }
   }
@@ -633,16 +639,45 @@ class AccountBrowserPool {
   async openLogin(...args) {
     const id = this.registry.snapshot().selectedId;
     const releaseOperation = this.acquireAccountOperation(id, 'ChatGPT account login');
+    this.embeddedLoginLeases ??= new Map();
+    this.embeddedLoginLeases.set(id, releaseOperation);
     try { return await this.getHost(id).openLogin(...args); }
-    finally { releaseOperation(); }
+    finally {
+      if (this.embeddedLoginLeases.get(id) === releaseOperation) this.embeddedLoginLeases.delete(id);
+      releaseOperation();
+    }
+  }
+  async openWorkspaceWindow(asTab = false) {
+    const account = this.registry.snapshot().accounts.find(account => account.id === this.registry.snapshot().selectedId);
+    if (!account || this.destroyed) throw new Error('ChatGPT account is unavailable');
+    return this.getHost(account.id).openWorkspaceWindow(asTab, account.label);
+  }
+  async closeWorkspaceWindows() {
+    for (const host of this.hosts.values()) await host.closeWorkspaceWindows();
   }
   async openPasskeyLogin(...args) {
-    this.ensurePrimaryImport();
-    const releaseOperation = this.acquireAccountOperation('default', 'ChatGPT passkey login');
-    try { return await this.getHost('default').openPasskeyLogin(...args); }
-    finally { releaseOperation(); }
+    if (this.destroyed) throw new Error('ChatGPT account pool is closed');
+    const id = this.registry.snapshot().selectedId;
+    const host = this.getHost(id);
+    if (this.passkeyImportLease) {
+      if (this.passkeyImportLease.id !== id) throw new Error('Another account owns passkey sign-in');
+      return await host.openPasskeyLogin(...args);
+    }
+    if (this.existingChromeImportLease) throw new Error('Finish the existing Chrome import before passkey sign-in');
+    // Only a pool-owned embedded login can hand off its lease. The host cancels and joins
+    // that exact operation before starting the dedicated browser; foreign leases still veto.
+    const handoff = this.embeddedLoginLeases?.has(id) && host.embeddedLoginController && host.loginOperation;
+    const releaseOperation = handoff ? () => {} : this.acquireAccountOperation(id, 'ChatGPT passkey login');
+    const lease = Object.freeze({ id });
+    this.passkeyImportLease = lease;
+    try { return await host.openPasskeyLogin(...args); }
+    finally {
+      if (this.passkeyImportLease === lease) this.passkeyImportLease = null;
+      releaseOperation();
+    }
   }
   async openExistingChromeLogin(...args) {
+    if (this.passkeyImportLease) throw new Error('Finish or cancel passkey sign-in before Chrome import');
     this.ensurePrimaryImport();
     if (this.existingChromeImportLease) {
       return await this.getHost('default').openExistingChromeLogin(...args);
@@ -694,6 +729,7 @@ class AccountBrowserPool {
   }
   async selectTab(tabId) {
     const host = this.ownerForTab(tabId);
+    if (this.passkeyImportLease && this.passkeyImportLease.id !== host.accountId) throw new Error('Finish or cancel passkey sign-in before switching accounts');
     if (this.addingAccount) throw new Error('Finish adding the ChatGPT account before switching accounts');
     this.assertAccountOperationAvailable(host.accountId);
     const tab = tabId === 'home' ? null : host.turnTabs.get(tabId);

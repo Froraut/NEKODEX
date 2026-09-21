@@ -82,6 +82,12 @@ function installMockLauncher() {
         active: false, canCancel: false, canCopySettings: true, canAllowFileAccess: true, error: "chrome-profile-access-denied" } });
     operation = { name: "existing-chrome-login", status: "failed", message: "Fixture Chrome access was denied" };
   }
+  if (scenario === "passkey-secondary" || scenario === "passkey-secondary-error") {
+    state.launcherRestartRequired = true;
+    browser.accountId = "12345678-1234-4123-8123-123456789abc";
+    browser.accountName = "Secondary";
+    browser.tabs[0].title = "Verifying it's you… - OpenAI account authentication";
+  }
   let update = scenario === "update-recheck" ? { status: "error", message: "Fixture offline" }
     : scenario === "update-active" ? { status: "verifying", version: "9.9.9" }
       : scenario === "update-missing-speed" ? { status: "downloading", version: "9.9.9", downloadedBytes: 4096, totalBytes: 8192 }
@@ -147,14 +153,19 @@ function installMockLauncher() {
     },
     recheckUpdate: async () => { calls.push(["update-recheck"]); update = { status: "up-to-date" }; emit("update", update); return update; },
     onStateChanged: listen("state"), onBrowserState: listen("browser"), onOperation: listen("operation"), onLog: listen("log"), onUpdateState: listen("update"),
-    setBrowserBounds: async () => true,
+    setBrowserBounds: async bounds => { window.fixtureBounds = bounds; return true; },
     setBrowserSurfaceActive: async (active) => { browser.surfaceActive = active; return { ...browser }; },
+    openBrowserWindow: async asTab => { calls.push(["browser-window", asTab]); return {count:1}; },
     showBrowser: async () => { browser.visible = true; emit("browser", { ...browser }); return { ...browser }; },
     hideBrowser: async () => { browser.visible = false; emit("browser", { ...browser }); return { ...browser }; },
     navigateBrowser: async (action) => { calls.push(["navigate", action]); return { ...browser }; },
     setupHermes: async () => { calls.push(["hermes"]); return { provider: "codex-web", defaultChanged: false }; },
     openPasskeyLogin: async () => {
-      calls.push(["passkey"]); browser.loginKind = "passkey";
+      calls.push(["passkey"]);
+      if (scenario === "passkey-secondary-error") throw new Error("passkey-capture-failed");
+      browser.loginKind = "passkey";
+      browser.passkeyLogin = { phase: "waiting", active: true, canImport: true, canReveal: true, canCancel: true,
+        startedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 180000).toISOString(), error: null };
       operation = { name: "passkey-login", status: "running", message: "Waiting in Chrome" };
       emit("browser", { ...browser }); emit("operation", operation); return { ...browser };
     },

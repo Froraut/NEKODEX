@@ -1,10 +1,11 @@
+const { BrowserWorkspaceWindows } = require("./browser-workspace-windows.cjs");
 const { authenticationIssue } = require("./authentication-issue.cjs");
 const { validateAccountId } = require("./account-registry.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash, randomBytes } = require("node:crypto");
 const { setTimeout: delay } = require("node:timers/promises");
-const { clipboard, dialog, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
+const { clipboard, dialog, BrowserWindow, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { awaitInspection, inspectionAbortError } = require("./inspection-control.cjs");
 const {
@@ -482,7 +483,10 @@ class BrowserHost {
         webSecurity: true,
       },
     });
-    const remoteContentsVisible = contents => this.window.isVisible() && !this.window.isMinimized()
+    this.workspaceContents = new Map();
+    const remoteContentsVisible = contents => this.workspaceContents.has(contents)
+      ? (() => { const window = this.workspaceContents.get(contents); return !window.isDestroyed() && window.isVisible() && window.isFocused(); })()
+      : this.window.isVisible() && !this.window.isMinimized()
       && this.isAccountVisible() && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady)
       && this.activeView().webContents === contents;
     this.permissionPolicy = createRemotePermissionPolicy({
@@ -2781,7 +2785,7 @@ class BrowserHost {
       const sessionRefresh = this.sessionRefreshOperation;
       if (sessionRefresh) {
         try {
-          await sessionRefresh;
+          await awaitInspection(sessionRefresh, controller.signal);
         } catch {
           // An explicit login is the recovery path after a failed saved-session refresh.
         }
@@ -2795,14 +2799,14 @@ class BrowserHost {
           this.logger.info("browser.login_opened");
           const current = this.view.webContents.getURL();
           if (!current.startsWith(CHATGPT_ORIGIN)) {
-            await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+            await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), controller.signal);
           }
           controller.signal.throwIfAborted();
-          await this.probeAuthentication();
+          await awaitInspection(this.probeAuthentication({ signal: controller.signal }), controller.signal);
           controller.signal.throwIfAborted();
           const authenticated = await this.waitForAuthenticated(180_000, controller.signal);
           controller.signal.throwIfAborted();
-          await this.runSessionInspection(false);
+          await this.runSessionInspection(false, controller.signal);
           controller.signal.throwIfAborted();
           return authenticated;
         } catch (error) {
@@ -2853,6 +2857,35 @@ class BrowserHost {
       return contents;
     } });
   }
+
+  async openWorkspaceWindow(asTab = false, accountName = "ChatGPT") {
+    await this.ready();
+    this.workspaceBrowser ??= new BrowserWorkspaceWindows({
+      BrowserWindow, session: this.view.webContents.session, accountId: this.accountId,
+      label: accountName, allowedUrl: allowedAuthUrl,
+      register: (contents, window) => {
+        this.workspaceContents.set(contents, window);
+        this.permissionPolicy.register(contents, 'auth'); this.externalLinkBroker.register(contents);
+      },
+      unregister: contents => {
+        this.workspaceContents.delete(contents);
+        this.permissionPolicy.unregister(contents); this.externalLinkBroker.unregister(contents);
+      },
+      external: (contents, url) => this.externalLinkBroker.open(contents, url, 'home').catch(() => {}),
+      onAuthNavigation: async url => {
+        // New auth-page navigation invalidates dispatch proof before an identity can change.
+        if (new URL(url).origin !== CHATGPT_ORIGIN) {
+          this.workspaceAuthenticationPending = true;
+          this.setState({ authenticated: false, authenticationStatus: 'unknown', message: 'Checking saved session' });
+        }
+        if (!this.workspaceAuthenticationPending) return;
+        try { await this.retryAuthenticationCheck(); this.workspaceAuthenticationPending = false; } catch { /* Existing ownership gates remain authoritative. */ }
+      },
+    });
+    this.workspaceBrowser.open({ asTab });
+    return { count: this.workspaceBrowser.windows.size };
+  }
+  closeWorkspaceWindows() { return this.workspaceBrowser?.closeAll(); }
 
   openPasskeyLogin() {
     requireAutomaticBrowserInspection(this, "Automated ChatGPT passkey import");
@@ -3634,6 +3667,7 @@ class BrowserHost {
     this.readOnlyInspection?.controller.abort(new Error("Browser host closed"));
     this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));
     this.existingChromeLoginController?.abort(new Error("Existing Chrome sign-in cancelled during launcher shutdown"));
+    this.workspaceBrowser?.destroy();
     this.permissionPolicy?.destroy();
     this.externalLinkBroker?.destroy();
     this.authGeneration = (this.authGeneration ?? 0) + 1;

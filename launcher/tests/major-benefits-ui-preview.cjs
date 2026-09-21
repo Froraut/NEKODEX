@@ -158,3 +158,44 @@ test("session diagnostics explain unavailable verification and open the saved br
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });
+
+
+test("secondary passkey controls and tab order remain visible with restart and error notices", async () => {
+  for (const width of [760, 1280]) {
+    const {page, errors} = await open("passkey-secondary-error", {width, height:900});
+    try {
+      await navigateSidebar(page, "Browser");
+      assert.equal(await page.getByRole("button", {name:"Use existing Chrome sign-in", exact:true}).count(), 0);
+      await page.getByRole("button",{name:"New browser window",exact:true}).click();
+      await page.getByRole("button",{name:"New browser tab",exact:true}).click();
+      assert.deepEqual(await page.evaluate(()=>window.fixtureCalls.filter(c=>c[0]==='browser-window')), [['browser-window',false],['browser-window',true]]);
+      await page.getByRole("button", {name:"Use passkey", exact:true}).first().click();
+      await page.locator(".browser-inline-error").waitFor();
+      await page.waitForFunction(() => window.fixtureBounds?.y >= document.querySelector('.browser-inline-error').getBoundingClientRect().bottom, {timeout:5000});
+      const layout = await page.evaluate(() => {
+        const error=document.querySelector('.browser-inline-error').getBoundingClientRect();
+        const viewport=document.querySelector('.browser-viewport').getBoundingClientRect();
+        const tab=document.querySelector('.browser-tab-select');
+        const title=tab.querySelector('.browser-tab-title');
+        return {errorBottom:error.bottom,viewportTop:viewport.top,viewportHeight:viewport.height,
+          order:[...tab.children].map(c=>c.className), clipped:title.scrollWidth>title.clientWidth,
+          overflow:document.documentElement.scrollWidth>innerWidth};
+      });
+      assert.equal(layout.clipped,false);assert.equal(layout.overflow,false);
+      assert.match(layout.order[0],/brand-mark/);assert.match(layout.order[1],/state-dot|tab-spinner/);
+      assert.equal(layout.order[2],"browser-tab-title");
+      assert.ok(layout.viewportTop>=layout.errorBottom);assert.ok(layout.viewportHeight>100);
+      await page.screenshot({path:path.join(output, `passkey-error-${width}.png`),fullPage:true});
+      assert.deepEqual(errors,[]);
+    } finally {await page.close();}
+  }
+  const {page,errors}=await open("passkey-secondary",{width:760,height:900});
+  try {
+    await navigateSidebar(page,"Browser");
+    await page.getByRole("button",{name:"Use passkey",exact:true}).first().click();
+    await page.getByRole("button",{name:"Import browser sign-in",exact:true}).first().waitFor({timeout:5000});
+    assert.equal(await page.evaluate(()=>window.fixtureCalls.filter(c=>c[0]==='passkey').length),1);
+    await page.screenshot({path:path.join(output,'passkey-secondary-waiting.png'),fullPage:true});
+    assert.deepEqual(errors,[]);
+  } finally {await page.close();}
+});

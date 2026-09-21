@@ -995,6 +995,10 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-tab-close", (_event, tabId, expectedTraceId) => browserHost.closeTab(tabId, expectedTraceId));
   handle("launcher:manual-prompt-copy", (_event, tabId) => browserHost.copyManualPrompt(tabId));
   handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost.confirmManualSent(tabId));
+  handle("launcher:browser-window-open", (_event, asTab = false) => {
+    if (typeof asTab !== "boolean") throw new Error("Invalid browser window request");
+    return browserHost.openWorkspaceWindow(asTab);
+  });
   handle("launcher:browser-login", async () => {
     const browser = await browserHost.openLogin();
     if (browser.authenticated) {
@@ -1710,6 +1714,7 @@ async function requestQuit({ admissionHeld = false, restart = false, stopRuntime
     if (browserHost?.hasActiveTurns()) {
       throw new Error("Finish or cancel active tasks before quitting NEKODEX");
     }
+    await browserHost?.closeWorkspaceWindows();
     // Session persistence is a recoverable preflight. Keep every owner intact if it fails.
     await browserHost?.persistSession();
     const operationAfterPersistence = currentGlobalOperation();
