@@ -6,7 +6,7 @@ import traditionalChinese from "./i18n-zh-TW.json";
 const en = {
   lastConnectorVerification: "Last connector verification: {time}",
   passkeyBrowser: "Passkey browser",
-  passkeyBrowserBody: "Choose the installed browser for an isolated temporary sign-in profile. Your normal profile is not read. The imported session must pass Launcher verification.",
+  passkeyBrowserBody: "Chrome offers existing profiles first and remembers your selection. A temporary profile is used only when none matches. Firefox uses an isolated profile. Imported sign-in is verified.",
   webSubagents: "Web subagents",
   webSubagentsBody: "Allow ChatGPT Web tasks to delegate to Codex agents and use JavaScript tool orchestration. When off, commands and individual tool calls still work. Native-model tasks are unaffected. New installations start with this off; existing settings are preserved.",
   compactionModel: "Pro summary model",
@@ -604,7 +604,7 @@ const en = {
 const zh: Record<keyof typeof en, string> = {
   lastConnectorVerification: "最近一次连接器验证：{time}",
   passkeyBrowser: "登录浏览器",
-  passkeyBrowserBody: "选择已安装的浏览器，使用独立临时配置登录。不读取日常配置，导入会话需通过验证。",
+  passkeyBrowserBody: "Chrome 优先提供现有配置并记住选择。没有匹配配置时才使用临时配置。Firefox 使用独立配置。导入后验证登录。",
   webSubagents: "Web 子代理",
   webSubagentsBody: "允许 ChatGPT Web 任务委派给 Codex 代理，并使用 JavaScript 编排工具。关闭后仍可运行命令和单独调用工具。不影响原生模型任务。新安装默认关闭，现有设置保持不变。",
   compactionModel: "Pro 摘要模型",
@@ -1160,7 +1160,7 @@ const zh: Record<keyof typeof en, string> = {
 const ja: Record<keyof typeof en, string> = {
   lastConnectorVerification: "前回のコネクター検証: {time}",
   passkeyBrowser: "ログイン用ブラウザー",
-  passkeyBrowserBody: "一時プロファイルでログインします。通常のプロファイルは読みません。取得したセッションを検証します。",
+  passkeyBrowserBody: "Chrome は既存のプロファイルを先に提示し、選択を記憶します。一致しない場合のみ一時プロファイルを使います。Firefox は独立プロファイルを使います。取り込み後にログインを検証します。",
   webSubagents: "Web サブエージェント",
   webSubagentsBody: "ChatGPT Web タスクによる Codex エージェントへの委任と JavaScript によるツール連携を許可します。オフでもコマンドと個別のツール呼び出しは利用できます。ネイティブモデルには影響しません。新規導入ではオフ、既存の設定は維持します。",
   compactionModel: "Pro 要約モデル",

@@ -2939,7 +2939,7 @@ class BrowserHost {
         this.logger.info("browser.passkey_login_started");
         const transfer = await this.loginWithPasskey(patch => {
           if (!controller.signal.aborted) this.updatePasskeyProgress(patch);
-        });
+        }, { accountId: this.accountId, accountLabel: this.state.accountLabel, signal: controller.signal });
         this.updatePasskeyProgress({ phase: controller.signal.aborted ? "cancelling" : "verifying" });
         const result = await this.installPasskeyLogin(transfer, controller.signal);
         this.updatePasskeyProgress({ phase: "completed", error: null });
@@ -2948,9 +2948,10 @@ class BrowserHost {
     })();
     const tracked = operation.catch(error => {
       const message = error instanceof Error ? error.message : String(error);
-      const cancelled = controller.signal.aborted && !/(cleanup|clearing|removing|did not exit|termination|refused)/i.test(message);
+      const cancelled = (controller.signal.aborted || error?.code === "profile-login-cancelled") && !/(cleanup|clearing|removing|did not exit|termination|refused)/i.test(message);
       const phase = cancelled ? "cancelled" : /timed out/i.test(message) ? "timed-out" : "failed";
       const errorCode = phase === "cancelled" ? null
+        : error?.code === "chrome-account-mismatch" ? "chrome-account-mismatch"
         : error?.code === "existing_chrome_handoff_timeout" ? "passkey-handoff-timeout"
           : phase === "timed-out" ? "passkey-timeout"
             : /(cleanup|clearing|removing|did not exit|termination|refused)/i.test(message) ? "passkey-cleanup-failed"

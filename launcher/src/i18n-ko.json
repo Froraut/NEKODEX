@@ -551,7 +551,7 @@
   "webSubagents": "Web 하위 에이전트",
   "webSubagentsBody": "ChatGPT Web 작업이 Codex 에이전트에 위임하고 JavaScript로 도구 호출을 구성하도록 허용합니다. 꺼도 명령과 개별 도구 호출은 사용할 수 있습니다. 네이티브 모델 작업에는 영향을 주지 않습니다. 새 설치에서는 꺼져 있으며 기존 설정은 유지됩니다.",
   "passkeyBrowser": "로그인 브라우저",
-  "passkeyBrowserBody": "별도 임시 프로필에서 로그인합니다. 기존 프로필은 읽지 않으며 가져온 세션을 검증합니다.",
+  "passkeyBrowserBody": "Chrome은 기존 프로필을 먼저 제안하고 선택을 기억합니다. 일치하는 프로필이 없을 때만 임시 프로필을 사용합니다. Firefox는 별도 프로필을 사용합니다. 가져온 로그인을 확인합니다.",
   "connectionsNav": "연결",
   "modelsConnectionTab": "모델 및 Codex 경로",
   "toolsConnectionTab": "로컬 도구 커넥터",

@@ -1,3 +1,5 @@
+const { createChromeProfileChoice } = require("./chrome-profile-choice.cjs");
+const { createProfileFirstLogin } = require("./profile-first-login.cjs");
 const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
 const { createCodexAccountTools } = require("./codex-account-tools.cjs");
@@ -1977,6 +1979,13 @@ async function start() {
     stateStore.update({ browserInteractionMode: configuredInteractionMode });
   }
   startupPhase = "browser";
+  const profileFirstLogin = createProfileFirstLogin({
+    choose: createChromeProfileChoice({
+      root: path.join(app.getPath("home"), "Library", "Application Support", "Google", "Chrome"),
+      coreHome: CORE_HOME, dialog, window: () => mainWindow,
+      executable: () => runtimeHost.passkeyChromeExecutable("chrome"), language: () => stateStore.read().language,
+    }), runtime: runtimeHost, session, dialog, window: () => mainWindow, language: () => stateStore.read().language,
+  });
   browserHost = new AccountBrowserPool({
     skipInitialNavigation: launcherSmokeTest,
     getManualSubmitTimeoutSec: () => stateStore.read().manualSubmitTimeoutSec,
@@ -1990,7 +1999,8 @@ async function start() {
     getConnectorName: () => runtimeHost.browserConnectorName(),
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
-    loginWithPasskey: onProgress => runtimeHost.capturePasskeyLogin(onProgress, stateStore.read().passkeyBrowser),
+    loginWithPasskey: (onProgress, context) => stateStore.read().passkeyBrowser === "firefox"
+      ? runtimeHost.capturePasskeyLogin(onProgress, "firefox") : profileFirstLogin(onProgress, context),
     loginWithExistingChrome: (onProgress, options) => runtimeHost.captureExistingChromeLogin(onProgress, options),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,

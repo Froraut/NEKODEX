@@ -1,5 +1,6 @@
 const ACTIVE_PHASES = new Set(["starting", "waiting", "importing", "verifying", "cancelling"]);
 const PUBLIC_ERROR_CODES = new Set([
+  "chrome-account-mismatch",
   "passkey-timeout",
   "passkey-handoff-timeout",
   "passkey-capture-failed",

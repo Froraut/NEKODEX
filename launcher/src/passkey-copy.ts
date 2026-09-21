@@ -2,6 +2,8 @@ import type { Copy } from "./i18n";
 
 export function passkeyFailureText(code: string | null, copy: Copy): string {
   switch (code) {
+    case "chrome-account-mismatch":
+      return copy.passkeyFailed;
     case "passkey-timeout":
     case "passkey-handoff-timeout":
       return copy.passkeyTimedOut;
