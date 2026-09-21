@@ -1176,8 +1176,15 @@ function registerIpc({ logger, stateStore }) {
 
   handle("launcher:doctor", () => IS_DEV_PROFILE ? runtimeHost.devDoctor() : runtimeHost.doctor());
   handle("launcher:route-diagnostics", () => runtimeHost.routeDiagnostics());
-  handle("launcher:cancel-turns", () => {
+  handle("launcher:cancel-turns", async () => {
     if (IS_DEV_PROFILE) throw new Error("DEV chat turns are owned by the repository CLI process");
+    const translations = require('./task-control-copy.json');
+    const copy = translations[stateStore.read().language] ?? translations.en;
+    const confirmation = await dialog.showMessageBox(mainWindow, {
+      type: 'warning', title: copy.all, message: copy.all, detail: copy.detail,
+      buttons: [copy.cancel, copy.confirm], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (confirmation.response !== 1) return { cancelled: true };
     return runtimeHost.cancelActiveTurns();
   });
   handle("launcher:uninstall-integration", async () => {

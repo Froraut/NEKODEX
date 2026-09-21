@@ -462,7 +462,8 @@ export interface LauncherApi {
   verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;
   routeDiagnostics(): Promise<RouteDiagnosticsReport>;
-  cancelTurns(): Promise<{ stdout: string }>;
+  cancelTurns(): Promise<{ cancelled: true } | { cancelled: false; cancelledHttpTurns: number;
+    cancelledBrowserTurns: number; cancelledCompactionRuns: number | null }>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
   setupMcp(input: {

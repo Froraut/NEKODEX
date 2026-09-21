@@ -214,6 +214,7 @@ export async function interruptActiveTurn(
 export async function cancelActiveTurns(config: AppConfig): Promise<{
   cancelledHttpTurns: number;
   cancelledBrowserTurns: number;
+  cancelledCompactionRuns: number | null;
 }> {
   const result = await control(config, "cancel-turns");
   const cancelledHttpTurns = result.cancelled_http_turns;
@@ -227,6 +228,8 @@ export async function cancelActiveTurns(config: AppConfig): Promise<{
   return {
     cancelledHttpTurns: cancelledHttpTurns as number,
     cancelledBrowserTurns: cancelledBrowserTurns as number,
+    cancelledCompactionRuns: Number.isInteger(result.cancelled_compaction_runs)
+      && (result.cancelled_compaction_runs as number) >= 0 ? result.cancelled_compaction_runs as number : null,
   };
 }
 

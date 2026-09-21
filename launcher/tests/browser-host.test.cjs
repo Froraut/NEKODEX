@@ -14,6 +14,8 @@ const {
 } = require("../electron/browser-state.cjs");
 const {
   allowedAuthUrl,
+  allowedWorkspaceUrl,
+  guardBrowserNavigation,
   BrowserHost,
   IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
@@ -24,6 +26,31 @@ const {
   navigationErrorForLog,
   navigationOriginForLog,
 } = require("../electron/browser-host.cjs");
+
+test('workspace navigation permits ChatGPT documents while auth popup creation stays narrow', () => {
+  for (const url of ['https://chatgpt.com/', 'https://chatgpt.com/c/example', 'https://chatgpt.com/?temporary-chat=true']) {
+    assert.equal(allowedWorkspaceUrl(url), true);
+    assert.equal(allowedAuthUrl(url), false);
+  }
+  assert.equal(allowedWorkspaceUrl('https://accounts.google.com/signin'), true);
+  for (const url of ['https://chatgpt.com.evil.test/', 'http://chatgpt.com/', 'https://user:pass@chatgpt.com/', 'https://accounts.google.com:9000/', 'javascript:alert(1)']) {
+    assert.equal(allowedWorkspaceUrl(url), false);
+  }
+});
+
+test('embedded navigation blocks foreign main-frame commits before external broker handling', () => {
+  const contents = new EventEmitter(), external = [];
+  guardBrowserNavigation(contents, url => external.push(url));
+  let prevented = 0;
+  const event = { preventDefault() { prevented++; } };
+  contents.emit('will-navigate', event, 'https://chatgpt.com/c/example');
+  contents.emit('will-redirect', event, 'https://chatgpt.com/', false, true);
+  assert.equal(prevented, 0);
+  contents.emit('will-navigate', event, 'https://example.test/');
+  contents.emit('will-redirect', event, 'https://example.test/redirect', false, true);
+  assert.equal(prevented, 2);
+  assert.deepEqual(external, ['https://example.test/', 'https://example.test/redirect']);
+});
 
 test("manual prompt handoff keeps ordinary turns at thirty seconds and compaction at two minutes", () => {
   assert.equal(MANUAL_SUBMIT_TIMEOUT_MS, 30_000);

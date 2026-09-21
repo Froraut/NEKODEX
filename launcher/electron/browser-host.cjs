@@ -166,13 +166,32 @@ function allowedAuthUrl(value) {
   } catch {
     return false;
   }
-  if (parsed.protocol !== "https:") return false;
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return false;
   if (parsed.hostname === "chatgpt.com") {
     return parsed.pathname === "/auth"
       || parsed.pathname.startsWith("/auth/")
       || parsed.pathname === "/login";
   }
   return AUTH_PROVIDER_HOSTS.has(parsed.hostname);
+}
+
+function allowedWorkspaceUrl(value) {
+  try {
+    const url = new URL(value);
+    return (url.origin === CHATGPT_ORIGIN && !url.username && !url.password)
+      || allowedAuthUrl(value);
+  } catch { return false; }
+}
+
+function guardBrowserNavigation(contents, external) {
+  const guard = (event, url) => {
+    if (allowedWorkspaceUrl(url)) return;
+    event.preventDefault();
+    // The external broker independently requires a fresh user gesture.
+    void external(url);
+  };
+  contents.on('will-navigate', guard);
+  contents.on('will-redirect', (event, url, _inPlace, mainFrame) => { if (mainFrame) guard(event, url); });
 }
 
 function navigationOriginForLog(value) {
@@ -1175,6 +1194,7 @@ class BrowserHost {
     const contents = this.view.webContents;
     this.permissionPolicy?.register(contents, "auth");
     this.externalLinkBroker?.register(contents);
+    guardBrowserNavigation(contents, url => this.externalLinkBroker?.open(contents, url, 'home').catch(() => {}));
     contents.setWindowOpenHandler(({ url, referrer, postBody }) => {
       if (allowedAuthUrl(url)) {
         return {
@@ -1902,6 +1922,7 @@ class BrowserHost {
     const contents = authView.webContents;
     this.permissionPolicy?.register(contents, "auth");
     this.externalLinkBroker?.register(contents);
+    guardBrowserNavigation(contents, url => this.externalLinkBroker?.open(contents, url, 'home').catch(() => {}));
     const clearNavigationTimeout = () => {
       if (!authView.navigationTimeout) return;
       clearTimeout(authView.navigationTimeout);
@@ -2862,7 +2883,7 @@ class BrowserHost {
     await this.ready();
     this.workspaceBrowser ??= new BrowserWorkspaceWindows({
       BrowserWindow, session: this.view.webContents.session, accountId: this.accountId,
-      label: accountName, allowedUrl: allowedAuthUrl,
+      label: accountName, allowedUrl: allowedWorkspaceUrl,
       register: (contents, window) => {
         this.workspaceContents.set(contents, window);
         this.permissionPolicy.register(contents, 'auth'); this.externalLinkBroker.register(contents);
@@ -3714,6 +3735,8 @@ class BrowserHost {
 
 module.exports = {
   allowedAuthUrl,
+  allowedWorkspaceUrl,
+  guardBrowserNavigation,
   authViewOptions,
   BrowserHost,
   BrowserTurnCancelledError,

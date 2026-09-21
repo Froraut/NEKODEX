@@ -1,3 +1,4 @@
+import taskControlCopy from "../electron/task-control-copy.json";
 import { browserWindowCopy } from "./browser-window-copy";
 import { sessionIssueCopy } from "./session-issue-copy";
 import type { CompactionModel } from "./types";
@@ -2811,7 +2812,8 @@ function SettingsSurface({
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [localBusy, setBusy] = useState(false);
   const busy = localBusy || Boolean(snapshot.lifecycle?.transition);
-  const [turnsCancelled, setTurnsCancelled] = useState(false);
+  const [turnsCancelled, setTurnsCancelled] = useState<string | null>(null);
+  const taskCopy = taskControlCopy[language] ?? taskControlCopy.en;
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
   const codexStatus = codexSettingsStatus(snapshot.state, devProfile, Boolean(catalogFailure));
   const proModelBusy = busy
@@ -2849,8 +2851,13 @@ function SettingsSurface({
     setBusy(true);
     setError(null);
     try {
-      await api!.cancelTurns();
-      setTurnsCancelled(true);
+      const receipt = await api!.cancelTurns();
+      if (receipt.cancelled) return;
+      setTurnsCancelled(receipt.cancelledHttpTurns === 0 && receipt.cancelledBrowserTurns === 0
+        && receipt.cancelledCompactionRuns === 0 ? taskCopy.none : taskCopy.receipt
+          .replace("{http}", String(receipt.cancelledHttpTurns))
+          .replace("{browser}", String(receipt.cancelledBrowserTurns))
+          .replace("{compaction}", receipt.cancelledCompactionRuns === null ? taskCopy.unknown : String(receipt.cancelledCompactionRuns)));
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -3102,8 +3109,8 @@ function SettingsSurface({
       {!devProfile ? <button className="diagnostic-row" disabled={busy} onClick={() => void cancelTurns()} type="button">
         <Icon name="close" />
         <span>
-          <strong>{copy.cancelTurns}</strong>
-          <small>{turnsCancelled ? copy.turnsCancelled : copy.cancelTurnsBody}</small>
+          <strong>{taskCopy.all}</strong>
+          <small>{turnsCancelled ?? taskCopy.detail}</small>
         </span>
         <Icon name="chevron" />
       </button> : null}

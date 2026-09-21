@@ -1067,13 +1067,21 @@ class RuntimeHost {
       : automaticConnectorName({ development: this.launcherProfile === "development" });
   }
 
-  cancelActiveTurns() {
+  async cancelActiveTurns() {
     this.assertProductionProfile("Launcher-owned turn cancellation");
-    return this.run("cancel-active-turns", ["service", "cancel-turns"], {
+    const result = await this.run("cancel-active-turns", ["service", "cancel-turns"], {
       message: "Cancelling active Codex turns",
-      successMessage: "Active Codex turns cancelled",
+      successMessage: "Cancellation request acknowledged",
       timeoutMs: 15_000,
     });
+    const receipt = JSON.parse(result.stdout);
+    for (const key of ['cancelledHttpTurns', 'cancelledBrowserTurns']) {
+      if (!Number.isInteger(receipt[key]) || receipt[key] < 0) throw new Error('Invalid cancellation acknowledgement');
+    }
+    return { cancelled: false, cancelledHttpTurns: receipt.cancelledHttpTurns,
+      cancelledBrowserTurns: receipt.cancelledBrowserTurns,
+      cancelledCompactionRuns: Number.isInteger(receipt.cancelledCompactionRuns) && receipt.cancelledCompactionRuns >= 0
+        ? receipt.cancelledCompactionRuns : null };
   }
 
   async uninstallIntegration() {
