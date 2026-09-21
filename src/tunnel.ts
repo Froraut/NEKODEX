@@ -673,7 +673,11 @@ export function parseTunnelStatus(output: string, alias: string, exitStatus = 0)
   }
 }
 
-export function tunnelStatus(config: AppConfig, signal?: AbortSignal): TunnelRuntimeStatus {
+export function tunnelStatus(
+  config: AppConfig,
+  signal?: AbortSignal,
+  timeoutMs = 10_000,
+): TunnelRuntimeStatus {
   throwIfAborted(signal);
   const settings = tunnel(config);
   if (!existsSync(settings.binaryPath)) {
@@ -682,7 +686,7 @@ export function tunnelStatus(config: AppConfig, signal?: AbortSignal): TunnelRun
   const result = runCommand(
     settings.binaryPath,
     ["runtimes", "cleanup", "--json"],
-    { timeout: 10_000, signal },
+    { timeout: timeoutMs, signal },
   );
   throwIfAborted(signal);
   return parseTunnelStatus(tunnelCommandOutput(result), settings.alias, result.status);
@@ -692,27 +696,49 @@ export async function waitForTunnelReady(
   config: AppConfig,
   timeoutMs = TUNNEL_READY_TIMEOUT_MS,
   signal?: AbortSignal,
+  options: {
+    now?: () => number;
+    probe?: (config: AppConfig, signal: AbortSignal | undefined, timeoutMs: number) => TunnelRuntimeStatus;
+    wait?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
+  } = {},
 ): Promise<TunnelRuntimeStatus> {
   throwIfAborted(signal);
-  const deadline = Date.now() + timeoutMs;
-  let status = tunnelStatus(config, signal);
-  while (!status.ok && Date.now() < deadline) {
-    const pause = Math.min(TUNNEL_STATUS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()));
-    await new Promise<void>((resolveWait, rejectWait) => {
+  const now = options.now ?? Date.now;
+  const probe = options.probe ?? tunnelStatus;
+  const wait = options.wait ?? ((delayMs: number, waitSignal?: AbortSignal) => new Promise<void>((resolveWait, rejectWait) => {
       const onAbort = () => {
         clearTimeout(timer);
-        rejectWait(signal?.reason instanceof Error
-          ? signal.reason
+        rejectWait(waitSignal?.reason instanceof Error
+          ? waitSignal.reason
           : new DOMException("The operation was aborted", "AbortError"));
       };
       const timer = setTimeout(() => {
-        signal?.removeEventListener("abort", onAbort);
+        waitSignal?.removeEventListener("abort", onAbort);
         resolveWait();
-      }, pause);
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-    });
-    status = tunnelStatus(config, signal);
+      }, delayMs);
+      waitSignal?.addEventListener("abort", onAbort, { once: true });
+      if (waitSignal?.aborted) onAbort();
+    }));
+  const deadline = now() + Math.max(0, timeoutMs);
+  const initialRemaining = deadline - now();
+  if (initialRemaining <= 0) {
+    return {
+      ok: false,
+      processRunning: false,
+      healthy: false,
+      ready: false,
+      detail: "Tunnel readiness deadline elapsed before status probe",
+    };
+  }
+  let status = probe(config, signal, Math.min(10_000, initialRemaining));
+  while (!status.ok) {
+    const remainingBeforeWait = deadline - now();
+    if (remainingBeforeWait <= 0) break;
+    await wait(Math.min(TUNNEL_STATUS_POLL_INTERVAL_MS, remainingBeforeWait), signal);
+    throwIfAborted(signal);
+    const remainingBeforeProbe = deadline - now();
+    if (remainingBeforeProbe <= 0) break;
+    status = probe(config, signal, Math.min(10_000, remainingBeforeProbe));
   }
   return status;
 }

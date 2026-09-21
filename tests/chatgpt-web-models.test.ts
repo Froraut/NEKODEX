@@ -13,6 +13,7 @@ import {
   CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
   CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE,
   CHATGPT_WEB_MODEL_ROUTES,
+  CHATGPT_WEB_PRO_REASONING_COMPOSER_CHAR_LIMIT,
   requireChatGptWebModelRoute,
   resolveChatGptWebContextLimits,
   resolveChatGptWebTransportLimits,
@@ -42,10 +43,14 @@ describe("fixed ChatGPT Web model routes", () => {
     ]);
     expect(requireChatGptWebModelRoute("chatgpt-web/extra-high", fourPositions).adapterEffort).toBe("xhigh");
     expect(() => requireChatGptWebModelRoute("chatgpt-web/pro", fourPositions)).toThrow("Pro is not available");
-    expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", fourPositions))
-      .toEqual(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", pro));
-    expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", fourPositions))
-      .toEqual(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", pro));
+    expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", fourPositions)).toEqual({
+      contextWindow: 90_000,
+      effectiveContextWindowPercent: 89,
+      autoCompactTokenLimit: 80_000,
+    });
+    expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", fourPositions)).toEqual({
+      browserComposerCharLimit: 1_048_572,
+    });
     expect(() => requireChatGptWebModelRoute("chatgpt-web/extra-high", { ...fourPositions, extraHighAvailable: false }))
       .toThrow("Extra High is not available");
   });
@@ -190,7 +195,7 @@ describe("fixed ChatGPT Web model routes", () => {
     for (const effort of ["medium", "high", "xhigh"] as const) {
       expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, pro)).toEqual({
         browserMessageTokenLimit: 103_000,
-        browserComposerCharLimit: 1_045_000,
+        browserComposerCharLimit: CHATGPT_WEB_PRO_REASONING_COMPOSER_CHAR_LIMIT,
       });
     }
     expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "max", pro)).toEqual({

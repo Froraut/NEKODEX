@@ -914,6 +914,57 @@ test("explicit login waits for an in-flight saved-session refresh before taking 
   assert.deepEqual(calls, ["ChatGPT login", "probe", "inspect"]);
 });
 
+function passkeyHandoffFixture(timeoutMs = 20) {
+  const embeddedController = new AbortController();
+  const embeddedLogin = new Promise(() => {});
+  let captures = 0;
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    state: { authenticated: false },
+    authHandoffTimeoutMs: timeoutMs,
+    authGeneration: 0,
+    authNavigationError: null,
+    embeddedLoginController: embeddedController,
+    loginOperation: embeddedLogin,
+    passkeyLoginOperation: null,
+    passkeyLoginController: null,
+    sessionRefreshOperation: null,
+    manualOperation: null,
+    interactionModeOverride: null,
+    getBrowserInteractionMode: () => "automatic",
+    view: { webContents: { isDestroyed: () => false, stop() {} } },
+    authView: null,
+    loginWithPasskey: async () => { captures += 1; throw new Error("capture must not start"); },
+    closeAuthView() {},
+    publishState() {},
+    snapshot() { return { ...this.state, passkeyLogin: require("../electron/passkey-login-progress.cjs").publicPasskeyProgress(this.passkeyProgress) }; },
+    setState(patch) { this.state = { ...this.state, ...patch }; },
+    logger: { info() {}, warn() {} },
+  });
+  return { fixture, embeddedLogin, captures: () => captures };
+}
+
+test("passkey handoff times out without overlapping a stuck embedded login", async () => {
+  const { fixture, embeddedLogin, captures } = passkeyHandoffFixture(5);
+  await assert.rejects(BrowserHost.prototype.openPasskeyLogin.call(fixture), error => error.code === "existing_chrome_handoff_timeout");
+  assert.equal(captures(), 0);
+  assert.equal(fixture.loginOperation, embeddedLogin);
+  assert.equal(fixture.snapshot().passkeyLogin.error, "passkey-handoff-timeout");
+  assert.equal(fixture.state.message, "passkey-handoff-timeout");
+});
+
+test("cancelling a passkey handoff stops waiting without releasing its old auth owner", async () => {
+  const { fixture, embeddedLogin, captures } = passkeyHandoffFixture(1_000);
+  const operation = BrowserHost.prototype.openPasskeyLogin.call(fixture);
+  await Promise.resolve();
+  const result = await BrowserHost.prototype.cancelPasskeyLogin.call(fixture, async () => {
+    throw new Error("capture must not have started");
+  });
+  await operation;
+  assert.equal(result.passkeyLogin.phase, "cancelled");
+  assert.equal(captures(), 0);
+  assert.equal(fixture.loginOperation, embeddedLogin);
+});
+
 test("passkey login imports only validated state and re-proves the Launcher session", async () => {
   const calls = [];
   const browserSession = {

@@ -4,6 +4,7 @@ const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 const { validateAccountId } = require('./account-registry.cjs');
 
 const SESSION_ID_PATTERN = /^[a-f0-9]{64}$/;
+const MAX_JS_DATE_MILLISECONDS = 8_640_000_000_000_000;
 const NEW_SESSION_WINDOW_LIMIT_RANGE = Object.freeze([1, 10_000]);
 const NEW_SESSION_WINDOW_MINUTES_RANGE = Object.freeze([1, 525_600]);
 const DEFAULT_POLICY = Object.freeze({ enabled: false, minIntervalSec: 10, maxConcurrent: 1,
@@ -66,7 +67,10 @@ class AccountSafety {
         validateAccountId(id);
         const policy = validatePolicy(item.policy);
         for (const key of ['lastStart', 'sessionStart', 'breakStart', 'cooldownUntil']) {
-          if (!Number.isFinite(item[key]) || item[key] < 0) throw new Error('Invalid account safety timestamp');
+          if (!Number.isFinite(item[key]) || item[key] < 0
+            || item[key] > MAX_JS_DATE_MILLISECONDS) {
+            throw new Error('Invalid account safety timestamp');
+          }
         }
         if (typeof item.stopped !== 'boolean') throw new Error('Invalid account safety stop');
         const newSessionUsages = validateNewSessionUsages(item.newSessionUsages);

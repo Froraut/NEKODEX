@@ -119,6 +119,21 @@ test('legacy account safety policy remains valid with the new-session window dis
   assert.equal(snapshot.policy.enabled, false);
 }));
 
+test('persisted account safety timestamps stay within the JavaScript Date domain', () => fixture(root => {
+  const saved = timestamp => fs.writeFileSync(path.join(root, 'account-safety.json'), `${JSON.stringify({
+    version: 1,
+    accounts: { default: { policy: DEFAULT_POLICY, lastStart: timestamp, sessionStart: 0,
+      breakStart: 0, cooldownUntil: 0, stopped: false } },
+  })}\n`);
+
+  saved(8_640_000_000_000_000);
+  assert.doesNotThrow(() => new AccountSafety(root, () => 1_000));
+  saved(1.5);
+  assert.doesNotThrow(() => new AccountSafety(root, () => 1_000));
+  saved(8_640_000_000_000_001);
+  assert.throws(() => new AccountSafety(root, () => 1_000), /Invalid account safety timestamp/);
+}));
+
 test('opt-in window counts only new Web sessions and lets existing sessions continue', () => fixture(root => {
   let now = 1_000_000;
   const safety = new AccountSafety(root, () => now);

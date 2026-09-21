@@ -1,5 +1,5 @@
 export class AsyncEventQueue<T> implements AsyncIterable<T> {
-  private readonly buffered: T[] = [];
+  private readonly buffered: Array<{ value: T; bytes: number }> = [];
   private bufferedBytes = 0;
   private readonly waiters: Array<{
     resolve: (result: IteratorResult<T>) => void;
@@ -26,7 +26,7 @@ export class AsyncEventQueue<T> implements AsyncIterable<T> {
     if (this.maxBufferedBytes !== undefined && this.bufferedBytes + valueBytes > this.maxBufferedBytes) {
       throw new Error("Adapter event byte backlog exceeded");
     }
-    this.buffered.push(value);
+    this.buffered.push({ value, bytes: valueBytes });
     this.bufferedBytes += valueBytes;
   }
 
@@ -64,9 +64,9 @@ export class AsyncEventQueue<T> implements AsyncIterable<T> {
     return {
       next: () => {
         if (this.buffered.length > 0) {
-          const value = this.buffered.shift()!;
-          this.bufferedBytes -= this.measureBytes(value);
-          return Promise.resolve({ value, done: false });
+          const entry = this.buffered.shift()!;
+          this.bufferedBytes -= entry.bytes;
+          return Promise.resolve({ value: entry.value, done: false });
         }
         if (this.failure) return Promise.reject(this.failure.error);
         if (this.closed) return Promise.resolve({ value: undefined, done: true });

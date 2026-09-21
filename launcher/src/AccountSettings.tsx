@@ -28,6 +28,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   const retryRef = useRef<HTMLButtonElement | null>(null);
   const refreshRef = useRef<() => void>(() => {});
   const [quotas, setQuotas] = useState<Map<string, AccountQuotaSnapshot | null>>(new Map());
+  const [quotaFailures, setQuotaFailures] = useState<Set<string>>(new Set());
   const [quotaRefreshing, setQuotaRefreshing] = useState<Set<string>>(new Set());
   const [refreshAllBusy, setRefreshAllBusy] = useState(false);
   const [quotaClock, setQuotaClock] = useState(() => Date.now());
@@ -118,6 +119,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       for (const id of hydrationAccounts) next.set(id, null);
       return next;
     });
+    setQuotaFailures(current => new Set([...current].filter(id => activeIds.has(id))));
     void (async () => {
       for (const id of hydrationAccounts) {
         const revision = revisions.get(id)!;
@@ -125,8 +127,15 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const value = await api.accountCodexQuotaSnapshot(id);
           if (disposed || quotaRevisions.current.get(id) !== revision) continue;
           setQuotas(current => new Map(current).set(id, value));
+          setQuotaFailures(current => {
+            if (!current.has(id)) return current;
+            const next = new Set(current);
+            next.delete(id);
+            return next;
+          });
         } catch (error) {
           if (!disposed && quotaRevisions.current.get(id) === revision) {
+            setQuotaFailures(current => new Set(current).add(id));
             setError(error instanceof Error ? error.message : String(error));
           }
         }
@@ -224,6 +233,12 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       const value = await api.refreshAccountCodexQuota(id);
       if (quotaRevisions.current.get(id) === revision) {
         setQuotas(current => new Map(current).set(id, value));
+        setQuotaFailures(current => {
+          if (!current.has(id)) return current;
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
       }
     } catch (error) {
       if (quotaRevisions.current.get(id) === revision) setError(error instanceof Error ? error.message : String(error));
@@ -349,7 +364,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         ? loginLockedReason
         : codexCopy.quotaRateLimited) : undefined);
   return <section className="account-settings" aria-label={copy.accountsTitle} aria-busy={busy || transitionBusy}>
-    {manual ? <p>{copy.accountsManual}</p> : null}
+    {manual ? <p id="accounts-manual-reason">{copy.accountsManual}</p> : null}
     {loadFailed ? <div className="account-codex-toolbar account-stale-status" role="alert">
       <p>{copy.accountsRefreshFailed}</p>
       <button ref={retryRef} type="button" className="button-secondary"
@@ -381,7 +396,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       </button>
     </div>
     {refreshAllDisabledReason && !loadFailed ? <p className="account-codex-disabled-reason">{refreshAllDisabledReason}</p> : null}
-    {state.accounts.map(account => <article className={`account-card${account.id === state.selectedId ? " is-selected" : ""}`} key={account.id}>
+    {state.accounts.map((account, accountIndex) => <article className={`account-card${account.id === state.selectedId ? " is-selected" : ""}`} key={account.id}>
       {(() => {
         const credentialLabel = account.authenticated ? copy.replaceCredentials : copy.accountsSignIn;
         const active = account.activeTurns > 0;
@@ -397,9 +412,18 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         const blockedReason = transitionReason ?? (loadFailed ? copy.accountsRefreshFailed
           : loginBoundReason ?? (active ? copy.accountsBusyTasks.replace("{count}", String(account.activeTurns))
             : busy ? copy.loading : undefined));
-        // The adjacent login widget names this account while its flow is active or settling.
-        const actionHint = loginBoundReason && !flowForAccount?.active && !flowForAccount?.settling ? loginBoundReason
-          : active ? blockedReason : undefined;
+        const selectionReadinessReason = account.id !== state.selectedId
+          ? !account.authenticated ? copy.accountsSignInNeeded
+            : !account.checked || !account.connectorReady ? copy.connectionPending : undefined
+          : undefined;
+        const credentialActionReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined);
+        const checkActionReason = blockedReason ?? (manual ? copy.accountsManual
+          : !account.authenticated ? copy.accountsSignInNeeded : undefined);
+        const actionHint = blockedReason ?? selectionReadinessReason
+          ?? (!manual ? checkActionReason : undefined) ?? credentialActionReason;
+        const actionHintId = actionHint ? `account-action-reason-${accountIndex}` : undefined;
+        const describedBy = (reason?: string) => reason === actionHint
+          ? actionHintId : reason === copy.accountsManual && manual ? "accounts-manual-reason" : undefined;
         const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id)
           || Boolean(login && (login.active || login.settling) && login.accountId !== account.id)
           ? (login?.settling ? codexCopy.loginSettlingCurrent : codexCopy.loginCurrent)
@@ -429,9 +453,11 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       </div>
       <div className="account-actions">
         <label title={loginBoundReason}><input type="checkbox" checked={account.enabled} disabled={mutationsDisabled || loginBoundActive}
+          aria-describedby={(mutationsDisabled || loginBoundActive) ? describedBy(blockedReason) : undefined}
           onChange={event => void run(() => api.setAccountEnabled(account.id, event.target.checked))} />{copy.accountsEnabled}</label>
         <button type="button" className={account.authenticated ? "button-secondary" : "button-primary"}
           disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy} aria-label={credentialLabel}
+          aria-describedby={describedBy(credentialActionReason)}
           title={sessionMutationReason} onClick={() => void run(async () => {
           const next = await api.selectAccount(account.id);
           setState(next);
@@ -441,17 +467,21 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         })}><Icon name="browser" />{credentialLabel}</button>
         {account.id !== state.selectedId ? <button type="button" className="button-secondary"
           disabled={mutationsDisabled || loginBoundActive || !account.authenticated || !account.checked || !account.connectorReady}
+          aria-describedby={describedBy(blockedReason ?? selectionReadinessReason)}
           title={loginBoundReason}
           onClick={() => void run(() => api.selectAccount(account.id))}>{copy.accountsSelect}</button> : null}
         <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || loginBoundActive || !account.authenticated}
+          aria-describedby={describedBy(checkActionReason)}
           title={loginBoundReason} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
         <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || loginBoundActive || !account.authenticated}
+          aria-describedby={describedBy(checkActionReason)}
           title={loginBoundReason} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
       </div>
-      {actionHint ? <p className="field-hint" role="status">{actionHint}</p> : null}
+      {actionHint ? <p className="field-hint" id={actionHintId} role="status">{actionHint}</p> : null}
       <AccountCodexControls account={account} copy={codexCopy} language={language}
         transitionBusy={transitionBusy}
         quota={quotas.has(account.id) ? quotas.get(account.id) : undefined}
+        quotaFailed={quotaFailures.has(account.id)}
         quotaBusy={quotaRefreshing.has(account.id)} quotaDisabledReason={quotaDisabledReason}
         onRefreshQuota={() => refreshQuota(account.id)}
         login={flowForAccount} loginStarting={startingAccountId === account.id}

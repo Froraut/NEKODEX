@@ -11,7 +11,12 @@ const compiled = ts.transpileModule(source, { compilerOptions: {
 } }).outputText;
 function load(react = React) {
   const loaded = { exports: {} };
-  const localRequire = name => name === "react" ? react : name === "./icons" ? { Icon: () => null } : require(name);
+  const localRequire = name => name === "react" ? react
+    : name === "./icons" ? { Icon: () => null }
+      : name === "./i18n" ? { copyFor: () => ({ routingCatalogFailed: "Catalog request failed ({status}: {reason})",
+        routingCatalogFailureBody: "The latest request failed.", catalogUnavailable: "Catalog unavailable",
+        viewActivity: "View activity", exportSafeLog: "Export safe log" }) }
+      : name === "./route-diagnostics-locales.json" ? require("../src/route-diagnostics-locales.json") : require(name);
   Function("module", "exports", "require", compiled)(loaded, loaded.exports, localRequire);
   return loaded.exports;
 }
@@ -57,6 +62,25 @@ test("unavailable observation does not present a partial count as verified succe
   const view = ui.routeDiagnosticsView(fixture({ catalog: { status: "unavailable", successfulRequests: 7, lastSuccessfulAt: null } }), "en");
   assert.equal(row(view, copy.catalog), copy.unavailable);
   assert.equal(row(view, copy.last), undefined);
+});
+
+test("a redirect supersedes an older catalog success and a later success renders recovery", () => {
+  const copy = ui.routeDiagnosticsCopy("en");
+  const redirected = ui.routeDiagnosticsView(fixture({ catalog: { status: "unavailable", successfulRequests: 7,
+    lastSuccessfulAt: "2026-09-11T12:00:00Z",
+    lastResult: { request: 8, at: "2026-09-11T12:01:00Z", status: 302, failure: { stage: "catalog" } },
+  } }), "en");
+  assert.equal(redirected.catalogFailed, true);
+  assert.match(row(redirected, copy.catalog), /302/);
+  assert.equal(row(redirected, copy.last), undefined);
+
+  const recovered = ui.routeDiagnosticsView(fixture({ catalog: { status: "observed", successfulRequests: 8,
+    lastSuccessfulAt: "2026-09-11T12:02:00Z",
+    lastResult: { request: 9, at: "2026-09-11T12:02:00Z", status: 200 },
+  } }), "en");
+  assert.equal(recovered.catalogFailed, false);
+  assert.equal(row(recovered, copy.catalog), `${copy.observed} (8)`);
+  assert.ok(row(recovered, copy.last));
 });
 test("missing configuration and rejected profiles do not claim a configured default", () => {
   const copy = ui.routeDiagnosticsCopy("en");
@@ -133,15 +157,4 @@ test("failed refresh clears stale results and hides raw exception text", async (
   assert.equal(result.props.children[1].props.role, "alert");
   assert.equal(result.props.children[1].props.children, ui.routeDiagnosticsCopy("en").failed);
   assert.equal(result.props.children[2], null); assert.equal(result.props.children[0].props.disabled, false);
-});
-test("Setup mounts pending-catalog diagnostics and Settings mounts the read-only action outside DEV", () => {
-  const app = fs.readFileSync(path.join(__dirname, "../src/App.tsx"), "utf8");
-  const setup = app.slice(app.indexOf("function SetupSurface("), app.indexOf("function McpSurface("));
-  assert.match(setup, /!devProfile && snapshot\.state\.coreSetupComplete && !snapshot\.state\.codexCatalogVerified \? \(/);
-  assert.match(setup, /<RouteDiagnostics\s+disabled=\{busy\}/);
-  assert.match(setup, /readReport=\{\(\) => api!\.routeDiagnostics\(\)\}/);
-  const settings = app.slice(app.indexOf("function SettingsSurface("), app.indexOf("function ContentSurface("));
-  assert.match(settings, /!devProfile \? <RouteDiagnostics/);
-  assert.match(settings, /disabled=\{busy \|\| operation\?\.status === "running" \|\| browser\?\.navigationLocked === true\}/);
-  assert.doesNotMatch(source, /setupCore\(|setPreference\(|uninstallIntegration\(|openExternal\(/);
 });

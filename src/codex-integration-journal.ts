@@ -33,11 +33,45 @@ import {
 } from "./codex-interrupt-hook-json";
 
 function isPreviousAssignment(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const assignment = value as Record<string, unknown>;
   if (typeof assignment.present !== "boolean") return false;
+  if (assignment.index !== undefined
+    && (!Number.isSafeInteger(assignment.index) || (assignment.index as number) < 0)) return false;
   return !assignment.present
     || (typeof assignment.rawLine === "string" && typeof assignment.value === "string");
+}
+
+function isPreviousAssignments(value: unknown, keys: readonly string[]): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const assignments = value as Record<string, unknown>;
+  return keys.every(key => isPreviousAssignment(assignments[key]));
+}
+
+function isPreviousFeatureAssignment(value: unknown): boolean {
+  if (!isPreviousAssignment(value)) return false;
+  const assignment = value as Record<string, unknown>;
+  return typeof assignment.tablePresent === "boolean"
+    && (assignment.tableName === undefined
+      || assignment.tableName === "features"
+      || assignment.tableName === "features.multi_agent_v2")
+    && (assignment.inlineTable === undefined || typeof assignment.inlineTable === "boolean")
+    && (assignment.separatorInserted === undefined || typeof assignment.separatorInserted === "boolean");
+}
+
+function isPreviousAgentAssignment(value: unknown): boolean {
+  if (!isPreviousAssignment(value)) return false;
+  const assignment = value as Record<string, unknown>;
+  return typeof assignment.tablePresent === "boolean"
+    && (assignment.separatorInserted === undefined || typeof assignment.separatorInserted === "boolean");
+}
+
+const MANAGED_ASSIGNMENT_KEYS = ["openai_base_url", "model_provider", "model_catalog_json"] as const;
+
+function hasCompatibilityEvidence(value: Record<string, unknown>): boolean {
+  return isPreviousFeatureAssignment(value.previousMultiAgent)
+    && isPreviousFeatureAssignment(value.previousMultiAgentV2)
+    && isPreviousAgentAssignment(value.previousAgentMaxDepth);
 }
 
 function isInstalledInterruptHook(value: unknown): boolean {
@@ -75,12 +109,11 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
     && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
     && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
     && (installed.subagent_protocol !== "compatibility-v1"
-      || (value.previousMultiAgent && value.previousMultiAgentV2
-        && value.previousAgentMaxDepth
+      || (hasCompatibilityEvidence(value)
         && typeof installed.agent_max_depth === "number"
         && Number.isSafeInteger(installed.agent_max_depth)
         && installed.agent_max_depth >= 2))
-    && value.previous
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
     && isInstalledInterruptHookV11(value.interruptHook)
     && typeof value.configPath === "string") {
@@ -93,12 +126,11 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
     && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
     && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
     && (installed.subagent_protocol !== "compatibility-v1"
-      || (value.previousMultiAgent && value.previousMultiAgentV2
-        && value.previousAgentMaxDepth
+      || (hasCompatibilityEvidence(value)
         && typeof installed.agent_max_depth === "number"
         && Number.isSafeInteger(installed.agent_max_depth)
         && installed.agent_max_depth >= 2))
-    && value.previous
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
     && isInstalledInterruptHook(value.interruptHook)
     && typeof value.configPath === "string") {
@@ -111,12 +143,11 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
     && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
     && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
     && (installed.subagent_protocol !== "compatibility-v1"
-      || (value.previousMultiAgent && value.previousMultiAgentV2
-        && value.previousAgentMaxDepth
+      || (hasCompatibilityEvidence(value)
         && typeof installed.agent_max_depth === "number"
         && Number.isSafeInteger(installed.agent_max_depth)
         && installed.agent_max_depth >= 2))
-    && value.previous
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
     && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV9;
@@ -126,52 +157,55 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
     && installed
     && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
     && (installed.subagent_protocol !== "compatibility-v1"
-      || (value.previousMultiAgent && value.previousMultiAgentV2
-        && value.previousAgentMaxDepth
+      || (hasCompatibilityEvidence(value)
         && typeof installed.agent_max_depth === "number"
         && Number.isSafeInteger(installed.agent_max_depth)
         && installed.agent_max_depth >= 2))
-    && value.previous
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV8;
   }
   if (value.version === 7
     && typeof value.active === "boolean"
     && value.installed
-    && value.previous
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV7;
   }
   if (value.version === 6
     && typeof value.active === "boolean"
     && value.installed
-    && value.previous
-    && value.previousRemoteCompactionV2
-    && value.previousMultiAgent
-    && value.previousMultiAgentV2
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
+    && isPreviousFeatureAssignment(value.previousRemoteCompactionV2)
+    && isPreviousFeatureAssignment(value.previousMultiAgent)
+    && isPreviousFeatureAssignment(value.previousMultiAgentV2)
     && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV6;
   }
   if (value.version === 5
     && typeof value.active === "boolean"
     && value.installed
-    && value.previous
-    && value.previousRemoteCompactionV2
-    && value.previousMultiAgent
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
+    && isPreviousFeatureAssignment(value.previousRemoteCompactionV2)
+    && isPreviousFeatureAssignment(value.previousMultiAgent)
     && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV5;
   }
   if (value.version === 4
     && typeof value.active === "boolean"
     && value.installed
-    && value.previous
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV4;
   }
-  if (value.version === 3 && value.installed && value.previous && typeof value.configPath === "string") {
+  if (value.version === 3 && value.installed
+    && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
+    && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV3;
   }
-  if (value.version === 2 && value.installed && value.previous && typeof value.providerBlock === "string"
+  if (value.version === 2 && value.installed
+    && isPreviousAssignments(value.previous, ["model_provider", "model_catalog_json"])
+    && typeof value.providerBlock === "string"
     && (value.uninstalling === undefined || (value.uninstalling
       && typeof (value.uninstalling as Record<string, unknown>).restoredConfigSha256 === "string"
       && /^[a-f0-9]{64}$/.test((value.uninstalling as Record<string, unknown>).restoredConfigSha256 as string)))) {

@@ -1,4 +1,4 @@
-.browser-surface .browser-tab > button {
+.browser-surface .browser-tab > button:not(.browser-tab-select) {
   width: 28px;
   height: 28px;
   flex: none;
@@ -6,7 +6,7 @@
 }
 
 .browser-surface .browser-tab > .browser-tab-cancel,
-.browser-surface .browser-tab > button:disabled {
+.browser-surface .browser-tab > button:not(.browser-tab-select):disabled {
   opacity: 1;
 }
 

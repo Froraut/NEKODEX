@@ -15,7 +15,12 @@ const { validateConnectorName } = require("./connector-identity.cjs");
 const { processRunning } = require("./process-tree.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { initialPasskeyProgress, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
-const { publicExistingChromeProgress, openExistingChromeLogin, cancelExistingChromeLogin } = require("./existing-chrome-login.cjs");
+const {
+  publicExistingChromeProgress,
+  openExistingChromeLogin,
+  cancelExistingChromeLogin,
+  waitForPreviousAuthentication,
+} = require("./existing-chrome-login.cjs");
 const { createRemotePermissionPolicy, httpsOrigin } = require("./remote-permissions.cjs");
 const { createExternalLinkBroker } = require("./external-links.cjs");
 const {
@@ -54,6 +59,7 @@ const TURN_TAB_BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
 const CHATGPT_AUTH_SESSION_TIMEOUT_MS = 5_000;
+const AUTH_HANDOFF_TIMEOUT_MS = 15_000;
 const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore"];
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [`${CHATGPT_ORIGIN}/backend-api/*`] };
 const ZOOM_FACTORS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -2846,20 +2852,25 @@ class BrowserHost {
     this.passkeyLoginController = controller;
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     const operation = (async () => {
+      const handoffTimeoutMs = Number.isFinite(this.authHandoffTimeoutMs)
+        ? Math.max(1, this.authHandoffTimeoutMs) : AUTH_HANDOFF_TIMEOUT_MS;
+      const handoffDeadline = Date.now() + handoffTimeoutMs;
       if (embeddedLogin) {
         embeddedController.abort();
         for (const view of [this.view, this.authView]) {
           if (view && !view.webContents.isDestroyed()) view.webContents.stop();
         }
         // No Chrome session is started until the previous operation releases browser ownership.
-        await embeddedLogin;
+        await waitForPreviousAuthentication(embeddedLogin, controller.signal, handoffDeadline - Date.now());
+        controller.signal.throwIfAborted();
         this.closeAuthView(this.authView, true, false);
       }
       const sessionRefresh = this.sessionRefreshOperation;
       if (sessionRefresh) {
         try {
-          await sessionRefresh;
-        } catch {
+          await waitForPreviousAuthentication(sessionRefresh, controller.signal, handoffDeadline - Date.now());
+        } catch (error) {
+          if (controller.signal.aborted || error?.code === "existing_chrome_handoff_timeout") throw error;
           // Explicit sign-in is the recovery path after a failed saved-session refresh.
         }
       }
@@ -2886,13 +2897,24 @@ class BrowserHost {
       const message = error instanceof Error ? error.message : String(error);
       const cancelled = controller.signal.aborted && !/(cleanup|clearing|removing|did not exit|termination|refused)/i.test(message);
       const phase = cancelled ? "cancelled" : /timed out/i.test(message) ? "timed-out" : "failed";
-      this.updatePasskeyProgress({ phase, error: phase === "cancelled" ? null : message });
+      const errorCode = phase === "cancelled" ? null
+        : error?.code === "existing_chrome_handoff_timeout" ? "passkey-handoff-timeout"
+          : phase === "timed-out" ? "passkey-timeout"
+            : /(cleanup|clearing|removing|did not exit|termination|refused)/i.test(message) ? "passkey-cleanup-failed"
+              : /invalid (storage-state|cookie|origin|ChatGPT local storage)|contains no ChatGPT\/OpenAI cookies|too (large|many)/i.test(message) ? "passkey-validation-failed"
+                : this.passkeyProgress?.phase === "verifying" ? "passkey-verification-failed"
+                  : this.passkeyProgress?.phase === "starting" || this.passkeyProgress?.phase === "waiting" || this.passkeyProgress?.phase === "importing"
+                    ? "passkey-capture-failed" : "passkey-import-failed";
+      this.updatePasskeyProgress({ phase, error: errorCode });
       this.setState({ loading: false, status: "signed-out", authenticated: false,
-        message: phase === "cancelled" ? "Passkey sign-in cancelled" : message });
+        message: phase === "cancelled" ? "Passkey sign-in cancelled" : errorCode });
       if (phase === "cancelled") return this.snapshot();
-      throw error;
+      const safeError = new Error(errorCode);
+      if (error?.code === "existing_chrome_handoff_timeout") safeError.code = error.code;
+      throw safeError;
     }).finally(() => {
-      if (this.loginOperation === tracked) this.loginOperation = null;
+      if (this.loginOperation === tracked) this.loginOperation = embeddedController
+        && this.embeddedLoginController === embeddedController ? embeddedLogin : null;
       if (this.passkeyLoginOperation === tracked) this.passkeyLoginOperation = null;
       if (this.passkeyLoginController === controller) this.passkeyLoginController = null;
       this.publishState?.(this.snapshot());

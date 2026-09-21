@@ -13,8 +13,12 @@ export async function readRequestBodyBytes(
   maxBytes = MAX_ENCODED_REQUEST_BYTES,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const declaredLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declaredLength)) {
-    assertWithinLimit(declaredLength, maxBytes, "Encoded request body");
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    const error = new Error(`Encoded request body exceeds ${maxBytes} bytes`);
+    // Reject immediately even when this is one branch of a tee: cancellation can wait for the
+    // other branch, but the oversized request must not keep this branch's source live.
+    void request.body?.cancel(error).catch(() => {});
+    throw error;
   }
   if (!request.body) {
     request.signal.throwIfAborted();

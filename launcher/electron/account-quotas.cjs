@@ -96,11 +96,15 @@ function cleanAdditionalBuckets(value) {
   const buckets = [];
   const ids = new Set();
   for (const candidate of value) {
-    if (buckets.length >= MAX_ADDITIONAL_BUCKETS) break;
     if (!isPlainObject(candidate)) continue;
     const id = cleanBoundedString(candidate.metered_feature, MAX_BUCKET_ID_LENGTH, { required: true });
     if (id === null || ids.has(id)) continue;
     ids.add(id);
+    // Keep scanning malformed and duplicate trailing entries: truncation means
+    // that a real unique bucket was omitted, not merely that the raw array was long.
+    if (buckets.length >= MAX_ADDITIONAL_BUCKETS) {
+      return { buckets, truncated: true };
+    }
     buckets.push(cleanBucket(
       candidate.rate_limit,
       id,
@@ -108,7 +112,7 @@ function cleanAdditionalBuckets(value) {
       cleanBoundedString(candidate.normal_model_slug, MAX_BUCKET_ID_LENGTH),
     ));
   }
-  return { buckets, truncated: value.length > MAX_ADDITIONAL_BUCKETS };
+  return { buckets, truncated: false };
 }
 
 function normalizeUsage(payload, localAccountId, tokenAccountId, fetchedAt) {

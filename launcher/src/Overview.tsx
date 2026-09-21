@@ -3,7 +3,7 @@ import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
 import { useId, type CSSProperties } from "react";
 import { Icon, type IconName } from "./icons";
 import type { Copy } from "./i18n";
-import { modelConnectionReadiness } from "./setup-progress";
+import { modelConnectionReadiness, setupNextStep } from "./setup-progress";
 import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types";
 
 const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
@@ -27,10 +27,23 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const modelsReady = models === "available";
   const ready = modelsReady && toolsReady && (manual || signedIn);
   const workspaceReady = modelsReady && (manual || signedIn);
+  const nextStep = setupNextStep({
+    manual,
+    signedIn,
+    smokePassed: snapshot.state.browserSmokePassed === true,
+    installed: snapshot.state.coreSetupComplete === true,
+    catalogVerified: snapshot.state.codexCatalogVerified === true,
+    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true,
+    toolsVerified: toolsReady,
+    development: snapshot.profile === "development",
+  });
+  const manualToolsPending = manual && nextStep === "tools";
   const runtime = snapshot.runtimeCapabilities ?? snapshot.lifecycle;
   const toolsTransportUnavailable = snapshot.state.mcpRuntimeInstalled && runtime
     && ["degraded", "failed", "recovering", "starting", "stopping"].includes(runtime.tunnelStatus);
-  const heroOpensWorkspace = workspaceReady && !toolsTransportUnavailable && !catalogUnavailable;
+  const heroNeedsTools = Boolean(toolsTransportUnavailable) || manualToolsPending;
+  const heroOpensWorkspace = workspaceReady && !heroNeedsTools && !catalogUnavailable;
   const activeTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
@@ -48,21 +61,25 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
       status: toolsTransportUnavailable ? copy.localToolsUnavailable : toolsReady ? copy.connectorVerified : copy.connectorNotVerified },
   ];
   const heroTitle = catalogUnavailable ? copy.catalogUnavailable
-    : toolsTransportUnavailable ? copy.localToolsUnavailable : ready ? copy.setupChecksPassed
+    : toolsTransportUnavailable ? copy.localToolsUnavailable : manualToolsPending ? copy.localTools
+      : ready ? copy.setupChecksPassed : heroOpensWorkspace ? copy.setupReadyModels
       : (manual || signedIn) && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle;
   const heroBody = catalogUnavailable ? copy.catalogFailureKeptInstall
     : toolsTransportUnavailable ? runtime?.nativeAvailability === "ready" ? copy.localToolsUnavailableNativeBody : copy.localToolsUnavailableBody
-    : ready ? copy.connectorAvailableNotExecuted
+    : manualToolsPending ? copy.mcpBody : ready ? copy.connectorAvailableNotExecuted
+      : heroOpensWorkspace ? copy.setupUseCodex
       : (manual || signedIn) && snapshot.state.coreSetupComplete
         ? models === "picker-pending" ? copy.setupConfirmTitle : models === "catalog-pending" ? copy.setupCatalogTitle : copy.manageToolsConnection
         : copy.overviewBody;
+  const heroSurface: Surface = heroNeedsTools ? "mcp" : heroOpensWorkspace ? "browser" : "setup";
+  const heroAction = heroNeedsTools ? copy.manageToolsConnection : heroOpensWorkspace ? copy.openWorkspace : copy.finishSetup;
   return <section className="content-surface overview-surface is-page-scroll">
     <div className="content-scroll overview-scroll">
       <header className="overview-heading"><div><h1>{copy.overview}</h1><p>{copy.overviewSubtitle}</p></div><span className="workspace-location"><Icon name="globe" />{copy.localWorkspace}</span></header>
       <section className="workspace-intro" aria-labelledby="overview-intro-heading">
         <div className="intro-copy"><h2 id="overview-intro-heading">{heroTitle}</h2>
           <p>{heroBody}</p>
-          <button className="button-primary" type="button" onClick={() => navigate(toolsTransportUnavailable ? "mcp" : heroOpensWorkspace ? "browser" : "setup")}>{toolsTransportUnavailable ? copy.manageToolsConnection : heroOpensWorkspace ? copy.openWorkspace : copy.finishSetup}<Icon name="forward" /></button>
+          <button className="button-primary" type="button" onClick={() => navigate(heroSurface)}>{heroAction}<Icon name="forward" /></button>
         </div>
         <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>
       </section>
@@ -72,9 +89,6 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
             <strong className="overview-work-count">{active}</strong>
             <div className="overview-work-copy">
               <h2 id={`${overviewId}-runs`} title={copy.overviewActiveRunsBody}>{copy.overviewActiveRuns}</h2>
-              {!heroOpensWorkspace ? <button className="overview-inline-action" type="button" onClick={() => navigate("browser")}>
-                {copy.openWorkspace}<Icon name="forward" />
-              </button> : null}
             </div>
           </div>
           <div className="overview-work-preferences">

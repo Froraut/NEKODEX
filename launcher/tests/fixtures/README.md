@@ -49,3 +49,19 @@ Accessibility-tree and visual checks confirmed:
 
 These observations verify renderer behavior with simulated state. They do not
 establish native passkey success, session import, or a real Codex response.
+
+## Focused two-wave review scenarios (2026-09-21)
+
+After rebuilding the renderer, run `node --test tests/two-wave-ui-preview.cjs`
+from `launcher/` for the eight focused flow groups. This uses an isolated headless
+Chromium and a dynamically allocated loopback fixture, then closes both. It
+requires the repository's Playwright browser runtime. It does not access a real
+account or perform an update. Screenshots are written to
+`launcher/output/playwright/wave2-ui/` (relative to the repository root).
+
+Additional fixture scenarios cover `setup-fresh`, `manual-tools`,
+`accounts-failed`, `update-active`, `update-missing-speed`, `passkey-failed`,
+and `diagnostics-redirect`. The runner checks keyboard drawer/tab controls,
+explicit sign-in selection, Overview readiness routing, quota retry, update
+phase messaging, safe passkey text, and catalog failure/recovery. See
+`docs/reviews/two-wave-20260921.md` for results and evidence limits.

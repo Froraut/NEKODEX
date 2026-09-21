@@ -26,6 +26,7 @@ import { browserControls } from "./browser-controls";
 import { RouteDiagnostics } from "./RouteDiagnostics";
 import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
 import { ExistingChromeLoginGuide } from "./ExistingChromeLoginGuide";
+import { passkeyFailureText } from "./passkey-copy";
 import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits, resolveChatGptWebTransportLimits } from "../../src/chatgpt-web-models";
 import "./connections.css";
 import type {
@@ -762,6 +763,8 @@ function LauncherShell({
   const compactAtMount = useRef(window.matchMedia(COMPACT_SIDEBAR_QUERY).matches).current;
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
   const [compactSidebar, setCompactSidebar] = useState(compactAtMount);
+  const sidebar = useRef<HTMLElement>(null);
+  const sidebarToggle = useRef<HTMLButtonElement>(null);
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
   const browserSurfaceCommand = useRef(Promise.resolve());
   const browserSurfaceIntent = useRef(0);
@@ -801,6 +804,59 @@ function LauncherShell({
       window.clearTimeout(updateCheckTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!compactSidebar || !sidebarOpen || !sidebar.current) return;
+    const drawer = sidebar.current;
+    const workspace = drawer.parentElement?.querySelector<HTMLElement>(":scope > .workspace") ?? null;
+    const workspaceWasInert = workspace?.inert ?? false;
+    if (workspace) workspace.inert = true;
+    const focusable = () => [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')];
+    const focusDrawer = () => {
+      const active = drawer.querySelector<HTMLElement>('.sidebar-item[aria-current="page"]');
+      (active ?? focusable()[0] ?? drawer).focus();
+    };
+    const frame = requestAnimationFrame(focusDrawer);
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSidebarOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = focusable();
+      if (!controls.length) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = controls[0]!;
+      const last = controls.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const focusin = (event: FocusEvent) => {
+      if (event.target instanceof Node && drawer.contains(event.target)) return;
+      event.stopPropagation();
+      focusDrawer();
+    };
+    document.addEventListener("keydown", keydown, true);
+    document.addEventListener("focusin", focusin, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", keydown, true);
+      document.removeEventListener("focusin", focusin, true);
+      if (workspace) workspace.inert = workspaceWasInert;
+      if (window.matchMedia(COMPACT_SIDEBAR_QUERY).matches) {
+        requestAnimationFrame(() => sidebarToggle.current?.focus());
+      }
+    };
+  }, [compactSidebar, sidebarOpen]);
   const recheckUpdate = async () => {
     if (transitionBusy || updateCheckCooldown || updateCheckBusy || updateCheckPendingRef.current) return;
     updateCheckPendingRef.current = true;
@@ -1053,21 +1109,30 @@ function LauncherShell({
         devProfile={devProfile}
         draggable
         sidebarOpen={sidebarOpen}
+        sidebarToggle={sidebarToggle}
         toggleSidebar={toggleSidebar}
       />
 
       {compactSidebar && sidebarOpen ? (
         <button
+          aria-hidden="true"
           aria-label={copy.hideSidebar}
           className="sidebar-backdrop"
           onClick={() => setSidebarOpen(false)}
+          tabIndex={-1}
           type="button"
         />
       ) : null}
 
       <aside
+        aria-label={compactSidebar ? copy.workspace : undefined}
+        aria-modal={compactSidebar && sidebarOpen ? "true" : undefined}
         inert={!sidebarOpen}
+        id="app-sidebar"
+        ref={sidebar}
+        role={compactSidebar ? "dialog" : undefined}
         style={{ width: sidebarOpen ? "var(--sidebar-width)" : 0 }}
+        tabIndex={compactSidebar ? -1 : undefined}
         className="app-sidebar"
       >
         <div className="sidebar-clip">
@@ -1271,6 +1336,7 @@ function TitleBar({
   devProfile,
   draggable,
   sidebarOpen,
+  sidebarToggle,
   toggleSidebar,
 }: {
   copy: Copy;
@@ -1279,14 +1345,18 @@ function TitleBar({
   devProfile: boolean;
   draggable: boolean;
   sidebarOpen: boolean;
+  sidebarToggle: RefObject<HTMLButtonElement | null>;
   toggleSidebar: () => void;
 }) {
   return (
     <header className={`app-titlebar${draggable ? " draggable" : ""}`}>
       <div className="titlebar-left no-drag">
         <IconButton
+          buttonRef={sidebarToggle}
           icon="sidebar"
           label={sidebarOpen ? copy.hideSidebar : copy.showSidebar}
+          controls="app-sidebar"
+          expanded={sidebarOpen}
           onClick={toggleSidebar}
         />
         {devProfile ? <span className="titlebar-dev-profile">{copy.devBadge}</span> : null}
@@ -1472,7 +1542,7 @@ function BrowserSurface({
     try {
       await api!.openPasskeyLogin();
     } catch (cause) {
-      setError(messageOf(cause));
+      setError(passkeyFailureText(messageOf(cause), copy));
     } finally {
       setPasskeyStarting(false);
     }
@@ -1492,7 +1562,10 @@ function BrowserSurface({
     try {
       await api!.continuePasskeyLogin();
     } catch (cause) {
-      setError(messageOf(cause));
+      const detail = messageOf(cause);
+      setError(detail === "No passkey sign-in is waiting for Continue"
+        ? copy.passkeyImporting
+        : passkeyFailureText(detail, copy));
     } finally {
       setPasskeyRequestPending(false);
     }
@@ -1527,46 +1600,46 @@ function BrowserSurface({
           <div
             className={`browser-tab${tab.active ? " is-active" : ""}`}
             key={tab.id}
-            onClick={() => void selectTab(tab.id)}
-            onKeyDown={(event) => {
-              if (event.target !== event.currentTarget) return;
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                void selectTab(tab.id);
-              }
-              if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
-                event.preventDefault();
-                const tabs = browser?.tabs ?? [];
-                const index = tabs.findIndex((candidate) => candidate.id === tab.id);
-                const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
-                  : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
-                const next = tabs[nextIndex];
-                if (next) {
-                  void selectTab(next.id);
-                  event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus();
-                }
-              }
-            }}
-            aria-disabled={transitionBusy}
-            role="tab"
-            aria-selected={tab.active}
-            aria-label={`${browserTabTitleFromTitle(tab.title, copy)} — ${tab.status === "running" ? copy.running
-              : tab.status === "loading" ? copy.loading : tab.status === "testing" ? copy.overviewRunTesting
-                : tab.status === "error" ? copy.failed : tab.status === "ready" ? copy.complete : copy.noActiveTask}`}
-            tabIndex={tab.active ? 0 : -1}
           >
-            <BrandMark small />
-            <span className="browser-tab-title" title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
-              {browserTabTitleFromTitle(tab.title, copy)}
-            </span>
-            {tab.loading ? <i className="tab-spinner" /> : <StateDot state={browserTabTone(tab.status)} />}
+            <button
+              className="browser-tab-select"
+              onClick={() => void selectTab(tab.id)}
+              onKeyDown={(event) => {
+                if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                  event.preventDefault();
+                  const tabs = browser?.tabs ?? [];
+                  const index = tabs.findIndex((candidate) => candidate.id === tab.id);
+                  const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+                    : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                  const next = tabs[nextIndex];
+                  if (next) {
+                    void selectTab(next.id);
+                    event.currentTarget.closest('[role="tablist"]')
+                      ?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus();
+                  }
+                }
+              }}
+              aria-disabled={transitionBusy}
+              role="tab"
+              aria-selected={tab.active}
+              aria-label={`${browserTabTitleFromTitle(tab.title, copy)} — ${tab.status === "running" ? copy.running
+                : tab.status === "loading" ? copy.loading : tab.status === "testing" ? copy.overviewRunTesting
+                  : tab.status === "error" ? copy.failed : tab.status === "ready" ? copy.complete : copy.noActiveTask}`}
+              tabIndex={tab.active ? 0 : -1}
+              type="button"
+            >
+              <BrandMark small />
+              <span className="browser-tab-title" title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
+                {browserTabTitleFromTitle(tab.title, copy)}
+              </span>
+              {tab.loading ? <i className="tab-spinner" /> : <StateDot state={browserTabTone(tab.status)} />}
+            </button>
             {tab.closable ? (
               <button
                 aria-label={`${tab.status === "running" ? copy.manualPromptCancel : copy.hideTab}: ${browserTabTitleFromTitle(tab.title, copy)}`}
                 disabled={transitionBusy || closingTabs.has(tab.id)}
                 className={tab.status === "running" ? "browser-tab-cancel" : undefined}
-                onClick={(event) => {
-                  event.stopPropagation();
+                onClick={() => {
                   if (tab.status === "running") setCancelTarget({ id: tab.id, traceId: tab.traceId });
                   else void closeTab(tab.id, tab.traceId);
                 }}
@@ -1811,6 +1884,7 @@ function SetupSurface({
   const confirmPending = models === "picker-pending";
   const pendingContext = typeof snapshot.state.pendingBiggerContext === "boolean";
   const troubleshooting = useRef<HTMLDetailsElement>(null);
+  const accountSignInChoices = useRef<HTMLDivElement>(null);
   const toolsVerified = currentToolProof(snapshot, operation);
   const nextStep = setupNextStep({ manual: manualInteraction, signedIn: browser?.authenticated === true,
     smokePassed: snapshot.smokePassed, installed: snapshot.state.coreSetupComplete === true,
@@ -1877,6 +1951,10 @@ function SetupSurface({
     troubleshooting.current.scrollIntoView({ block: "start" });
     troubleshooting.current.querySelector<HTMLButtonElement>("button")?.focus();
   };
+  const showAccountSignInChoices = () => {
+    accountSignInChoices.current?.scrollIntoView({ block: "center" });
+    accountSignInChoices.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  };
   const readyTitle = manualInteraction ? copy.manualSetupReady
     : toolsVerified ? copy.setupChecksPassed : copy.setupReadyModels;
   const readyBody = manualInteraction ? copy.manualSetupReadyBody
@@ -1887,11 +1965,11 @@ function SetupSurface({
   const nextBody = { "sign-in": copy.stepAccountBody, test: copy.stepSmokeBody, install: copy.stepInstallBody,
     catalog: copy.setupCatalogBody, confirm: copy.setupConfirmBody, tools: copy.mcpBody,
     ready: readyBody }[nextStep];
-  const nextLabel = { "sign-in": copy.signIn, test: copy.runSmoke, install: copy.install,
+  const nextLabel = { "sign-in": copy.next, test: copy.runSmoke, install: copy.install,
     catalog: copy.diagnostics, confirm: copy.confirmPicker, tools: copy.configureMcp,
     ready: copy.openWorkspace }[nextStep];
   const nextAction = () => {
-    if (nextStep === "sign-in") void openLogin();
+    if (nextStep === "sign-in") showAccountSignInChoices();
     else if (nextStep === "test") void smoke();
     else if (nextStep === "install") void install();
     else if (nextStep === "confirm") void confirmModels();
@@ -1940,6 +2018,7 @@ function SetupSurface({
             onAction={useExistingChrome ? openExistingChromeLogin : openLogin}
             secondaryAction={useExistingChrome && !browser?.authenticated ? copy.signIn : undefined}
             onSecondaryAction={openLogin}
+            rowRef={accountSignInChoices}
             secondaryDisabled={busy}
             title={copy.stepAccount}
           />
@@ -2899,6 +2978,7 @@ function SetupRow({
   onAction,
   onSecondaryAction,
   repeatable = false,
+  rowRef,
   secondaryAction,
   secondaryDisabled = false,
   title,
@@ -2912,13 +2992,14 @@ function SetupRow({
   onAction: () => void;
   onSecondaryAction?: () => void;
   repeatable?: boolean;
+  rowRef?: RefObject<HTMLDivElement | null>;
   secondaryAction?: string;
   secondaryDisabled?: boolean;
   title: string;
   titleAction?: ReactNode;
 }) {
   return (
-    <div className={`setup-row${complete ? " is-complete" : ""}`}>
+    <div className={`setup-row${complete ? " is-complete" : ""}`} ref={rowRef}>
       <span className="setup-index">{complete ? <Icon name="check" /> : index}</span>
       <div className="setup-row-copy">
         <div className="setup-row-heading">
@@ -3361,22 +3442,31 @@ function SecondaryButton({
 }
 
 function IconButton({
+  buttonRef,
+  controls,
   disabled = false,
+  expanded,
   icon,
   label,
   onClick,
 }: {
+  buttonRef?: RefObject<HTMLButtonElement | null>;
+  controls?: string;
   disabled?: boolean;
+  expanded?: boolean;
   icon: IconName;
   label: string;
   onClick: () => void;
 }) {
   return (
     <button
+      aria-controls={controls}
+      aria-expanded={expanded}
       aria-label={label}
       className="icon-button"
       disabled={disabled}
       onClick={onClick}
+      ref={buttonRef}
       title={label}
       type="button"
     >

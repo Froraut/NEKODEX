@@ -37,3 +37,18 @@ test("returning an event queue releases the buffered suffix", async () => {
   await iterator.return!();
   expect(await iterator.next()).toEqual({ value: undefined, done: true });
 });
+
+test("event queue byte accounting uses enqueue-time size for mutable values", async () => {
+  const first = { text: "a" };
+  const queue = new AsyncEventQueue<typeof first>(10, 5, value => value.text.length);
+  queue.push(first);
+  first.text = "changed after enqueue";
+
+  const iterator = queue[Symbol.asyncIterator]();
+  const delivered = await iterator.next();
+  expect(delivered.value).toBe(first);
+  expect(delivered.done).toBe(false);
+
+  queue.push({ text: "12345" });
+  expect(() => queue.push({ text: "x" })).toThrow("Adapter event byte backlog exceeded");
+});

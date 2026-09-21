@@ -70,6 +70,38 @@ afterEach(() => {
 });
 
 describe("reversible native Codex route integration", () => {
+  test("rejects malformed route history before changing the Codex config", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    writeFileSync(configPath, 'model = "gpt-5.6-sol"\n');
+    installCodexIntegration(nativeConfig("browser-only"));
+    const installedConfig = readFileSync(configPath, "utf8");
+    const journal = JSON.parse(readFileSync(getCodexJournalPath(), "utf8"));
+    delete journal.previous.openai_base_url;
+    const malformed = `${JSON.stringify(journal, null, 2)}\n`;
+    writeFileSync(getCodexJournalPath(), malformed);
+    writeFileSync(getCodexJournalRecoveryPath(), malformed);
+
+    expect(() => deactivateCodexIntegration()).toThrow("Invalid Codex integration journal");
+    expect(readFileSync(configPath, "utf8")).toBe(installedConfig);
+  });
+
+  test("rejects malformed Compatibility V1 history before changing the Codex config", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    writeFileSync(configPath, 'model = "gpt-5.6-sol"\n');
+    installCodexIntegration(compatibilityV1Config("browser-only"));
+    const installedConfig = readFileSync(configPath, "utf8");
+    const journal = JSON.parse(readFileSync(getCodexJournalPath(), "utf8"));
+    journal.previousAgentMaxDepth = { present: false };
+    const malformed = `${JSON.stringify(journal, null, 2)}\n`;
+    writeFileSync(getCodexJournalPath(), malformed);
+    writeFileSync(getCodexJournalRecoveryPath(), malformed);
+
+    expect(() => uninstallCodexIntegration()).toThrow("Invalid Codex integration journal");
+    expect(readFileSync(configPath, "utf8")).toBe(installedConfig);
+  });
+
   test("ordinary journal inspection preserves a hook reintroduced after completed disconnect", () => {
     const { codexHome } = fixture();
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.6-sol"\n');

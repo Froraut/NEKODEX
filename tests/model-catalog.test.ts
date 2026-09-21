@@ -54,8 +54,8 @@ describe("native /models augmentation", () => {
       "chatgpt-web/light", "chatgpt-web/medium", "chatgpt-web/high", "chatgpt-web/extra-high",
     ]);
     expect(web.at(-1)).toMatchObject({
-      context_window: 111_193,
-      auto_compact_token_limit: 95_000,
+      context_window: 90_000,
+      auto_compact_token_limit: 80_000,
       default_reasoning_level: "xhigh",
     });
   });
@@ -64,6 +64,7 @@ describe("native /models augmentation", () => {
     const nativeSnapshot = structuredClone(native);
     const config = defaultConfig("full");
     config.subagentProtocol = "native";
+    config.allowWebSubagents = true;
     config.proAvailable = true;
     config.extraHighAvailable = true;
     const result = augmentNativeModelCatalog(native, config);
@@ -113,6 +114,7 @@ describe("native /models augmentation", () => {
   test("keeps native Sol selectable in the bounded Compatibility V1 registry", () => {
     const config = defaultConfig("full");
     config.subagentProtocol = "compatibility-v1";
+    config.allowWebSubagents = true;
     config.proAvailable = true;
     config.extraHighAvailable = true;
     const models = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
@@ -152,6 +154,7 @@ describe("native /models augmentation", () => {
     const nativeModels = snapshot.models as Array<Record<string, unknown>>;
     const config = defaultConfig("full");
     config.subagentProtocol = "native";
+    config.allowWebSubagents = true;
     config.proAvailable = true;
     config.extraHighAvailable = true;
 
@@ -184,7 +187,7 @@ describe("native /models augmentation", () => {
       CHATGPT_WEB_MODEL_ROUTES.filter(route => !route.requiresPro && !route.requiresExtraHigh).map(route => route.slug),
     );
     expect(web.every(model => model.tool_mode === null)).toBe(true);
-    expect(web.every(model => model.multi_agent_version === "v2")).toBe(true);
+    expect(web.every(model => model.multi_agent_version === "disabled")).toBe(true);
     expect(web.every(model => (model.supported_reasoning_levels as unknown[]).length === 1)).toBe(true);
     expect(web.map(model => ({
       contextWindow: model.context_window,

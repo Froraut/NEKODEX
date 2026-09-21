@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { localizeLauncherError, type Copy } from "./i18n";
+import type { Copy } from "./i18n";
+import { passkeyFailureText } from "./passkey-copy";
 import type { PasskeyLoginProgress } from "./types";
 
 export function PasskeyLoginGuide({ progress, copy, onRetry, setError, transitionBusy = false }: {
@@ -29,12 +30,12 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, setError, transitio
     : progress.phase === "timed-out" ? copy.passkeyTimedOut
     : progress.phase === "failed" ? copy.passkeyFailed
     : copy.passkeyImporting;
-  const act = async (action: () => Promise<unknown>, allowedDuringTransition = false) => {
+  const act = async (action: () => Promise<unknown>, allowedDuringTransition = false, failure: string = copy.passkeyFailed) => {
     if (inFlight.current || (transitionBusy && !allowedDuringTransition)) return;
     inFlight.current = true;
     setPending(true);
-    try { await action(); } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+    try { await action(); } catch {
+      setError(failure);
     } finally { inFlight.current = false; setPending(false); }
   };
   return <div className="browser-login-guide">
@@ -45,11 +46,11 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, setError, transitio
     {progress.active && ["starting", "waiting"].includes(progress.phase) ? (
       <p>{copy.passkeyTimeRemaining.replace("{time}", remaining)}</p>
     ) : null}
-    {progress.error ? <p role="alert">{localizeLauncherError(copy, progress.error)}</p> : null}
-    {progress.revealError ? <p role="alert">{copy.passkeyRevealFailed}</p> : null}
+    {progress.error ? <p role="alert">{passkeyFailureText(progress.error, copy)}</p> : null}
+    {progress.revealError ? <p role="alert">{passkeyFailureText(progress.revealError, copy)}</p> : null}
     <div className="browser-empty-actions">
       {progress.canReveal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
-        onClick={() => void act(() => window.codexWebLauncher!.revealPasskeyLogin())}>{copy.passkeyReveal}</button> : null}
+        onClick={() => void act(() => window.codexWebLauncher!.revealPasskeyLogin(), false, copy.passkeyRevealFailed)}>{copy.passkeyReveal}</button> : null}
       {progress.canCancel ? <button className="toolbar-text-button" type="button" disabled={pending}
         onClick={() => void act(() => window.codexWebLauncher!.cancelPasskeyLogin(), true)}>{copy.passkeyCancel}</button> : null}
       {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}

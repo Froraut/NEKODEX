@@ -1,4 +1,13 @@
 const ACTIVE_PHASES = new Set(["starting", "waiting", "importing", "verifying", "cancelling"]);
+const PUBLIC_ERROR_CODES = new Set([
+  "passkey-timeout",
+  "passkey-handoff-timeout",
+  "passkey-capture-failed",
+  "passkey-validation-failed",
+  "passkey-cleanup-failed",
+  "passkey-verification-failed",
+  "passkey-import-failed",
+]);
 
 function initialPasskeyProgress(now = Date.now()) {
   return {
@@ -13,7 +22,11 @@ function initialPasskeyProgress(now = Date.now()) {
 function publicPasskeyProgress(progress) {
   if (!progress) return null;
   return {
-    ...progress,
+    phase: progress.phase,
+    startedAt: progress.startedAt,
+    deadlineAt: progress.deadlineAt,
+    error: PUBLIC_ERROR_CODES.has(progress.error) ? progress.error : progress.error ? "passkey-import-failed" : null,
+    revealError: progress.revealError === "passkey-reveal-failed" ? progress.revealError : null,
     active: ACTIVE_PHASES.has(progress.phase),
     canImport: progress.phase === "waiting",
     canReveal: progress.phase === "waiting",
@@ -30,7 +43,7 @@ function parsePasskeyProgress(line) {
     return { phase: "waiting", deadlineAt: message.deadlineAt };
   }
   if (message.event === "revealed") return { revealError: null };
-  if (message.event === "reveal-failed") return { revealError: "Passkey Chrome window could not be revealed" };
+  if (message.event === "reveal-failed") return { revealError: "passkey-reveal-failed" };
   return null;
 }
 

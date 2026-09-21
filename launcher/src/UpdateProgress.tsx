@@ -45,7 +45,8 @@ export function UpdateProgress({ state, label }: { state: UpdateState; label: st
   const total = downloading && Number.isFinite(state.totalBytes) && state.totalBytes! > 0 ? state.totalBytes : undefined;
   const bytes = downloading && Number.isFinite(state.downloadedBytes)
     ? Math.max(0, Math.min(total ?? Infinity, state.downloadedBytes!)) : 0;
-  const speed = downloading && Number.isFinite(state.bytesPerSecond) ? Math.max(0, state.bytesPerSecond!) : 0;
+  const hasSpeed = downloading && Number.isFinite(state.bytesPerSecond);
+  const speed = hasSpeed ? Math.max(0, state.bytesPerSecond!) : 0;
   const reading = useTransferReading({ bytes, speed }, downloading);
   // No reported total is not evidence that part of the file has arrived.
   const fraction = total ? Math.min(1, reading.bytes / total) : 0;
@@ -58,6 +59,6 @@ export function UpdateProgress({ state, label }: { state: UpdateState; label: st
     </div>
     {downloading ? <div className="updates-transfer"><span>{mib(reading.bytes)}{total ? ` / ${mib(total)}` : ""}</span>
       {total ? <strong>{((fraction ?? 0) * 100).toFixed(1)}%</strong> : null}</div> : null}
-    {downloading ? <small className="updates-speed">{mib(reading.speed)}/s</small> : null}
+    {downloading ? <small className="updates-speed">{hasSpeed ? `${mib(reading.speed)}/s` : "—"}</small> : null}
   </div>;
 }

@@ -27,6 +27,7 @@ export function AccountCodexControls({
   onStartLogin,
   quota,
   quotaBusy,
+  quotaFailed = false,
   quotaDisabledReason,
   transitionBusy = false,
 }: {
@@ -44,6 +45,7 @@ export function AccountCodexControls({
   onStartLogin: () => Promise<void>;
   quota: AccountQuotaSnapshot | null | undefined;
   quotaBusy: boolean;
+  quotaFailed?: boolean;
   quotaDisabledReason?: string;
   transitionBusy?: boolean;
 }) {
@@ -84,7 +86,8 @@ export function AccountCodexControls({
       {quotaDisabledReason && !sharedDisabledReason
         ? <p className="account-codex-disabled-reason" id={quotaDisabledReasonId}>{quotaDisabledReason}</p>
         : null}
-      <QuotaContent copy={copy} language={language} quota={quota} disabledReason={quotaDisabledReason} />
+      <QuotaContent copy={copy} language={language} quota={quota} disabledReason={quotaDisabledReason}
+        failed={quotaFailed} />
     </section>
 
     <section className="account-codex-login" aria-labelledby={loginHeadingId}>
@@ -110,12 +113,14 @@ export function AccountCodexControls({
   </div>;
 }
 
-function QuotaContent({ copy, disabledReason, language, quota }: {
+function QuotaContent({ copy, disabledReason, failed, language, quota }: {
   copy: AccountCodexCopy;
   disabledReason?: string;
+  failed: boolean;
   language: Language;
   quota: AccountQuotaSnapshot | null | undefined;
 }) {
+  if (failed) return <p className="account-codex-status" role="alert">{copy.quotaUnavailable}</p>;
   if (quota === undefined) return disabledReason ? null : <p className="account-codex-status" role="status">{copy.quotaChecking}</p>;
   if (quota === null) return disabledReason ? null : <p className="account-codex-status">{copy.quotaNotChecked}</p>;
   if (quota.availability !== "available" || quota.coverage !== "reported_buckets") {

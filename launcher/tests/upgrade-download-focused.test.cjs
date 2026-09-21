@@ -92,3 +92,37 @@ test('ignored range replaces partial instead of appending full response', async 
     assert.deepEqual(fs.readFileSync(dest), payload);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('network idle deadline stops after download while cancellation still covers hashing', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cgw-hash-deadline-'));
+  const dest = path.join(dir, 'asset.zip'), payload = Buffer.from('already downloaded authenticated payload');
+  const expectedBytes = payload.length, expectedSha256 = crypto.createHash('sha256').update(payload).digest('hex');
+  const url = 'https://github.com/a/b';
+  const slowRead = () => Readable.from((async function* () {
+    await new Promise(resolve => setTimeout(resolve, 25));
+    yield payload;
+  })());
+  try {
+    fs.writeFileSync(dest + '.part', payload);
+    fs.writeFileSync(dest + '.identity.json', JSON.stringify({ url, expectedBytes, expectedSha256 }));
+    await downloadAuthenticatedAsset(url, dest, { expectedBytes, expectedSha256,
+      idleTimeoutMs: 5, totalTimeoutMs: 200, createReadStream: slowRead,
+      requestDownload: async () => { throw new Error('complete partial must not download'); } });
+    assert.deepEqual(fs.readFileSync(dest), payload);
+
+    fs.renameSync(dest, dest + '.part');
+    fs.writeFileSync(dest + '.identity.json', JSON.stringify({ url, expectedBytes, expectedSha256 }));
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error('cancel hash')), 5);
+    await assert.rejects(downloadAuthenticatedAsset(url, dest, { expectedBytes, expectedSha256,
+      idleTimeoutMs: 100, totalTimeoutMs: 200, createReadStream: slowRead, signal: controller.signal,
+      requestDownload: async () => { throw new Error('complete partial must not download'); } }), /cancel hash/);
+    assert.equal(fs.existsSync(dest + '.part'), true);
+
+    const stalledRead = () => new Readable({ read() {} });
+    await assert.rejects(downloadAuthenticatedAsset(url, dest, { expectedBytes, expectedSha256,
+      idleTimeoutMs: 100, totalTimeoutMs: 5, createReadStream: stalledRead,
+      requestDownload: async () => { throw new Error('complete partial must not download'); } }), /overall time limit/);
+    assert.equal(fs.existsSync(dest + '.part'), true);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

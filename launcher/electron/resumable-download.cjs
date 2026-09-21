@@ -7,7 +7,7 @@ const { pipeline } = require('node:stream/promises');
 async function downloadAuthenticatedAsset(url, destination, {
   expectedBytes, expectedSha256, requestDownload, onProgress,
   maxBytes = 1024 ** 3, idleTimeoutMs = 60_000, totalTimeoutMs = 60 * 60_000,
-  signal,
+  signal, createReadStream = fs.createReadStream,
 }) {
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || expectedBytes > 1024 ** 3
     || !Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 1024 ** 3
@@ -86,12 +86,14 @@ async function downloadAuthenticatedAsset(url, destination, {
       } });
       await pipeline(response, limit, fs.createWriteStream(partial, { fd }), { signal: controller.signal });
     }
+    // The idle deadline only describes network progress. A complete download may
+    // legitimately take longer than that to hash on a slow disk; the overall
+    // deadline and caller cancellation continue to cover verification.
+    clearTimeout(idle);
+    idle = undefined;
     if (bytes !== expectedBytes) throw new Error('Incomplete update download; partial retained');
     const hash = crypto.createHash('sha256');
-    for await (const chunk of fs.createReadStream(partial)) {
-      if (controller.signal.aborted) throw controller.signal.reason;
-      hash.update(chunk);
-    }
+    await pipeline(createReadStream(partial), hash, { signal: controller.signal });
     if (controller.signal.aborted) throw controller.signal.reason;
     if (hash.digest('hex') !== expectedSha256) {
       invalid = true; throw new Error('Update SHA-256 does not match signed metadata');
