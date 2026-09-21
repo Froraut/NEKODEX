@@ -27,6 +27,7 @@ function harness(options: {
 }) {
   const inside = { name: "text-node-inside-composer" };
   const composer = {
+    get ownerDocument() { return fakeDocument; },
     focus() { if (options.focusable) fakeDocument.activeElement = composer; },
     contains: (node: object | null) => node === inside || node === composer,
   };
@@ -46,7 +47,9 @@ function harness(options: {
     },
   };
   (globalThis as Record<string, unknown>).document = fakeDocument;
-  (globalThis as Record<string, unknown>).window = { getSelection: () => selection };
+  (globalThis as Record<string, unknown>).window = {
+    location: { origin: "https://chatgpt.com" }, getSelection: () => selection,
+  };
   return { composer: composer as unknown as HTMLElement, calls, selection, fakeDocument };
 }
 
@@ -84,4 +87,17 @@ test("reports a genuinely rejected edit as a failure", () => {
   });
 
   expect(insertPlainTextIntoComposer(composer, "staged part")).toBeFalse();
+});
+
+test("rejects foreign documents before focusing or inserting a private continuation", () => {
+  const { composer, calls, fakeDocument } = harness({ focusable: true, caretInsideComposer: false });
+  for (const origin of ["https://example.test", "https://chatgpt.com.example.test", "http://chatgpt.com", "null"]) {
+    (window as unknown as { location: { origin: string } }).location.origin = origin;
+    expect(() => insertPlainTextIntoComposer(composer, "synthetic-private-continuation")).toThrow("foreign document");
+    expect(fakeDocument.activeElement).toBeNull();
+    expect(calls).toEqual([]);
+  }
+  (window as unknown as { location: { origin: string } }).location.origin = "https://chatgpt.com";
+  expect(() => insertPlainTextIntoComposer({ ...composer, ownerDocument: {} } as HTMLElement, "synthetic"))
+    .toThrow("foreign document");
 });

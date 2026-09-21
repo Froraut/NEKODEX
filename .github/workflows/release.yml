@@ -238,7 +238,6 @@ jobs:
           cp LICENSE release-assets/LICENSE
           cp LICENSES/Bun-1.4.0.md release-assets/Bun-1.4.0.md
           cp LICENSES/libnotify-0.8.7-LGPL-2.1.md release-assets/libnotify-0.8.7-LGPL-2.1.md
-          cp scripts/install.sh release-assets/install.sh
           cp scripts/install-launcher.sh release-assets/install-launcher.sh
           cp scripts/install-launcher.ps1 release-assets/install-launcher.ps1
       - name: Flatten release assets

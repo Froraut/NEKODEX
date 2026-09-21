@@ -907,6 +907,13 @@ class BrowserHost {
     contents.once("destroyed", () => this.shellZoomShortcutBindings.delete(contents));
   }
 
+  hasTrustedTurnDocument(tab) {
+    const contents = tab.view?.webContents;
+    if (!contents || contents.isDestroyed() || contents.isLoadingMainFrame()) return false;
+    const url = contents.getURL();
+    return httpsOrigin(url) === CHATGPT_ORIGIN && !allowedAuthUrl(url);
+  }
+
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
     this.permissionPolicy?.register(contents);
@@ -919,17 +926,36 @@ class BrowserHost {
       void this.externalLinkBroker?.open(contents, url, "turn").catch(() => {});
       return { action: "deny" };
     });
-    const blockAuthenticationNavigation = (event, url) => {
-      if (!allowedAuthUrl(url)) return;
+    const allowedTurnUrl = url => (httpsOrigin(url) === CHATGPT_ORIGIN && !allowedAuthUrl(url))
+      || (tab.initializingSurface && url === IDLE_BROWSER_URL);
+    const invalidateForeignNavigation = url => {
+      if (allowedTurnUrl(url)) return false;
+      tab.conversationKey = undefined;
+      tab.connectorBound = false;
+      tab.bootstrapReady = false;
+      tab.rendererReady = false;
+      tab.status = "error";
+      tab.url = url;
+      tab.message = "The ChatGPT page changed. Start a new turn to resend the full context.";
+      contents.stop();
+      this.syncPowerSaveBlocker();
+      this.publishState?.(this.snapshot());
+      return true;
+    };
+    const blockForeignNavigation = (event, url) => {
+      if (allowedTurnUrl(url)) return;
       event.preventDefault();
-      tab.message = "ChatGPT requires a fresh sign-in; finish this turn, then sign in from Setup";
-      this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
+      tab.message = allowedAuthUrl(url)
+        ? "ChatGPT requires a fresh sign-in; finish this turn, then sign in from Setup"
+        : "External pages cannot replace this ChatGPT task tab";
+      this.logger.warn("browser.turn_navigation_blocked", { tabId: tab.id, traceId: tab.traceId });
       this.publishState?.(this.snapshot());
     };
-    contents.on("will-navigate", blockAuthenticationNavigation);
-    contents.on("will-redirect", blockAuthenticationNavigation);
+    contents.on("will-navigate", blockForeignNavigation);
+    contents.on("will-redirect", blockForeignNavigation);
     contents.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
       if (!mainFrame) return;
+      if (invalidateForeignNavigation(url)) return;
       tab.url = url;
       tab.loading = true;
       if (!inPlace) {
@@ -950,8 +976,9 @@ class BrowserHost {
     contents.on("did-finish-load", () => {
       tab.url = contents.getURL();
       tab.loading = false;
+      if (invalidateForeignNavigation(tab.url)) return;
       tab.rendererReady = true;
-      if (tab.url.startsWith(CHATGPT_ORIGIN)) tab.bootstrapReady = true;
+      tab.bootstrapReady = httpsOrigin(tab.url) === CHATGPT_ORIGIN;
       this.syncViewVisibility();
       if (browserInteractionModeFor(this) !== "automatic") {
         this.publishState?.(this.snapshot());
@@ -977,6 +1004,7 @@ class BrowserHost {
       this.publishState?.(this.snapshot());
     });
     contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
+      if (mainFrame && invalidateForeignNavigation(url)) return;
       if (mainFrame) tab.url = url;
       this.publishState?.(this.snapshot());
     });
@@ -1020,6 +1048,10 @@ class BrowserHost {
     void contents.insertCSS(CHATGPT_VIEWPORT_CSS).catch(() => {});
     const encoded = JSON.stringify(tab.surfaceId);
     await contents.executeJavaScript(`(() => {
+      if (location.origin !== ${JSON.stringify(CHATGPT_ORIGIN)}
+        && !(${JSON.stringify(tab.initializingSurface === true)} && location.href === ${JSON.stringify(IDLE_BROWSER_URL)})) {
+        throw new Error("Cannot mark a foreign document as a ChatGPT turn surface");
+      }
       Object.defineProperty(globalThis, "__CODEX_WEB_GPT_SURFACE_ID__", {
         value: ${encoded}, configurable: true, enumerable: false, writable: false,
       });
@@ -2519,6 +2551,7 @@ class BrowserHost {
       && tab.conversationKey === conversationKey
       && tab.connectorIdentity === connectorIdentity
       && (!connectorIdentity || tab.connectorBound === true)
+      && this.hasTrustedTurnDocument(tab)
     )) : [];
     if (matches.length > 1) {
       throw new Error(`ChatGPT retained conversation ${conversationKey} owns multiple browser tabs`);
@@ -2665,7 +2698,8 @@ class BrowserHost {
     if (status === "completed"
       && retain
       && tab.conversationKey
-      && (!tab.connectorIdentity || connectorBound)) {
+      && (!tab.connectorIdentity || connectorBound)
+      && this.hasTrustedTurnDocument(tab)) {
       tab.connectorBound = connectorBound === true;
       tab.lastHeartbeatAt = Date.now();
       if (hideAfterTurn && !this.activeTraceId) this.hide();

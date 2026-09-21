@@ -2282,6 +2282,10 @@ export function chatGptPromptFilePayloads(
  * position inside this composer, so an insert can never land in another element.
  */
 export function insertPlainTextIntoComposer(element: HTMLElement, value: string): boolean {
+  // Re-check in the document that will receive the text: a retained lease can outlive navigation.
+  if (window.location.origin !== "https://chatgpt.com" || element.ownerDocument !== document) {
+    throw new Error("Cannot insert a ChatGPT prompt into a foreign document");
+  }
   if (document.activeElement !== element) element.focus();
   if (document.activeElement !== element) return false;
   const selection = window.getSelection();
@@ -5263,6 +5267,9 @@ export class ChatGptBrowserWorker {
       const launcherObservationRecovery = launcherSurfaceId !== undefined
         && this.config.browserHostDescriptorPath !== undefined;
       await diagnostics.capture(page, "browser-page-acquired");
+      if (reuseConversation && new URL(page.url()).origin !== "https://chatgpt.com") {
+        throw new Error("The retained ChatGPT conversation left its trusted origin");
+      }
       console.info(
         `[chatgpt-web] browser turn ${turn.traceId} opened (transport=${prepared.multipart ? `multipart-${prepared.multipart.parts.length}` : "inline"}, maxMessageChars=${maxMessageChars}, estimatedInputTokens=${estimatedInputTokens}, images=${prepared.images.length}, compactionTrimmedMessages=${prepared.trimmedCompactionMessages ?? 0})`,
       );

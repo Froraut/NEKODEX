@@ -2166,6 +2166,8 @@ test("a later provider round reuses only its exact connector-bound conversation"
         isDestroyed: () => false,
         setBackgroundThrottling: (enabled) => throttling.push(enabled),
         enableDeviceEmulation: options => { rendererViewport = options.viewSize; },
+        getURL: () => "https://chatgpt.com/c/retained",
+        isLoadingMainFrame: () => false,
       },
     },
   };
@@ -2487,6 +2489,8 @@ test("a completed keyed turn is retained for thirty minutes and preserves its ac
     view: { webContents: {
       isDestroyed: () => false,
       setBackgroundThrottling: (enabled) => throttling.push(enabled),
+      getURL: () => "https://chatgpt.com/c/retained",
+      isLoadingMainFrame: () => false,
     } },
   };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {

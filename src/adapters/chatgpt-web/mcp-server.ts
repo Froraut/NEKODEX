@@ -151,12 +151,15 @@ function gatewayToolNameIsValid(name: string): boolean {
   return /^[A-Za-z0-9_$]+$/.test(name);
 }
 
-function safeVisibleTools(environment: ChatGptTurnEnvironment, contract: ChatGptMcpContract): CodexTool[] {
-  if (contract === "native") return environment.tools;
+function safeVisibleTools(environment: ChatGptTurnEnvironment, contract: ChatGptMcpContract, allowWebSubagents = true): CodexTool[] {
+  // The native exec realm cannot be restricted by a JavaScript wrapper. Keep it private when
+  // delegation is disabled; trusted, structured gateway programs can still use it internally.
+  const tools = environment.tools.filter(tool => allowWebSubagents || tool !== execGateway(environment));
+  if (contract === "native") return tools;
   const bridgeNamespaces = new Set(environment.tools
     .filter(tool => tool.namespace && BRIDGE_TOOL_NAMES.has(tool.name))
     .map(tool => tool.namespace!));
-  return environment.tools.filter(tool => (
+  return tools.filter(tool => (
     wireName(tool) !== CODEX_COMPACTION_CONTROL_WIRE_NAME
     && !BRIDGE_TOOL_NAMES.has(tool.name)
     // Zero Risk does not expose model-authored JavaScript. Automatic Full mode keeps the native
@@ -177,7 +180,7 @@ function isGatewayAgentWaitTool(name: string): boolean {
 function browserToolDescription(tool: CodexTool): string {
   if (isAgentWaitTool(tool)) return `${tool.description}\n\n${AGENT_WAIT_TRANSPORT_RULE}`;
   if (!tool.namespace && tool.name === "exec") {
-    return `${tool.description}\n\n${AGENT_WAIT_TRANSPORT_RULE} This rule is enforced for wait_agent calls made inside exec; recursive raw exec is unavailable.`;
+    return `${tool.description}\n\n${AGENT_WAIT_TRANSPORT_RULE} Use the supplied tools wrapper for wait_agent polling; do not invoke recursive raw exec. These cooperative guards do not isolate arbitrary JavaScript.`;
   }
   return tool.description;
 }
@@ -457,15 +460,18 @@ function execGatewayProgram(
 }
 
 /**
- * Preserve the native freeform exec surface while applying the same wait_agent deadline contract
- * as direct calls. The model still owns its JavaScript; only the tool registry it receives is a
- * transparent proxy whose native wait functions validate their transport-bound argument before dispatch.
+ * Preserve native freeform exec for unrestricted delegation, with cooperative transport guards.
+ * This wrapper is not an isolation boundary for model-authored JavaScript. Restricted turns must
+ * use the structured gateway, whose tool name and input are serialized by trusted host code.
  */
 export function transportBoundRawExecProgram(
   input: string,
   blockedExecName: string,
   spawnExclusions: readonly string[] = [],
 ): string {
+  if (spawnExclusions.length > 0) {
+    throw new Error("Raw exec is unavailable while Web subagents are disabled; use structured tool calls");
+  }
   return [
     "await (async (tools) => {",
     input,
@@ -757,7 +763,10 @@ export async function runChatGptMcpServer(options: {
     args: Record<string, unknown> | undefined,
     input: string | undefined,
   ): { tool: CodexTool; payload: { arguments?: Record<string, unknown>; input?: string } } => {
-    const tool = safeVisibleTools(bound, contract).find(candidate => wireName(candidate) === wireNameValue);
+    if (options.allowWebSubagents === false && wireNameValue === "exec") {
+      throw new Error("Raw exec is unavailable while Web subagents are disabled; use structured tool calls");
+    }
+    const tool = safeVisibleTools(bound, contract, options.allowWebSubagents).find(candidate => wireName(candidate) === wireNameValue);
     if (!tool) {
       const gateway = execGateway(bound);
       const hiddenOuterTool = bound.tools.some(candidate => wireName(candidate) === wireNameValue);
@@ -1030,7 +1039,7 @@ export async function runChatGptMcpServer(options: {
         const { query, offset, limit, include_schema } = input;
         const bound = claimed.environment;
         const needle = query?.trim().toLowerCase();
-        const visibleTools = safeVisibleTools(bound, contract)
+        const visibleTools = safeVisibleTools(bound, contract, options.allowWebSubagents)
           .filter(tool => options.allowWebSubagents !== false || !isSpawnCollaborationWireName(wireName(tool)));
         const directMatches = visibleTools.filter(tool => !needle || [
           wireName(tool),

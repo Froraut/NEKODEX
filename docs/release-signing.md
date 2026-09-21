@@ -190,7 +190,12 @@ gh attestation verify /absolute/path/to/downloaded-asset \
   --signer-workflow Froraut/codex-chatgpt-web/.github/workflows/release.yml
 ```
 
-First-install scripts remain a bootstrap trust boundary: use a reviewed checkout or independently
+The terminal-only `scripts/install.sh` runtime installer is retired and is no longer published
+with releases. Its checkout entry point exits without downloading or modifying anything. Use
+the signed desktop application and its authenticated built-in updater, or a reviewed source
+checkout for terminal development. Old release copies of the retired script must not be used.
+
+Desktop first-install scripts remain a bootstrap trust boundary: use a reviewed checkout or independently
 verify its signature/provenance before executing a downloaded installer script. An in-app update
 signature cannot authenticate the first app installation retroactively.
 

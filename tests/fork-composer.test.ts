@@ -9,8 +9,9 @@ let page: Page;
 beforeAll(async () => {
   browser = await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
   const context = await browser.newContext();
-  await context.route('**/*', route => route.abort());
+  await context.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body></body></html>' }));
   page = await context.newPage();
+  await page.goto('https://chatgpt.com/?temporary-chat=true');
 });
 afterAll(async () => { await browser?.close(); });
 
@@ -64,4 +65,12 @@ test('CR and NUL inputs keep the plain text command', async () => {
     return calls;
   },source);
   expect(commands).toEqual(['insertText']);
+});
+
+test('navigation to a lookalike origin cannot receive continuation text', async () => {
+  await page.goto('https://chatgpt.com.example.test/');
+  await page.setContent('<div id="prompt-textarea" contenteditable="true">unchanged</div>');
+  await expect(page.locator('#prompt-textarea').evaluate(insertPlainTextIntoComposer, 'synthetic-private-continuation'))
+    .rejects.toThrow('foreign document');
+  expect(await page.locator('#prompt-textarea').textContent()).toBe('unchanged');
 });
