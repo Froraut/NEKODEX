@@ -322,6 +322,8 @@ export interface AccountPoolSnapshot {
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
+    capabilities?: { solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean } | null;
+    availability?: { eligible: boolean; reason: string | null; retryAt: number | null };
     authenticationStatus?: AuthenticationStatus;
   authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "unknown" | null; authenticationCheckedAt?: string | null; lastVerifiedAt?: string | null;
     proxy: AccountProxy;

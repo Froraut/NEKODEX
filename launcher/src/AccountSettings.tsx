@@ -3,6 +3,7 @@ import { Icon } from "./icons";
 import { AccountSafetySettings } from "./AccountSafetySettings";
 import { AccountProxySettings } from "./AccountProxySettings";
 import { AccountCodexControls } from "./AccountCodexControls";
+import { AccountReadiness } from "./AccountReadiness";
 import { QuotaPortfolioSummary } from "./QuotaPortfolioSummary";
 import { accountCodexCopyFor, type Copy } from "./i18n";
 import { sessionIssueCopy } from "./session-issue-copy";
@@ -518,7 +519,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         const selectionReadinessReason = account.id !== state.selectedId
           ? authUnavailable ? workflow.session.verificationUnavailable
             : !account.authenticated ? copy.accountsSignInNeeded
-            : !account.checked || !account.connectorReady ? copy.connectionPending : undefined
+            : !manual && !account.checked ? copy.connectionPending : undefined
           : undefined;
         const credentialActionReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined);
         const authRetryDisabledReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined);
@@ -562,6 +563,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         <span className={account.checked ? "is-ready" : ""}><i className={`state-dot is-${account.checked ? "ready" : "idle"}`} />{copy.accountsChecked}: {account.checked ? copy.connectionVerified : copy.connectionPending}</span>
         <span className={account.connectorReady ? "is-ready" : ""}><i className={`state-dot is-${account.connectorReady ? "ready" : "idle"}`} />{copy.toolConnection}: {account.connectorReady ? copy.connectionVerified : copy.connectionPending}</span>
       </div>
+      <AccountReadiness account={account} language={language} />
       <div className="account-actions">
         <label title={loginBoundReason}><input type="checkbox" checked={account.enabled} disabled={mutationsDisabled || loginBoundActive}
           aria-describedby={(mutationsDisabled || loginBoundActive) ? describedBy(blockedReason) : undefined}
@@ -584,7 +586,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           onClick={() => void refreshAuthentication(account.id)}>{authRefreshBusy
             ? workflow.session.checkingVerification : workflow.session.retryVerification}</button> : null}
         {account.id !== state.selectedId ? <button type="button" className="button-secondary"
-          disabled={mutationsDisabled || loginBoundActive || !account.authenticated || !account.checked || !account.connectorReady}
+          disabled={mutationsDisabled || loginBoundActive || !account.authenticated || (!manual && !account.checked)}
           aria-describedby={describedBy(blockedReason ?? selectionReadinessReason)}
           title={loginBoundReason}
           onClick={() => void run(() => api.selectAccount(account.id))}>{copy.accountsSelect}</button> : null}

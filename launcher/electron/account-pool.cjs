@@ -240,6 +240,9 @@ class AccountBrowserPool {
     const config = this.registry.snapshot();
     return { ...config, accounts: config.accounts.map(account => {
       const host = this.hosts.get(account.id);
+      const capabilities = this.capabilities.get(account.id);
+      const activeTurns = host ? [...host.turnTabs.values()].filter(tab => tab.status === 'running').length : 0;
+      const reserved = [...this.reservations.values()].filter(id => id === account.id).length;
       return { ...account, proxy: this.network.get(account.id), safety: this.safety.snapshot(account.id), authenticated: host?.state.authenticated === true,
         authenticationStatus: host?.state.authenticationStatus,
         authenticationIssue: host?.state.authenticationIssue ?? null,
@@ -247,7 +250,13 @@ class AccountBrowserPool {
         lastVerifiedAt: host?.state.lastVerifiedAt ?? null,
         accountLabel: host?.state.accountLabel ?? null,
         evidenceEpoch: this.evidenceEpoch(account.id),
-        activeTurns: host ? [...host.turnTabs.values()].filter(tab => tab.status === 'running').length : 0,
+        activeTurns,
+        availability: this.safety.availability(account.id, activeTurns + reserved, { createsNewSession: true }),
+        capabilities: capabilities ? {
+          solAvailable: capabilities.solAvailable === true,
+          extraHighAvailable: capabilities.extraHighAvailable === true,
+          proAvailable: capabilities.proAvailable === true,
+        } : null,
         checked: this.capabilities.has(account.id),
         connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()) };
     }) };
@@ -833,11 +842,27 @@ class AccountBrowserPool {
       }
       return pinned;
     }
-    const candidates = config.mode === 'selected'
+    let candidates = config.mode === 'selected'
       ? config.accounts.filter(account => account.id === config.selectedId && eligible(account))
       : config.accounts.filter(eligible);
     const load = id => [...(this.hosts.get(id)?.turnTabs.values() ?? [])].filter(tab => tab.status === 'running').length
       + [...this.reservations.values()].filter(value => value === id).length;
+    if (config.mode === 'balanced') {
+      const blocked = [];
+      candidates = candidates.filter(account => {
+        const availability = this.safety.availability(account.id, load(account.id), { createsNewSession: true });
+        if (!availability.eligible) blocked.push({ accountId: account.id, ...availability });
+        return availability.eligible;
+      });
+      if (!candidates.length && blocked.length) {
+        const retries = blocked.map(item => item.retryAt).filter(Number.isFinite);
+        throw Object.assign(new Error('Matching accounts are waiting for local pacing or resume. No request was sent.'), {
+          code: 'account_cooldown', workStarted: false,
+          retryAt: retries.length ? Math.min(...retries) : undefined,
+          blockers: blocked.map(({ accountId, reason, retryAt }) => ({ accountId, reason, retryAt })),
+        });
+      }
+    }
     candidates.sort((a, b) => load(a.id) - load(b.id) || (this.lastAssigned.get(a.id) ?? 0) - (this.lastAssigned.get(b.id) ?? 0));
     if (!candidates.length) {
       const blocked = config.mode === 'selected'

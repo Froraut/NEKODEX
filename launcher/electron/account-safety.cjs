@@ -123,6 +123,37 @@ class AccountSafety {
       cooldownUntil: Math.max(item.cooldownUntil, this.clock() + item.policy.cooldownMinutes * 60_000) });
     else if (code === 'account_safety_stop') this.save(id, { ...item, stopped: true });
   }
+  // Read-only admission preview. Scheduler/UI/queue share the same predicates as admit;
+  // observing a blocked account must never consume an allowance or extend its break.
+  availability(id, activeCount, session = {}) {
+    const now = this.clock();
+    const item = this.syncNewSessionWindow(this.entry(id), now).item;
+    const p = item.policy;
+    const blocked = (reason, message, retryAt = null) => ({ eligible: false, reason, message, retryAt });
+    if (item.stopped) return blocked('paused', 'This account is paused. Review it in Accounts and explicitly resume.');
+    if (now < item.cooldownUntil) return blocked('cooldown', `This account is cooling down until ${new Date(item.cooldownUntil).toISOString()}. No request was sent.`, item.cooldownUntil);
+    if (p.enabled) {
+      if (activeCount >= p.maxConcurrent) return blocked('concurrency', 'Account pacing concurrency limit reached. Wait for its active tasks.');
+      if (item.sessionStart && now - item.sessionStart >= p.maxSessionMinutes * 60_000) {
+        return blocked('session-limit', 'Account session time limit reached. Review the account and explicitly resume.');
+      }
+      const nextStart = item.lastStart + p.minIntervalSec * 1000;
+      if (item.lastStart && now < nextStart) return blocked('interval', 'Account pacing interval has not elapsed. No request was sent.', nextStart);
+      const breakDue = item.breakStart + p.breakAfterMinutes * 60_000;
+      const breakEnd = breakDue + p.breakMinutes * 60_000;
+      if (item.breakStart && now >= breakDue && now < breakEnd) {
+        return blocked('scheduled-break', `Scheduled account break until ${new Date(breakEnd).toISOString()}. No request was sent.`, breakEnd);
+      }
+    }
+    if (session.createsNewSession && p.newSessionWindow) {
+      const usages = item.newSessionUsages ?? [];
+      if (!usages.some(usage => usage.id === session.sessionId) && usages.length >= p.newSessionWindow.limit) {
+        const retryAt = Math.min(...usages.map(usage => usage.usedAt)) + p.newSessionWindow.minutes * 60_000;
+        return blocked('new-session-window', `New Web session window reached its configured limit. Existing sessions may continue; wait until ${new Date(retryAt).toISOString()} before starting another.`, retryAt);
+      }
+    }
+    return { eligible: true, reason: null, message: null, retryAt: null };
+  }
   admit(id, activeCount, session = undefined) {
     const now = this.clock();
     const synced = this.syncNewSessionWindow(this.entry(id), now);
@@ -142,20 +173,14 @@ class AccountSafety {
       error.retryAt = until;
       throw error;
     };
-    if (item.stopped) reject('This account is paused. Review it in Accounts and explicitly resume.');
-    if (now < item.cooldownUntil) reject(`This account is cooling down until ${new Date(item.cooldownUntil).toISOString()}. No request was sent.`, item.cooldownUntil);
-    if (p.enabled) {
-      if (activeCount >= p.maxConcurrent) reject('Account pacing concurrency limit reached. Wait for its active tasks.');
-      if (item.sessionStart && now - item.sessionStart >= p.maxSessionMinutes * 60_000) {
-        this.save(id, { ...item, stopped: true });
-        reject('Account session time limit reached. Review the account and explicitly resume.');
-      }
-      if (item.lastStart && now < item.lastStart + p.minIntervalSec * 1000) reject('Account pacing interval has not elapsed. No request was sent.', item.lastStart + p.minIntervalSec * 1000);
-      if (item.breakStart && now - item.breakStart >= p.breakAfterMinutes * 60_000) {
-        const until = now + p.breakMinutes * 60_000;
-        this.save(id, { ...item, cooldownUntil: until, breakStart: until });
-        reject(`Scheduled account break until ${new Date(until).toISOString()}. No request was sent.`, until);
-      }
+    const available = this.availability(id, activeCount, session);
+    if (!available.eligible) {
+      if (available.reason === 'session-limit') this.save(id, { ...item, stopped: true });
+      reject(available.message, available.retryAt ?? undefined);
+    }
+    if (p.enabled && item.breakStart
+      && now >= item.breakStart + (p.breakAfterMinutes + p.breakMinutes) * 60_000) {
+      item = { ...item, breakStart: now };
     }
     let newSessionRecorded = false;
     if (createsNewSession && p.newSessionWindow) {

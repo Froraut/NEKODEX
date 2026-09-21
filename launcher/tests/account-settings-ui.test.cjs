@@ -15,7 +15,9 @@ function compile(file) {
 function load(compiled, overrides) {
   const loaded = { exports: {} };
   Function("module", "exports", "require", compiled)(loaded, loaded.exports,
-    name => Object.hasOwn(overrides, name) ? overrides[name] : require(name));
+    name => Object.hasOwn(overrides, name) ? overrides[name]
+      : name === './account-availability' ? load(compile('account-availability.ts'), {})
+      : name === './AccountReadiness' ? load(compile('AccountReadiness.tsx'), {}) : require(name));
   return loaded.exports;
 }
 

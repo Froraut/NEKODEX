@@ -15,3 +15,8 @@
 .account-new-session-window-fields { display: flex; gap: 12px; flex-wrap: wrap; min-width: 0; }
 .account-new-session-window-fields > label { display: grid; gap: 6px; flex: 1 1 190px; min-width: 0; }
 @media (prefers-reduced-motion: reduce) { .account-form-panel > summary::before { transition: none; } }
+
+.account-readiness-models { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 12px 0; }
+.account-readiness-models dt { font-weight: 600; }
+.account-readiness-models dd { margin: 4px 0 0; color: var(--text-secondary); }
+.account-readiness p { font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }

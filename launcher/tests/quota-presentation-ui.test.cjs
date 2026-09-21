@@ -14,9 +14,34 @@ function compile(file) {
 function load(file, overrides = {}) {
   const loaded = { exports: {} };
   Function("module", "exports", "require", compile(file))(loaded, loaded.exports,
-    name => Object.hasOwn(overrides, name) ? overrides[name] : require(name));
+    name => Object.hasOwn(overrides, name) ? overrides[name]
+      : name === './account-availability' ? load('account-availability.ts') : require(name));
   return loaded.exports;
 }
+
+test('explicit provider denial and exhaustion remain visible without percentage windows', () => {
+  const { quotaAvailability, accountAvailabilityCopy } = load('account-availability.ts');
+  const text = accountAvailabilityCopy('en');
+  assert.equal(text[quotaAvailability({ allowed: null, limitReached: true })], 'Limit reached');
+  assert.equal(text[quotaAvailability({ allowed: false, limitReached: null })], 'Unavailable');
+  assert.equal(text[quotaAvailability({ allowed: null, limitReached: null })], 'Not reported');
+  assert.equal(text[quotaAvailability({ allowed: true, limitReached: true })], 'Limit reached');
+});
+
+test('account capabilities and local hold are exposed without presenting a missing check as support', () => {
+  const { AccountReadiness } = load('AccountReadiness.tsx');
+  const account = { checked: true, authenticated: true,
+    capabilities: { solAvailable: true, extraHighAvailable: false, proAvailable: true },
+    availability: { eligible: false, reason: 'cooldown', retryAt: null } };
+  const html = renderToStaticMarkup(React.createElement(AccountReadiness, { account, language: 'en' }));
+  assert.match(html, /<dt>Pro<\/dt><dd>Supported/);
+  assert.match(html, /<dt>Extra High<\/dt><dd>Unavailable/);
+  assert.match(html, /Cooling down/);
+  const stale = renderToStaticMarkup(React.createElement(AccountReadiness, {
+    account: { ...account, checked: false }, language: 'en' }));
+  assert.doesNotMatch(stale, /<dd>Supported/);
+  assert.match(stale, /Check models/);
+});
 
 const portfolioCopy = {
   refreshing: "Refreshing allowances",
