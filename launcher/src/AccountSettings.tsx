@@ -598,7 +598,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       {authUnavailable ? <p className="field-hint" role="status">{sessionIssueCopy(language, account.authenticationIssue)}</p> : null}
       {authUnavailable && account.id === state.selectedId ? <button type="button" className="text-button"
         disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy}
-        onClick={openBrowser}><Icon name="browser" />{copy.browser}</button> : null}
+        onClick={openBrowser}>{copy.browser}</button> : null}
       {authUnavailable && authRetryDisabledReason ? <p className="field-hint" id={authRetryReasonId}>{authRetryDisabledReason}</p> : null}
       {actionHint ? <p className="field-hint" id={actionHintId} role="status">{actionHint}</p> : null}
       <AccountCodexControls account={account} copy={codexCopy} language={language}
