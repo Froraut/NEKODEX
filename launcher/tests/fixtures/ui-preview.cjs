@@ -32,7 +32,7 @@ function installMockLauncher() {
     autoStart: false, keepRunningOnClose: true, showBrowserDuringTurns: true, browserInteractionMode: "automatic",
     experimentalBiggerContext: false, zeroRiskProEnabled: false, sidebarOpen: true, sidebarWidth: 252,
     browserSmokePassed: false, browserSmokeVersion: null, coreSetupComplete: false, codexCatalogVerified: false,
-    mcpGuideStep: 0, sessionRefreshReminderAt: null,
+    mcpGuideStep: 0,
   };
   if (scenario === "manual-tools") state.browserInteractionMode = "manual";
   const browser = {

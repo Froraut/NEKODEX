@@ -2646,58 +2646,6 @@ code {
   color: var(--color-text-primary);
 }
 
-.session-refresh-reminder {
-  position: fixed;
-  z-index: 500;
-  top: calc(var(--height-titlebar) + 14px);
-  right: 18px;
-  display: grid;
-  width: min(430px, calc(100vw - 36px));
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 10px 12px;
-  padding: 14px;
-  border: 1px solid var(--color-border-heavy);
-  border-radius: var(--radius-md);
-  background: var(--color-background-elevated);
-  box-shadow: var(--shadow-overlay);
-  animation: feedback-enter var(--duration-panel) var(--ease-enter) both;
-}
-
-.session-refresh-reminder-icon {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--color-background-status-warning);
-  color: var(--color-text-warning);
-}
-
-.session-refresh-reminder-icon svg {
-  width: 16px;
-  height: 16px;
-}
-
-.session-refresh-reminder-copy strong {
-  color: var(--color-text-primary);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
-.session-refresh-reminder-copy p {
-  margin: 4px 0 0;
-  color: var(--color-text-secondary);
-  font-size: var(--text-xs);
-  line-height: 1.5;
-}
-
-.session-refresh-reminder-actions {
-  display: flex;
-  grid-column: 2;
-  justify-content: flex-end;
-  gap: 7px;
-}
-
 .bigger-context-recommendation-backdrop {
   position: fixed;
   z-index: 450;

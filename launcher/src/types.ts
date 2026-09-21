@@ -47,7 +47,6 @@ export interface LauncherState {
   runtimeMigrationPending?: boolean;
   launcherRestartRequired?: boolean;
   mcpGuideStep: number;
-  sessionRefreshReminderAt: string | null;
 }
 
 export interface BrowserState {
@@ -468,7 +467,6 @@ export interface LauncherApi {
   allowExistingChromeFileAccess(): Promise<BrowserState>;
   copyExistingChromeSettingsAddress(): Promise<boolean>;
   logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
-  dismissSessionReminder(): Promise<LauncherState>;
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
   verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;

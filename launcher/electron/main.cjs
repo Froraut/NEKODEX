@@ -56,7 +56,6 @@ const { CHROME_SETTINGS_ADDRESS, confirmExistingChromeImport } = require("./exis
 const { selectChromeConnectionFile } = require("./existing-chrome-file-access.cjs");
 const {
   createStateStore,
-  nextSessionRefreshReminderAt,
   validateSidebarState,
 } = require("./state.cjs");
 const {
@@ -1004,18 +1003,10 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:browser-login", async () => {
     const browser = await browserHost.openLogin();
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
     return browser;
   });
   handle("launcher:browser-passkey-login", async () => {
     const browser = await browserHost.openPasskeyLogin();
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
     return browser;
   });
   handle("launcher:browser-passkey-login-continue", () => {
@@ -1029,10 +1020,6 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-passkey-login-cancel", () => browserHost.cancelPasskeyLogin(() => runtimeHost.cancelPasskeyLogin()));
   handle("launcher:browser-existing-chrome-login", async () => {
     const browser = await browserHost.openExistingChromeLogin(() => confirmExistingChromeImport(dialog, mainWindow, stateStore.read().language));
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
     return browser;
   });
   handle("launcher:browser-existing-chrome-login-cancel", () => browserHost.cancelExistingChromeLogin(() => runtimeHost.cancelExistingChromeLogin()));
@@ -1042,10 +1029,6 @@ function registerIpc({ logger, stateStore }) {
       isCurrent: () => browserHost.existingChromeLoginController?.signal === signal
         && stateStore.read().browserInteractionMode === "automatic" && mainWindow && !mainWindow.isDestroyed(),
     }));
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
     return browser;
   });
   handle("launcher:browser-existing-chrome-settings-copy", () => {
@@ -1055,14 +1038,9 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-logout", async () => {
     invalidateAccountProof(stateStore);
     const browser = await browserHost.logout();
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
+    const state = stateStore.read();
     send("launcher:state-changed", state);
     return { browser, state };
-  });
-  handle("launcher:session-reminder-dismiss", () => {
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return state;
   });
   handle("launcher:browser-smoke", async () => {
     if (stateStore.read().browserInteractionMode === "manual") {
@@ -1855,9 +1833,6 @@ async function start() {
       onboardingComplete: true,
       autoStart: false,
     });
-  }
-  if (stateStore.read().sessionRefreshReminderAt === null) {
-    stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
   }
   const persistedState = stateStore.read();
   if (persistedState.coreSetupComplete === true && persistedState.codexCatalogVerified === undefined) {

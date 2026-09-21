@@ -549,8 +549,6 @@
   "error": "Что-то пошло не так",
   "retry": "Повторить",
   "dismiss": "Закрыть",
-  "sessionReminderTitle": "Обновите сеанс ChatGPT",
-  "sessionReminderBody": "Рекомендуем входить заново каждые два дня. Устаревший сеанс ChatGPT может прерывать запросы веб-моделей и работу инструментов MCP.",
   "connectionsNav": "Подключения",
   "modelsConnectionTab": "Модели и маршрут Codex",
   "toolsConnectionTab": "Коннектор локальных инструментов",

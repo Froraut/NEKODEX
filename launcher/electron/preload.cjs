@@ -38,7 +38,6 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   allowExistingChromeFileAccess: () => ipcRenderer.invoke("launcher:browser-existing-chrome-file-access"),
   copyExistingChromeSettingsAddress: () => ipcRenderer.invoke("launcher:browser-existing-chrome-settings-copy"),
   logoutChatGpt: () => ipcRenderer.invoke("launcher:browser-logout"),
-  dismissSessionReminder: () => ipcRenderer.invoke("launcher:session-reminder-dismiss"),
   smokeTest: () => ipcRenderer.invoke("launcher:browser-smoke"),
   verifyMcp: () => ipcRenderer.invoke("launcher:mcp-verify"),
   doctor: () => ipcRenderer.invoke("launcher:doctor"),

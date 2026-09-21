@@ -414,8 +414,6 @@
   "error": "發生錯誤",
   "retry": "重試",
   "dismiss": "關閉",
-  "sessionReminderTitle": "重新整理 ChatGPT 工作階段",
-  "sessionReminderBody": "建議每兩天重新登入一次。失效的 ChatGPT 工作階段可能會中斷 Web 模型任務與 MCP 工具。",
   "logOut": "登出",
   "skillAttachments": "技能作為檔案（實驗性）",
   "skillAttachmentsBody": "將明確選取的 Codex 技能作為具名文字檔上傳，而不是內嵌指令。其他技能仍透過工具讀取。預設關閉；與圖片共用附件數量限制。",

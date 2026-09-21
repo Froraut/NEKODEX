@@ -414,8 +414,6 @@
   "error": "문제가 발생했습니다",
   "retry": "다시 시도",
   "dismiss": "닫기",
-  "sessionReminderTitle": "ChatGPT 세션 새로고침",
-  "sessionReminderBody": "이틀마다 다시 로그인하는 것을 권장합니다. 오래된 ChatGPT 세션은 Web 모델 턴과 MCP 도구의 동작을 중단시킬 수 있습니다.",
   "logOut": "로그아웃",
   "skillAttachments": "스킬을 파일로 전송 (실험적)",
   "skillAttachmentsBody": "명시적으로 선택한 Codex 스킬을 인라인 지침 대신 이름이 있는 텍스트 파일로 업로드합니다. 다른 스킬은 도구로 읽습니다. 기본값은 꺼짐이며 이미지와 첨부 파일 수 제한을 공유합니다.",
