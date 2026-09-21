@@ -5,6 +5,7 @@ import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
 import {
   ChatGptBrowserWorker,
+  chatGptDocumentFilePayloads,
   closeChatGptBrowserWorkers,
   type BrowserTurn,
   type ChatGptCompletionFenceStart,
@@ -35,6 +36,7 @@ interface RunMessage {
   turn: {
     traceId: string;
     modelId: string;
+    requestedModel?: string;
     reasoning?: string;
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
@@ -248,6 +250,7 @@ async function run(message: RunMessage): Promise<void> {
   const turn: BrowserTurn = {
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
+    requestedModel: message.turn.requestedModel,
     reasoning: message.turn.reasoning,
     capabilities: message.turn.capabilities,
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
@@ -443,7 +446,13 @@ const input = createProcessLineReader(stdin, line => {
       abortControllers.get(message.id)?.abort();
       return;
     }
-    try { validateSkillFiles(prepared.skillFiles); }
+    try {
+      validateSkillFiles(prepared.skillFiles);
+      if (prepared.files !== undefined && !Array.isArray(prepared.files)) {
+        throw new Error("Browser helper file attachment list is invalid");
+      }
+      chatGptDocumentFilePayloads(prepared.files ?? []);
+    }
     catch (error) {
       writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
       abortControllers.get(message.id)?.abort();
@@ -585,4 +594,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-reasons", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "compaction-execution"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-reasons", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "file-attachments", "compaction-execution"] });

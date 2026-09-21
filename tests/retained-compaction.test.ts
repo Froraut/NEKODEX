@@ -530,7 +530,7 @@ test("native interruption before registration prevents the detached compaction f
   expect(unrelatedStarted).toBeTrue();
 });
 
-test("a completed exact compaction remains replayable after a later native interruption", async () => {
+test("a completed exact compaction rejects replay after a later native interruption", async () => {
   const key = `completed-before-interrupt-${Date.now()}-${Math.random()}`;
   const owner = {
     ownerKey: `owner-${key}`,
@@ -541,10 +541,12 @@ test("a completed exact compaction remains replayable after a later native inter
   const completed = runStructuredCompactionOnce(key, owner, async () => "canonical checkpoint");
   await expect(completed).resolves.toBe("canonical checkpoint");
 
+  expect(existingStructuredCompactionRun(key, owner)).toBe(completed);
+  const reason = new DOMException("Codex turn interrupted", "AbortError");
   const cancellation = cancelStructuredCompactionNativeTurn(
     owner.nativeThreadId,
     owner.nativeTurnId,
-    new DOMException("Codex turn interrupted", "AbortError"),
+    reason,
   );
   expect(cancellation.cancelled).toBe(0);
   await cancellation.settlement;
@@ -554,8 +556,8 @@ test("a completed exact compaction remains replayable after a later native inter
     restarted = true;
     return "must not replace canonical checkpoint";
   });
-  expect(replay).toBe(completed);
-  await expect(replay).resolves.toBe("canonical checkpoint");
+  await expect(replay).rejects.toBe(reason);
+  await expect(existingStructuredCompactionRun(key, owner)!).rejects.toBe(reason);
   expect(restarted).toBeFalse();
 });
 
@@ -1459,6 +1461,7 @@ test("structured compact rebuilds canonical context when its retained browser di
   const sourceRequest = request(false);
   const namespace = chatGptWebExecutionNamespace(provider);
   const sourceKey = `${namespace}:${chatGptTurnExecutionKey(sourceRequest)}`;
+  let retainedReleased = false;
   chatGptTurnSessions.getOrCreate(sourceKey, () => ({
     mode: "read-only",
     browser: Promise.resolve("source complete"),
@@ -1467,6 +1470,7 @@ test("structured compact rebuilds canonical context when its retained browser di
     text: new ChatGptTextFeed(),
     usageInput: sourceRequest,
     conversationKey: chatGptConversationKey(sourceRequest, namespace)!,
+    releaseRetainedConversation: async () => { retainedReleased = true; },
     cancel() {},
   }));
   await chatGptTurnSessions.find(sourceKey)!.browserOutcome;
@@ -1475,6 +1479,7 @@ test("structured compact rebuilds canonical context when its retained browser di
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
     if (turn.requireRetainedConversation) throw chatGptRetainedConversationUnavailableError();
+    expect(retainedReleased).toBeTrue();
     const prepared = await turn.prepare();
     expect(prepared.text).toContain("Original task");
     prepared.release();
@@ -1519,6 +1524,7 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
   const sourceRequest = request(false);
   const namespace = chatGptWebExecutionNamespace(provider);
   const sourceKey = `${namespace}:${chatGptTurnExecutionKey(sourceRequest)}`;
+  let retainedReleased = false;
   chatGptTurnSessions.getOrCreate(sourceKey, () => ({
     mode: "read-only",
     browser: Promise.resolve("source complete"),
@@ -1527,6 +1533,7 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
     text: new ChatGptTextFeed(),
     usageInput: sourceRequest,
     conversationKey: chatGptConversationKey(sourceRequest, namespace)!,
+    releaseRetainedConversation: async () => { retainedReleased = true; },
     cancel() {},
   }));
   await chatGptTurnSessions.find(sourceKey)!.browserOutcome;
@@ -1537,6 +1544,7 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
     if (turn.requireRetainedConversation) throw chatGptRetainedConversationUnavailableError();
+    expect(retainedReleased).toBeTrue();
     fallbackTrace = turn.traceId;
     return new Promise<string>(resolve => { releaseBrowser = () => resolve("browser cleanup completed"); });
   };
@@ -1552,9 +1560,9 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
     expect(browserStarts).toBe(2);
     expect(events.at(-1)).toMatchObject({
       type: "error",
-      code: "compaction_handoff_failed",
+      code: "compaction_handoff_timeout",
       retryable: false,
-      message: "ChatGPT did not complete the context handoff. Retry the task.",
+      status: 409,
     });
   } finally {
     releaseBrowser?.();

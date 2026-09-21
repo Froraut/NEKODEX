@@ -9,7 +9,7 @@ import {
   extractChatGptTurnIdentity,
   extractChatGptTurnUserRevision,
 } from "./environment";
-import { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
+import { MAX_CHATGPT_OUTSTANDING_TURNS } from "./concurrency";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
 import {
   CHATGPT_REPLAY_BYTES, CHATGPT_REGISTRY_REPLAY_BYTES, CHATGPT_TEXT_BUFFER_BYTES,
@@ -617,7 +617,7 @@ export class ChatGptTurnSessions {
 
   constructor(
     private readonly ttlMs = 30 * 60_000,
-    private readonly maxEntries = 256,
+    private readonly maxEntries = Math.max(256, MAX_CHATGPT_OUTSTANDING_TURNS),
     private readonly maxReplayBytes = CHATGPT_REGISTRY_REPLAY_BYTES,
   ) {
     assertByteLimit(0, maxReplayBytes, "ChatGPT session replay registry");
@@ -647,9 +647,9 @@ export class ChatGptTurnSessions {
       return existing;
     }
     const active = [...this.entries.values()].filter(session => session.isActive()).length;
-    if (active >= MAX_CHATGPT_BROWSER_TABS) {
+    if (active >= MAX_CHATGPT_OUTSTANDING_TURNS) {
       throw new Error(
-        `ChatGPT Web supports at most ${MAX_CHATGPT_BROWSER_TABS} simultaneous browser turns; close or finish a browser tab before starting another`,
+        `ChatGPT Web has reached its ${MAX_CHATGPT_OUTSTANDING_TURNS} active and waiting task limit; finish or cancel a task before submitting another`,
       );
     }
     if (this.entries.size >= this.maxEntries) throw new Error(`ChatGPT web session registry is full (${this.maxEntries} entries)`);
@@ -1059,7 +1059,8 @@ export class ChatGptTurnSessions {
       session.nativeThreadId === threadId
       && session.nativeTurnId === turnId
     ));
-    for (const [, session] of matches) session.cancel(reason);
+    // retireSession delivers cancellation synchronously before returning its cleanup promise.
+    // A separate cancel pass would invoke the runtime twice for the same native interruption.
     const settlement = Promise.all(
       matches.map(([key, session]) => this.retireSession(key, session, reason)),
     ).then(() => undefined);

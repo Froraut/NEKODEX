@@ -353,6 +353,7 @@ export class LauncherBrowserHelperClient {
           turn: {
             traceId: turn.traceId,
             modelId: turn.modelId,
+            requestedModel: turn.requestedModel,
             reasoning: turn.reasoning,
             capabilities: turn.capabilities,
             ...(turn.nativeConnector ? { nativeConnector: true } : {}),
@@ -635,6 +636,9 @@ export class LauncherBrowserHelperClient {
             if (prepared.skillFiles?.length && !this.helperFeatures.has("skill-attachments")) {
               throw new Error("Launcher browser helper does not support skill attachments; update or restart the launcher");
             }
+            if (prepared.files?.length && !this.helperFeatures.has("file-attachments")) {
+              throw new Error("Launcher browser helper does not support file attachments; update or restart the launcher");
+            }
             return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused)).then(() => {
               if (this.pending.get(message.id) !== pending) return;
               return this.send({
@@ -643,6 +647,7 @@ export class LauncherBrowserHelperClient {
                 prepared: {
                   text: prepared.text,
                   images: prepared.images,
+                  ...(prepared.files?.length ? { files: prepared.files } : {}),
                   ...(prepared.skillFiles ? { skillFiles: prepared.skillFiles } : {}),
                   ...(prepared.multipart ? { multipart: prepared.multipart } : {}),
                   ...(prepared.trimmedCompactionMessages !== undefined

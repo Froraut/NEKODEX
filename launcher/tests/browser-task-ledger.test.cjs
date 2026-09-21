@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { BrowserTaskLedger } = require('../electron/browser-task-ledger.cjs');
+const { BrowserTaskLedger, taskModelForRequirement } = require('../electron/browser-task-ledger.cjs');
 const { BrowserHost } = require('../electron/browser-host.cjs');
 const { BrowserControlServer } = require('../electron/control-server.cjs');
 const { AccountBrowserPool } = require('../electron/account-pool.cjs');
@@ -25,7 +25,7 @@ test('interrupted sending survives restart without becoming a safe-to-retry task
     assert.equal(recovered.get(id).terminal, true);
     assert.throws(() => recovered.progress(id, 'preparing', 2), /no longer active/);
     assert.equal(fs.statSync(f.file).mode & 0o777, 0o600);
-    assert.deepEqual(Object.keys(recovered.get(id)).sort(), ['id', 'traceId', 'tabId', 'createdAt', 'updatedAt', 'phase', 'submission', 'sequence', 'terminal'].sort());
+    assert.deepEqual(Object.keys(recovered.get(id)).sort(), ['id', 'traceId', 'tabId', 'model', 'createdAt', 'updatedAt', 'phase', 'submission', 'sequence', 'terminal'].sort());
     recovered.dismiss(id);
     assert.equal(new BrowserTaskLedger(f.file).snapshot().length, 0);
   } finally { f.cleanup(); }
@@ -102,4 +102,34 @@ test('authenticated progress binds to exact surface and ambiguous end keeps the 
     assert.equal(host.taskSnapshot()[0].retrySafe, false);
     assert.equal(host.evictOldestReclaimableTurnTab(), false);
   } finally { await server.close(); f.cleanup(); }
+});
+
+
+test('legacy journal rows retain outcomes and allowlisted model metadata survives progress and restart', () => {
+  const f = fixture();
+  try {
+    const legacyId = f.ledger.start('trace-legacy-model', 'tab-legacy-model', 1);
+    f.ledger.end(legacyId, 'failed');
+    const legacy = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+    delete legacy.records[0].model;
+    fs.writeFileSync(f.file, JSON.stringify(legacy));
+    const upgraded = new BrowserTaskLedger(f.file);
+    assert.equal(upgraded.storageIssue, null);
+    assert.equal(upgraded.get(legacyId).model, null);
+    assert.equal(upgraded.get(legacyId).phase, 'failed-before-send');
+    assert.equal(taskModelForRequirement({ requestedModel: 'https://secret.invalid/prompt' }), null);
+    assert.equal(taskModelForRequirement({ requestedModel: 'constructor' }), null);
+    assert.equal(taskModelForRequirement({ effort: 'xhigh' }), null);
+    assert.equal(taskModelForRequirement({ requestedModel: 'chatgpt-web/think' }), 'chatgpt-web/think');
+    const model = taskModelForRequirement({ requestedModel: 'chatgpt-web/extra-high' });
+    assert.equal(model, 'chatgpt-web/extra-high');
+    const id = upgraded.start('trace-model', 'tab-model', 1, model);
+    upgraded.progress(id, 'accepted', 1);
+    assert.throws(() => upgraded.start('trace-invalid', 'tab-invalid', 1, 'user prompt'), /Invalid task owner/);
+    const recovered = new BrowserTaskLedger(f.file);
+    assert.equal(recovered.get(id).model, model);
+    assert.equal(recovered.get(id).submission, 'accepted');
+    assert.equal(recovered.get(id).phase, 'interrupted');
+    assert.equal(recovered.get(legacyId).model, null);
+  } finally { f.cleanup(); }
 });

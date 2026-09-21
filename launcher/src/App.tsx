@@ -1,6 +1,8 @@
 import taskControlCopy from "../electron/task-control-copy.json";
 import { TaskCenter, taskCenterTitle } from './TaskCenter';
+import { QueueControls } from './QueueControls';
 import { browserWindowCopy } from "./browser-window-copy";
+import { BrowserWorkspaceManager } from "./BrowserWorkspaceManager";
 import { sessionIssueCopy } from "./session-issue-copy";
 import type { CompactionModel } from "./types";
 import { codexSettingsStatus, modelConnectionReadiness, setupNextStep } from "./setup-progress";
@@ -8,6 +10,8 @@ import languages from "../electron/languages.json";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
 import { AccountSettings } from "./AccountSettings";
+import { AccountToolsHandoff } from "./AccountToolsOnboarding";
+import { accountToolsCopy } from "./account-tools-onboarding";
 import { UsageDashboard } from "./UsageDashboard";
 import { Updates } from "./Updates";
 import { updateCopyFor } from "./update-copy";
@@ -793,6 +797,9 @@ function LauncherShell({
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
   const browserSurfaceCommand = useRef(Promise.resolve());
   const browserSurfaceIntent = useRef(0);
+  const [accountToolsTargetId, setAccountToolsTargetId] = useState<string | null>(null);
+  const [mcpReturnAccountId, setMcpReturnAccountId] = useState<string | null>(null);
+  const [mcpReturnAccountLabel, setMcpReturnAccountLabel] = useState<string | null>(null);
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
   const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(false);
   const [biggerContextRecommendationBusy, setBiggerContextRecommendationBusy] = useState(false);
@@ -1207,9 +1214,21 @@ function LauncherShell({
               openTab={(tabId) => void openBrowserTab(tabId)} /> : null}
             {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
               <AccountSettings copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
-                setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy} />
+                setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
+                focusAccountId={accountToolsTargetId}
+                toolsSetup={{ runtimeConfigured: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
+                  connectorName: snapshot.connectorNames[snapshot.state.browserInteractionMode], urls: snapshot.urls }}
+                onSetupTools={(accountId, accountLabel) => {
+                  setMcpReturnAccountId(accountId);
+                  setMcpReturnAccountLabel(accountLabel);
+                  setMcpTargetMode(null);
+                  navigateSurface("mcp");
+                }} />
             </ContentSurface> : null}
             {surface === 'tasks' ? <ContentSurface title={taskCenterTitle(language)}>
+              <QueueControls queue={browser?.queue} language={language} disabled={transitionBusy}
+                action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
+                onError={cause => setError(messageOf(cause))} />
               <TaskCenter tasks={browser?.tasks ?? []} language={language} disabled={transitionBusy}
                 open={async tabId => { await api!.selectBrowserTab(tabId); navigateSurface('browser'); }}
                 cancel={(tabId, traceId) => api!.closeBrowserTab(tabId, traceId)}
@@ -1218,6 +1237,11 @@ function LauncherShell({
             </ContentSurface> : null}
             {surface === "browser" ? (
               <BrowserSurface
+                accountSetup={!manualInteraction && browser ? <AccountToolsHandoff browser={browser} language={language}
+                  disabled={transitionBusy} onContinue={accountId => {
+                    setAccountToolsTargetId(accountId);
+                    navigateSurface("accounts");
+                  }} /> : null}
                 browser={browser}
                 error={error}
                 browserSlotRef={browserSlotRef}
@@ -1243,6 +1267,7 @@ function LauncherShell({
                 setError={setError}
                 showMcp={() => {
                   setMcpTargetMode(null);
+                  setMcpReturnAccountId(null);
                   setSurface("mcp");
                 }}
                 showActivity={() => setSurface("activity")}
@@ -1252,6 +1277,12 @@ function LauncherShell({
             ) : null}
             {surface === "mcp" ? (
               <McpSurface
+                accountSetupLabel={mcpReturnAccountId ? mcpReturnAccountLabel : null}
+                onReturnToAccount={mcpReturnAccountId ? () => {
+                  setAccountToolsTargetId(mcpReturnAccountId);
+                  setMcpReturnAccountId(null);
+                  navigateSurface("accounts");
+                } : undefined}
                 copy={copy}
                 devProfile={devProfile}
                 interactionMode={mcpTargetMode ?? snapshot.state.browserInteractionMode}
@@ -1259,7 +1290,11 @@ function LauncherShell({
                 showSetup={() => setSurface("setup")}
                 onDone={() => {
                   setMcpTargetMode(null);
-                  setSurface("browser");
+                  if (mcpReturnAccountId) {
+                    setAccountToolsTargetId(mcpReturnAccountId);
+                    setMcpReturnAccountId(null);
+                    navigateSurface("accounts");
+                  } else navigateSurface("browser");
                 }}
                 operation={operation}
                 readiness={readiness}
@@ -1284,6 +1319,7 @@ function LauncherShell({
                 showModelSetup={() => navigateSurface("setup")}
                 configureInteractionMode={(mode) => {
                   setMcpTargetMode(mode);
+                  setMcpReturnAccountId(null);
                   setSurface("mcp");
                 }}
                 copy={copy}
@@ -1426,6 +1462,7 @@ function SidebarItem({
 }
 
 function BrowserSurface({
+  accountSetup,
   browser,
   error,
   browserSlotRef,
@@ -1438,6 +1475,7 @@ function BrowserSurface({
   readiness,
   setError,
 }: {
+  accountSetup?: ReactNode;
   browser: BrowserState | null;
   error: string | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
@@ -1606,6 +1644,7 @@ function BrowserSurface({
 
   return (
     <section className="browser-surface">
+      {accountSetup}
       {error ? <div className="browser-inline-error" role="alert">
         <p>{localizeLauncherError(copy, error)}</p>
         <button type="button" className="text-button" onClick={() => setError(null)}>{copy.dismiss}</button>
@@ -1684,10 +1723,20 @@ function BrowserSurface({
       <div className="browser-workspace-actions">
         <button type="button" className="text-button" disabled={transitionBusy}
           onClick={() => void api!.openBrowserWindow(false).catch(cause => setError(messageOf(cause)))}>{windowCopy.newWindow}</button>
-        <button type="button" className="text-button" disabled={transitionBusy}
-          onClick={() => void api!.openBrowserWindow(true).catch(cause => setError(messageOf(cause)))}>{windowCopy.newTab}</button>
-        <span>{windowCopy.hint}</span>
+        {platform === "darwin" ? <button type="button" className="text-button" disabled={transitionBusy}
+          onClick={() => void api!.openBrowserWindow(true).catch(cause => setError(messageOf(cause)))}>{windowCopy.newTab}</button> : null}
+        <span>{platform === "darwin" ? windowCopy.hint : windowCopy.tabsMacOnly}</span>
       </div>
+      {browser?.workspaces ? <BrowserWorkspaceManager
+        language={language}
+        snapshot={browser.workspaces}
+        selectedAccountId={browser.accountId}
+        disabled={transitionBusy}
+        onOpen={(accountId, asTab) => api!.openBrowserWorkspace(accountId, { asTab })}
+        onRestore={accountId => api!.restoreBrowserWorkspaces(accountId)}
+        onFocus={(accountId, workspaceId) => api!.focusBrowserWorkspace(accountId, workspaceId)}
+        onClose={(accountId, workspaceId) => api!.closeBrowserWorkspace(accountId, workspaceId)}
+      /> : null}
       <div className="browser-toolbar">
         <div className="browser-history">
           <IconButton
@@ -1742,9 +1791,9 @@ function BrowserSurface({
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
       {!manualInteraction && browser?.existingChromeLogin ? (
-        <ExistingChromeLoginGuide transitionBusy={transitionBusy} progress={browser.existingChromeLogin} copy={copy} onRetry={openExistingChromeLogin} setError={setError} />
+        <ExistingChromeLoginGuide transitionBusy={transitionBusy} progress={browser.existingChromeLogin} copy={copy} language={language} onRetry={openExistingChromeLogin} setError={setError} />
       ) : !manualInteraction && browser?.passkeyLogin && browser.passkeyLogin.phase !== "completed" ? (
-        <PasskeyLoginGuide transitionBusy={transitionBusy} progress={browser.passkeyLogin} copy={copy} onRetry={openPasskeyLogin} setError={setError} />
+        <PasskeyLoginGuide transitionBusy={transitionBusy} progress={browser.passkeyLogin} copy={copy} language={language} onRetry={openPasskeyLogin} setError={setError} />
       ) : browser?.loginKind === "embedded" ? (
         <div className="browser-login-guide" role="status">
           <p>{passkeyAvailable ? copy.embeddedLoginPasskeyBody : copy.embeddedLoginBody}</p>
@@ -2178,6 +2227,8 @@ function SetupSurface({
 }
 
 function McpSurface({
+  accountSetupLabel,
+  onReturnToAccount,
   copy,
   devProfile,
   interactionMode,
@@ -2191,6 +2242,8 @@ function McpSurface({
   updateState,
   updateSnapshot,
 }: {
+  accountSetupLabel?: string | null;
+  onReturnToAccount?: () => void;
   copy: Copy;
   devProfile: boolean;
   interactionMode: BrowserInteractionMode;
@@ -2247,13 +2300,13 @@ function McpSurface({
   }, [currentRuntime?.revision, currentRuntime?.tunnelRepair?.active,
     currentRuntime?.tunnelRepair?.eligible, readiness.web, repairOutcome, repairOutcomeRevision]);
   const steps = useMemo(() => [
-    { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
+    { title: accountToolsCopy(language).tunnelTitle, body: accountToolsCopy(language).sharedTunnel },
     { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
     {
       title: copy.mcpStepThree,
       body: manualInteraction ? copy.manualMcpStepThreeBody : null,
     },
-  ], [copy, manualInteraction]);
+  ], [copy, language, manualInteraction]);
   const guideMedia = MCP_GUIDE_MEDIA[step];
   const recommendedConnectorName = (snapshot as ProjectedLauncherSnapshot)
     .recommendedConnectorNames?.[interactionMode]?.trim() ?? "";
@@ -2383,6 +2436,10 @@ function McpSurface({
       subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
       title={devProfile ? copy.devMcpTitle : copy.localTools}
     >
+      {accountSetupLabel ? <p className="field-hint"><strong>{accountToolsCopy(language).target}: {accountSetupLabel}</strong><br />
+        {accountToolsCopy(language).identity}</p> : null}
+      {onReturnToAccount ? <button type="button" className="text-button" disabled={busy}
+        onClick={onReturnToAccount}>{accountToolsCopy(language).back}</button> : null}
       <ConnectionsTabs active="tools" copy={copy}
         modelsReady={modelConnectionReadiness({ manual: manualInteraction,
           installed: snapshot.state.coreSetupComplete === true,
@@ -2461,6 +2518,7 @@ function McpSurface({
             </header>
 
             {step === 0 ? (
+              <><p>{accountToolsCopy(language).keyInstructions}</p><p>{accountToolsCopy(language).identity}</p>
               <div className="inline-actions">
                 <SecondaryButton icon="external" onClick={() => void openExternal(snapshot.urls.tunnels)}>
                   {copy.openTunnels}
@@ -2468,7 +2526,7 @@ function McpSurface({
                 <SecondaryButton icon="external" onClick={() => void openExternal(snapshot.urls.keys)}>
                   {copy.openKeys}
                 </SecondaryButton>
-              </div>
+              </div></>
             ) : null}
             {step === 1 ? (
               credentialsConfigured && !replacingCredentials ? (
@@ -2631,20 +2689,20 @@ function McpSurface({
         ) : null}
             {step === 2 ? (
           <>
-            {verified ? (
+            {!onReturnToAccount && verified ? (
               <SecondaryButton disabled={busy} onClick={() => void verify()}>
                 {copy.verifyRuntime}
               </SecondaryButton>
             ) : null}
             <PrimaryButton
               disabled={busy || !connectorConfiguredForTarget}
-              onClick={() => void (verified ? onDone() : verify())}
+              onClick={() => void (onReturnToAccount ? onReturnToAccount() : verified ? onDone() : verify())}
             >
               {busy
                 ? operation?.name === "mcp-verification" && operation.status === "running"
                   ? localizeRuntimeMessage(copy, operation.message, undefined, language)
                   : copy.running
-                : verified ? copy.done : native6CopyFor(language).verify}
+                : onReturnToAccount ? accountToolsCopy(language).back : verified ? copy.done : native6CopyFor(language).verify}
             </PrimaryButton>
           </>
         ) : null}

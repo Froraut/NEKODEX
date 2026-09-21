@@ -10,7 +10,7 @@ test('unresolved message attachments never become text claiming a file was deliv
       { type: 'input_file' },
     ]) {
       expect(() => parseRequest({ model: 'chatgpt-web/medium', input: [{ role, content: [attachment] }] }))
-        .toThrow(/content was not sent/);
+        .toThrow(/content was not sent|requires exactly one/);
     }
   }
 });

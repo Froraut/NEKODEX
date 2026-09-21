@@ -1,10 +1,21 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { randomBytes } = require('node:crypto');
 const { spawn } = require('node:child_process');
-const { writePrivateFileAtomic } = require('./atomic-file.cjs');
+const { createServer } = require('node:http');
 const { validateAccountId } = require('./account-registry.cjs');
+const { createChromeProfileBindingStore } = require('./chrome-profile-binding.cjs');
+const { showChromeProfilePicker } = require('./chrome-profile-picker.cjs');
+
 const profileId = value => typeof value === 'string' && /^(Default|Profile [1-9][0-9]{0,5})$/.test(value);
-const email = value => typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value.trim().toLowerCase() : null;
+const email = value => {
+  if (typeof value !== 'string') return null;
+  const candidate = value.trim().toLowerCase();
+  return candidate.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : null;
+};
+const safeName = (value, fallback) => typeof value === 'string'
+  ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 80) || fallback
+  : fallback;
 
 function readProfiles(root) {
   const file = path.join(root, 'Local State');
@@ -13,56 +24,142 @@ function readProfiles(root) {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024) throw new Error('Chrome profile list is unavailable');
   const cache = JSON.parse(fs.readFileSync(file, 'utf8'))?.profile?.info_cache;
   if (!cache || typeof cache !== 'object' || Array.isArray(cache)) return [];
-  // Profile metadata only: no cookies, Login Data, browsing history or credential decryption.
-  return Object.entries(cache).filter(([id, value]) => profileId(id) && value && typeof value === 'object')
-    .map(([id, value]) => ({ id, email: email(value.user_name),
-      name: typeof value.name === 'string' ? value.name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80) : id }))
+  // Profile names and optional Google email are display metadata only. They never establish ChatGPT identity.
+  return Object.entries(cache).filter(([id, value]) => profileId(id) && value && typeof value === 'object' && !Array.isArray(value))
+    .map(([id, value]) => ({ id, googleEmail: email(value.user_name), name: safeName(value.name, id) }))
     .filter(profile => { try { const s = fs.lstatSync(path.join(root, profile.id)); return s.isDirectory() && !s.isSymbolicLink(); } catch { return false; } });
 }
-function selectMatch(profiles, expectedEmail, saved) {
-  const expected = email(expectedEmail);
-  const mapped = saved && profiles.find(p => p.id === saved.id && p.email && p.email === saved.email);
-  if (mapped && (!expected || mapped.email === expected)) return mapped;
-  const matches = expected ? profiles.filter(p => p.email === expected) : [];
-  return matches.length === 1 ? matches[0] : null;
+
+function selectMatch(profiles, _accountLabel, saved) {
+  return saved && profiles.find(profile => profile.id === saved.profileId) || null;
 }
-function openProfile(executable, id) {
-  if (!profileId(id)) throw new Error('Invalid Chrome profile');
+
+function createProfileClaim(port, now = Date.now()) {
+  if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid Chrome profile claim port');
+  const nonce = randomBytes(24).toString('base64url');
+  return Object.freeze({ version: 1, nonce,
+    url: `http://127.0.0.1:${port}/nekodex-profile-claim-v1/${nonce}`,
+    openedAt: new Date(now).toISOString() });
+}
+
+async function createProfileClaimServer({ signal, timeoutMs = 15_000 } = {}) {
+  signal?.throwIfAborted();
+  let claim;
+  let settled = false;
+  let resolveLoaded;
+  let rejectLoaded;
+  let timer;
+  const loaded = new Promise((resolve, reject) => { resolveLoaded = resolve; rejectLoaded = reject; });
+  // A launch error can occur before the caller starts waiting for Chrome's GET.
+  void loaded.catch(() => {});
+  const server = createServer((request, response) => {
+    if (settled || request.method !== 'GET' || !claim
+      || request.headers.host !== new URL(claim.url).host
+      || request.url !== new URL(claim.url).pathname) {
+      response.writeHead(404, { Connection: 'close' }); response.end(); return;
+    }
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'", 'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff', Connection: 'close' });
+    response.once('finish', () => finish());
+    response.end('<!doctype html><meta charset="utf-8"><title>NEKODEX</title><p>NEKODEX is verifying the selected Chrome profile. This temporary tab will close automatically.</p>');
+  });
+  const finish = error => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+    server.close();
+    server.closeAllConnections();
+    if (error) rejectLoaded(error); else resolveLoaded();
+  };
+  const abort = () => finish(signal.reason || new Error('Chrome profile claim cancelled'));
+  const cleanup = () => finish(new Error('Chrome profile claim closed'));
+  server.requestTimeout = timeoutMs;
+  server.headersTimeout = timeoutMs;
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    claim = createProfileClaim(server.address().port);
+    timer = setTimeout(() => {
+      const error = new Error('Chrome did not open the selected profile verification page. Retry the import.');
+      error.code = 'chrome-profile-claim-missing';
+      finish(error);
+    }, timeoutMs);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    return { claim, loaded, cleanup };
+  } catch (error) { finish(error); throw error; }
+}
+
+function validLaunchUrl(url) {
+  if (url === 'https://chatgpt.com/?temporary-chat=true') return true;
+  const match = typeof url === 'string' && /^http:\/\/127\.0\.0\.1:([1-9][0-9]{3,4})\/nekodex-profile-claim-v1\/[A-Za-z0-9_-]{32}$/.exec(url);
+  return !!match && Number(match[1]) >= 1024 && Number(match[1]) <= 65535;
+}
+
+function openProfile(executable, id, url = 'https://chatgpt.com/?temporary-chat=true') {
+  if (!profileId(id) || typeof executable !== 'string' || !path.isAbsolute(executable) || !validLaunchUrl(url)) {
+    throw new Error('Invalid Chrome profile launch');
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, [`--profile-directory=${id}`, '--new-window', 'https://chatgpt.com/?temporary-chat=true'],
+    const child = spawn(executable, [`--profile-directory=${id}`, '--new-window', url],
       { detached: true, stdio: 'ignore', shell: false });
-    child.once('error', reject); child.once('spawn', () => { child.unref(); resolve(); });
+    child.once('error', reject);
+    child.once('spawn', () => { child.unref(); resolve(); });
   });
 }
-function createChromeProfileChoice({ root, coreHome, dialog, window, executable, language, launch = openProfile }) {
-  const file = path.join(coreHome, 'chrome-profile-bindings.json');
-  function bindings() { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return {}; throw new Error('Saved Chrome profile selection is unreadable'); } }
-  return async ({ accountId, accountLabel, signal }) => {
+
+function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, executable, language,
+  launch = openProfile, picker = showChromeProfilePicker, bindingStore = createChromeProfileBindingStore(coreHome) }) {
+  return async ({ accountId, signal }) => {
     validateAccountId(accountId);
-    const ru = language() === 'ru';
+    signal?.throwIfAborted();
     let profiles;
     try { profiles = readProfiles(root); }
-    catch { throw new Error(ru ? 'Не удалось прочитать список профилей Chrome. Проверьте доступ NEKODEX; новый профиль автоматически не создавался.' : 'Could not read Chrome profiles. Check NEKODEX access; no new profile was created.'); }
-    const saved = bindings();
-    let selected = selectMatch(profiles, accountLabel, saved[accountId]);
-    if (profiles.length) {
-      const listed = selected ? [selected, ...profiles.filter(p => p.id !== selected.id)] : profiles;
-      const result = await dialog.showMessageBox(window(), { type:'question',
-        title:ru?'Профиль Chrome для этого аккаунта':'Chrome profile for this account',
-        message:ru?'Выберите существующий профиль Chrome':'Choose an existing Chrome profile',
-        detail:ru?'Выбор запомнится для этого аккаунта NEKODEX. Почта профиля Google не подтверждает вход в ChatGPT — он проверяется отдельно. Если подходящего профиля нет, выберите новый.' : 'This choice is remembered for this NEKODEX account. Google profile email does not prove ChatGPT sign-in; that is verified separately. Choose a new profile only if none matches.',
-        buttons:[ru?'Отмена':'Cancel',...listed.map(p=>`${p.name}${p.email ? ` — ${p.email}` : ''}`),ru?'Нет подходящего — новый профиль':'None matches — new profile'],defaultId:selected ? 1 : 0,cancelId:0,noLink:true,signal });
-      if (result.response === 0) return {kind:'cancel'};
-      if (result.response === listed.length+1) return {kind:'new'};
-      selected = listed[result.response-1];
-      if (!selected?.email) throw new Error(ru?'У профиля нет адреса Google. Сначала войдите в этот профиль Chrome.':'This profile has no Google email. Sign in to this Chrome profile first.');
+    catch {
+      throw new Error(language() === 'ru'
+        ? 'Не удалось прочитать список профилей Chrome. Проверьте доступ NEKODEX; новый профиль автоматически не создавался.'
+        : 'Could not read Chrome profiles. Check NEKODEX access; no new profile was created.');
     }
-    if (!selected) return {kind:'new'};
+    const saved = bindingStore.read(accountId);
+    const selection = await picker({ BrowserWindow, parent: window(), profiles,
+      selectedId: selectMatch(profiles, null, saved)?.id ?? null, language: language(), signal });
     signal?.throwIfAborted();
-    await launch(executable(), selected.id);
-    saved[accountId] = {id:selected.id,email:selected.email};
-    writePrivateFileAtomic(file, JSON.stringify(saved)+'\n', {durable:true});
-    return {kind:'existing',email:selected.email,id:selected.id};
+    if (!selection || selection.kind === 'cancel') return { kind: 'cancel' };
+    if (selection.kind === 'new') return { kind: 'new' };
+    const selected = profiles.find(profile => profile.id === selection.profile?.id);
+    if (!selected) throw new Error('Selected Chrome profile is no longer available');
+    const binding = bindingStore.begin(accountId, selected);
+    try { await launch(executable(), selected.id, 'https://chatgpt.com/?temporary-chat=true'); }
+    catch (error) { binding.rollback(); throw error; }
+    let claimPrepared = false;
+    let claimServer;
+    return {
+      kind: 'existing', profile: selected, previousBinding: binding.previous,
+      corruptPreviousBinding: binding.corruptPreviousFile,
+      async prepareCapture() {
+        if (claimPrepared) throw new Error('Chrome profile capture was already prepared');
+        signal?.throwIfAborted();
+        claimPrepared = true;
+        // Chrome command-line launch rejects about:blank with a fragment. Serve an inert
+        // one-use loopback page and wait for its GET; spawning Chrome alone is no receipt.
+        claimServer = await createProfileClaimServer({ signal });
+        try {
+          await launch(executable(), selected.id, claimServer.claim.url);
+          await claimServer.loaded;
+          signal?.throwIfAborted();
+          return claimServer.claim;
+        } catch (error) { binding.rollback(); throw error; }
+        finally { claimServer.cleanup(); }
+      },
+      cleanupCapture: () => claimServer?.cleanup(),
+      commitBinding: identity => binding.commit(identity),
+      rollbackBinding: () => binding.rollback(),
+    };
   };
 }
-module.exports={readProfiles,selectMatch,openProfile,createChromeProfileChoice};
+
+module.exports = { createChromeProfileChoice, createProfileClaim, createProfileClaimServer, openProfile, readProfiles, selectMatch };

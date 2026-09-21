@@ -4,11 +4,12 @@ import { AccountSafetySettings } from "./AccountSafetySettings";
 import { AccountProxySettings } from "./AccountProxySettings";
 import { AccountCodexControls } from "./AccountCodexControls";
 import { AccountReadiness } from "./AccountReadiness";
+import { AccountToolsOnboarding } from "./AccountToolsOnboarding";
 import { QuotaPortfolioSummary } from "./QuotaPortfolioSummary";
 import { accountCodexCopyFor, type Copy } from "./i18n";
 import { sessionIssueCopy } from "./session-issue-copy";
 import { workflowCopy } from "./workflow-copy";
-import type { AccountPoolSnapshot, AccountQuotaSnapshot, CodexLoginProgress, Language } from "./types";
+import type { AccountPoolSnapshot, AccountQuotaSnapshot, CodexLoginProgress, Language, LauncherSnapshot } from "./types";
 import "./account-codex.css";
 import "./quota-portfolio.css";
 
@@ -36,7 +37,10 @@ export function nextQuotaClockAt(values: Iterable<AccountQuotaSnapshot | null>, 
   return next;
 }
 
-export function AccountSettings({ copy, language, openBrowser, setError, manual, transitionBusy = false }: {
+export function AccountSettings({ copy, language, openBrowser, setError, manual, transitionBusy = false,
+  toolsSetup, focusAccountId, onSetupTools }: {
+  toolsSetup: { runtimeConfigured: boolean; connectorName: string; urls: LauncherSnapshot["urls"] };
+  focusAccountId: string | null; onSetupTools: (accountId: string, accountLabel: string) => void;
   manual: boolean; copy: Copy; language: Language; openBrowser: () => void; setError: (message: string | null) => void;
   transitionBusy?: boolean;
 }) {
@@ -564,6 +568,12 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         <span className={account.connectorReady ? "is-ready" : ""}><i className={`state-dot is-${account.connectorReady ? "ready" : "idle"}`} />{copy.toolConnection}: {account.connectorReady ? copy.connectionVerified : copy.connectionPending}</span>
       </div>
       <AccountReadiness account={account} language={language} />
+      <AccountToolsOnboarding account={account} copy={copy} language={language}
+        runtimeConfigured={toolsSetup.runtimeConfigured} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
+        manual={manual} disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy || authRefreshBusy}
+        focus={focusAccountId === account.id} onError={setError}
+        onSetup={() => onSetupTools(account.id, account.accountLabel ? `${account.label} · ${account.accountLabel}` : account.label)}
+        onVerify={() => void run(() => api.checkAccount(account.id, true))} />
       <div className="account-actions">
         <label title={loginBoundReason}><input type="checkbox" checked={account.enabled} disabled={mutationsDisabled || loginBoundActive}
           aria-describedby={(mutationsDisabled || loginBoundActive) ? describedBy(blockedReason) : undefined}
@@ -593,9 +603,6 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || loginBoundActive || !account.authenticated}
           aria-describedby={describedBy(checkActionReason)}
           title={loginBoundReason} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</button>
-        <button type="button" className="text-button" disabled={mutationsDisabled || manual || active || loginBoundActive || !account.authenticated}
-          aria-describedby={describedBy(checkActionReason)}
-          title={loginBoundReason} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
       </div>
       {authUnavailable ? <p className="field-hint" role="status">{sessionIssueCopy(language, account.authenticationIssue)}</p> : null}
       {authUnavailable && account.id === state.selectedId ? <button type="button" className="text-button"

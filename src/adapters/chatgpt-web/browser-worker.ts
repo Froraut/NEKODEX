@@ -3,7 +3,7 @@ import { parseChatGptWebCompactionExecution, type ChatGptWebCompactionExecution 
 import { skillFileTokens, validateSkillFiles } from "./skill-attachments";
 import { stabilizeEffortSlider } from "./effort-stabilization";
 import { CHATGPT_TRACE_BUFFER_BYTES, assertByteLimit, retainedRecordBytes } from "./resource-budgets";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request, type Response } from "playwright-core";
@@ -21,6 +21,7 @@ import {
 } from "../../config";
 import { estimateTokens } from "../../lib/token-estimate";
 import type { CodexProviderConfig } from "../../types";
+import { codexFileMimeType, sanitizeCodexFileName } from "../../responses/file-content";
 import { parseDataUrl } from "../image";
 import { chatGptWebInputImageExtension, validateChatGptWebInputImage } from "./input-image-validation";
 import {
@@ -48,6 +49,7 @@ import {
   formatChatGptWebMultipartStage,
   isChatGptWebMultipartPartCount,
   type CompiledChatGptWebPrompt,
+  type ChatGptWebPromptFile,
   type ChatGptWebPromptImage,
   type ChatGptWebMultipartStage,
 } from "./prompt";
@@ -76,6 +78,10 @@ import {
 } from "../../browser-login";
 import {
   connectLauncherBrowserHost,
+  cancelLauncherArtifactDownload,
+  launcherArtifactTaskDirectory,
+  registerLauncherArtifactDownload,
+  waitForLauncherArtifactDownload,
   LauncherBrowserTurnCancelledError,
   LauncherAccountCooldownError,
   LauncherRetainedConversationUnavailableError,
@@ -95,7 +101,8 @@ import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { chatGptProUsageLimitTooltip } from "./pro-retry-hint";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import { retainBrowserDiagnosticTrace } from "./browser-diagnostic-retention";
-import { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
+import { acquireChatGptResponseArtifacts, chatGptArtifactMarkdown } from "./artifacts";
+import { MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_OUTSTANDING_TURNS } from "./concurrency";
 import {
   ChatGptCompactionHandoffAccepted,
   ChatGptWebAdapterError,
@@ -1347,6 +1354,7 @@ function browserStageAbortSignal(stageSignal: AbortSignal, turnSignal?: AbortSig
 }
 
 export interface BrowserTurn {
+  requestedModel?: string;
   accountRoutingKey?: string;
   traceId: string;
   modelId: string;
@@ -1364,7 +1372,7 @@ export interface BrowserTurn {
   onHeartbeat?: () => void;
   /** Send activation is the ambiguity boundary after which a fresh surface must not replay this prompt. */
   onSendActivated?: () => void | Promise<void>;
-  /** Semantic submission evidence proved that ChatGPT accepted the prompt. */
+  /** Observed current-submission receipt/activity; not proof of model understanding or completion. */
   onSubmitted?: () => void | Promise<void>;
   /** Private to the launcher worker. Durable UI evidence; never a provider completion signal. */
   onTaskProgress?: (phase: 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools') => Promise<void>;
@@ -1402,6 +1410,7 @@ interface ChatGptSubmissionBaseline {
   userTurns: Locator;
   responseTurns: Locator;
   initialTurnIdentities: readonly string[];
+  initialGenerationRunning?: boolean;
   acknowledgedStages?: readonly string[];
   domCache: ChatGptSubmissionDomCache;
 }
@@ -2248,10 +2257,47 @@ export function chatGptImageFilePayloads(images: ChatGptWebPromptImage[]): Array
   });
 }
 
+export function chatGptDocumentFilePayloads(files: ChatGptWebPromptFile[]): Array<{ name: string; mimeType: string; buffer: Buffer }> {
+  if (files.length > CHATGPT_MAX_INPUT_IMAGES) {
+    throw new Error(`ChatGPT web accepts at most ${CHATGPT_MAX_INPUT_IMAGES} input files per Codex turn`);
+  }
+  const names = new Set<string>();
+  const refs = new Set<string>();
+  let totalBytes = 0;
+  return files.map(file => {
+    if (sanitizeCodexFileName(file.name) !== file.name
+      || codexFileMimeType(file.name, file.mimeType) !== file.mimeType
+      || !/^codex-input-file-[1-9][0-9]*$/.test(file.ref)
+      || !/^[a-f0-9]{64}$/.test(file.sha256)
+      || (file.source !== "inline" && file.source !== "authorized_file_id")
+      || (file.fileId !== undefined && (file.source !== "authorized_file_id" || !file.fileId))) {
+      throw new Error(`ChatGPT web input file ${JSON.stringify(file.name)} has an invalid verified manifest`);
+    }
+    if (names.has(file.name) || refs.has(file.ref)) {
+      throw new Error(`ChatGPT web input file ${JSON.stringify(file.name)} has a duplicate filename or attachment reference`);
+    }
+    names.add(file.name);
+    refs.add(file.ref);
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(file.base64) || file.base64.length % 4 !== 0) {
+      throw new Error(`ChatGPT web input file ${JSON.stringify(file.name)} contains invalid base64 data`);
+    }
+    const buffer = Buffer.from(file.base64, "base64");
+    if (buffer.length !== file.size || buffer.length === 0 || buffer.length > 20_000_000) {
+      throw new Error(`ChatGPT web input file ${JSON.stringify(file.name)} size does not match its verified manifest`);
+    }
+    if (createHash("sha256").update(buffer).digest("hex") !== file.sha256) {
+      throw new Error(`ChatGPT web input file ${JSON.stringify(file.name)} bytes do not match its verified manifest`);
+    }
+    totalBytes += buffer.length;
+    if (totalBytes > 50_000_000) throw new Error("ChatGPT web input files exceed the 50 MB per-turn limit");
+    return { name: file.name, mimeType: file.mimeType, buffer };
+  });
+}
+
 function assertChatGptPromptAttachments(prompt: CompiledChatGptWebPrompt): void {
-  if (prompt.images.length + (prompt.skillFiles?.length ?? 0) > CHATGPT_MAX_INPUT_IMAGES) {
+  if (prompt.images.length + (prompt.files?.length ?? 0) + (prompt.skillFiles?.length ?? 0) > CHATGPT_MAX_INPUT_IMAGES) {
     throw new ChatGptWebAdapterError(
-      "Selected skills and images exceed ChatGPT's 10 attachments per message; disable Skills as files or reduce attachments.",
+      "Selected files, skills, and images exceed ChatGPT's 10 attachments per message; reduce attachments before retrying.",
       { status: 400, errorType: "invalid_request_error", code: "too_many_attachments", retryable: false },
     );
   }
@@ -2262,9 +2308,13 @@ export function chatGptPromptFilePayloads(
   prompt: CompiledChatGptWebPrompt,
 ): Array<{ name: string; mimeType: string; buffer: Buffer }> {
   assertChatGptPromptAttachments(prompt);
-  const files = [...chatGptImageFilePayloads(prompt.images), ...(prompt.skillFiles ?? []).map(file => ({
+  const files = [
+    ...chatGptImageFilePayloads(prompt.images),
+    ...chatGptDocumentFilePayloads(prompt.files ?? []),
+    ...(prompt.skillFiles ?? []).map(file => ({
     name: file.name, mimeType: "text/plain", buffer: Buffer.from(file.text, "utf8"),
-  }))];
+    })),
+  ];
   if (files.reduce((sum, file) => sum + file.buffer.length, 0) > 50_000_000) {
     throw new Error("ChatGPT web attachments exceed the 50 MB per-turn limit");
   }
@@ -2419,9 +2469,10 @@ export class ChatGptBrowserWorker {
     if (this.activeRuns.has(turn.traceId)) {
       return Promise.reject(new Error(`Duplicate ChatGPT web browser turn: ${turn.traceId}`));
     }
-    if (this.activeRuns.size >= MAX_CHATGPT_BROWSER_TABS) {
+    const outstandingLimit = this.config.browserHost === 'launcher' ? MAX_CHATGPT_OUTSTANDING_TURNS : MAX_CHATGPT_BROWSER_TABS;
+    if (this.activeRuns.size >= outstandingLimit) {
       return Promise.reject(new Error(
-        `ChatGPT Web supports at most ${MAX_CHATGPT_BROWSER_TABS} simultaneous browser turns; close or finish a browser tab before starting another`,
+        `ChatGPT Web has reached its ${outstandingLimit} active and waiting task limit; finish or cancel a task before submitting another`,
       ));
     }
     const useHelper = this.config.browserHost === "launcher" && process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS !== "1";
@@ -3147,7 +3198,8 @@ export class ChatGptBrowserWorker {
       initialTurnIdentities: baseline.initialTurnIdentities,
       userIdentities: state.userIdentities,
       responseIdentities: state.responseIdentities,
-      generationRunning: state.visibleStopButtonCount > 0,
+      // A pre-existing Stop control belongs to earlier work, not this send.
+      generationRunning: state.visibleStopButtonCount > 0 && !baseline.initialGenerationRunning,
     });
   }
 
@@ -3176,6 +3228,7 @@ export class ChatGptBrowserWorker {
       userTurns,
       responseTurns,
       initialTurnIdentities: state.turnIdentities,
+      initialGenerationRunning: state.visibleStopButtonCount > 0,
       domCache,
     };
   }
@@ -3930,8 +3983,13 @@ export class ChatGptBrowserWorker {
       await this.assertEffortSurface(page, expectedMode.effort);
       if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     }
-    const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
+    throwIfPromptAttachmentAborted(abortSignal);
     await submissionLifecycle?.onSendActivated?.();
+    // Persistence/IPC can yield long enough for the owning turn to be cancelled.
+    // Keep its no-replay fence, but never activate a cancelled send.
+    throwIfPromptAttachmentAborted(abortSignal);
+    // Activity preceding Enter cannot have been caused by this submission.
+    const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
     submissionRejection?.begin(page);
     await sendButton.press("Enter", {
       noWaitAfter: true,
@@ -3951,6 +4009,8 @@ export class ChatGptBrowserWorker {
       recoverObservation,
       recoverableObservation,
     );
+    // Observation may settle concurrently with cancellation; late evidence cannot revive the turn.
+    throwIfPromptAttachmentAborted(abortSignal);
     await submissionLifecycle?.onSubmitted?.();
     return evidence;
   }
@@ -4261,7 +4321,7 @@ export class ChatGptBrowserWorker {
       modelId,
       reasoning,
       capabilities,
-      prepare: async () => ({ text: CHATGPT_SMOKE_TEXT, images: [], release: () => {} }),
+      prepare: async () => ({ text: CHATGPT_SMOKE_TEXT, images: [], files: [], release: () => {} }),
       abortSignal,
       onTextDelta: () => {},
     }, undefined, page);
@@ -4868,6 +4928,7 @@ export class ChatGptBrowserWorker {
     const lease = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
       phase: "start",
       taskProgressVersion: 1,
+      requestedModel: turn.requestedModel,
       requestedEffort: turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? "luna" : resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities).effort,
       ...(turn.accountRoutingKey ? { accountRoutingKey: turn.accountRoutingKey } : {}),
       traceId: turn.traceId,
@@ -4877,7 +4938,7 @@ export class ChatGptBrowserWorker {
         ? { connectorIdentity: this.config.appName }
         : {}),
       ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
-    }).catch(error => {
+    }, undefined, turn.abortSignal).catch(error => {
       if (error instanceof LauncherAccountCooldownError) throw new ChatGptWebAdapterError(error.message, {
         status: 429, errorType: "rate_limit_error", code: "account_cooldown", retryable: false,
       });
@@ -5884,6 +5945,54 @@ export class ChatGptBrowserWorker {
               finalText = completed.answer;
             } else {
               finalText = final.markdown;
+            }
+            if (!turn.compaction) {
+              const artifacts = await acquireChatGptResponseArtifacts(
+                page,
+                responseTurn.locator,
+                turn.traceId,
+                responseTurn.identity,
+                turn.abortSignal,
+                launcherSurfaceId && this.config.browserHostDescriptorPath ? {
+                  taskDirectory: launcherArtifactTaskDirectory(
+                    this.config.browserHostDescriptorPath,
+                    turn.traceId,
+                  ),
+                  networkGuard: {
+                    register: input => registerLauncherArtifactDownload(
+                      this.config.browserHostDescriptorPath!,
+                      {
+                        traceId: turn.traceId,
+                        helperPid: process.pid,
+                        surfaceId: launcherSurfaceId,
+                        ...input,
+                      },
+                      turn.abortSignal,
+                    ),
+                    wait: leaseId => waitForLauncherArtifactDownload(
+                      this.config.browserHostDescriptorPath!,
+                      { traceId: turn.traceId, helperPid: process.pid, surfaceId: launcherSurfaceId, leaseId },
+                      60_000,
+                      turn.abortSignal,
+                    ),
+                    cancel: (leaseId, reason) => cancelLauncherArtifactDownload(
+                      this.config.browserHostDescriptorPath!,
+                      {
+                        traceId: turn.traceId,
+                        helperPid: process.pid,
+                        surfaceId: launcherSurfaceId,
+                        leaseId,
+                        reason: reason.message.slice(0, 500),
+                      },
+                    ),
+                  },
+                } : {},
+              );
+              const artifactMarkdown = chatGptArtifactMarkdown(artifacts);
+              if (artifactMarkdown) {
+                turn.onTextDelta(artifactMarkdown);
+                finalText += artifactMarkdown;
+              }
             }
             break;
           }

@@ -41,6 +41,13 @@ test('account capabilities and local hold are exposed without presenting a missi
     account: { ...account, checked: false }, language: 'en' }));
   assert.doesNotMatch(stale, /<dd>Supported/);
   assert.match(stale, /Check models/);
+  const unknown = renderToStaticMarkup(React.createElement(AccountReadiness, {
+    account: { ...account, availability: undefined,
+      capabilities: { solAvailable: null, extraHighAvailable: null, proAvailable: null } }, language: 'en' }));
+  assert.doesNotMatch(unknown, /<dd>Supported|<dd>Unavailable/);
+  assert.equal((unknown.match(/<dd>Not reported/g) ?? []).length, 6);
+  assert.match(html, /<dt>Instant<\/dt><dd>Supported/);
+  assert.match(html, /<dt>High<\/dt><dd>Supported/);
 });
 
 const portfolioCopy = {

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { Copy } from "./i18n";
 import { passkeyFailureText } from "./passkey-copy";
-import type { PasskeyLoginProgress } from "./types";
+import type { PasskeyLoginProgress, Language } from "./types";
 
-export function PasskeyLoginGuide({ progress, copy, onRetry, setError, transitionBusy = false }: {
+export function PasskeyLoginGuide({ progress, copy, onRetry, setError, transitionBusy = false, language = 'en' }: {
+  language?: Language;
   progress: PasskeyLoginProgress;
   copy: Copy;
   onRetry: () => Promise<void>;
@@ -46,8 +47,8 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, setError, transitio
     {progress.active && ["starting", "waiting"].includes(progress.phase) ? (
       <p>{copy.passkeyTimeRemaining.replace("{time}", remaining)}</p>
     ) : null}
-    {progress.error ? <p role="alert">{passkeyFailureText(progress.error, copy)}</p> : null}
-    {progress.revealError ? <p role="alert">{passkeyFailureText(progress.revealError, copy)}</p> : null}
+    {progress.error ? <p role="alert">{passkeyFailureText(progress.error, copy, language)}</p> : null}
+    {progress.revealError ? <p role="alert">{passkeyFailureText(progress.revealError, copy, language)}</p> : null}
     <div className="browser-empty-actions">
       {progress.canReveal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.revealPasskeyLogin(), false, copy.passkeyRevealFailed)}>{copy.passkeyReveal}</button> : null}

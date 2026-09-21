@@ -995,12 +995,23 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
   handle("launcher:browser-tab-close", (_event, tabId, expectedTraceId) => browserHost.closeTab(tabId, expectedTraceId));
   handle('launcher:task-dismiss', (_event, accountId, id) => browserHost.dismissTask(accountId, id));
+  handle('launcher:queue-action', (_event, id, action) => browserHost.queueAction(id, action));
+  handle('launcher:queue-pause', (_event, accountId, paused) => browserHost.pauseQueue(accountId, paused));
   handle("launcher:manual-prompt-copy", (_event, tabId) => browserHost.copyManualPrompt(tabId));
   handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost.confirmManualSent(tabId));
   handle("launcher:browser-window-open", (_event, asTab = false) => {
     if (typeof asTab !== "boolean") throw new Error("Invalid browser window request");
     return browserHost.openWorkspaceWindow(asTab);
   });
+  handle("launcher:browser-workspaces", () => browserHost.workspaceSnapshot());
+  handle("launcher:browser-workspace-open", (_event, accountId, options) =>
+    browserHost.openWorkspace(accountId, options));
+  handle("launcher:browser-workspace-restore", (_event, accountId) =>
+    browserHost.restoreWorkspaces(accountId));
+  handle("launcher:browser-workspace-focus", (_event, accountId, workspaceId) =>
+    browserHost.focusWorkspace(accountId, workspaceId));
+  handle("launcher:browser-workspace-close", (_event, accountId, workspaceId) =>
+    browserHost.closeWorkspace(accountId, workspaceId));
   handle("launcher:browser-login", async () => {
     const browser = await browserHost.openLogin();
     return browser;
@@ -1019,6 +1030,9 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:browser-passkey-login-cancel", () => browserHost.cancelPasskeyLogin(() => runtimeHost.cancelPasskeyLogin()));
   handle("launcher:browser-existing-chrome-login", async () => {
+    // Normal macOS Chrome entry points share the selected-profile identity transaction,
+    // even when the separate passkey-browser preference is Firefox.
+    if (process.platform === "darwin") return await browserHost.openPasskeyLogin("chrome-profile");
     const browser = await browserHost.openExistingChromeLogin(() => confirmExistingChromeImport(dialog, mainWindow, stateStore.read().language));
     return browser;
   });
@@ -1965,8 +1979,12 @@ async function start() {
   const profileFirstLogin = createProfileFirstLogin({
     choose: createChromeProfileChoice({
       root: path.join(app.getPath("home"), "Library", "Application Support", "Google", "Chrome"),
-      coreHome: CORE_HOME, dialog, window: () => mainWindow,
-      executable: () => runtimeHost.passkeyChromeExecutable("chrome"), language: () => stateStore.read().language,
+      coreHome: CORE_HOME, BrowserWindow, window: () => mainWindow,
+      // Existing-profile metadata and launches are deliberately paired to macOS Stable Chrome.
+      // A configured Beta/Canary/Chromium executable remains available through isolated sign-in;
+      // its unrelated "Profile N" directory must never be selected from Stable's catalog.
+      executable: () => "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      language: () => stateStore.read().language,
     }), runtime: runtimeHost, session, dialog, window: () => mainWindow, language: () => stateStore.read().language,
   });
   browserHost = new AccountBrowserPool({
@@ -1984,9 +2002,11 @@ async function start() {
     logger,
     loginWithPasskey: (onProgress, context) => stateStore.read().passkeyBrowser === "firefox"
       ? runtimeHost.capturePasskeyLogin(onProgress, "firefox") : profileFirstLogin(onProgress, context),
+    loginWithChromeProfile: profileFirstLogin,
     loginWithExistingChrome: (onProgress, options) => runtimeHost.captureExistingChromeLogin(onProgress, options),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
+    workspaceDisplays: () => screen.getAllDisplays(),
     publishState: (state) => send("launcher:browser-state", state),
     showWindow: showMainWindow,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,

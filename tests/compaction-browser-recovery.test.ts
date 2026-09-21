@@ -16,8 +16,24 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [true,
   const sendBudgets: number[] = [];
   let stage = "";
   let released = false;
-  const page = { evaluate: async () => ({}), isClosed: () => false };
+  // Model an unobstructed page while exercising the real multipart blocker check.
+  const absentDialog = {
+    filter: () => absentDialog,
+    last: () => absentDialog,
+    isVisible: async () => false,
+  };
+  const page = {
+    evaluate: async () => ({}),
+    isClosed: () => false,
+    locator: (selector: string) => {
+      expect(selector).toBe('[role="dialog"]');
+      return absentDialog;
+    },
+  };
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    effortSelections: new WeakMap(),
+    observedProVersions: new WeakMap(),
+    validatedPinnedVersions: new WeakMap(),
     config: { appName: "Codex Native4", browserDiagnosticsPath: diagnostics, ...(owned ? { browserHostDescriptorPath: "owned-descriptor" } : {}) },
     runStage: async (_trace: string, name: string, timeout: number, action: (signal: AbortSignal) => Promise<unknown>) => {
       stage = name;
@@ -43,7 +59,10 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [true,
       // Context ingestion cannot mistake tool activity for acknowledgement of a part.
       expect(args[4]).toBe(stage === "send" ? progress : undefined);
       // Context parts track Send activation for no-replay safety, but gain no tool observer.
-      if (stage !== "send") expect(args[5]).toEqual({ onSendActivated: expect.any(Function) });
+      if (stage !== "send") expect(args[5]).toEqual({
+        onSendActivated: expect.any(Function),
+        onSubmitted: expect.any(Function),
+      });
       recoveryCallbacks.push(args[7]);
       actions.push("send");
       return "user_turn";
@@ -72,18 +91,17 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [true,
       prepare: async () => ({ text: "Summarize the context", images: [], multipart: multipart ? { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "Summarize" } : undefined, release: () => { released = true; } }),
     }, owned ? "owned-surface" : undefined, page)).rejects.toBe(finalResponse);
     expect(recoveryCallbacks.map(callback => typeof callback)).toEqual(
-      Array(multipart ? 6 : 2).fill(owned ? "function" : "undefined"),
+      Array(multipart ? 12 : 2).fill(owned ? "function" : "undefined"),
     );
     expect(actions).toEqual([
-      ...(multipart ? [
-        "effort:low",
-        "attach:plain", "send", "observe", "ack",
-        "attach:plain", "send", "observe", "ack",
-      ] : []),
+      // Six supplied parts mean five low-effort ingestion sends, then the final tool-capable send.
+      ...(multipart ? Array.from({ length: 5 }, () => [
+        "effort:low", "attach:plain", "send", "observe", "ack",
+      ]).flat() : []),
       "effort:high",
       tools ? "attach:tools" : "attach:plain", "files", "send", "observe",
     ]);
-    expect(sendBudgets).toEqual(multipart ? [180_000, 180_000, 180_000] : [20_000]);
+    expect(sendBudgets).toEqual(multipart ? Array(6).fill(180_000) : [20_000]);
     expect(released).toBe(true);
   } finally {
     rmSync(diagnostics, { recursive: true, force: true });

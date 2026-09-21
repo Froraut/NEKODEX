@@ -1,0 +1,28 @@
+.account-tools-onboarding {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-background-control);
+}
+.account-tools-onboarding h3 { margin: 0; font-size: var(--text-sm); }
+.account-tools-onboarding p,
+.account-tools-handoff p { margin: 8px 0; font-size: var(--text-xs); line-height: 1.6; color: var(--color-text-secondary); }
+.account-tools-onboarding .inline-actions { margin-top: 12px; flex-wrap: wrap; }
+.account-tools-identity { display: grid; gap: 6px; font-size: var(--text-xs); }
+.account-tools-identity input { min-width: 0; width: 100%; }
+.account-tools-handoff {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background-control);
+}
+.account-tools-handoff strong { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.account-tools-handoff p { margin-bottom: 0; }
+.account-tools-handoff > div { min-width: 0; flex: 1 1 14rem; }
+.account-tools-handoff button { flex-shrink: 0; }

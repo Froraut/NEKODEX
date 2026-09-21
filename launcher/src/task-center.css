@@ -6,3 +6,9 @@
 .task-center-list code { font-size: 12px; }
 .task-center-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .task-cancel-confirm { padding: 12px; border: 1px solid var(--border-color, #383640); border-radius: 8px; margin-top: 12px; }
+.task-queue { margin-bottom: 24px; }
+.task-queue h2 { font-size: 16px; margin-bottom: 12px; }
+.task-queue article { border-bottom: 1px solid var(--border-color, #383640); padding: 14px 0; }
+.task-queue header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.task-queue p { margin: 8px 0; font-size: 13px; overflow-wrap: anywhere; }
+.task-queue select { max-width: 100%; background: var(--surface, #25232d); color: inherit; border: 1px solid var(--border-color, #383640); border-radius: 6px; padding: 8px; }

@@ -18,6 +18,11 @@ import { responsesRequestSchema } from "./schema";
 import { compactionItemToText } from "./compaction";
 import { previousResponseReplayPrefixLength } from "./state";
 import { decodeReasoningEnvelope } from "./reasoning-envelope";
+import {
+  resolveCodexFileId,
+  resolveInlineCodexFile,
+  type CodexFileIdResolver,
+} from "./file-content";
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -29,7 +34,10 @@ type InputBlock =
   | { type: "input_image"; image_url?: string; file_id?: string; detail?: string }
   | { type: "input_file"; file_id?: string; filename?: string; file_data?: unknown };
 
-function inputContentParts(blocks: unknown[] | string | undefined): string | CodexContentPart[] {
+function inputContentParts(
+  blocks: unknown[] | string | undefined,
+  fileIdResolver?: CodexFileIdResolver,
+): string | CodexContentPart[] {
   if (typeof blocks === "string") return blocks;
   if (!blocks) return [];
   const parts: CodexContentPart[] = [];
@@ -45,15 +53,28 @@ function inputContentParts(blocks: unknown[] | string | undefined): string | Cod
         parts.push({ type: "image", imageUrl: b.image_url, ...(b.detail ? { detail: normalizeImageDetail(b.detail) } : {}) });
       } else {
         if (!b.file_id) throw new Error("input_image requires image_url or file_id");
-        throw new Error("input_image file_id is unresolved; image content was not sent. Provide image_url with supported inline image bytes.");
+        let resolved;
+        try {
+          resolved = resolveCodexFileId(b.file_id, undefined, fileIdResolver);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(`input_image file_id is unresolved; image content was not sent. ${detail}`, { cause: error });
+        }
+        if (!resolved.mimeType.startsWith("image/")) {
+          throw new Error(`input_image file_id resolved to ${resolved.mimeType}, not an image`);
+        }
+        parts.push({
+          type: "image",
+          imageUrl: `data:${resolved.mimeType};base64,${resolved.base64}`,
+          ...(b.detail ? { detail: normalizeImageDetail(b.detail) } : {}),
+        });
       }
     } else if (block.type === "input_file") {
-      // The schema rejects inline data before projection. Keep the same explicit failure
-      // here if this helper is ever reached with an unchecked content block.
-      if (Object.prototype.hasOwnProperty.call(block, "file_data")) {
-        throw new Error("input_file.file_data is unsupported; inline file content was not sent");
-      }
-      throw new Error("input_file is unresolved; file content was not sent. A filename or file_id alone is not a delivered attachment.");
+      const b = block as { file_id?: string; filename?: string; file_data?: unknown };
+      const resolved = b.file_id
+        ? resolveCodexFileId(b.file_id, b.filename, fileIdResolver)
+        : resolveInlineCodexFile(b.filename, b.file_data);
+      parts.push({ type: "file", ...resolved });
     } else {
       throw new Error(`unsupported input content block type: ${String((block as { type?: unknown }).type)}`);
     }
@@ -288,7 +309,11 @@ function findToolById(messages: CodexMessage[], callId: string): { name: string;
 
 const REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
-export function parseRequest(body: unknown, parseOptions?: { allowWebSubagents?: boolean }): CodexParsedRequest {
+export function parseRequest(body: unknown, parseOptions?: {
+  allowWebSubagents?: boolean;
+  /** In-process authority boundary for file_id. HTTP requests have no resolver by default. */
+  resolveFileId?: CodexFileIdResolver;
+}): CodexParsedRequest {
   const replayedInputPrefixLength = previousResponseReplayPrefixLength(body);
   const parsed = responsesRequestSchema.safeParse(body);
   if (!parsed.success) {
@@ -375,6 +400,7 @@ export function parseRequest(body: unknown, parseOptions?: { allowWebSubagents?:
 
         const content = inputContentParts(
           agentMessage.content as unknown[] | string | undefined,
+          parseOptions?.resolveFileId,
         );
 
         // An agent_message is external input delivered to the parent agent. Keep its distinct
@@ -402,9 +428,9 @@ export function parseRequest(body: unknown, parseOptions?: { allowWebSubagents?:
         switch (msg.role) {
           case "system": {
             pendingReasoning.length = 0;
-            const text = inputContentParts(msg.content as unknown[] | string | undefined);
-            if (typeof text !== "string" && text.some(p => p.type === "image")) {
-              throw new Error("input_image in a system message is unsupported; system image content was not sent");
+            const text = inputContentParts(msg.content as unknown[] | string | undefined, parseOptions?.resolveFileId);
+            if (typeof text !== "string" && text.some(p => p.type !== "text")) {
+              throw new Error("file or image content in a system message is unsupported; content was not sent");
             }
             const flat = typeof text === "string" ? text : text.map(p => (p.type === "text" ? p.text : "")).join("");
             if (flat.length > 0) systemPrompt.push(flat);
@@ -413,7 +439,7 @@ export function parseRequest(body: unknown, parseOptions?: { allowWebSubagents?:
           case "user":
           case "developer": {
             pendingReasoning.length = 0;
-            const content = inputContentParts(msg.content as unknown[] | string | undefined);
+            const content = inputContentParts(msg.content as unknown[] | string | undefined, parseOptions?.resolveFileId);
             const kinds = msg.internal_chat_message_metadata_passthrough?.content_item_kinds;
             const selectedSkill = msg.role === "user" && kinds?.length === 1
               && kinds[0] === "skills.selected_skill_instructions";

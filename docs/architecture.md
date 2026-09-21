@@ -105,9 +105,16 @@ Compaction asks the same retained Web agent for a one-shot structured checkpoint
 response and physical helper cleanup,
 then closes the old surface. The next epoch gets a new Temporary Chat. Model messages never copy
 state between tabs. Tabs share only the local login
-partition and keep independent documents and lifecycles. Closing a running tab destroys its page
-and terminates that browser turn. A new turn fails explicitly when the configured ceiling is full;
-the limit bounds local allocation and does not guarantee account-side capacity or usage allowance.
+partition and keep independent documents and lifecycles. Closing a running tab requests targeted
+runtime cancellation before releasing its local observation; it does not undo provider-side work.
+Automatic turns wait in a bounded, owner-bound admission queue when local capacity or pacing is
+unavailable. The physical ceiling still bounds browser allocation and does not increase account
+allowance. See [admission and cancellation](design/browser-admission-queue.md).
+
+The Task Center projects durable submission receipts separately from browser documents. An
+uncertain or post-acceptance failure retains its exact document for inspection while available.
+After a process restart, unfinished receipts become interrupted incidents; they do not authorize
+another Send. Completed-history dismissal does not destroy a still-usable retained conversation.
 
 Browser submission and response binding use ChatGPT's logical `data-turn-id`, not the
 `conversation-turn-N` display index, which can change during rendering. The submission baseline
@@ -119,8 +126,12 @@ Sign-in uses that same persistent Electron partition. ChatGPT login pages and al
 provider popups are adopted into a temporary `WebContentsView` inside the launcher instead of being
 redirected to another browser. After the provider returns to ChatGPT, the launcher requires both a
 server-authenticated session and the Temporary Chat composer in the primary owned view, then closes
-the temporary auth view. There is no browser-profile handoff, cookie import, CDP login port, or
-temporary session-transfer directory.
+the temporary auth view. Passkey sign-in can also use an explicitly selected existing Chrome
+profile or an isolated browser. Existing-profile capture requires Chrome's native approval and
+an exact one-use target claim opened in the selected profile; the profile directory is never
+assumed to be a CDP context ID. The captured ChatGPT principal is checked independently of Google
+profile metadata before replacing the account session. Private temporary transfers are cleaned
+before the verified profile binding is committed.
 
 The current compiled Codex task context is inserted as one inline JSON envelope. Image bytes stay
 out of the JSON and are attached natively with stable references. The runtime does not create a

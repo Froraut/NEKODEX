@@ -242,7 +242,7 @@ test('expired-window pruning cannot undo a session hard-stop mutation', () => fi
   assert.equal(stored.newSessionUsages, undefined);
 }));
 
-test('expired-window pruning cannot undo a scheduled break mutation', () => fixture(root => {
+test('expired-window pruning preserves a fixed scheduled break across restart', () => fixture(root => {
   let now = 5_000_000;
   const safety = new AccountSafety(root, () => now);
   safety.setPolicy('default', {
@@ -256,12 +256,18 @@ test('expired-window pruning cannot undo a scheduled break mutation', () => fixt
   safety.admit('default', 0, { createsNewSession: true, sessionId: 'f'.repeat(64) });
 
   now += 60_001;
+  const fixedEnd = 5_000_000 + 60_000 + 5 * 60_000;
   assert.equal(safety.snapshot('default').newSessionWindow.used, 0);
   assert.throws(() => safety.admit('default', 0, { createsNewSession: false }), /Scheduled account break/);
   const stored = JSON.parse(fs.readFileSync(path.join(root, 'account-safety.json'), 'utf8')).accounts.default;
-  assert.equal(stored.cooldownUntil, now + 5 * 60_000);
-  assert.equal(stored.breakStart, now + 5 * 60_000);
+  assert.equal(stored.cooldownUntil, fixedEnd);
+  assert.equal(stored.breakStart, fixedEnd);
   assert.equal(stored.newSessionUsages, undefined);
+  const restarted = new AccountSafety(root, () => now);
+  now = fixedEnd - 1;
+  assert.throws(() => restarted.admit('default', 0, { createsNewSession: false }), error => error.retryAt === fixedEnd);
+  now = fixedEnd;
+  assert.doesNotThrow(() => restarted.admit('default', 0, { createsNewSession: false }));
 }));
 
 test('new-session window is nullable and bounded only by technical validation ranges', () => {

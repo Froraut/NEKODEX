@@ -1,4 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,16 @@ import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/la
 import { ChatGptResourceLimitError } from "../src/adapters/chatgpt-web/resource-budgets";
 
 const roots: string[] = [];
+const ipcFileBytes = Buffer.from("id,value\n1,helper-file-roundtrip\n", "utf8");
+const ipcFile = {
+  ref: "codex-input-file-1",
+  name: "helper.csv",
+  mimeType: "text/csv",
+  base64: ipcFileBytes.toString("base64"),
+  size: ipcFileBytes.length,
+  sha256: createHash("sha256").update(ipcFileBytes).digest("hex"),
+  source: "inline" as const,
+};
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -62,6 +73,10 @@ test("daemon streams browser lifecycle through the real helper process", async (
       await turn.onPreparedSelected(false);
       const prepared = await turn.prepare();
       if (prepared.multipart.parts.length !== 6) throw new Error("Multipart context was lost");
+      if (prepared.files?.length !== 1 || prepared.files[0].name !== "helper.csv"
+        || Buffer.from(prepared.files[0].base64, "base64").toString("utf8") !== "id,value\\n1,helper-file-roundtrip\\n") {
+        throw new Error("File attachment bytes were lost across helper IPC");
+      }
       await turn.onMultipartStageAcknowledged?.(1);
       await turn.onMultipartStageAcknowledged?.(2);
       await turn.onSendActivated();
@@ -130,7 +145,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       reasoning: "high",
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
       prepare: async () => ({
-        text: "inspect", images: [],
+        text: "inspect", images: [], files: [ipcFile],
         multipart: { parts: ["part one", "part two", "part three", "part four", "part five", "part six"], commit: "inspect" },
         release: () => { released = true; },
       }),
@@ -166,6 +181,59 @@ test("daemon streams browser lifecycle through the real helper process", async (
   } finally {
     await client.close();
   }
+});
+
+test("file attachments fail closed when the running helper does not advertise support", async () => {
+  const sent: Record<string, unknown>[] = [];
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native4 DEV",
+    browserHost: "launcher",
+    browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json",
+    chromeExecutablePath: "/durable/unused-chrome",
+    turnTimeoutMs: 60_000,
+    headed: true,
+    autoApproveToolCalls: false,
+  });
+  const internal = client as unknown as {
+    child?: unknown;
+    helperFeatures: Set<string>;
+    ensureChild(): Promise<void>;
+    send(message: Record<string, unknown>): Promise<void>;
+    sendAbort(pending: unknown, message: Record<string, unknown>): Promise<void>;
+    handleLine(child: unknown, line: string): void;
+  };
+  const child = {};
+  internal.child = child;
+  internal.helperFeatures = new Set(["progress", "turn-settled"]);
+  internal.ensureChild = async () => {};
+  internal.send = async message => {
+    sent.push(message);
+    if (message.type === "run" && typeof message.id === "string") {
+      queueMicrotask(() => internal.handleLine(child, JSON.stringify({
+        type: "event", id: message.id, event: "prepared_selected", reused: false,
+      })));
+    }
+  };
+  internal.sendAbort = async (_pending, message) => {
+    sent.push(message);
+    if (typeof message.id === "string") {
+      queueMicrotask(() => internal.handleLine(child, JSON.stringify({
+        type: "error", id: message.id, name: "AbortError", message: "helper prompt rejected",
+      })));
+    }
+  };
+
+  await expect(client.run({
+    traceId: "file-feature-missing",
+    modelId: "gpt-5.6-sol",
+    reasoning: "high",
+    capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+    prepare: async () => ({ text: "inspect", images: [], files: [ipcFile], release() {} }),
+    onTextDelta() {},
+  })).rejects.toThrow("does not support file attachments");
+  expect(sent.map(message => message.type)).toEqual(["run", "abort"]);
+  expect(sent.some(message => message.type === "prepared_selected_ack")).toBeFalse();
 });
 
 test("accepted compaction retires through the helper as completed without hiding cancellations or errors", async () => {

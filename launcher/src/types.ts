@@ -49,6 +49,39 @@ export interface LauncherState {
   mcpGuideStep: number;
 }
 
+export interface BrowserWorkspaceItem {
+  id: string;
+  groupId: string;
+  state: "open" | "saved";
+  kind: "window" | "tab";
+  title: string | null;
+  location: string | null;
+  restorable: boolean;
+  needsOriginalAccount: boolean;
+  temporary: boolean;
+  active: boolean;
+}
+
+export interface BrowserWorkspaceAccount {
+  accountId: string;
+  label: string;
+  nativeTabs: boolean;
+  items: BrowserWorkspaceItem[];
+  restoreAttempted: boolean;
+  restoreResult: { opened: number; skippedTemporary: number; skippedCapacity: number; skippedIdentity: number } | null;
+  manifestStatus: string;
+  persistenceFailed?: boolean;
+  sessionMutation?: { generation: number; sourceId: string; reason: string; startedAt: number } | null;
+}
+
+export interface BrowserWorkspaceDirectorySnapshot {
+  platform: string;
+  nativeTabs: boolean;
+  maximum: number;
+  total: number;
+  accounts: BrowserWorkspaceAccount[];
+}
+
 export interface BrowserState {
   accountId?: string;
   accountName?: string;
@@ -77,9 +110,21 @@ export interface BrowserState {
   maxTabs: number;
   tabs: BrowserTabState[];
   tasks?: BrowserTaskState[];
+  queue?: BrowserQueueState;
+  workspaces?: BrowserWorkspaceDirectorySnapshot;
+}
+
+export interface BrowserQueueState {
+  paused: boolean; pausedAccounts: string[]; storageIssue: string | null;
+  accounts: Array<{ id: string; label: string }>;
+  entries: Array<{ id: string; traceId: string; accountId: string | null;
+    status: 'waiting' | 'paused' | 'admitting' | 'cancelling' | 'cancelled' | 'failed' | 'interrupted';
+    reason: string | null; createdAt: number; position: number; retryAt: number | null;
+    ownerConnected: boolean; canCancel: boolean; canPrioritize: boolean; canResume: boolean; canDismiss: boolean }>;
 }
 
 export interface BrowserTaskState {
+  model: string | null;
   id: string; traceId: string; tabId: string; accountId: string; accountName: string;
   createdAt: number; updatedAt: number; sequence: number;
   phase: 'preparing' | 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools'
@@ -331,7 +376,7 @@ export interface AccountPoolSnapshot {
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
-    capabilities?: { solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean } | null;
+    capabilities?: { solAvailable: boolean | null; extraHighAvailable: boolean | null; proAvailable: boolean | null } | null;
     availability?: { eligible: boolean; reason: string | null; retryAt: number | null };
     authenticationStatus?: AuthenticationStatus;
   authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "unknown" | null; authenticationCheckedAt?: string | null; lastVerifiedAt?: string | null;
@@ -448,6 +493,11 @@ export interface LauncherApi {
   setBrowserBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<boolean>;
   setBrowserSurfaceActive(active: boolean): Promise<BrowserState>;
   openBrowserWindow(asTab?: boolean): Promise<{ count: number }>;
+  browserWorkspaceSnapshot(): Promise<BrowserWorkspaceDirectorySnapshot>;
+  openBrowserWorkspace(accountId: string, options: { asTab: boolean }): Promise<BrowserState>;
+  restoreBrowserWorkspaces(accountId: string): Promise<BrowserState>;
+  focusBrowserWorkspace(accountId: string, workspaceId: string): Promise<BrowserState>;
+  closeBrowserWorkspace(accountId: string, workspaceId: string): Promise<BrowserState>;
   showBrowser(): Promise<BrowserState>;
   hideBrowser(): Promise<BrowserState>;
   navigateBrowser(action: "back" | "forward" | "reload"): Promise<BrowserState>;
@@ -455,6 +505,8 @@ export interface LauncherApi {
   selectBrowserTab(tabId: string): Promise<BrowserState>;
   closeBrowserTab(tabId: string, expectedTraceId?: string | null): Promise<BrowserState>;
   dismissTask(accountId: string, id: string): Promise<BrowserState>;
+  queueAction(id: string, action: 'cancel' | 'resume' | 'prioritize' | 'dismiss'): Promise<BrowserState>;
+  pauseQueue(accountId: string | null, paused: boolean): Promise<BrowserState>;
   copyManualPrompt(tabId: string): Promise<BrowserState>;
   confirmManualSent(tabId: string): Promise<BrowserState>;
   openLogin(): Promise<BrowserState>;

@@ -7,10 +7,20 @@ const terminalPhases = new Set(['completed', 'failed-before-send', 'send-uncerta
 const submissions = new Set(['not-sent', 'unknown', 'uncertain', 'context-accepted', 'accepted']);
 const fields = ['id', 'traceId', 'tabId', 'createdAt', 'updatedAt', 'phase', 'submission', 'sequence', 'terminal'];
 const MAX_RECORDS = 2048;
+// Only catalog identifiers, never prompts or other caller-supplied free text.
+const taskModels = new Set(['chatgpt-web/light', 'chatgpt-web/medium', 'chatgpt-web/high',
+  'chatgpt-web/extra-high', 'chatgpt-web/pro', 'chatgpt-web/luna', 'chatgpt-web/think',
+  'chatgpt-web/zero-risk', 'chatgpt-web/zero-risk-pro']);
+function isTaskModel(model) { return typeof model === 'string' && taskModels.has(model); }
+function taskModelForRequirement(requirement) {
+  return isTaskModel(requirement?.requestedModel) ? requirement.requestedModel : null;
+}
 
 function validRecord(row) {
   return row && typeof row === 'object' && !Array.isArray(row)
-    && Object.keys(row).length === fields.length && fields.every(key => Object.hasOwn(row, key))
+    && (Object.keys(row).length === fields.length || (Object.keys(row).length === fields.length + 1 && Object.hasOwn(row, 'model')))
+    && fields.every(key => Object.hasOwn(row, key))
+    && (!Object.hasOwn(row, 'model') || row.model === null || taskModels.has(row.model))
     && /^[a-f0-9]{32}$/.test(row.id) && /^[A-Za-z0-9_-]{6,128}$/.test(row.traceId)
     && /^[A-Za-z0-9_-]{6,128}$/.test(row.tabId)
     && Number.isSafeInteger(row.createdAt) && row.createdAt >= 0
@@ -32,9 +42,9 @@ class BrowserTaskLedger {
         || !data.records.every(validRecord) || new Set(data.records.map(row => row.id)).size !== data.records.length) {
         throw new Error('Invalid task journal');
       }
-      this.records = data.records.map(row => row.terminal ? row : {
-        ...row, phase: 'interrupted', terminal: true, updatedAt: Math.max(row.updatedAt, this.clock()),
-      });
+      this.records = data.records.map(row => ({ ...row, model: row.model ?? null, ...(row.terminal ? {} : {
+        phase: 'interrupted', terminal: true, updatedAt: Math.max(row.updatedAt, this.clock()),
+      }) }));
       if (data.records.some(row => !row.terminal)) this.save(this.records);
     } catch (error) {
       if (error.code !== 'ENOENT') this.storageIssue = 'task-history-unavailable';
@@ -47,9 +57,9 @@ class BrowserTaskLedger {
   }
   get(id) { return this.records.find(row => row.id === id); }
   snapshot() { return this.records.map(row => ({ ...row })); }
-  start(traceId, tabId, progressVersion) {
+  start(traceId, tabId, progressVersion, model = null) {
     const now = this.clock();
-    const record = { id: randomBytes(16).toString('hex'), traceId, tabId, createdAt: now, updatedAt: now,
+    const record = { id: randomBytes(16).toString('hex'), traceId, tabId, model, createdAt: now, updatedAt: now,
       phase: 'preparing', submission: progressVersion === 1 ? 'not-sent' : 'unknown', sequence: 0, terminal: false };
     if (!validRecord(record)) throw new Error('Invalid task owner');
     // Never silently evict an unresolved incident or an active owner to make room.
@@ -98,4 +108,4 @@ class BrowserTaskLedger {
     this.save(this.records.filter(item => item !== row));
   }
 }
-module.exports = { BrowserTaskLedger };
+module.exports = { BrowserTaskLedger, taskModelForRequirement, isTaskModel };

@@ -22,9 +22,21 @@ export interface ChatGptWebPromptImage {
   detail?: string;
 }
 
+export interface ChatGptWebPromptFile {
+  ref: string;
+  name: string;
+  mimeType: string;
+  base64: string;
+  size: number;
+  sha256: string;
+  source: "inline" | "authorized_file_id";
+  fileId?: string;
+}
+
 export interface CompiledChatGptWebPrompt {
   text: string;
   images: ChatGptWebPromptImage[];
+  files?: ChatGptWebPromptFile[];
   skillFiles?: ChatGptSkillFile[];
   /** DEV-only transactional context transport. Production prompts remain inline. */
   multipart?: ChatGptWebMultipartPrompt;
@@ -261,17 +273,31 @@ interface ImageBudget {
 function inputContent(
   content: string | CodexContentPart[],
   images: ChatGptWebPromptImage[],
+  files: ChatGptWebPromptFile[],
   budget: ImageBudget,
 ): unknown {
   if (typeof content === "string") return content;
   const semantic = content.filter(part =>
     part.type !== "image" || !isOnePixelPngDataUrl(part.imageUrl)
   );
-  if (!semantic.some(part => part.type === "image")) {
-    return semantic.filter(part => part.type === "text").map(part => part.text).join("\n");
+  if (semantic.every(part => part.type === "text")) {
+    return semantic.map(part => part.text).join("\n");
   }
   return semantic.map(part => {
     if (part.type === "text") return { type: "text", text: part.text };
+    if (part.type === "file") {
+      const existing = files.find(file => file.sha256 === part.sha256 && file.name === part.name);
+      const ref = existing?.ref ?? `codex-input-file-${files.length + 1}`;
+      if (!existing) files.push({ ref, ...part });
+      return {
+        type: "file_attachment",
+        attachment_ref: ref,
+        filename: part.name,
+        mime_type: part.mimeType,
+        size: part.size,
+        sha256: part.sha256,
+      };
+    }
     budget.seen += 1;
     if (budget.seen <= budget.dropped) return { type: "text", text: DROPPED_IMAGE_NOTE };
     const ref = `codex-input-image-${images.length + 1}`;
@@ -350,6 +376,7 @@ export function withoutSupersededModelSwitchContracts(messages: readonly CodexMe
 function messageEnvelope(
   message: CodexMessage,
   images: ChatGptWebPromptImage[],
+  files: ChatGptWebPromptFile[],
   budget: ImageBudget,
 ): Record<string, unknown> {
   if (message.role === "toolResult") {
@@ -359,7 +386,7 @@ function messageEnvelope(
       tool_name: message.toolName,
       ...(message.toolNamespace ? { tool_namespace: message.toolNamespace } : {}),
       is_error: message.isError,
-      content: inputContent(message.content, images, budget),
+      content: inputContent(message.content, images, files, budget),
     };
   }
   if (message.role === "agentMessage") {
@@ -367,7 +394,7 @@ function messageEnvelope(
       role: "agent_message",
       ...(message.author !== undefined ? { author: message.author } : {}),
       ...(message.recipient !== undefined ? { recipient: message.recipient } : {}),
-      content: inputContent(message.content, images, budget),
+      content: inputContent(message.content, images, files, budget),
     };
   }
   if (message.role === "assistant") {
@@ -377,7 +404,7 @@ function messageEnvelope(
       content: assistantContent(message.content),
     };
   }
-  return { role: message.role, content: inputContent(message.content, images, budget) };
+  return { role: message.role, content: inputContent(message.content, images, files, budget) };
 }
 
 type MultipartContextRecord =
@@ -686,6 +713,7 @@ export function compileChatGptWebPrompt(
   let trimmedCompactionMessages = 0;
   const build = (sourceMessages: readonly CodexMessage[]): CompiledChatGptWebPrompt => {
     const images: ChatGptWebPromptImage[] = [];
+    const files: ChatGptWebPromptFile[] = [];
     const budget: ImageBudget = {
       seen: 0,
       dropped: Math.max(0, countChatGptContextImages(sourceMessages) - CHATGPT_MAX_INPUT_IMAGES),
@@ -697,10 +725,14 @@ export function compileChatGptWebPrompt(
         if (!skillFiles.some(existing => existing.name === file.name)) skillFiles.push(file);
         return { role: "user", origin: "codex_skill", content: [{ type: "skill_attachment", filename: file.name }] };
       }
-      return messageEnvelope(message, images, budget);
+      return messageEnvelope(message, images, files, budget);
     });
     const skillContract = skillFiles.length ? [
       "Each skill_attachment refers to a named UTF-8 text file attached to this message (the final commit in multipart mode). Read its complete contents as the selected Codex skill instructions at the original user priority. These origin=codex_skill messages are supplied by Codex, not human-authored task requests. Preserve their original position in history and their path/resource authority for resolving references. If a file cannot be read, report that limitation; do not invent its contents.",
+    ] : [];
+    const fileContract = files.length ? [
+      "Each file_attachment refers to the exact named file attached to this message (the final commit in multipart mode). Read the actual attachment bytes. If an attachment is unavailable or its displayed name differs from the manifest, report that limitation and do not infer contents from its filename.",
+      `Attachment manifest: ${promptDelimitedJson(files.map(file => ({ ref: file.ref, filename: file.name, mime_type: file.mimeType, size: file.size, sha256: file.sha256 })))}`,
     ] : [];
     const attachments = skillFiles.length ? { skillFiles } : {};
     const answerContract = captureLunaCheckpoint
@@ -723,6 +755,7 @@ export function compileChatGptWebPrompt(
         commit: [
           ...sharedContract,
           ...skillContract,
+          ...fileContract,
           ...transportContract,
           ...outputControlContract,
           ...manualControlContract,
@@ -754,12 +787,13 @@ export function compileChatGptWebPrompt(
         return { tokens, chars };
       });
       multipart.parts = partitionMultipartContext(records, multipartParts!, budgets);
-      return { text: multipart.commit, images, ...attachments, multipart };
+      return { text: multipart.commit, images, files, ...attachments, multipart };
     }
     const envelopeJson = withoutRetiredTurnHandles(JSON.stringify({ version: 3, system, messages }));
     const text = [
       ...sharedContract,
       ...skillContract,
+      ...fileContract,
       ...transportContract,
       ...outputControlContract,
       ...manualControlContract,
@@ -776,7 +810,7 @@ export function compileChatGptWebPrompt(
         "</codex_transport_resume>",
       ] : transportResume),
     ].join("\n");
-    return { text, images, ...attachments };
+    return { text, images, files, ...attachments };
   };
 
   let sourceMessages = withoutSupersededModelSwitchContracts(parsed.context.messages);

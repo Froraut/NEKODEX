@@ -7,9 +7,18 @@ const { AccountNetwork, validateProxy } = require('./account-network.cjs');
 const { UsageStore } = require('./usage-store.cjs');
 const { createAccountRegistry, validateAccountId } = require('./account-registry.cjs');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
-const { BrowserTaskLedger } = require('./browser-task-ledger.cjs');
+const { BrowserTaskLedger, taskModelForRequirement } = require('./browser-task-ledger.cjs');
+const { BrowserAdmissionQueue } = require('./browser-admission-queue.cjs');
+const { BrowserWorkspaceDirectory } = require('./browser-workspace-directory.cjs');
+const { AccountSessionMutationCoordinator } = require('./browser-workspace-session-mutations.cjs');
 
 const ACCOUNT_READ_SETTLEMENT_TIMEOUT_MS = 10_000;
+
+function validateWorkspaceId(value) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 128
+    || /[\u0000-\u001f\u007f]/.test(value)) throw new Error('Browser workspace identity is invalid');
+  return value;
+}
 
 function newWebSessionReservationId(accountId, traceId, nonce = randomUUID()) {
   validateAccountId(accountId);
@@ -44,6 +53,9 @@ class AccountBrowserPool {
     this.creatingHosts = new Set();
     this.reservations = new Map();
     this.pendingAffinity = new Map();
+    this.unsentAdmissions = new Map();
+    this.workspaceSessionMutations = new Map();
+    this.workspaceRegistrations = new Map();
     this.traceOwners = new Map();
     this.capabilities = new Map();
     this.connectors = new Map();
@@ -72,6 +84,21 @@ class AccountBrowserPool {
         this.affinity.set(key, id);
       }
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    this.admissionQueue = new BrowserAdmissionQueue({
+      file: path.join(options.coreHome, 'runtime', 'admission-queue.json'),
+      inspect: request => this.previewAdmission(request),
+      dispatch: (request, signal) => this.beginTurn(request.traceId, request.reveal, request.helperPid,
+        request.key ?? undefined, request.connector ?? undefined, request.retained, {
+          requestedModel: request.requestedModel ?? undefined,
+          effort: request.effort ?? undefined, routingKey: request.routingKey ?? undefined,
+          requestedAccountId: request.requestedAccountId ?? undefined,
+          taskProgressVersion: 1, admissionSignal: signal, deferAffinity: true,
+        }),
+      releaseUnsent: request => this.releaseUnsentAdmission(request),
+      leaseCurrent: (request, lease) => this.admissionLeaseCurrent(request, lease),
+      changed: () => this.publish(),
+    });
+    this.workspaceDirectory = new BrowserWorkspaceDirectory({ platform: process.platform });
     this.getHost('default');
     this.getHost(this.registry.snapshot().selectedId);
     // UI methods keep operating on the selected profile. Turn methods below
@@ -87,6 +114,64 @@ class AccountBrowserPool {
     } });
   }
   selectedHost() { return this.getHost(this.registry.snapshot().selectedId); }
+  workspaceCoordinator(id) {
+    validateAccountId(id);
+    let coordinator = this.workspaceSessionMutations.get(id);
+    if (coordinator) return coordinator;
+    coordinator = new AccountSessionMutationCoordinator({
+      accountId: id,
+      canMutateAccountSession: request => this.canMutateAccountSession(request),
+      verify: request => this.hosts.get(id)?.observeWorkspaceSessionMutation(request),
+      applyVerification: (evidence, context) => {
+        const host = this.hosts.get(id);
+        if (!host) throw new Error('ChatGPT account closed during workspace session verification');
+        return host.applyWorkspaceSessionMutationEvidence(evidence, context);
+      },
+      onStateChange: () => this.publish(),
+    });
+    this.workspaceSessionMutations.set(id, coordinator);
+    return coordinator;
+  }
+  canMutateAccountSession({ accountId }) {
+    validateAccountId(accountId);
+    const blockers = [];
+    const host = this.hosts.get(accountId);
+    for (const tab of host?.turnTabs.values() ?? []) {
+      if (['loading', 'testing', 'running'].includes(tab.status)) {
+        blockers.push({ kind: 'turn', id: tab.traceId ?? tab.id });
+      }
+    }
+    for (const [traceId, owner] of this.reservations) {
+      if (owner === accountId) blockers.push({ kind: 'reservation', id: traceId });
+    }
+    for (const [traceId, pending] of this.pendingAffinity) {
+      if (pending.id === accountId) blockers.push({ kind: 'pending-affinity', id: traceId });
+    }
+    for (const [traceId, admission] of this.unsentAdmissions) {
+      if (admission.id === accountId) blockers.push({ kind: 'unsent-admission', id: traceId });
+    }
+    const operation = this.accountOperations.get(accountId);
+    if (operation) blockers.push({ kind: 'account-operation', id: operation.label });
+    const read = this.accountReadOperations?.get(accountId)?.values().next().value;
+    if (read) blockers.push({ kind: 'inspection', id: read.label });
+    if (this.authenticationRefreshOperations.get(accountId)) {
+      blockers.push({ kind: 'inspection', id: 'session verification' });
+    }
+    if (this.loginOperation?.id === accountId) blockers.push({ kind: 'login', id: 'embedded login' });
+    if (this.passkeyImportLease?.id === accountId) blockers.push({ kind: 'import', id: 'passkey login' });
+    if (accountId === 'default' && this.existingChromeImportLease) {
+      blockers.push({ kind: 'import', id: 'existing Chrome login' });
+    }
+    if (this.networkOperation === accountId) blockers.push({ kind: 'account-operation', id: 'network configuration' });
+    if (this.addingAccount && this.registry.snapshot().selectedId === accountId) {
+      blockers.push({ kind: 'account-operation', id: 'account addition' });
+    }
+    return blockers.length === 0 ? { allowed: true } : {
+      allowed: false,
+      reason: "Finish this account's active or acquiring task and account operation before signing in or out",
+      blockers,
+    };
+  }
   getHost(id) {
     validateAccountId(id);
     if (!this.registry.snapshot().accounts.some(account => account.id === id)) throw new Error('Unknown ChatGPT account');
@@ -101,8 +186,12 @@ class AccountBrowserPool {
       accountId: id,
       configureAccountSession: (session, accountId) => this.network.apply(session, this.network.get(accountId)),
       partition: id === 'default' ? basePartition : `${basePartition}-account-${id}`,
+      coreHome: this.options.coreHome,
       descriptorPath: path.join(this.options.coreHome, 'runtime', `browser-account-${id}.json`),
       isAccountVisible: () => this.registry.snapshot().selectedId === id,
+      workspaceSessionMutation: this.workspaceCoordinator(id),
+      workspaceManifestPath: path.join(this.options.coreHome, 'runtime', `browser-workspaces-${id}.json`),
+      workspaceChanged: () => this.publish(),
       onAuthIdentityChanged: (accountId) => {
         if (accountId !== id) throw new Error('Browser host reported an unexpected account identity');
         this.invalidateEvidence(id);
@@ -112,6 +201,11 @@ class AccountBrowserPool {
     const write = host.writeDescriptor.bind(host);
     host.writeDescriptor = () => { write(); this.writeDescriptor(); };
     this.hosts.set(id, host);
+    if (typeof host.workspaceManager === 'function') {
+      const account = this.registry.snapshot().accounts.find(candidate => candidate.id === id);
+      this.workspaceRegistrations.set(id,
+        this.workspaceDirectory.register(id, account?.label ?? id, host.workspaceManager(account?.label ?? id)));
+    }
     if (this.bounds) host.setBounds(this.bounds, this.rendererZoomFactor);
     host.surfaceActive = this.surfaceActive;
     return host;
@@ -147,6 +241,7 @@ class AccountBrowserPool {
     if (reserved) return reserved.label;
     if (this.networkOperation === id) return 'Account network configuration';
     if (this.loginOperation?.id === id) return 'ChatGPT account login';
+    if (this.workspaceSessionMutations?.get(id)?.snapshot().admissionBlocked) return 'browser workspace sign-in';
     return null;
   }
   accountOperationError(id) {
@@ -209,7 +304,7 @@ class AccountBrowserPool {
     if (readLabel) {
       throw new Error(`This ChatGPT account is busy with ${readLabel}; retry after it finishes`);
     }
-    if (host.activeTraceId || [...this.reservations.values()].includes(id)) {
+    if (this.canMutateAccountSession({ accountId: id }).allowed !== true) {
       throw new Error('Finish this account’s active or acquiring tasks before starting the account operation');
     }
     const token = Symbol('account-operation');
@@ -259,9 +354,9 @@ class AccountBrowserPool {
         activeTurns,
         availability: this.safety.availability(account.id, activeTurns + reserved, { createsNewSession: true }),
         capabilities: capabilities ? {
-          solAvailable: capabilities.solAvailable === true,
-          extraHighAvailable: capabilities.extraHighAvailable === true,
-          proAvailable: capabilities.proAvailable === true,
+          solAvailable: typeof capabilities.solAvailable === 'boolean' ? capabilities.solAvailable : null,
+          extraHighAvailable: typeof capabilities.extraHighAvailable === 'boolean' ? capabilities.extraHighAvailable : null,
+          proAvailable: typeof capabilities.proAvailable === 'boolean' ? capabilities.proAvailable : null,
         } : null,
         checked: this.capabilities.has(account.id),
         connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()) };
@@ -353,6 +448,9 @@ class AccountBrowserPool {
     const state = this.selectedHost().snapshot();
     const labels = new Map(this.registry.snapshot().accounts.map(account => [account.id, account.label]));
     return { ...state, accountId: selected, accountName: labels.get(selected),
+      ...(this.workspaceDirectory ? { workspaces: this.workspaceSnapshot() } : {}),
+      queue: this.admissionQueue ? { ...this.admissionQueue.snapshot(),
+        accounts: [...labels].map(([id, label]) => ({ id, label })) } : undefined,
       tasks: [...(this.taskLedgers ?? [])].flatMap(([id, ledger]) => {
         const host = this.hosts.get(id);
         return (host?.taskSnapshot?.() ?? ledger.snapshot().map(row => ({ ...row,
@@ -424,6 +522,9 @@ class AccountBrowserPool {
           const host = this.hosts.get(id);
           if (host && host.turnTabs.size === 0) {
             host.destroy(); this.hosts.delete(id);
+            this.workspaceRegistrations.get(id)?.(); this.workspaceRegistrations.delete(id);
+            this.workspaceSessionMutations.get(id)?.invalidate('ChatGPT account addition rolled back');
+            this.workspaceSessionMutations.delete(id);
             try { this.writeDescriptor(); }
             catch (descriptorError) {
               this.logger.warn('browser.account_descriptor_refresh_failed', { accountId: id, message: descriptorError.message });
@@ -674,6 +775,43 @@ class AccountBrowserPool {
     if (!account || this.destroyed) throw new Error('ChatGPT account is unavailable');
     return this.getHost(account.id).openWorkspaceWindow(asTab, account.label);
   }
+  workspaceSnapshot() {
+    const snapshot = this.workspaceDirectory.snapshot(this.registry.snapshot().accounts);
+    return { ...snapshot, accounts: snapshot.accounts.map(account => ({ ...account,
+      sessionMutation: this.workspaceSessionMutations.get(account.accountId)?.snapshot().mutation ?? null,
+    })) };
+  }
+  async openWorkspace(accountId, options = {}) {
+    validateAccountId(accountId);
+    if (!options || typeof options !== 'object' || typeof options.asTab !== 'boolean') {
+      throw new Error('Browser workspace options are invalid');
+    }
+    const account = this.registry.snapshot().accounts.find(candidate => candidate.id === accountId);
+    if (!account || this.destroyed) throw new Error('ChatGPT account is unavailable');
+    const host = this.getHost(accountId);
+    await host.ready();
+    const manager = host.workspaceManager();
+    manager.open({ asTab: options.asTab }); this.publish(); return this.snapshot();
+  }
+  async restoreWorkspaces(accountId) {
+    validateAccountId(accountId);
+    const account = this.registry.snapshot().accounts.find(candidate => candidate.id === accountId);
+    if (!account || this.destroyed) throw new Error('ChatGPT account is unavailable');
+    const host = this.getHost(accountId);
+    await host.ready();
+    const manager = host.workspaceManager();
+    manager.restore(); this.publish(); return this.snapshot();
+  }
+  focusWorkspace(accountId, workspaceId) {
+    validateAccountId(accountId); validateWorkspaceId(workspaceId);
+    if (!this.workspaceDirectory.focus(accountId, workspaceId)) throw new Error('Browser workspace is not open');
+    return this.snapshot();
+  }
+  async closeWorkspace(accountId, workspaceId) {
+    validateAccountId(accountId); validateWorkspaceId(workspaceId);
+    if (!await this.workspaceDirectory.close(accountId, workspaceId)) throw new Error('Browser workspace is not open');
+    this.publish(); return this.snapshot();
+  }
   async closeWorkspaceWindows() {
     for (const host of this.hosts.values()) await host.closeWorkspaceWindows();
   }
@@ -815,14 +953,14 @@ class AccountBrowserPool {
     const threadOwner = requirement?.routingKey ? ownerForBinding(requirement.routingKey) : undefined;
     const conversationOwner = key ? ownerForBinding(key) : undefined;
     if (threadOwner && conversationOwner && threadOwner !== conversationOwner) throw new Error('Conversation and task account ownership conflict');
-    const pinned = existingTrace ?? threadOwner ?? conversationOwner ?? existingTab?.[0];
+    const pinned = existingTrace ?? threadOwner ?? conversationOwner ?? existingTab?.[0] ?? requirement?.requestedAccountId;
     if (pinned && ((threadOwner && threadOwner !== pinned) || (conversationOwner && conversationOwner !== pinned))) {
       throw new Error('Conversation and task account ownership conflict');
     }
     if (retained && !pinned) { const error = new Error('Retained conversation has no account owner'); error.code = 'retained_conversation_unavailable'; throw error; }
     const eligible = account => {
       const host = this.hosts.get(account.id);
-      if (!account.enabled || this.accountOperationLabel(account.id)) return false;
+      if (!account.enabled || this.accountOperationLabel(account.id) || this.admissionQueue?.accountPaused(account.id)) return false;
       if (host?.state.authenticated !== true) return false;
       const caps = this.capabilities.get(account.id);
       if (config.mode === 'balanced' && account.id !== 'default' && !caps) return false;
@@ -952,11 +1090,14 @@ class AccountBrowserPool {
     return released;
   }
   async beginTurn(traceId, reveal, helperPid, key, connector, retained, requirement) {
+    requirement?.admissionSignal?.throwIfAborted();
+    if (this.destroyed) throw new Error('Browser account pool is closed');
     const admissionRevision = this.assertTurnAdmission();
     if (this.reservations.has(traceId)) throw new Error('Browser turn is already acquiring its account');
     const active = [...this.turnTabs.values()].filter(tab => tab.status === 'running');
     const activeTraces = new Set([...active.map(tab => tab.traceId), ...this.reservations.keys()]);
-    if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw new Error('Global browser capacity is full');
+    if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw Object.assign(new Error('Global browser capacity is full'), { code: 'browser_capacity_full' });
+    if (!activeTraces.has(traceId) && this.admissionQueue?.paused) throw Object.assign(new Error('New browser tasks are paused'), { code: 'account_cooldown' });
     const id = this.chooseAccount(traceId, key, retained, { ...requirement, connector });
     const admissionEpoch = this.evidenceEpoch(id);
     const revealRevision = this.selectionRevision;
@@ -967,6 +1108,7 @@ class AccountBrowserPool {
     this.lastAssigned.set(id, ++this.sequence);
     let newSessionReservation;
     let newSessionRecorded = false;
+    let safetyBefore, safetyAfter;
     try {
       const host = this.getHost(id);
       if (keys.some(binding => this.affinity.has(binding) && this.affinity.get(binding) !== id)) {
@@ -975,6 +1117,13 @@ class AccountBrowserPool {
       const newKeys = [...new Set(keys)].filter(binding => !this.affinity.has(binding));
       if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
       await host.ready();
+      requirement?.admissionSignal?.throwIfAborted();
+      if (this.destroyed) throw new Error('Browser account pool is closed');
+      if (this.workspaceSessionMutations?.get(id)?.snapshot().admissionBlocked) {
+        throw Object.assign(new Error('This ChatGPT account is changing its browser identity. No request was sent.'), {
+          code: 'account_cooldown', workStarted: false,
+        });
+      }
       if (!this.turnAdmission.open || this.turnAdmissionRevision !== admissionRevision) {
         throw new Error('NEKODEX turn admission changed while acquiring this task; retry after launcher activity finishes');
       }
@@ -983,6 +1132,9 @@ class AccountBrowserPool {
         && tab.status === 'running' && tab.interactionMode === 'automatic'
         && tab.conversationKey === key && tab.connectorIdentity === connector);
       const retainedSession = host.exactRetainedTurnTab(key, connector);
+      if (!runningSession && (this.admissionQueue?.paused || this.admissionQueue?.accountPaused(id))) {
+        throw Object.assign(new Error('New browser tasks are paused. No request was sent.'), { code: 'account_cooldown' });
+      }
       const reusesWebSession = Boolean(runningSession || retainedSession);
       const exactContinuation = retained || reusesWebSession;
       if (!exactContinuation) {
@@ -1001,20 +1153,32 @@ class AccountBrowserPool {
           + [...this.reservations].filter(([reservedTrace, owner]) => reservedTrace !== traceId && owner === id).length;
         const createsNewSession = !reusesWebSession;
         newSessionReservation = createsNewSession ? newWebSessionReservationId(id, traceId) : undefined;
+        if (requirement?.deferAffinity) safetyBefore = this.safety.entry(id);
         const admission = this.safety.admit(id, accountActive, {
           createsNewSession,
           ...(newSessionReservation ? { sessionId: newSessionReservation } : {}),
         });
         newSessionRecorded = admission.newSessionRecorded;
+        if (requirement?.deferAffinity) safetyAfter = this.safety.entry(id);
+        if (requirement?.deferAffinity) {
+          this.unsentAdmissions.set(traceId, { helperPid, id, keys, newSessionReservation, newSessionRecorded, safetyBefore, safetyAfter });
+        }
       }
       host.assertLiveConversationOwner(traceId, key);
       this.ensureTabCapacity(host, traceId, key, connector);
+      requirement?.admissionSignal?.throwIfAborted();
       // Keep the turn owner and its tab independent from visible selection. The
       // automatic reveal owns the selection only while its revision is current.
-      const lease = await host.beginTurn(traceId, false, helperPid, key, connector, retained, requirement?.taskProgressVersion);
+      const lease = await host.beginTurn(traceId, false, helperPid, key, connector, retained, requirement?.taskProgressVersion, taskModelForRequirement(requirement));
       if (newSessionRecorded && lease.reused) {
+        const clocksStillOwned = this.safety.entry(id) === safetyAfter;
         this.safety.rollbackNewSession(id, newSessionReservation);
         newSessionRecorded = false;
+        const pending = this.unsentAdmissions.get(traceId);
+        if (pending) {
+          pending.newSessionRecorded = false;
+          if (clocksStillOwned) pending.safetyAfter = this.safety.entry(id);
+        }
       }
       if (reveal && !this.accountOperationLabel(id) && this.selectionRevision === revealRevision) {
         this.registry.select(id);
@@ -1023,30 +1187,118 @@ class AccountBrowserPool {
         host.selectTab(lease.tabId);
         host.show();
       }
-      this.persistAffinity(keys, id);
+      if (!requirement?.deferAffinity) this.persistAffinity(keys, id);
       this.writeDescriptor(); this.publish();
       return { ...lease, accountId: id };
     } catch (error) {
       // No other account is tried here: even a failed acquisition can own a live tab.
       const ownsTab = [...this.getHost(id).turnTabs.values()].some(tab => tab.traceId === traceId);
-      if (newSessionRecorded && !ownsTab) {
-        try { this.safety.rollbackNewSession(id, newSessionReservation); }
+      let rollbackFailed = false;
+      if (!ownsTab && (newSessionRecorded || this.unsentAdmissions?.has(traceId))) {
+        try {
+          if (requirement?.deferAffinity) this.rollbackUnsentAdmission(traceId, helperPid);
+          else this.safety.rollbackNewSession(id, newSessionReservation);
+        }
         catch (rollbackError) {
+          rollbackFailed = true;
           this.logger.warn('browser.account_new_session_rollback_failed', {
             accountId: id,
             message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
           });
         }
       }
-      if (ownsTab) {
+      if (ownsTab && !requirement?.deferAffinity) {
         try { this.persistAffinity(keys, id); }
         catch (affinityError) { this.logger.warn('browser.account_affinity_write_failed', { accountId: id, message: affinityError.message }); }
-      } else this.traceOwners.delete(traceId);
+      } else if (!ownsTab) { this.traceOwners.delete(traceId); if (!rollbackFailed) this.unsentAdmissions?.delete(traceId); }
       throw error;
-    } finally { this.reservations.delete(traceId); this.pendingAffinity.delete(traceId); }
+    } finally { this.reservations.delete(traceId); if (!this.unsentAdmissions?.has(traceId)) this.pendingAffinity.delete(traceId); }
   }
   heartbeatTurn(...args) { return this.ownerForTrace(args[0]).heartbeatTurn(...args); }
-  taskProgress(...args) { return this.ownerForTrace(args[0]).taskProgress(...args); }
+  registerArtifactDownload(...args) { return this.ownerForTrace(args[0]).registerArtifactDownload(...args); }
+  waitArtifactDownload(...args) { return this.ownerForTrace(args[0]).waitArtifactDownload(...args); }
+  cancelArtifactDownload(...args) { return this.ownerForTrace(args[0]).cancelArtifactDownload(...args); }
+  queueTurn(body, reveal) {
+    const existing = this.admissionQueue.entries.find(row => row.request.traceId === body.traceId);
+    const config = this.registry.snapshot();
+    return this.admissionQueue.request({ traceId: body.traceId, helperPid: body.helperPid,
+      reveal: existing ? existing.request.reveal : reveal,
+      key: body.conversationKey ?? null, connector: body.connectorIdentity ?? null,
+      requestedModel: body.requestedModel ?? null,
+      retained: body.requireRetainedConversation === true, effort: body.requestedEffort ?? null,
+      routingKey: body.accountRoutingKey ?? null, taskProgressVersion: 1,
+      requestedAccountId: existing ? existing.request.requestedAccountId : config.mode === 'selected' ? config.selectedId : null,
+    });
+  }
+  previewAdmission(request) {
+    if (!this.turnAdmission.open || this.destroyed) return { reason: 'runtime-transition' };
+    if ([...this.taskLedgers.values()].some(ledger => ledger.snapshot().some(row => row.traceId === request.traceId
+      && row.terminal && row.submission !== 'not-sent'))) return { reason: 'previous-submission-needs-review' };
+    const active = new Set([...this.turnTabs.values()].filter(tab => tab.status === 'running').map(tab => tab.traceId));
+    for (const trace of this.reservations.keys()) active.add(trace);
+    if (!active.has(request.traceId) && active.size >= this.options.maxTabs) return { reason: 'capacity' };
+    try {
+      const id = this.chooseAccount(request.traceId, request.key ?? undefined, request.retained, {
+        effort: request.effort, connector: request.connector, routingKey: request.routingKey,
+        requestedAccountId: request.requestedAccountId ?? undefined,
+      });
+      const host = this.getHost(id);
+      if (this.admissionQueue.accountPaused(id)) return { reason: 'paused-account' };
+      const activeCount = [...host.turnTabs.values()].filter(tab => tab.status === 'running').length
+        + [...this.reservations.values()].filter(owner => owner === id).length;
+      const reuses = [...host.turnTabs.values()].some(tab => tab.traceId === request.traceId && tab.status === 'running')
+        || host.exactRetainedTurnTab(request.key, request.connector ?? undefined);
+      if (!reuses && this.turnTabs.size >= this.options.maxTabs
+        && ![...this.turnTabs.values()].some(tab => tab.status === 'ready')) return { reason: 'inspection-tabs' };
+      const availability = this.safety.availability(id, activeCount, { createsNewSession: !reuses });
+      return availability.eligible ? null : { reason: availability.reason, retryAt: availability.retryAt };
+    } catch (error) {
+      return { reason: error?.code === 'account_cooldown' ? 'local-admission' : 'account-not-ready', retryAt: error.retryAt };
+    }
+  }
+  releaseUnsentAdmission(request) {
+    const host = [...this.hosts.values()].find(candidate => [...candidate.turnTabs.values()].some(tab => tab.traceId === request.traceId));
+    if (!host) {
+      if ([...this.taskLedgers.values()].some(ledger => ledger.snapshot().some(row => row.traceId === request.traceId && row.submission !== 'not-sent'))) return false;
+      this.rollbackUnsentAdmission(request.traceId, request.helperPid); return true;
+    }
+    const tab = [...host.turnTabs.values()].find(candidate => candidate.traceId === request.traceId);
+    const record = host.taskLedger.get(tab.taskRecordId);
+    if (tab.helperPid !== request.helperPid || !record || record.submission !== 'not-sent') return false;
+    this.rollbackUnsentAdmission(request.traceId, request.helperPid);
+    host.removeTurnTab(tab, true); this.traceOwners.delete(request.traceId); this.publish(); return true;
+  }
+  rollbackUnsentAdmission(traceId, helperPid) {
+    const admission = this.unsentAdmissions?.get(traceId);
+    if (!admission) return;
+    if (admission.helperPid !== helperPid) throw new Error('Unsent admission owner mismatch');
+    this.safety.rollbackUnsentAdmission(admission.id, admission.newSessionRecorded ? admission.newSessionReservation : undefined,
+      admission.safetyBefore, admission.safetyAfter);
+    this.unsentAdmissions.delete(traceId); this.pendingAffinity.delete(traceId);
+  }
+  admissionLeaseCurrent(request, lease) {
+    const host = [...this.hosts.values()].find(candidate => [...candidate.turnTabs.values()].some(tab => tab.traceId === request.traceId));
+    const tab = host && [...host.turnTabs.values()].find(candidate => candidate.traceId === request.traceId);
+    return Boolean(tab && tab.status === 'running' && tab.helperPid === request.helperPid && tab.surfaceId === lease?.surfaceId);
+  }
+  acknowledgeQueuedOwner(traceId, helperPid, surfaceId) { return this.admissionQueue.acknowledge(traceId, helperPid, surfaceId); }
+  cancelQueuedOwner(traceId, helperPid) { return this.admissionQueue.cancelOwner(traceId, helperPid); }
+  async queueAction(id, action) { await this.admissionQueue.action(id, action); return this.snapshot(); }
+  pauseQueue(accountId, paused) {
+    if (accountId !== null && !this.registry.snapshot().accounts.some(account => account.id === accountId)) throw new Error('Unknown account');
+    this.admissionQueue.pause(accountId, paused); return this.snapshot();
+  }
+  taskProgress(...args) {
+    const [traceId, helperPid, , phase] = args;
+    const result = this.ownerForTrace(traceId).taskProgress(...args);
+    const admission = this.unsentAdmissions?.get(traceId);
+    if (admission && phase !== 'preparing') {
+      if (admission.helperPid !== helperPid) throw new Error('Admission progress owner mismatch');
+      this.persistAffinity(admission.keys, admission.id);
+      this.unsentAdmissions.delete(traceId); this.pendingAffinity.delete(traceId);
+    }
+    return result;
+  }
   dismissTask(accountId, id) {
     const host = this.getHost(accountId);
     const record = host.taskLedger.get(id);
@@ -1063,7 +1315,10 @@ class AccountBrowserPool {
     const owner = this.ownerForTrace(traceId);
     const id = this.traceOwners.get(traceId) ?? owner.accountId;
     // Host validates trace/helper ownership before account-wide state can change.
+    const tab = [...owner.turnTabs.values()].find(candidate => candidate.traceId === traceId && candidate.helperPid === helperPid);
+    if (tab && owner.taskLedger?.get(tab.taskRecordId)?.submission === 'not-sent') this.rollbackUnsentAdmission(traceId, helperPid);
     const result = await owner.endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound);
+    this.admissionQueue?.retire(traceId, helperPid);
     this.recordUsage(() => this.usage.finish(traceId, helperPid, status, undefined, failureCode));
     try { if (id && status === 'failed') this.safety.fail(id, failureCode); }
     catch (error) {
@@ -1148,6 +1403,10 @@ class AccountBrowserPool {
   }
   destroy() {
     this.destroyed = true;
+    this.admissionQueue?.close();
+    for (const coordinator of this.workspaceSessionMutations?.values() ?? []) {
+      coordinator.invalidate('Browser account pool closed');
+    }
     this.existingChromeImportLease = null;
     this.accountOperations.clear();
     for (const operations of this.accountReadOperations?.values() ?? []) {
@@ -1156,6 +1415,8 @@ class AccountBrowserPool {
       }
     }
     this.accountReadOperations?.clear();
+    for (const unregister of this.workspaceRegistrations.values()) unregister();
+    this.workspaceRegistrations.clear();
     for (const host of this.hosts.values()) host.destroy();
     try { if (JSON.parse(fs.readFileSync(this.options.descriptorPath, 'utf8')).pid === process.pid) fs.rmSync(this.options.descriptorPath); } catch {}
   }

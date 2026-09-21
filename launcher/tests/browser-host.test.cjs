@@ -1143,6 +1143,12 @@ test("logout clears only the owned ChatGPT session and returns to the sign-in su
   const authView = { webContents: { isDestroyed: () => false } };
   const fixture = {
     authView,
+    accountId: 'default',
+    authPrincipalFingerprint: 'a'.repeat(64),
+    authSessionFingerprint: 'b'.repeat(64),
+    authIdentityEpoch: 1,
+    onAuthIdentityChanged() {},
+    retireAuthenticatedIdentity: BrowserHost.prototype.retireAuthenticatedIdentity,
     state: { authenticated: true, status: "ready" },
     view: {
       webContents: {
@@ -1182,6 +1188,9 @@ test("logout clears only the owned ChatGPT session and returns to the sign-in su
   const result = await BrowserHost.prototype.logout.call(fixture);
 
   assert.equal(result.authenticated, false);
+  assert.equal(fixture.authPrincipalFingerprint, null);
+  assert.equal(fixture.authSessionFingerprint, null);
+  assert.equal(fixture.authIdentityEpoch, 2);
   assert.equal(result.status, "signed-out");
   assert.deepEqual(calls[0], ["manualOperation", "ChatGPT logout"]);
   assert.deepEqual(calls[1], ["closeAuthView", authView, true, false]);

@@ -26,3 +26,23 @@ test('separate windows, native tabs and keyboard switching keep their account se
 test('quit preserves a browser window that refuses unload',async()=>{
  const m=manager('a');try{const w=m.open();w.preventClose=true;await assert.rejects(m.closeAll(),/save work/);assert.equal(w.destroyed,false);}finally{m.destroy();}
 });
+
+test('Cmd-W closes the current macOS workspace tab and respects an unload veto',()=>{
+ const m=manager('close-shortcut');try{
+  const first=m.open();const tab=m.open({asTab:true});let prevented=false;
+  tab.webContents.emit('before-input-event',{preventDefault(){prevented=true;}},{type:'keyDown',key:'w',meta:true});
+  assert.equal(prevented,true);assert.equal(tab.destroyed,true);assert.equal(m.windows.has(tab),false);
+  first.preventClose=true;prevented=false;
+  first.webContents.emit('before-input-event',{preventDefault(){prevented=true;}},{type:'keyDown',key:'W',meta:true});
+  assert.equal(prevented,true);assert.equal(first.destroyed,false);assert.equal(m.windows.has(first),true);
+ }finally{m.destroy();}
+});
+
+test('Ctrl-W closes the current Windows or Linux workspace window',()=>{
+ const m=new BrowserWorkspaceWindows({BrowserWindow:Window,session:{id:'linux'},accountId:'linux',label:'linux',
+  platform:'linux',allowedUrl:url=>url.startsWith('https://chatgpt.com/'),register(){},unregister(){},external:async()=>{}});
+ try{const w=m.open();let prevented=false;
+  w.webContents.emit('before-input-event',{preventDefault(){prevented=true;}},{type:'keyDown',key:'w',control:true});
+  assert.equal(prevented,true);assert.equal(w.destroyed,true);assert.equal(m.windows.size,0);
+ }finally{m.destroy();}
+});

@@ -176,6 +176,9 @@ class AccountSafety {
     const available = this.availability(id, activeCount, session);
     if (!available.eligible) {
       if (available.reason === 'session-limit') this.save(id, { ...item, stopped: true });
+      if (available.reason === 'scheduled-break') {
+        this.save(id, { ...item, cooldownUntil: available.retryAt, breakStart: available.retryAt });
+      }
       reject(available.message, available.retryAt ?? undefined);
     }
     if (p.enabled && item.breakStart
@@ -212,6 +215,12 @@ class AccountSafety {
     this.save(id, { ...synced.item,
       ...(retained.length ? { newSessionUsages: retained } : { newSessionUsages: undefined }) });
     return retained.length !== usages.length;
+  }
+  rollbackUnsentAdmission(id, sessionId, before, after) {
+    // Revert pacing clocks only if no newer admission, policy edit, resume or provider
+    // cooldown has replaced the state. Otherwise remove only this reservation's usage.
+    if (before && after && this.entry(id) === after) { this.save(id, before); return; }
+    if (sessionId) this.rollbackNewSession(id, sessionId);
   }
   syncNewSessionWindow(item, now) {
     const window = item.policy.newSessionWindow;

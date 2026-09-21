@@ -13,13 +13,23 @@ for (const multipart of [false, true]) {
     let sends = 0;
     let finalActivations = 0;
     let released = 0;
-    const page = { evaluate: async () => ({}), isClosed: () => false } as unknown as Page;
+    const hidden = {
+      filter() { return this; }, last() { return this; }, getByText() { return this; },
+      isVisible: async () => false, count: async () => 0,
+    };
+    const page = {
+      evaluate: async () => ({}), isClosed: () => false,
+      url: () => "https://chatgpt.com/c/submitted-provider-fixture", locator: () => hidden,
+    } as unknown as Page;
     const prepared = {
       text: "Synthetic context", images: [], release: () => { released++; },
       ...(multipart ? { multipart: { parts: ["{}", "{}"] as const, commit: "Synthetic task" } } : {}),
     };
     const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
       config: { browserHost: "managed-chrome", browserDiagnosticsPath: root, appName: "Fixture connector" },
+      effortSelections: new WeakMap(),
+      observedProVersions: new WeakMap(),
+      validatedPinnedVersions: new WeakMap(),
       runStage: async (_trace: string, _stage: string, _timeout: number, action: (signal: AbortSignal) => Promise<unknown>) => (
         action(new AbortController().signal)
       ),

@@ -44,6 +44,8 @@ Usage:
   codex-chatgpt-web setup --full --tunnel-id ID --runtime-key-file PATH [options]
   codex-chatgpt-web login
   codex-chatgpt-web doctor [--json]
+  codex-chatgpt-web compaction-checkpoints list
+  codex-chatgpt-web compaction-checkpoints show ID --binding HASH
   codex-chatgpt-web route <status|connect|disconnect|diagnostics> [--profile NAME]
   codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web config pro-model-version <follow|5.6|5.5|6> --launcher-control
@@ -157,10 +159,14 @@ async function loginCommand(args: string[]): Promise<void> {
   const existingChrome = takeFlag(args, "--existing-chrome");
   const consentUserProfile = takeFlag(args, "--consent-user-profile");
   const selectedChromeDiscovery = takeFlag(args, "--selected-chrome-discovery");
+  const selectedChromeProfileClaim = takeFlag(args, "--selected-chrome-profile-claim");
   if (selectedChromeDiscovery && (!existingChrome || !launcherControl || !consentUserProfile)) {
     throw new Error("Selected Chrome discovery requires the owned launcher consent route");
   }
-  if ((existingChrome || consentUserProfile) && !launcherControl) {
+  if (selectedChromeProfileClaim && (!existingChrome || !launcherControl || !consentUserProfile)) {
+    throw new Error("Selected Chrome profile claim requires the owned launcher consent route");
+  }
+  if ((existingChrome || consentUserProfile || selectedChromeProfileClaim) && !launcherControl) {
     throw new Error("Existing Chrome import requires explicit consent in the launcher");
   }
   if (!launcherControl) {
@@ -188,11 +194,13 @@ async function loginCommand(args: string[]): Promise<void> {
     if (!consentUserProfile || chromeExecutablePath || !storageStatePath || !isAbsolute(storageStatePath)) {
       throw new Error("Existing Chrome import requires explicit profile consent and an absolute --storage-state path");
     }
-    const control = createExistingChromeLoginControl(undefined, { selectedDiscovery: selectedChromeDiscovery });
+    const control = createExistingChromeLoginControl(undefined, { selectedDiscovery: selectedChromeDiscovery,
+      selectedProfileClaim: selectedChromeProfileClaim });
     try {
       await captureExistingChromeLoginToFile({ ...defaultConfig(), storageStatePath }, {
         consent: true, signal: control.signal,
         ...(selectedChromeDiscovery ? { discoveryData: control.discoveryData! } : {}),
+        ...(selectedChromeProfileClaim ? { profileClaim: control.profileClaim! } : {}),
         onProgress: progress => stdout.write(`@codex-chrome-import:${JSON.stringify(progress)}\n`),
       });
     } catch (error) {
@@ -361,6 +369,38 @@ async function doctorCommand(args: string[]): Promise<void> {
   const report = await runDoctor();
   stdout.write(json ? `${JSON.stringify(report, null, 2)}\n` : formatDoctorReport(report));
   if (!report.ok) process.exitCode = 1;
+}
+
+async function compactionCheckpointsCommand(args: string[]): Promise<void> {
+  const action = args.shift();
+  if (action !== "list" && action !== "show") {
+    throw new Error("Compaction checkpoints supports read-only list or show; no automatic resume or replay");
+  }
+  if (action === "list") {
+    assertNoArgs(args);
+    const { CompactionCheckpointStore } = await import("./adapters/chatgpt-web/compaction-checkpoint-store");
+    const checkpoints = new CompactionCheckpointStore().listDiagnostics();
+    stdout.write(`${JSON.stringify({ checkpoints, automaticResume: false }, null, 2)}\n`);
+    return;
+  }
+  const id = args.shift();
+  const binding = takeOption(args, "--binding");
+  assertNoArgs(args);
+  if (!id || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id)) {
+    throw new Error("Invalid checkpoint id; use the exact UUID from list");
+  }
+  if (!binding || !/^[a-f0-9]{64}$/.test(binding)) {
+    throw new Error("An exact checkpoint --binding HASH from list is required");
+  }
+  const { CompactionCheckpointStore } = await import("./adapters/chatgpt-web/compaction-checkpoint-store");
+  const store = new CompactionCheckpointStore();
+  const expected = { id, binding };
+  const checkpoint = store.readDiagnostic(expected);
+  if (!checkpoint) throw new Error("Checkpoint unavailable, expired, invalid, or binding mismatch");
+  const summary = store.readSummary(expected);
+  // JSON escapes terminal control characters in provider-authored text. This explicit read
+  // never feeds a summary to the model or reconstructs a broker capability.
+  stdout.write(`${JSON.stringify({ checkpoint, ...(summary === undefined ? {} : { summary }), automaticResume: false }, null, 2)}\n`);
 }
 
 async function routeCommand(args: string[]): Promise<void> {
@@ -592,6 +632,7 @@ async function main(): Promise<void> {
   else if (command === "setup") await setupCommand(args);
   else if (command === "login") await loginCommand(args);
   else if (command === "doctor" || command === "status") await doctorCommand(args);
+  else if (command === "compaction-checkpoints") await compactionCheckpointsCommand(args);
   else if (command === "route") await routeCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "config") {

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_OUTSTANDING_TURNS } from "../src/adapters/chatgpt-web/concurrency";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
@@ -112,6 +113,7 @@ test("native interruption retires only the exact browser turn identity", async (
     new DOMException("Codex turn interrupted", "AbortError"),
   );
   expect(cancellation.cancelled).toBe(1);
+  expect(cancelled).toEqual(["target"]); // Abort reaches the runtime before hook acknowledgement.
   await cancellation.settlement;
   expect(cancelled).toEqual(["target"]);
   expect(sessions.find("target")).toBeUndefined();
@@ -141,7 +143,7 @@ test("session cache expiry never cancels a still-active long browser turn", asyn
   sessions.clear();
 });
 
-test("sixteen active turns coexist and a seventeenth fails closed", () => {
+test("active and waiting turns coexist up to the outstanding-owner limit and overflow fails closed", () => {
   const sessions = new ChatGptTurnSessions();
   let cancelled = 0;
   const runtime = () => ({
@@ -153,19 +155,24 @@ test("sixteen active turns coexist and a seventeenth fails closed", () => {
     cancel: () => { cancelled += 1; },
   });
 
-  const active = Array.from({ length: 16 }, (_unused, index) => (
+  const active = Array.from({ length: MAX_CHATGPT_BROWSER_TABS }, (_unused, index) => (
     sessions.getOrCreate(`turn-${index + 1}`, runtime)
   ));
-  expect(sessions.activeCount()).toBe(16);
+  expect(sessions.activeCount()).toBe(MAX_CHATGPT_BROWSER_TABS);
   expect(cancelled).toBe(0);
-  expect(() => sessions.getOrCreate("turn-17", runtime)).toThrow("at most 16 simultaneous browser turns");
+  // Session ownership includes tabless queued requests; Launcher separately limits live tabs.
+  for (let index = MAX_CHATGPT_BROWSER_TABS; index < MAX_CHATGPT_OUTSTANDING_TURNS; index++) {
+    sessions.getOrCreate(`turn-${index + 1}`, runtime);
+  }
+  expect(sessions.activeCount()).toBe(MAX_CHATGPT_OUTSTANDING_TURNS);
+  expect(() => sessions.getOrCreate("overflow", runtime)).toThrow("active and waiting task limit");
 
   expect(sessions.getOrCreate("turn-3", () => {
     throw new Error("an in-flight turn must be reused");
   })).toBe(active[2]);
   expect(cancelled).toBe(0);
   sessions.clear();
-  expect(cancelled).toBe(16);
+  expect(cancelled).toBe(MAX_CHATGPT_OUTSTANDING_TURNS);
 });
 
 test("settled replay sessions expire from their last use instead of their creation time", async () => {

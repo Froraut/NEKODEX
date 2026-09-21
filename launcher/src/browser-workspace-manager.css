@@ -1,0 +1,63 @@
+.browser-workspace-manager {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-background-panel);
+}
+
+.browser-workspace-manager-heading,
+.browser-workspace-manager-heading > div,
+.browser-workspace-manager-actions,
+.browser-workspace-restore-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.browser-workspace-manager-heading { justify-content: space-between; }
+.browser-workspace-manager-heading h3,
+.browser-workspace-manager-heading p { margin: 0; }
+.browser-workspace-manager-heading h3 { font-size: var(--text-sm); }
+.browser-workspace-manager-heading p,
+.browser-workspace-manager-heading label span,
+.browser-workspace-platform-note,
+.browser-workspace-temporary-note,
+.browser-workspace-open span:last-child,
+.browser-workspace-restore-result { color: var(--color-text-tertiary); font-size: var(--text-xs); }
+.browser-workspace-manager-heading label { display: flex; align-items: center; gap: 6px; }
+.browser-workspace-manager-actions { flex-wrap: wrap; }
+
+.browser-workspace-manager ul {
+  display: grid;
+  gap: 5px;
+  max-height: 210px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.browser-workspace-manager li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background-surface);
+}
+
+.browser-workspace-manager li.is-active { border-color: var(--color-border-focus); }
+.browser-workspace-open { display: grid; min-width: 0; padding: 8px 10px; text-align: left; background: transparent; border: 0; }
+.browser-workspace-item-title { overflow: hidden; color: var(--color-text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.browser-workspace-close { width: 36px; border: 0; border-left: 1px solid var(--color-border); background: transparent; }
+.browser-workspace-error { margin: 0; color: var(--color-text-error); }
+.browser-workspace-empty,
+.browser-workspace-platform-note,
+.browser-workspace-temporary-note { margin: 0; }
+.browser-workspace-restore-result { flex-wrap: wrap; }
+
+@media (max-width: 640px) {
+  .browser-workspace-manager-heading { align-items: stretch; flex-direction: column; }
+  .browser-workspace-manager-heading label { justify-content: space-between; }
+  .browser-workspace-manager-heading select { min-width: 0; max-width: 65%; }
+}

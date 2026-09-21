@@ -14,6 +14,7 @@ function load(file, overrides = {}) {
   const loaded = { exports: {} };
   Function("module", "exports", "require", compiled)(loaded, loaded.exports, name => {
     if (overrides[name]) return overrides[name];
+    if (name === './profile-login-copy') return load('profile-login-copy.ts');
     if (name.startsWith("./") && name.endsWith(".json")) {
       return { default: JSON.parse(fs.readFileSync(path.join(__dirname, "../src", name), "utf8")) };
     }
@@ -24,6 +25,20 @@ function load(file, overrides = {}) {
 
 const { copyFor } = load("i18n.ts");
 const { passkeyFailureText } = load("passkey-copy.ts");
+
+test('profile login errors keep fixed public codes and show actionable localized guidance', () => {
+  const { publicPasskeyProgress, initialPasskeyProgress } = require('../electron/passkey-login-progress.cjs');
+  const copy = copyFor('ru');
+  for (const code of ['chrome-account-mismatch', 'chrome-account-unverified', 'chrome-account-unidentified', 'chrome-profile-claim-missing']) {
+    const state = publicPasskeyProgress({ ...initialPasskeyProgress(), phase: 'failed', error: code });
+    assert.equal(state.error, code);
+    assert.notEqual(passkeyFailureText(state.error, copy, 'ru'), copy.passkeyFailed);
+  }
+  assert.match(passkeyFailureText('chrome-profile-claim-missing', copy, 'ru'), /выбранному профилю/);
+  const unsafe = publicPasskeyProgress({ ...initialPasskeyProgress(), phase: 'failed', error: 'SECRET session value' });
+  assert.equal(unsafe.error, 'passkey-import-failed');
+  assert.equal(passkeyFailureText(unsafe.error, copy, 'ru'), copy.passkeyFailed);
+});
 const { PasskeyLoginGuide } = load("PasskeyLoginGuide.tsx", {
   "./passkey-copy": { passkeyFailureText },
 });

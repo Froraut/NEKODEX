@@ -24,6 +24,7 @@ function fixture() {
     closedTurnOwners: new Map(), userCancelledTurnOwners: new Map(),
     manualCompletionSignals: new Map(), manualTerminalSignals: new Map(),
     currentOperation: () => null, ready: async () => {},
+    assertLiveConversationOwner() {},
     exactRetainedTurnTab: () => null,
     evictOldestReclaimableTurnTab() {
       const tab = [...this.turnTabs.values()].find(tab => tab.status === 'ready');
@@ -43,6 +44,8 @@ function fixture() {
     },
   }]));
   const pool = Object.assign(Object.create(AccountBrowserPool.prototype), { registry, hosts,
+    turnAdmission: { open: true, reason: null }, turnAdmissionRevision: 0,
+    unsentAdmissions: new Map(), usage: { accept() {}, finish() {} },
     safety: new AccountSafety(home),
     accountOperations: new Map(), accountReadOperations: new Map(),
     options: { maxTabs: 2 }, reservations: new Map(), pendingAffinity: new Map(), traceOwners: new Map(), affinity: new Map(),
@@ -165,7 +168,7 @@ test('parallel starts count once, respect total capacity, and pin the task accou
     release(); await first;
     pool.registry.setEnabled('default', false);
     assert.throws(() => pool.chooseAccount('followup_trace', undefined, false,
-      { effort: 'medium', routingKey: taskKey }), /ready|connector/i);
+      { effort: 'medium', routingKey: taskKey }), /disabled|ready|connector/i);
     assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'affinity.json'), 'utf8'))[taskKey], 'default');
   } finally { release(); cleanup(); }
 });

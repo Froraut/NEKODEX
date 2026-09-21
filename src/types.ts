@@ -3,6 +3,8 @@ import type { ChatGptWebProModelVersion } from "./chatgpt-web-models";
 import type { ChatGptWebCompactionModel } from "./chatgpt-web-compaction-policy";
 
 export interface CodexParsedRequest {
+  /** Validated catalog slug retained before backend routing. */
+  requestedModel?: string;
   modelId: string;
   previousResponseId?: string;
   context: CodexContext;
@@ -98,8 +100,21 @@ export interface CodexImageContent {
   detail?: string;
 }
 
-/** A user/developer message content part: text or an image (vision). */
-export type CodexContentPart = CodexTextContent | CodexImageContent;
+export interface CodexFileContent {
+  type: "file";
+  /** A plain filename only; paths from the request are rejected. */
+  name: string;
+  mimeType: string;
+  /** Canonical base64 bytes, bounded and verified before this object is created. */
+  base64: string;
+  size: number;
+  sha256: string;
+  source: "inline" | "authorized_file_id";
+  fileId?: string;
+}
+
+/** A user/developer message content part delivered to the provider. */
+export type CodexContentPart = CodexTextContent | CodexImageContent | CodexFileContent;
 
 export interface CodexThinkingContent {
   type: "thinking";

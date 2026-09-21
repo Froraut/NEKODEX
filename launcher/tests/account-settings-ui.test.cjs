@@ -17,7 +17,8 @@ function load(compiled, overrides) {
   Function("module", "exports", "require", compiled)(loaded, loaded.exports,
     name => Object.hasOwn(overrides, name) ? overrides[name]
       : name === './account-availability' ? load(compile('account-availability.ts'), {})
-      : name === './AccountReadiness' ? load(compile('AccountReadiness.tsx'), {}) : require(name));
+      : name === './AccountReadiness' ? load(compile('AccountReadiness.tsx'), {})
+      : name === './AccountToolsOnboarding' ? { AccountToolsOnboarding: () => null } : require(name));
   return loaded.exports;
 }
 
@@ -111,7 +112,9 @@ function accountHarness(snapshotPromise, refreshValue, accountOverrides = {}, se
     accountsLabel: "Label", accountsManual: "Manual mode", accountsBusyTasks: "Busy {count}",
   };
   return {
-    render() { stateIndex = 0; refIndex = 0; effects = []; return AccountSettings({ copy, language: "en", openBrowser() {}, setError() {}, manual: false }); },
+    render() { stateIndex = 0; refIndex = 0; effects = []; return AccountSettings({ copy, language: "en", openBrowser() {}, setError() {}, manual: false,
+      toolsSetup: { runtimeConfigured: true, connectorName: 'Codex Native6', urls: {} },
+      focusAccountId: null, onSetupTools() {} }); },
     effects: () => effects,
     AccountCodexControls,
     api,
@@ -311,5 +314,28 @@ test("stale batch cleanup releases its busy owner after account evidence changes
   const controls = findCodexControls(view.render());
   assert.equal(controls.props.quotaBusy, false);
   assert.notEqual(controls.props.quota?.evidenceEpoch, 1);
+  delete global.window;
+});
+
+
+test("account tools check keeps its explicit account even when another account is selected", async () => {
+  const checks = [];
+  const view = accountHarness(Promise.resolve(null), null, { connectorReady: false }, "b", {
+    checkAccount: async (id, connector) => { checks.push({ id, connector }); return view.api.accounts(); },
+  });
+  view.render(); view.effects()[0](); await flush();
+  function findTools(node) {
+    if (!node || typeof node !== "object") return null;
+    if (typeof node.props?.onVerify === "function" && node.props?.account?.id) return node;
+    for (const child of [node.props?.children].flat(Infinity)) {
+      const found = findTools(child); if (found) return found;
+    }
+    return null;
+  }
+  const card = findTools(view.render());
+  assert.equal(card.props.account.id, "a");
+  assert.equal(card.props.disabled, false);
+  card.props.onVerify(); await flush();
+  assert.deepEqual(checks, [{ id: "a", connector: true }]);
   delete global.window;
 });

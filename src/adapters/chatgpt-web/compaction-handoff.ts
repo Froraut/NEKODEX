@@ -1,3 +1,4 @@
+import { CompactionCheckpointStore, type CompactionCheckpoint } from "./compaction-checkpoint-store";
 import { parseDataUrl } from "../image";
 import type {
   CodexContentPart,
@@ -24,6 +25,15 @@ function brokerContent(content: string | CodexContentPart[]): unknown[] {
   if (typeof content === "string") return [{ type: "text", text: content }];
   return content.map(part => {
     if (part.type === "text") return { type: "text", text: part.text };
+    if (part.type === "file") return {
+      type: "resource",
+      resource: {
+        uri: `nekodex-file:sha256:${part.sha256}`,
+        name: part.name,
+        mimeType: part.mimeType,
+        blob: part.base64,
+      },
+    };
     const parsed = parseDataUrl(part.imageUrl);
     if (parsed) return { type: "image", data: parsed.base64, mimeType: parsed.mediaType };
     return { type: "resource_link", uri: part.imageUrl, name: "Codex tool image", mimeType: "image/*" };
@@ -143,7 +153,10 @@ function abortReason(signal: AbortSignal): Error {
 
 function withCompactionAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(abortReason(signal));
+  if (signal.aborted) {
+    void promise.catch(() => {});
+    return Promise.reject(abortReason(signal));
+  }
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(abortReason(signal));
     signal.addEventListener("abort", onAbort, { once: true });
@@ -303,6 +316,8 @@ export async function requestRetainedCompactionHandoff(
   let transaction: CompactionTransactionHandle | undefined;
   let browser: Promise<string> | undefined;
   let sendActivated = false;
+  const checkpoints = new CompactionCheckpointStore();
+  let checkpoint: CompactionCheckpoint | undefined;
   if (operationSignal.aborted) abortBrowser();
   else operationSignal.addEventListener("abort", abortBrowser, { once: true });
   try {
@@ -315,6 +330,12 @@ export async function requestRetainedCompactionHandoff(
     transaction = await withCompactionAbort(transactionPromise, operationSignal);
     const instruction = structuredCompactionHandoffInstruction(transaction);
     const prepare = async () => ({ text: instruction, images: [], release: () => {} });
+    checkpoint = checkpoints.begin({
+      owner: source.ownerKey, thread: source.nativeThreadId, turn: source.nativeTurnId,
+      conversationKey, sourceRequest: parsed._rawBody,
+      // Hash the complete source context as well: latest-user identity alone misses tool revisions.
+      context: parsed.context, model: parsed.modelId, options: parsed.options,
+    });
     browser = worker.run({
       traceId,
       modelId: parsed.modelId,
@@ -337,6 +358,8 @@ export async function requestRetainedCompactionHandoff(
       () => new Promise<never>(() => {}),
       error => { throw error; },
     );
+    // A synchronous worker cancellation can precede the abort race attaching its handler.
+    void browserFailure.catch(() => {});
     const summary = await withCompactionAbort(
       Promise.race([
         broker.waitForCompactionHandoff(transaction.token, operationSignal),
@@ -352,8 +375,20 @@ export async function requestRetainedCompactionHandoff(
       browser.then(() => undefined, () => undefined),
       operationSignal,
     );
+    try { checkpoints.finish(checkpoint, "accepted", summary); }
+    catch {
+      // Persistence is diagnostic, not part of live success. Rejecting here would evict the
+      // shared successful run and permit a reconnect to submit a second browser operation.
+      console.warn("Compaction checkpoint acceptance not persisted", { id: checkpoint.id, binding: checkpoint.binding });
+    }
     return summary;
   } catch (error) {
+    if (checkpoint) {
+      // If this write fails, the fsynced intent remains deliberately uncertain. Preserve the
+      // original failure/cancellation, and never reinterpret a journal failure as safe to retry.
+      try { checkpoints.finish(checkpoint, operationSignal.aborted ? "interrupted" : "ambiguous"); }
+      catch { /* diagnostic update unavailable; durable intent remains */ }
+    }
     // Only page acquisition failure before Send is safe to replace. A model
     // refusal, timeout after submission or cancellation must never be resent.
     if (!sendActivated && !operationSignal.aborted && error instanceof Error

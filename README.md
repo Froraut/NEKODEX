@@ -40,6 +40,7 @@ On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later relea
 | **Accounts** | Separate saved ChatGPT sessions, selected or balanced routing, per-account Codex allowance refresh, and official Codex device sign-in. |
 | **Connections** | Model setup and local-tool setup together, with the exact connector identity and independent readiness checks. |
 | **Browser** | Embedded, task-bound ChatGPT conversations. Continuing work stays with its owning account. |
+| **Task center** | Submission stages, inspectable failures, a bounded waiting queue, priority, and global or per-account pause of new Web work. |
 | **Activity** | Separate Web and Native statistics, lifetime history, outcomes, observed durations and CSV export. |
 | **Updates** | Download progress, cancellation before installation, package verification and guarded restart/recovery. |
 

@@ -6,9 +6,10 @@ export function AccountReadiness({ account, language }: {
 }) {
   const copy = accountAvailabilityCopy(language);
   const caps = account.checked && account.authenticated ? account.capabilities : null;
-  const modes: Array<[string, boolean | undefined]> = [
-    ['Luna', caps ? !caps.solAvailable : undefined],
-    ['Sol', caps?.solAvailable], ['Extra High', caps?.extraHighAvailable], ['Pro', caps?.proAvailable],
+  const modes: Array<[string, boolean | null | undefined]> = [
+    ['Instant', caps?.solAvailable], ['Medium', caps?.solAvailable], ['High', caps?.solAvailable],
+    ['Extra High', caps?.extraHighAvailable], ['Pro', caps?.proAvailable],
+    ['Luna', caps ? caps.solAvailable === false ? true : caps.solAvailable === true ? false : null : undefined],
   ];
   const availability = account.availability;
   const reason = availability?.reason;
@@ -16,7 +17,7 @@ export function AccountReadiness({ account, language }: {
   return <section className="account-readiness" aria-label={copy.models}>
     <dl className="account-readiness-models">
       {modes.map(([name, supported]) => <div key={name}><dt>{name}</dt>
-        <dd>{supported === undefined ? copy.check : supported ? copy.supported : copy.unavailable}</dd></div>)}
+        <dd>{supported === undefined ? copy.check : supported === null ? copy.unknown : supported ? copy.supported : copy.unavailable}</dd></div>)}
     </dl>
     {availability ? <p>{copy.local}: {availability.eligible ? copy.ready : status}
       {typeof availability.retryAt === 'number' && Number.isFinite(availability.retryAt)

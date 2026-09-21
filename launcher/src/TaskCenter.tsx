@@ -21,6 +21,8 @@ const actionCopy = {
   ko: ['이 작업의 관찰을 중지할까요? 완료된 외부 작업은 되돌릴 수 없습니다.', '계속 작업', '브라우저 페이지를 사용할 수 없습니다. 원래 Codex 작업을 확인하고 전송 상태가 불확실한 요청을 다시 보내지 마세요.'],
 };
 
+const unknownModel: Record<Language, string> = { en: 'Model unknown', ru: 'Модель неизвестна', 'zh-CN': '模型未知', 'zh-TW': '模型未知', ja: 'モデル不明', ko: '모델 알 수 없음' };
+
 export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, onError }: {
   tasks: BrowserTaskState[]; language: Language; disabled: boolean;
   open: (tabId: string) => Promise<unknown>; cancel: (tabId: string, traceId: string) => Promise<unknown>;
@@ -39,7 +41,7 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
     <div className="task-center-list">
       {!tasks.length ? <p>{text[1]}</p> : tasks.map(task => <article key={task.id}>
         <header><strong>{task.accountName}</strong><span>{text[8 + phaseOrder.indexOf(task.phase)] ?? task.phase}</span></header>
-        <p><code>{task.traceId}</code> · <time dateTime={new Date(task.updatedAt).toISOString()}>
+        <p><span>{task.model ?? unknownModel[language]}</span> · <code>{task.traceId}</code> · <time dateTime={new Date(task.updatedAt).toISOString()}>
           {new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'medium' }).format(task.updatedAt)}</time></p>
         {task.terminal && task.phase !== 'completed' ? <p role="status">{task.retrySafe ? text[5] : task.phase === 'cancelled' ? text[7] : task.canOpen ? text[6] : actions[2]}</p> : null}
         <div className="task-center-actions">

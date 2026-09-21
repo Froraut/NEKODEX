@@ -3,7 +3,7 @@ export class LauncherAccountCooldownError extends Error {
 }
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { expandUserPath } from "./config";
 import { processRunning } from "./process";
@@ -74,6 +74,7 @@ export interface LauncherBrowserHostDescriptor {
   idleUrl: string;
   surfaceId: string;
   surfaceTargets: Record<string, string>;
+  features?: string[];
   createdAt: string;
 }
 
@@ -158,6 +159,10 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (typeof descriptor.createdAt !== "string" || Number.isNaN(Date.parse(descriptor.createdAt))) {
     throw new Error("Launcher browser descriptor has an invalid creation time");
   }
+  if (descriptor.features !== undefined && (!Array.isArray(descriptor.features)
+    || descriptor.features.some(feature => typeof feature !== "string" || !feature))) {
+    throw new Error("Launcher browser descriptor has invalid feature flags");
+  }
   return {
     version: 3,
     kind: LAUNCHER_BROWSER_HOST_KIND,
@@ -171,6 +176,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     idleUrl: descriptor.idleUrl,
     surfaceId: descriptor.surfaceId,
     surfaceTargets: targets,
+    ...(descriptor.features ? { features: [...descriptor.features] } : {}),
     createdAt: descriptor.createdAt,
   };
 }
@@ -493,6 +499,7 @@ export type LauncherTurnActivity =
       connectorIdentity?: string;
       requireRetainedConversation?: boolean;
       requestedEffort?: string;
+      requestedModel?: string;
       accountRoutingKey?: string;
     }
   | {
@@ -751,6 +758,7 @@ export async function notifyLauncherTurn(
     : activity.phase === "heartbeat"
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
+  abortSignal?: AbortSignal,
 ): Promise<{
   surfaceId?: string;
   taskProgressVersion?: number;
@@ -759,13 +767,31 @@ export async function notifyLauncherTurn(
   connectorBound?: boolean;
   cancelledByUser?: boolean;
 }> {
-  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+  let descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const mutation = activity.phase === "usage"
     ? activity
     : { ...activity, mutationId: randomUUID() };
   let ambiguousError: unknown;
   const attempts = activity.phase === "usage" ? 1 : 2;
+  const cancelAdmission = async () => {
+    if (activity.phase !== 'start' || activity.taskProgressVersion !== 1) return;
+    descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const response = await fetch(`${descriptor.control.endpoint}/v1/turn/start-cancel`, {
+        method: 'POST', headers: { authorization: `Bearer ${descriptor.control.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ traceId: activity.traceId, helperPid: activity.helperPid }), signal: AbortSignal.timeout(2500),
+      });
+      const receipt = await response.json() as { cancelling?: boolean; cancelled?: boolean; notSent?: boolean };
+      if (response.status === 202 && receipt.cancelling) { await new Promise(resolve => setTimeout(resolve, 250)); continue; }
+      if (!response.ok || receipt.cancelled !== true || receipt.notSent !== true) throw new Error('Queued task cancellation was not confirmed; inspect Task center before retrying');
+      return;
+    }
+    throw new Error('Queued task cancellation is still settling; inspect Task center before retrying');
+  };
+  try {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    abortSignal?.throwIfAborted();
+    if (activity.phase === 'start') descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -776,9 +802,22 @@ export async function notifyLauncherTurn(
           "content-type": "application/json",
         },
         body: JSON.stringify(mutation),
-        signal: controller.signal,
+        signal: abortSignal ? AbortSignal.any([controller.signal, abortSignal]) : controller.signal,
       });
       const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+      abortSignal?.throwIfAborted();
+      if (activity.phase === 'start' && response.status === 202) {
+        if (body.queued !== true || body.notSent !== true || typeof body.queueId !== 'string') throw new Error('Invalid queue admission receipt');
+        // A queued response is a live wait, not a failed attempt or permission to resubmit.
+        attempt = -1;
+        await new Promise<void>((resolveWait, rejectWait) => {
+          const abort = () => { clearTimeout(wait); abortSignal?.removeEventListener('abort', abort); rejectWait(abortSignal?.reason ?? new DOMException('Queued turn aborted', 'AbortError')); };
+          const wait = setTimeout(() => { abortSignal?.removeEventListener('abort', abort); resolveWait(); }, 500);
+          abortSignal?.addEventListener('abort', abort, { once: true });
+          if (abortSignal?.aborted) abort();
+        });
+        continue;
+      }
       if (!response.ok) {
         if (body.code === "account_cooldown") throw new LauncherAccountCooldownError(
           typeof body.error === "string" ? body.error : "Account cooldown is active. Wait before retrying.",
@@ -808,6 +847,27 @@ export async function notifyLauncherTurn(
         if (typeof body.connectorBound !== "boolean") {
           throw new Error("Launcher browser control channel returned an invalid connector state");
         }
+        if (body.queueId !== undefined) {
+          if (typeof body.queueId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.queueId)) throw new Error('Invalid admitted queue owner');
+          let acknowledged = false;
+          for (let ackAttempt = 0; ackAttempt < 2 && !acknowledged; ackAttempt++) {
+            abortSignal?.throwIfAborted();
+            try {
+              const acknowledgement = await fetch(`${descriptor.control.endpoint}/v1/turn/start-ack`, {
+                method: 'POST', headers: { authorization: `Bearer ${descriptor.control.token}`, 'content-type': 'application/json' },
+                body: JSON.stringify({ traceId: activity.traceId, helperPid: activity.helperPid, surfaceId: body.surfaceId }),
+                signal: abortSignal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), abortSignal]) : AbortSignal.timeout(timeoutMs),
+              });
+              const receipt = await acknowledgement.json() as { acknowledged?: boolean };
+              acknowledged = acknowledgement.ok && receipt.acknowledged === true;
+            } catch { if (abortSignal?.aborted) abortSignal.throwIfAborted(); }
+          }
+          if (!acknowledged) {
+            const failure = new Error('Browser lease handoff was not acknowledged; this prompt was not sent');
+            failure.name = 'LauncherControlRejectedError'; throw failure;
+          }
+          abortSignal?.throwIfAborted();
+        }
         return {
           surfaceId: body.surfaceId,
           ...(body.taskProgressVersion === 1 && Number.isSafeInteger(body.taskProgressSequence) && (body.taskProgressSequence as number) >= 0
@@ -827,6 +887,7 @@ export async function notifyLauncherTurn(
       }
       return {};
     } catch (error) {
+      if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException('Queued turn aborted', 'AbortError');
       if (error instanceof LauncherBrowserTurnCancelledError
         || error instanceof LauncherAccountCooldownError
         || error instanceof LauncherRetainedConversationUnavailableError
@@ -837,6 +898,121 @@ export async function notifyLauncherTurn(
     }
   }
   throw new Error(`Launcher browser control channel failed: ${ambiguousError instanceof Error ? ambiguousError.message : String(ambiguousError)}`);
+  } catch (error) {
+    try { await cancelAdmission(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Browser admission did not finish cleanly; inspect Task center before retrying');
+    }
+    throw error;
+  }
+}
+
+export interface LauncherArtifactOwner {
+  traceId: string;
+  helperPid: number;
+  surfaceId: string;
+}
+
+export interface LauncherArtifactReceipt extends LauncherArtifactOwner {
+  leaseId: string;
+  assistantTurnId: string;
+  filename: string;
+  partialPath: string;
+  receivedBytes: number;
+  downloadAuthority: "chatgpt.com" | "oaiusercontent.com" | "chatgpt-blob" | "chatgpt-sandbox";
+}
+
+export function launcherArtifactTaskDirectory(descriptorPath: string, traceId: string): string {
+  if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) throw new Error("Launcher artifact trace identity is invalid");
+  const absoluteDescriptor = resolve(expandUserPath(descriptorPath));
+  return join(dirname(dirname(absoluteDescriptor)), "artifacts", traceId);
+}
+
+async function launcherArtifactRequest(
+  descriptorPath: string,
+  action: "register" | "wait" | "cancel",
+  body: object,
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+  if (!descriptor.features?.includes("task-artifact-download-v1")) {
+    throw new Error("Launcher browser host does not support bounded task artifacts; update or restart NEKODEX before sending files");
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(`Launcher artifact ${action} timed out`)), timeoutMs);
+  const signal = abortSignal ? AbortSignal.any([controller.signal, abortSignal]) : controller.signal;
+  try {
+    const response = await fetch(`${descriptor.control.endpoint}/v1/turn/artifact-${action}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${descriptor.control.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+    const decoded = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok) {
+      throw new Error(typeof decoded.error === "string" ? decoded.error : `Launcher artifact ${action} failed: HTTP ${response.status}`);
+    }
+    return decoded;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function registerLauncherArtifactDownload(
+  descriptorPath: string,
+  owner: LauncherArtifactOwner & {
+    assistantTurnId: string;
+    expectedFilename: string;
+    maxBytes: number;
+    deadlineMs: number;
+  },
+  abortSignal?: AbortSignal,
+): Promise<{ leaseId: string }> {
+  const request = { ...owner, mutationId: randomUUID() };
+  let body: Record<string, unknown> | undefined;
+  let failure: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { body = await launcherArtifactRequest(descriptorPath, "register", request, 10_000, abortSignal); break; }
+    catch (error) { if (abortSignal?.aborted) throw error; failure = error; }
+  }
+  if (!body) throw failure instanceof Error ? failure : new Error("Launcher artifact registration failed");
+  if (body.ok !== true || typeof body.leaseId !== "string" || !/^artifact_[a-f0-9]{32}$/.test(body.leaseId)) {
+    throw new Error("Launcher returned an invalid artifact registration receipt");
+  }
+  return { leaseId: body.leaseId };
+}
+
+export async function waitForLauncherArtifactDownload(
+  descriptorPath: string,
+  owner: LauncherArtifactOwner & { leaseId: string },
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+): Promise<LauncherArtifactReceipt> {
+  const body = await launcherArtifactRequest(descriptorPath, "wait", owner, timeoutMs + 5_000, abortSignal);
+  const expectedDirectory = launcherArtifactTaskDirectory(descriptorPath, owner.traceId);
+  if (body.ok !== true || body.leaseId !== owner.leaseId || body.traceId !== owner.traceId
+    || body.helperPid !== owner.helperPid || body.surfaceId !== owner.surfaceId
+    || typeof body.assistantTurnId !== "string" || typeof body.filename !== "string"
+    || typeof body.partialPath !== "string" || dirname(resolve(body.partialPath)) !== expectedDirectory
+    || !Number.isSafeInteger(body.receivedBytes) || Number(body.receivedBytes) <= 0
+    || !["chatgpt.com", "oaiusercontent.com", "chatgpt-blob", "chatgpt-sandbox"].includes(String(body.downloadAuthority))) {
+    throw new Error("Launcher returned an invalid artifact completion receipt");
+  }
+  return body as unknown as LauncherArtifactReceipt;
+}
+
+export async function cancelLauncherArtifactDownload(
+  descriptorPath: string,
+  owner: LauncherArtifactOwner & { leaseId: string; reason: string },
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  const body = await launcherArtifactRequest(descriptorPath, "cancel", owner, 10_000, abortSignal);
+  if (body.ok !== true || typeof body.cancelled !== "boolean") {
+    throw new Error("Launcher returned an invalid artifact cancellation receipt");
+  }
 }
 
 export async function releaseLauncherRetainedConversation(

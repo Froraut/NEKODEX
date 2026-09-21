@@ -30,6 +30,10 @@ import { ChatGptBrowserWorker } from "./browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt";
+import {
+  chatGptManualAttachmentInstructions,
+  materializeChatGptManualAttachments,
+} from "./manual-attachments";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { TurnBroker, type BrokerToolRequest, type BrokerToolResult, type TurnBrokerOwner } from "./turn-broker";
@@ -242,6 +246,15 @@ function brokerContent(content: string | CodexContentPart[]): unknown[] {
   if (typeof content === "string") return [{ type: "text", text: content }];
   return content.map(part => {
     if (part.type === "text") return { type: "text", text: part.text };
+    if (part.type === "file") return {
+      type: "resource",
+      resource: {
+        uri: `nekodex-file:sha256:${part.sha256}`,
+        name: part.name,
+        mimeType: part.mimeType,
+        blob: part.base64,
+      },
+    };
     const parsed = parseDataUrl(part.imageUrl);
     if (parsed) return { type: "image", data: parsed.base64, mimeType: parsed.mediaType };
     return { type: "resource_link", uri: part.imageUrl, name: "Codex tool image", mimeType: "image/*" };
@@ -316,8 +329,10 @@ function submittedTurnFailure(session: ChatGptTurnSession, error: unknown): Erro
   const classified = chatGptSubmittedProviderFailure(error,
     phase && phase !== "prepared" ? "response" : undefined);
   const normalized = classified instanceof Error ? classified : new Error(String(classified));
-  if (normalized instanceof ChatGptWebAdapterError) return normalized;
   if (!phase || phase === "prepared") return normalized;
+  // Error classification cannot undo an irreversible send boundary. Preserve terminal
+  // provider errors, but never let a newly introduced retryable code reopen this turn.
+  if (normalized instanceof ChatGptWebAdapterError && !normalized.retryable) return normalized;
   const ambiguous = phase === "send_activated";
   return new ChatGptWebAdapterError(
     ambiguous
@@ -601,10 +616,25 @@ export function createChatGptWebAdapter(
           }
           tokenSettled = true;
           token.resolve(activeToken);
+          const manualAttachments = await materializeChatGptManualAttachments(`${traceId}-new`, compiled);
+          const manualResumeAttachments = resumeCompiled
+            ? await materializeChatGptManualAttachments(`${traceId}-resume`, resumeCompiled)
+            : undefined;
           if (!parsed._compactionRequest) {
+            const attachmentInstructions = manualResumeAttachments
+              ? [
+                  "For a new ChatGPT conversation:",
+                  chatGptManualAttachmentInstructions(manualAttachments),
+                  "For the retained Resume prompt:",
+                  chatGptManualAttachmentInstructions(manualResumeAttachments),
+                  "Use only the file set matching the prompt shown by the launcher.",
+                ].join("\n")
+              : chatGptManualAttachmentInstructions(manualAttachments);
             trace.push({
               kind: "commentary",
-              text: "> **Action required in Manual mode**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Manual mode cannot transfer them, select the `Codex Zero Risk4` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
+              text: "> **Action required in Manual mode**\n>\n> Open the launcher and copy the prompt into ChatGPT. Select the `Codex Zero Risk4` plugin and the model you want.\n>\n> "
+                + attachmentInstructions.replaceAll("\n", "\n> ")
+                + "\n>\n> Send only after the exact required files are attached, then confirm `Sent` in the launcher.",
             });
           }
           await zeroRiskManualControl.start(retainedLauncherDescriptor, {
@@ -720,6 +750,7 @@ export function createChatGptWebAdapter(
         accountRoutingKey: chatGptAccountRoutingKey(checkpointInput.parsed),
         traceId,
         modelId: parsed.modelId,
+        requestedModel: parsed.requestedModel,
         reasoning: parsed.options.reasoning,
         capabilities: turnCapabilities,
         prepare: async () => ({
@@ -799,6 +830,7 @@ export function createChatGptWebAdapter(
       accountRoutingKey: chatGptAccountRoutingKey(checkpointInput.parsed),
       traceId,
       modelId: parsed.modelId,
+        requestedModel: parsed.requestedModel,
       reasoning: parsed.options.reasoning,
       capabilities: turnCapabilities,
       prepare: () => prepareWith(checkpointInput.parsed),

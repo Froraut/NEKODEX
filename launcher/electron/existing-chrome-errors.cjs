@@ -10,6 +10,7 @@ const MESSAGES = Object.freeze({
   "chrome-permission-timeout": "Chrome permission timed out",
   "chrome-too-old": "Existing Chrome import requires Google Chrome 144 or later",
   "chrome-disconnected": "Chrome disconnected before the sign-in could be imported",
+  "chrome-profile-claim-missing": "The approved Chrome connection did not expose the selected profile; make that profile Chrome's default and retry",
   "invalid-response": "Chrome returned an unsupported session response",
   "session-missing": "The current Chrome profile has no usable ChatGPT sign-in",
   "session-verification-failed": "Chrome connected, but ChatGPT did not accept the imported session. Open sign in in this app to complete verification, or select the intended signed-in Chrome profile and retry.",

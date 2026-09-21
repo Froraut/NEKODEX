@@ -303,7 +303,7 @@ test("retry cleans only abandoned owned transfer directories after checking runt
 test("typed helper errors preserve only allowlisted codes, never raw diagnostics", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-safe-error-"));
   try {
-    for (const code of ["chrome-profile-access-denied", "chrome-permission-denied", "chrome-permission-timeout", "launcher-authorization-failed"]) {
+    for (const code of ["chrome-profile-access-denied", "chrome-profile-claim-missing", "chrome-permission-denied", "chrome-permission-timeout", "launcher-authorization-failed"]) {
       const host = runtimeFixture("darwin", root), logs = [];
       host.logger = { warn: (...args) => logs.push(args) };
       host.run = async (_name, _args, options) => {
@@ -401,6 +401,24 @@ test("selected connection contents stay out of progress and travel only in the p
     assert.doesNotMatch(JSON.stringify({ args: host.invocation.args, env: host.invocation.options.env }), /devtools|11111111/);
     await transfer.cleanup();
     await assert.rejects(captureExistingChromeLogin(host, undefined, { selectedDiscoveryContents: undefined }));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("selected profile claim travels only through the private runtime control pipe", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-profile-claim-"));
+  const nonce = "P".repeat(32);
+  const profileClaim = { version: 1, nonce, url: `http://127.0.0.1:43210/nekodex-profile-claim-v1/${nonce}`,
+    openedAt: new Date().toISOString() };
+  try {
+    const host = runtimeFixture("darwin", root);
+    const transfer = await captureExistingChromeLogin(host, undefined, { profileClaim });
+    assert.ok(host.invocation.args.includes("--selected-chrome-profile-claim"));
+    assert.deepEqual(JSON.parse(host.invocation.options.privateControlMessage),
+      { version: 1, type: "existing-chrome-profile-claim", claim: profileClaim });
+    assert.doesNotMatch(JSON.stringify({ args: host.invocation.args, env: host.invocation.options.env }), new RegExp(nonce));
+    await transfer.cleanup();
+    await assert.rejects(captureExistingChromeLogin(host, undefined, { profileClaim: { ...profileClaim, url: "about:blank#wrong" } }),
+      /claim is invalid/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
