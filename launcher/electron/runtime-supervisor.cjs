@@ -27,6 +27,7 @@ const TUNNEL_HEALTH_POLL_INTERVAL_MS = 1_000;
 const TUNNEL_MONITOR_INTERVAL_MS = 10_000;
 const TUNNEL_MONITOR_FAILURE_THRESHOLD = 3;
 const TUNNEL_MCP_FAILURE_RECENCY_MS = 2 * 60_000;
+const TUNNEL_REPAIR_HEALTH_FRESH_MS = 5_000;
 const BOOT_TIME_CLOCK_TOLERANCE_MS = 5_000;
 const CURRENT_BOOT_STARTED_AT_MS = Date.now() - (os.uptime() * 1_000);
 
@@ -412,6 +413,39 @@ class RuntimeSupervisor {
     this.webAccepting = null;
     this.brokerReady = null;
     this.reportedTunnelReady = null;
+    this.lastOwnedHealth = null;
+    this.lastOwnedHealthAt = 0;
+    this.tunnelRepairPromise = null;
+  }
+
+  tunnelRepairSnapshot(config = undefined) {
+    let current = config;
+    if (current === undefined) {
+      try { current = this.readConfig(); } catch { current = null; }
+    }
+    const active = this.tunnelRepairPromise !== null;
+    const unavailable = reason => ({ eligible: false, reason, active });
+    if (active) return unavailable("repair-active");
+    if (this.launcherProfile !== "production") return unavailable("production-only");
+    if (!current || current.mode !== "full") return unavailable("full-mode-required");
+    if (current.browserInteractionMode !== "automatic") return unavailable("automatic-mode-required");
+    if (this.stopping || this.shutdownRequested || this.startPromise || this.stopPromise
+      || this.recoveryTasks.size > 0 || this.restartTimers.daemon || this.restartTimers.tunnel) {
+      return unavailable("runtime-transition-active");
+    }
+    const health = this.lastOwnedHealth;
+    if (!health || Date.now() - this.lastOwnedHealthAt > TUNNEL_REPAIR_HEALTH_FRESH_MS
+      || (this.daemonInstanceId && health.instance_id !== this.daemonInstanceId)) {
+      return unavailable("health-refresh-required");
+    }
+    if (this.nativeAccepting !== true) return unavailable("native-route-unavailable");
+    if (this.brokerReady !== true) return unavailable("broker-unavailable");
+    if (this.webAccepting === true && this.reportedTunnelReady === true) return unavailable("web-route-ready");
+    if (this.reportedTunnelReady !== false) return unavailable("tunnel-state-unknown");
+    if (health.active_browser_turns !== 0 || health.active_compaction_runs !== 0) {
+      return unavailable("web-work-active");
+    }
+    return { eligible: true, reason: "tunnel-repair-available", active: false };
   }
 
   capabilitySnapshot(config = undefined) {
@@ -440,6 +474,7 @@ class RuntimeSupervisor {
       brokerReady: this.brokerReady,
       tunnelReady: this.reportedTunnelReady,
       detail: this.runtimeDetail,
+      tunnelRepair: this.tunnelRepairSnapshot(current),
     };
   }
 
@@ -538,6 +573,16 @@ class RuntimeSupervisor {
       }
       this.logger.error("runtime.state_write_failed", { status, message });
       this.publishOperation?.({ name: "runtime-supervisor", status: "failed", message });
+      return false;
+    }
+  }
+
+  tryWriteRepairState(status, detail) {
+    try {
+      this.writeState(status, detail);
+      return true;
+    } catch (error) {
+      this.logger.warn("runtime.web_route_repair_state_failed", { message: errorMessage(error) });
       return false;
     }
   }
@@ -674,7 +719,12 @@ class RuntimeSupervisor {
     try {
       const response = await fetch(`http://${config.host}:${config.port}/healthz`, { signal: controller.signal });
       if (!response.ok) return null;
-      return await response.json();
+      const body = await response.json();
+      if (this.ownedHealthMatches(config, body)) {
+        this.lastOwnedHealth = body;
+        this.lastOwnedHealthAt = Date.now();
+      }
+      return body;
     } catch {
       return null;
     } finally {
@@ -805,8 +855,168 @@ class RuntimeSupervisor {
       this.webAccepting = typeof body.web_accepting_turns === "boolean" ? body.web_accepting_turns : body.accepting_turns === true;
       this.brokerReady = typeof body.broker_ready === "boolean" ? body.broker_ready : null;
       this.reportedTunnelReady = typeof body.tunnel_ready === "boolean" ? body.tunnel_ready : this.reportedTunnelReady;
+      this.lastOwnedHealth = body;
+      this.lastOwnedHealthAt = Date.now();
     }
     return matches && (!requireAccepting || this.nativeHealthAccepting(body));
+  }
+
+  ownedHealthMatches(config, health, daemon = this.daemon) {
+    return Boolean(config && daemon && Number.isInteger(daemon.pid)
+      && daemon.exitCode === null && daemon.signalCode === null
+      && health?.service === "codex-chatgpt-web" && health.status === "ok"
+      && health.version === config.releaseVersion && health.mode === config.mode
+      && health.pid === daemon.pid
+      && (!this.daemonInstanceId || health.instance_id === this.daemonInstanceId));
+  }
+
+  async repairWebRoute() {
+    if (this.tunnelRepairPromise) return this.tunnelRepairPromise;
+    if (this.stopping || this.shutdownRequested || this.startPromise || this.stopPromise
+      || this.recoveryTasks.size > 0 || this.restartTimers.daemon || this.restartTimers.tunnel) {
+      return { status: "unavailable", reason: "runtime-transition-active" };
+    }
+    const controller = new AbortController();
+    const repair = this.performWebRouteRepair(controller.signal).catch(error => {
+      const reason = errorMessage(error);
+      this.logger.warn("runtime.web_route_repair_unavailable", { message: reason });
+      return { status: "unavailable", reason };
+    });
+    this.tunnelRepairPromise = repair;
+    this.recoveryControllers.add(controller);
+    this.recoveryTasks.add(repair);
+    this.updateCapabilities(this.runtimeStatus, this.runtimeDetail);
+    void repair.finally(() => {
+      this.recoveryControllers.delete(controller);
+      this.recoveryTasks.delete(repair);
+      if (this.tunnelRepairPromise === repair) this.tunnelRepairPromise = null;
+      this.updateCapabilities(this.runtimeStatus, this.runtimeDetail);
+    }).catch(() => {});
+    return repair;
+  }
+
+  async performWebRouteRepair(signal) {
+    this.assertRecoveryActive(signal);
+    const config = this.readConfig();
+    const daemon = this.daemon;
+    const health = await this.proxyHealthPayload(config);
+    this.assertRecoveryActive(signal);
+    if (!this.ownedHealthMatches(config, health, daemon)) {
+      return { status: "unavailable", reason: "owned-health-unavailable" };
+    }
+    this.lastOwnedHealth = health;
+    this.lastOwnedHealthAt = Date.now();
+    const eligibility = this.tunnelRepairSnapshot(config);
+    // The operation itself owns the single-flight marker; ignore only that marker after
+    // all other eligibility facts have been recomputed from fresh owned health.
+    if (!eligibility.eligible && eligibility.reason !== "repair-active") {
+      return { status: "unavailable", reason: eligibility.reason };
+    }
+    if (this.launcherProfile !== "production") return { status: "unavailable", reason: "production-only" };
+    if (config.mode !== "full") return { status: "unavailable", reason: "full-mode-required" };
+    if (config.browserInteractionMode !== "automatic") return { status: "unavailable", reason: "automatic-mode-required" };
+    if (health.native_accepting_turns !== true) return { status: "unavailable", reason: "native-route-unavailable" };
+    if (health.broker_ready !== true) return { status: "unavailable", reason: "broker-unavailable" };
+    if (health.web_accepting_turns === true && health.tunnel_ready === true) {
+      return { status: "unavailable", reason: "web-route-ready" };
+    }
+    if (health.tunnel_ready !== false) return { status: "unavailable", reason: "tunnel-state-unknown" };
+    if (health.active_browser_turns !== 0 || health.active_compaction_runs !== 0) {
+      return { status: "unavailable", reason: "web-work-active" };
+    }
+    if (this.stopping || this.shutdownRequested || this.startPromise || this.stopPromise
+      || this.recoveryTasks.size !== 1 || this.restartTimers.daemon || this.restartTimers.tunnel) {
+      return { status: "unavailable", reason: "runtime-transition-active" };
+    }
+    const currentConfig = this.readConfig();
+    const ownership = this.readState();
+    if (!isDeepStrictEqual(config, currentConfig) || this.daemon !== daemon
+      || !ownership || ownership.ownerPid !== process.pid || ownership.daemonPid !== daemon.pid
+      || (this.tunnel?.pid && ownership.tunnelPid !== this.tunnel.pid)) {
+      return { status: "unavailable", reason: "runtime-identity-changed" };
+    }
+    this.publishOperation?.({ name: "web-route-repair", status: "running",
+      message: "Repairing the Web tool tunnel while keeping the Native route available" });
+    const unavailable = reason => {
+      this.updateCapabilities("degraded", reason, config);
+      this.publishOperation?.({ name: "web-route-repair", status: "failed", message: reason });
+      return { status: "unavailable", reason };
+    };
+    let finalHealthProven = false;
+    this.stopTunnelMonitor();
+    try {
+      await this.tunnelStatusQueue.catch(() => {});
+      this.assertRecoveryActive(signal);
+      const fence = await this.reportTunnelStatus(config, false, signal);
+      if (!fence || fence.stale === true || fence.applied !== true || fence.tunnel_ready !== false) {
+        return unavailable("web-admission-fence-unavailable");
+      }
+      // Closing Web admission is the ownership boundary. Recheck after it so a turn that
+      // entered between the first health read and the status mutation cannot lose its tunnel.
+      const quiescentHealth = await this.proxyHealthPayload(config);
+      this.assertRecoveryActive(signal);
+      if (!isDeepStrictEqual(config, this.readConfig()) || this.daemon !== daemon
+        || !this.ownedHealthMatches(config, quiescentHealth, daemon)) {
+        return unavailable("runtime-identity-changed");
+      }
+      if (quiescentHealth.native_accepting_turns !== true || quiescentHealth.broker_ready !== true) {
+        return unavailable("native-route-unavailable");
+      }
+      if (quiescentHealth.active_browser_turns !== 0 || quiescentHealth.active_compaction_runs !== 0) {
+        return unavailable("web-work-active");
+      }
+      await this.startTunnel(config, "web-route-repair", {
+        forceRestart: true, recoverySignal: signal, startMonitor: false,
+      });
+      const reopened = await this.reportTunnelStatus(config, true, signal);
+      if (!reopened || reopened.stale === true || reopened.applied !== true || reopened.tunnel_ready !== true) {
+        throw new Error("Responses proxy did not confirm the repaired Web admission state");
+      }
+      const finalHealth = await this.proxyHealthPayload(config);
+      this.assertRecoveryActive(signal);
+      if (!isDeepStrictEqual(config, this.readConfig()) || this.daemon !== daemon
+        || !this.ownedHealthMatches(config, finalHealth, daemon)
+        || finalHealth.native_accepting_turns !== true
+        || finalHealth.web_accepting_turns !== true
+        || finalHealth.broker_ready !== true || finalHealth.tunnel_ready !== true) {
+        throw new Error("Fresh owned health did not confirm Web tunnel recovery");
+      }
+      this.lastOwnedHealth = finalHealth;
+      this.lastOwnedHealthAt = Date.now();
+      this.nativeAccepting = true;
+      this.webAccepting = true;
+      this.brokerReady = true;
+      this.reportedTunnelReady = true;
+      finalHealthProven = true;
+      if (!this.tryWriteRepairState("ready")) {
+        const reason = "Web tunnel recovered but ownership state could not be persisted";
+        this.updateCapabilities("ready", reason, config);
+        this.publishOperation?.({ name: "web-route-repair", status: "failed", message: reason });
+        return { status: "unavailable", reason };
+      }
+      this.updateCapabilities("ready", null, config);
+      this.publishOperation?.({ name: "web-route-repair", status: "completed",
+        message: "Web tool tunnel recovered; the Native route remained available" });
+      return { status: "recovered", reason: null };
+    } catch (error) {
+      const reason = errorMessage(error);
+      if (!finalHealthProven) {
+        this.webAccepting = false;
+        this.reportedTunnelReady = false;
+      }
+      this.tryWriteRepairState("degraded", reason);
+      this.updateCapabilities("degraded", reason, config);
+      this.publishOperation?.({ name: "web-route-repair", status: "failed", message: reason });
+      return { status: "unavailable", reason };
+    } finally {
+      if (!this.stopping && !this.shutdownRequested && this.daemon === daemon) {
+        try {
+          if (isDeepStrictEqual(config, this.readConfig())) this.startTunnelMonitor(config);
+        } catch (error) {
+          this.logger.warn("runtime.web_route_repair_monitor_restore_failed", { message: errorMessage(error) });
+        }
+      }
+    }
   }
 
   async waitForProxy(config, timeoutMs = 20_000, recoverySignal) {
@@ -1216,7 +1426,11 @@ class RuntimeSupervisor {
     );
   }
 
-  async startTunnel(config, operationName = "runtime-start", { forceRestart = false, recoverySignal } = {}) {
+  async startTunnel(config, operationName = "runtime-start", {
+    forceRestart = false,
+    recoverySignal,
+    startMonitor = true,
+  } = {}) {
     if (config.mode !== "full") return;
     this.assertCanStart(recoverySignal);
     if (recoverySignal) this.recoveryAliasMayBeLive = true;
@@ -1235,7 +1449,7 @@ class RuntimeSupervisor {
         };
         await this.waitForTunnelMcpTransport(config, 10_000, recoverySignal);
         this.assertCanStart(recoverySignal);
-        this.startTunnelMonitor(config);
+        if (startMonitor) this.startTunnelMonitor(config);
         this.logger.info("runtime.tunnel_adopted", { pid: existing.pid });
         return;
       }
@@ -1264,7 +1478,7 @@ class RuntimeSupervisor {
       if (!this.tunnel) throw new Error("Tunnel runtime became ready without a managed process identity");
       await this.waitForTunnelMcpTransport(config, 10_000, recoverySignal);
       this.assertCanStart(recoverySignal);
-      this.startTunnelMonitor(config);
+      if (startMonitor) this.startTunnelMonitor(config);
     } catch (error) {
       // Shutdown owns cleanup after cancellation. Recovery must not race its stop command.
       if (recoverySignal?.aborted) throw error;

@@ -11,6 +11,8 @@ import type {
   UsageSnapshot,
 } from "./types";
 import { aggregateUsageGroups, normalizedUsageSnapshot, type UsageDisplayGroup } from "./usage-statistics";
+import { UsageInsights } from "./UsageInsights";
+import { workflowCopy } from "./workflow-copy";
 import "./usage-lifetime.css";
 
 const ranges: UsageRangeDays[] = [1, 7, 30, 90];
@@ -239,6 +241,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const noDurations = web ? copy.usageNoDurations : copy.usageNativeNoDurations;
   const knownRateBody = web ? copy.usageWebKnownRateBody : copy.usageNativeKnownRateBody;
   const nativeRecordedOnly = copy.usageNativeRecordedOnly;
+  const diagnosticGroups = (visible?.diagnosticGroups ?? []).filter(group => group.source === source);
 
   return <section className="usage-dashboard" aria-labelledby="usage-title">
     <div className="usage-heading">
@@ -290,6 +293,11 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
         ] as const).map(([label, value, tone]) => <div className={`usage-metric ${tone}`} key={tone}><span>{label}</span><strong>{number(value, language)}</strong></div>)}
       </div>
       {!web ? <p className="usage-recorded-only-note">{nativeRecordedOnly}</p> : null}
+
+      <UsageInsights groups={diagnosticGroups} accounts={visible.accounts} copy={workflowCopy(language).insights}
+        language={language} failureLabels={failureLabels} detailsLabel={copy.usageDetailedBreakdown}
+        hideDetailsLabel={copy.usageHideTable} completedLabel={copy.usageCompleted} failedLabel={copy.usageFailed}
+        cancelledLabel={copy.usageAborted} incompleteLabel={copy.usageIncomplete} />
 
       <div className="usage-insights">
         <section><span>{copy.usageKnownRate}</span><strong>{rate === null || rate === undefined ? copy.usageNotAvailable : new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 1 }).format(rate)}</strong>

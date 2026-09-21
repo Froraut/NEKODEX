@@ -1,0 +1,28 @@
+.browser-recovery-notice,
+.connection-recovery-card {
+  align-items: center;
+  background: color-mix(in srgb, var(--color-warning, #c78100) 9%, var(--color-background-surface));
+  border: 1px solid color-mix(in srgb, var(--color-warning, #c78100) 30%, transparent);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 10px 12px 0;
+  padding: 12px 14px;
+}
+
+.browser-recovery-notice > svg,
+.connection-recovery-card > svg { color: var(--color-warning, #c78100); }
+.browser-recovery-notice p,
+.connection-recovery-card p { margin: 3px 0 0; }
+.browser-recovery-notice small { display: block; margin-top: 4px; }
+.browser-recovery-actions { align-items: center; display: flex; gap: 8px; }
+
+.connection-recovery-card { margin: 0 0 18px; }
+
+@media (max-width: 720px) {
+  .browser-recovery-notice,
+  .connection-recovery-card { grid-template-columns: auto minmax(0, 1fr); }
+  .browser-recovery-actions,
+  .connection-recovery-card > button { grid-column: 2; justify-self: start; }
+}

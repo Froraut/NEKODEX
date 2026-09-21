@@ -3,6 +3,7 @@ import languages from "../electron/languages.json";
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
+export type AuthenticationStatus = "unknown" | "verified" | "signed-out" | "unavailable";
 export type ProModelVersion = "5.6" | "5.5" | "6";
 export type Surface = "overview" | "accounts" | "browser" | "setup" | "mcp" | "activity" | "settings" | "updates";
 
@@ -57,6 +58,9 @@ export interface BrowserState {
   url: string;
   title: string;
   authenticated: boolean;
+  authenticationStatus?: AuthenticationStatus;
+  authenticationCheckedAt?: string | null;
+  lastVerifiedAt?: string | null;
   accountLabel?: string | null;
   visible: boolean;
   surfaceActive: boolean;
@@ -181,6 +185,40 @@ export interface UsageDurations {
 export type UsageFailureCode = "rate_limit" | "safety_stop" | "timeout" | "browser_failure" | "other" | "unknown"
   | "http-auth" | "http-rate-limit" | "http-client" | "http-server" | "transport" | "stream" | "protocol" | "aborted";
 export interface UsageFailure { code: UsageFailureCode; count: number; }
+export interface UsageDiagnosticDurations {
+  observedSamples: number;
+  eligibleSamples: number;
+  medianMs: number | null;
+  p95Ms: number | null;
+}
+interface UsageDiagnosticGroupBase {
+  accepted: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  knownOutcomeTotal: number;
+  knownOutcomeCompletionRate: number | null;
+  durations: UsageDiagnosticDurations;
+  failures: UsageFailure[];
+  classifiedFailureSamples: number;
+}
+export interface WebUsageDiagnosticGroup extends UsageDiagnosticGroupBase {
+  source: "web";
+  accountId: string;
+  effort: string;
+  modelVersion: string;
+  modelVersionSource: "observed" | "pinned" | "unknown";
+  mode: string;
+  messageKind: "task" | "context_stage" | "compaction" | "unknown";
+}
+export interface NativeUsageDiagnosticGroup extends UsageDiagnosticGroupBase {
+  source: "native";
+  endpoint: "responses" | "responses/compact";
+  modelId: string;
+  modelIdSource: "reported" | "requested" | "unknown";
+  incomplete?: number;
+}
+export type UsageDiagnosticGroup = WebUsageDiagnosticGroup | NativeUsageDiagnosticGroup;
 export interface UsageCalendarDay {
   day: string; total: number; completed: number; failed: number; cancelled: number; incomplete?: number; unrecorded: number;
 }
@@ -207,6 +245,7 @@ export interface UsageSnapshot {
   metrics: UsageMetrics;
   durations: UsageDurations;
   failures: UsageFailure[];
+  diagnosticGroups?: UsageDiagnosticGroup[];
   calendar: UsageCalendarDay[];
   tokens?: UsageTokenReport;
 }
@@ -248,6 +287,20 @@ export interface AccountQuotaSnapshot {
   accountBucket: AccountQuotaBucket;
   additionalBuckets: AccountQuotaBucket[];
   additionalBucketsTruncated: boolean;
+  freshness?: "fresh" | "stale";
+  freshUntil?: string | null;
+  refreshError?: string | null;
+}
+export interface AccountQuotaPortfolioRow {
+  accountId: string;
+  evidenceEpoch: number;
+  status: "updated" | "retained" | "unavailable" | "skipped";
+  snapshot: AccountQuotaSnapshot | null;
+  reason: string | null;
+}
+export interface AccountQuotaPortfolioResult {
+  generatedAt: string;
+  rows: AccountQuotaPortfolioRow[];
 }
 export interface CodexLoginProgress {
   flowId: string; accountId: string;
@@ -268,6 +321,7 @@ export interface AccountPoolSnapshot {
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
+    authenticationStatus?: AuthenticationStatus; authenticationCheckedAt?: string | null; lastVerifiedAt?: string | null;
     proxy: AccountProxy;
     safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
       newSessionWindow: AccountNewSessionWindowStatus | null };
@@ -287,10 +341,13 @@ export interface RuntimeCapabilities {
   nativeAvailability: "unknown" | "ready" | "degraded" | "unavailable";
   webAvailability: "unknown" | "ready" | "degraded" | "unavailable";
   tunnelStatus: string;
+  brokerReady?: boolean | null;
+  tunnelReady?: boolean | null;
   releaseVersion: string | null;
   daemonPid: number | null;
   tunnelPid: number | null;
   detail: string | null;
+  tunnelRepair?: { eligible: boolean; reason: string; active: boolean };
 }
 
 export interface LauncherLifecycle extends RuntimeCapabilities {
@@ -418,8 +475,10 @@ export interface LauncherApi {
   setAsyncToolOperations(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   accounts(): Promise<AccountPoolSnapshot>;
+  refreshAccountAuthentication(id: string): Promise<AccountPoolSnapshot>;
   accountCodexQuotaSnapshot(id: string): Promise<AccountQuotaSnapshot | null>;
   refreshAccountCodexQuota(id: string): Promise<AccountQuotaSnapshot>;
+  refreshAccountCodexQuotas(): Promise<AccountQuotaPortfolioResult>;
   codexLoginSnapshot(): Promise<CodexLoginProgress | null>;
   startCodexLogin(id: string): Promise<CodexLoginProgress>;
   codexLoginStatus(flowId: string, id: string): Promise<CodexLoginProgress>;
@@ -451,6 +510,7 @@ export interface LauncherApi {
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   usage(query: number | UsageQuery): Promise<UsageSnapshot>;
+  repairWebRoute(): Promise<{ status: "recovered" | "unavailable"; reason: string | null }>;
   logs(limit?: number): Promise<LogRecord[]>;
   exportLogs(): Promise<string | null>;
   installUpdate(): Promise<boolean>;

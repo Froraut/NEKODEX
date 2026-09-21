@@ -12,6 +12,14 @@ import type {
 type Account = AccountPoolSnapshot["accounts"][number];
 type AccountCodexCopy = ReturnType<typeof accountCodexCopyFor>;
 
+export interface QuotaFreshnessCopy {
+  quotaCurrent: string;
+  quotaLastKnown: string;
+  quotaUnavailable: string;
+  checkedAt: string;
+  retainedAt: string;
+}
+
 export function AccountCodexControls({
   account,
   copy,
@@ -29,6 +37,8 @@ export function AccountCodexControls({
   quotaBusy,
   quotaFailed = false,
   quotaDisabledReason,
+  quotaFreshnessCopy,
+  quotaNow = Date.now(),
   transitionBusy = false,
 }: {
   account: Account;
@@ -47,6 +57,8 @@ export function AccountCodexControls({
   quotaBusy: boolean;
   quotaFailed?: boolean;
   quotaDisabledReason?: string;
+  quotaFreshnessCopy?: QuotaFreshnessCopy;
+  quotaNow?: number;
   transitionBusy?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
@@ -87,7 +99,7 @@ export function AccountCodexControls({
         ? <p className="account-codex-disabled-reason" id={quotaDisabledReasonId}>{quotaDisabledReason}</p>
         : null}
       <QuotaContent copy={copy} language={language} quota={quota} disabledReason={quotaDisabledReason}
-        failed={quotaFailed} />
+        failed={quotaFailed} freshnessCopy={quotaFreshnessCopy} now={quotaNow} />
     </section>
 
     <section className="account-codex-login" aria-labelledby={loginHeadingId}>
@@ -113,14 +125,18 @@ export function AccountCodexControls({
   </div>;
 }
 
-function QuotaContent({ copy, disabledReason, failed, language, quota }: {
+function QuotaContent({ copy, disabledReason, failed, freshnessCopy, language, now, quota }: {
   copy: AccountCodexCopy;
   disabledReason?: string;
   failed: boolean;
+  freshnessCopy?: QuotaFreshnessCopy;
   language: Language;
+  now: number;
   quota: AccountQuotaSnapshot | null | undefined;
 }) {
-  if (failed) return <p className="account-codex-status" role="alert">{copy.quotaUnavailable}</p>;
+  if (failed && (quota === null || quota === undefined)) {
+    return <p className="account-codex-status" role="alert">{copy.quotaUnavailable}</p>;
+  }
   if (quota === undefined) return disabledReason ? null : <p className="account-codex-status" role="status">{copy.quotaChecking}</p>;
   if (quota === null) return disabledReason ? null : <p className="account-codex-status">{copy.quotaNotChecked}</p>;
   if (quota.availability !== "available" || quota.coverage !== "reported_buckets") {
@@ -132,8 +148,10 @@ function QuotaContent({ copy, disabledReason, failed, language, quota }: {
       {quota.retryAt ? <small>{copy.quotaResets.replace("{time}", formatDateTime(quota.retryAt, language, copy.quotaUnknown))}</small> : null}
     </div>;
   }
-  const updatedAt = quota.fetchedAt ?? quota.checkedAt;
+  const updatedAt = quota.fetchedAt ?? quota.checkedAt ?? null;
   return <div className="account-codex-quota-content">
+    {freshnessCopy ? <QuotaFreshness copy={freshnessCopy} failed={failed} language={language}
+      now={now} quota={quota} updatedAt={updatedAt} /> : null}
     <QuotaBucketView bucket={quota.accountBucket} copy={copy} language={language} fallbackName={copy.quotaGeneral} />
     {quota.additionalBuckets.length ? <details className="account-codex-additional">
       <summary>{copy.quotaAdditional.replace("{count}", String(quota.additionalBuckets.length))}</summary>
@@ -142,6 +160,32 @@ function QuotaContent({ copy, disabledReason, failed, language, quota }: {
     </details> : null}
     {quota.additionalBucketsTruncated ? <p className="account-codex-status">{copy.quotaCoverageTruncated}</p> : null}
     {updatedAt ? <p className="account-codex-updated">{copy.quotaUpdated.replace("{time}", formatDateTime(updatedAt, language, copy.quotaUnknown))}</p> : null}
+  </div>;
+}
+
+function QuotaFreshness({ copy, failed, language, now, quota, updatedAt }: {
+  copy: QuotaFreshnessCopy;
+  failed: boolean;
+  language: Language;
+  now: number;
+  quota: AccountQuotaSnapshot;
+  updatedAt: string | null;
+}) {
+  const metadata = quota as AccountQuotaSnapshot & {
+    freshness?: "fresh" | "stale";
+    freshUntil?: string | null;
+    refreshError?: string | null;
+  };
+  const freshUntil = metadata.freshUntil ? Date.parse(metadata.freshUntil) : Number.NaN;
+  const stale = metadata.freshness === "stale" || (Number.isFinite(freshUntil) && freshUntil <= now);
+  const retained = Boolean(metadata.refreshError) || failed;
+  const label = retained || stale ? copy.quotaLastKnown : copy.quotaCurrent;
+  const updated = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+  const age = Number.isFinite(updated) ? (retained || stale ? copy.retainedAt : copy.checkedAt)
+    .replace("{time}", formatAge(now - updated, language)) : null;
+  return <div className={`account-codex-freshness is-${retained ? "retained" : stale ? "stale" : "fresh"}`}>
+    <strong>{label}</strong>{age ? <span>{age}</span> : null}
+    {retained ? <small>{copy.quotaUnavailable}</small> : null}
   </div>;
 }
 
@@ -275,4 +319,12 @@ function formatDateTime(value: string | number, language: Language, fallback: st
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return fallback;
   return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function formatAge(elapsedMs: number, language: Language) {
+  const minutes = Math.max(0, Math.floor(elapsedMs / 60_000));
+  if (minutes < 60) return new Intl.RelativeTimeFormat(language, { numeric: "auto" }).format(-minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return new Intl.RelativeTimeFormat(language, { numeric: "auto" }).format(-hours, "hour");
+  return new Intl.RelativeTimeFormat(language, { numeric: "auto" }).format(-Math.floor(hours / 24), "day");
 }

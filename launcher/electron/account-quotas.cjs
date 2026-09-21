@@ -42,6 +42,15 @@ function cloneResult(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function projectFreshness(value, now) {
+  const result = cloneResult(value);
+  if (result.availability !== "available") return result;
+  const freshUntil = typeof result.freshUntil === "string" ? Date.parse(result.freshUntil) : Number.NaN;
+  result.freshness = result.refreshError === null && Number.isFinite(freshUntil) && now < freshUntil
+    ? "fresh" : "stale";
+  return result;
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -139,6 +148,9 @@ function unavailable(accountId, reason, checkedAt, retryAt = null) {
   return {
     availability: "unavailable",
     coverage: "none",
+    freshness: "stale",
+    freshUntil: null,
+    refreshError: reason,
     accountId,
     checkedAt,
     reason,
@@ -296,7 +308,7 @@ class AccountQuotaReader {
     requireEvidenceEpoch(evidenceEpoch);
     const current = this.accounts.get(accountId);
     return current?.session === electronSession && current.evidenceEpoch === evidenceEpoch
-      && current.result ? cloneResult(current.result) : null;
+      && current.result ? projectFreshness(current.result, this.now()) : null;
   }
 
   async read(electronSession, accountId, evidenceEpoch, { refresh = false } = {}) {
@@ -314,10 +326,10 @@ class AccountQuotaReader {
     if (sameOwner && current.result
       && (!refresh || now < current.nextRefreshAt)
       && now < current.expiresAt) {
-      return cloneResult(current.result);
+      return projectFreshness(current.result, now);
     }
     if (sameOwner && current.result && refresh && now < current.nextRefreshAt) {
-      return cloneResult(current.result);
+      return projectFreshness(current.result, now);
     }
 
     if (current && !sameOwner) current.controller?.abort();
@@ -338,14 +350,33 @@ class AccountQuotaReader {
         return unavailable(accountId, "stale_read", new Date(this.now()).toISOString());
       }
       const completedAt = this.now();
-      state.result = result;
+      if (result.availability === "available") {
+        state.result = {
+          ...result,
+          freshness: "fresh",
+          freshUntil: new Date(completedAt + this.successTtlMs).toISOString(),
+          refreshError: null,
+        };
+      } else if (state.result?.availability === "available") {
+        // The same browser session and evidence epoch still own these values. Preserve their
+        // observation time, but expose the failed refresh and never call them current.
+        state.result = {
+          ...state.result,
+          freshness: "stale",
+          checkedAt: result.checkedAt,
+          retryAt: result.retryAt ?? null,
+          refreshError: result.reason ?? "request_failed",
+        };
+      } else {
+        state.result = result;
+      }
       state.expiresAt = completedAt + (result.availability === "available"
         ? this.successTtlMs : this.failureTtlMs);
       if (retryAt !== null) {
         state.nextRefreshAt = Math.max(state.nextRefreshAt, retryAt);
         state.expiresAt = Math.max(state.expiresAt, retryAt);
       }
-      return result;
+      return state.result;
     }).finally(() => {
       state.inflight = null;
       state.controller = null;

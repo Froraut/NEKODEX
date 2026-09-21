@@ -1,0 +1,13 @@
+.usage-diagnostic-insights { display: grid; gap: 14px; margin-top: 18px; }
+.usage-diagnostic-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+.usage-diagnostic-heading h3, .usage-diagnostic-heading p, .usage-diagnostic-details p { margin: 0; }
+.usage-diagnostic-heading p, .usage-diagnostic-details > p, .usage-diagnostic-empty { color: var(--color-text-secondary); }
+.usage-diagnostic-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.usage-diagnostic-facts article { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--color-border-light); border-radius: var(--radius-md); background: var(--color-background-panel-raised); }
+.usage-diagnostic-facts article.is-insufficient { border-style: dashed; }
+.usage-diagnostic-facts small, .usage-diagnostic-table small { display: block; color: var(--color-text-tertiary); margin-top: 3px; }
+.usage-diagnostic-details { display: grid; gap: 10px; outline: none; }
+.usage-diagnostic-details:focus-visible { border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--color-border-focus); }
+.usage-diagnostic-table th, .usage-diagnostic-table td { vertical-align: top; }
+.usage-diagnostic-table tr.is-insufficient { opacity: .76; }
+@media (max-width: 720px) { .usage-diagnostic-heading { align-items: start; flex-direction: column; } .usage-diagnostic-facts { grid-template-columns: 1fr; } }

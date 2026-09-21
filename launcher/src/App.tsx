@@ -27,8 +27,11 @@ import { RouteDiagnostics } from "./RouteDiagnostics";
 import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
 import { ExistingChromeLoginGuide } from "./ExistingChromeLoginGuide";
 import { passkeyFailureText } from "./passkey-copy";
+import { deriveWorkspaceReadiness, type WorkspaceReadiness } from "./workspace-readiness";
+import { workflowCopy } from "./workflow-copy";
 import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits, resolveChatGptWebTransportLimits } from "../../src/chatgpt-web-models";
 import "./connections.css";
+import "./connection-recovery.css";
 import type {
   BrowserCapacitySettings,
   BrowserInteractionMode,
@@ -752,14 +755,29 @@ function LauncherShell({
     pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
     development: snapshot.profile === "development",
   });
+  const devProfile = snapshot.profile === "development";
   const toolProof = currentToolProof(snapshot, operation);
+  const readiness = deriveWorkspaceReadiness({
+    manual: manualInteraction,
+    development: devProfile,
+    authenticationStatus: manualInteraction ? "verified"
+      : browser?.authenticationStatus ?? (browser?.authenticated ? "verified"
+        : browser?.status === "signed-out" ? "signed-out" : "unknown"),
+    smokePassed: snapshot.smokePassed,
+    installed: snapshot.state.coreSetupComplete === true,
+    catalogUnavailable: Boolean(catalogFailure),
+    catalogVerified: snapshot.state.codexCatalogVerified === true,
+    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
+    toolsVerified: toolProof,
+    runtime: { ...(runtimeCapabilities(snapshot) ?? {}), transitionActive: Boolean(snapshot.lifecycle?.transition) },
+  });
   const interactionSetupComplete = modelReadiness === "available" && (!manualInteraction || toolProof);
   const firstRunZeroRiskSetup = snapshot.state.browserInteractionMode === "manual"
     && snapshot.state.coreSetupComplete !== true;
   const [surface, setSurface] = useState<Surface>(
     firstRunZeroRiskSetup ? "mcp" : "overview",
   );
-  const devProfile = snapshot.profile === "development";
   const compactAtMount = useRef(window.matchMedia(COMPACT_SIDEBAR_QUERY).matches).current;
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
   const [compactSidebar, setCompactSidebar] = useState(compactAtMount);
@@ -777,8 +795,11 @@ function LauncherShell({
   const browserSurfaceActive = surface === "browser"
     && !(compactSidebar && sidebarOpen)
     && !biggerContextRecommendationOpen;
+  const browserAuthenticationStatus = browser?.authenticationStatus
+    ?? (browser?.authenticated ? "verified"
+      : browser?.status === "signed-out" ? "signed-out" : "unknown");
   const needsBrowser = snapshot.state.browserInteractionMode === "automatic"
-    && browser?.authenticated !== true;
+    && browserAuthenticationStatus === "signed-out";
   const needsSetup = !needsBrowser && !interactionSetupComplete;
   const mcpOptional = snapshot.state.browserInteractionMode === "automatic"
     && snapshot.state.codexCatalogVerified === true
@@ -1177,7 +1198,9 @@ function LauncherShell({
             </nav>
 
             <div className="sidebar-footer">
-              <div className="sidebar-session"><StateDot state={manualInteraction ? "idle" : browser?.authenticated ? "ready" : "idle"} /><span>{manualInteraction ? copy.manualInteraction : browser?.authenticated ? copy.sessionConnected : copy.sessionDisconnected}</span></div>
+              <div className="sidebar-session"><StateDot state={manualInteraction ? "idle" : browser?.authenticated ? "ready" : "idle"} /><span>{manualInteraction ? copy.manualInteraction
+                : browserAuthenticationStatus === "unavailable" ? workflowCopy(language).session.verificationUnavailable
+                  : browser?.authenticated ? copy.sessionConnected : browserAuthenticationStatus === "signed-out" ? copy.sessionDisconnected : copy.checkingSignIn}</span></div>
               <SidebarItem
                 active={surface === "updates"}
                 icon="update"
@@ -1232,9 +1255,11 @@ function LauncherShell({
                 browserSlotRef={browserSlotRef}
                 copy={copy}
                 interactionMode={snapshot.state.browserInteractionMode}
+                language={language}
                 transitionBusy={transitionBusy}
                 operation={operation}
                 platform={snapshot.platform}
+                readiness={readiness}
                 setError={setError}
               />
             ) : null}
@@ -1246,6 +1271,7 @@ function LauncherShell({
                 catalogFailure={catalogFailure}
                 devProfile={devProfile}
                 operation={operation}
+                readiness={readiness}
                 setError={setError}
                 showMcp={() => {
                   setMcpTargetMode(null);
@@ -1268,6 +1294,7 @@ function LauncherShell({
                   setSurface("browser");
                 }}
                 operation={operation}
+                readiness={readiness}
                 setError={setError}
                 snapshot={snapshot}
                 updateState={updateState}
@@ -1443,21 +1470,26 @@ function BrowserSurface({
   browserSlotRef,
   copy,
   interactionMode,
+  language,
   transitionBusy,
   operation,
   platform,
+  readiness,
   setError,
 }: {
   browser: BrowserState | null;
   browserSlotRef: (node: HTMLDivElement | null) => void;
   copy: Copy;
   interactionMode: BrowserInteractionMode;
+  language: Language;
   transitionBusy: boolean;
   operation: OperationState | null;
   platform: string;
+  readiness: WorkspaceReadiness;
   setError: (error: string | null) => void;
 }) {
   const [passkeyStarting, setPasskeyStarting] = useState(false);
+  const workflow = workflowCopy(language);
   const [passkeyRequestPending, setPasskeyRequestPending] = useState(false);
   const [existingChromeStarting, setExistingChromeStarting] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<{ id: string; traceId: string | null } | null>(null);
@@ -1465,7 +1497,10 @@ function BrowserSurface({
   const closingTabRequests = useRef(new Set<string>());
   const confirmingTabRequests = useRef(new Set<string>());
   const [confirmingTabs, setConfirmingTabs] = useState<Set<string>>(new Set());
+  const sessionRetryInFlight = useRef(false);
+  const [sessionRetryBusy, setSessionRetryBusy] = useState(false);
   const activeBrowserTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
+  const recoverableBrowserTabs = browser?.tabs.filter(tab => !["error", "aborted"].includes(tab.status)) ?? [];
   const cancelTab = browser?.tabs.find(tab => tab.id === cancelTarget?.id
     && tab.traceId === cancelTarget?.traceId && tab.status === "running");
   useEffect(() => { if (cancelTarget && !cancelTab) setCancelTarget(null); }, [cancelTarget, cancelTab]);
@@ -1518,6 +1553,20 @@ function BrowserSurface({
       await api!.selectBrowserTab(tabId);
     } catch (cause) {
       setError(messageOf(cause));
+    }
+  };
+  const retrySession = async () => {
+    if (sessionRetryInFlight.current || transitionBusy || browser?.navigationLocked || !browser?.accountId) return;
+    sessionRetryInFlight.current = true;
+    setSessionRetryBusy(true);
+    setError(null);
+    try {
+      await api!.refreshAccountAuthentication(browser.accountId);
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      sessionRetryInFlight.current = false;
+      setSessionRetryBusy(false);
     }
   };
   const closeTab = async (tabId: string, expectedTraceId?: string | null) => {
@@ -1727,6 +1776,31 @@ function BrowserSurface({
           <p>{passkeyAvailable ? copy.embeddedLoginPasskeyBody : copy.embeddedLoginBody}</p>
         </div>
       ) : null}
+      {!manualInteraction && browser?.authenticationStatus === "unavailable" ? (
+        <section className="browser-recovery-notice" aria-live="polite" data-testid="browser-session-recovery">
+          <Icon name="alert" />
+          <div>
+            <strong>{workflow.session.verificationUnavailable}</strong>
+            <p>{workflow.session.verificationUnavailableBody}</p>
+            {browser.lastVerifiedAt ? <small>{workflow.session.lastVerifiedAt.replace("{time}", new Date(browser.lastVerifiedAt).toLocaleString(language))}</small> : null}
+          </div>
+          <div className="browser-recovery-actions">
+            {recoverableBrowserTabs.length ? <button className="text-button" disabled={transitionBusy}
+              onClick={() => void selectTab(recoverableBrowserTabs[0]!.id)} type="button">{copy.openWorkspace}</button> : null}
+            <button className="button-secondary" disabled={sessionRetryBusy || transitionBusy || browser.navigationLocked || !browser.accountId}
+              aria-busy={sessionRetryBusy} onClick={() => void retrySession()} type="button">
+              {sessionRetryBusy ? workflow.session.checkingVerification : workflow.session.retryVerification}
+            </button>
+          </div>
+        </section>
+      ) : browser?.authenticated === true && (readiness.web === "degraded" || readiness.web === "unavailable") ? (
+        <section className="browser-recovery-notice" aria-live="polite" data-testid="browser-web-recovery">
+          <Icon name="alert" />
+          <div><strong>{workflow.recovery.webTransportTitle}</strong><p>{readiness.native === "ready"
+            ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}</p>
+            {readiness.native === "ready" ? <small>{workflow.recovery.nativePreserved}</small> : null}</div>
+        </section>
+      ) : null}
       {selectedManualTab
         && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
         <ManualTurnGuide
@@ -1745,10 +1819,12 @@ function BrowserSurface({
             <BrandMark />
             <h1>{activeBrowserTabs.length ? `${activeBrowserTabs.length} · ${copy.overviewActiveRuns}` : manualInteraction
               ? copy.browserReady
-              : browser?.authenticated ? copy.noActiveTask : copy.stepAccount}</h1>
+              : browser?.authenticationStatus === "unavailable" ? copy.connectionPending
+                : browser?.authenticated ? copy.noActiveTask : copy.stepAccount}</h1>
             <p>{activeBrowserTabs.length ? copy.overviewActiveRunsBody : manualInteraction
               ? copy.stepAccountBody
-              : browser?.authenticated
+              : browser?.authenticationStatus === "unavailable" ? (activeBrowserTabs.length ? copy.overviewActiveRunsBody : copy.stepAccountBody)
+                : browser?.authenticated
               ? copy.noActiveTaskBody
               : existingChromeWaiting ? copy.existingChromeBody : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
@@ -1757,7 +1833,7 @@ function BrowserSurface({
                 disabled={existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
                 onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</PrimaryButton> : null}
               <SecondaryButton disabled={transitionBusy || passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
-                {manualInteraction || browser?.authenticated ? copy.openChatgpt : copy.signIn}
+                {manualInteraction || browser?.authenticated || browser?.authenticationStatus === "unavailable" ? copy.openChatgpt : copy.signIn}
               </SecondaryButton>
               {passkeyAvailable ? (
                 <SecondaryButton
@@ -1852,6 +1928,7 @@ function SetupSurface({
   copy,
   devProfile,
   operation,
+  readiness,
   setError,
   showActivity,
   showMcp,
@@ -1864,6 +1941,7 @@ function SetupSurface({
   copy: Copy;
   devProfile: boolean;
   operation: OperationState | null;
+  readiness: WorkspaceReadiness;
   setError: (error: string | null) => void;
   showActivity: () => void;
   showMcp: () => void;
@@ -1945,6 +2023,10 @@ function SetupSurface({
   };
 
   const confirmModels = () => run(async () => { updateState(await api!.confirmCodexModels()); });
+  const retrySession = () => run(async () => {
+    if (!browser?.accountId) throw new Error(copy.accountConnection);
+    await api!.refreshAccountAuthentication(browser.accountId);
+  });
   const showTroubleshooting = () => {
     if (!troubleshooting.current) return;
     troubleshooting.current.open = true;
@@ -1959,17 +2041,39 @@ function SetupSurface({
     : toolsVerified ? copy.setupChecksPassed : copy.setupReadyModels;
   const readyBody = manualInteraction ? copy.manualSetupReadyBody
     : toolsVerified ? copy.connectorAvailableNotExecuted : copy.setupUseCodex;
-  const nextTitle = { "sign-in": copy.stepAccount, test: copy.stepSmoke, install: copy.stepInstall,
+  const nextTitle = readiness.action === "retry-session" ? copy.connectionPending
+    : readiness.reason === "session-checking" ? copy.checkingSignIn
+      : readiness.reason === "catalog-unavailable" ? copy.catalogUnavailable
+      : readiness.action === "open-accounts" ? copy.stepAccount
+        : readiness.action === "repair-web" ? copy.localToolsUnavailable
+          : readiness.action === "open-tools" ? copy.localTools
+            : ({ "sign-in": copy.stepAccount, test: copy.stepSmoke, install: copy.stepInstall,
     catalog: copy.setupCatalogTitle, confirm: copy.setupConfirmTitle, tools: copy.localTools,
-    ready: readyTitle }[nextStep];
-  const nextBody = { "sign-in": copy.stepAccountBody, test: copy.stepSmokeBody, install: copy.stepInstallBody,
+    ready: readyTitle }[nextStep]);
+  const nextBody = readiness.action === "retry-session" ? copy.stepAccountBody
+    : readiness.reason === "session-checking" ? copy.stepAccountBody
+      : readiness.reason === "catalog-unavailable" ? copy.catalogFailureKeptInstall
+      : readiness.action === "open-accounts" ? copy.stepAccountBody
+        : readiness.action === "repair-web" ? copy.localToolsUnavailableBody
+          : readiness.action === "open-tools" ? copy.mcpBody
+            : ({ "sign-in": copy.stepAccountBody, test: copy.stepSmokeBody, install: copy.stepInstallBody,
     catalog: copy.setupCatalogBody, confirm: copy.setupConfirmBody, tools: copy.mcpBody,
-    ready: readyBody }[nextStep];
-  const nextLabel = { "sign-in": copy.next, test: copy.runSmoke, install: copy.install,
+    ready: readyBody }[nextStep]);
+  const nextLabel = readiness.action === "retry-session" ? copy.retry
+    : readiness.reason === "catalog-unavailable" ? copy.diagnostics
+    : readiness.action === "open-accounts" ? copy.next
+      : readiness.action === "repair-web" || readiness.action === "open-tools" ? copy.configureMcp
+        : readiness.action === "wait" ? copy.loading
+          : ({ "sign-in": copy.next, test: copy.runSmoke, install: copy.install,
     catalog: copy.diagnostics, confirm: copy.confirmPicker, tools: copy.configureMcp,
-    ready: copy.openWorkspace }[nextStep];
+    ready: copy.openWorkspace }[nextStep]);
   const nextAction = () => {
-    if (nextStep === "sign-in") showAccountSignInChoices();
+    if (readiness.action === "retry-session") void retrySession();
+    else if (readiness.reason === "catalog-unavailable") showTroubleshooting();
+    else if (readiness.action === "open-accounts") showAccountSignInChoices();
+    else if (readiness.action === "open-tools" || readiness.action === "repair-web") showMcp();
+    else if (readiness.action === "wait") return;
+    else if (nextStep === "sign-in") showAccountSignInChoices();
     else if (nextStep === "test") void smoke();
     else if (nextStep === "install") void install();
     else if (nextStep === "confirm") void confirmModels();
@@ -2000,7 +2104,7 @@ function SetupSurface({
         <div><small>{copy.setupNext}</small><h2>{nextTitle}</h2><p>{nextBody}</p>
           {confirmPending && pendingContext ? <p role="status">{copy.contextWaiting}</p> : null}
         </div>
-        <PrimaryButton disabled={busy || (nextStep === "confirm" && pendingContext)} onClick={nextAction}>{nextLabel}</PrimaryButton>
+        <PrimaryButton disabled={busy || readiness.action === "wait" || (nextStep === "confirm" && pendingContext)} onClick={nextAction}>{nextLabel}</PrimaryButton>
       </section>
       <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} />
       <div className="setup-list">
@@ -2106,6 +2210,7 @@ function McpSurface({
   language,
   onDone,
   operation,
+  readiness,
   setError,
   showSetup,
   snapshot,
@@ -2118,6 +2223,7 @@ function McpSurface({
   language: Language;
   onDone: () => void;
   operation: OperationState | null;
+  readiness: WorkspaceReadiness;
   setError: (error: string | null) => void;
   showSetup: () => void;
   snapshot: LauncherSnapshot;
@@ -2144,12 +2250,28 @@ function McpSurface({
     }
   }, [interactionMode, replacingCredentials, snapshot.mcpCredentialsConfigured, snapshot.state.browserInteractionMode]);
   const [localBusy, setLocalBusy] = useState(false);
+  const repairInFlight = useRef(false);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairOutcome, setRepairOutcome] = useState<"recovered" | "unavailable" | "failed" | null>(null);
+  const [repairOutcomeRevision, setRepairOutcomeRevision] = useState<number | null>(null);
+  const workflow = workflowCopy(language);
+  const currentRuntime = runtimeCapabilities(snapshot);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const wizardHeading = useRef<HTMLHeadingElement>(null);
   const previousStep = useRef(step);
   const verified = !configuringInactiveMode && currentToolProof(snapshot, operation);
   const manualInteraction = interactionMode === "manual";
+  useEffect(() => {
+    if (repairOutcome !== "recovered" || repairOutcomeRevision === null
+      || (currentRuntime?.revision ?? 0) <= repairOutcomeRevision) return;
+    if (readiness.web !== "ready" || currentRuntime?.tunnelRepair?.eligible === true
+      || currentRuntime?.tunnelRepair?.active === true) {
+      setRepairOutcome(null);
+      setRepairOutcomeRevision(null);
+    }
+  }, [currentRuntime?.revision, currentRuntime?.tunnelRepair?.active,
+    currentRuntime?.tunnelRepair?.eligible, readiness.web, repairOutcome, repairOutcomeRevision]);
   const steps = useMemo(() => [
     { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
     { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
@@ -2259,6 +2381,28 @@ function McpSurface({
       setLocalBusy(false);
     }
   };
+  const repairWebRoute = async () => {
+    const repair = runtimeCapabilities(snapshot)?.tunnelRepair;
+    if (repairInFlight.current || repair?.eligible !== true || repair.active || busy) return;
+    repairInFlight.current = true;
+    setRepairBusy(true);
+    setRepairOutcome(null);
+    setRepairOutcomeRevision(null);
+    setError(null);
+    try {
+      const result = await api!.repairWebRoute();
+      await updateSnapshot();
+      setRepairOutcome(result.status);
+      setRepairOutcomeRevision(currentRuntime?.revision ?? 0);
+    } catch (cause) {
+      setRepairOutcome("failed");
+      setRepairOutcomeRevision(currentRuntime?.revision ?? 0);
+      setError(messageOf(cause));
+    } finally {
+      repairInFlight.current = false;
+      setRepairBusy(false);
+    }
+  };
 
   return (
     <ContentSurface
@@ -2274,6 +2418,27 @@ function McpSurface({
         onModels={showSetup} onTools={() => {}} toolsReady={verified} />
       {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
         <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
+      ) : null}
+      {!configuringInactiveMode && (runtimeCapabilities(snapshot)?.tunnelRepair?.eligible === true
+        || runtimeCapabilities(snapshot)?.tunnelRepair?.active === true || repairOutcome) ? (
+        <section className="connection-recovery-card" aria-live="polite" data-testid="web-route-repair">
+          <Icon name="alert" />
+          <div>
+            <strong>{workflow.recovery.webTransportTitle}</strong>
+            <p>{readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}</p>
+            {readiness.native === "ready" ? <p>{workflow.recovery.nativePreserved}</p> : null}
+            {repairOutcome ? <p role="status">{repairOutcome === "recovered" ? workflow.recovery.recovered
+              : repairOutcome === "unavailable" ? workflow.recovery.stillUnavailable : workflow.recovery.couldNotVerify}</p> : null}
+          </div>
+          <button className="button-secondary" type="button"
+            disabled={busy || repairBusy || runtimeCapabilities(snapshot)?.tunnelRepair?.active === true
+              || runtimeCapabilities(snapshot)?.tunnelRepair?.eligible !== true}
+            aria-busy={repairBusy || runtimeCapabilities(snapshot)?.tunnelRepair?.active === true}
+            onClick={() => void repairWebRoute()}>
+            {repairBusy || runtimeCapabilities(snapshot)?.tunnelRepair?.active
+              ? workflow.recovery.repairing : workflow.recovery.repairAction}
+          </button>
+        </section>
       ) : null}
 
       <div className="wizard-stepper" aria-label={`${copy.localTools}: ${step + 1} / 3`} role="group">
@@ -2394,11 +2559,15 @@ function McpSurface({
               )
             ) : null}
             {step === 1 ? (
-            <p className="mcp-step-two-hint" id="mcp-credentials-hint">
+            <><p className="mcp-step-two-hint" id="mcp-credentials-hint">
                 {manualInteraction || configuringInactiveMode || snapshot.state.codexCatalogVerified
                   ? copy.mcpStepTwoHint
                   : copy.mcpCatalogRequired}
               </p>
+            {credentialsConfigured && !replacingCredentials ? (
+              <p className="mcp-step-two-hint">{workflow.recovery.fullSetupBody}</p>
+            ) : null}
+            </>
             ) : null}
         {step === 2 ? (
               <div className="connector-actions">
@@ -2482,7 +2651,8 @@ function McpSurface({
             }
             onClick={() => void install()}
           >
-            {busy ? copy.running : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
+            {busy ? copy.running : credentialsConfigured && !replacingCredentials
+              ? workflow.recovery.fullSetupAction : copy.connect}
           </PrimaryButton>
         ) : null}
             {step === 2 ? (

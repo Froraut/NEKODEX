@@ -1470,8 +1470,16 @@ function registerIpc({ logger, stateStore }) {
     return { state, credentialsRequired: false, targetMode: mode };
   });
   handle("launcher:accounts", () => browserHost.accountSnapshot());
+  // A retry performs fresh account-owned browser observation. Keep it behind lifecycle admission:
+  // it is not a passive read and must not race replacement, update, or shutdown transitions.
+  handle("launcher:account-authentication-refresh", (_event, id) => (
+    browserHost.refreshAccountAuthentication(id)
+  ));
   handle("launcher:account-codex-quota-snapshot", (_event, id) => accountToolsService.quotaSnapshot(id));
   handle("launcher:account-codex-quota-refresh", (_event, id) => accountToolsService.refreshQuota(id));
+  // Portfolio refresh owns its concurrency and per-account leases in the backend. The renderer can
+  // request one batch, but cannot supply workers or bypass lifecycle admission.
+  handle("launcher:account-codex-quotas-refresh", () => accountToolsService.refreshQuotaPortfolio());
   handle("launcher:codex-login-snapshot", () => accountToolsService.snapshot());
   handle("launcher:codex-login-start", (_event, id) => {
     if (quitting || shutdownInProgress || runtimeHost.currentOperation()) throw new Error("Finish the current runtime operation before Codex sign-in");
@@ -1512,6 +1520,27 @@ function registerIpc({ logger, stateStore }) {
         invalidateAccountProof(stateStore);
       }
       throw error;
+    }
+  });
+  // Narrow Web repair remains a supervisor-owned transition. It may preserve healthy native work,
+  // but renderer authority cannot bypass app-wide operations or active Web/manual turns.
+  handle("launcher:repair-web-route", async () => {
+    const operation = currentGlobalOperation();
+    if (operation) throw new Error(`Finish ${operation} before repairing the Web route`);
+    if (browserHost?.hasActiveTurns()) {
+      return { status: "unavailable", reason: "Finish active Web or Manual work before repairing the Web route" };
+    }
+    if (!runtimeSupervisor?.repairWebRoute) {
+      return { status: "unavailable", reason: "Web route repair is unavailable in this runtime" };
+    }
+    const repairOwner = lifecycleAdmission.acquire("Web route repair");
+    try {
+      lifecycleAdmission.assertOwner(repairOwner);
+      const competingOperation = currentGlobalOperation();
+      if (competingOperation) throw new Error(`Finish ${competingOperation} before repairing the Web route`);
+      return await runtimeSupervisor.repairWebRoute();
+    } finally {
+      lifecycleAdmission.release(repairOwner);
     }
   });
   handle("launcher:browser-capacity", async (_event, value) => {

@@ -373,6 +373,79 @@ function median(values) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+function diagnosticDurations(values, eligibleSamples) {
+  return { observedSamples: values.length, eligibleSamples,
+    medianMs: median(values), p95Ms: quantile(values, 0.95) };
+}
+
+function diagnosticFailures(counts, expected) {
+  const observed = [...counts.values()].reduce((sum, count) => sum + count, 0);
+  const classifiedFailureSamples = [...counts].reduce((sum, [code, count]) =>
+    sum + (code === 'unknown' ? 0 : count), 0);
+  if (observed < expected) counts.set('unknown', (counts.get('unknown') ?? 0) + expected - observed);
+  const failures = [...counts].map(([code, count]) => ({ code, count }))
+    .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
+  return { failures, classifiedFailureSamples };
+}
+
+function webDiagnosticGroups(rows, receipts) {
+  const groups = new Map(), rowsByKey = new Map(rows.map(row => [rowKey(row), row]));
+  for (const row of rows) {
+    const key = classificationKey(row);
+    const group = groups.get(key) ?? { source: 'web', ...emptyGroup(row), durations: [], failureCounts: new Map() };
+    for (const field of COUNTERS) group[field] += row[field];
+    groups.set(key, group);
+  }
+  for (const receipt of receipts) {
+    const row = rowsByKey.get(receipt.key);
+    if (!row) continue;
+    const group = groups.get(classificationKey(row));
+    if (receipt.outcome !== null && Number.isSafeInteger(receipt.durationMs)) group.durations.push(receipt.durationMs);
+    if (receipt.outcome === 'failed') {
+      const code = normalizedFailureCode(receipt.failureCode);
+      group.failureCounts.set(code, (group.failureCounts.get(code) ?? 0) + 1);
+    }
+  }
+  return [...groups.values()].map(group => {
+    const { durations, failureCounts, aborted, ...identity } = group;
+    const knownOutcomeTotal = group.completed + group.failed + aborted;
+    return { ...identity, cancelled: aborted, knownOutcomeTotal,
+      knownOutcomeCompletionRate: knownOutcomeTotal ? group.completed / knownOutcomeTotal : null,
+      durations: diagnosticDurations(durations, knownOutcomeTotal),
+      ...diagnosticFailures(failureCounts, group.failed) };
+  }).sort((a, b) => classificationKey(a).localeCompare(classificationKey(b)));
+}
+
+function nativeDiagnosticGroups(rows, receipts) {
+  const groups = new Map(), rowsByKey = new Map(rows.map(row => [nativeRowKey(row), row]));
+  for (const row of rows) {
+    const key = nativeGroupKey(row);
+    const group = groups.get(key) ?? { source: 'native', ...emptyNativeGroup(row), durations: [], failureCounts: new Map() };
+    for (const field of NATIVE_COUNTERS) group[field] += row[field];
+    for (const [code, count] of Object.entries(row.failures)) {
+      group.failureCounts.set(code, (group.failureCounts.get(code) ?? 0) + count);
+    }
+    groups.set(key, group);
+  }
+  for (const receipt of receipts) {
+    const row = rowsByKey.get(receipt.key);
+    if (row) groups.get(nativeGroupKey(row)).durations.push(receipt.durationMs);
+  }
+  return [...groups.values()].map(group => {
+    const { durations, failureCounts, failures: _failures, httpStatuses: _httpStatuses,
+      inputTokens: _inputTokens, outputTokens: _outputTokens, totalTokens: _totalTokens,
+      cachedInputTokens: _cachedInputTokens, reasoningOutputTokens: _reasoningOutputTokens,
+      reportedSamples: _reportedSamples, unreportedSamples: _unreportedSamples,
+      cachedInputReportedSamples: _cachedInputReportedSamples,
+      reasoningOutputReportedSamples: _reasoningOutputReportedSamples, aborted, ...identity } = group;
+    const knownOutcomeTotal = group.completed + group.incomplete + group.failed + aborted;
+    return { ...identity, cancelled: aborted, knownOutcomeTotal,
+      knownOutcomeCompletionRate: knownOutcomeTotal ? group.completed / knownOutcomeTotal : null,
+      durations: diagnosticDurations(durations, knownOutcomeTotal),
+      ...diagnosticFailures(failureCounts, group.failed + aborted) };
+  }).sort((a, b) => nativeGroupKey(a).localeCompare(nativeGroupKey(b)));
+}
+
 function publicNativeAggregate(value) {
   const row = structuredClone(value);
   row.reasoningTokens = row.reasoningOutputTokens;
@@ -554,7 +627,7 @@ class UsageStore {
       period: { startDay, endDay, days }, selectedAccountId: null, accounts: [] };
     const emptyMetrics = { total: 0, messageCount: 0, responseCount: 0, completed: 0, incomplete: 0, failed: 0,
       cancelled: 0, unrecorded: 0, knownOutcomeTotal: 0, knownOutcomeCompletionRate: null };
-    if (this.error) return { available: false, error: this.error, rows: [], ...base, metrics: emptyMetrics,
+    if (this.error) return { available: false, error: this.error, rows: [], diagnosticGroups: [], ...base, metrics: emptyMetrics,
       durations: { observedSamples: 0, medianMs: null, p95Ms: null }, failures: [], calendar,
       tokens: { inputTokens: null, outputTokens: null, totalTokens: null, cachedInputTokens: null,
         reasoningTokens: null, reportedSamples: 0, unreportedSamples: 0,
@@ -593,12 +666,14 @@ class UsageStore {
       reportedSamples: tokenSums.reportedSamples, unreportedSamples: tokenSums.unreportedSamples,
       cachedInputReportedSamples: tokenSums.cachedInputReportedSamples,
       reasoningReportedSamples: tokenSums.reasoningOutputReportedSamples };
+    const diagnosticGroups = nativeDiagnosticGroups(rows,
+      Object.values(this.state.native.receipts).filter(receipt => rowKeys.has(receipt.key)));
     return { available: true, startedAt: this.state.startedAt, lifetime: this.state.native.lifetime,
       lifetimeGroups: Object.values(this.state.native.lifetimeGroups).map(publicNativeAggregate), lifetimeUnclassified: 0,
       recovered: this.recovered, backupAvailable: this.backupAvailable, rows: rows.map(publicNativeAggregate), ...base, metrics,
       durations: { observedSamples: durations.length, medianMs: median(durations), p95Ms: quantile(durations, 0.95) },
       failures: [...failures].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
-      calendar: calendar.map(publicNativeAggregate), tokens };
+      diagnosticGroups, calendar: calendar.map(publicNativeAggregate), tokens };
   }
 
   snapshot(query = 7, accountMetadata = []) {
@@ -629,7 +704,7 @@ class UsageStore {
     const emptyMetrics = { total: 0, messageCount: 0, completed: 0, failed: 0, cancelled: 0, unrecorded: 0,
       knownOutcomeTotal: 0, knownOutcomeCompletionRate: null, observedRunCount: 0,
       runCountCoverage: { observedMessages: 0, totalMessages: 0, complete: true } };
-    if (this.error) return { available: false, error: this.error, rows: [], ...base, metrics: emptyMetrics,
+    if (this.error) return { available: false, error: this.error, rows: [], diagnosticGroups: [], ...base, metrics: emptyMetrics,
       durations: { observedSamples: 0, medianMs: null, p95Ms: null }, failures: [], calendar };
 
     const rows = Object.values(this.state.rows).filter(row => row.day >= startDay
@@ -664,12 +739,15 @@ class UsageStore {
     }
     const lifetimeGroups = Object.values(this.state.lifetimeGroups).filter(row => accountId === null || row.accountId === accountId);
     const lifetimeUnclassified = accountId === null || accountId === UNKNOWN_ACCOUNT_ID ? this.state.lifetimeUnclassified : 0;
+    const diagnosticGroups = webDiagnosticGroups(rows,
+      Object.values(this.state.receipts).filter(receipt => includedKeys.has(receipt.key)));
     return { available: true, startedAt: this.state.startedAt,
       lifetime: lifetimeGroups.reduce((sum, row) => sum + row.accepted, lifetimeUnclassified),
       lifetimeGroups: structuredClone(lifetimeGroups), lifetimeUnclassified, recovered: this.recovered,
       backupAvailable: this.backupAvailable, rows: structuredClone(rows), ...base, metrics,
       durations: { observedSamples: durations.length, medianMs: median(durations), p95Ms: quantile(durations, 0.95) },
-      failures: [...failureCounts].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)), calendar };
+      failures: [...failureCounts].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
+      diagnosticGroups, calendar };
   }
 }
 

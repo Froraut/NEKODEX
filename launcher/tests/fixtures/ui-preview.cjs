@@ -1,7 +1,9 @@
 // Credential-free UI fixture. Build the renderer first, then run this file with
 // Node or Bun and open the loopback URL it prints. No Electron or ChatGPT calls.
 // Scenarios: ?scenario=embedded, passkey, passkey-failed, onboarding, startup-error,
-// existing-chrome-failed, setup-fresh, manual-tools, accounts-failed, update-active, diagnostics-redirect
+// existing-chrome-failed, setup-fresh, manual-tools, accounts-failed, update-active, diagnostics-redirect,
+// benefits-auth-unavailable, benefits-portfolio-mixed, benefits-insights, benefits-repair-success,
+// benefits-repair-failure
 // Add &no-animation-frames=true to keep requestAnimationFrame callbacks permanently paused.
 const http = require("node:http");
 const fs = require("node:fs");
@@ -17,7 +19,8 @@ function installMockLauncher() {
     window.requestAnimationFrame = () => { window.fixtureAnimationRequests++; return 1; };
     window.cancelAnimationFrame = () => {};
   }
-  const language = ["en", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
+  const language = ["en", "ru", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
+  const benefitsScenario = scenario.startsWith("benefits-");
   const listeners = {};
   const emit = (name, value) => (listeners[name] || []).forEach((listener) => listener(value));
   const listen = (name) => (listener) => {
@@ -51,11 +54,26 @@ function installMockLauncher() {
         active: false, canImport: false, canReveal: false, canCancel: false,
         error: "passkey-verification-failed", revealError: null } });
   }
-  if (scenario === "models-ready" || scenario === "tools-pending") {
+  if (scenario === "models-ready" || scenario === "tools-pending" || benefitsScenario) {
     Object.assign(state, { coreSetupComplete: true, codexCatalogVerified: true, codexPickerConfirmed: true, browserSmokePassed: true,
-      browserSmokeVersion: "fixture", mcpRuntimeInstalled: scenario === "tools-pending", mcpSetupComplete: false });
+      browserSmokeVersion: "fixture", mcpRuntimeInstalled: scenario === "tools-pending" || benefitsScenario,
+      mcpSetupComplete: benefitsScenario });
     Object.assign(browser, { authenticated: true, accountLabel: "fixture@example.test", status: "ready",
+      authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T10:00:00.000Z",
+      lastVerifiedAt: "2026-09-21T10:00:00.000Z",
       navigationLocked: false, loginInProgress: false, loginKind: null, visible: false });
+  }
+  if (scenario === "benefits-auth-unavailable") {
+    Object.assign(browser, { authenticated: false, authenticationStatus: "unavailable",
+      authenticationCheckedAt: "2026-09-21T10:08:00.000Z", lastVerifiedAt: "2026-09-21T09:55:00.000Z",
+      accountLabel: "retained@example.test", status: "error", message: "Fixture authentication check unavailable" });
+  }
+  if (scenario === "benefits-repair-success" || scenario === "benefits-repair-failure") {
+    // Native readiness is a runtime capability, not a BrowserTab. Keep only an idle retained
+    // browser tab: an active Web/manual turn would correctly make tunnel repair ineligible.
+    browser.activeTabId = "fixture-retained-tab";
+    browser.tabs = [{ id: "fixture-retained-tab", traceId: null, title: "Retained workspace tab",
+      status: "idle", loading: false, active: true, closable: true, interactionMode: "automatic" }];
   }
   let operation = scenario === "passkey" ? { name: "passkey-login", status: "running", message: "Waiting in Chrome" } : null;
   if (scenario === "existing-chrome-failed") {
@@ -72,27 +90,48 @@ function installMockLauncher() {
     breakMinutes: 5, maxSessionMinutes: 240, cooldownMinutes: 3, newSessionWindow: null };
   let accountSnapshot = { selectedId: "fixture-primary", mode: "selected", accounts: [
     { id: "fixture-primary", label: "Primary", enabled: true, authenticated: true, accountLabel: "primary@example.test",
+      authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T10:00:00.000Z", lastVerifiedAt: "2026-09-21T10:00:00.000Z",
       activeTurns: 0, checked: true, connectorReady: true, evidenceEpoch: 1, proxy: { mode: "system" },
       safety: { policy: defaultPolicy, cooldownUntil: 0, stopped: false, newSessionWindow: null } },
     { id: "fixture-secondary", label: "Secondary", enabled: true, authenticated: true, accountLabel: "secondary@example.test",
+      authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T09:50:00.000Z", lastVerifiedAt: "2026-09-21T09:50:00.000Z",
       activeTurns: 0, checked: false, connectorReady: false, evidenceEpoch: 1, proxy: { mode: "system" },
       safety: { policy: defaultPolicy, cooldownUntil: 0, stopped: false, newSessionWindow: null } },
+    { id: "fixture-tertiary", label: "Tertiary", enabled: true, authenticated: false, accountLabel: "retained@example.test",
+      authenticationStatus: "unavailable", authenticationCheckedAt: "2026-09-21T10:08:00.000Z", lastVerifiedAt: "2026-09-21T09:40:00.000Z",
+      activeTurns: 0, checked: false, connectorReady: false, evidenceEpoch: 3, proxy: { mode: "system" },
+      safety: { policy: defaultPolicy, cooldownUntil: 0, stopped: false, newSessionWindow: null } },
   ] };
+  if (!benefitsScenario) accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.slice(0, 2) };
+  const quotaNow = Date.now();
   const quota = { availability: "available", coverage: "reported_buckets", accountId: "fixture-primary",
     planType: "plus", accountBucket: { id: "account", name: "Account", normalModelSlug: null,
       allowed: true, limitReached: false,
       primary: { usedPercent: 10, remainingPercent: 90, windowDurationMins: 300, resetsAt: null },
       secondary: { usedPercent: null, remainingPercent: null, windowDurationMins: null, resetsAt: null } },
-    additionalBuckets: [], additionalBucketsTruncated: false };
+    additionalBuckets: [], additionalBucketsTruncated: false, fetchedAt: new Date(quotaNow).toISOString(),
+    checkedAt: new Date(quotaNow).toISOString(), freshness: "fresh", freshUntil: new Date(quotaNow + 5 * 60_000).toISOString(), refreshError: null };
+  const retainedQuota = { ...quota, accountId: "fixture-secondary", freshness: "stale",
+    fetchedAt: new Date(quotaNow - 4 * 60 * 60_000).toISOString(), checkedAt: new Date(quotaNow).toISOString(),
+    freshUntil: new Date(quotaNow - 3 * 60 * 60_000).toISOString(),
+    refreshError: "quota-refresh-unavailable", accountBucket: { ...quota.accountBucket,
+      primary: { ...quota.accountBucket.primary, usedPercent: 45, remainingPercent: 55 } } };
   let quotaFailed = scenario === "accounts-failed";
   let diagnosticChecks = 0;
+  let runtimeCapabilities = benefitsScenario ? { runtimeStatus: "ready", nativeAvailability: "ready", webAvailability: "ready",
+    tunnelStatus: "ready", tunnelRepair: { eligible: false, active: false, reason: null } } : undefined;
+  if (scenario === "benefits-repair-success" || scenario === "benefits-repair-failure") {
+    runtimeCapabilities = { runtimeStatus: "degraded", nativeAvailability: "ready", webAvailability: "degraded",
+      tunnelStatus: "failed", tunnelRepair: { eligible: true, active: false, reason: "tunnel-unavailable" } };
+  }
   const snapshot = () => ({
-    profile: scenario === "models-ready" || scenario === "tools-pending" ? "production" : "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
+    profile: scenario === "models-ready" || scenario === "tools-pending" || benefitsScenario ? "production" : "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
     connectorNames: { automatic: "Fixture connector", manual: "Fixture manual" }, mcpCredentialsConfigured: scenario === "tools-pending",
     logs: [], urls: { github: "https://github.com/Froraut/NEKODEX", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
     browserCapacity: { configured: 16, active: 16, maximum: 1000, restartRequired: false },
     platform: "darwin", packaged: false, version: "fixture", smokePassed: state.browserSmokePassed, operation, update,
+    ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
   });
   let startupAttempts = 0;
   const calls = [];
@@ -135,10 +174,19 @@ function installMockLauncher() {
       emit("browser", { ...browser }); return { ...browser };
     },
     accounts: async () => accountSnapshot,
+    refreshAccountAuthentication: async (id) => {
+      calls.push(["account-auth-refresh", id]);
+      accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(account => account.id === id
+        ? { ...account, authenticated: true, authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T10:10:00.000Z",
+          lastVerifiedAt: "2026-09-21T10:10:00.000Z" } : account) };
+      if (id === accountSnapshot.selectedId) Object.assign(browser, { authenticated: true, authenticationStatus: "verified",
+        authenticationCheckedAt: "2026-09-21T10:10:00.000Z", lastVerifiedAt: "2026-09-21T10:10:00.000Z", status: "ready" });
+      return accountSnapshot;
+    },
     accountCodexQuotaSnapshot: async (id) => {
       calls.push(["quota-snapshot", id]);
       if (quotaFailed && id === "fixture-primary") throw new Error("Fixture quota unavailable");
-      return id === "fixture-primary" ? quota : null;
+      return id === "fixture-primary" ? quota : id === "fixture-secondary" && benefitsScenario ? retainedQuota : null;
     },
     refreshAccountCodexQuota: async (id) => {
       calls.push(["quota-refresh", id]); quotaFailed = false; return { ...quota, accountId: id };
@@ -154,15 +202,52 @@ function installMockLauncher() {
     setAccountProxy: async () => accountSnapshot,
     setAccountSafety: async () => accountSnapshot,
     resumeAccount: async () => accountSnapshot,
-    refreshAccountCodexQuotas: async () => ({ accounts: accountSnapshot.accounts.map(account => ({ accountId: account.id, quota: account.id === "fixture-primary" ? quota : null })) }),
+    refreshAccountCodexQuotas: async () => ({ generatedAt: "2026-09-21T10:10:00.000Z", rows: [
+      { accountId: "fixture-primary", evidenceEpoch: 1, status: "updated", snapshot: quota, reason: null },
+      { accountId: "fixture-secondary", evidenceEpoch: 1, status: "retained", snapshot: retainedQuota, reason: "quota-refresh-unavailable" },
+      { accountId: "fixture-tertiary", evidenceEpoch: 3, status: "unavailable", snapshot: null, reason: "authentication-unavailable" },
+    ].filter(row => accountSnapshot.accounts.some(account => account.id === row.accountId)) }),
     startCodexLogin: async () => { calls.push(["start-codex-login"]); return null; },
     usage: async (query) => ({ available: true, rows: [], generatedAt: "2026-09-21T10:00:00.000Z", timeZone: "UTC",
       source: query.source, period: { startDay: "2026-09-21", endDay: "2026-09-21", days: query.days },
       selectedAccountId: query.accountId ?? null,
       accounts: accountSnapshot.accounts.map(account => ({ id: account.id, label: account.label, available: true })),
-      metrics: { total: 0, completed: 0, failed: 0, cancelled: 0, unrecorded: 0,
-        knownOutcomeTotal: 0, knownOutcomeCompletionRate: null },
-      durations: { observedSamples: 0, medianMs: null, p95Ms: null }, failures: [], calendar: [] }),
+      metrics: scenario === "benefits-insights"
+        ? { total: 27, completed: 22, failed: 4, cancelled: 1, unrecorded: 0,
+          knownOutcomeTotal: 27, knownOutcomeCompletionRate: 22 / 27 }
+        : { total: 0, completed: 0, failed: 0, cancelled: 0, unrecorded: 0,
+          knownOutcomeTotal: 0, knownOutcomeCompletionRate: null },
+      durations: scenario === "benefits-insights"
+        ? { observedSamples: 24, medianMs: 4100, p95Ms: 9200 }
+        : { observedSamples: 0, medianMs: null, p95Ms: null }, failures: [], calendar: [],
+      ...(scenario === "benefits-insights" ? { diagnosticGroups: [
+        { source: "web", accountId: "fixture-primary", mode: "automatic", effort: "high", modelVersion: "5.6-sol",
+          modelVersionSource: "observed", messageKind: "task",
+          accepted: 24, completed: 20, failed: 3, cancelled: 1, incomplete: 0, knownOutcomeTotal: 24,
+          knownOutcomeCompletionRate: 20 / 24, durations: { observedSamples: 22, eligibleSamples: 24, medianMs: 4100, p95Ms: 9200 },
+          failures: [{ code: "timeout", count: 2 }, { code: "browser_failure", count: 1 }], classifiedFailureSamples: 3 },
+        { source: "web", accountId: "fixture-secondary", mode: "automatic", effort: "medium", modelVersion: "5.6-sol",
+          modelVersionSource: "observed", messageKind: "task",
+          accepted: 3, completed: 2, failed: 1, cancelled: 0, incomplete: 0, knownOutcomeTotal: 3,
+          knownOutcomeCompletionRate: null, durations: { observedSamples: 2, eligibleSamples: 3, medianMs: null, p95Ms: null },
+          failures: [{ code: "transport", count: 1 }], classifiedFailureSamples: 1 },
+        { source: "native", endpoint: "responses", modelId: "gpt-5.6-sol", modelIdSource: "requested",
+          accepted: 3, completed: 2, failed: 1, cancelled: 0, incomplete: 0, knownOutcomeTotal: 3,
+          knownOutcomeCompletionRate: null, durations: { observedSamples: 2, eligibleSamples: 3, medianMs: null, p95Ms: null },
+          failures: [{ code: "transport", count: 1 }], classifiedFailureSamples: 1 },
+      ] } : {}) }),
+    repairWebRoute: async () => {
+      calls.push(["repair-web-route"]);
+      runtimeCapabilities = { ...runtimeCapabilities, tunnelRepair: { eligible: false, active: true, reason: null } };
+      if (scenario === "benefits-repair-failure") {
+        runtimeCapabilities = { runtimeStatus: "degraded", nativeAvailability: "ready", webAvailability: "degraded",
+          tunnelStatus: "failed", tunnelRepair: { eligible: true, active: false, reason: "tunnel-restart-failed" } };
+        return { status: "unavailable", reason: "tunnel-restart-failed" };
+      }
+      runtimeCapabilities = { runtimeStatus: "ready", nativeAvailability: "ready", webAvailability: "ready",
+        tunnelStatus: "ready", tunnelRepair: { eligible: false, active: false, reason: null } };
+      return { status: "recovered", reason: null };
+    },
     routeDiagnostics: async () => {
       diagnosticChecks++;
       const failed = diagnosticChecks === 1;

@@ -35,6 +35,7 @@ class AccountBrowserPool {
     this.networkOperation = null;
     this.accountOperations = new Map();
     this.accountReadOperations = new Map();
+    this.authenticationRefreshOperations = new Map();
     this.existingChromeImportLease = null;
     this.hosts = new Map();
     this.creatingHosts = new Set();
@@ -238,6 +239,9 @@ class AccountBrowserPool {
     return { ...config, accounts: config.accounts.map(account => {
       const host = this.hosts.get(account.id);
       return { ...account, proxy: this.network.get(account.id), safety: this.safety.snapshot(account.id), authenticated: host?.state.authenticated === true,
+        authenticationStatus: host?.state.authenticationStatus,
+        authenticationCheckedAt: host?.state.authenticationCheckedAt ?? null,
+        lastVerifiedAt: host?.state.lastVerifiedAt ?? null,
         accountLabel: host?.state.accountLabel ?? null,
         evidenceEpoch: this.evidenceEpoch(account.id),
         activeTurns: host ? [...host.turnTabs.values()].filter(tab => tab.status === 'running').length : 0,
@@ -485,6 +489,55 @@ class AccountBrowserPool {
       if (this.evidenceEpoch(id) === epoch) this.connectors.delete(id);
       throw error;
     } finally { this.publish(); }
+  }
+  refreshAccountAuthentication(id) {
+    validateAccountId(id);
+    if (this.destroyed) return Promise.reject(new Error('ChatGPT account pool is closed'));
+    const existing = this.authenticationRefreshOperations.get(id);
+    if (existing) return existing;
+    if (this.inspectionsPaused) return Promise.reject(new Error('Browser checks are paused for launcher restart'));
+    const host = this.getHost(id);
+    const conflict = this.accountOperationError(id);
+    if (conflict) return Promise.reject(conflict);
+    if (host.activeTraceId || [...this.reservations.values()].includes(id)) {
+      return Promise.reject(new Error('Finish this account’s active or acquiring tasks before retrying session verification'));
+    }
+    if (host.browserInteractionMode() !== 'automatic') {
+      return Promise.reject(new Error('ChatGPT session verification retry is unavailable in Manual mode'));
+    }
+    const releaseRead = this.acquireAccountReadOperation(id, 'ChatGPT session verification retry',
+      () => { void host.cancelReadOnlyInspection(); });
+    const epoch = this.invalidateEvidence(id);
+    const identityEpoch = host.authIdentityEpoch;
+    let retry;
+    try { retry = host.retryAuthenticationCheck(); }
+    catch (error) {
+      releaseRead();
+      this.publish();
+      return Promise.reject(error);
+    }
+    let tracked;
+    tracked = retry.then(() => {
+      if (this.destroyed || this.hosts.get(id) !== host
+        || !this.registry.snapshot().accounts.some(account => account.id === id)) {
+        throw new Error('ChatGPT account changed while retrying session verification');
+      }
+      const currentEpoch = this.evidenceEpoch(id);
+      const identityDelta = host.authIdentityEpoch - identityEpoch;
+      const expectedIdentityInvalidation = identityDelta === 1 && currentEpoch === epoch + 1;
+      if (currentEpoch !== epoch && !expectedIdentityInvalidation) {
+        throw new Error('ChatGPT account readiness changed while retrying session verification');
+      }
+      return this.accountSnapshot();
+    }).finally(() => {
+      releaseRead();
+      if (this.authenticationRefreshOperations.get(id) === tracked) {
+        this.authenticationRefreshOperations.delete(id);
+      }
+      this.publish();
+    });
+    this.authenticationRefreshOperations.set(id, tracked);
+    return tracked;
   }
   async verifyConnector(appName) {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');

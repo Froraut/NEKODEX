@@ -423,6 +423,7 @@ class BrowserHost {
     this.authGeneration = 0;
     this.authProbeRevision = 0;
     this.authProbeTail = Promise.resolve();
+    this.authenticationRetryOperation = null;
     this.authPrincipalFingerprint = null;
     this.authSessionFingerprint = null;
     this.authIdentityEpoch = 0;
@@ -459,6 +460,9 @@ class BrowserHost {
       url: "about:blank",
       title: "ChatGPT",
       authenticated: false,
+      authenticationStatus: "unknown",
+      authenticationCheckedAt: null,
+      lastVerifiedAt: null,
       visible: false,
       surfaceActive: true,
       loading: false,
@@ -556,7 +560,7 @@ class BrowserHost {
       || (hasUnsettledBrowserHelpers?.(this.descriptorPath) ? "browser helper cleanup" : null);
   }
 
-  withReadOnlyInspection(name, action) {
+  withReadOnlyInspection(name, action, { preserveSelection = false } = {}) {
     if (this.activeTraceId || this.currentOperation()) {
       return Promise.reject(new Error("Finish the account's active task or operation before checking it"));
     }
@@ -575,7 +579,14 @@ class BrowserHost {
     controller.signal.addEventListener("abort", onAbort, { once: true });
     const deadline = setTimeout(() => controller.abort(new Error("Browser check timed out")), 90_000);
     deadline.unref?.();
-    inspection.done = this.withManualOperation(name, () => action(controller.signal), controller.signal)
+    const run = preserveSelection
+      ? (async () => {
+          await awaitInspection(this.ready(), controller.signal);
+          controller.signal.throwIfAborted();
+          return await action(controller.signal);
+        })()
+      : this.withManualOperation(name, () => action(controller.signal), controller.signal);
+    inspection.done = run
       .finally(() => {
         clearTimeout(deadline);
         controller.signal.removeEventListener("abort", onAbort);
@@ -1487,7 +1498,10 @@ class BrowserHost {
     this.state = {
       ...this.state,
       ...patch,
-      ...(patch.authenticated === false ? { accountLabel: null } : {}),
+      ...(patch.authenticationStatus === "signed-out" ? { lastVerifiedAt: null } : {}),
+      ...(patch.authenticated === false
+        && patch.authenticationStatus !== "unavailable"
+        && patch.authenticationStatus !== "unknown" ? { accountLabel: null } : {}),
       visible: this.visible,
       surfaceActive: this.surfaceActive,
     };
@@ -2879,6 +2893,7 @@ class BrowserHost {
         this.authNavigationError = null;
         this.setState({
           authenticated: false,
+          authenticationStatus: "unknown",
           status: "loading",
           message: "Waiting for passkey sign-in in the selected browser",
           loading: true,
@@ -2906,7 +2921,13 @@ class BrowserHost {
                   : this.passkeyProgress?.phase === "starting" || this.passkeyProgress?.phase === "waiting" || this.passkeyProgress?.phase === "importing"
                     ? "passkey-capture-failed" : "passkey-import-failed";
       this.updatePasskeyProgress({ phase, error: errorCode });
-      this.setState({ loading: false, status: "signed-out", authenticated: false,
+      const authenticationStatus = this.state.authenticationStatus === "signed-out"
+        ? "signed-out" : cancelled ? "unknown" : "unavailable";
+      this.setState({ loading: false,
+        status: authenticationStatus === "signed-out" ? "signed-out" : authenticationStatus === "unavailable" ? "error" : "idle",
+        authenticated: false,
+        authenticationStatus,
+        ...(authenticationStatus === "unavailable" ? { authenticationCheckedAt: new Date().toISOString() } : {}),
         message: phase === "cancelled" ? "Passkey sign-in cancelled" : errorCode });
       if (phase === "cancelled") return this.snapshot();
       const safeError = new Error(errorCode);
@@ -2973,7 +2994,9 @@ class BrowserHost {
     await contents.loadURL(TEMPORARY_CHAT_URL);
     const browser = await this.probeAuthentication();
     if (browser.authenticated) throw new Error("Partial passkey session remained authenticated after cleanup");
-    this.setState({ authenticated: false, loading: false, status: "signed-out", message: "Sign in to ChatGPT" });
+    this.setState({ authenticated: false, authenticationStatus: "signed-out",
+      authenticationCheckedAt: new Date().toISOString(), loading: false,
+      status: "signed-out", message: "Sign in to ChatGPT" });
   }
 
   async installPasskeyLogin(transfer, signal) {
@@ -3060,6 +3083,8 @@ class BrowserHost {
       this.retireAuthenticatedIdentity();
       this.setState({
         authenticated: false,
+        authenticationStatus: "signed-out",
+        authenticationCheckedAt: new Date().toISOString(),
         loading: true,
         message: "Signing out of ChatGPT",
         status: "loading",
@@ -3100,6 +3125,29 @@ class BrowserHost {
     return tracked;
   }
 
+  retryAuthenticationCheck() {
+    requireAutomaticBrowserInspection(this, "ChatGPT authentication retry");
+    if (this.authenticationRetryOperation) return this.authenticationRetryOperation;
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return Promise.reject(new Error("ChatGPT session verification is unavailable: embedded browser is not ready"));
+    }
+    const operation = this.withReadOnlyInspection("session verification retry", async signal => {
+      const generation = this.authGeneration ?? 0;
+      const state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
+      signal.throwIfAborted();
+      if ((this.authGeneration ?? 0) !== generation) {
+        throw new Error("ChatGPT session verification is unavailable: browser session changed");
+      }
+      return state;
+    }, { preserveSelection: true });
+    let tracked;
+    tracked = operation.finally(() => {
+      if (this.authenticationRetryOperation === tracked) this.authenticationRetryOperation = null;
+    });
+    this.authenticationRetryOperation = tracked;
+    return tracked;
+  }
+
   probeAuthentication(options = {}) {
     const operation = this.authProbeTail.then(
       () => this.runAuthenticationProbe(options),
@@ -3109,7 +3157,7 @@ class BrowserHost {
     return operation;
   }
 
-  async runAuthenticationProbe({ forSetup = false, signal } = {}) {
+  async runAuthenticationProbe({ forSetup = false, observationOnly = false, signal } = {}) {
     signal?.throwIfAborted();
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
     if (!this.view || this.view.webContents.isDestroyed()) {
@@ -3141,6 +3189,17 @@ class BrowserHost {
     let url = primaryContents.getURL();
     if (url === IDLE_BROWSER_URL) {
       if (forSetup) throw new Error("ChatGPT session verification is unavailable: Temporary Chat has not loaded");
+      if (observationOnly) {
+        this.setState({
+          status: "error",
+          message: "ChatGPT session verification unavailable: Temporary Chat has not loaded",
+          authenticated: false,
+          authenticationStatus: "unavailable",
+          authenticationCheckedAt: new Date().toISOString(),
+          url,
+        });
+        return this.snapshot();
+      }
       this.setState({
         status: this.state.authenticated ? "ready" : "signed-out",
         message: this.state.authenticated ? "No active task" : "Sign in to ChatGPT",
@@ -3150,7 +3209,9 @@ class BrowserHost {
     }
     if (!url.startsWith(CHATGPT_ORIGIN)) {
       if (forSetup) throw new Error("ChatGPT session verification is unavailable: Temporary Chat has not loaded");
-      this.setState({ status: "signed-out", message: "Sign in to ChatGPT", authenticated: false, url });
+      this.retireAuthenticatedIdentity();
+      this.setState({ status: "signed-out", message: "Sign in to ChatGPT", authenticated: false,
+        authenticationStatus: "signed-out", authenticationCheckedAt: new Date().toISOString(), url });
       return this.snapshot();
     }
     const probe = (contents) => awaitInspection(contents.executeJavaScript(`(async () => {
@@ -3265,7 +3326,7 @@ class BrowserHost {
       return this.snapshot();
     }
     let authResult;
-    if (!(result.composer && result.temporary && result.sessionAuthenticated)
+    if (!observationOnly && !(result.composer && result.temporary && result.sessionAuthenticated)
       && authView) {
       authResult = await probe(authView.webContents);
       if (!isCurrent()) {
@@ -3331,7 +3392,10 @@ class BrowserHost {
         this.authIdentityEpoch += 1;
         this.onAuthIdentityChanged(this.accountId, this.authIdentityEpoch);
       }
-      this.setState({ ...availability, authenticated: true, accountLabel: result.accountLabel ?? null, url: result.url });
+      const verifiedAt = new Date().toISOString();
+      this.setState({ ...availability, authenticated: true, authenticationStatus: "verified",
+        authenticationCheckedAt: verifiedAt, lastVerifiedAt: verifiedAt,
+        accountLabel: result.accountLabel ?? null, url: result.url });
       if (!wasAuthenticated) this.logger.info("browser.authenticated", { url: result.url });
     } else {
       const loaded = result.readyState === "complete";
@@ -3341,11 +3405,14 @@ class BrowserHost {
         : authResult?.sessionVerification === "unavailable" ? authResult.verificationFailure
           : "Temporary Chat surface unavailable";
       if (rejected && loaded) this.retireAuthenticatedIdentity();
+      const checkedAt = new Date().toISOString();
       this.setState({
         status: rejected && loaded ? "signed-out" : loaded ? "error" : "loading",
         message: rejected && loaded ? "Sign in to ChatGPT"
           : loaded ? `ChatGPT session verification unavailable: ${failure}` : "Waiting for ChatGPT",
         authenticated: false,
+        authenticationStatus: rejected && loaded ? "signed-out" : "unavailable",
+        authenticationCheckedAt: checkedAt,
         url: result.url || url,
       });
       if (forSetup && !rejected) {
@@ -3406,7 +3473,7 @@ class BrowserHost {
       throw new Error("Browser helper returned invalid smoke-test evidence");
     }
     this.logger.info("smoke.completed", { effort: evidence.effort, responseChars: evidence.response.length });
-    this.setState({ status: "ready", message: "Smoke test passed", authenticated: true });
+    this.setState({ status: "ready", message: "Smoke test passed" });
     return { ok: true, ...evidence };
   }
 
@@ -3430,7 +3497,7 @@ class BrowserHost {
       });
       signal?.throwIfAborted();
       this.logger.info("connector.verified", { appName: connectorName });
-      this.setState({ status: "ready", message: "ChatGPT connector is available", authenticated: true });
+      this.setState({ status: "ready", message: "ChatGPT connector is available" });
       return result;
     } catch (error) {
       this.logger.error("connector.verification_failed", {
@@ -3482,7 +3549,7 @@ class BrowserHost {
       throw new Error("Browser helper returned contradictory ChatGPT capability evidence");
     }
     if (startedIdle) await awaitInspection(this.returnToIdle(), signal);
-    else this.setState({ status: "ready", message: "ChatGPT is ready", authenticated: true, loading: false });
+    else this.setState({ status: "ready", message: "ChatGPT is ready", loading: false });
     return inspected;
   }
 

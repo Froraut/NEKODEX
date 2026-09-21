@@ -32,6 +32,8 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
   const authChildren = new Set();
   const quotaAccounts = new Set();
   const activeQuotaReads = new Set();
+  const quotaRefreshes = new Map();
+  let quotaPortfolioRefresh = null;
 
   function pool() {
     if (destroyed) throw new Error('Codex account tools are closed');
@@ -124,16 +126,15 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     if (!host || host.view.webContents.isDestroyed()) return null;
     return quotaReader.snapshot(host.view.webContents.session, id, pool().evidenceEpoch(id));
   }
-  async function refreshQuota(id) {
+  async function runQuotaRefresh(id, currentPool, epoch, identity) {
     if (stopping) throw new Error('Codex account tools are closing');
-    account(id);
-    const currentPool = pool();
     if (getInteractionMode() === 'manual') {
       throw new Error('Account limit refresh is unavailable in Manual mode');
     }
     const host = currentPool.getHost(id);
     await host.ready();
-    if (stopping || destroyed || getPool() !== currentPool) {
+    if (stopping || destroyed || getPool() !== currentPool || currentPool.evidenceEpoch(id) !== epoch
+      || !sameIdentity(identity, currentPool.accountIdentityLease(id))) {
       throw new Error('The account changed while its limits were being read; refresh again');
     }
     const releaseOperation = currentPool.acquireAccountReadOperation(
@@ -141,9 +142,7 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
       'Codex account limit refresh',
       () => quotaReader.clear(id),
     );
-    const operation = (async () => {
-      const epoch = currentPool.evidenceEpoch(id);
-      const identity = currentPool.accountIdentityLease(id);
+    try {
       quotaAccounts.add(id);
       const result = await quotaReader.read(host.view.webContents.session, id, epoch, { refresh: true });
       if (stopping || destroyed || getPool() !== currentPool || currentPool.evidenceEpoch(id) !== epoch
@@ -152,14 +151,110 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
         throw new Error('The account changed while its limits were being read; refresh again');
       }
       return result;
-    })();
-    activeQuotaReads.add(operation);
-    try {
-      return await operation;
     } finally {
-      activeQuotaReads.delete(operation);
       releaseOperation();
     }
+  }
+  function refreshQuota(id) {
+    account(id);
+    const currentPool = pool();
+    const epoch = currentPool.evidenceEpoch(id);
+    const identity = currentPool.accountIdentityLease(id);
+    const existing = quotaRefreshes.get(id);
+    if (existing && existing.pool === currentPool && existing.epoch === epoch
+      && sameIdentity(existing.identity, identity)) return existing.operation;
+    const operation = runQuotaRefresh(id, currentPool, epoch, identity);
+    const entry = { pool: currentPool, epoch, identity, operation };
+    quotaRefreshes.set(id, entry);
+    activeQuotaReads.add(operation);
+    void operation.finally(() => {
+      activeQuotaReads.delete(operation);
+      if (quotaRefreshes.get(id) === entry) quotaRefreshes.delete(id);
+    }).catch(() => {});
+    return operation;
+  }
+
+  function frozen(value) {
+    if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+    for (const item of Object.values(value)) frozen(item);
+    return Object.freeze(value);
+  }
+  function portfolioRow(value, evidenceEpoch, status, snapshot = null, reason = null) {
+    const retainedSnapshot = snapshot === null ? null : structuredClone(snapshot);
+    return frozen({ accountId: value.id, evidenceEpoch, status, snapshot: retainedSnapshot, reason });
+  }
+  function quotaStatus(quota) {
+    if (quota?.availability !== 'available') return 'unavailable';
+    return quota.freshness === 'fresh' ? 'updated' : 'retained';
+  }
+  function portfolioSkip(value, currentPool) {
+    const evidenceEpoch = value.evidenceEpoch;
+    if (getInteractionMode() === 'manual') return portfolioRow(value, evidenceEpoch, 'skipped', null, 'manual_mode');
+    if (!value.authenticated) return portfolioRow(value, evidenceEpoch, 'skipped', null, 'signed_out');
+    const loginOwner = controller.selectionLock();
+    if (loginOwner?.accountId === value.id || releaseAccountOperation && binding?.accountId === value.id) {
+      return portfolioRow(value, evidenceEpoch, 'skipped', null, 'login_in_progress');
+    }
+    const host = currentPool.hosts.get(value.id);
+    if (!host || host.view.webContents.isDestroyed()) {
+      return portfolioRow(value, evidenceEpoch, 'skipped', null, 'host_unavailable');
+    }
+    const cached = quotaReader.snapshot(host.view.webContents.session, value.id, evidenceEpoch);
+    const retryAt = cached?.retryAt ? Date.parse(cached.retryAt) : NaN;
+    if (Number.isFinite(retryAt) && retryAt > Date.now()) {
+      return portfolioRow(value, evidenceEpoch, 'skipped', cached, cached.refreshError ?? cached.reason ?? 'rate_limited');
+    }
+    return null;
+  }
+  function refreshQuotaPortfolio() {
+    if (quotaPortfolioRefresh) return quotaPortfolioRefresh;
+    const currentPool = pool();
+    const accounts = currentPool.accountSnapshot().accounts.map(value => Object.freeze({
+      id: value.id, authenticated: value.authenticated, evidenceEpoch: currentPool.evidenceEpoch(value.id),
+    }));
+    const rows = new Array(accounts.length);
+    let cursor = 0;
+    const worker = async () => {
+      while (true) {
+        const index = cursor++;
+        if (index >= accounts.length) return;
+        const value = accounts[index];
+        const evidenceEpoch = value.evidenceEpoch;
+        try {
+          if (stopping || destroyed) {
+            rows[index] = portfolioRow(value, evidenceEpoch, 'skipped', null, 'closing');
+            continue;
+          }
+          if (getPool() !== currentPool || currentPool.evidenceEpoch(value.id) !== evidenceEpoch
+            || !currentPool.accountSnapshot().accounts.some(accountValue => accountValue.id === value.id)) {
+            rows[index] = portfolioRow(value, evidenceEpoch, 'skipped', null, 'identity_changed');
+            continue;
+          }
+          const skipped = portfolioSkip(value, currentPool);
+          if (skipped) { rows[index] = skipped; continue; }
+          const quota = await refreshQuota(value.id);
+          if (stopping || destroyed || getPool() !== currentPool
+            || currentPool.evidenceEpoch(value.id) !== evidenceEpoch) {
+            rows[index] = portfolioRow(value, evidenceEpoch, 'skipped', null, 'identity_changed');
+          } else {
+            rows[index] = portfolioRow(value, evidenceEpoch, quotaStatus(quota), quota,
+              quota?.refreshError ?? quota?.reason ?? null);
+          }
+        } catch (error) {
+          const reason = /changed while its limits were being read/.test(error?.message ?? '') ? 'identity_changed'
+            : stopping || destroyed ? 'closing' : 'refresh_failed';
+          rows[index] = portfolioRow(value, evidenceEpoch,
+            reason === 'identity_changed' || reason === 'closing' ? 'skipped' : 'unavailable', null, reason);
+        }
+      }
+    };
+    const operation = Promise.all(Array.from({ length: Math.min(3, accounts.length) }, worker))
+      .then(() => frozen({ generatedAt: new Date().toISOString(), rows }));
+    quotaPortfolioRefresh = operation;
+    void operation.finally(() => {
+      if (quotaPortfolioRefresh === operation) quotaPortfolioRefresh = null;
+    }).catch(() => {});
+    return operation;
   }
 
   async function start(id) {
@@ -253,7 +348,7 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     if (settling) await settling;
     destroyed = true;
   }
-  return Object.freeze({ quotaSnapshot, refreshQuota, start, snapshot,
+  return Object.freeze({ quotaSnapshot, refreshQuota, refreshQuotaPortfolio, start, snapshot,
     status: requireOwner, open, cancel, copyCode, assertAccountMutable,
     currentOperation: () => starting || releaseAccountOperation || controller.selectionLock()
       ? 'Codex account sign-in' : null,
