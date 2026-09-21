@@ -294,6 +294,8 @@
 .account-add > div { display: flex; gap: 10px; }
 .account-add input { flex: 1; min-width: 0; height: 38px; border: 1px solid var(--color-border-heavy); border-radius: 8px; background: var(--color-background-control); padding: 0 12px; font-size: var(--text-sm); }
 .account-loading { color: var(--color-text-tertiary); padding: 20px 0; }
+.account-loading.is-error { display: grid; justify-items: start; gap: 12px; color: var(--color-text-secondary); }
+.account-loading.is-error p { margin: 0; }
 
 /* A purposeful welcome instead of a social follow step. */
 .welcome { background: var(--color-background-surface); }

@@ -465,6 +465,7 @@ async function nativeImagesRequest(
 ): Promise<Response> {
   const authorization = req.headers.get("authorization") ?? "";
   if (!authorization.startsWith("Bearer ") || authorization.length <= "Bearer ".length) {
+    void req.body?.cancel().catch(() => {});
     return formatErrorResponse(401, "authentication_error", "Native image requests require incoming Codex Bearer authorization");
   }
   try {
@@ -517,6 +518,7 @@ export async function responseRequest(
       options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
     }
   } catch (error) {
+    void nativeRequest.body?.cancel().catch(() => {});
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
   if (typeof requestedModel === "string" && !isChatGptWebModelSlug(requestedModel)) {
@@ -862,6 +864,7 @@ export async function compactRequest(
       options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
     }
   } catch (error) {
+    void nativeRequest.body?.cancel().catch(() => {});
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
   if (typeof raw.model !== "string" || !raw.model) {

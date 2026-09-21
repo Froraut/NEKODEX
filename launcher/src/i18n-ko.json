@@ -1,4 +1,5 @@
 {
+  "lastConnectorVerification": "마지막 커넥터 확인: {time}",
   "checkUpdates": "업데이트 확인",
   "updateCheckCooldown": "1분 후 다시 확인",
   "setupNext": "다음 단계",

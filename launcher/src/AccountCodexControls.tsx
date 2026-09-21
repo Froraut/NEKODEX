@@ -28,6 +28,7 @@ export function AccountCodexControls({
   quota,
   quotaBusy,
   quotaDisabledReason,
+  transitionBusy = false,
 }: {
   account: Account;
   copy: AccountCodexCopy;
@@ -44,6 +45,7 @@ export function AccountCodexControls({
   quota: AccountQuotaSnapshot | null | undefined;
   quotaBusy: boolean;
   quotaDisabledReason?: string;
+  transitionBusy?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | undefined>(undefined);
@@ -57,7 +59,7 @@ export function AccountCodexControls({
     ? quotaDisabledReason : undefined;
 
   const copyCode = async () => {
-    if (loginAction !== null) return;
+    if (transitionBusy || loginAction !== null) return;
     if (!await onCopyCode()) return;
     setCopied(true);
     window.clearTimeout(copiedTimer.current);
@@ -71,7 +73,7 @@ export function AccountCodexControls({
       <header>
         <h3 id={quotaHeadingId}>{copy.quotaTitle}</h3>
         <button className="button-secondary" type="button"
-          disabled={quotaBusy || Boolean(quotaDisabledReason)}
+          disabled={transitionBusy || quotaBusy || Boolean(quotaDisabledReason)}
           aria-busy={quotaBusy || undefined}
           aria-describedby={quotaDisabledReason ? quotaDisabledReasonId : undefined}
           title={quotaDisabledReason}
@@ -89,7 +91,7 @@ export function AccountCodexControls({
       <header>
         <h3 id={loginHeadingId}>{copy.loginTitle}</h3>
         {!login?.active && !login?.settling ? <button className="button-secondary" type="button"
-          disabled={loginStarting || Boolean(loginDisabledReason)}
+          disabled={transitionBusy || loginStarting || Boolean(loginDisabledReason)}
           aria-busy={loginStarting || undefined}
           aria-describedby={loginDisabledReason ? (sharedDisabledReason ? quotaDisabledReasonId : loginDisabledReasonId) : undefined}
           title={loginDisabledReason}
@@ -102,7 +104,8 @@ export function AccountCodexControls({
         ? <p className="account-codex-disabled-reason" id={loginDisabledReasonId}>{loginDisabledReason}</p>
         : null}
       {login ? <LoginProgressView account={account} copy={copy} language={language} login={login}
-        action={loginAction} copied={copied} onCancel={onCancelLogin} onCopy={copyCode} onOpen={onOpenLogin} /> : null}
+        action={loginAction} copied={copied} transitionBusy={transitionBusy}
+        onCancel={onCancelLogin} onCopy={copyCode} onOpen={onOpenLogin} /> : null}
     </section>
   </div>;
 }
@@ -176,7 +179,7 @@ function QuotaWindowView({ copy, label, language, value }: {
   </section>;
 }
 
-function LoginProgressView({ account, action, copied, copy, language, login, onCancel, onCopy, onOpen }: {
+function LoginProgressView({ account, action, copied, copy, language, login, onCancel, onCopy, onOpen, transitionBusy }: {
   account: Account;
   action: "open" | "copy" | "cancel" | null;
   copied: boolean;
@@ -186,6 +189,7 @@ function LoginProgressView({ account, action, copied, copy, language, login, onC
   onCancel: () => Promise<void>;
   onCopy: () => Promise<void>;
   onOpen: () => Promise<void>;
+  transitionBusy: boolean;
 }) {
   const actual = login.actualAccount?.email || login.actualAccount?.planType || null;
   const expected = account.accountLabel?.trim().toLocaleLowerCase() ?? null;
@@ -202,14 +206,14 @@ function LoginProgressView({ account, action, copied, copy, language, login, onC
     {login.userCode ? <div className="account-codex-device-code">
       <div className="account-codex-device-code-row">
         <div><span>{copy.loginCode}</span><code>{login.userCode}</code></div>
-        {login.active ? <button className="button-secondary" type="button" disabled={action !== null}
+        {login.active ? <button className="button-secondary" type="button" disabled={transitionBusy || action !== null}
           aria-busy={action === "copy" || undefined}
           onClick={() => void onCopy()}>{copied ? copy.Copied : copy.copyCode}</button> : null}
       </div>
       <small>{copy.loginCodeHint}</small>
     </div> : null}
     {login.active ? <div className="account-codex-login-actions">
-      {login.canOpen ? <button className="button-primary" type="button" disabled={action !== null}
+      {login.canOpen ? <button className="button-primary" type="button" disabled={transitionBusy || action !== null}
         aria-busy={action === "open" || undefined}
         onClick={() => void onOpen()}>{copy.loginOpen}</button> : null}
       {login.canCancel ? <button className="text-button" type="button" disabled={action !== null}

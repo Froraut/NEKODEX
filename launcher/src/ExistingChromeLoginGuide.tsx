@@ -25,16 +25,18 @@ export function existingChromeFailureText(code: string | null, copy: Copy): stri
   }
 }
 
-export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: {
+export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, transitionBusy = false }: {
   progress: ExistingChromeLoginProgress;
   copy: Copy;
   onRetry: () => Promise<void>;
   setError: (error: string | null) => void;
+  transitionBusy?: boolean;
 }) {
   const [now, setNow] = useState(Date.now());
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const [copied, setCopied] = useState(false);
+  useEffect(() => setCopied(false), [progress.startedAt]);
   useEffect(() => {
     setNow(Date.now());
     if (!progress.active) return;
@@ -59,8 +61,8 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: 
   const verificationFailed = progress.error === "session-verification-failed";
   const settings = !["existing-chrome-handoff-timeout", "session-verification-failed"].includes(progress.error ?? "")
     && ["discovering", "waiting-for-chrome", "failed", "timed-out", "cancelled"].includes(progress.phase);
-  const act = async (action: () => Promise<unknown>) => {
-    if (inFlight.current) return;
+  const act = async (action: () => Promise<unknown>, allowedDuringTransition = false) => {
+    if (inFlight.current || (transitionBusy && !allowedDuringTransition)) return;
     inFlight.current = true;
     setPending(true);
     try { await action(); } catch { setError(copy.existingChromeFailure); }
@@ -79,16 +81,16 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError }: 
     {progress.active && progress.phase === "preparing" ? <p>{copy.existingChromeHandoffRemaining.replace("{time}", remaining)}</p> : null}
     {progress.error ? <p role="alert">{existingChromeFailureText(progress.error, copy)}</p> : null}
     <div className="browser-empty-actions">
-      {progress.canAllowFileAccess ? <button className="toolbar-text-button" type="button" disabled={pending}
+      {progress.canAllowFileAccess ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.allowExistingChromeFileAccess())}>{copy.existingChromeAllowFile}</button> : null}
-      {progress.canCopySettings ? <button className="toolbar-text-button" type="button" disabled={pending}
+      {progress.canCopySettings ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(async () => { await window.codexWebLauncher!.copyExistingChromeSettingsAddress(); setCopied(true); })}>
         {copied ? copy.existingChromeCopied : copy.existingChromeCopy}</button> : null}
       {progress.canCancel ? <button className="toolbar-text-button" type="button" disabled={pending}
-        onClick={() => void act(() => window.codexWebLauncher!.cancelExistingChromeLogin())}>{copy.passkeyCancel}</button> : null}
-      {terminal ? <button className="toolbar-text-button" type="button" disabled={pending}
-        onClick={() => void onRetry()}>{copy.retry}</button> : null}
-      {verificationFailed ? <button className="toolbar-text-button" type="button" disabled={pending}
+        onClick={() => void act(() => window.codexWebLauncher!.cancelExistingChromeLogin(), true)}>{copy.passkeyCancel}</button> : null}
+      {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+        onClick={() => void act(onRetry)}>{copy.retry}</button> : null}
+      {verificationFailed ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.openLogin())}>{copy.signIn}</button> : null}
     </div>
   </div>;

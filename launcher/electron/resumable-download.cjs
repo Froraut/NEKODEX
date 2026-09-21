@@ -7,11 +7,13 @@ const { pipeline } = require('node:stream/promises');
 async function downloadAuthenticatedAsset(url, destination, {
   expectedBytes, expectedSha256, requestDownload, onProgress,
   maxBytes = 1024 ** 3, idleTimeoutMs = 60_000, totalTimeoutMs = 60 * 60_000,
+  signal,
 }) {
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || expectedBytes > 1024 ** 3
     || !Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 1024 ** 3
     || expectedBytes > maxBytes || !Number.isSafeInteger(totalTimeoutMs) || totalTimeoutMs <= 0
     || !/^[a-f0-9]{64}$/.test(expectedSha256)) throw new Error('Invalid authenticated download identity');
+  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('Update download was cancelled');
   const partial = `${destination}.part`;
   const identityFile = `${destination}.identity.json`;
   const identity = JSON.stringify({ url, expectedBytes, expectedSha256 });
@@ -29,14 +31,20 @@ async function downloadAuthenticatedAsset(url, destination, {
   }
   let bytes = fs.existsSync(partial) ? fs.statSync(partial).size : 0;
   if (bytes > expectedBytes) throw new Error('Update partial exceeds signed size');
-  const startBytes = bytes, startedAt = Date.now();
+  let speedBaseBytes = bytes;
+  let speedStartedAt = Date.now();
   const controller = new AbortController();
+  const cancel = () => controller.abort(
+    signal.reason instanceof Error ? signal.reason : new Error('Update download was cancelled'),
+  );
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
   const total = setTimeout(() => controller.abort(new Error('Update download exceeded its overall time limit; partial retained')), totalTimeoutMs);
   let idle, response, invalid = false, lastPublishedAt = 0;
   const progress = () => {
     clearTimeout(idle);
     idle = setTimeout(() => controller.abort(new Error('Update download made no progress; partial retained for retry')), idleTimeoutMs);
-    const speed = Math.max(0, bytes - startBytes) / Math.max(0.001, (Date.now() - startedAt) / 1000);
+    const speed = Math.max(0, bytes - speedBaseBytes) / Math.max(0.001, (Date.now() - speedStartedAt) / 1000);
     if (Date.now() - lastPublishedAt >= 100 || bytes === expectedBytes) {
       lastPublishedAt = Date.now();
       onProgress?.({ downloadedBytes: bytes, totalBytes: expectedBytes, bytesPerSecond: speed,
@@ -60,7 +68,14 @@ async function downloadAuthenticatedAsset(url, destination, {
         }
       } else if (response.statusCode === 200) {
         // The server ignored Range: replace the partial, never append a full body.
+        const restarted = bytes > 0;
         bytes = 0;
+        speedBaseBytes = 0;
+        speedStartedAt = Date.now();
+        if (restarted) {
+          lastPublishedAt = 0;
+          progress();
+        }
       } else throw new Error(`Update download failed with HTTP ${response.statusCode}`);
       const fd = fs.openSync(partial, bytes ? 'a' : 'w', 0o600);
       const limit = new Transform({ transform(chunk, _encoding, callback) {
@@ -73,7 +88,11 @@ async function downloadAuthenticatedAsset(url, destination, {
     }
     if (bytes !== expectedBytes) throw new Error('Incomplete update download; partial retained');
     const hash = crypto.createHash('sha256');
-    for await (const chunk of fs.createReadStream(partial)) hash.update(chunk);
+    for await (const chunk of fs.createReadStream(partial)) {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      hash.update(chunk);
+    }
+    if (controller.signal.aborted) throw controller.signal.reason;
     if (hash.digest('hex') !== expectedSha256) {
       invalid = true; throw new Error('Update SHA-256 does not match signed metadata');
     }
@@ -87,6 +106,10 @@ async function downloadAuthenticatedAsset(url, destination, {
       fs.rmSync(partial, { force: true }); fs.rmSync(identityFile, { force: true });
     }
     throw controller.signal.aborted ? controller.signal.reason : error;
-  } finally { clearTimeout(idle); clearTimeout(total); }
+  } finally {
+    clearTimeout(idle);
+    clearTimeout(total);
+    signal?.removeEventListener('abort', cancel);
+  }
 }
 module.exports = { downloadAuthenticatedAsset };

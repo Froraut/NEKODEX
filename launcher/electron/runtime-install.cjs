@@ -6,6 +6,7 @@ const { runtimeBundlePaths } = require("./runtime-command.cjs");
 
 const DEFAULT_SOURCE_WAIT_TIMEOUT_MS = 30_000;
 const DEFAULT_SOURCE_WAIT_INTERVAL_MS = 50;
+const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 function comparePaths(left, right) {
@@ -40,7 +41,12 @@ function validateManifestPath(relativePath) {
 
 function readRuntimeManifest(runtimeRoot, { version, platform, arch, bundleId }) {
   const manifestPath = path.join(runtimeRoot, "manifest.json");
-  if (!fs.existsSync(manifestPath)) throw new Error(`Runtime manifest is missing: ${manifestPath}`);
+  const manifestMetadata = fs.lstatSync(manifestPath, { throwIfNoEntry: false });
+  if (!manifestMetadata) throw new Error(`Runtime manifest is missing: ${manifestPath}`);
+  if (!manifestMetadata.isFile() || manifestMetadata.isSymbolicLink()
+    || manifestMetadata.size < 1 || manifestMetadata.size > MAX_MANIFEST_BYTES) {
+    throw new Error(`Runtime manifest must be a bounded regular file owned by the bundle: ${manifestPath}`);
+  }
   let manifest;
   try {
     manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -143,6 +149,11 @@ function validateRuntimeFile(runtimeRoot, canonicalRoot, file) {
 }
 
 function inspectRuntimeBundle(runtimeRoot, identity) {
+  const rootMetadata = fs.lstatSync(runtimeRoot, { throwIfNoEntry: false });
+  if (!rootMetadata) throw new Error(`Runtime bundle root is missing: ${runtimeRoot}`);
+  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
+    throw new Error(`Runtime bundle root must be a real directory: ${runtimeRoot}`);
+  }
   const manifest = readRuntimeManifest(runtimeRoot, identity);
   const expectedPaths = manifest.files.map(file => file.path);
   const expectedSet = new Set(expectedPaths);

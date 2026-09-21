@@ -7,6 +7,8 @@ const { UsageStore } = require('./usage-store.cjs');
 const { createAccountRegistry, validateAccountId } = require('./account-registry.cjs');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 
+const ACCOUNT_READ_SETTLEMENT_TIMEOUT_MS = 10_000;
+
 /** One browser session per account; shared global capacity and sticky conversation routing. */
 class AccountBrowserPool {
   constructor(options) {
@@ -18,6 +20,7 @@ class AccountBrowserPool {
     this.usage = new UsageStore(options.coreHome);
     this.networkOperation = null;
     this.accountOperations = new Map();
+    this.accountReadOperations = new Map();
     this.existingChromeImportLease = null;
     this.hosts = new Map();
     this.creatingHosts = new Set();
@@ -111,11 +114,17 @@ class AccountBrowserPool {
   }
   accountOperationLabel(id) {
     validateAccountId(id);
+    const mutation = this.accountMutationOperationLabel(id);
+    if (mutation) return mutation;
+    return this.hosts.get(id)?.currentOperation() || null;
+  }
+  accountMutationOperationLabel(id) {
+    validateAccountId(id);
     const reserved = this.accountOperations.get(id);
     if (reserved) return reserved.label;
     if (this.networkOperation === id) return 'Account network configuration';
     if (this.loginOperation?.id === id) return 'ChatGPT account login';
-    return this.hosts.get(id)?.currentOperation() || null;
+    return null;
   }
   accountOperationError(id) {
     const label = this.accountOperationLabel(id);
@@ -124,6 +133,43 @@ class AccountBrowserPool {
   assertAccountOperationAvailable(id) {
     const error = this.accountOperationError(id);
     if (error) throw error;
+  }
+  accountReadOperationLabel(id) {
+    validateAccountId(id);
+    return this.accountReadOperations?.get(id)?.values().next().value?.label ?? null;
+  }
+  acquireAccountReadOperation(id, label, cancel) {
+    if (this.destroyed) throw new Error('ChatGPT account pool is closed');
+    if (this.inspectionsPaused) throw new Error('Account reads are paused for launcher restart');
+    validateAccountId(id);
+    if (typeof label !== 'string' || !label.trim() || label.trim().length > 80
+      || /[\u0000-\u001f\u007f]/.test(label) || typeof cancel !== 'function') {
+      throw new Error('Account read operation requires a printable label and cancellation callback');
+    }
+    this.getHost(id);
+    const mutation = this.accountMutationOperationLabel(id);
+    if (mutation) {
+      throw new Error(`This ChatGPT account is busy with ${mutation}; retry after it finishes`);
+    }
+    const token = Symbol('account-read-operation');
+    let resolveSettled;
+    const settled = new Promise(resolve => { resolveSettled = resolve; });
+    const operation = Object.freeze({ label: label.trim(), token, cancel, settled });
+    this.accountReadOperations ??= new Map();
+    const operations = this.accountReadOperations.get(id) ?? new Map();
+    operations.set(token, operation);
+    this.accountReadOperations.set(id, operations);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const current = this.accountReadOperations.get(id);
+      if (current?.get(token) === operation) {
+        current.delete(token);
+        if (current.size === 0) this.accountReadOperations.delete(id);
+      }
+      resolveSettled();
+    };
   }
   acquireAccountOperation(id, label) {
     if (this.destroyed) throw new Error('ChatGPT account pool is closed');
@@ -136,6 +182,10 @@ class AccountBrowserPool {
     const normalizedLabel = label.trim();
     const conflict = this.accountOperationError(id);
     if (conflict) throw conflict;
+    const readLabel = this.accountReadOperationLabel(id);
+    if (readLabel) {
+      throw new Error(`This ChatGPT account is busy with ${readLabel}; retry after it finishes`);
+    }
     if (host.activeTraceId || [...this.reservations.values()].includes(id)) {
       throw new Error('Finish this account’s active or acquiring tasks before starting the account operation');
     }
@@ -726,7 +776,7 @@ class AccountBrowserPool {
     if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
     const next = new Map(this.affinity);
     for (const binding of newKeys) next.set(binding, id);
-    writePrivateFileAtomic(this.affinityPath, JSON.stringify(Object.fromEntries(next)) + '\n');
+    writePrivateFileAtomic(this.affinityPath, JSON.stringify(Object.fromEntries(next)) + '\n', { durable: true });
     this.affinity = next;
   }
   releaseRetainedConversation(conversationKey) {
@@ -895,7 +945,24 @@ class AccountBrowserPool {
   async persistSession() { await Promise.all([...this.hosts.values()].map(host => host.persistSession())); }
   async cancelReadOnlyInspections() {
     this.inspectionsPaused = true;
-    const results = await Promise.allSettled([...this.hosts.values()].map(host => host.cancelReadOnlyInspection()));
+    const reads = [...(this.accountReadOperations?.values() ?? [])]
+      .flatMap(operations => [...operations.values()]);
+    for (const read of reads) {
+      try { read.cancel(); } catch {}
+    }
+    let settlementTimer;
+    const readSettlement = Promise.race([
+      Promise.allSettled(reads.map(read => read.settled)),
+      new Promise((_, reject) => {
+        settlementTimer = setTimeout(() => reject(new Error('Account read cancellation timed out')),
+          ACCOUNT_READ_SETTLEMENT_TIMEOUT_MS);
+        settlementTimer.unref?.();
+      }),
+    ]).finally(() => clearTimeout(settlementTimer));
+    const results = await Promise.allSettled([
+      ...[...this.hosts.values()].map(host => host.cancelReadOnlyInspection()),
+      readSettlement,
+    ]);
     const failure = results.find(result => result.status === 'rejected');
     if (failure) throw failure.reason;
   }
@@ -903,6 +970,12 @@ class AccountBrowserPool {
     this.destroyed = true;
     this.existingChromeImportLease = null;
     this.accountOperations.clear();
+    for (const operations of this.accountReadOperations?.values() ?? []) {
+      for (const read of operations.values()) {
+        try { read.cancel(); } catch {}
+      }
+    }
+    this.accountReadOperations?.clear();
     for (const host of this.hosts.values()) host.destroy();
     try { if (JSON.parse(fs.readFileSync(this.options.descriptorPath, 'utf8')).pid === process.pid) fs.rmSync(this.options.descriptorPath); } catch {}
   }

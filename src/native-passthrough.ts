@@ -26,6 +26,7 @@ const FIRST_PARTY_CODEX_ORIGINATORS = new Set([
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
+  "proxy-connection",
   "proxy-authenticate",
   "proxy-authorization",
   "te",
@@ -155,9 +156,14 @@ export function scrubBridgeArtifactsForNative(value: unknown): { value: unknown;
 }
 
 function endToEndHeaders(source: Headers): Headers {
+  const hopByHopHeaders = new Set(HOP_BY_HOP_HEADERS);
+  for (const name of (source.get("connection") ?? "").split(",")) {
+    const normalized = name.trim().toLowerCase();
+    if (normalized) hopByHopHeaders.add(normalized);
+  }
   const headers = new Headers();
   for (const [name, value] of source) {
-    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers.append(name, value);
+    if (!hopByHopHeaders.has(name.toLowerCase())) headers.append(name, value);
   }
   headers.delete("content-length");
   return headers;
@@ -535,6 +541,7 @@ export async function forwardNativeCodexRequest(
   const telemetryStartedAt = new Date(telemetryStartedAtMs).toISOString();
   const authorization = request.headers.get("authorization") ?? "";
   if (!authorization.startsWith("Bearer ") || authorization.length <= "Bearer ".length) {
+    void request.body?.cancel().catch(() => {});
     throw new Error("Native Codex passthrough requires the incoming Bearer authorization");
   }
 
@@ -608,9 +615,9 @@ export async function forwardNativeCodexRequest(
     headers,
     ...(body ? { body } : {}),
     signal: request.signal,
-    // Images create work: preserve redirects as responses instead of replaying a POST or
-    // forwarding account headers to a redirect destination.
-    redirect: imageRequest ? "manual" : "follow",
+    // Preserve redirects as responses. Native POSTs create work and must not be replayed, while
+    // every endpoint carries account-scoped headers that must stay on the exact trusted origin.
+    redirect: "manual",
   });
   const telemetryEndpoint = endpoint === "responses" || endpoint === "responses/compact"
     ? (compactionRequest ? "responses/compact" : endpoint)

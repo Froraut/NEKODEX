@@ -3,13 +3,14 @@ const fs = require("node:fs");
 const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const { Transform } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 const { validateStagedApplication } = require("./update-validation.cjs");
 const { verifyReleaseMetadata } = require("./release-trust.cjs");
 const { downloadAuthenticatedAsset } = require("./resumable-download.cjs");
 const { processIdentity } = require("./update-recovery.cjs");
+const { runOwnedCommand } = require("./update-preparation.cjs");
 const BUILD = require("../package.json");
 const APPLICATION = applicationIdentity(BUILD);
 
@@ -34,6 +35,20 @@ const MAX_REDIRECTS = 5;
 const MAX_ASSET_BYTES = 1024 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 const RECHECK_COOLDOWN_MS = 60_000;
+
+function preparationCancelledError() {
+  return Object.assign(new Error("Update preparation was cancelled; the authenticated partial download was kept for retry"), {
+    code: "UPDATE_PREPARATION_CANCELLED",
+  });
+}
+
+function abortReason(signal, fallback = "Update preparation was cancelled") {
+  return signal?.reason instanceof Error ? signal.reason : new Error(fallback);
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortReason(signal);
+}
 
 function validateRepository(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(value)) {
@@ -142,6 +157,10 @@ function validateReleaseAssetUrl(raw, version, assetName, repository = REPOSITOR
 
 function request(url, redirects = 0, { signal, headers = {}, allowPartial = false } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortReason(signal, "Update request was cancelled"));
+      return;
+    }
     if (redirects > MAX_REDIRECTS) {
       reject(new Error(`Too many redirects while downloading ${url}`));
       return;
@@ -184,8 +203,13 @@ function request(url, redirects = 0, { signal, headers = {}, allowPartial = fals
 async function downloadText(url, maxBytes = 2 * 1024 * 1024, {
   timeoutMs = 60_000,
   requestDownload = request,
+  signal,
 } = {}) {
+  throwIfAborted(signal);
   const controller = new AbortController();
+  const cancel = () => controller.abort(abortReason(signal, "Update metadata download was cancelled"));
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
   const timer = setTimeout(() => controller.abort(new Error("Update metadata exceeded its time limit")), timeoutMs);
   let response;
   const abortResponse = () => response?.destroy(controller.signal.reason);
@@ -208,6 +232,7 @@ async function downloadText(url, maxBytes = 2 * 1024 * 1024, {
   } finally {
     clearTimeout(timer);
     controller.signal.removeEventListener("abort", abortResponse);
+    signal?.removeEventListener("abort", cancel);
   }
 }
 
@@ -218,12 +243,17 @@ async function downloadFile(url, destination, {
   maxBytes = MAX_ASSET_BYTES,
   timeoutMs = DOWNLOAD_TIMEOUT_MS,
   requestDownload = request,
+  signal,
 } = {}) {
   if (expectedSha256) return downloadAuthenticatedAsset(url, destination, {
     expectedBytes, expectedSha256, onProgress, requestDownload,
-    maxBytes, totalTimeoutMs: timeoutMs,
+    maxBytes, totalTimeoutMs: timeoutMs, signal,
   });
+  throwIfAborted(signal);
   const controller = new AbortController();
+  const cancel = () => controller.abort(abortReason(signal, "Update download was cancelled"));
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
   const timer = setTimeout(() => controller.abort(new Error("Update download exceeded its time limit")), timeoutMs);
   let response;
   let created = false;
@@ -253,6 +283,7 @@ async function downloadFile(url, destination, {
     throw error;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
   }
 }
 
@@ -346,32 +377,33 @@ function defaultDependencies() {
     sha256,
     verifyReleaseMetadata,
     validateStagedApplication,
-    extractMac(archive, destination) {
+    async extractMac(archive, destination, { signal } = {}) {
       fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
-      const result = spawnSync("/usr/bin/ditto", ["-x", "-k", archive, destination], {
-        encoding: "utf8",
-        timeout: 120_000,
+      await runOwnedCommand("/usr/bin/ditto", ["-x", "-k", archive, destination], {
+        signal,
+        timeoutMs: 120_000,
+        failureMessage: "Could not extract the macOS update",
       });
-      if (result.error) throw result.error;
-      if (result.status !== 0) throw new Error(`Could not extract the macOS update: ${result.stderr.trim()}`);
     },
-    extractWindows(archive, destination) {
+    async extractWindows(archive, destination, { signal } = {}) {
       fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
-      const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+      await runOwnedCommand("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
         "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:CODEX_UPDATE_ARCHIVE -DestinationPath $env:CODEX_UPDATE_STAGE"], {
+        signal,
         env: { ...process.env, CODEX_UPDATE_ARCHIVE: archive, CODEX_UPDATE_STAGE: destination },
-        encoding: "utf8", timeout: 180_000, windowsHide: true,
+        timeoutMs: 180_000,
+        failureMessage: "Could not extract the Windows update",
       });
-      if (result.error) throw result.error;
-      if (result.status !== 0) throw new Error(`Could not extract the Windows update: ${result.stderr.trim()}`);
     },
-    extractLinux(archive, destination) {
+    async extractLinux(archive, destination, { signal } = {}) {
       fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
       // Execute only after independently authenticated release metadata and hash verification.
-      const result = spawnSync(archive, ["--appimage-extract"], { cwd: destination, encoding: "utf8", timeout: 180_000,
-        maxBuffer: 1024 * 1024, stdio: ["ignore", "ignore", "pipe"] });
-      if (result.error) throw result.error;
-      if (result.status !== 0) throw new Error(`Could not extract the Linux update: ${result.stderr?.trim()}`);
+      await runOwnedCommand(archive, ["--appimage-extract"], {
+        cwd: destination,
+        signal,
+        timeoutMs: 180_000,
+        failureMessage: "Could not extract the Linux update",
+      });
     },
     linuxRunnerSource() {
       if (typeof process.resourcesPath === "string" && process.resourcesPath) {
@@ -418,6 +450,7 @@ function createUpdateController({
   let state = packaged && supportedAsset ? { status: "idle" } : { status: "disabled" };
   let checked = false;
   let pending = null;
+  let preparation = null;
   let candidate = null;
   let checkPromise = null;
   let lastCheckFinishedAt = 0;
@@ -536,18 +569,35 @@ function createUpdateController({
     if (pending) throw new Error("An update is already being prepared");
     if (state.status !== "available" || !candidate) throw new Error("No launcher update is available");
     const available = candidate;
+    let settlePreparation;
+    const active = {
+      controller: new AbortController(),
+      version: available.version,
+      handoffCommitted: false,
+      cancelRequested: false,
+      outcome: null,
+      settled: new Promise(resolve => { settlePreparation = resolve; }),
+    };
+    preparation = active;
     pending = (async () => {
       transition({ status: "downloading", version: available.version });
       let tempRoot;
       try {
+        throwIfAborted(active.controller.signal);
         tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-update-"));
-        const metadataText = await deps.downloadText(available.metadataUrl, 512 * 1024);
+        const metadataText = await deps.downloadText(available.metadataUrl, 512 * 1024, {
+          signal: active.controller.signal,
+        });
+        throwIfAborted(active.controller.signal);
         const metadata = deps.verifyReleaseMetadata(metadataText, { repository, tag: `v${available.version}`, version: available.version });
         const authenticatedAsset = metadata.assets.find(asset => asset.name === available.assetName);
         if (!authenticatedAsset || authenticatedAsset.size !== available.assetBytes) {
           throw new Error("Signed release metadata does not match the selected asset size");
         }
-        const checksums = await deps.downloadText(available.checksumsUrl);
+        const checksums = await deps.downloadText(available.checksumsUrl, 2 * 1024 * 1024, {
+          signal: active.controller.signal,
+        });
+        throwIfAborted(active.controller.signal);
         const expected = expectedChecksum(checksums, available.assetName);
         if (expected !== authenticatedAsset.sha256) throw new Error("Checksums do not match independently authenticated release metadata");
         const assetPath = path.join(tempRoot, available.assetName);
@@ -562,23 +612,33 @@ function createUpdateController({
         }
         if (!fs.existsSync(cachedAsset)) await deps.downloadFile(available.assetUrl, cachedAsset, {
           expectedBytes: available.assetBytes, expectedSha256: expected,
-          onProgress: progress => transition({ status: "downloading", version: available.version, ...progress }),
+          onProgress: progress => {
+            if (!active.controller.signal.aborted) {
+              transition({ status: "downloading", version: available.version, ...progress });
+            }
+          },
+          signal: active.controller.signal,
         });
+        throwIfAborted(active.controller.signal);
         transition({ status: "verifying", version: available.version });
-        fs.copyFileSync(cachedAsset, assetPath);
+        await fs.promises.copyFile(cachedAsset, assetPath);
+        throwIfAborted(active.controller.signal);
         const actual = deps.sha256(assetPath);
         if (actual !== expected) throw new Error(`SHA-256 verification failed for ${available.assetName}`);
+        throwIfAborted(active.controller.signal);
 
         const stagingRoot = path.join(tempRoot, "stage");
-        if (platform === "darwin") deps.extractMac(assetPath, stagingRoot);
-        if (platform === "win32") deps.extractWindows(assetPath, stagingRoot);
+        if (platform === "darwin") await deps.extractMac(assetPath, stagingRoot, { signal: active.controller.signal });
+        if (platform === "win32") await deps.extractWindows(assetPath, stagingRoot, { signal: active.controller.signal });
         if (platform === "linux") {
           fs.chmodSync(assetPath, 0o755);
-          deps.extractLinux(assetPath, stagingRoot);
+          await deps.extractLinux(assetPath, stagingRoot, { signal: active.controller.signal });
+          throwIfAborted(active.controller.signal);
           const runnerSource = deps.linuxRunnerSource();
           fs.copyFileSync(runnerSource, path.join(tempRoot, "linux-appimage-runner.sh"));
           fs.chmodSync(path.join(tempRoot, "linux-appimage-runner.sh"), 0o755);
         }
+        throwIfAborted(active.controller.signal);
 
         const workerPath = path.join(tempRoot, "update-worker.cjs");
         for (const filename of ["update-worker.cjs", "update-validation.cjs", "update-recovery.cjs", "update-launcher.cjs"]) {
@@ -597,18 +657,52 @@ function createUpdateController({
           logPath: path.join(logsDirectory, "update-worker.log"),
         });
         deps.validateStagedApplication(job.stagedApplication, job);
+        throwIfAborted(active.controller.signal);
         const jobPath = path.join(tempRoot, "job.json");
         fs.writeFileSync(jobPath, `${JSON.stringify(job)}\n`, { mode: 0o600 });
+        // Give cancellation IPC one final turn after synchronous validation. Once
+        // handoff starts, only the existing quit-failure rollback may stop the worker.
+        await new Promise(resolve => setImmediate(resolve));
+        throwIfAborted(active.controller.signal);
+        active.handoffCommitted = true;
+        transition({ status: "installing", version: available.version });
         const child = await deps.spawnWorker(runtimeExecutable, workerPath, jobPath);
         if (!Number.isInteger(child?.pid) || child.pid <= 0) throw new Error("The update worker did not start");
         child.unref?.();
         logger?.info("launcher.update_worker_started", { pid: child.pid, version: available.version });
-        transition({ status: "installing", version: available.version });
         return { child, tempRoot, version: available.version };
       } catch (error) {
+        const cancelled = active.controller.signal.aborted && !active.handoffCommitted;
+        let cleanupError = null;
         if (tempRoot) {
-          try { fs.rmSync(tempRoot, { recursive: true, force: true }); }
-          catch (cleanupError) { logger?.warn("launcher.update_cleanup_failed", { message: String(cleanupError) }); }
+          if (error?.preserveStaging === true) {
+            cleanupError = error;
+            logger?.warn("launcher.update_cleanup_preserved", { message: String(error) });
+          } else {
+            try { fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); }
+            catch (failure) {
+              cleanupError = failure;
+              logger?.warn("launcher.update_cleanup_failed", { message: String(failure) });
+            }
+          }
+        }
+        if (cancelled) {
+          if (cleanupError) {
+            const failure = Object.assign(new Error("Update preparation was cancelled, but temporary staging cleanup did not complete"), {
+              code: "UPDATE_PREPARATION_CLEANUP_FAILED",
+              cause: cleanupError,
+            });
+            active.outcome = { status: "failed", version: available.version, message: failure.message };
+            transition({ status: "error", message: failure.message });
+            throw failure;
+          }
+          active.outcome = { status: "cancelled", version: available.version };
+          transition({ status: "available", version: available.version });
+          throw abortReason(active.controller.signal);
+        }
+        if (error?.preserveStaging === true) {
+          transition({ status: "error", message: error.message });
+          throw error;
         }
         transition({ status: "available", version: available.version });
         throw error;
@@ -618,7 +712,28 @@ function createUpdateController({
       return await pending;
     } finally {
       pending = null;
+      if (preparation === active) preparation = null;
+      settlePreparation();
     }
+  }
+
+  async function cancelPreparation() {
+    const active = preparation;
+    if (!active) {
+      return state.status === "installing"
+        ? { status: "too-late", reason: "worker-handoff", version: state.version }
+        : { status: "not-active" };
+    }
+    if (active.handoffCommitted) {
+      return { status: "too-late", reason: "worker-handoff", version: active.version };
+    }
+    if (!active.cancelRequested) {
+      active.cancelRequested = true;
+      active.controller.abort(preparationCancelledError());
+      transition({ status: "cancelling", version: active.version });
+    }
+    await active.settled;
+    return active.outcome || { status: "cancelled", version: active.version };
   }
 
   async function cancelInstall(launch) {
@@ -652,6 +767,7 @@ function createUpdateController({
     checkOnce,
     recheck,
     beginInstall,
+    cancelPreparation,
     cancelInstall,
   };
 }

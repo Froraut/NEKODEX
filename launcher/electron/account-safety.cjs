@@ -42,7 +42,7 @@ class AccountSafety {
   }
   save(id, item) {
     const next = { ...this.state, [id]: item };
-    writePrivateFileAtomic(this.path, JSON.stringify({ version: 1, accounts: next }) + '\n');
+    writePrivateFileAtomic(this.path, JSON.stringify({ version: 1, accounts: next }) + '\n', { durable: true });
     this.state = next;
   }
   snapshot(id) {

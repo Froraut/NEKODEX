@@ -106,7 +106,7 @@ export function BrandMark({ small = false }: { small?: boolean }) {
   return <span
     className={`brand-mark${small ? " is-small" : ""}${reaction ? ` is-reacting reaction-${reaction}` : ""}`}
     role={small ? undefined : "img"}
-    aria-label={small ? undefined : "NEKODEX cat"}
+    aria-label={small ? undefined : "NEKODEX"}
     onPointerEnter={begin}
     onPointerMove={follow}
     onPointerLeave={event => reset(event.currentTarget)}

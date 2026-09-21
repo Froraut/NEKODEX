@@ -3,6 +3,7 @@ import { ChatGptWebAdapterError } from "./adapter-error";
 /** Maximum number of automatic browser-turn retries after the initial send. */
 export const MAX_CHATGPT_WEB_TURN_RETRIES = 3;
 const RETRY_BUDGET_TTL_MS = 30 * 60_000;
+const MAX_RETRY_BUDGETS = 4_096;
 
 interface RetryBudgetEntry {
   retries: number;
@@ -27,6 +28,18 @@ function exhaustedError(entry: RetryBudgetEntry): ChatGptWebAdapterError {
   );
 }
 
+function capacityError(): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(
+    "ChatGPT retry tracking is at capacity. Refusing to start an untracked browser retry until an existing retry budget settles or expires.",
+    {
+      status: 503,
+      errorType: "server_error",
+      code: "chatgpt_retry_capacity",
+      retryable: false,
+    },
+  );
+}
+
 /**
  * Tracks only retryable ChatGPT browser failures across adapter instances. The HTTP bridge creates
  * one adapter per request, so this process-local budget must live outside createChatGptWebAdapter.
@@ -39,6 +52,7 @@ export class ChatGptWebTurnRetryPolicy {
   recordRetryableFailure(key: string, error: ChatGptWebAdapterError, now = Date.now()): ChatGptWebAdapterError {
     this.prune(now);
     const previous = this.entries.get(key);
+    if (!previous && this.entries.size >= MAX_RETRY_BUDGETS) return capacityError();
     const entry: RetryBudgetEntry = {
       retries: (previous?.retries ?? 0) + 1,
       updatedAt: now,
@@ -49,6 +63,7 @@ export class ChatGptWebTurnRetryPolicy {
         code: error.code,
       },
     };
+    this.entries.delete(key);
     this.entries.set(key, entry);
     return entry.retries > MAX_CHATGPT_WEB_TURN_RETRIES ? exhaustedError(entry) : error;
   }
@@ -56,7 +71,8 @@ export class ChatGptWebTurnRetryPolicy {
   exhaustedError(key: string, now = Date.now()): ChatGptWebAdapterError | undefined {
     this.prune(now);
     const entry = this.entries.get(key);
-    return entry && entry.retries > MAX_CHATGPT_WEB_TURN_RETRIES ? exhaustedError(entry) : undefined;
+    if (entry) return entry.retries > MAX_CHATGPT_WEB_TURN_RETRIES ? exhaustedError(entry) : undefined;
+    return this.entries.size >= MAX_RETRY_BUDGETS ? capacityError() : undefined;
   }
 
   clear(key: string): void {
