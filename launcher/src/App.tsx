@@ -1,4 +1,5 @@
 import taskControlCopy from "../electron/task-control-copy.json";
+import { TaskCenter, taskCenterTitle } from './TaskCenter';
 import { browserWindowCopy } from "./browser-window-copy";
 import { sessionIssueCopy } from "./session-issue-copy";
 import type { CompactionModel } from "./types";
@@ -1189,6 +1190,7 @@ function LauncherShell({
                   onClick={() => navigateSurface("browser")}
                 />
                 <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
+                <SidebarItem active={surface === 'tasks'} icon="logs" label={taskCenterTitle(language)} onClick={() => navigateSurface('tasks')} />
               </SidebarGroup>
               <SidebarGroup label={copy.configuration}>
                 <SidebarItem
@@ -1255,6 +1257,13 @@ function LauncherShell({
             {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
               <AccountSettings copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
                 setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy} />
+            </ContentSurface> : null}
+            {surface === 'tasks' ? <ContentSurface title={taskCenterTitle(language)}>
+              <TaskCenter tasks={browser?.tasks ?? []} language={language} disabled={transitionBusy}
+                open={async tabId => { await api!.selectBrowserTab(tabId); navigateSurface('browser'); }}
+                cancel={(tabId, traceId) => api!.closeBrowserTab(tabId, traceId)}
+                dismiss={(accountId, id) => api!.dismissTask(accountId, id)}
+                onError={cause => setError(messageOf(cause))} />
             </ContentSurface> : null}
             {surface === "browser" ? (
               <BrowserSurface
@@ -1396,7 +1405,7 @@ function TitleBar({
         />
         {devProfile ? <span className="titlebar-dev-profile">{copy.devBadge}</span> : null}
       </div>
-      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface]}</strong></div>
+      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language), setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface]}</strong></div>
     </header>
   );
 }

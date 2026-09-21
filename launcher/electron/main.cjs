@@ -995,6 +995,7 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
   handle("launcher:browser-tab-close", (_event, tabId, expectedTraceId) => browserHost.closeTab(tabId, expectedTraceId));
+  handle('launcher:task-dismiss', (_event, accountId, id) => browserHost.dismissTask(accountId, id));
   handle("launcher:manual-prompt-copy", (_event, tabId) => browserHost.copyManualPrompt(tabId));
   handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost.confirmManualSent(tabId));
   handle("launcher:browser-window-open", (_event, asTab = false) => {

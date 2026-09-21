@@ -477,6 +477,8 @@ export const LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS = 30_000;
 export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
 export type LauncherTurnActivity =
+  | { phase: "progress"; traceId: string; helperPid: number; surfaceId: string; sequence: number;
+      taskPhase: "preparing" | "sending-context" | "context-accepted" | "sending" | "accepted" | "responding" | "waiting-tools" }
   | { phase: "usage"; traceId: string; helperPid: number; receipt: string;
       effort: string; modelVersion: string;
       modelVersionSource?: "observed" | "pinned" | "unknown";
@@ -484,6 +486,7 @@ export type LauncherTurnActivity =
       outcome?: "completed"; }
   | {
       phase: "start";
+      taskProgressVersion?: 1;
       traceId: string;
       helperPid: number;
       conversationKey?: string;
@@ -750,6 +753,8 @@ export async function notifyLauncherTurn(
       : LAUNCHER_TURN_START_TIMEOUT_MS,
 ): Promise<{
   surfaceId?: string;
+  taskProgressVersion?: number;
+  taskProgressSequence?: number;
   reused?: boolean;
   connectorBound?: boolean;
   cancelledByUser?: boolean;
@@ -805,6 +810,8 @@ export async function notifyLauncherTurn(
         }
         return {
           surfaceId: body.surfaceId,
+          ...(body.taskProgressVersion === 1 && Number.isSafeInteger(body.taskProgressSequence) && (body.taskProgressSequence as number) >= 0
+            ? { taskProgressVersion: 1, taskProgressSequence: body.taskProgressSequence as number } : {}),
           reused: body.reused,
           connectorBound: body.connectorBound,
         };

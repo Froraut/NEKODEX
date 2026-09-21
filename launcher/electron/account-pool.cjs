@@ -7,6 +7,7 @@ const { AccountNetwork, validateProxy } = require('./account-network.cjs');
 const { UsageStore } = require('./usage-store.cjs');
 const { createAccountRegistry, validateAccountId } = require('./account-registry.cjs');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
+const { BrowserTaskLedger } = require('./browser-task-ledger.cjs');
 
 const ACCOUNT_READ_SETTLEMENT_TIMEOUT_MS = 10_000;
 
@@ -29,6 +30,8 @@ class AccountBrowserPool {
     this.options = options;
     this.logger = options.logger;
     this.registry = createAccountRegistry(options.coreHome);
+    this.taskLedgers = new Map(this.registry.snapshot().accounts.map(account => [account.id,
+      new BrowserTaskLedger(path.join(options.coreHome, 'runtime', `tasks-${account.id}.json`))]));
     this.safety = new AccountSafety(options.coreHome);
     this.network = new AccountNetwork(options.coreHome);
     this.usage = new UsageStore(options.coreHome);
@@ -91,7 +94,10 @@ class AccountBrowserPool {
     const basePartition = this.options.partition;
     this.creatingHosts.add(id);
     let host;
+    if (!this.taskLedgers.has(id)) this.taskLedgers.set(id,
+      new BrowserTaskLedger(path.join(this.options.coreHome, 'runtime', `tasks-${id}.json`)));
     try { host = new BrowserHost({ ...this.options,
+      taskLedger: this.taskLedgers.get(id),
       accountId: id,
       configureAccountSession: (session, accountId) => this.network.apply(session, this.network.get(accountId)),
       partition: id === 'default' ? basePartition : `${basePartition}-account-${id}`,
@@ -347,6 +353,13 @@ class AccountBrowserPool {
     const state = this.selectedHost().snapshot();
     const labels = new Map(this.registry.snapshot().accounts.map(account => [account.id, account.label]));
     return { ...state, accountId: selected, accountName: labels.get(selected),
+      tasks: [...(this.taskLedgers ?? [])].flatMap(([id, ledger]) => {
+        const host = this.hosts.get(id);
+        return (host?.taskSnapshot?.() ?? ledger.snapshot().map(row => ({ ...row,
+          canOpen: false, canCancel: false, canDismiss: row.terminal,
+          retrySafe: row.terminal && row.submission === 'not-sent',
+        }))).map(task => ({ ...task, accountId: id, accountName: labels.get(id) }));
+      }).sort((a, b) => b.createdAt - a.createdAt),
       maxTabs: this.options.maxTabs,
       tabs: [...state.tabs.filter(tab => tab.id === 'home'), ...[...this.hosts].flatMap(([id, host]) =>
         host.snapshot().tabs.filter(tab => tab.id !== 'home').map(tab => ({ ...tab,
@@ -998,7 +1011,7 @@ class AccountBrowserPool {
       this.ensureTabCapacity(host, traceId, key, connector);
       // Keep the turn owner and its tab independent from visible selection. The
       // automatic reveal owns the selection only while its revision is current.
-      const lease = await host.beginTurn(traceId, false, helperPid, key, connector, retained);
+      const lease = await host.beginTurn(traceId, false, helperPid, key, connector, retained, requirement?.taskProgressVersion);
       if (newSessionRecorded && lease.reused) {
         this.safety.rollbackNewSession(id, newSessionReservation);
         newSessionRecorded = false;
@@ -1033,6 +1046,19 @@ class AccountBrowserPool {
     } finally { this.reservations.delete(traceId); this.pendingAffinity.delete(traceId); }
   }
   heartbeatTurn(...args) { return this.ownerForTrace(args[0]).heartbeatTurn(...args); }
+  taskProgress(...args) { return this.ownerForTrace(args[0]).taskProgress(...args); }
+  dismissTask(accountId, id) {
+    const host = this.getHost(accountId);
+    const record = host.taskLedger.get(id);
+    if (!record?.terminal) throw new Error('Only a finished task can be dismissed');
+    const tab = host.turnTabs.get(record.tabId);
+    if (tab?.taskRecordId === id) {
+      if (tab.status === 'running') throw new Error('Task is still running');
+      // Dismissing a completed history row must not destroy its usable continuation.
+      if (record.phase !== 'completed') host.removeTurnTab(tab, false);
+    }
+    host.taskLedger.dismiss(id); this.publish(); return this.snapshot();
+  }
   async endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound, failureCode) {
     const owner = this.ownerForTrace(traceId);
     const id = this.traceOwners.get(traceId) ?? owner.accountId;

@@ -131,6 +131,7 @@ class BrowserControlServer {
     const isNativeProxy = request.url === "/v1/network/resolve-proxy";
     const isNativeUsage = request.url === "/v1/usage/native";
     const isTurn = request.url === "/v1/turn/start"
+      || request.url === "/v1/turn/progress"
       || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/end";
@@ -199,6 +200,9 @@ class BrowserControlServer {
       if (!Number.isInteger(body.helperPid) || body.helperPid < 1) {
         throw new Error("browser helper pid is invalid");
       }
+      if (body.taskProgressVersion !== undefined && (body.taskProgressVersion !== 1 || request.url !== '/v1/turn/start')) {
+        throw new Error('Invalid task progress version');
+      }
       if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
         throw new Error("conversationKey is invalid");
       }
@@ -231,7 +235,7 @@ class BrowserControlServer {
         throw new Error("refreshViewport is only valid for a turn heartbeat");
       }
       if (body.surfaceId !== undefined
-        && (request.url !== "/v1/turn/heartbeat"
+        && (!["/v1/turn/heartbeat", "/v1/turn/progress"].includes(request.url)
           || typeof body.surfaceId !== "string"
           || !/^[A-Za-z0-9_-]{32}$/.test(body.surfaceId))) {
         throw new Error("surfaceId is only valid for a turn heartbeat and must identify an owned surface");
@@ -373,13 +377,19 @@ class BrowserControlServer {
             body.conversationKey,
             body.connectorIdentity,
             body.requireRetainedConversation === true,
-            { effort: body.requestedEffort, routingKey: body.accountRoutingKey },
+            { effort: body.requestedEffort, routingKey: body.accountRoutingKey, taskProgressVersion: body.taskProgressVersion },
           );
           this.logger.info("browser.turn_started", { traceId: body.traceId });
           return { ok: true, ...lease };
         });
         writeJson(response, 200, result);
         return;
+      } else if (request.url === '/v1/turn/progress') {
+        const result = await this.reconcileAutomaticMutation('progress', body, () => {
+          host.taskProgress(body.traceId, body.helperPid, body.surfaceId, body.taskPhase, body.sequence);
+          return { ok: true };
+        });
+        writeJson(response, 200, result); return;
       } else if (request.url === "/v1/turn/heartbeat") {
         const result = await this.reconcileAutomaticMutation("heartbeat", body, () => {
           host.heartbeatTurn(body.traceId, body.helperPid, body.refreshViewport === true, body.surfaceId);

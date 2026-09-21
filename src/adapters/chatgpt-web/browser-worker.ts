@@ -1365,7 +1365,9 @@ export interface BrowserTurn {
   /** Send activation is the ambiguity boundary after which a fresh surface must not replay this prompt. */
   onSendActivated?: () => void | Promise<void>;
   /** Semantic submission evidence proved that ChatGPT accepted the prompt. */
-  onSubmitted?: () => void;
+  onSubmitted?: () => void | Promise<void>;
+  /** Private to the launcher worker. Durable UI evidence; never a provider completion signal. */
+  onTaskProgress?: (phase: 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools') => Promise<void>;
   /** One inert Bigger Context stage completed its exact acknowledgement boundary. */
   onMultipartStageAcknowledged?: (stageIndex: number) => void | Promise<void>;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
@@ -3949,7 +3951,7 @@ export class ChatGptBrowserWorker {
       recoverObservation,
       recoverableObservation,
     );
-    submissionLifecycle?.onSubmitted?.();
+    await submissionLifecycle?.onSubmitted?.();
     return evidence;
   }
 
@@ -4865,6 +4867,7 @@ export class ChatGptBrowserWorker {
 
     const lease = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
       phase: "start",
+      taskProgressVersion: 1,
       requestedEffort: turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? "luna" : resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities).effort,
       ...(turn.accountRoutingKey ? { accountRoutingKey: turn.accountRoutingKey } : {}),
       traceId: turn.traceId,
@@ -4924,6 +4927,7 @@ export class ChatGptBrowserWorker {
     };
     try {
       if (!surfaceId) throw new Error("Launcher did not lease a browser tab for the ChatGPT turn");
+      if (lease.taskProgressVersion !== 1) throw new Error('NEKODEX and its browser helper need matching versions. Restart NEKODEX before running new Web tasks; this prompt was not sent.');
       if (turn.requireRetainedConversation && !reused) {
         throw chatGptRetainedConversationUnavailableError();
       }
@@ -4933,7 +4937,17 @@ export class ChatGptBrowserWorker {
       await turn.onPreparedSelected?.(reused);
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
-      return await this.runBrowserTurn(turn, surfaceId, undefined, reused);
+      let sequence = lease.taskProgressSequence ?? 0;
+      let lastPhase = '';
+      const onTaskProgress: BrowserTurn['onTaskProgress'] = async phase => {
+        if (phase === lastPhase) return;
+        await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+          phase: 'progress', traceId: turn.traceId, helperPid: process.pid, surfaceId,
+          taskPhase: phase, sequence: ++sequence,
+        }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS);
+        lastPhase = phase;
+      };
+      return await this.runBrowserTurn({ ...turn, onTaskProgress }, surfaceId, undefined, reused);
     } catch (error) {
       originalError = error;
       terminal = error instanceof ChatGptCompactionHandoffAccepted
@@ -5365,7 +5379,10 @@ export class ChatGptBrowserWorker {
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
               undefined,
-              { onSendActivated: () => { providerSubmissionStage = `context part ${index + 1}`; } },
+              { onSendActivated: async () => {
+                providerSubmissionStage = `context part ${index + 1}`;
+                await turn.onTaskProgress?.('sending-context');
+              }, onSubmitted: () => turn.onTaskProgress?.('context-accepted') },
               undefined,
               launcherObservationRecovery
                 ? async (...args) => {
@@ -5540,7 +5557,12 @@ export class ChatGptBrowserWorker {
             ...turn,
             onSendActivated: async () => {
               providerSubmissionStage = "response";
+              await turn.onTaskProgress?.('sending');
               await turn.onSendActivated?.();
+            },
+            onSubmitted: async () => {
+              await turn.onSubmitted?.();
+              await turn.onTaskProgress?.('accepted');
             },
           },
           completionTracker,
@@ -5747,6 +5769,7 @@ export class ChatGptBrowserWorker {
           Date.now(),
         );
         const externalToolCallsInFlight = chatGptExternalToolCallsAreInFlight(externalProgressSnapshot);
+        await turn.onTaskProgress?.(externalToolCallsInFlight ? 'waiting-tools' : 'responding');
         if (!snapshot.responsePresent && externalProgressLive) {
           // Current-turn MCP activity proves that ChatGPT is still executing even if its renderer
           // temporarily cannot expose the response subtree. DOM remains authoritative for text and

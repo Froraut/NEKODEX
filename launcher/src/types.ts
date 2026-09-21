@@ -5,7 +5,7 @@ export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type AuthenticationStatus = "unknown" | "verified" | "signed-out" | "unavailable";
 export type ProModelVersion = "5.6" | "5.5" | "6";
-export type Surface = "overview" | "accounts" | "browser" | "setup" | "mcp" | "activity" | "settings" | "updates";
+export type Surface = "overview" | "accounts" | "browser" | "tasks" | "setup" | "mcp" | "activity" | "settings" | "updates";
 
 export interface LauncherState {
   version: 1;
@@ -77,6 +77,16 @@ export interface BrowserState {
   activeTabId: string;
   maxTabs: number;
   tabs: BrowserTabState[];
+  tasks?: BrowserTaskState[];
+}
+
+export interface BrowserTaskState {
+  id: string; traceId: string; tabId: string; accountId: string; accountName: string;
+  createdAt: number; updatedAt: number; sequence: number;
+  phase: 'preparing' | 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools'
+    | 'completed' | 'failed-before-send' | 'send-uncertain' | 'failed-after-send' | 'cancelled' | 'interrupted';
+  submission: 'not-sent' | 'unknown' | 'uncertain' | 'context-accepted' | 'accepted';
+  terminal: boolean; canOpen: boolean; canCancel: boolean; canDismiss: boolean; retrySafe: boolean;
 }
 
 export interface ExistingChromeLoginProgress {
@@ -445,6 +455,7 @@ export interface LauncherApi {
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;
   closeBrowserTab(tabId: string, expectedTraceId?: string | null): Promise<BrowserState>;
+  dismissTask(accountId: string, id: string): Promise<BrowserState>;
   copyManualPrompt(tabId: string): Promise<BrowserState>;
   confirmManualSent(tabId: string): Promise<BrowserState>;
   openLogin(): Promise<BrowserState>;

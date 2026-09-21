@@ -7,6 +7,7 @@ const { createHash, randomBytes } = require("node:crypto");
 const { setTimeout: delay } = require("node:timers/promises");
 const { clipboard, dialog, BrowserWindow, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { BrowserTaskLedger } = require('./browser-task-ledger.cjs');
 const { awaitInspection, inspectionAbortError } = require("./inspection-control.cjs");
 const {
   hasUnsettledBrowserHelpers,
@@ -389,6 +390,7 @@ class BrowserHost {
     accountId = "default",
     isAccountVisible = () => true,
     onAuthIdentityChanged = () => {},
+    taskLedger = null,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -419,6 +421,7 @@ class BrowserHost {
     const expectedPartition = accountId === "default" ? basePartition : `${basePartition}-account-${accountId}`;
     if (partition !== expectedPartition) throw new Error("Browser host partition does not match its profile");
     this.partition = partition;
+    this.taskLedger = taskLedger ?? new BrowserTaskLedger(path.join(path.dirname(descriptorPath), `tasks-${this.accountId}.json`));
     this.profile = profile;
     this.publishState = publishState;
     this.showWindow = showWindow;
@@ -701,6 +704,7 @@ class BrowserHost {
       loading: tab.loading === true,
       active: this.selectedTabId === tab.id,
       closable: true,
+      task: tab.taskRecordId ? this.taskLedger?.get(tab.taskRecordId) : undefined,
     };
     if (tab.interactionMode === "manual") {
       Object.assign(snapshot, {
@@ -718,7 +722,26 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity) {
+  taskSnapshot() {
+    return (this.taskLedger?.snapshot() ?? []).map(record => {
+      const tab = this.turnTabs.get(record.tabId);
+      const live = tab?.taskRecordId === record.id && !tab.view.webContents.isDestroyed();
+      return { ...record, canOpen: live, canCancel: live && tab.status === 'running',
+        canDismiss: record.terminal && (!live || tab.status !== 'running'),
+        retrySafe: record.terminal && record.submission === 'not-sent' };
+    });
+  }
+
+  taskProgress(traceId, helperPid, surfaceId, phase, sequence) {
+    const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
+    if (!tab || tab.helperPid !== helperPid || tab.surfaceId !== surfaceId || tab.status !== 'running' || !tab.taskRecordId) {
+      throw new Error('Task progress does not match a live browser owner');
+    }
+    this.taskLedger.progress(tab.taskRecordId, phase, sequence);
+    this.publishState?.(this.snapshot());
+  }
+
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion) {
     if (this.turnTabs.size >= this.maxTabs
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
       throw new Error(
@@ -726,6 +749,7 @@ class BrowserHost {
       );
     }
     const id = randomBytes(12).toString("base64url");
+    const taskRecordId = this.taskLedger?.start(traceId, id, taskProgressVersion);
     const surfaceId = randomBytes(24).toString("base64url");
     const ordinal = Array.from({ length: this.maxTabs }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
@@ -743,6 +767,7 @@ class BrowserHost {
     });
     const tab = {
       id,
+      taskRecordId,
       surfaceId,
       traceId,
       conversationKey,
@@ -1828,6 +1853,9 @@ class BrowserHost {
   }
 
   removeTurnTab(tab, abortRunning) {
+    if (tab.taskRecordId && this.taskLedger?.get(tab.taskRecordId)?.terminal === false) {
+      this.taskLedger.end(tab.taskRecordId, 'aborted');
+    }
     if (!this.turnTabs.has(tab.id)) return;
     this.turnTabs.delete(tab.id);
     if (tab.interactionMode === "manual") {
@@ -2640,6 +2668,7 @@ class BrowserHost {
     conversationKey,
     connectorIdentity,
     requireRetainedConversation = false,
+    taskProgressVersion,
   ) {
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
@@ -2648,6 +2677,9 @@ class BrowserHost {
       throw new BrowserTurnCancelledError(traceId);
     }
     const sameTrace = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
+    if (sameTrace && ['error', 'aborted'].includes(sameTrace.status) && sameTrace.taskRecordId) {
+      throw new Error('Review the previous task outcome before starting another attempt. The existing tab was preserved.');
+    }
     if (sameTrace && sameTrace.interactionMode !== "automatic") {
       throw new Error(`Browser turn ${traceId} already belongs to Manual mode interaction`);
     }
@@ -2663,6 +2695,7 @@ class BrowserHost {
     const existing = sameTrace?.status === "running" ? sameTrace : exactRetained;
     if (existing) {
       const reused = existing.status === "ready";
+      if (reused) existing.taskRecordId = this.taskLedger?.start(traceId, existing.id, taskProgressVersion);
       if (existing.status === "running" && existing.helperPid !== helperPid) {
         if (processRunning(existing.helperPid)) {
           throw new Error(`ChatGPT browser turn ${traceId} is owned by another helper process`);
@@ -2699,6 +2732,8 @@ class BrowserHost {
       this.logger.info("browser.tab_reused", { tabId: existing.id, traceId });
       return {
         surfaceId: existing.surfaceId,
+        taskProgressVersion: 1,
+        taskProgressSequence: this.taskLedger?.get(existing.taskRecordId)?.sequence ?? 0,
         tabId: existing.id,
         reused,
         connectorBound: existing.connectorBound === true,
@@ -2709,14 +2744,15 @@ class BrowserHost {
       error.code = "retained_conversation_unavailable";
       throw error;
     }
-    const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity);
+    const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion);
     if (reveal) this.selectedTabId = tab.id;
     if (reveal) this.show();
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
     this.writeDescriptor();
-    return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false, connectorBound: false };
+    return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false, connectorBound: false,
+      taskProgressVersion: 1, taskProgressSequence: 0 };
   }
 
   async endTurn(
@@ -2744,6 +2780,7 @@ class BrowserHost {
       );
     }
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
+    if (tab.taskRecordId) this.taskLedger.end(tab.taskRecordId, status);
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
     this.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
@@ -2751,6 +2788,12 @@ class BrowserHost {
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.setBackgroundThrottling(true);
     if (status === "completed") {
       this.logger.info("browser.tab_completed", { tabId: tab.id, traceId });
+    }
+    if (status !== 'completed' && !cancelledByUser && tab.taskRecordId) {
+      // Preserve the exact document for inspection. It is not a reusable continuation and
+      // cannot be silently reclaimed as an ordinary completed tab.
+      this.publishState?.(this.snapshot()); this.writeDescriptor();
+      return { cancelledByUser };
     }
     if (status === "completed"
       && retain
