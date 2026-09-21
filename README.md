@@ -14,20 +14,20 @@
 
 ![NEKODEX workspace](docs/design/screenshots/overview.png)
 
-<p align="center"><sub>Current interface, captured in an isolated DEV profile with example data.</sub></p>
+<p align="center"><sub>Interface preview, captured in an isolated DEV profile with example data.</sub></p>
 
 ## Download
 
-**5.8.0-nekodex.3 · prerelease**
+**5.9.0-nekodex.1 · prerelease**
 
 | Platform | Package | Delivery |
 | --- | --- | --- |
-| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.3/NEKODEX-5.8.0-nekodex.3-mac-arm64.dmg) | Developer ID signed and notarized |
-| macOS 13+ · Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.3/NEKODEX-5.8.0-nekodex.3-mac-x64.dmg) | Developer ID signed and notarized |
-| Linux x64 | [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.3/codex-web-gpt-5.8.0-nekodex.3-linux-x64.AppImage) | Authenticated release metadata |
+| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.1/NEKODEX-5.9.0-nekodex.1-mac-arm64.dmg) | Developer ID signed and notarized |
+| macOS 13+ · Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.1/NEKODEX-5.9.0-nekodex.1-mac-x64.dmg) | Developer ID signed and notarized |
+| Linux x64 | [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.1/codex-web-gpt-5.9.0-nekodex.1-linux-x64.AppImage) | Authenticated release metadata |
 | Windows x64 | [Preview artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml) | Unsigned preview; outside authenticated updates |
 
-[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v5.8.0-nekodex.3) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.8.0-nekodex.3/checksums.txt) · [Release authenticity](docs/release-signing.md)
+[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v5.9.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.1/checksums.txt) · [Release authenticity](docs/release-signing.md)
 
 On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later releases, use **Updates → Download and restart** inside the app. Account profiles and settings stay in place. Finish active tasks first.
 
@@ -41,7 +41,7 @@ On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later relea
 | **Connections** | Model setup and local-tool setup together, with the exact connector identity and independent readiness checks. |
 | **Browser** | Embedded, task-bound ChatGPT conversations. Continuing work stays with its owning account. |
 | **Activity** | Separate Web and Native statistics, lifetime history, outcomes, observed durations and CSV export. |
-| **Updates** | Observed download progress, package verification, guarded restart and recovery of the previous runtime. |
+| **Updates** | Download progress, cancellation before installation, package verification and guarded restart/recovery. |
 
 <table>
   <tr>
@@ -50,7 +50,7 @@ On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later relea
   </tr>
 </table>
 
-New in 5.8: native Codex keeps running after the interface exits, and reopening attaches to the existing runtime. Web tasks keep their guarded browser/tunnel lifecycle. [Architecture and evidence](docs/design/native-background-runtime.md)
+New in 5.9: cancellable update preparation, consistent busy/retry controls, and safer account and browser cancellation. Native Codex continues running after the interface exits. [Review and evidence](docs/reviews/full-stack-20260921.md)
 
 ## Get started
 
