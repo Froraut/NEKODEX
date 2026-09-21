@@ -45,7 +45,7 @@ function inputContentParts(blocks: unknown[] | string | undefined): string | Cod
         parts.push({ type: "image", imageUrl: b.image_url, ...(b.detail ? { detail: normalizeImageDetail(b.detail) } : {}) });
       } else {
         if (!b.file_id) throw new Error("input_image requires image_url or file_id");
-        parts.push({ type: "text", text: `[image: ${b.file_id}]` }); // file_id ref → no inline data
+        throw new Error("input_image file_id is unresolved; image content was not sent. Provide image_url with supported inline image bytes.");
       }
     } else if (block.type === "input_file") {
       // The schema rejects inline data before projection. Keep the same explicit failure
@@ -53,8 +53,7 @@ function inputContentParts(blocks: unknown[] | string | undefined): string | Cod
       if (Object.prototype.hasOwnProperty.call(block, "file_data")) {
         throw new Error("input_file.file_data is unsupported; inline file content was not sent");
       }
-      const ref = (block as { file_id?: string; filename?: string }).file_id ?? (block as { filename?: string }).filename ?? "?";
-      parts.push({ type: "text", text: `[file: ${ref}]` });
+      throw new Error("input_file is unresolved; file content was not sent. A filename or file_id alone is not a delivered attachment.");
     } else {
       throw new Error(`unsupported input content block type: ${String((block as { type?: unknown }).type)}`);
     }
