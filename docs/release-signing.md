@@ -190,10 +190,23 @@ gh attestation verify /absolute/path/to/downloaded-asset \
   --signer-workflow Froraut/codex-chatgpt-web/.github/workflows/release.yml
 ```
 
-The terminal-only `scripts/install.sh` runtime installer is retired and is no longer published
-with releases. Its checkout entry point exits without downloading or modifying anything. Use
-the signed desktop application and its authenticated built-in updater, or a reviewed source
-checkout for terminal development. Old release copies of the retired script must not be used.
+The terminal-only `scripts/install.sh` installer supports macOS arm64 and x86_64 runtime archives.
+It requires a preinstalled, trusted Node.js runtime before downloading anything, and embeds the
+same Ed25519 publisher key and signed-metadata verifier as the launcher installer. It pins
+`Froraut/NEKODEX`, the requested version and published GitHub Actions provenance, checks metadata
+and key validity, and authenticates the archive, `LICENSE`, `Bun-1.4.0.md` and
+`THIRD_PARTY_NOTICES.txt` before any extraction or downloaded runtime execution. Metadata is
+bounded to 512 KiB and downloads use a private temporary directory. `checksums.txt` is not used
+as publisher authentication. Authentication failure leaves the existing installation untouched;
+a failed replacement rolls back the runtime, command and notices together.
+
+The compatible settings remain `CODEX_CHATGPT_WEB_VERSION`, `CODEX_CHATGPT_WEB_BIN_DIR`,
+`CODEX_CHATGPT_WEB_LIB_DIR` and `CODEX_CHATGPT_WEB_DOC_DIR`; positional arguments are forwarded
+to the installed command's `setup`. A repository override can only name `Froraut/NEKODEX`.
+The workflow publishes this reviewed standalone script alongside the signed metadata. The script
+itself must come from a trusted checkout or an independently authenticated distribution: its
+embedded key cannot retroactively authenticate an untrusted first installer. Older checksum-only
+copies do not provide this guarantee and must not be used.
 
 Desktop first-install scripts remain a bootstrap trust boundary: use a reviewed checkout or independently
 verify its signature/provenance before executing a downloaded installer script. An in-app update

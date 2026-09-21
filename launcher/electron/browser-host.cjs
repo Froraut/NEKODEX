@@ -952,17 +952,24 @@ class BrowserHost {
       this.publishState?.(this.snapshot());
     };
     contents.on("will-navigate", blockForeignNavigation);
-    contents.on("will-redirect", blockForeignNavigation);
+    contents.on("will-redirect", (event, url, _inPlace, mainFrame) => {
+      if (event.isMainFrame ?? mainFrame) blockForeignNavigation(event, event.url ?? url);
+    });
     contents.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
-      if (!mainFrame) return;
-      if (invalidateForeignNavigation(url)) return;
+      // A provisional navigation can still be cancelled. Its destination is not the current
+      // document, so preserve the conversation and renderer until a new document commits.
+      if (!mainFrame || !allowedTurnUrl(url)) return;
       tab.url = url;
       tab.loading = true;
-      if (!inPlace) {
-        tab.rendererReady = false;
-        tab.deviceEmulationDirty = true;
-      }
       this.publishState?.(this.snapshot());
+    });
+    contents.on("did-navigate", (_event, url) => {
+      // Electron emits did-navigate for a committed main-frame document only. Even a brief
+      // foreign document must permanently lose the old conversation before it can return.
+      tab.url = url;
+      tab.rendererReady = false;
+      tab.deviceEmulationDirty = true;
+      invalidateForeignNavigation(url);
     });
     contents.on("did-start-loading", () => {
       tab.loading = true;

@@ -56,12 +56,21 @@ test("automatic navigation blocks foreign destinations and committed changes ret
   const { host, tab, contents, state } = fixture();
   for (const event of ["will-navigate", "will-redirect"]) {
     let prevented = false;
-    contents.emit(event, { preventDefault() { prevented = true; } }, "https://example.test/");
+    // did-start precedes the cancellable event, including same-origin -> foreign redirects.
+    contents.emit("did-start-navigation", {}, event === "will-redirect"
+      ? "https://chatgpt.com/outgoing" : "https://example.test/", false, true);
+    contents.emit(event, { isMainFrame: true, preventDefault() { prevented = true; } }, "https://example.test/", false, true);
     assert.equal(prevented, true);
     assert.equal(host.exactRetainedTurnTab(tab.conversationKey, tab.connectorIdentity), tab);
+    assert.equal(tab.rendererReady, true);
+    assert.equal(tab.bootstrapReady, true);
   }
   // Subframes and ordinary ChatGPT history routes do not invalidate the retained conversation.
   contents.emit("did-start-navigation", {}, "https://example.test/frame", false, false);
+  let subframePrevented = false;
+  contents.emit("will-redirect", { isMainFrame: false, preventDefault() { subframePrevented = true; } },
+    "https://example.test/redirected-frame", false, false);
+  assert.equal(subframePrevented, false);
   state.url = "https://chatgpt.com/c/retained#answer";
   contents.emit("did-start-navigation", {}, state.url, true, true);
   contents.emit("did-navigate-in-page", {}, state.url, true);
@@ -69,6 +78,8 @@ test("automatic navigation blocks foreign destinations and committed changes ret
 
   state.url = "https://example.test/";
   contents.emit("did-start-navigation", {}, state.url, false, true);
+  contents.emit("did-navigate", {}, state.url);
+  assert.equal(tab.conversationKey, undefined); // retire on commit, before load completion
   contents.emit("did-finish-load");
   assert.equal(tab.conversationKey, undefined);
   assert.equal(tab.connectorBound, false);

@@ -549,7 +549,7 @@
   "compactionModelBody": "僅選擇下一次自動 Pro 上下文摘要使用的模型。任務回合保持原模型。無法使用時在傳送前報錯，不自動切換。",
   "compactionFollow": "跟隨任務模型",
   "webSubagents": "Web 子代理",
-  "webSubagentsBody": "允許 ChatGPT Web 任務委派給 Codex 代理。不影響原生模型任務。新安裝預設關閉；現有安裝保留之前的行為。",
+  "webSubagentsBody": "允許 ChatGPT Web 工作委派給 Codex 代理，並使用 JavaScript 協調工具。關閉後仍可執行命令及個別呼叫工具。不影響原生模型工作。新安裝預設關閉，現有設定保持不變。",
   "passkeyBrowser": "登入瀏覽器",
   "passkeyBrowserBody": "選擇已安裝的瀏覽器，使用獨立暫存設定檔登入。不讀取日常設定檔，匯入工作階段需通過驗證。",
   "connectionsNav": "連線",
