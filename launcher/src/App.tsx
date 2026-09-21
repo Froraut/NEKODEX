@@ -1,3 +1,4 @@
+import { sessionIssueCopy } from "./session-issue-copy";
 import type { CompactionModel } from "./types";
 import { codexSettingsStatus, modelConnectionReadiness, setupNextStep } from "./setup-progress";
 import languages from "../electron/languages.json";
@@ -1781,7 +1782,7 @@ function BrowserSurface({
           <Icon name="alert" />
           <div>
             <strong>{workflow.session.verificationUnavailable}</strong>
-            <p>{workflow.session.verificationUnavailableBody}</p>
+            <p>{sessionIssueCopy(language, browser?.authenticationIssue)}</p>
             {browser.lastVerifiedAt ? <small>{workflow.session.lastVerifiedAt.replace("{time}", new Date(browser.lastVerifiedAt).toLocaleString(language))}</small> : null}
           </div>
           <div className="browser-recovery-actions">
@@ -1819,23 +1820,23 @@ function BrowserSurface({
             <BrandMark />
             <h1>{activeBrowserTabs.length ? `${activeBrowserTabs.length} · ${copy.overviewActiveRuns}` : manualInteraction
               ? copy.browserReady
-              : browser?.authenticationStatus === "unavailable" ? copy.connectionPending
+              : browser?.authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
                 : browser?.authenticated ? copy.noActiveTask : copy.stepAccount}</h1>
             <p>{activeBrowserTabs.length ? copy.overviewActiveRunsBody : manualInteraction
               ? copy.stepAccountBody
-              : browser?.authenticationStatus === "unavailable" ? (activeBrowserTabs.length ? copy.overviewActiveRunsBody : copy.stepAccountBody)
+              : browser?.authenticationStatus === "unavailable" ? sessionIssueCopy(language, browser.authenticationIssue)
                 : browser?.authenticated
               ? copy.noActiveTaskBody
               : existingChromeWaiting ? copy.existingChromeBody : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
             <div className="browser-empty-actions">
               {activeBrowserTabs.length ? <PrimaryButton disabled={transitionBusy} onClick={() => void selectTab(activeBrowserTabs[0].id)}>{copy.openWorkspace}</PrimaryButton> : null}
-              {existingChromeAvailable ? <PrimaryButton
+              {existingChromeAvailable && browser?.authenticationStatus !== "unavailable" ? <PrimaryButton
                 disabled={existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
                 onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</PrimaryButton> : null}
               <SecondaryButton disabled={transitionBusy || passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
                 {manualInteraction || browser?.authenticated || browser?.authenticationStatus === "unavailable" ? copy.openChatgpt : copy.signIn}
               </SecondaryButton>
-              {passkeyAvailable ? (
+              {passkeyAvailable && browser?.authenticationStatus !== "unavailable" ? (
                 <SecondaryButton
                   disabled={passkeyActionDisabled}
                   onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}

@@ -1,3 +1,4 @@
+import { NativeRouteCache } from "./native-route-cache";
 import {
   LauncherBrowserHostUnavailableError,
   readLauncherBrowserHostDescriptor,
@@ -28,8 +29,10 @@ function fallbackProxyOrigin(value: string): string {
   return origin;
 }
 
+const routes = new NativeRouteCache();
 let backgroundProxy: string | undefined;
 let backgroundProxyError: Error | undefined;
+let bootstrapSeeded = false;
 const configuredBackgroundProxy = process.env[NATIVE_FALLBACK_PROXY_KEY];
 if (configuredBackgroundProxy !== undefined) {
   try {
@@ -75,12 +78,18 @@ function hasErrorCode(error: unknown, code: string, seen = new Set<unknown>()): 
   return false;
 }
 
+function transientProxyError(error: unknown): boolean {
+  return hasErrorCode(error, "ECONNREFUSED") || hasErrorCode(error, "ECONNRESET")
+    || (error instanceof DOMException && error.name === "TimeoutError");
+}
+
 function fetchWithProxy(request: Request, proxy: string): Promise<Response> {
   return fetch(request, { proxy });
 }
 
-/** Per-request OS proxy refresh applies only to native first-party traffic, never account sessions. */
+/** Validated routes live in the daemon; GUI refresh runs off the request critical path. */
 export async function fetchNativeCodex(request: Request): Promise<Response> {
+  request.signal.throwIfAborted();
   const url = new URL(request.url);
   if (url.origin !== "https://chatgpt.com" || !url.pathname.startsWith("/backend-api/codex/")
     || url.username || url.password) throw proxyError("Native proxy resolution requires the first-party Codex endpoint");
@@ -106,28 +115,39 @@ export async function fetchNativeCodex(request: Request): Promise<Response> {
     }
     throw error;
   }
-  let response: Response;
-  const controlTimeout = AbortSignal.timeout(10_000);
-  try {
-    response = await fetch(`${descriptor.control.endpoint}/v1/network/resolve-proxy`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${descriptor.control.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ url: request.url }),
-      signal: AbortSignal.any([request.signal, controlTimeout]),
-      redirect: "error",
-      // Never let ambient proxy resolution carry the loopback control token off-machine.
-      proxy: "",
-    });
-  } catch (error) {
-    if (!request.signal.aborted && !controlTimeout.aborted && hasErrorCode(error, "ECONNREFUSED")) {
-      return fetchWithProxy(request, requireBackgroundProxy(error));
-    }
-    throw error;
+  // Bootstrap evidence is for this exact URL; PAC rules for other endpoints remain independent.
+  if (!bootstrapSeeded && request.url === "https://chatgpt.com/backend-api/codex/responses" && backgroundProxy !== undefined) {
+    bootstrapSeeded = true;
+    routes.seed(request.url, backgroundProxy);
   }
-  if (!response.ok) throw proxyError(`Launcher native proxy resolution failed (HTTP ${response.status})`);
-  const result = await response.json() as { proxy?: unknown };
-  const proxy = nativeProxyOrigin(result.proxy);
-  backgroundProxy = proxy;
-  backgroundProxyError = undefined;
+  const proxy = await routes.resolve(request.url, async () => {
+    try {
+      const controlTimeout = AbortSignal.timeout(2_000);
+      const response = await fetch(`${descriptor.control.endpoint}/v1/network/resolve-proxy`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${descriptor.control.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ url: request.url }),
+        signal: controlTimeout,
+        redirect: "error",
+        proxy: "",
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw proxyError(`Launcher native proxy resolution failed (HTTP ${response.status})`);
+      }
+      const result = await response.json() as { proxy?: unknown };
+      const resolved = nativeProxyOrigin(result.proxy);
+      if (request.url === "https://chatgpt.com/backend-api/codex/responses") backgroundProxy = resolved;
+      backgroundProxyError = undefined;
+      return resolved;
+    } catch (error) {
+      if (!transientProxyError(error) && request.url === "https://chatgpt.com/backend-api/codex/responses") {
+        backgroundProxy = undefined;
+        backgroundProxyError = proxyError("Native background route requires a successful proxy check");
+      }
+      throw error;
+    }
+  }, transientProxyError);
+  request.signal.throwIfAborted();
   return fetchWithProxy(request, proxy);
 }

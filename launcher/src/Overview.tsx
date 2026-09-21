@@ -1,3 +1,4 @@
+import { sessionIssueCopy } from "./session-issue-copy";
 import { CatTail } from "./CatTail";
 import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
 import { useId, type CSSProperties } from "react";
@@ -53,7 +54,9 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
     || (readiness.tools === "unavailable" && readiness.action === "open-tools");
   const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [
     { icon: "accounts", label: copy.accountConnection, ready: manual || signedIn, surface: "accounts",
-      status: manual ? copy.manualShort : signedIn ? copy.connectionVerified : copy.signInNeededShort },
+      status: manual ? copy.manualShort : signedIn ? copy.connectionVerified
+        : authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
+          : authenticationStatus === "unknown" ? workflow.session.checkingVerification : copy.signInNeededShort },
     { error: catalogUnavailable, icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogUnavailable,
       surface: "setup", status: modelStatus },
     { error: toolsError, icon: "mcp", label: copy.toolsConnectionTab,
@@ -77,7 +80,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
         : readiness.action === "open-browser" ? (nativePreserved ? copy.setupReadyModels : copy.setupChecksPassed)
           : setupPending ? copy.setupInstalledTitle : copy.overviewTitle;
   const heroBody = catalogUnavailable ? copy.catalogFailureKeptInstall
-    : readiness.reason === "session-unavailable" ? workflow.session.verificationUnavailableBody
+    : readiness.reason === "session-unavailable" ? sessionIssueCopy(snapshot.state.language ?? "en", browser?.authenticationIssue)
       : toolsPending ? (readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody)
         : readiness.action === "open-browser" ? (nativePreserved ? workflow.recovery.webTransportBody : copy.connectorAvailableNotExecuted)
           : setupPending ? (readiness.reason === "picker-confirmation-required" ? copy.setupConfirmTitle

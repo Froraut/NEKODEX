@@ -1,3 +1,4 @@
+const { authenticationIssue } = require("./authentication-issue.cjs");
 const { validateAccountId } = require("./account-registry.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -1495,6 +1496,10 @@ class BrowserHost {
   }
 
   setState(patch) {
+    if (patch.authenticationStatus) {
+      patch = { ...patch, authenticationIssue: patch.authenticationStatus === "unavailable"
+        ? authenticationIssue(patch.message) : null };
+    }
     this.state = {
       ...this.state,
       ...patch,

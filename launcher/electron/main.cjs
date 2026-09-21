@@ -1905,8 +1905,8 @@ async function start() {
     launcherProfile: LAUNCHER_PROFILE.kind,
     publishOperation,
     publishCapabilities: capability => lifecycleProjection.update(capability),
-    // Prime a known transport for GUI absence. While the GUI is alive, each native request
-    // still resolves the current system route through its authenticated control channel.
+    // Prime the daemon-owned route. While the GUI is alive, bounded background refreshes
+    // use its authenticated control channel without holding every native request.
     nativeProxyEnvironmentProvider: async () => {
       try {
         const proxy = await resolveNativeRequestProxy(

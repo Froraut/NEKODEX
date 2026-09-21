@@ -55,6 +55,7 @@ test("unavailable authentication evidence fails closed while retaining historica
 
   assert.equal(result.authenticated, false);
   assert.equal(result.authenticationStatus, "unavailable");
+  assert.equal(result.authenticationIssue, "timeout");
   assert.match(result.authenticationCheckedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(result.lastVerifiedAt, "2026-09-20T10:00:00.000Z");
   assert.equal(result.accountLabel, "alex@example.com");

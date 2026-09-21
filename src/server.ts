@@ -31,6 +31,7 @@ import { readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
 import { createHash } from "node:crypto";
 import { augmentNativeModelCatalog } from "./model-catalog";
+import { startNativeUsageDelivery } from "./native-usage-telemetry";
 import { fetchNativeCodex, nativeNetworkBackgroundReady } from "./native-network";
 import {
   readCodexModelContextOverride,
@@ -1000,6 +1001,7 @@ export function startServer(
   if (config.purpose === "dev-harness") {
     throw new Error("DEV harness configuration cannot start a Responses listener");
   }
+  startNativeUsageDelivery();
   const startedAt = Date.now();
   const instanceId = randomUUID();
   const backgroundRuntime = process.env.CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME === "1";

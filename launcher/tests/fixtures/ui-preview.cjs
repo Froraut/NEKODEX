@@ -102,6 +102,10 @@ function installMockLauncher() {
       activeTurns: 0, checked: false, connectorReady: false, evidenceEpoch: 3, proxy: { mode: "system" },
       safety: { policy: defaultPolicy, cooldownUntil: 0, stopped: false, newSessionWindow: null } },
   ] };
+  if (scenario === "benefits-auth-diagnostics") {
+    Object.assign(browser, { authenticated: false, authenticationStatus: "unavailable", authenticationIssue: "access", accountId: "fixture-primary", url: "https://chatgpt.com/?temporary-chat=true", status: "error" });
+    Object.assign(accountSnapshot.accounts[0], { authenticated: false, authenticationStatus: "unavailable", authenticationIssue: "access" });
+  }
   if (!benefitsScenario) accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.slice(0, 2) };
   const quotaNow = Date.now();
   const quota = { availability: "available", coverage: "reported_buckets", accountId: "fixture-primary",

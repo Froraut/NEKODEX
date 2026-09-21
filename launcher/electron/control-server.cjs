@@ -169,7 +169,7 @@ class BrowserControlServer {
       if (isNativeUsage) {
         validateNativeUsageSample(body);
         const result = host.recordNativeUsage(body);
-        writeJson(response, 200, { ok: true, recorded: result.recorded === true, duplicate: result.duplicate === true });
+        writeJson(response, result.unavailable ? 503 : 200, { ok: !result.unavailable, recorded: result.recorded === true, duplicate: result.duplicate === true });
         return;
       }
       if (isSessionInspect) {

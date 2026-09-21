@@ -59,6 +59,7 @@ export interface BrowserState {
   title: string;
   authenticated: boolean;
   authenticationStatus?: AuthenticationStatus;
+  authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "unknown" | null;
   authenticationCheckedAt?: string | null;
   lastVerifiedAt?: string | null;
   accountLabel?: string | null;
@@ -321,7 +322,8 @@ export interface AccountPoolSnapshot {
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
-    authenticationStatus?: AuthenticationStatus; authenticationCheckedAt?: string | null; lastVerifiedAt?: string | null;
+    authenticationStatus?: AuthenticationStatus;
+  authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "unknown" | null; authenticationCheckedAt?: string | null; lastVerifiedAt?: string | null;
     proxy: AccountProxy;
     safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
       newSessionWindow: AccountNewSessionWindowStatus | null };

@@ -5,6 +5,7 @@ import { AccountProxySettings } from "./AccountProxySettings";
 import { AccountCodexControls } from "./AccountCodexControls";
 import { QuotaPortfolioSummary } from "./QuotaPortfolioSummary";
 import { accountCodexCopyFor, type Copy } from "./i18n";
+import { sessionIssueCopy } from "./session-issue-copy";
 import { workflowCopy } from "./workflow-copy";
 import type { AccountPoolSnapshot, AccountQuotaSnapshot, CodexLoginProgress, Language } from "./types";
 import "./account-codex.css";
@@ -594,7 +595,10 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           aria-describedby={describedBy(checkActionReason)}
           title={loginBoundReason} onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</button>
       </div>
-      {authUnavailable ? <p className="field-hint" role="status">{workflow.session.verificationUnavailableBody}</p> : null}
+      {authUnavailable ? <p className="field-hint" role="status">{sessionIssueCopy(language, account.authenticationIssue)}</p> : null}
+      {authUnavailable && account.id === state.selectedId ? <button type="button" className="text-button"
+        disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy}
+        onClick={openBrowser}><Icon name="browser" />{copy.browser}</button> : null}
       {authUnavailable && authRetryDisabledReason ? <p className="field-hint" id={authRetryReasonId}>{authRetryDisabledReason}</p> : null}
       {actionHint ? <p className="field-hint" id={actionHintId} role="status">{actionHint}</p> : null}
       <AccountCodexControls account={account} copy={codexCopy} language={language}

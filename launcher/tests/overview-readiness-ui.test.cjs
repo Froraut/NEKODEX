@@ -22,6 +22,7 @@ function loadOverview(deriveWorkspaceReadiness) {
       useCatReaction: () => ({ reaction: null, play() {}, follow() {}, reset() {} }) },
     './icons': { Icon: () => null },
     './workspace-readiness': { deriveWorkspaceReadiness },
+    './session-issue-copy': { sessionIssueCopy: () => 'This does not mean the account is signed out.' },
     './workflow-copy': { workflowCopy: () => ({
       session: { verificationUnavailable: 'Verification unavailable',
         verificationUnavailableBody: 'This does not mean the account is signed out.',

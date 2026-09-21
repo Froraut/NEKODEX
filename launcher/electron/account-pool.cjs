@@ -240,6 +240,7 @@ class AccountBrowserPool {
       const host = this.hosts.get(account.id);
       return { ...account, proxy: this.network.get(account.id), safety: this.safety.snapshot(account.id), authenticated: host?.state.authenticated === true,
         authenticationStatus: host?.state.authenticationStatus,
+        authenticationIssue: host?.state.authenticationIssue ?? null,
         authenticationCheckedAt: host?.state.authenticationCheckedAt ?? null,
         lastVerifiedAt: host?.state.lastVerifiedAt ?? null,
         accountLabel: host?.state.accountLabel ?? null,

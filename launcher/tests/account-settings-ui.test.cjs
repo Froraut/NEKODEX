@@ -95,6 +95,7 @@ function accountHarness(snapshotPromise, refreshValue, accountOverrides = {}, se
     "./QuotaPortfolioSummary": { QuotaPortfolioSummary: () => null },
     "./i18n": { accountCodexCopyFor: () => codexCopy },
     "./workflow-copy": { workflowCopy: () => workflow },
+    "./session-issue-copy": { sessionIssueCopy: () => workflow.session.verificationUnavailableBody },
     "./account-codex.css": {},
     "./quota-portfolio.css": {},
   });
@@ -258,6 +259,7 @@ test("freshness clock selects the earliest quota expiry or retry without a provi
     "./AccountCodexControls": { AccountCodexControls: () => null },
     "./QuotaPortfolioSummary": { QuotaPortfolioSummary: () => null },
     "./i18n": { accountCodexCopyFor: () => codexCopy }, "./workflow-copy": { workflowCopy: () => workflow },
+    "./session-issue-copy": { sessionIssueCopy: () => workflow.session.verificationUnavailableBody },
     "./account-codex.css": {}, "./quota-portfolio.css": {},
   });
   const now = Date.parse("2026-09-21T10:00:00Z");

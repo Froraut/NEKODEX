@@ -137,3 +137,24 @@ test("readiness repairs only degraded Web routing and keeps native work availabl
   assert.deepEqual(russian.errors, []);
   await russian.page.close();
 });
+
+
+test("session diagnostics explain unavailable verification and open the saved browser without login", async () => {
+  const { page, errors } = await open("benefits-auth-diagnostics", { width: 760, height: 900 });
+  try {
+    assert.doesNotMatch(await page.locator("main").innerText(), /Needs sign-in/);
+    assert.match(await page.locator("main").innerText(), /redirected or refused/);
+    await page.screenshot({ path: path.join(output, "session-diagnostics-overview.png"), fullPage: true });
+    await navigateSidebar(page, "Accounts");
+    const primary = page.locator(".account-card", { hasText: "primary@example.test" });
+    assert.match(await primary.innerText(), /redirected or refused/);
+    await page.screenshot({ path: path.join(output, "session-diagnostics-account.png"), fullPage: true });
+    await primary.getByRole("button", { name: "Browser", exact: true }).click();
+    await page.getByTestId("browser-session-recovery").waitFor();
+    assert.match(await page.getByTestId("browser-session-recovery").innerText(), /redirected or refused/);
+    assert.doesNotMatch(await page.locator(".browser-empty").innerText(), /Needs setup|Sign in|Use passkey/);
+    assert.equal(await page.evaluate(() => window.fixtureCalls.some(call => /login/i.test(call[0]))), false);
+    await page.screenshot({ path: path.join(output, "session-diagnostics-browser.png"), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
