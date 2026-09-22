@@ -59,6 +59,7 @@ separate facts.
 | Updates | [controller](launcher/electron/update.cjs), [release policy](launcher/electron/update-release-policy.cjs), [staging](launcher/electron/update-staging.cjs), [validation](launcher/electron/update-validation.cjs), [worker](launcher/electron/update-worker.cjs) | Packaged repository/channel selects candidates; signature validation, preparation, handoff and detached installation are separate owners. |
 | Usage | [Native contract](src/usage/native-contract.ts), [outbox](src/native-usage-outbox.ts), [durable store](launcher/electron/usage-store.cjs), [report projection](launcher/electron/usage-report.cjs) | Receipt validation and persistence remain independent of UI aggregation. Preserve unknown fields and source/account scope. |
 | UI | [App](launcher/src/App.tsx), [deferred surfaces](launcher/src/deferred-surface.tsx), [presentation log store](launcher/src/launcher-log-store.ts), [Onboarding](launcher/src/Onboarding.tsx), [Accounts](launcher/src/AccountSettings.tsx), [Browser](launcher/src/BrowserSurface.tsx), [Activity](launcher/src/ActivitySurface.tsx), [Task Center](launcher/src/TaskCenter.tsx), [Settings](launcher/src/SettingsSurface.tsx) | App owns shell/navigation/shared snapshots. Optional screens load on navigation; logs update subscribed views instead of App. Feature surfaces and hooks own local drafts/actions; late results stay with their original account/query/flow. |
+| Localization | [locale catalog](launcher/src/locale-catalog.ts), [subscription hook](launcher/src/useLocaleCopy.ts), [language selection](launcher/src/language-selection.ts), [message facade](launcher/src/i18n.ts) | English is immediately available. Other dictionaries load independently and share pending requests. Prepare before saving; a superseded preparation cannot overwrite the latest choice. |
 | DEV harness | [CLI](src/dev-chat/cli.ts), [driver](src/dev-chat/driver.ts), [session store](src/dev-chat/session.ts), [context fixtures](src/dev-chat/context-fixtures.ts), [transport](src/dev-chat/transport.ts) | Isolated DEV state and inert generated content are distinct. The harness attaches to the launcher's existing DEV tunnel rather than taking over supervision. |
 | Build and distribution | [runtime bundler](scripts/build-runtime-bundle.ts), [owned build output](scripts/build-output.cjs), [launcher scripts](launcher/scripts), [CI](.github/workflows/ci.yml), [release workflow](.github/workflows/release.yml) | Generated output must be owned before replacement. Development checks precede separately authorized packaging/publication. |
 
@@ -104,11 +105,29 @@ Overview and Activity subscribe; notifications during bursts are grouped at
 the timer. Durable logs and immediate lifecycle/error/task events remain owned
 by their existing layers. Activity usage aggregation does not rerender for logs.
 
+The locale catalog caches dictionaries by language, not a globally mutable active
+translation. `useLocaleCopy` subscribes to the requested resource; `copyFor` is a
+synchronous read with English fallback and requires preloading for translated
+content. App awaits its first saved language while retaining startup subscriptions.
+After presentation, language loading never unmounts the shell. Settings prepares a
+dictionary before language-save IPC; Onboarding can preview another language while
+an earlier load completes. The shared selection revision suppresses stale saves,
+receipts and failures. Failed loading preserves the saved preference and exposes
+English fallback plus explicit reload; Chromium can cache a rejected module fetch.
+All six dictionaries retain their keys/content from before extraction.
+
 Account snapshots compose one full selected-host observation plus tab-only
 observations for other hosts; no cached authentication/navigation state is
 introduced. Usage projection filters receipts once and sorts each duration set
 once for both median and p95, without changing the durable store or unknown-data
 semantics.
+
+The task ledger owns an ID index over its current records. Regular saves publish
+records and the index only after durable writing succeeds; failed writes preserve
+the prior index. Startup builds the index over recovered in-memory records and
+retains any storage issue. It is not another journal/cache owner. Task Center
+reuses one date formatter per mounted language while retaining full filtering,
+confirmation and keyboard focus behavior.
 
 | State | Owner and rule |
 | --- | --- |

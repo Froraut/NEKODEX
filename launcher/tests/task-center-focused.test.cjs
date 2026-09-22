@@ -27,6 +27,7 @@ function harness(tasks, overrides = {}) {
   const state = [], refs = [], effects = [], calls = [], errors = [];
   let stateIndex = 0, refIndex = 0, effectIndex = 0;
   const react = { ...React,
+    useMemo: create => create(),
     useId: () => 'task-confirmation',
     useLayoutEffect(setup, deps) {
       const i = effectIndex++;

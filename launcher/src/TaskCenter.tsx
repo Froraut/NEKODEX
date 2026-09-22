@@ -2,7 +2,7 @@ import { taskCenterCopy } from "./task-center-copy";
 export { taskCenterTitle } from "./task-center-copy";
 import { filterTasks, taskKey, eligibleTaskConfirmation, requiresDismissConfirmation, type HistoryStatus, type TaskConfirmationTarget } from "./task-center-model";
 import { TaskActionConfirmation } from "./TaskActionConfirmation";
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { BrowserTaskState, Language } from './types';
 import './task-center.css';
 
@@ -28,6 +28,7 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
   const confirmationTrigger = useRef<HTMLButtonElement | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const text = taskCenterCopy(language);
+  const timeFormat = useMemo(() => new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'medium' }), [language]);
   const accounts = new Map(tasks.map(task => [task.accountId, task.accountName]));
   for (const health of historyHealth) accounts.set(health.accountId, health.accountName);
   const visible = filterTasks(tasks, { account, status, query, language });
@@ -83,7 +84,7 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
       {!tasks.length ? (historyHealth.length ? null : <p>{text.empty}</p>) : !visible.length ? <p>{text.noMatches}</p> : visible.map(task => <article key={taskKey(task)}>
         <header><strong>{task.accountName}</strong><span>{text.phases[task.phase] ?? task.phase}</span></header>
         <p><span>{task.model ?? unknownModel[language]}</span> · <code>{task.traceId}</code> · <time dateTime={new Date(task.updatedAt).toISOString()}>
-          {new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'medium' }).format(task.updatedAt)}</time></p>
+          {timeFormat.format(task.updatedAt)}</time></p>
         {task.terminal && task.phase !== 'completed' ? <p role="status">{task.retrySafe ? text.retrySafe : task.phase === 'cancelled' ? text.observationStopped : task.canOpen ? text.inspectFirst : text.documentUnavailable}</p> : null}
         <div className="task-center-actions">
           {task.canOpen ? <button type="button" className="text-button" disabled={disabled || !!pending}

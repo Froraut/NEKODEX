@@ -6,6 +6,8 @@ const { chromium } = require('playwright-core');
 const { createFixtureServer } = require('../tests/fixtures/ui-preview.cjs');
 
 async function measure() {
+  const language = process.argv.find(value => value.startsWith('--language='))?.slice('--language='.length) ?? 'en';
+  const startupOnly = process.argv.includes('--startup-only');
   const server = createFixtureServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
@@ -25,15 +27,15 @@ async function measure() {
         window.codexWebLauncher.onLog = listener => { window.emitMeasuredLog = listener; return () => {}; };
       ` });
     });
-    await page.goto(`http://127.0.0.1:${server.address().port}/?scenario=benefits-astra&language=en`);
+    await page.goto(`http://127.0.0.1:${server.address().port}/?scenario=benefits-astra&language=${encodeURIComponent(language)}`);
     await page.locator('.overview-activity').waitFor();
     const initialScripts = await page.evaluate(() => performance.getEntriesByType('resource')
       .filter(entry => new URL(entry.name).pathname.endsWith('.js') && !entry.name.includes('fixture-setup'))
       .map(entry => new URL(entry.name).pathname));
     const files = initialScripts.map(name => fs.readFileSync(path.resolve(__dirname, '../dist', '.' + name)));
-    const evidence = { initialJavaScriptBytes: files.reduce((n, file) => n + file.length, 0),
+    const evidence = { language, initialJavaScriptBytes: files.reduce((n, file) => n + file.length, 0),
       initialJavaScriptGzipBytes: files.reduce((n, file) => n + gzipSync(file).length, 0), initialScripts, screens: {} };
-    for (const [label, ready] of [['Settings', '.settings-list'], ['Activity', '.activity-filters']]) {
+    for (const [label, ready] of startupOnly ? [] : [['Settings', '.settings-list'], ['Activity', '.activity-filters']]) {
       await page.locator('.sidebar-item').filter({ hasText: label }).first().click();
       await page.locator(ready).first().waitFor();
       await page.waitForTimeout(200);

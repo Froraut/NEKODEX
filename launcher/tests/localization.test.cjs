@@ -2,7 +2,6 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const ts = require("typescript");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const repositoryRoot = path.resolve(launcherRoot, "..");
@@ -13,18 +12,10 @@ const chineseReadme = read("README.zh-CN.md");
 const japaneseReadme = read("README.ja.md");
 const appSource = read("launcher", "src", "App.tsx");
 
-function loadI18nModule() {
-  const source = read("launcher", "src", "i18n.ts");
-  const output = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2023,
-    },
-  }).outputText;
-  const loaded = { exports: {} };
-  Function("module", "exports", "require", output)(loaded, loaded.exports, require);
-  return loaded.exports;
-}
+const { loadRendererModule } = require('./fixtures/load-renderer-module.cjs');
+const i18n = loadRendererModule('i18n.ts');
+test.before(() => Promise.all(['en', 'zh-CN', 'zh-TW', 'ja', 'ko', 'ru'].map(i18n.loadLanguage)));
+function loadI18nModule() { return i18n; }
 
 function commandFences(source) {
   return [...source.matchAll(/```(bash|powershell)\n([\s\S]*?)```/g)]
@@ -46,7 +37,9 @@ test("launcher errors remove IPC wrappers and offer localized navigation guidanc
     assert.equal(localizeLauncherError(copy, "Browser navigation is locked during session inspection"), copy.browserNavigationBusy);
     assert.equal(localizeLauncherError(copy, "Error invoking remote method 'launcher:snapshot': Error: Runtime unavailable"), "Runtime unavailable");
     assert.equal(localizeLauncherError(copy, "Unknown diagnostic (42)"), "Unknown diagnostic (42)");
-    assert.ok(copy.passkeyContinueBody.includes("Chrome"));
+    // The saved browser preference supports Chrome and Firefox; the shared
+    // guidance intentionally refers to the chosen browser rather than a brand.
+    assert.ok(copy.passkeyContinueBody.length > 0);
     assert.notEqual(copy.passkeyContinue, copy.continue);
     assert.ok(copy.retry.length > 0);
     for (const key of ["passkeyReveal", "passkeyCancel", "passkeyVerifying", "passkeyTimedOut", "passkeyRecoveryBody"]) {

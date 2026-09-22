@@ -60,6 +60,11 @@ test('source Electron uses the refactored renderer and real isolated preload', {
       await page.locator(selector).first().waitFor();
       identity.screens.push(label);
     }
+    // Exercise a real file:// deferred locale import and saved-language IPC.
+    await page.locator('.language-menu select').selectOption('ru');
+    await page.waitForFunction(() => document.documentElement.lang === 'ru');
+    assert.equal((await page.evaluate(() => window.codexWebLauncher.snapshot())).state.language, 'ru');
+    identity.language = 'ru';
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
     await page.screenshot({ path: path.join(output, 'source-electron-settings.png') });
     assert.deepEqual(errors, []);

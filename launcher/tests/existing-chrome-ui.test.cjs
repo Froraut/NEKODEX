@@ -14,7 +14,8 @@ function load(file, overrides = {}) {
       : name.startsWith('./') && name.endsWith('.json') ? require(path.join(__dirname, '../src', name)) : require(name)));
   return loaded.exports;
 }
-const { copyFor } = load("i18n.ts");
+const { copyFor, loadLanguage } = require("./fixtures/load-renderer-module.cjs").loadRendererModule("i18n.ts");
+test.before(() => Promise.all(["en", "zh-CN", "ja"].map(loadLanguage)));
 const { ExistingChromeLoginGuide, existingChromeFailureText } = load("ExistingChromeLoginGuide.tsx");
 const progress = (phase, overrides = {}) => ({
   phase, startedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 120000).toISOString(),

@@ -1,8 +1,10 @@
+import { selectLanguage } from "./language-selection";
 import { useState } from "react";
 import languages from "../electron/languages.json";
 import { BrandMark } from "./BrandMark";
 import { Icon } from "./icons";
-import { copyFor } from "./i18n";
+import { useLocaleCopy } from "./useLocaleCopy";
+import { LocaleNotice } from "./LocaleNotice";
 import { messageOf, handleRadioGroupKeys, InteractionModePicker, PrimaryButton } from "./launcher-ui";
 import type { BrowserInteractionMode, Language, LauncherSnapshot, LauncherState } from "./types";
 const api = window.codexWebLauncher;
@@ -26,8 +28,9 @@ export function Onboarding({
     snapshot.state.browserInteractionMode,
   );
   const [localBusy, setBusy] = useState(false);
-  const busy = localBusy || Boolean(snapshot.lifecycle?.transition);
-  const localized = copyFor(selectedLanguage);
+  const locale = useLocaleCopy(selectedLanguage);
+  const busy = localBusy || locale.status !== "ready" || Boolean(snapshot.lifecycle?.transition);
+  const localized = locale.copy;
   const isLanguage = stage === "language";
   const isInteraction = stage === "interaction";
   const stageIndex = isLanguage ? 0 : isInteraction ? 1 : 2;
@@ -37,8 +40,8 @@ export function Onboarding({
     setBusy(true);
     setError(null);
     try {
-      updateState(await api!.setLanguage(selectedLanguage));
-      setStage("interaction");
+      const state = await selectLanguage(selectedLanguage, next => api!.setLanguage(next));
+      if (state) { updateState(state); setStage("interaction"); }
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -51,7 +54,8 @@ export function Onboarding({
     setBusy(true);
     setError(null);
     try {
-      updateState(await api!.completeOnboarding(selectedLanguage, selectedInteractionMode));
+      const state = await selectLanguage(selectedLanguage, next => api!.completeOnboarding(next, selectedInteractionMode));
+      if (state) updateState(state);
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -62,7 +66,7 @@ export function Onboarding({
   return (
     <main
       className="welcome"
-      lang={selectedLanguage}
+      lang={locale.language}
     >
       <header className="welcome-top draggable">
         <div className="welcome-brand no-drag">
@@ -117,12 +121,13 @@ export function Onboarding({
           )}
         </section>
 
+      {locale.status !== "ready" ? <LocaleNotice language={selectedLanguage} copy={localized} failed={locale.status === "failed"} /> : null}
       <footer className="welcome-footer">
         <div>
           {!isLanguage ? (
             <button
               className="text-button"
-              disabled={busy}
+              disabled={localBusy || Boolean(snapshot.lifecycle?.transition)}
               onClick={() => setStage(isInteraction ? "language" : "interaction")}
               type="button"
             >

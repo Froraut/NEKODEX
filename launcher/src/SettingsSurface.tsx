@@ -1,9 +1,11 @@
+import { selectLanguage } from "./language-selection";
 import taskControlCopy from "../electron/task-control-copy.json";
 import type { CompactionModel } from "./types";
 import { codexSettingsStatus } from "./setup-progress";
 import { BrandMark } from "./BrandMark";
 import { useEffect, useRef, useState } from "react";
 import { type Copy } from "./i18n";
+import { LocaleNotice } from "./LocaleNotice";
 import { Icon } from "./icons";
 import { RouteDiagnostics } from "./RouteDiagnostics";
 import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState, ProModelVersion } from "./types";
@@ -58,6 +60,7 @@ export function SettingsSurface({
     && capacityValue >= 1 && capacityValue <= capacity.maximum;
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [localBusy, setBusy] = useState(false);
+  const [languageLoad, setLanguageLoad] = useState<{ language: Language; failed: boolean } | null>(null);
   const busy = localBusy || Boolean(snapshot.lifecycle?.transition);
   const [turnsCancelled, setTurnsCancelled] = useState<string | null>(null);
   const taskCopy = taskControlCopy[language] ?? taskControlCopy.en;
@@ -85,7 +88,14 @@ export function SettingsSurface({
     });
   };
   const savePreference = (action: () => Promise<LauncherState>) => runAction(async () => { updateState(await action()); });
-  const updateLanguage = (next: Language) => savePreference(() => api!.setLanguage(next));
+  const updateLanguage = (next: Language) => runAction(async () => {
+    setLanguageLoad({ language: next, failed: false });
+    try {
+      const state = await selectLanguage(next, language => api!.setLanguage(language));
+      if (state) updateState(state);
+      setLanguageLoad(null);
+    } catch (cause) { setLanguageLoad({ language: next, failed: true }); throw cause; }
+  });
   const runDoctor = () => runAction(async () => {
     setDoctor(null);
     setDoctor(await api!.doctor());
@@ -278,6 +288,7 @@ export function SettingsSurface({
           </select>
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
+          {languageLoad ? <LocaleNotice language={languageLoad.language} copy={copy} failed={languageLoad.failed} /> : null}
           <LanguageMenu disabled={busy} copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
       </div>

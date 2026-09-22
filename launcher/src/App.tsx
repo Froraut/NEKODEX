@@ -1,3 +1,5 @@
+import { useLocaleCopy } from './useLocaleCopy';
+import { LocaleNotice } from './LocaleNotice';
 import { createLauncherLogStore, type LauncherLogStore } from './launcher-log-store';
 import { deferredSurface } from './deferred-surface';
 import { Onboarding } from "./Onboarding";
@@ -65,7 +67,10 @@ export function App() {
   const lastOperationStatus = useRef<OperationState["status"] | null>(null);
   const lastOperationName = useRef<string | null>(null);
   const completionRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const documentLanguage = snapshot?.state.language ?? "en";
+  const requestedLanguage = snapshot?.state.language ?? "en";
+  const locale = useLocaleCopy(requestedLanguage);
+  const documentLanguage = locale.language;
+  const hasPresentedLocale = useRef(false);
   const currentLanguage = useRef(documentLanguage);
   currentLanguage.current = documentLanguage;
   const acceptLifecycle = useCallback((next: LifecycleProjection | null | undefined) => {
@@ -384,10 +389,11 @@ export function App() {
       }}
     />
   );
-  if (!snapshot) return <LaunchLoading />;
+  if (!snapshot || (locale.pending && !hasPresentedLocale.current)) return <LaunchLoading />;
+  hasPresentedLocale.current = true;
 
-  const language = snapshot.state.language ?? "en";
-  const copy = copyFor(language);
+  const language = locale.language;
+  const copy = locale.copy;
   const visibleOperation: OperationState | null = snapshot.lifecycle?.transition && operation?.status !== "running"
     ? { name: "launcher-transition", status: "running", message: copy.running }
     : operation;
@@ -400,10 +406,11 @@ export function App() {
       data-profile={snapshot.profile}
       data-theme="dark"
     >
+        {(locale.pending || locale.status === "failed") ? <LocaleNotice language={requestedLanguage} copy={copy} failed={locale.status === "failed"} floating /> : null}
         {!snapshot.state.onboardingComplete ? (
           <Onboarding
             key="onboarding"
-            language={language}
+            language={requestedLanguage}
             setError={setError}
             snapshot={snapshot}
             updateState={updateState}

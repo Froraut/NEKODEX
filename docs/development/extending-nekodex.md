@@ -50,6 +50,9 @@ Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) a
 | Add a screen loaded on navigation | `deferred-surface.tsx`, composed in `App.tsx` | Keep startup/IPC ownership in App, loading/error recovery local to the feature, and shared labels outside the deferred module. A browser-cached failed module needs explicit reload. |
 | Display live logs | `launcher-log-store.ts`, subscribed by Overview and Activity | Retain 300 ordered records with stable IDs, reconcile snapshot/events, batch presentation notifications and cancel unused timers. Do not route logs back through App state or delay task/error/lifecycle IPC. |
 | Add a Task Center action | `task-center-model.ts`, `task-center-copy.ts`, `TaskActionConfirmation.tsx` | Backend capabilities authorize actions; phase labels alone do not. Task Center retains focus restoration. |
+| Add or load a translation | `locale-catalog.ts`, `i18n-<language>.json`, `useLocaleCopy.ts` | English is the synchronous fallback; translated `copyFor` reads require `loadLanguage` first. Avoid eager runtime imports of all dictionaries; preserve complete keys/placeholders. |
+| Save a language choice | `language-selection.ts`, Settings and Onboarding | Load before IPC and preserve the latest selection revision. Failure must not rewrite the saved language or erase dirty inputs; keep reload/fallback available. |
+| Read task history by ID | `launcher/electron/browser-task-ledger.cjs` | Its index references the same records and updates after durable writes. Preserve failed-write, restart, dismissal and uncertain-submission semantics. |
 | Add a usage report section | `useUsageReport.ts`, `UsageCalendar.tsx`, `launcher/electron/usage-report.cjs` | Query identity, report projection and durable storage remain separate. Reuse the filtered receipt set and one sort per duration summary; preserve unknown coverage. Log changes must not trigger usage recomputation. |
 | Add synthetic DEV context | `src/dev-chat/context-fixtures.ts` | Named chat persistence remains in `session.ts`; generated content stays explicitly inert. |
 
@@ -74,5 +77,12 @@ offscreen log retention, stable filtered rows and failed-load recovery, includin
 paused animation frames. The bounded `launcher/scripts/measure-ui-work.cjs` and
 `measure-usage-projection.cjs <baseline-ref>` probes produce comparative evidence;
 they are not default startup tasks or broad regression suites.
+
+`launcher/tests/locale-loading-ui-preview.cjs` checks saved-locale startup,
+in-flight selection, dirty-input retention and failed-chunk recovery. Startup-only
+size sampling uses `measure-ui-work.cjs --startup-only --language=ru`; it counts
+all requested scripts, including the selected language chunk. Task probes are
+`measure-task-history.cjs` (compiled UI, synthetic rows) and
+`measure-task-lookup.cjs <baseline-ref>` (isolated valid synthetic journal).
 
 Source publication, development verification, packaging and installed runtime are separate outcomes. This refactor does not change the release version or authorize a release.

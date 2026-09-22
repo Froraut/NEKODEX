@@ -33,7 +33,7 @@ function validRecord(row) {
 // Metadata only. No prompt, response, page title, URL, credentials or tool arguments.
 class BrowserTaskLedger {
   constructor(file, clock = Date.now) {
-    this.file = file; this.clock = clock; this.records = []; this.storageIssue = null;
+    this.file = file; this.clock = clock; this.records = []; this.recordIndex = new Map(); this.storageIssue = null;
     try {
       const stat = fs.lstatSync(file);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) throw new Error('Invalid task journal');
@@ -49,13 +49,17 @@ class BrowserTaskLedger {
     } catch (error) {
       if (error.code !== 'ENOENT') this.storageIssue = 'task-history-unavailable';
     }
+    this.recordIndex = new Map(this.records.map(row => [row.id, row]));
   }
   save(records) {
     if (this.storageIssue) throw new Error('Task history could not be read; preserve the journal and repair storage before starting new tasks');
     writePrivateFileAtomic(this.file, JSON.stringify({ version: 1, records }) + '\n', { durable: true });
     this.records = records;
+    // Publish the read index only after the durable write succeeds. It refers to
+    // these exact records, never a second owner of journal state.
+    this.recordIndex = new Map(records.map(row => [row.id, row]));
   }
-  get(id) { return this.records.find(row => row.id === id); }
+  get(id) { return this.recordIndex.get(id); }
   snapshot() { return this.records.map(row => ({ ...row })); }
   start(traceId, tabId, progressVersion, model = null) {
     const now = this.clock();
