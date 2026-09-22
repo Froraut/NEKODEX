@@ -225,12 +225,13 @@ function parentAssistantAnswer(
   if (!input) return undefined;
   const boundary = currentTurnBoundary(parsed, input, turnId);
   if (boundary === undefined) return undefined;
-  for (let index = boundary - 1; index >= 0; index -= 1) {
-    const text = assistantItemText(input[index]);
-    const parentTurnId = itemTurnId(input[index]);
-    if (text && parentTurnId) return { answer: text, turnId: parentTurnId };
-  }
-  return undefined;
+  // Only the adjacent answer can summarize the entire replaced prefix. Searching
+  // backward could cross an interrupted turn whose instructions are not in its
+  // predecessor's checkpoint. On any intervening item, keep canonical history.
+  const parent = input[boundary - 1];
+  const text = assistantItemText(parent);
+  const parentTurnId = itemTurnId(parent);
+  return text && parentTurnId ? { answer: text, turnId: parentTurnId } : undefined;
 }
 
 function currentTurnInput(parsed: CodexParsedRequest, turnId: string): unknown[] | undefined {

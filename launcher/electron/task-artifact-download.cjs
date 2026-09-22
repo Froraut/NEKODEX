@@ -7,6 +7,18 @@ const path = require('node:path');
 const DEFAULT_MAX_BYTES = 50_000_000;
 const DEFAULT_DEADLINE_MS = 60_000;
 
+// Match the adapter's sanitizeCodexFileName NFKC/trim policy without basename
+// stripping or lossy replacements that could turn unsafe paths into owned names.
+function canonicalDownloadFilename(value) {
+  if (typeof value !== 'string') throw new Error('Artifact download filename is invalid');
+  const normalized = value.normalize('NFKC').trim();
+  if (!normalized || normalized.length > 160 || normalized === '.' || normalized === '..'
+    || /[/\\\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error('Artifact download filename must be a safe plain filename');
+  }
+  return normalized;
+}
+
 function downloadAuthority(raw) {
   if (typeof raw !== 'string' || !raw) throw new Error('Artifact download has no authoritative URL');
   if (raw.startsWith('sandbox:/')) return 'chatgpt-sandbox';
@@ -67,7 +79,9 @@ function createTaskArtifactDownloadGuard(session, options = {}) {
 
   const onWillDownload = (_event, item, webContents) => {
     if (disposed || !item || !webContents) return;
-    const filename = item.getFilename?.();
+    let filename;
+    try { filename = canonicalDownloadFilename(item.getFilename?.()); }
+    catch { return; } // invalid names cannot acquire a task's save path
     const candidates = [...leases.values()].filter(lease => !lease.claimed
       && lease.webContentsId === webContents.id && lease.expectedFilename === filename);
     if (candidates.length === 0) return; // unrelated user/workspace download remains untouched
@@ -143,6 +157,7 @@ function createTaskArtifactDownloadGuard(session, options = {}) {
         || !path.basename(input.partialPath).endsWith('.partial')) {
         throw new Error('Artifact download lease is invalid');
       }
+      const expectedFilename = canonicalDownloadFilename(input.expectedFilename);
       const taskInfo = fs.lstatSync(input.taskDirectory);
       if (!taskInfo.isDirectory() || taskInfo.isSymbolicLink()
         || fs.realpathSync(path.dirname(input.partialPath)) !== fs.realpathSync(input.taskDirectory)
@@ -150,7 +165,7 @@ function createTaskArtifactDownloadGuard(session, options = {}) {
         throw new Error('Artifact download lease requires a real task-owned directory and a new partial path');
       }
       if ([...leases.values()].some(lease => lease.webContentsId === input.webContentsId
-        && lease.expectedFilename === input.expectedFilename)) {
+        && lease.expectedFilename === expectedFilename)) {
         throw new Error('Artifact download lease already owns this webContents and filename');
       }
       const maxBytes = Math.min(defaultMaxBytes, input.maxBytes ?? defaultMaxBytes);
@@ -167,6 +182,7 @@ function createTaskArtifactDownloadGuard(session, options = {}) {
       const lease = {
         id: `artifact_${randomUUID().replaceAll('-', '')}`,
         ...input,
+        expectedFilename,
         maxBytes,
         deadlineMs,
         completion,

@@ -46,7 +46,7 @@ function csvCell(value: string | number | null) {
 export function usageReportCsv(report: UsageSnapshot): string {
   const scope = report.source === "native" ? "native-recorded-only"
     : report.selectedAccountId !== null ? "selected-account" : "all-accounts";
-  const header = ["record_type", "source", "scope", "period_start", "period_end", "time_zone", "day", "account_id", "mode", "effort", "model_version", "model_version_source", "message_kind", "endpoint", "model_id", "model_id_source", "total_count", "completed_count", "failed_count", "cancelled_count", "incomplete_count", "unrecorded_count", "known_outcome_count", "known_outcome_completion_rate", "duration_samples", "median_accept_to_outcome_ms", "p95_accept_to_outcome_ms", "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "reported_token_samples", "unreported_token_samples", "failure_code", "failure_count", "selected_account_id", "generated_at"];
+  const header = ["record_type", "source", "scope", "period_start", "period_end", "time_zone", "day", "account_id", "mode", "effort", "model_version", "model_version_source", "message_kind", "endpoint", "model_id", "model_id_source", "total_count", "completed_count", "failed_count", "cancelled_count", "incomplete_count", "unrecorded_count", "known_outcome_count", "known_outcome_completion_rate", "duration_samples", "median_accept_to_outcome_ms", "p95_accept_to_outcome_ms", "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "reported_token_samples", "unreported_token_samples", "failure_code", "failure_count", "selected_account_id", "generated_at", "cached_input_reported_samples", "reasoning_reported_samples"];
   const token = report.tokens;
   type CsvValue = string | number | null | undefined;
   const base = { source: report.source, scope, period_start: report.period.startDay, period_end: report.period.endDay,
@@ -62,7 +62,9 @@ export function usageReportCsv(report: UsageSnapshot): string {
     p95_accept_to_outcome_ms: report.durations.p95Ms, input_tokens: token?.inputTokens,
     output_tokens: token?.outputTokens, cached_input_tokens: token?.cachedInputTokens,
     reasoning_tokens: token?.reasoningTokens, reported_token_samples: token?.reportedSamples,
-    unreported_token_samples: token?.unreportedSamples }];
+    unreported_token_samples: token?.unreportedSamples,
+    cached_input_reported_samples: token?.cachedInputReportedSamples,
+    reasoning_reported_samples: token?.reasoningReportedSamples }];
   for (const day of report.calendar) records.push({ ...base, record_type: "day", day: day.day, total_count: day.total,
     completed_count: day.completed, failed_count: day.failed, cancelled_count: day.cancelled,
     incomplete_count: day.incomplete ?? 0, unrecorded_count: report.source === "web" ? day.unrecorded : null });

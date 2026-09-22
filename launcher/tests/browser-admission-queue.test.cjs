@@ -245,3 +245,40 @@ test('live candidate selection still honors pause and owner loss after an awaite
     assert.equal(f.queue.snapshot().entries.find(row => row.id === stale.queueId).status, 'paused');
   } finally { release(); f.close(); }
 });
+
+test('terminal failures persist only allowlisted metadata and never infer unsent from failure', async () => {
+  let dispatches = 0;
+  const f = fixture({ dispatch: async req => {
+    dispatches++;
+    throw Object.assign(new Error('private provider text must not be journalled'), {
+      code: req.retained ? 'retained_conversation_unavailable' : 'unexpected_provider_failure',
+      ...(req.retained ? {} : { workStarted: false }), token: 'private-secret',
+    });
+  }, releaseUnsent: () => { throw new Error('Failed row must not refund based on a missing tab'); } });
+  let restored;
+  try {
+    const retained = { ...request('trace-terminal-retained'), retained: true };
+    const unknown = request('trace-terminal-unknown');
+    f.queue.request(retained); await tick();
+    f.queue.request(unknown); await tick();
+    assert.equal(dispatches, 2);
+    const bytes = fs.readFileSync(f.options.file, 'utf8');
+    assert.equal(bytes.includes('private'), false);
+    const saved = JSON.parse(bytes);
+    assert.deepEqual(saved.entries[0].terminalFailure, { code: 'retained_conversation_unavailable' });
+    assert.equal(saved.entries[1].terminalFailure, undefined);
+    restored = new BrowserAdmissionQueue(f.options);
+    assert.equal(restored.storageIssue, null);
+    assert.throws(() => restored.request(retained), error => error.code === 'retained_conversation_unavailable' && error.workStarted === undefined);
+    assert.throws(() => restored.request(unknown), error => error.code === 'queue_task_ended' && error.workStarted === undefined);
+    assert.deepEqual(await f.queue.cancelOwner(retained.traceId, retained.helperPid), { cancelled: false, notSent: false });
+    assert.deepEqual(await f.queue.cancelOwner(unknown.traceId, unknown.helperPid), { cancelled: false, notSent: false });
+    await restored.pump(); assert.equal(dispatches, 2);
+    restored.close();
+    saved.entries[0].terminalFailure.workStarted = true;
+    fs.writeFileSync(f.options.file, JSON.stringify(saved));
+    restored = new BrowserAdmissionQueue(f.options);
+    assert.equal(restored.storageIssue, 'queue-storage-unavailable');
+    assert.throws(() => restored.request(retained), /history is unavailable/);
+  } finally { restored?.close(); f.close(); }
+});

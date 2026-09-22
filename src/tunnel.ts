@@ -1,3 +1,4 @@
+import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./codex-integration-shared";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -33,6 +34,7 @@ interface TunnelInstallManifest {
 }
 
 interface TunnelInstallFile {
+  identity?: { dev: number; ino: number };
   bytes?: Uint8Array;
   mode?: number;
 }
@@ -42,7 +44,7 @@ export interface TunnelClientInstallSnapshot {
   manifest: TunnelInstallFile;
 }
 
-function installFileSnapshot(path: string, executable = false): TunnelInstallFile {
+function installFileSnapshot(path: string): TunnelInstallFile {
   const entry = lstatSync(path, { throwIfNoEntry: false });
   if (!entry) return {};
   if (entry.isSymbolicLink()) {
@@ -53,13 +55,14 @@ function installFileSnapshot(path: string, executable = false): TunnelInstallFil
   }
   return {
     bytes: new Uint8Array(readFileSync(path)),
-    ...(executable && process.platform !== "win32" ? { mode: entry.mode & 0o777 } : {}),
+    mode: entry.mode & 0o777,
+    identity: { dev: entry.dev, ino: entry.ino },
   };
 }
 
 export function snapshotTunnelClientInstallation(): TunnelClientInstallSnapshot {
   return {
-    binary: installFileSnapshot(binaryPath(), true),
+    binary: installFileSnapshot(binaryPath()),
     manifest: installFileSnapshot(manifestPath()),
   };
 }
@@ -67,7 +70,8 @@ export function snapshotTunnelClientInstallation(): TunnelClientInstallSnapshot 
 function sameInstallFile(left: TunnelInstallFile, right: TunnelInstallFile): boolean {
   return Boolean(left.bytes) === Boolean(right.bytes)
     && (!left.bytes || Boolean(right.bytes && Buffer.from(left.bytes).equals(right.bytes)))
-    && left.mode === right.mode;
+    && left.mode === right.mode
+    && left.identity?.dev === right.identity?.dev && left.identity?.ino === right.identity?.ino;
 }
 
 function sameInstallation(left: TunnelClientInstallSnapshot, right: TunnelClientInstallSnapshot): boolean {
@@ -75,7 +79,7 @@ function sameInstallation(left: TunnelClientInstallSnapshot, right: TunnelClient
     && sameInstallFile(left.manifest, right.manifest);
 }
 
-/** Restore only bytes and executable mode still matching this install attempt. */
+/** Restore only files whose bytes, inode and permissions still match this install attempt. */
 export function restoreTunnelClientInstallation(
   before: TunnelClientInstallSnapshot,
   owned: TunnelClientInstallSnapshot,
@@ -89,12 +93,11 @@ export function restoreTunnelClientInstallation(
   }
   if (!sameInstallFile(before.binary, owned.binary)) {
     if (before.binary.bytes) {
-      atomicWriteFile(binaryPath(), before.binary.bytes);
-      if (process.platform !== "win32") chmodSync(binaryPath(), before.binary.mode!);
+      atomicWriteFile(binaryPath(), before.binary.bytes, { mode: before.binary.mode });
     } else rmSync(binaryPath(), { force: true });
   }
   if (!sameInstallFile(before.manifest, owned.manifest)) {
-    if (before.manifest.bytes) atomicWriteFile(manifestPath(), before.manifest.bytes);
+    if (before.manifest.bytes) atomicWriteFile(manifestPath(), before.manifest.bytes, { mode: before.manifest.mode });
     else rmSync(manifestPath(), { force: true });
   }
 }
@@ -393,27 +396,26 @@ export async function installTunnelClient(
   const releaseInstallLock = acquireTunnelInstallLock(`${manifestFile}.lock`);
   let binaryWritten = false;
   let manifestWritten = false;
-  let ownedBinaryMode = 0o600;
+  let ownedBinary = beforeInstall.binary;
+  let ownedManifest = beforeInstall.manifest;
   let failure: Error | undefined;
   try {
     if (!sameInstallation(snapshotTunnelClientInstallation(), beforeInstall)) {
       throw new Error("Tunnel client changed while the upgrade was prepared; preserving the concurrent edit");
     }
-    atomicWriteFile(executable, binary);
+    const binaryReceipt = atomicWriteFile(executable, binary, { mode: process.platform === "win32" ? 0o600 : 0o700 });
+    ownedBinary = { bytes: binary, mode: binaryReceipt.mode, identity: binaryReceipt.identity };
     binaryWritten = true;
-    if (process.platform !== "win32") {
-      chmodSync(executable, 0o700);
-      ownedBinaryMode = 0o700;
-    }
-    atomicWriteFile(manifestFile, manifestBytes);
+    const manifestReceipt = atomicWriteFile(manifestFile, manifestBytes);
+    ownedManifest = { bytes: manifestBytes, mode: manifestReceipt.mode, identity: manifestReceipt.identity };
     manifestWritten = true;
   } catch (error) {
     try {
       restoreTunnelClientInstallation(beforeInstall, {
         binary: binaryWritten
-          ? { bytes: binary, ...(process.platform !== "win32" ? { mode: ownedBinaryMode } : {}) }
+          ? ownedBinary
           : beforeInstall.binary,
-        manifest: manifestWritten ? { bytes: manifestBytes } : beforeInstall.manifest,
+        manifest: manifestWritten ? ownedManifest : beforeInstall.manifest,
       });
     } catch (rollbackError) {
       failure = new Error(`${error instanceof Error ? error.message : String(error)}; tunnel-client rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
@@ -431,8 +433,8 @@ export async function installTunnelClient(
   }
   if (failure) throw failure;
   onInstalled?.({
-    binary: { bytes: binary, ...(process.platform !== "win32" ? { mode: 0o700 } : {}) },
-    manifest: { bytes: manifestBytes },
+    binary: ownedBinary,
+    manifest: ownedManifest,
   });
   return executable;
 }
@@ -440,8 +442,8 @@ export async function installTunnelClient(
 export function installRuntimeKey(
   sourcePath: string,
   interactionMode: BrowserInteractionMode = "automatic",
-  onWritten?: (bytes: Uint8Array) => void,
-  expectedBefore?: Uint8Array | null,
+  onWritten?: (bytes: Uint8Array, receipt: FileSnapshot) => void,
+  expectedBefore?: Uint8Array | null | FileSnapshot,
 ): string {
   if (!existsSync(sourcePath)) throw new Error(`Tunnel runtime key file does not exist: ${sourcePath}`);
   const key = readFileSync(sourcePath);
@@ -459,21 +461,24 @@ export function managedRuntimeKeyPath(interactionMode: BrowserInteractionMode = 
 export function installRuntimeKeyBytes(
   key: Uint8Array | string,
   interactionMode: BrowserInteractionMode = "automatic",
-  onWritten?: (bytes: Uint8Array) => void,
-  expectedBefore?: Uint8Array | null,
+  onWritten?: (bytes: Uint8Array, receipt: FileSnapshot) => void,
+  expectedBefore?: Uint8Array | null | FileSnapshot,
 ): string {
   const bytes = typeof key === "string" ? new TextEncoder().encode(key.trim()) : key;
   if (bytes.byteLength === 0 || bytes.byteLength > 64 * 1024) throw new Error("Tunnel runtime key is empty or unexpectedly large");
   const destination = managedRuntimeKeyPath(interactionMode);
-  if (expectedBefore !== undefined) {
+  const expectedSnapshot = expectedBefore && "path" in expectedBefore ? expectedBefore : undefined;
+  if (expectedBefore !== undefined && !expectedSnapshot) {
+    const expectedBytes = expectedBefore as Uint8Array | null;
     const current = existsSync(destination) ? readFileSync(destination) : null;
-    if ((current === null) !== (expectedBefore === null)
-      || (current !== null && expectedBefore !== null && !current.equals(expectedBefore))) {
+    if ((current === null) !== (expectedBytes === null)
+      || (current !== null && expectedBytes !== null && !current.equals(expectedBytes))) {
       throw new Error("Tunnel runtime key changed after setup took its snapshot; preserving the concurrent edit");
     }
   }
-  atomicWriteFile(destination, bytes);
-  onWritten?.(bytes);
+  const before = expectedSnapshot ?? snapshotFile(destination);
+  const receipt = writeFileSnapshot(before, bytes, { expectedSnapshot: before });
+  onWritten?.(bytes, receipt);
   return destination;
 }
 

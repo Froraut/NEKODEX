@@ -78,8 +78,18 @@ async function verifyCapturedAccount(sessionApi, transfer, { expectedPrincipalFi
     }
     return identity;
   } finally {
-    await isolated.clearStorageData();
-    isolated.closeAllConnections();
+    // Both resources must finish teardown, even after cancellation or a failed
+    // storage clear. Successful cleanup leaves the original result/error intact.
+    let cleanupFailed = false;
+    try { await isolated.clearStorageData(); }
+    catch { cleanupFailed = true; }
+    try { await isolated.closeAllConnections(); }
+    catch { cleanupFailed = true; }
+    if (cleanupFailed) {
+      throw Object.assign(new Error('Temporary Chrome sign-in cleanup failed'), {
+        code: 'existing_chrome_cleanup_failed',
+      });
+    }
   }
 }
 

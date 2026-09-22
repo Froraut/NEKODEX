@@ -3,6 +3,7 @@ const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 
 const VERSION = 1;
 const MAX_WORKSPACES = 16;
+const WORKSPACE_OVERFLOW_CODE = "NEKODEX_WORKSPACE_OVERFLOW";
 const MAX_LOCATION_LENGTH = 2_048;
 const CHATGPT_ORIGIN = "https://chatgpt.com";
 const BLOCKED_PATH = /^\/(?:auth|login|logout|sign-in|signin|sign-up|signup|api\/auth)(?:\/|$)/i;
@@ -91,7 +92,9 @@ function normalizeManifest(value, accountId, { rejectOverflow = false } = {}) {
     seen.add(entry.id);
     entries.push(entry);
     if (rejectOverflow && entries.length > MAX_WORKSPACES) {
-      throw new Error(`Workspace restoration state exceeds the ${MAX_WORKSPACES}-entry limit; not all windows could be saved`);
+      const error = new Error(`Workspace restoration state exceeds the ${MAX_WORKSPACES}-entry limit; not all windows could be saved`);
+      error.code = WORKSPACE_OVERFLOW_CODE;
+      throw error;
     }
     if (!rejectOverflow && entries.length === MAX_WORKSPACES) break;
   }
@@ -139,6 +142,7 @@ module.exports = {
   BrowserWorkspaceManifest,
   CHATGPT_ORIGIN,
   MAX_WORKSPACES,
+  WORKSPACE_OVERFLOW_CODE,
   VERSION,
   isTemporaryChat,
   normalizeBounds,

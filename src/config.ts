@@ -1,5 +1,6 @@
+import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./codex-integration-shared";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { chmodSync, fchmodSync, fstatSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { tmpdir } from "node:os";
@@ -210,7 +211,7 @@ export function atomicWriteFile(
   path: string,
   data: string | Uint8Array,
   { mode = 0o600, protectDirectory = true }: { mode?: number; protectDirectory?: boolean } = {},
-): void {
+): FileSnapshot {
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   if (protectDirectory) {
@@ -220,14 +221,16 @@ export function atomicWriteFile(
   const fd = openSync(temp, "wx", mode);
   try {
     writeFileSync(fd, data);
+    try { fchmodSync(fd, mode); } catch { /* Windows ACLs are managed by the installer. */ }
+    const stat = fstatSync(fd);
     closeSync(fd);
     renameAtomicFile(temp, path);
+    return { path, exists: true, data: Buffer.from(data), mode: stat.mode & 0o777, identity: { dev: stat.dev, ino: stat.ino } };
   } catch (error) {
     try { closeSync(fd); } catch {}
     rmSync(temp, { force: true });
     throw error;
   }
-  try { chmodSync(path, mode); } catch { /* Windows ACLs are managed by the installer. */ }
 }
 
 export function stripUtf8Bom(text: string): string {
@@ -685,10 +688,11 @@ function parseConfig(value: unknown, path: string): AppConfig {
   } as AppConfig;
 }
 
-export function saveConfig(config: AppConfig): void {
+export function saveConfig(config: AppConfig, expectedBefore?: FileSnapshot): FileSnapshot {
   const path = getConfigPath();
-  const original = existsSync(path) ? readFileSync(path, "utf8") : "";
-  atomicWriteFile(path, preserveUtf8Bom(`${JSON.stringify(config, null, 2)}\n`, original));
+  const before = expectedBefore ?? snapshotFile(path);
+  const original = before.data?.toString("utf8") ?? "";
+  return writeFileSnapshot(before, preserveUtf8Bom(`${JSON.stringify(config, null, 2)}\n`, original), { expectedSnapshot: before });
 }
 
 export function providerConfig(config: AppConfig): CodexProviderConfig {

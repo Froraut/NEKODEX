@@ -59,7 +59,10 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   const [quotaFailures, setQuotaFailures] = useState<Set<string>>(new Set());
   const [quotaRefreshing, setQuotaRefreshing] = useState<Set<string>>(new Set());
   const [refreshAllBusy, setRefreshAllBusy] = useState(false);
-  const [quotaClock, setQuotaClock] = useState(() => Date.now());
+  const [, wakeQuotaClock] = useState(0);
+  // Hydration can settle after a cached deadline; compare against this render's
+  // time and keep state only to wake the UI when a future deadline expires.
+  const quotaClock = Date.now();
   const quotaInFlight = useRef(new Set<string>());
   const quotaBusySequence = useRef(0);
   const quotaBusyOwners = useRef(new Map<string, number>());
@@ -179,10 +182,10 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   }, [api, quotaEvidenceKey, setError]);
 
   useEffect(() => {
-    const now = Date.now();
-    const nextChange = nextQuotaClockAt(quotas.values(), now);
+    const nextChange = nextQuotaClockAt(quotas.values(), quotaClock);
     if (nextChange === null) return;
-    const timer = window.setTimeout(() => setQuotaClock(Date.now()), Math.min(2_147_483_647, nextChange - now + 50));
+    const timer = window.setTimeout(() => wakeQuotaClock(value => value + 1),
+      Math.min(2_147_483_647, Math.max(0, nextChange - Date.now()) + 50));
     return () => window.clearTimeout(timer);
   }, [quotaClock, quotas]);
 

@@ -425,6 +425,9 @@ export function bridgeToResponsesSSE(
         while (!terminated && !closed && emittedFrames === emittedAtStart) {
           iteratorStarted = true;
           const next = await it.next();
+          // Cancellation cannot revoke a value already handed to a pending queue waiter.
+          // Recheck before processing it, including completion/continuation callbacks.
+          if (closed || clientCancelled) break;
           if (next.done) { upstreamDone = true; break; }
           const event = next.value;
           let terminalEvent = false;

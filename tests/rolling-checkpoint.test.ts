@@ -236,6 +236,48 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   expect(stale.reason).toContain("source turn");
 });
 
+test.each([false, true])("Luna checkpoint skips unsummarized intervening turns with replay boundary %s", (replayed) => {
+  const threadId = `thread_luna_interrupted_${replayed}`;
+  const store = new ChatGptLunaCheckpointStore();
+  const answer = "Completed the first step.";
+  const source = request(threadId, "turn_a", [message("user", "Start the audit.", "turn_a")]);
+  store.commit(source, {
+    checkpoint: { version: 2, summary: "The first audit step is complete." },
+    answerHash: hashChatGptLunaAnswer(answer),
+  }, answer);
+  const prefix = [
+    message("developer", "Ask before external sends.", "turn_a"),
+    message("user", "Start the audit.", "turn_a"),
+    message("assistant", answer, "turn_a"),
+  ];
+  const current = message("user", "Continue with my last request.", "turn_c");
+  // Prove this exact stored parent is usable before introducing the interrupted turn.
+  expect(store.apply(request(threadId, "turn_c", [...prefix, current])).applied).toBeTrue();
+  const constraint = "Use staging only. Production must remain untouched.";
+  const interruption = "<turn_aborted>The user interrupted the previous turn.</turn_aborted>";
+  const next = request(threadId, "turn_c", [
+    ...prefix,
+    message("user", constraint, "turn_b"),
+    message("user", interruption, "turn_b"),
+    current,
+    message("assistant", "Inspecting the pending request.", "turn_c"),
+    message("user", "Keep those constraints.", "turn_c"),
+  ]);
+  if (replayed) next._replayPrefixLen = 7;
+  const result = store.apply(next);
+  const prompt = compileChatGptWebPrompt(result.parsed, {
+    localToolsEnabled: false, solAvailable: false, proAvailable: false,
+  });
+  expect(prompt.text).toContain(constraint);
+  expect(prompt.text).toContain(interruption);
+  expect(prompt.text).toContain("Continue with my last request.");
+  expect(prompt.text).toContain("Keep those constraints.");
+  expect(prompt.text).toContain("Ask before external sends.");
+  expect(result.applied).toBeFalse();
+  expect(result.parsed).toBe(next);
+  expect(extractChatGptTurnUserRevision(result.parsed)).toEqual(extractChatGptTurnUserRevision(next));
+});
+
 test.each([false, true])("Luna checkpoint preserves canonical prefix instructions with replay boundary %s", (replayed) => {
   const threadId = `thread_luna_instructions_${replayed}`;
   const store = new ChatGptLunaCheckpointStore();

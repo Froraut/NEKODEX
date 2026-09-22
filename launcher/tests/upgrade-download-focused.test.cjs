@@ -4,9 +4,133 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { Readable } = require('node:stream');
+const { Readable, PassThrough } = require('node:stream');
 const { downloadAuthenticatedAsset } = require('../electron/resumable-download.cjs');
 const { setupIdentity, preserveSetup, SETUP_CONTRACT } = require('../electron/upgrade-readiness.cjs');
+
+async function waitForPartial(dest, expected) {
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const size = await fs.promises.stat(dest + '.part').then(stat => stat.size, () => -1);
+    if (size === expected) return;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.fail(`download did not write ${expected} bytes to the partial`);
+}
+
+test('download telemetry expires without extending the actual idle deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cgw-freshness-idle-'));
+  const dest = path.join(dir, 'asset.zip');
+  const payload = Buffer.from('authenticated payload');
+  const response = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
+  const progress = [];
+  let requested = false;
+  const download = downloadAuthenticatedAsset('https://github.com/a/b', dest, {
+    expectedBytes: payload.length, expectedSha256: crypto.createHash('sha256').update(payload).digest('hex'),
+    onProgress: value => progress.push(value),
+    requestDownload: async () => { requested = true; return response; },
+  });
+  const rejected = assert.rejects(download, /made no progress; partial retained for retry/);
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requested, true);
+    t.mock.timers.tick(200);
+    response.write(payload.subarray(0, 8));
+    await waitForPartial(dest, 8); // Real response, transform and disk write reached before stalling.
+    assert.equal(progress.at(-1).downloadedBytes, 8);
+    assert.ok(progress.at(-1).bytesPerSecond > 0);
+    t.mock.timers.tick(2_999);
+    assert.ok(progress.at(-1).bytesPerSecond > 0);
+    t.mock.timers.tick(1);
+    assert.deepEqual(progress.at(-1), { downloadedBytes: 8, totalBytes: payload.length,
+      bytesPerSecond: 0, remainingSeconds: null });
+    t.mock.timers.tick(56_999);
+    assert.equal(response.destroyed, false);
+    t.mock.timers.tick(1); // Exactly 60 seconds since the chunk, not since freshness publication.
+    await rejected;
+    assert.equal(fs.statSync(dest + '.part').size, 8);
+    const count = progress.length;
+    t.mock.timers.tick(60_000);
+    assert.equal(progress.length, count);
+  } finally {
+    response.destroy();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('download telemetry resumes after inactivity and stays quiet through hashing and completion', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cgw-freshness-resume-'));
+  const dest = path.join(dir, 'asset.zip');
+  const payload = Buffer.from('authenticated payload');
+  const response = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
+  const hashRead = new PassThrough();
+  const progress = [];
+  let hashEntered;
+  const hashing = new Promise(resolve => { hashEntered = resolve; });
+  const download = downloadAuthenticatedAsset('https://github.com/a/b', dest, {
+    expectedBytes: payload.length, expectedSha256: crypto.createHash('sha256').update(payload).digest('hex'),
+    onProgress: value => progress.push(value), requestDownload: async () => response,
+    createReadStream: file => { assert.deepEqual(fs.readFileSync(file), payload); hashEntered(); return hashRead; },
+  });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(200);
+    response.write(payload.subarray(0, 8));
+    await waitForPartial(dest, 8);
+    t.mock.timers.tick(3_000);
+    assert.equal(progress.at(-1).bytesPerSecond, 0);
+    response.write(payload.subarray(8, 12));
+    await waitForPartial(dest, 12);
+    assert.equal(progress.at(-1).downloadedBytes, 12);
+    assert.ok(progress.at(-1).bytesPerSecond > 0);
+    assert.ok(progress.at(-1).remainingSeconds > 0);
+    response.end(payload.subarray(12));
+    await hashing;
+    const duringHash = progress.length;
+    t.mock.timers.tick(60_001);
+    assert.equal(progress.length, duringHash);
+    hashRead.end(payload);
+    await download;
+    assert.deepEqual(fs.readFileSync(dest), payload);
+    const completed = progress.length;
+    t.mock.timers.tick(60_001);
+    assert.equal(progress.length, completed);
+  } finally {
+    response.destroy(); hashRead.destroy();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('download telemetry timer is cleared on cancellation and stream error', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  for (const mode of ['cancel', 'error']) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cgw-freshness-stop-'));
+    const dest = path.join(dir, 'asset.zip');
+    const response = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
+    const controller = new AbortController();
+    const progress = [];
+    const download = downloadAuthenticatedAsset('https://github.com/a/b', dest, {
+      expectedBytes: 20, expectedSha256: 'a'.repeat(64), signal: controller.signal,
+      onProgress: value => progress.push(value), requestDownload: async () => response,
+    });
+    const rejected = assert.rejects(download, /fixture stop/);
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      t.mock.timers.tick(200);
+      response.write(Buffer.from('partial'));
+      await waitForPartial(dest, 7);
+      assert.ok(progress.at(-1).bytesPerSecond > 0);
+      if (mode === 'cancel') controller.abort(new Error('fixture stop'));
+      else response.destroy(new Error('fixture stop'));
+      await rejected;
+      const count = progress.length;
+      t.mock.timers.tick(60_001);
+      assert.equal(progress.length, count);
+      assert.equal(fs.statSync(dest + '.part').size, 7);
+    } finally { response.destroy(); fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+});
 
 test('signed partial resumes exact range and publishes progress', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cgw-range-'));

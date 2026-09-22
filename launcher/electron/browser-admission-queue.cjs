@@ -11,6 +11,20 @@ const known = new Set(['waiting', 'paused', ...terminal]);
 const idPattern = /^[a-f0-9-]{36}$/;
 const tracePattern = /^[A-Za-z0-9_-]{6,128}$/;
 const accountPattern = /^(default|[a-f0-9-]{36})$/;
+// Persist only audited terminal outcomes, never arbitrary exception text or data.
+const terminalFailureMessages = new Map([
+  ['retained_conversation_unavailable', 'The retained ChatGPT conversation is no longer available'],
+]);
+function terminalFailure(error) {
+  if (!terminalFailureMessages.has(error?.code)) return undefined;
+  return { code: error.code, ...(error.workStarted === false ? { workStarted: false } : {}) };
+}
+function validTerminalFailure(failure) {
+  return failure && typeof failure === 'object' && !Array.isArray(failure)
+    && terminalFailureMessages.has(failure.code)
+    && Object.keys(failure).every(key => key === 'code' || key === 'workStarted')
+    && (!Object.hasOwn(failure, 'workStarted') || failure.workStarted === false);
+}
 
 function validateRequest(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)
@@ -52,7 +66,11 @@ class BrowserAdmissionQueue {
         validateRequest(row.request);
         if (!idPattern.test(row.id) || !known.has(row.status) || !Number.isSafeInteger(row.priority)
           || !Number.isSafeInteger(row.createdAt) || row.createdAt < 0 || row.createdAt > 8_640_000_000_000_000) throw new Error('Invalid admission record');
+        if (row.terminalFailure !== undefined && (row.status !== 'failed' || !validTerminalFailure(row.terminalFailure))) {
+          throw new Error('Invalid terminal admission failure');
+        }
         return { id: row.id, request: row.request, priority: row.priority, createdAt: row.createdAt,
+          ...(row.terminalFailure ? { terminalFailure: terminalFailure(row.terminalFailure) } : {}),
           status: ['waiting', 'paused'].includes(row.status) ? 'paused' : ['admitted', 'running'].includes(row.status) ? 'interrupted' : row.status,
           reason: ['waiting', 'paused'].includes(row.status) ? 'owner-reconnect-required'
             : row.status === 'interrupted' && row.reason === 'lease-ended' ? 'lease-ended' : 'previous-run',
@@ -69,6 +87,7 @@ class BrowserAdmissionQueue {
       pausedAccounts: [...this.pausedAccounts], entries: this.entries.map(row => ({
         id: row.id, request: row.request, createdAt: row.createdAt, priority: row.priority,
         status: row.status === 'admitting' ? 'waiting' : row.status,
+        ...(row.status === 'failed' && row.terminalFailure ? { terminalFailure: row.terminalFailure } : {}),
         ...(row.status === 'interrupted' && row.reason === 'lease-ended' ? { reason: 'lease-ended' } : {}),
       })) }) + '\n', { durable: true }); }
     catch (error) { this.storageIssue = 'queue-storage-unavailable'; throw error; }
@@ -120,6 +139,9 @@ class BrowserAdmissionQueue {
         row.status = 'interrupted'; row.reason = 'lease-ended'; this.save(); this.publish();
       } else return { queued: false, queueId: row.id, ...row.result };
     }
+    if (row.status === 'failed' && row.terminalFailure) {
+      throw Object.assign(new Error(terminalFailureMessages.get(row.terminalFailure.code)), row.terminalFailure);
+    }
     if (terminal.has(row.status)) throw Object.assign(new Error('Queued task ended before a new submission; review its outcome in Task center'), {
       code: row.status === 'cancelled' ? 'turn_cancelled' : 'queue_task_ended',
     });
@@ -170,7 +192,10 @@ class BrowserAdmissionQueue {
           if (row.cancelRequested) row.status = await this.releaseUnsent(row.request) ? 'cancelled' : 'interrupted';
           else if (error?.code === 'account_cooldown' || error?.code === 'browser_capacity_full') {
             row.status = 'waiting'; row.reason = 'local-admission'; row.retryAt = error.retryAt;
-          } else { row.status = 'failed'; row.reason = 'admission-failed'; }
+          } else {
+            row.status = 'failed'; row.reason = 'admission-failed';
+            row.terminalFailure = terminalFailure(error);
+          }
         }
         this.save(); this.publish();
       }

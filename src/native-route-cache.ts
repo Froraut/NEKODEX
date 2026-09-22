@@ -5,6 +5,12 @@ export class NativeRouteCache {
   seed(url: string, proxy: string): void {
     if (!this.entries.has(url)) this.entries.set(url, { proxy, verifiedAt: this.clock(), refreshAt: 0 });
   }
+  /** Detached use retains the same five-minute lease and never revives a rejected route. */
+  cached(url: string): string | undefined {
+    const entry = this.entries.get(url);
+    if (entry?.blocked) throw entry.blocked;
+    return entry && this.clock() - entry.verifiedAt < 300_000 ? entry.proxy : undefined;
+  }
   async resolve(url: string, refresh: () => Promise<string>, transient: (error: unknown) => boolean): Promise<string> {
     let entry = this.entries.get(url);
     const now = this.clock();

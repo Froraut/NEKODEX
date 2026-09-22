@@ -408,9 +408,10 @@ async function waitForReadiness(transaction, { timeoutMs = 90_000, graceMs = 1_0
   throw new Error("Replacement launcher did not prove readiness before its deadline");
 }
 function commit(transaction) {
-  // The commit reaches disk before deleting any byte of the prior installation.
+  // Only a durable commit may authorize cleanup or suppress compensation.
+  // Keep the live phase nonterminal if journal publication fails.
+  writeJournal({ ...transaction, phase: "committed" });
   transaction.phase = "committed";
-  writeJournal(transaction);
   for (const op of transaction.operations) fs.rmSync(op.previous, { recursive: true, force: true });
   // Linux retains the old version and old runner for a separate explicit cleanup.
 }

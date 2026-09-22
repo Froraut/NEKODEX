@@ -2911,6 +2911,11 @@ function SettingsSurface({
     }
   };
   const setInteractionMode = async (mode: BrowserInteractionMode) => {
+    // A mode transition can replace the runtime even if its eventual receipt fails.
+    // Retire old evidence (including pending diagnostics) before starting IPC.
+    if (mode !== snapshot.state.browserInteractionMode) {
+      setRouteDiagnosticsGeneration((generation) => generation + 1);
+    }
     setBusy(true);
     setError(null);
     try {

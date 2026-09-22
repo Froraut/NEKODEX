@@ -58,13 +58,13 @@ test("a failed quota load is rendered inline as an alert", () => {
 
 function accountHarness(snapshotPromise, refreshValue, accountOverrides = {}, selectedId = "a", apiOverrides = {}) {
   const state = [], refs = [];
-  let stateIndex = 0, refIndex = 0, effects = [];
+  let stateIndex = 0, refIndex = 0, effects = [], stateUpdates = 0;
   const react = {
     ...React,
     useState(initial) {
       const index = stateIndex++;
       if (!(index in state)) state[index] = typeof initial === "function" ? initial() : initial;
-      return [state[index], value => { state[index] = typeof value === "function" ? value(state[index]) : value; }];
+      return [state[index], value => { state[index] = typeof value === "function" ? value(state[index]) : value; stateUpdates += 1; }];
     },
     useRef(initial) {
       const index = refIndex++;
@@ -116,6 +116,7 @@ function accountHarness(snapshotPromise, refreshValue, accountOverrides = {}, se
       toolsSetup: { runtimeConfigured: true, connectorName: 'Codex Native6', urls: {} },
       focusAccountId: null, onSetupTools() {} }); },
     effects: () => effects,
+    stateUpdates: () => stateUpdates,
     AccountCodexControls,
     api,
   };
@@ -132,6 +133,62 @@ function findCodexControls(node) {
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
+
+for (const delayed of [true, false]) {
+  test(`quota cooldown ${delayed ? "expired during deferred hydration enables refresh" : "in the future stays blocked until its deadline wakeup"}`, async () => {
+    const originalNow = Date.now;
+    const originalWindow = global.window;
+    const mountedAt = Date.parse("2026-09-22T12:00:00Z");
+    let now = mountedAt, snapshotReads = 0, providerRefreshes = 0, resolveSnapshot;
+    const snapshot = new Promise(resolve => { resolveSnapshot = resolve; });
+    const quota = { accountId: "a", availability: "unavailable", reason: "rate_limited",
+      retryAt: new Date(mountedAt + 1_000).toISOString(), freshUntil: null, additionalBuckets: [] };
+    Date.now = () => now;
+    try {
+      const view = accountHarness(snapshot, null, {}, "a", {
+        accountCodexQuotaSnapshot(id) { assert.equal(id, "a"); snapshotReads += 1; return snapshot; },
+        refreshAccountCodexQuota() { providerRefreshes += 1; throw new Error("unexpected provider refresh"); },
+        refreshAccountCodexQuotas() { providerRefreshes += 1; throw new Error("unexpected batch refresh"); },
+      });
+      view.render(); view.effects()[0](); await flush();
+      view.render(); view.effects()[2]();
+      assert.equal(snapshotReads, 1, "deferred snapshot IPC boundary was reached");
+      assert.equal(findCodexControls(view.render()).props.quota, null);
+      if (delayed) now += 2_000;
+      resolveSnapshot(quota); await flush();
+      let tree = view.render();
+      assert.equal(findCodexControls(tree).props.quota, quota, "the intended snapshot reached the component");
+      const timers = new Map();
+      window.setTimeout = (callback, delay) => { const id = timers.size + 1; timers.set(id, { callback, delay }); return id; };
+      window.clearTimeout = id => timers.delete(id);
+      const cleanup = view.effects()[3]();
+      if (!delayed) {
+        assert.equal(findCodexControls(tree).props.quotaDisabledReason, "Rate limited");
+        assert.equal(findButton(tree, "Refresh all").props.disabled, true);
+        assert.equal(timers.size, 1);
+        const timer = [...timers.values()][0];
+        assert.equal(timer.delay, 1_050);
+        now += timer.delay;
+        const beforeWakeup = view.stateUpdates();
+        timer.callback();
+        assert.equal(view.stateUpdates(), beforeWakeup + 1, "deadline wakes component state");
+        cleanup();
+        tree = view.render();
+        view.effects()[3]();
+      }
+      assert.equal(findCodexControls(tree).props.quotaDisabledReason, undefined);
+      assert.equal(findButton(tree, "Refresh all").props.disabled, false);
+      assert.equal(findCodexControls(tree).props.quotaNow, now);
+      assert.equal(timers.size, 0, "expired evidence leaves no deadline timer");
+      assert.equal(snapshotReads, 1);
+      assert.equal(providerRefreshes, 0);
+    } finally {
+      Date.now = originalNow;
+      if (originalWindow === undefined) delete global.window;
+      else global.window = originalWindow;
+    }
+  });
+}
 
 function findButton(node, label) {
   if (!node || typeof node !== "object") return null;

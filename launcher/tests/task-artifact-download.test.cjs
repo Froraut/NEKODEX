@@ -216,3 +216,90 @@ test('artifact cancellation settles before a synchronous terminal notification',
     fs.rmSync(paths.root, { recursive: true, force: true });
   }
 });
+
+test('canonical filenames claim only the matching owner and complete with the canonical receipt', { timeout: 1000 }, async () => {
+  const session = new EventEmitter();
+  const paths = fixture();
+  const guard = createTaskArtifactDownloadGuard(session);
+  try {
+    const lease = guard.register({
+      webContentsId: 42, traceId: 'trace_canonical', assistantTurnId: 'assistant-turn',
+      expectedFilename: '1.csv', taskDirectory: paths.taskDirectory, partialPath: paths.partialPath,
+    });
+    // Observe rejection even if a preceding assertion fails and finally disposes the lease.
+    lease.completion.catch(() => {});
+    for (const [name, owner] of [['①.csv', 43], ['other.csv', 42], ['../1.csv', 42], ['／1.csv', 42], ['a\\1.csv', 42], ['1\u0000.csv', 42]]) {
+      const unrelated = new FakeDownload(name, 'https://chatgpt.com/file', 4);
+      session.emit('will-download', {}, unrelated, { id: owner });
+      assert.equal(unrelated.savePath, undefined, `${name} on ${owner} must not acquire ownership`);
+      assert.equal(unrelated.cancelled, false);
+    }
+    const item = new FakeDownload(' ①.csv ', 'https://chatgpt.com/file', 4);
+    session.emit('will-download', {}, item, { id: 42 });
+    assert.equal(item.savePath, paths.partialPath);
+    fs.writeFileSync(item.savePath, 'a,b\n');
+    item.receivedBytes = 4;
+    item.emit('done', {}, 'completed');
+    const receipt = await lease.completion;
+    assert.equal(receipt.filename, '1.csv');
+    assert.equal(receipt.partialPath, paths.partialPath);
+    assert.equal(receipt.receivedBytes, 4);
+    assert.equal(fs.readFileSync(receipt.partialPath, 'utf8'), 'a,b\n');
+    assert.equal(guard.has(lease.leaseId), false);
+  } finally {
+    guard.dispose();
+    fs.rmSync(paths.root, { recursive: true, force: true });
+  }
+});
+
+test('canonical filename collisions are rejected within one owner while separate owners stay isolated', { timeout: 1000 }, async () => {
+  const session = new EventEmitter();
+  const paths = fixture();
+  const guard = createTaskArtifactDownloadGuard(session);
+  try {
+    const input = {
+      webContentsId: 42, traceId: 'trace_collision', assistantTurnId: 'assistant-turn',
+      expectedFilename: '①.csv', taskDirectory: paths.taskDirectory, partialPath: paths.partialPath,
+    };
+    const first = guard.register(input);
+    first.completion.catch(() => {});
+    assert.throws(() => guard.register({ ...input, expectedFilename: '1.csv',
+      partialPath: path.join(paths.taskDirectory, '.duplicate.partial') }), /already owns/);
+    const secondPath = path.join(paths.taskDirectory, '.second.partial');
+    const second = guard.register({ ...input, webContentsId: 43, expectedFilename: '1.csv', partialPath: secondPath });
+    second.completion.catch(() => {});
+    const item = new FakeDownload('①.csv', 'https://chatgpt.com/file', 4);
+    session.emit('will-download', {}, item, { id: 43 });
+    assert.equal(item.savePath, secondPath);
+    assert.equal(guard.has(first.leaseId), true);
+    item.receivedBytes = 4;
+    item.emit('done', {}, 'completed');
+    assert.equal((await second.completion).filename, '1.csv');
+    const firstItem = new FakeDownload('1.csv', 'https://chatgpt.com/file', 4);
+    session.emit('will-download', {}, firstItem, { id: 42 });
+    assert.equal(firstItem.savePath, paths.partialPath);
+    firstItem.receivedBytes = 4;
+    firstItem.emit('done', {}, 'completed');
+    assert.equal((await first.completion).filename, '1.csv');
+  } finally {
+    guard.dispose();
+    fs.rmSync(paths.root, { recursive: true, force: true });
+  }
+});
+
+test('canonical lease names reject unsafe paths and invalid normalized filenames', { timeout: 1000 }, () => {
+  const session = new EventEmitter();
+  const paths = fixture();
+  const guard = createTaskArtifactDownloadGuard(session);
+  try {
+    for (const expectedFilename of ['../1.csv', '／1.csv', 'a\\1.csv', '1\u0000.csv', '  ', '．．', 'x'.repeat(161)]) {
+      assert.throws(() => guard.register({
+        webContentsId: 42, traceId: 'trace_invalid', assistantTurnId: 'assistant-turn',
+        expectedFilename, taskDirectory: paths.taskDirectory, partialPath: paths.partialPath,
+      }), /filename/);
+    }
+  } finally {
+    guard.dispose();
+    fs.rmSync(paths.root, { recursive: true, force: true });
+  }
+});

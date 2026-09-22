@@ -438,6 +438,8 @@ class BrowserHost {
     workspaceChanged = () => {},
     workspaceDisplays = () => [],
     taskLedger = null,
+    onTurnTabRemoved = () => {},
+    onTurnTabOwned = () => {},
     coreHome = path.dirname(path.dirname(descriptorPath)),
   }) {
     if (typeof getConnectorName !== "function") {
@@ -466,6 +468,8 @@ class BrowserHost {
       throw new Error("Browser host profile is invalid");
     }
     this.accountId = validateAccountId(accountId);
+    this.onTurnTabRemoved = onTurnTabRemoved;
+    this.onTurnTabOwned = onTurnTabOwned;
     this.isAccountVisible = isAccountVisible;
     this.onAuthIdentityChanged = onAuthIdentityChanged;
     this.workspaceSessionMutation = workspaceSessionMutation;
@@ -862,6 +866,7 @@ class BrowserHost {
       lastHeartbeatAt: Date.now(),
     };
     this.turnTabs.set(id, tab);
+    this.onTurnTabOwned?.({ accountId: this.accountId, traceId, helperPid, tabId: id, surfaceId, taskRecordId });
     this.syncPowerSaveBlocker();
     this.window.contentView.addChildView(view);
     this.presentTurnView(tab, false);
@@ -1989,10 +1994,12 @@ class BrowserHost {
   }
 
   removeTurnTab(tab, abortRunning) {
+    if (this.turnTabs.get(tab.id) !== tab) return;
+    const removedOwner = { accountId: this.accountId, traceId: tab.traceId, helperPid: tab.helperPid,
+      tabId: tab.id, surfaceId: tab.surfaceId, taskRecordId: tab.taskRecordId };
     if (tab.taskRecordId && this.taskLedger?.get(tab.taskRecordId)?.terminal === false) {
       this.taskLedger.end(tab.taskRecordId, 'aborted');
     }
-    if (!this.turnTabs.has(tab.id)) return;
     this.releaseArtifactDownloads(tab.traceId, tab.helperPid, new Error("Browser turn surface closed"));
     this.turnTabs.delete(tab.id);
     if (tab.interactionMode === "manual") {
@@ -2015,6 +2022,13 @@ class BrowserHost {
     }
     try { this.window.contentView.removeChildView(tab.view); } catch {}
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    // Only the actual removal owner can authorize settlement; a missing tab is not evidence.
+    try { this.onTurnTabRemoved?.(removedOwner); }
+    catch (error) {
+      this.logger.warn('browser.removed_turn_settlement_failed', {
+        traceId: removedOwner.traceId, errorType: error?.name || 'Error',
+      });
+    }
     if (this.selectedTabId === tab.id) {
       this.selectedTabId = [...this.turnTabs.keys()].at(-1) || "home";
       const homeContents = this.view?.webContents;
@@ -2086,11 +2100,14 @@ class BrowserHost {
       surfaceId,
       assistantTurnId,
       expectedFilename,
+      partialPath,
+      released: false,
       settled: false,
       outcome: null,
     };
     lease.outcome = registered.completion.then(receipt => {
       lease.settled = true;
+      if (lease.released) this.cleanupArtifactPartial(lease);
       return { receipt };
     }, error => {
       lease.settled = true;
@@ -2123,9 +2140,17 @@ class BrowserHost {
     return { ...outcome.receipt, helperPid, surfaceId };
   }
 
+  cleanupArtifactPartial(lease) {
+    // This is the host-created path, never a helper-provided receipt or promoted artifact.
+    try { fs.rmSync(lease.partialPath, { force: true }); }
+    catch { this.logger.warn('browser.artifact_partial_cleanup_failed', { leaseId: lease.leaseId }); }
+  }
+
   cancelArtifactDownload(traceId, helperPid, surfaceId, leaseId, reason) {
     const lease = this.artifactLease(traceId, helperPid, surfaceId, leaseId);
+    lease.released = true;
     const cancelled = this.artifactDownloads.cancel(leaseId, new Error(reason || 'Artifact download cancelled'));
+    if (!cancelled) this.cleanupArtifactPartial(lease);
     this.artifactLeases.delete(leaseId);
     return { cancelled };
   }
@@ -2133,7 +2158,8 @@ class BrowserHost {
   releaseArtifactDownloads(traceId, helperPid, reason) {
     for (const [leaseId, lease] of this.artifactLeases) {
       if (lease.traceId !== traceId || lease.helperPid !== helperPid) continue;
-      if (!lease.settled) this.artifactDownloads.cancel(leaseId, reason);
+      lease.released = true;
+      if (!this.artifactDownloads.cancel(leaseId, reason)) this.cleanupArtifactPartial(lease);
       this.artifactLeases.delete(leaseId);
     }
   }
@@ -2956,6 +2982,8 @@ class BrowserHost {
       existing.deviceEmulationDirty ||= reused || existing.helperPid !== helperPid;
       existing.helperPid = helperPid;
       existing.traceId = traceId;
+      this.onTurnTabOwned?.({ accountId: this.accountId, traceId, helperPid, tabId: existing.id,
+        surfaceId: existing.surfaceId, taskRecordId: existing.taskRecordId });
       existing.status = "running";
       existing.loading = true;
       existing.message = "ChatGPT is working";

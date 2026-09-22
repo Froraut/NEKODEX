@@ -40,7 +40,8 @@ function harness(api = {}) {
     messageOf: cause => cause.message, platformLabel: () => 'Test', ...Object.fromEntries(children.map(name => [name, name])) };
   const Settings = Function(...Object.keys(scope), `${compiled}\nreturn SettingsSurface;`)(...Object.values(scope));
   const props = { copy, language: 'en', browser: null, operation: null, devProfile: false,
-    snapshot: { state: {}, browserCapacity: { configured: 4, active: 4, maximum: 16, restartRequired: false } },
+    snapshot: { state: { browserInteractionMode: 'automatic' }, browserCapacity: { configured: 4, active: 4, maximum: 16, restartRequired: false } },
+    updateState: state => { props.snapshot = { ...props.snapshot, state }; },
     setError: value => { error = value; }, updateBrowserCapacity: value => { props.snapshot = { ...props.snapshot, browserCapacity: value }; } };
   function render() {
     do { changed = false; cursor = 0; effects = []; tree = Settings(props); effects.forEach(effect => effect()); } while (changed);
@@ -102,4 +103,39 @@ test('doctor refresh clears a previous healthy result even when the replacement 
   assert.equal(h.error(), 'Diagnostic unavailable');
   assert.equal(h.find(node => node.type === 'DoctorSummary'), undefined);
   assert.equal(doctorButton().props.disabled, false);
+});
+
+test('mode transition retires diagnostics before IPC settles and preserves same-mode evidence', async () => {
+  let resolve, reject;
+  const calls = [];
+  const h = harness({ setBrowserInteractionMode: mode => {
+    calls.push(mode);
+    return new Promise((done, fail) => { resolve = done; reject = fail; });
+  } });
+  const picker = () => h.find(node => node.type === 'InteractionModePicker');
+  const diagnostics = () => h.find(node => node.type === 'RouteDiagnostics');
+  const initial = diagnostics().props.key;
+  picker().props.onChange('automatic'); h.render();
+  assert.deepEqual(calls, ['automatic']);
+  assert.equal(diagnostics().props.key, initial);
+  resolve({ state: { browserInteractionMode: 'automatic' }, credentialsRequired: false });
+  await tick(); h.render();
+  picker().props.onChange('manual'); h.render();
+  assert.deepEqual(calls, ['automatic', 'manual']); // Prove the transition IPC was reached.
+  assert.notEqual(diagnostics().props.key, initial);
+  assert.equal(diagnostics().props.disabled, true);
+  const pendingKey = diagnostics().props.key;
+  resolve({ state: { browserInteractionMode: 'manual' }, credentialsRequired: false });
+  await tick(); h.render();
+  assert.equal(picker().props.mode, 'manual');
+  assert.equal(diagnostics().props.key, pendingKey);
+  assert.equal(diagnostics().props.disabled, false);
+  picker().props.onChange('automatic'); h.render();
+  assert.deepEqual(calls, ['automatic', 'manual', 'automatic']);
+  assert.notEqual(diagnostics().props.key, pendingKey);
+  const failedKey = diagnostics().props.key;
+  reject(new Error('Mode transition failed')); await tick(); h.render();
+  assert.equal(h.error(), 'Mode transition failed');
+  assert.equal(diagnostics().props.key, failedKey);
+  assert.equal(diagnostics().props.disabled, false);
 });

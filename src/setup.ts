@@ -10,7 +10,6 @@ import {
   defaultConfig,
   getConfigPath,
   loadConfigForSetup,
-  preserveUtf8Bom,
   resolveInteractionConnectorIdentities,
   saveConfig,
   tunnelConfigForInteractionMode,
@@ -404,13 +403,38 @@ async function inspectLauncherCapabilities(
   };
 }
 
+// Match the shared snapshot receipt contract for preflight and compensation decisions.
+function sameSnapshot(left: FileSnapshot, right: FileSnapshot): boolean {
+  if (left.path !== right.path || left.exists !== right.exists) return false;
+  if (!left.exists) return true;
+  return Boolean(left.data?.equals(right.data ?? Buffer.alloc(0)))
+    && Boolean(left.identity && right.identity)
+    && left.mode === right.mode && left.identity?.dev === right.identity?.dev
+    && left.identity?.ino === right.identity?.ino;
+}
+
+/** A failed connect is not evidence of a stopped runtime. Probe with the candidate client;
+ * never send stop to an alias whose launch did not return an ownership checkpoint. */
+function failedConnectIsStopped(config: AppConfig): boolean {
+  if (!config.tunnel) return false;
+  try {
+    const result = runCommand(config.tunnel.binaryPath,
+      ["runtimes", "status", config.tunnel.alias, "--json"], { timeout: 10_000 });
+    if (result.status !== 0) return false;
+    const status = JSON.parse(result.stdout.trim() || result.stderr.trim());
+    return status.process_running === false
+      && (status.runtime_state === "stopped" || status.status === "stopped")
+      && status.error === undefined;
+  } catch { return false; }
+}
+
 async function configureTunnel(
   config: AppConfig,
   existing: AppConfig | undefined,
   options: SetupOptions,
   expectedTunnelClient?: TunnelClientInstallSnapshot,
   onInstalled?: (owned: TunnelClientInstallSnapshot) => void,
-  onKeyWritten?: (bytes: Uint8Array) => void,
+  onKeyWritten?: (receipt: FileSnapshot) => void,
   expectedRuntimeKey?: FileSnapshot,
 ): Promise<void> {
   if (config.mode === "browser-only") {
@@ -440,11 +464,10 @@ async function configureTunnel(
   if (otherTunnel?.tunnelId === tunnelId) {
     throw new Error("Automatic and Manual mode require different Tunnel IDs and separate ChatGPT connectors");
   }
-  let expectedKey: Uint8Array | null | undefined = expectedRuntimeKey?.exists
-    ? expectedRuntimeKey.data! : expectedRuntimeKey ? null : undefined;
-  const keyWritten = (bytes: Uint8Array): void => {
-    expectedKey = bytes;
-    onKeyWritten?.(bytes);
+  let expectedKey = expectedRuntimeKey;
+  const keyWritten = (_bytes: Uint8Array, receipt: FileSnapshot): void => {
+    expectedKey = receipt;
+    onKeyWritten?.(receipt);
   };
   let runtimeKeyFile = existingTunnel?.runtimeKeyFile;
   const managedKeyFile = managedRuntimeKeyPath(interactionMode);
@@ -728,13 +751,13 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   const assertKnownTunnelState = (): void => {
     if (tunnelStatusUnknown) throw new Error("Tunnel service status is unknown after setup transition");
   };
-  const onServiceDefinitionWritten = ({ path, data }: { path: string; data: string }): void => {
+  const onServiceDefinitionWritten = ({ path, receipt }: { path: string; receipt: FileSnapshot }): void => {
     if (path !== servicePath) throw new Error("Service definition path changed during setup");
-    serviceAfterRoute = { path, exists: true, data: Buffer.from(data) };
+    serviceAfterRoute = receipt;
   };
-  const onTunnelDefinitionWritten = ({ path, data }: { path: string; data: string }): void => {
+  const onTunnelDefinitionWritten = ({ path, receipt }: { path: string; receipt: FileSnapshot }): void => {
     if (path !== tunnelServicePath) throw new Error("Tunnel service definition path changed during setup");
-    tunnelDefinitionAfterRoute = { path, exists: true, data: Buffer.from(data) };
+    tunnelDefinitionAfterRoute = receipt;
   };
   const checkpointServiceRemoval = (): void => {
     if (servicePath && !existsSync(servicePath)) {
@@ -757,9 +780,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   const tunnelServiceUnchanged = (): boolean => {
     if (!tunnelServicePath || !tunnelDefinitionBeforeRoute) return true;
     const current = snapshotFile(tunnelServicePath);
-    return current.exists === tunnelDefinitionBeforeRoute.exists
-      && (!current.exists || Boolean(current.data && tunnelDefinitionBeforeRoute.data
-        && current.data.equals(tunnelDefinitionBeforeRoute.data)))
+    return sameSnapshot(current, tunnelDefinitionBeforeRoute)
       && getTunnelServiceStatus().loaded === tunnelServiceBeforeRoute.loaded;
   };
   let changedWhileLoaded = false;
@@ -771,19 +792,15 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   let validationTunnelRunning = false;
   let previousTunnelStopped = false;
   let failedConnectMayHaveWrittenProfile = false;
-  let savedConfigBytes: Buffer | undefined;
+  let savedConfigReceipt: FileSnapshot | undefined;
   const configUnchanged = (): boolean => {
     const current = snapshotFile(getConfigPath());
-    return current.exists === configBeforeRoute.exists
-      && (!current.exists || Boolean(current.data && configBeforeRoute.data
-        && current.data.equals(configBeforeRoute.data)));
+    return sameSnapshot(current, configBeforeRoute);
   };
   const serviceUnchanged = (): boolean => {
     if (!servicePath || !serviceBeforeRoute) return true;
     const current = snapshotFile(servicePath);
-    return current.exists === serviceBeforeRoute.exists
-      && (!current.exists || Boolean(current.data && serviceBeforeRoute.data
-        && current.data.equals(serviceBeforeRoute.data)))
+    return sameSnapshot(current, serviceBeforeRoute)
       && getServiceStatus().loaded === beforeService.loaded;
   };
 
@@ -792,7 +809,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     await configureTunnel(config, existing, options,
       tunnelClientBeforeRoute,
       owned => { tunnelClientAfterRoute = owned; },
-      bytes => { runtimeKeyAfterRoute = { path: runtimeKeyPath, exists: true, data: Buffer.from(bytes) }; },
+      receipt => { runtimeKeyAfterRoute = receipt; },
       runtimeKeyBeforeRoute);
     changedWhileLoaded = Boolean(existing && beforeService.loaded
       && (meaningfulRuntimeChange(existing, config) || connectorIdentityMigrating));
@@ -812,11 +829,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     if (!launcherOwned) {
       if (!configUnchanged()) throw new Error("Setup config changed during setup; refusing to overwrite the concurrent edit");
       if (!serviceUnchanged()) throw new Error("Background service changed during setup; refusing to overwrite the concurrent edit");
-      savedConfigBytes = Buffer.from(preserveUtf8Bom(
-        `${JSON.stringify(config, null, 2)}\n`,
-        configBeforeRoute.data?.toString("utf8") ?? "",
-      ));
-      saveConfig(config);
+      savedConfigReceipt = saveConfig(config, configBeforeRoute);
       try { installService(config, onServiceDefinitionWritten); } finally {
         observeServiceState();
       }
@@ -833,7 +846,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       tunnelRuntimeTouched = true;
       if (previousTunnelService.installed || previousTunnelService.loaded) {
         if (!tunnelServiceUnchanged()) throw new Error("Tunnel service changed during setup; refusing to remove the concurrent edit");
-        try { await uninstallTunnelService(); } finally { checkpointTunnelRemoval(); }
+        try { await uninstallTunnelService(); checkpointTunnelRemoval(); } finally { observeTunnelState(); }
         assertKnownTunnelState();
       }
       stopTunnel(existing);
@@ -846,7 +859,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       if (launcherOwned) {
         if (tunnelService.installed || tunnelService.loaded) {
           if (!tunnelServiceUnchanged()) throw new Error("Tunnel service changed during setup; refusing to remove the concurrent edit");
-          try { await uninstallTunnelService(); } finally { checkpointTunnelRemoval(); }
+          try { await uninstallTunnelService(); checkpointTunnelRemoval(); } finally { observeTunnelState(); }
           assertKnownTunnelState();
         }
         if (needsProfile || refreshTunnelWorker || explicitTunnelChange) {
@@ -872,8 +885,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
             () => { failedConnectMayHaveWrittenProfile = true; });
           if (tunnelServicePath && tunnelDefinitionAfterRoute) {
             const current = snapshotFile(tunnelServicePath);
-            if (current.exists !== tunnelDefinitionAfterRoute.exists
-              || (current.exists && !current.data?.equals(tunnelDefinitionAfterRoute.data!))) {
+            if (!sameSnapshot(current, tunnelDefinitionAfterRoute)) {
               throw new Error("Tunnel service changed during setup; refusing to overwrite the concurrent edit");
             }
           }
@@ -894,16 +906,12 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     }
     if (launcherOwned && (beforeService.installed || beforeService.loaded)) {
       if (!serviceUnchanged()) throw new Error("Background service changed during setup; refusing to remove the concurrent edit");
-      try { await uninstallService(existing!); } finally { checkpointServiceRemoval(); }
+      try { await uninstallService(existing!); checkpointServiceRemoval(); } finally { observeServiceState(); }
       assertKnownServiceState();
     }
     if (launcherOwned) {
       if (!configUnchanged()) throw new Error("Setup config changed during setup; refusing to overwrite the concurrent edit");
-      savedConfigBytes = Buffer.from(preserveUtf8Bom(
-        `${JSON.stringify(config, null, 2)}\n`,
-        configBeforeRoute.data?.toString("utf8") ?? "",
-      ));
-      saveConfig(config);
+      savedConfigReceipt = saveConfig(config, configBeforeRoute);
     }
     // Keep the previous terminal runtime intact through the ownership handoff. A later launcher
     // setup removes it once the launcher-owned configuration is already the established baseline.
@@ -914,24 +922,23 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     });
   } catch (error) {
     const rollbackFailures: string[] = [...statusProbeFailures];
-    const sameSnapshot = (left: FileSnapshot, right: FileSnapshot): boolean =>
-      left.exists === right.exists
-      && (!left.exists || Boolean(left.data && right.data && left.data.equals(right.data)));
+    const failedConnectUnresolved = failedConnectMayHaveWrittenProfile && !failedConnectIsStopped(config);
+    if (failedConnectUnresolved) rollbackFailures.push("failed connect runtime ownership is unknown; preserving tunnel profile, client and key for manual recovery");
     let configRestored = true;
-    if (!savedConfigBytes) {
+    if (!savedConfigReceipt) {
       try { configRestored = configUnchanged(); }
       catch (caught) {
         configRestored = false;
         rollbackFailures.push(`config status during rollback: ${caught instanceof Error ? caught.message : String(caught)}`);
       }
     }
-    if (savedConfigBytes) {
+    if (savedConfigReceipt) {
       try {
         const current = snapshotFile(getConfigPath());
         if (sameSnapshot(current, configBeforeRoute)) {
-          // The save failed before replacing the original file; owned tunnel writes can roll back.
-        } else if (current.exists && current.data?.equals(savedConfigBytes)) {
-          restoreFileSnapshot(configBeforeRoute);
+          // The exact original file is still current; no compensation is needed.
+        } else if (sameSnapshot(current, savedConfigReceipt)) {
+          restoreFileSnapshot(configBeforeRoute, { expectedCurrent: savedConfigReceipt });
         } else {
           throw new Error("changed after setup wrote it; preserving the concurrent edit");
         }
@@ -951,8 +958,11 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
           || getServiceStatus().loaded !== serviceLoadedAfterRoute) {
           throw new Error("changed after setup wrote it; preserving the concurrent service edit");
         }
-        if (getServiceStatus().loaded) await uninstallService(config);
-        restoreFileSnapshot(serviceBeforeRoute);
+        if (getServiceStatus().loaded) {
+          await uninstallService(config);
+          serviceAfterRoute = { path: servicePath, exists: false };
+        }
+        restoreFileSnapshot(serviceBeforeRoute, { expectedCurrent: serviceAfterRoute });
         if (beforeService.loaded && existing) bootstrapRestoredDefinition(servicePath);
       } catch (caught) {
         rollbackFailures.push(`${servicePath}: ${caught instanceof Error ? caught.message : String(caught)}`);
@@ -965,6 +975,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     let runtimeKeyRestored = false;
     if (tunnelRuntimeTouched || existing?.mode === "full" || config.mode === "full") {
       try {
+        if (failedConnectUnresolved) throw new Error("failed connect is not confirmed stopped; preserving dependent files");
         if (tunnelStatusUnknown) throw new Error("loaded state unknown; leaving tunnel and dependent files for manual recovery");
         if (!configRestored) throw new Error("config rollback was not safe; leaving tunnel state for manual recovery");
         if (tunnelServicePath && tunnelDefinitionBeforeRoute && tunnelDefinitionAfterRoute
@@ -989,10 +1000,10 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         tunnelClientRestored = true;
         if (tunnelProfilePath && tunnelProfileBeforeRoute && tunnelProfileAfterRoute
           && !sameSnapshot(tunnelProfileBeforeRoute, tunnelProfileAfterRoute)) {
-          restoreFileSnapshot(tunnelProfileBeforeRoute);
+          restoreFileSnapshot(tunnelProfileBeforeRoute, { expectedCurrent: tunnelProfileAfterRoute });
         }
         if (!sameSnapshot(runtimeKeyBeforeRoute, runtimeKeyAfterRoute)) {
-          restoreFileSnapshot(runtimeKeyBeforeRoute);
+          restoreFileSnapshot(runtimeKeyBeforeRoute, { expectedCurrent: runtimeKeyAfterRoute });
         }
         runtimeKeyRestored = true;
         const tunnelServiceChanged = Boolean(tunnelServicePath && tunnelDefinitionBeforeRoute
@@ -1000,8 +1011,11 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
           && (!sameSnapshot(tunnelDefinitionBeforeRoute, tunnelDefinitionAfterRoute)
             || tunnelServiceBeforeRoute.loaded !== tunnelServiceLoadedAfterRoute));
         if (tunnelServiceChanged && tunnelDefinitionBeforeRoute) {
-          if (getTunnelServiceStatus().loaded) await uninstallTunnelService();
-          restoreFileSnapshot(tunnelDefinitionBeforeRoute);
+          if (getTunnelServiceStatus().loaded) {
+            await uninstallTunnelService();
+            tunnelDefinitionAfterRoute = { path: tunnelServicePath!, exists: false };
+          }
+          restoreFileSnapshot(tunnelDefinitionBeforeRoute, { expectedCurrent: tunnelDefinitionAfterRoute });
           if (tunnelServiceBeforeRoute.loaded && existing?.mode === "full") {
             bootstrapRestoredDefinition(tunnelServicePath!);
           }
@@ -1027,7 +1041,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         rollbackFailures.push(`tunnel service status during rollback: ${caught instanceof Error ? caught.message : String(caught)}`);
       }
     }
-    if (configRestored && !validationTunnelRunning && !tunnelStatusUnknown
+    if (configRestored && !failedConnectUnresolved && !validationTunnelRunning && !tunnelStatusUnknown
       && (!tunnelRuntimeTouched || !tunnelLoadedForFallback)) {
       if (!tunnelClientRestored) {
         try {
@@ -1041,7 +1055,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
           if (!sameSnapshot(snapshotFile(runtimeKeyPath), runtimeKeyAfterRoute)) {
             throw new Error("changed after setup; preserving the concurrent edit");
           }
-          restoreFileSnapshot(runtimeKeyBeforeRoute);
+          restoreFileSnapshot(runtimeKeyBeforeRoute, { expectedCurrent: runtimeKeyAfterRoute });
         } catch (caught) {
           rollbackFailures.push(`tunnel runtime key: ${caught instanceof Error ? caught.message : String(caught)}`);
         }
@@ -1140,19 +1154,16 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   const clientBefore = snapshotTunnelClientInstallation();
   let clientOwned = clientBefore;
   const configBefore = snapshotFile(getConfigPath());
-  let configPlanned: Buffer | undefined;
+  let configReceipt: FileSnapshot | undefined;
   let profileBefore: FileSnapshot | undefined;
   let profileOwned: FileSnapshot | undefined;
   let failedConnectMayHaveWrittenProfile = false;
   let validationTunnelRunning = false;
   let tunnelReady: boolean | null = null;
-  const sameSnapshot = (left: FileSnapshot, right: FileSnapshot): boolean =>
-    left.exists === right.exists
-    && (!left.exists || Boolean(left.data && right.data && left.data.equals(right.data)));
   try {
     await configureTunnel(config, existing, options, clientBefore,
       owned => { clientOwned = owned; },
-      bytes => { keyOwned = { path: keyPath, exists: true, data: Buffer.from(bytes) }; },
+      receipt => { keyOwned = receipt; },
       keyBefore);
     if (config.mode === "full") {
       const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
@@ -1170,27 +1181,26 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     if (!sameSnapshot(snapshotFile(getConfigPath()), configBefore)) {
       throw new Error("DEV config changed during setup; preserving the concurrent edit");
     }
-    configPlanned = Buffer.from(preserveUtf8Bom(
-      `${JSON.stringify(config, null, 2)}\n`, configBefore.data?.toString("utf8") ?? ""));
-    saveConfig(config);
+    configReceipt = saveConfig(config, configBefore);
   } catch (error) {
     const rollbackFailures: string[] = [];
+    const failedConnectUnresolved = failedConnectMayHaveWrittenProfile && !failedConnectIsStopped(config);
     let configRestored = true;
     const attempt = (label: string, action: () => void): void => {
       try { action(); } catch (caught) {
         rollbackFailures.push(`${label}: ${caught instanceof Error ? caught.message : String(caught)}`);
       }
     };
-    if (configPlanned) attempt("DEV config", () => {
+    if (configReceipt) attempt("DEV config", () => {
       const current = snapshotFile(getConfigPath());
       if (sameSnapshot(current, configBefore)) return;
-      if (!current.exists || !current.data?.equals(configPlanned!)) {
+      if (!sameSnapshot(current, configReceipt!)) {
         throw new Error("changed after setup; preserving the concurrent edit");
       }
-      restoreFileSnapshot(configBefore);
+      restoreFileSnapshot(configBefore, { expectedCurrent: configReceipt });
     });
-    if (configPlanned && rollbackFailures.length > 0) configRestored = false;
-    if (!configPlanned && !sameSnapshot(snapshotFile(getConfigPath()), configBefore)) {
+    if (configReceipt && rollbackFailures.length > 0) configRestored = false;
+    if (!configReceipt && !sameSnapshot(snapshotFile(getConfigPath()), configBefore)) {
       configRestored = false;
       rollbackFailures.push("DEV config changed during setup; preserving the concurrent edit");
     }
@@ -1198,12 +1208,12 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
       stopTunnel(config);
       validationTunnelRunning = false;
     });
-    if (configRestored && !validationTunnelRunning && profileBefore && profileOwned && !sameSnapshot(profileBefore, profileOwned)) {
+    if (configRestored && !failedConnectUnresolved && !validationTunnelRunning && profileBefore && profileOwned && !sameSnapshot(profileBefore, profileOwned)) {
       attempt("DEV tunnel profile", () => {
         if (!sameSnapshot(snapshotFile(profileOwned!.path), profileOwned!)) {
           throw new Error("changed after setup; preserving the concurrent edit");
         }
-        restoreFileSnapshot(profileBefore!);
+        restoreFileSnapshot(profileBefore!, { expectedCurrent: profileOwned });
       });
     }
     if (failedConnectMayHaveWrittenProfile) {
@@ -1212,13 +1222,13 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     if (validationTunnelRunning) {
       rollbackFailures.push("DEV validation tunnel may still be running; preserving its profile for manual recovery");
     }
-    if (configRestored && !validationTunnelRunning) {
+    if (configRestored && !failedConnectUnresolved && !validationTunnelRunning) {
       attempt("DEV tunnel client", () => restoreTunnelClientInstallation(clientBefore, clientOwned));
       if (!sameSnapshot(keyBefore, keyOwned)) attempt("DEV runtime key", () => {
         if (!sameSnapshot(snapshotFile(keyPath), keyOwned)) {
           throw new Error("changed after setup; preserving the concurrent edit");
         }
-        restoreFileSnapshot(keyBefore);
+        restoreFileSnapshot(keyBefore, { expectedCurrent: keyOwned });
       });
     } else {
       rollbackFailures.push("DEV config or validation tunnel remains active; preserving tunnel client and runtime key for manual recovery");

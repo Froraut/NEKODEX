@@ -35,7 +35,7 @@ export class LauncherBrowserTurnCancelledError extends Error {
 }
 
 export class LauncherRetainedConversationUnavailableError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly workStarted?: false) {
     super(message);
     this.name = "LauncherRetainedConversationUnavailableError";
   }
@@ -830,6 +830,7 @@ export async function notifyLauncherTurn(
         if (response.status === 409 && body.code === "retained_conversation_unavailable") {
           throw new LauncherRetainedConversationUnavailableError(
             typeof body.error === "string" ? body.error : "The retained ChatGPT conversation is no longer available",
+            body.workStarted === false ? false : undefined,
           );
         }
         const detail = typeof body.error === "string" ? body.error : "";
@@ -899,6 +900,9 @@ export async function notifyLauncherTurn(
   }
   throw new Error(`Launcher browser control channel failed: ${ambiguousError instanceof Error ? ambiguousError.message : String(ambiguousError)}`);
   } catch (error) {
+    // Only the server's explicit predispatch proof makes cleanup unnecessary.
+    // A missing retained tab or a typed failure alone does not prove no work.
+    if (error instanceof LauncherRetainedConversationUnavailableError && error.workStarted === false) throw error;
     try { await cancelAdmission(); } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], 'Browser admission did not finish cleanly; inspect Task center before retrying');
     }

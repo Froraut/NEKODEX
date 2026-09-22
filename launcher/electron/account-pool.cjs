@@ -184,6 +184,8 @@ class AccountBrowserPool {
     try { host = new BrowserHost({ ...this.options,
       taskLedger: this.taskLedgers.get(id),
       accountId: id,
+      onTurnTabOwned: receipt => this.bindUnsentAdmissionOwner(receipt),
+      onTurnTabRemoved: receipt => this.settleRemovedUnsentAdmission(receipt),
       configureAccountSession: (session, accountId) => this.network.apply(session, this.network.get(accountId)),
       partition: id === 'default' ? basePartition : `${basePartition}-account-${id}`,
       coreHome: this.options.coreHome,
@@ -1114,6 +1116,14 @@ class AccountBrowserPool {
     assertHistoryAvailable();
     const admissionEpoch = this.evidenceEpoch(id);
     const revealRevision = this.selectionRevision;
+    const priorTraceWork = this.traceOwners.has(traceId) || this.unsentAdmissions.has(traceId)
+      || this.pendingAffinity.has(traceId)
+      || [...this.hosts.values()].some(host => [...host.turnTabs.values()].some(tab => tab.traceId === traceId)
+        || host.closedTurnOwners?.has(traceId))
+      || [...this.taskLedgers.values()].some(ledger => ledger.storageIssue
+        || ledger.snapshot().some(row => row.traceId === traceId));
+    let retainedPrecheckFailure = null;
+    let safetyAdmissionReached = false;
     const keys = [key, requirement?.routingKey].filter(Boolean);
     this.reservations.set(traceId, id);
     this.pendingAffinity.set(traceId, { id, keys });
@@ -1160,7 +1170,15 @@ class AccountBrowserPool {
           throw new Error('ChatGPT account selection changed while acquiring this turn');
         }
       }
-      if (retained) host.precheckRetainedTurn(traceId, key, connector);
+      if (retained) {
+        try { host.precheckRetainedTurn(traceId, key, connector); }
+        catch (error) {
+          if (!priorTraceWork && error?.code === 'retained_conversation_unavailable'
+            && ![...this.taskLedgers.values()].some(ledger => ledger.storageIssue
+              || ledger.snapshot().some(row => row.traceId === traceId))) retainedPrecheckFailure = error;
+          throw error;
+        }
+      }
       if (!activeTraces.has(traceId)) {
         const accountActive = [...this.turnTabs.values()].filter(tab => tab.status === 'running'
           && this.traceOwners.get(tab.traceId) === id).length
@@ -1168,6 +1186,7 @@ class AccountBrowserPool {
         const createsNewSession = !reusesWebSession;
         newSessionReservation = createsNewSession ? newWebSessionReservationId(id, traceId) : undefined;
         if (requirement?.deferAffinity) safetyBefore = this.safety.entry(id);
+        safetyAdmissionReached = true;
         const admission = this.safety.admit(id, accountActive, {
           createsNewSession,
           ...(newSessionReservation ? { sessionId: newSessionReservation } : {}),
@@ -1225,6 +1244,13 @@ class AccountBrowserPool {
         try { this.persistAffinity(keys, id); }
         catch (affinityError) { this.logger.warn('browser.account_affinity_write_failed', { accountId: id, message: affinityError.message }); }
       } else if (!ownsTab) { this.traceOwners.delete(traceId); if (!rollbackFailed) this.unsentAdmissions?.delete(traceId); }
+      if (error === retainedPrecheckFailure && !safetyAdmissionReached && !ownsTab && !rollbackFailed
+        && !this.unsentAdmissions.has(traceId)) {
+        this.reservations.delete(traceId);
+        this.pendingAffinity.delete(traceId);
+        if (!this.traceOwners.has(traceId) && !this.reservations.has(traceId)
+          && !this.pendingAffinity.has(traceId)) error.workStarted = false;
+      }
       throw error;
     } finally { this.reservations.delete(traceId); if (!this.unsentAdmissions?.has(traceId)) this.pendingAffinity.delete(traceId); }
   }
@@ -1274,14 +1300,42 @@ class AccountBrowserPool {
   releaseUnsentAdmission(request) {
     const host = [...this.hosts.values()].find(candidate => [...candidate.turnTabs.values()].some(tab => tab.traceId === request.traceId));
     if (!host) {
-      if ([...this.taskLedgers.values()].some(ledger => ledger.snapshot().some(row => row.traceId === request.traceId && row.submission !== 'not-sent'))) return false;
-      this.rollbackUnsentAdmission(request.traceId, request.helperPid); return true;
+      const receipt = this.unsentAdmissions?.get(request.traceId)?.removedOwner;
+      return receipt?.helperPid === request.helperPid ? this.settleRemovedUnsentAdmission(receipt) : false;
     }
     const tab = [...host.turnTabs.values()].find(candidate => candidate.traceId === request.traceId);
     const record = host.taskLedger.get(tab.taskRecordId);
     if (tab.helperPid !== request.helperPid || !record || record.submission !== 'not-sent') return false;
-    this.rollbackUnsentAdmission(request.traceId, request.helperPid);
-    host.removeTurnTab(tab, true); this.traceOwners.delete(request.traceId); this.publish(); return true;
+    host.removeTurnTab(tab, true);
+    const pending = this.unsentAdmissions?.get(request.traceId);
+    if (pending?.removedOwner) this.settleRemovedUnsentAdmission(pending.removedOwner);
+    if (this.unsentAdmissions?.has(request.traceId)) return false;
+    this.traceOwners.delete(request.traceId); this.publish(); return true;
+  }
+  bindUnsentAdmissionOwner(receipt) {
+    const admission = this.unsentAdmissions?.get(receipt.traceId);
+    if (admission && admission.id === receipt.accountId && admission.helperPid === receipt.helperPid
+      && !admission.taskOwner) admission.taskOwner = Object.freeze({ ...receipt });
+  }
+  settleRemovedUnsentAdmission(receipt) {
+    const { accountId, traceId, helperPid, tabId, surfaceId, taskRecordId } = receipt;
+    const admission = this.unsentAdmissions?.get(traceId);
+    if (!admission || admission.id !== accountId || admission.helperPid !== helperPid) return false;
+    const expected = admission.taskOwner;
+    if (!expected || expected.tabId !== tabId || expected.surfaceId !== surfaceId
+      || expected.taskRecordId !== taskRecordId) return false;
+    const host = this.hosts.get(accountId);
+    const record = host?.taskLedger?.get(taskRecordId);
+    if (!host || host.taskLedger.storageIssue || !record || !record.terminal
+      || record.id !== taskRecordId || record.traceId !== traceId || record.tabId !== tabId
+      || record.submission !== 'not-sent'
+      || [...host.turnTabs.values()].some(tab => tab.id === tabId || tab.surfaceId === surfaceId || tab.traceId === traceId)) return false;
+    if (admission.removedOwner && (admission.removedOwner.taskRecordId !== taskRecordId
+      || admission.removedOwner.surfaceId !== surfaceId)) return false;
+    // Keep exact recovery evidence until safety persistence succeeds, including when end never arrives.
+    admission.removedOwner = Object.freeze({ ...receipt });
+    this.rollbackUnsentAdmission(traceId, helperPid);
+    return true;
   }
   rollbackUnsentAdmission(traceId, helperPid) {
     const admission = this.unsentAdmissions?.get(traceId);
@@ -1331,8 +1385,15 @@ class AccountBrowserPool {
     const id = this.traceOwners.get(traceId) ?? owner.accountId;
     // Host validates trace/helper ownership before account-wide state can change.
     const tab = [...owner.turnTabs.values()].find(candidate => candidate.traceId === traceId && candidate.helperPid === helperPid);
-    if (tab && owner.taskLedger?.get(tab.taskRecordId)?.submission === 'not-sent') this.rollbackUnsentAdmission(traceId, helperPid);
+    const removedOwner = this.unsentAdmissions?.get(traceId)?.removedOwner;
+    if (removedOwner && removedOwner.helperPid === helperPid) this.settleRemovedUnsentAdmission(removedOwner);
     const result = await owner.endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound);
+    // A failed turn may retain its inspection surface; host end must succeed before refund.
+    if (tab && owner.turnTabs.get(tab.id) === tab
+      && owner.taskLedger?.get(tab.taskRecordId)?.terminal
+      && owner.taskLedger.get(tab.taskRecordId).submission === 'not-sent') this.rollbackUnsentAdmission(traceId, helperPid);
+    const pendingRemoval = this.unsentAdmissions?.get(traceId)?.removedOwner;
+    if (pendingRemoval) this.settleRemovedUnsentAdmission(pendingRemoval);
     this.admissionQueue?.retire(traceId, helperPid);
     this.recordUsage(() => this.usage.finish(traceId, helperPid, status, undefined, failureCode));
     try { if (id && status === 'failed') this.safety.fail(id, failureCode); }

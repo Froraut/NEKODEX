@@ -40,10 +40,21 @@ async function downloadAuthenticatedAsset(url, destination, {
   signal?.addEventListener('abort', cancel, { once: true });
   if (signal?.aborted) cancel();
   const total = setTimeout(() => controller.abort(new Error('Update download exceeded its overall time limit; partial retained')), totalTimeoutMs);
-  let idle, response, invalid = false, lastPublishedAt = 0;
+  let idle, freshness, response, invalid = false, lastPublishedAt = 0;
+  controller.signal.addEventListener('abort', () => clearTimeout(freshness), { once: true });
   const progress = () => {
     clearTimeout(idle);
     idle = setTimeout(() => controller.abort(new Error('Update download made no progress; partial retained for retry')), idleTimeoutMs);
+    clearTimeout(freshness);
+    if (bytes > speedBaseBytes && bytes < expectedBytes) {
+      // Expire the measurement without calling progress(): telemetry is not
+      // network activity and must never extend the real idle deadline.
+      freshness = setTimeout(() => {
+        lastPublishedAt = 0; // Publish the first real chunk after the stall.
+        onProgress?.({ downloadedBytes: bytes, totalBytes: expectedBytes,
+          bytesPerSecond: 0, remainingSeconds: null });
+      }, 3_000);
+    }
     const speed = Math.max(0, bytes - speedBaseBytes) / Math.max(0.001, (Date.now() - speedStartedAt) / 1000);
     if (Date.now() - lastPublishedAt >= 100 || bytes === expectedBytes) {
       lastPublishedAt = Date.now();
@@ -82,7 +93,8 @@ async function downloadAuthenticatedAsset(url, destination, {
         if (bytes + chunk.length > maxBytes || bytes + chunk.length > expectedBytes) {
           invalid = true; callback(new Error('Update exceeds signed size')); return;
         }
-        bytes += chunk.length; progress(); callback(null, chunk);
+        if (chunk.length > 0) { bytes += chunk.length; progress(); }
+        callback(null, chunk);
       } });
       await pipeline(response, limit, fs.createWriteStream(partial, { fd }), { signal: controller.signal });
     }
@@ -91,6 +103,8 @@ async function downloadAuthenticatedAsset(url, destination, {
     // deadline and caller cancellation continue to cover verification.
     clearTimeout(idle);
     idle = undefined;
+    clearTimeout(freshness);
+    freshness = undefined;
     if (bytes !== expectedBytes) throw new Error('Incomplete update download; partial retained');
     const hash = crypto.createHash('sha256');
     await pipeline(createReadStream(partial), hash, { signal: controller.signal });
@@ -110,6 +124,7 @@ async function downloadAuthenticatedAsset(url, destination, {
     throw controller.signal.aborted ? controller.signal.reason : error;
   } finally {
     clearTimeout(idle);
+    clearTimeout(freshness);
     clearTimeout(total);
     signal?.removeEventListener('abort', cancel);
   }

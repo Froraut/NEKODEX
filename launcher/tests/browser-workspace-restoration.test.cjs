@@ -345,7 +345,50 @@ test('wave3: orderly close and disposal flush pending bounds before destroying w
   }
 });
 
-test('wave3 overflow: preserves previous manifest bytes and recovers when saved plus live entries fit', async () => {
+test('wave5: dormant deletion retains its retry target after a commit I/O failure', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-workspace-delete-'));
+  const file = path.join(root, 'a.json');
+  const store = new BrowserWorkspaceManifest(file, 'a');
+  const workspaces = manager({ file });
+  const rename = fs.renameSync;
+  const failure = Object.assign(new Error('Injected workspace commit I/O failure'), { code: 'EIO' });
+  const changes = [];
+  let commitAttempts = 0;
+  workspaces.onChanged = snapshot => changes.push(snapshot);
+  try {
+    store.write([{ id: 'dormant', groupId: 'saved', location: 'https://chatgpt.com/c/retry',
+      restore: 'supported', principalFingerprint: PRINCIPAL_A }]);
+    const before = fs.readFileSync(file);
+    assert.equal(workspaces.snapshot().items[0].state, 'saved');
+    assert.equal(workspaces.windows.size, 0);
+    fs.renameSync = (source, destination) => {
+      if (destination !== file) return rename(source, destination);
+      // The real writer reached publication with a valid, fully written candidate.
+      assert.deepEqual(JSON.parse(fs.readFileSync(source, 'utf8')),
+        { version: 1, accountId: 'a', entries: [] });
+      commitAttempts += 1;
+      throw failure;
+    };
+    await assert.rejects(workspaces.close('dormant'), error => error === failure);
+    assert.equal(commitAttempts, 1);
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.deepEqual(workspaces.snapshot().items.map(item => item.id), ['dormant']);
+    assert.equal(changes.at(-1).persistenceFailed, true);
+    assert.equal(changes.at(-1).items[0].id, 'dormant');
+    assert.deepEqual(fs.readdirSync(root), ['a.json'], 'failed candidate must be cleaned up');
+    fs.renameSync = rename;
+    assert.equal(await workspaces.close('dormant'), true);
+    assert.deepEqual(store.read().entries, []);
+    assert.deepEqual(changes.at(-1).items, []);
+    assert.equal(changes.at(-1).persistenceFailed, false);
+  } finally {
+    fs.renameSync = rename;
+    workspaces.destroy();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('wave5 overflow: successive removals preserve progress until saved plus live entries fit', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-workspace-overflow-'));
   const file = path.join(root, 'a.json');
   const store = new BrowserWorkspaceManifest(file, 'a');
@@ -362,17 +405,26 @@ test('wave3 overflow: preserves previous manifest bytes and recovers when saved 
     const before = fs.readFileSync(file);
     const live = workspaces.open({ url: 'https://chatgpt.com/c/new-live' });
     const liveId = workspaces.windowMeta.get(live).id;
+    const secondLive = workspaces.open({ url: 'https://chatgpt.com/c/second-live' });
+    const secondLiveId = workspaces.windowMeta.get(secondLive).id;
     assert.equal(workspaces.snapshot().persistenceFailed, true);
-    assert.equal(workspaces.snapshot().items.length, MAX_WORKSPACES + 1);
+    assert.equal(workspaces.snapshot().items.length, MAX_WORKSPACES + 2);
     assert.equal(live.isDestroyed(), false);
     assert.match(errors.at(-1).message, /16-entry limit/);
     assert.deepEqual(fs.readFileSync(file), before);
     assert.equal(await workspaces.close('saved-0'), true);
+    assert.equal(workspaces.snapshot().items.length, MAX_WORKSPACES + 1);
+    assert.equal(workspaces.snapshot().items.some(item => item.id === 'saved-0'), false);
+    assert.equal(workspaces.snapshot().persistenceFailed, true);
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.equal(await workspaces.close('saved-1'), true);
     assert.equal(workspaces.snapshot().persistenceFailed, false);
     const persisted = new BrowserWorkspaceManifest(file, 'a').read().entries;
     assert.equal(persisted.length, MAX_WORKSPACES);
     assert.equal(persisted.some(entry => entry.id === 'saved-0'), false);
+    assert.equal(persisted.some(entry => entry.id === 'saved-1'), false);
     assert.equal(persisted.some(entry => entry.id === liveId), true);
+    assert.equal(persisted.some(entry => entry.id === secondLiveId), true);
     assert.notDeepEqual(fs.readFileSync(file), before);
   } finally { workspaces.destroy(); fs.rmSync(root, { recursive: true, force: true }); }
 });

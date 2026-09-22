@@ -19,6 +19,15 @@ const pauseCopy = {
   ko: { global: '모든 계정의 새 작업이 일시 중지되었습니다. 개별 계정을 재개해도 전체 일시 중지는 유지됩니다.', controls: '모든 계정 제어 표시', globalReason: '모든 계정 일시 중지', accountReason: '이 계정 일시 중지' },
 };
 
+const inspectionTabsCopy: Record<Language, string> = {
+  en: 'Retained task pages occupy browser capacity. In Task center, inspect a failed or interrupted conversation, then choose Dismiss and confirm closing its page to free a slot.',
+  ru: 'Сохранённые страницы задач занимают доступные места в браузере. В Центре задач проверьте беседу со сбоем или прерыванием, затем нажмите «Убрать запись» и подтвердите закрытие её страницы, чтобы освободить место.',
+  'zh-CN': '保留的任务页面占用了浏览器容量。请在任务中心检查失败或中断的对话，然后选择“移除记录”并确认关闭其页面，以释放空位。',
+  'zh-TW': '保留的任務頁面佔用了瀏覽器容量。請在任務中心檢查失敗或中斷的對話，然後選擇「移除記錄」並確認關閉其頁面，以釋出空位。',
+  ja: '保持されたタスクページがブラウザーの空き枠を占有しています。タスクセンターで失敗または中断した会話を確認し、「記録を閉じる」を選んでページを閉じる操作を確定すると、空き枠を確保できます。',
+  ko: '보관된 작업 페이지가 브라우저 슬롯을 차지하고 있습니다. 작업 센터에서 실패하거나 중단된 대화를 확인한 뒤 “기록 닫기”를 선택하고 페이지 닫기를 확인하여 슬롯을 확보하세요.',
+};
+
 const historyUnavailableCopy = {
   en: 'Task history unavailable for this account; new tasks are blocked.',
   ru: 'История задач этого аккаунта недоступна; запуск новых задач заблокирован.',
@@ -76,6 +85,7 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
           : row.status === 'cancelled' ? text[17] : row.status === 'failed' ? text[18] : row.status === 'interrupted' ? text[19]
             : row.status === 'admitting' ? text[15]
               : row.reason === 'task-history-unavailable' ? (historyUnavailableCopy[language] ?? historyUnavailableCopy.en)
+              : row.reason === 'inspection-tabs' ? (inspectionTabsCopy[language] ?? inspectionTabsCopy.en)
               : row.reason === 'paused-global' ? pauseText.globalReason : row.reason === 'paused-account' ? pauseText.accountReason
                 : row.status === 'paused' || row.reason?.startsWith('paused') ? text[16] : text[14];
       return <article key={row.id}>

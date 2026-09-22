@@ -65,6 +65,37 @@ describe("usage CSV consumer contract", () => {
     expect(groups.every(row => row.total_count === "1" && row.completed_count === "1")).toBe(true);
   });
 
+  test("optional token coverage distinguishes partial zeros, known absence and unavailable coverage", () => {
+    const snapshot = report("native");
+    snapshot.tokens = { inputTokens: 20, outputTokens: 40,
+      cachedInputTokens: 0, reasoningTokens: 0, reportedSamples: 2, unreportedSamples: 0,
+      cachedInputReportedSamples: 1, reasoningReportedSamples: 1 };
+    const partial = parseCsv(usageReportCsv(snapshot))[0];
+    expect(partial.cached_input_tokens).toBe("0");
+    expect(partial.reasoning_tokens).toBe("0");
+    expect(partial.reported_token_samples).toBe("2");
+    expect(partial.cached_input_reported_samples).toBe("1");
+    expect(partial.reasoning_reported_samples).toBe("1");
+
+    snapshot.tokens = { inputTokens: null, outputTokens: null,
+      cachedInputTokens: null, reasoningTokens: null, reportedSamples: 0, unreportedSamples: 2,
+      cachedInputReportedSamples: 0, reasoningReportedSamples: 0 };
+    const absent = parseCsv(usageReportCsv(snapshot))[0];
+    expect(absent.cached_input_tokens).toBe("");
+    expect(absent.reasoning_tokens).toBe("");
+    expect(absent.input_tokens).toBe("");
+    expect(absent.output_tokens).toBe("");
+    expect(absent.unreported_token_samples).toBe("2");
+    expect(absent.cached_input_reported_samples).toBe("0");
+    expect(absent.reasoning_reported_samples).toBe("0");
+
+    delete snapshot.tokens.cachedInputReportedSamples;
+    delete snapshot.tokens.reasoningReportedSamples;
+    const unavailable = parseCsv(usageReportCsv(snapshot))[0];
+    expect(unavailable.cached_input_reported_samples).toBe("");
+    expect(unavailable.reasoning_reported_samples).toBe("");
+  });
+
   test("ordinary Unicode, commas, quotes and line breaks round-trip as text", () => {
     const snapshot = report("native");
     snapshot.rows[0].modelId = 'модель,"quoted"\nsecond line';

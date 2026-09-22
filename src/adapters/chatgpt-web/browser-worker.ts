@@ -3919,7 +3919,7 @@ export class ChatGptBrowserWorker {
     completionTracker?: ChatGptCompletionTracker,
     recoverObservation?: ChatGptObservationRecovery,
     recoverableObservation?: ChatGptObservationRecoverability,
-    expectedMode?: Pick<ChatGptWebModelMode, "modelVersion" | "effort" | "uiEffortIndex">,
+    expectedMode?: Pick<ChatGptWebModelMode, "modelVersion" | "effort" | "uiEffortIndex" | "thinkEnabled">,
     submissionRejection?: ChatGptSubmissionRejectionObserver,
   ): Promise<ChatGptSubmissionEvidence> {
     const composer = await this.activeComposer(page);
@@ -3982,6 +3982,26 @@ export class ChatGptBrowserWorker {
       await settleChatGptUi();
       await this.assertEffortSurface(page, expectedMode.effort);
       if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+    } else if (expectedMode) {
+      // Files or a user interaction can change Luna/Think after prompt preparation.
+      // Only observe here: /think repair would require clearing the prepared draft.
+      const composerForm = composer.locator("xpath=ancestor::form[1]");
+      if (await composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true }).count() > 0) {
+        throw chatGptModelControlUnavailableAdapterError(
+          "ChatGPT Luna now exposes a model selector before submission; rerun setup",
+        );
+      }
+      const controls = composerForm.getByRole("button", { name: "Think", exact: true }).filter({ visible: true });
+      const count = await controls.count();
+      if (!(count === 0 && !expectedMode.thinkEnabled)) {
+        if (count !== 1) {
+          throw chatGptModelControlUnavailableAdapterError("ChatGPT Think control is missing or ambiguous before submission");
+        }
+        const pressed = await controls.getAttribute("aria-pressed");
+        if (pressed !== (expectedMode.thinkEnabled ? "true" : "false")) {
+          throw chatGptModelControlUnavailableAdapterError("ChatGPT changed the requested Luna/Think mode before submission");
+        }
+      }
     }
     throwIfPromptAttachmentAborted(abortSignal);
     await submissionLifecycle?.onSendActivated?.();

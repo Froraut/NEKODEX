@@ -2,6 +2,7 @@ const { randomUUID } = require("node:crypto");
 const {
   BrowserWorkspaceManifest,
   MAX_WORKSPACES,
+  WORKSPACE_OVERFLOW_CODE,
   isTemporaryChat,
   normalizeBounds,
   safeWorkspaceLocation,
@@ -364,9 +365,11 @@ class BrowserWorkspaceWindows {
     try {
       this.manifest.write([...this.saved.values()]);
       this.persistenceFailed = false;
+      return { ok: true };
     } catch (error) {
       this.persistenceFailed = true;
       this.onPersistenceError?.(error);
+      return { ok: false, error, overflow: error?.code === WORKSPACE_OVERFLOW_CODE };
     }
   }
 
@@ -478,11 +481,20 @@ class BrowserWorkspaceWindows {
   }
 
   async close(workspaceId) {
+    this.ensureManifestLoaded();
     const match = [...this.windowMeta].find(([, meta]) => meta.id === workspaceId);
     if (!match) {
       if (!this.saved.has(workspaceId)) return false;
+      const previous = new Map(this.saved);
       this.saved.delete(workspaceId);
-      this.persist();
+      const result = this.persist();
+      // Overflow must allow successive removals to reach capacity. Storage errors
+      // instead retain the target so the same explicit action can be retried.
+      if (!result.ok && !result.overflow) {
+        this.saved = previous;
+        this.changed();
+        throw result.error;
+      }
       this.changed();
       return true;
     }

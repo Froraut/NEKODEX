@@ -5,6 +5,7 @@ import {
 } from "./launcher-browser-host";
 
 const EXPLICIT_PROXY_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
+const BOOTSTRAP_URL = "https://chatgpt.com/backend-api/codex/responses";
 const NATIVE_FALLBACK_PROXY_KEY = "CODEX_CHATGPT_WEB_NATIVE_FALLBACK_PROXY";
 function proxyError(message: string): Error {
   return Object.assign(new Error(message), { code: "NativeProxyConfigurationError" });
@@ -30,19 +31,19 @@ function fallbackProxyOrigin(value: string): string {
 }
 
 const routes = new NativeRouteCache();
-let backgroundProxy: string | undefined;
 let backgroundProxyError: Error | undefined;
-let bootstrapSeeded = false;
 const configuredBackgroundProxy = process.env[NATIVE_FALLBACK_PROXY_KEY];
+let launcherRoutesRequired = configuredBackgroundProxy !== undefined
+  || !!process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
 if (configuredBackgroundProxy !== undefined) {
   try {
-    backgroundProxy = fallbackProxyOrigin(configuredBackgroundProxy);
+    routes.seed(BOOTSTRAP_URL, fallbackProxyOrigin(configuredBackgroundProxy));
   } catch (error) {
     backgroundProxyError = error instanceof Error ? error : proxyError("Native Codex background proxy configuration is invalid");
   }
 }
 
-/** True when the detached daemon has a launcher-independent native transport route. */
+/** Detach readiness requires intentional global transport independent of launcher route leases. */
 export function nativeNetworkBackgroundReady(): boolean {
   const explicit = process.env.CODEX_CHATGPT_WEB_NATIVE_PROXY?.trim();
   if (explicit) {
@@ -56,12 +57,14 @@ export function nativeNetworkBackgroundReady(): boolean {
   // These overrides are interpreted by Bun with its existing HTTP(S)/ALL_PROXY and NO_PROXY
   // semantics. Their presence already makes native transport independent of the launcher.
   if (EXPLICIT_PROXY_KEYS.some(key => process.env[key]?.trim())) return true;
-  return backgroundProxy !== undefined;
+  // Exact-URL bootstrap/cache evidence expires and cannot authorize durable GUI detachment.
+  return false;
 }
 
-function requireBackgroundProxy(cause: unknown): string {
-  if (backgroundProxy !== undefined) return backgroundProxy;
-  const error = backgroundProxyError
+function requireBackgroundProxy(url: string, cause: unknown): string {
+  const cached = routes.cached(url);
+  if (cached !== undefined) return cached;
+  const error = (url === BOOTSTRAP_URL ? backgroundProxyError : undefined)
     ?? proxyError("Native Codex background proxy route is unavailable");
   if (!("cause" in error)) Object.defineProperty(error, "cause", { value: cause, configurable: true });
   throw error;
@@ -99,26 +102,22 @@ export async function fetchNativeCodex(request: Request): Promise<Response> {
   if (EXPLICIT_PROXY_KEYS.some(key => process.env[key]?.trim())) return fetch(request);
   const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
   if (!descriptorPath) {
-    if (backgroundProxy !== undefined || backgroundProxyError !== undefined) {
-      return fetchWithProxy(request, requireBackgroundProxy(
+    if (launcherRoutesRequired) {
+      return fetchWithProxy(request, requireBackgroundProxy(request.url,
         proxyError("Launcher native proxy descriptor path is unavailable"),
       ));
     }
     return fetch(request);
   }
+  launcherRoutesRequired = true;
   let descriptor;
   try {
     descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   } catch (error) {
     if (error instanceof LauncherBrowserHostUnavailableError) {
-      return fetchWithProxy(request, requireBackgroundProxy(error));
+      return fetchWithProxy(request, requireBackgroundProxy(request.url, error));
     }
     throw error;
-  }
-  // Bootstrap evidence is for this exact URL; PAC rules for other endpoints remain independent.
-  if (!bootstrapSeeded && request.url === "https://chatgpt.com/backend-api/codex/responses" && backgroundProxy !== undefined) {
-    bootstrapSeeded = true;
-    routes.seed(request.url, backgroundProxy);
   }
   const proxy = await routes.resolve(request.url, async () => {
     try {
@@ -137,12 +136,10 @@ export async function fetchNativeCodex(request: Request): Promise<Response> {
       }
       const result = await response.json() as { proxy?: unknown };
       const resolved = nativeProxyOrigin(result.proxy);
-      if (request.url === "https://chatgpt.com/backend-api/codex/responses") backgroundProxy = resolved;
-      backgroundProxyError = undefined;
+      if (request.url === BOOTSTRAP_URL) backgroundProxyError = undefined;
       return resolved;
     } catch (error) {
-      if (!transientProxyError(error) && request.url === "https://chatgpt.com/backend-api/codex/responses") {
-        backgroundProxy = undefined;
+      if (!transientProxyError(error) && request.url === BOOTSTRAP_URL) {
         backgroundProxyError = proxyError("Native background route requires a successful proxy check");
       }
       throw error;

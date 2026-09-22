@@ -632,7 +632,7 @@ class UsageStore {
       tokens: { inputTokens: null, outputTokens: null, totalTokens: null, cachedInputTokens: null,
         reasoningTokens: null, reportedSamples: 0, unreportedSamples: 0,
         cachedInputReportedSamples: 0, reasoningReportedSamples: 0 } };
-    const rows = Object.values(this.state.native.rows).filter(row => row.day >= startDay)
+    const rows = Object.values(this.state.native.rows).filter(row => row.day >= startDay && row.day <= endDay)
       .sort((a, b) => a.day.localeCompare(b.day) || a.modelId.localeCompare(b.modelId));
     const metrics = rows.reduce((total, row) => ({ ...total, total: total.total + row.accepted,
       messageCount: total.messageCount + row.accepted, responseCount: total.responseCount + row.accepted,
@@ -707,7 +707,7 @@ class UsageStore {
     if (this.error) return { available: false, error: this.error, rows: [], diagnosticGroups: [], ...base, metrics: emptyMetrics,
       durations: { observedSamples: 0, medianMs: null, p95Ms: null }, failures: [], calendar };
 
-    const rows = Object.values(this.state.rows).filter(row => row.day >= startDay
+    const rows = Object.values(this.state.rows).filter(row => row.day >= startDay && row.day <= endDay
       && (accountId === null || row.accountId === accountId)).sort((a, b) => a.day.localeCompare(b.day));
     const metrics = rows.reduce((total, row) => ({ ...total, total: total.total + row.accepted,
       messageCount: total.messageCount + row.accepted, completed: total.completed + row.completed,
