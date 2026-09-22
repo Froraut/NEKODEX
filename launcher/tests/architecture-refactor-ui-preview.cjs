@@ -159,3 +159,64 @@ test('refactor usage preserves query identity and calendar export after feature 
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });
+
+test('refactor follow-up login start failure requires snapshot recovery in mounted Accounts', { timeout: 12000 }, async () => {
+  const { page, errors } = await open(() => {
+    let reads = 0;
+    window.codexWebLauncher.codexLoginSnapshot = async () => {
+      if (++reads === 2) throw new Error('Host snapshot unavailable');
+      return null;
+    };
+    window.codexWebLauncher.startCodexLogin = async id => {
+      window.fixtureCalls.push(['start-codex-login', id]);
+      throw new Error('Start reply unavailable');
+    };
+  });
+  try {
+    await navigate(page, 'Accounts');
+    const card = page.locator('.account-card').first();
+    const start = card.locator('.account-codex-login header button');
+    await start.click();
+    const retry = card.getByRole('button', { name: 'Retry: Sign in to Codex', exact: true });
+    await retry.waitFor();
+    assert.equal(await start.isDisabled(), true);
+    assert.deepEqual(await page.evaluate(() => window.fixtureCalls.filter(call => call[0] === 'start-codex-login')),
+      [['start-codex-login', 'fixture-primary']]);
+    await capture(page, 'followup-login-recovery');
+    await retry.focus(); await page.keyboard.press('Enter');
+    await page.waitForFunction(() => !document.querySelector('.account-codex-login header button')?.disabled);
+    assert.equal(await retry.count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('refactor follow-up Manual browser prompt preserves pending confirmation and exact tab ownership', { timeout: 12000 }, async () => {
+  const { page, errors } = await open(() => {
+    window.fixtureSetState({ browserInteractionMode: 'manual' });
+    window.fixtureSetBrowser({ visible: true, activeTabId: 'manual-owned',
+      tabs: [{ id: 'manual-owned', traceId: 'trace-owned', title: 'Manual task', active: true,
+        status: 'running', interactionMode: 'manual', closable: true, manualState: 'awaiting-user',
+        manualDeadlineAt: new Date(Date.now() + 60000).toISOString(), canCopyPrompt: true, canConfirmSent: true }] });
+    window.codexWebLauncher.copyManualPrompt = async id => window.fixtureCalls.push(['copy-prompt', id]);
+    window.codexWebLauncher.confirmManualSent = id => {
+      window.fixtureCalls.push(['confirm-prompt', id]);
+      return new Promise(resolve => { window.fixtureConfirmManual = () => resolve(true); });
+    };
+  }, 760);
+  try {
+    await navigate(page, 'Browser');
+    const guide = page.locator('.manual-turn-guide');
+    await guide.waitFor();
+    const copy = guide.locator('button').nth(1);
+    const confirm = guide.locator('button').nth(2);
+    await copy.focus(); await page.keyboard.press('Enter');
+    await confirm.click();
+    assert.equal(await confirm.isDisabled(), true);
+    assert.deepEqual(await page.evaluate(() => window.fixtureCalls.filter(call => /-prompt$/.test(call[0]))),
+      [['copy-prompt', 'manual-owned'], ['confirm-prompt', 'manual-owned']]);
+    await capture(page, 'followup-manual-confirm-compact');
+    await page.evaluate(() => window.fixtureConfirmManual());
+    await page.waitForFunction(() => !document.querySelector('.manual-turn-guide button:last-child')?.disabled);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});

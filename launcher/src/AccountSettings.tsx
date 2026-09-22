@@ -309,6 +309,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       : refreshableAccounts.length === 0 ? (loginLockedId
         ? loginLockedReason
         : codexCopy.quotaRateLimited) : undefined);
+  const recoverLoginStatus = () => { setError(null); retryLogin(); };
   return <section className="account-settings" aria-label={copy.accountsTitle} aria-busy={busy || transitionBusy}>
     {manual ? <p id="accounts-manual-reason">{copy.accountsManual}</p> : null}
     {loadFailed ? <div className="account-codex-toolbar account-stale-status" role="alert">
@@ -318,10 +319,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     </div> : null}
     {loginSnapshotStatus === "failed" ? <div className="account-codex-toolbar" role="alert">
       <p>{codexCopy.loginStatusUnavailable}</p>
-      <button type="button" className="button-secondary" onClick={() => {
-        setError(null);
-        retryLogin();
-      }}>{copy.retry}</button>
+      <button type="button" className="button-secondary" onClick={recoverLoginStatus}>{copy.retry}</button>
     </div> : null}
     <div className="account-routing">
       <label htmlFor="account-routing">{copy.accountsRouting}</label>
@@ -461,6 +459,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         quotaFreshnessCopy={workflow.portfolio} quotaNow={quotaClock}
         onRefreshQuota={() => refreshQuota(account.id)}
         login={flowForAccount} loginStarting={startingAccountId === account.id}
+        loginRecovery={loginSnapshotStatus === "failed" ? { label: copy.retry, retry: recoverLoginStatus } : undefined}
         loginDisabledReason={loginDisabledReason}
         loginAction={loginAction?.accountId === account.id ? loginAction.kind : null}
         onStartLogin={() => startCodexLogin(account.id)}

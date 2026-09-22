@@ -22,6 +22,7 @@ This map describes the module boundaries introduced by the September 22, 2026 re
 | Change compaction bookkeeping | `src/adapters/chatgpt-web/compaction-run-registry.ts` | Logical cancellation and physical settlement remain distinct; active-source delivery policy is in `active-compaction-source.ts`. |
 | Change a rolling checkpoint | `rolling-checkpoint-format.ts` and `rolling-checkpoint-projection.ts` | `rolling-checkpoint.ts` owns persistence and publishes memory state only after a successful disk-backed commit. |
 | Add a native endpoint/body rule | `src/native-request-preparation.ts` | Forwarding stays in `native-passthrough.ts`, byte-stream observation in `native-response-body.ts`, routing in `native-network.ts`. |
+| Interpret Native SSE or JSON usage | `src/native-terminal-inspector.ts` | Bounded interpretation stops at `[DONE]`; `native-response-body.ts` owns byte delivery, cancellation and one telemetry receipt. Diagnostics cannot interrupt a completed stream. |
 | Change native usage receipts | `src/usage/native-contract.ts` | Delivery and durable outbox ownership remain separate; provider-unknown tokens must not become zero. |
 | Add a setup/configuration option | `src/setup-policy.ts` and `src/config-policy.ts` | Capture the original read snapshot before asynchronous work. `file-transactions.ts` owns publication/rollback receipts; setup owns side-effect order. |
 | Add a browser/account IPC method | `launcher/electron/ipc/browser-handlers.cjs` or `account-handlers.cjs` | Use the already-guarded registration callback. Authorization, lifecycle admission and application wiring remain in `main.cjs`. |
@@ -31,7 +32,7 @@ This map describes the module boundaries introduced by the September 22, 2026 re
 | Change browser turn ownership | `launcher/electron/browser-turn-lifecycle.cjs` | Keep one turn map and preserve durable ledger → removal → receipt ordering; Electron presentation stays in the host. |
 | Change update preparation | `launcher/electron/update-staging.cjs` | Before staging returns it owns cleanup; the controller owns handoff after return. Hashing is abortable; uncertain extractor exit preserves staging. |
 | Extend runtime validation | `launcher/electron/runtime-config-contract.cjs` | Setup compatibility and permission to start a runtime are separate entry points. |
-| Extend an application screen | `launcher/src/SetupSurface.tsx`, `McpSurface.tsx`, `SettingsSurface.tsx` | `App.tsx` owns navigation, shared snapshots and the native browser surface. |
+| Extend an application screen | `launcher/src/SetupSurface.tsx`, `McpSurface.tsx`, `SettingsSurface.tsx`, `BrowserSurface.tsx` | `App.tsx` owns navigation, shared snapshots and native browser placement. `BrowserSurface.tsx` owns browser controls; `ManualTurnGuide.tsx` owns prompt presentation and its countdown. |
 | Add account UI actions | `useAccountPoolSnapshot.ts`, `useAccountCodexLogin.ts` | Preserve captured account/flow identity and invalidate older reads when applying a mutation receipt. |
 | Add a Task Center action | `task-center-model.ts`, `task-center-copy.ts`, `TaskActionConfirmation.tsx` | Backend capabilities authorize actions; phase labels alone do not. Task Center retains focus restoration. |
 | Add a usage report section | `useUsageReport.ts`, `UsageCalendar.tsx`, `launcher/electron/usage-report.cjs` | Query identity, report projection and durable storage remain separate. |
@@ -41,6 +42,8 @@ This map describes the module boundaries introduced by the September 22, 2026 re
 Prefer an explicit argument or small typed dependency to importing an orchestration module back into a leaf. Preserve public facade exports when a caller migration is unnecessary. Give one writer ownership of each coupled lifecycle area; additional feature modules should not create another registry for the same resource.
 
 For asynchronous UI, bind results and failures to the account, query or flow that started the operation. A screen unmount is not permission to cancel a host operation. Preserve dirty input until the user restores saved values or a matching save receipt arrives.
+
+Login mutation receipts retire older status reads and explicitly restart observation even when their flow/phase fields are unchanged. A failed start followed by an unavailable host snapshot leaves the login state unknown; recover that snapshot before allowing another start. Keep this recovery action reachable in the affected account card.
 
 For persistent changes, use the snapshot that produced the candidate. A later reread is not evidence that the original candidate is still current. Keep a before-image distinct from a receipt proving that this operation published bytes. Failures must preserve a retry target and truthful saved-state reporting.
 

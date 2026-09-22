@@ -167,6 +167,63 @@ test('failed start recovers host snapshot without losing the actionable start er
   assert.equal(starts, 1); assert.equal(reads, 2); assert.equal(view.render().login.flowId, 'flow-a'); assert.equal(errors.at(-1), 'start boundary');
 });
 
+test('late login cancellation cannot replace a newer login flow', async t => {
+  const cancel = deferred();
+  let current = progress;
+  const api = { codexLoginSnapshot: async () => current,
+    codexLoginStatus: async () => current,
+    cancelCodexLogin: () => cancel.promise };
+  const view = loginView(api); t.after(() => view.dispose()); view.render(); await flush();
+  const state = view.render(); const pending = state.cancelCodexLogin(state.login);
+  current = { ...progress, flowId: 'flow-b', accountId: 'b' };
+  view.render().retryLogin(); view.render(); await flush(); view.render();
+  cancel.resolve({ ...progress, active: false, phase: 'cancelled' }); await pending;
+  assert.equal(view.render().login.flowId, 'flow-b');
+});
+
+test('late login action failure cannot publish an error into a newer flow', async t => {
+  const cancel = deferred(), errors = [];
+  let current = progress;
+  const api = { codexLoginSnapshot: async () => current,
+    cancelCodexLogin: () => cancel.promise };
+  const view = loginView(api, error => errors.push(error)); t.after(() => view.dispose()); view.render(); await flush();
+  const state = view.render(); const pending = state.cancelCodexLogin(state.login);
+  current = { ...progress, flowId: 'flow-b', accountId: 'b' };
+  view.render().retryLogin(); view.render(); await flush(); view.render();
+  cancel.reject(new Error('old cancellation failed')); await pending;
+  assert.equal(view.render().login.flowId, 'flow-b');
+  assert.deepEqual(errors, [null]);
+});
+
+test('same-state cancellation receipt keeps polling and retires the older status read', async t => {
+  const stale = deferred(); let polls = 0;
+  const settling = { ...progress, active: false, settling: true, phase: 'cancelled' };
+  const api = { codexLoginSnapshot: async () => settling,
+    codexLoginStatus: () => ++polls === 1 ? stale.promise : Promise.resolve({ ...settling, settling: false }),
+    cancelCodexLogin: async () => ({ ...settling }) };
+  const view = loginView(api); t.after(() => view.dispose()); view.render(); await flush(); view.render();
+  view.timers(); assert.equal(polls, 1);
+  await view.render().cancelCodexLogin(settling); view.render();
+  stale.resolve({ ...progress }); await flush();
+  assert.equal(view.render().login.active, false);
+  view.timers(); await flush();
+  assert.equal(polls, 2); assert.equal(view.render().login.settling, false);
+});
+
+test('failed start with unreadable host state blocks a second start until snapshot recovery', async t => {
+  let reads = 0, starts = 0;
+  const errors = [];
+  const api = { codexLoginSnapshot: async () => { if (++reads === 2) throw new Error('snapshot unavailable'); return null; },
+    startCodexLogin: async () => { starts++; throw new Error('start boundary'); } };
+  const view = loginView(api, error => errors.push(error)); t.after(() => view.dispose()); view.render(); await flush();
+  await view.render().startCodexLogin('a');
+  assert.equal(view.render().loginSnapshotStatus, 'failed');
+  await view.render().startCodexLogin('b'); assert.equal(starts, 1);
+  assert.equal(errors.at(-1), 'start boundary');
+  view.render().retryLogin(); view.render(); await flush();
+  assert.equal(view.render().loginSnapshotStatus, 'ready');
+});
+
 test('Accounts keeps stale account identity visible but blocks mutations after refresh failure', async t => {
   let reads = 0, mutations = 0;
   const api = events(async () => {

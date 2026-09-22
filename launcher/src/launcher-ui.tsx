@@ -686,3 +686,37 @@ export function ProModelVersionMenu({
 export function platformLabel(value: string): string {
   return value === "darwin" ? "macOS" : value === "win32" ? "Windows" : value === "linux" ? "Linux" : value;
 }
+
+export function IconButton({
+  buttonRef,
+  controls,
+  disabled = false,
+  expanded,
+  icon,
+  label,
+  onClick,
+}: {
+  buttonRef?: RefObject<HTMLButtonElement | null>;
+  controls?: string;
+  disabled?: boolean;
+  expanded?: boolean;
+  icon: IconName;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-controls={controls}
+      aria-expanded={expanded}
+      aria-label={label}
+      className="icon-button"
+      disabled={disabled}
+      onClick={onClick}
+      ref={buttonRef}
+      title={label}
+      type="button"
+    >
+      <Icon name={icon} />
+    </button>
+  );
+}

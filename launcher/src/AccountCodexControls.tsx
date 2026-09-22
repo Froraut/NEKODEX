@@ -29,6 +29,7 @@ export function AccountCodexControls({
   loginAction,
   loginDisabledReason,
   loginStarting,
+  loginRecovery,
   onCancelLogin,
   onCopyCode,
   onOpenLogin,
@@ -49,6 +50,7 @@ export function AccountCodexControls({
   loginAction: "open" | "copy" | "cancel" | null;
   loginDisabledReason?: string;
   loginStarting: boolean;
+  loginRecovery?: { label: string; retry: () => void };
   onCancelLogin: () => Promise<void>;
   onCopyCode: () => Promise<boolean>;
   onOpenLogin: () => Promise<void>;
@@ -119,6 +121,9 @@ export function AccountCodexControls({
       {loginDisabledReason && !login?.active && !login?.settling && !sharedDisabledReason
         ? <p className="account-codex-disabled-reason" id={loginDisabledReasonId}>{loginDisabledReason}</p>
         : null}
+      {loginRecovery ? <button className="button-secondary" type="button"
+        aria-label={`${loginRecovery.label}: ${copy.loginTitle}`}
+        onClick={loginRecovery.retry}>{loginRecovery.label}</button> : null}
       {login ? <LoginProgressView account={account} copy={copy} language={language} login={login}
         action={loginAction} copied={copied} transitionBusy={transitionBusy}
         onCancel={onCancelLogin} onCopy={copyCode} onOpen={onOpenLogin} /> : null}

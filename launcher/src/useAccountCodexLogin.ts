@@ -11,6 +11,7 @@ export function useAccountCodexLogin({ api, transitionBusy, loadFailed, isQuotaB
   const [login, setLogin] = useState<CodexLoginProgress | null>(null);
   const [loginSnapshotStatus, setLoginSnapshotStatus] = useState<"loading" | "ready" | "failed">("loading");
   const [loginAttempt, setLoginAttempt] = useState(0);
+  const [pollAttempt, setPollAttempt] = useState(0);
   const [startingAccountId, setStartingAccountId] = useState<string | null>(null);
   const startingId = useRef<string | null>(null);
   const loginRevision = useRef(0);
@@ -80,7 +81,7 @@ export function useAccountCodexLogin({ api, transitionBusy, loadFailed, isQuotaB
       window.clearTimeout(timer);
       if (loginRevision.current === revision) loginRevision.current += 1;
     };
-  }, [api, login?.active, login?.accountId, login?.deadlineAt, login?.flowId, login?.phase, login?.settling, loginSnapshotStatus]);
+  }, [api, login?.active, login?.accountId, login?.deadlineAt, login?.flowId, login?.phase, login?.settling, loginSnapshotStatus, pollAttempt]);
 
   const startCodexLogin = async (id: string) => {
     if (transitionBusy || loadFailed || isQuotaBusy(id) || startingId.current !== null || login?.active || login?.settling || loginSnapshotStatus !== "ready") return;
@@ -96,7 +97,11 @@ export function useAccountCodexLogin({ api, transitionBusy, loadFailed, isQuotaB
         try {
           const current = await api.codexLoginSnapshot();
           if (loginRevision.current === revision) setLogin(current);
-        } catch { /* The original start error remains the actionable failure. */ }
+        } catch {
+          // The host may have started the flow before the reply failed. Keep new starts
+          // disabled until an explicit snapshot retry establishes its current owner.
+          if (loginRevision.current === revision) setLoginSnapshotStatus("failed");
+        }
         if (loginRevision.current === revision) setError(error instanceof Error ? error.message : String(error));
       }
     } finally {
@@ -112,17 +117,27 @@ export function useAccountCodexLogin({ api, transitionBusy, loadFailed, isQuotaB
     loginActionInFlight.current = true;
     setLoginAction({ accountId, kind });
     setError(null);
-    try { return await action(); }
-    catch (error) { setError(error instanceof Error ? error.message : String(error)); return null; }
+    const revision = loginRevision.current;
+    try {
+      const result = await action();
+      return loginRevision.current === revision ? result : null;
+    } catch (error) {
+      if (loginRevision.current === revision) setError(error instanceof Error ? error.message : String(error));
+      return null;
+    }
     finally { loginActionInFlight.current = false; setLoginAction(null); }
   };
 
   const cancelCodexLogin = async (progress: CodexLoginProgress) => {
+    const revision = loginRevision.current;
     const next = await runLoginAction(progress.accountId, "cancel",
       () => api.cancelCodexLogin(progress.flowId, progress.accountId));
-    if (next) {
+    if (next && loginRevision.current === revision) {
       loginRevision.current += 1;
       setLogin(next);
+      // Even an identical settling receipt retires an older status request. Restart
+      // observation explicitly because the flow/phase dependencies may not change.
+      setPollAttempt(value => value + 1);
     }
   };
 
