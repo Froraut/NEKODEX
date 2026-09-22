@@ -9,6 +9,19 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
+const WEB_CATALOG_ORDER = [
+  "chatgpt-web/pro",
+  "chatgpt-web/extra-high",
+  "chatgpt-web/high",
+  "chatgpt-web/medium",
+  "chatgpt-web/light",
+] as const;
+
+function webCatalogRank(route: ChatGptWebModelRoute): number {
+  const index = WEB_CATALOG_ORDER.findIndex(slug => slug === route.slug);
+  return index < 0 ? WEB_CATALOG_ORDER.length : index;
+}
+
 function object(value: unknown, label: string): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
@@ -39,22 +52,17 @@ function modelPriority(template: JsonObject): number | undefined {
   return value;
 }
 
-function routedModelPriority(
-  template: JsonObject,
-  route: ChatGptWebModelRoute,
-  config: AppConfig,
-): number | undefined {
-  const priority = modelPriority(template);
-  if (priority === undefined
-    || config.subagentProtocol !== "compatibility-v1"
-    || route.slug !== "chatgpt-web/light") return priority;
-  if (priority === Number.MAX_SAFE_INTEGER) {
-    throw new Error("Native Codex model template priority cannot reserve the Compatibility V1 roster");
-  }
-  // Codex V1 exposes at most five model overrides. Keep the native Sol row plus the four useful
-  // delegated Web efforts (Medium, High, Extra High, Pro); Instant remains a selectable root model
-  // but does not displace Pro from spawn_agent's bounded registry.
-  return priority + 1;
+function webCatalogPriority(nativeModels: unknown[], template: JsonObject): number | undefined {
+  const visiblePriorities = nativeModels.flatMap(candidate => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const model = candidate as JsonObject;
+    return model.visibility === "list" && typeof model.priority === "number"
+      && Number.isSafeInteger(model.priority) ? [model.priority] : [];
+  }).toSorted((left, right) => left - right);
+  // Codex sorts by priority while retaining catalog order for ties. Web rows are appended after
+  // native rows, so sharing the third visible native model's priority puts them immediately after
+  // Astra, Sol and Luna in the current catalog, ahead of the next lower-ranked native model.
+  return visiblePriorities[Math.min(2, visiblePriorities.length - 1)] ?? modelPriority(template);
 }
 
 function nativeTemplateCandidate(value: unknown, requireTools: boolean): value is JsonObject {
@@ -99,6 +107,7 @@ export function buildChatGptWebModel(
   templateValue: unknown,
   route: ChatGptWebModelRoute,
   config: AppConfig,
+  catalogPriority?: number,
 ): JsonObject {
   const template = object(templateValue, "native Codex model template");
   const templateSlug = slug(template);
@@ -107,7 +116,7 @@ export function buildChatGptWebModel(
   }
   const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
   const multiAgentVersion = routedSubagentVersion(template, config);
-  const priority = routedModelPriority(template, route, config);
+  const priority = catalogPriority ?? modelPriority(template);
   const model: JsonObject = {
     ...structuredClone(template),
     slug: route.slug,
@@ -118,9 +127,8 @@ export function buildChatGptWebModel(
     // These slugs are implemented by this local Responses-compatible bridge. Marking them false
     // makes Codex drop them from spawn_agent whenever openai_base_url points at the bridge.
     supported_in_api: true,
-    // Follow the official template's ordering without outranking it. Codex advertises at most five
-    // spawn-agent overrides; forcing every routed row to priority 0 displaced gpt-5.6-sol from that
-    // registry and made an explicit native child model fail validation.
+    // The same priority also controls Codex's bounded spawn-agent override list. Keep native
+    // models ahead of Web routes; Pro and Extra High are the first Web overrides when slots remain.
     ...(priority === undefined ? {} : { priority }),
     // ChatGPT Web stays out of spawn_agent unless the user explicitly allows Web sub-agents.
     ...(multiAgentVersion === undefined ? {} : { multi_agent_version: multiAgentVersion }),
@@ -185,8 +193,10 @@ export function augmentNativeModelCatalog(
       }
     }
   }
+  const priority = webCatalogPriority(nativeModels, template);
   const webModels = availableChatGptWebModelRoutes(config)
-    .map(route => buildChatGptWebModel(template, route, config));
+    .toSorted((left, right) => webCatalogRank(left) - webCatalogRank(right))
+    .map(route => buildChatGptWebModel(template, route, config, priority));
   return {
     ...structuredClone(catalog),
     models: [...nativeModels, ...webModels],

@@ -33,16 +33,18 @@ try {
   const sourceCatalog = JSON.parse(bundled.stdout) as {
     models?: Array<{ slug?: string; supported_in_api?: boolean; visibility?: string; priority?: number }>;
   };
-  // Native defaults change with Codex releases. Keep the bundled catalog's highest-ranked
-  // native model alongside the four delegated Web efforts; never hardcode a former default.
-  const expectedNative = sourceCatalog.models
+  // Native defaults change with Codex releases. Keep the first three visible native models
+  // ahead of Web rows, then Pro and Extra High in the bounded V1 override roster.
+  const nativeRows = sourceCatalog.models
     ?.filter(model => model.supported_in_api === true && model.visibility === "list" && model.slug && !model.slug.startsWith("chatgpt-web/"))
-    .toSorted((left, right) => (left.priority ?? Number.MAX_SAFE_INTEGER) - (right.priority ?? Number.MAX_SAFE_INTEGER))[0]?.slug;
+    .toSorted((left, right) => (left.priority ?? Number.MAX_SAFE_INTEGER) - (right.priority ?? Number.MAX_SAFE_INTEGER)) ?? [];
+  const expectedNative = nativeRows[0]?.slug;
   if (!expectedNative) throw new Error("Bundled Codex catalog has no list-visible native API model");
   const config = defaultConfig("browser-only");
   config.proAvailable = true;
   config.extraHighAvailable = true;
   config.subagentProtocol = "compatibility-v1";
+  config.allowWebSubagents = true;
   const catalogPath = join(root, "augmented-models.json");
   writeFileSync(catalogPath, `${JSON.stringify(augmentNativeModelCatalog(sourceCatalog, config))}\n`);
   writeFileSync(join(isolatedEnv.CODEX_HOME, "config.toml"), [
@@ -65,7 +67,15 @@ try {
     }>;
   };
   const web = catalog.models?.filter(model => model.slug?.startsWith("chatgpt-web/")) ?? [];
-  const expected = CHATGPT_WEB_MODEL_ROUTES.map(route => ({ slug: route.slug, effort: route.codexEffort }));
+  const webOrder = [
+    "chatgpt-web/pro", "chatgpt-web/extra-high", "chatgpt-web/high",
+    "chatgpt-web/medium", "chatgpt-web/light",
+  ];
+  const expected = webOrder.map(slug => {
+    const route = CHATGPT_WEB_MODEL_ROUTES.find(route => route.slug === slug);
+    if (!route) throw new Error(`Missing fixed ChatGPT Web route: ${slug}`);
+    return { slug: route.slug, effort: route.codexEffort };
+  });
   const actual = web.map(model => ({
     slug: model.slug,
     effort: Array.isArray(model.supported_reasoning_levels)
@@ -79,7 +89,10 @@ try {
   const webPro = catalog.models?.find(model => model.slug === "chatgpt-web/pro");
   if (nativeLead?.multi_agent_version !== "v1" || webPro?.multi_agent_version !== "v1") {
     throw new Error(
-      "Codex did not preserve Compatibility V1 metadata for the leading native model and Web Pro",
+      `Codex did not preserve Compatibility V1 metadata for the leading native model and Web Pro: ${JSON.stringify({
+        native: nativeLead?.multi_agent_version,
+        webPro: webPro?.multi_agent_version,
+      })}`,
     );
   }
   const features = runCodex(["features", "list"]).stdout;
@@ -93,9 +106,9 @@ try {
     .slice(0, 5)
     .map(model => model.slug);
   const expectedSpawnOverrides = [
-    expectedNative,
-    ...CHATGPT_WEB_MODEL_ROUTES.slice(1).map(route => route.slug),
-  ];
+    ...nativeRows.slice(0, 3).map(model => model.slug),
+    ...webOrder,
+  ].slice(0, 5);
   if (JSON.stringify(spawnOverrides) !== JSON.stringify(expectedSpawnOverrides)) {
     throw new Error(`Codex did not preserve the bounded V1 subagent roster: ${JSON.stringify(spawnOverrides)}`);
   }
