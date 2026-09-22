@@ -77,7 +77,7 @@ function normalizeEntry(value) {
   };
 }
 
-function normalizeManifest(value, accountId) {
+function normalizeManifest(value, accountId, { rejectOverflow = false } = {}) {
   const expectedAccount = text(accountId);
   if (!expectedAccount || !value || typeof value !== "object" || value.version !== VERSION
     || value.accountId !== expectedAccount || !Array.isArray(value.entries)) {
@@ -90,7 +90,10 @@ function normalizeManifest(value, accountId) {
     if (!entry || seen.has(entry.id)) continue;
     seen.add(entry.id);
     entries.push(entry);
-    if (entries.length === MAX_WORKSPACES) break;
+    if (rejectOverflow && entries.length > MAX_WORKSPACES) {
+      throw new Error(`Workspace restoration state exceeds the ${MAX_WORKSPACES}-entry limit; not all windows could be saved`);
+    }
+    if (!rejectOverflow && entries.length === MAX_WORKSPACES) break;
   }
   entries.sort((left, right) => left.lastActiveAt - right.lastActiveAt);
   return { version: VERSION, accountId: expectedAccount, entries };
@@ -121,7 +124,9 @@ class BrowserWorkspaceManifest {
   }
 
   write(entries) {
-    const manifest = normalizeManifest({ version: VERSION, accountId: this.accountId, entries }, this.accountId);
+    const manifest = normalizeManifest(
+      { version: VERSION, accountId: this.accountId, entries }, this.accountId, { rejectOverflow: true },
+    );
     if (this.filePath) {
       writePrivateFileAtomic(this.filePath, `${JSON.stringify(manifest, null, 2)}\n`, { durable: true });
       this.lastReadStatus = "ready";

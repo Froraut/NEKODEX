@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 import type { BrowserTaskState, Language } from './types';
 import './task-center.css';
 
@@ -47,6 +47,12 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
   const [status, setStatus] = useState<HistoryStatus>('all');
   const [account, setAccount] = useState('');
   const actionPending = useRef(false);
+  const confirmationId = useId();
+  const confirmationPanel = useRef<HTMLDivElement>(null);
+  const confirmationFocused = useRef(false);
+  const confirmationKeep = useRef<HTMLButtonElement>(null);
+  const confirmationTrigger = useRef<HTMLButtonElement | null>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const history = historyCopy[language] ?? historyCopy.en;
   const accounts = new Map(tasks.map(task => [task.accountId, task.accountName]));
   for (const health of historyHealth) accounts.set(health.accountId, health.accountName);
@@ -56,6 +62,31 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
       : status === 'completed' ? task.terminal && task.phase === 'completed'
       : task.terminal && task.phase !== 'completed'))
     && (!search || [task.traceId, task.accountName, task.model ?? ''].some(value => value.toLocaleLowerCase(language).includes(search))));
+  // Live snapshots can revoke a capability or remove a filtered row while its
+  // confirmation is open. Focus follows the actual rendered confirmation.
+  const confirmationKey = visible.some(task => taskKey(task) === cancelTarget && task.canCancel) ? `cancel:${cancelTarget}`
+    : visible.some(task => taskKey(task) === dismissTarget && task.canDismiss && task.canOpen && task.phase !== 'completed') ? `dismiss:${dismissTarget}` : null;
+  useLayoutEffect(() => {
+    if (!confirmationKey) return;
+    const panel = confirmationPanel.current;
+    const trigger = confirmationTrigger.current;
+    confirmationKeep.current?.focus();
+    confirmationFocused.current = !!panel?.contains(panel.ownerDocument.activeElement);
+    return () => {
+      // Do not steal focus from a filter or another control the user moved to.
+      if (!panel) return;
+      const active = panel.ownerDocument.activeElement;
+      if (!panel.contains(active) && !(active === panel.ownerDocument.body && confirmationFocused.current)) return;
+      // Wait until React has removed/disabled stale row controls before choosing
+      // a destination. A removed task must not receive focus just before removal.
+      queueMicrotask(() => {
+        const active = panel.ownerDocument.activeElement;
+        if (active !== panel.ownerDocument.body && !panel.contains(active)) return;
+        if (trigger?.isConnected && !trigger.disabled) trigger.focus();
+        else searchInput.current?.focus();
+      });
+    };
+  }, [confirmationKey]);
   const clearConfirmations = () => { setCancelTarget(null); setDismissTarget(null); };
   const text = terms[language] ?? terms.en;
   const actions = actionCopy[language] ?? actionCopy.en;
@@ -70,7 +101,7 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
       <strong>{health.accountName}</strong>: {history[14]}
     </p>)}
     <div className="task-history-filters">
-      <label>{history[0]}<input type="search" value={query} onChange={event => { setQuery(event.target.value); clearConfirmations(); }} /></label>
+      <label>{history[0]}<input type="search" ref={searchInput} value={query} onChange={event => { setQuery(event.target.value); clearConfirmations(); }} /></label>
       <label>{history[1]}<select value={status} onChange={event => { setStatus(event.target.value as HistoryStatus); clearConfirmations(); }}>
         {(['all', 'active', 'attention', 'completed'] as const).map((value, index) => <option key={value} value={value}>{history[2 + index]}</option>)}
       </select></label>
@@ -93,24 +124,31 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
           {task.canOpen ? <button type="button" className="text-button" disabled={disabled || !!pending}
             onClick={() => void act(taskKey(task), () => open(task.tabId))}>{text[2]}</button> : null}
           {task.canCancel ? <button type="button" className="text-button" disabled={disabled || !!pending}
-            onClick={() => { setDismissTarget(null); setCancelTarget(taskKey(task)); }}>{text[4]}</button> : null}
+            onClick={event => { confirmationTrigger.current = event.currentTarget; setDismissTarget(null); setCancelTarget(taskKey(task)); }}>{text[4]}</button> : null}
           {task.canDismiss ? <button type="button" className="text-button" disabled={disabled || !!pending}
-            onClick={() => {
+            onClick={event => {
+              confirmationTrigger.current = event.currentTarget;
               if (task.canOpen && task.phase !== 'completed') { setCancelTarget(null); setDismissTarget(taskKey(task)); }
               else void act(taskKey(task), () => dismiss(task.accountId, task.id));
             }}>{text[3]}</button> : null}
         </div>
-        {dismissTarget === taskKey(task) && task.canDismiss && task.canOpen && task.phase !== 'completed' ? <div className="task-cancel-confirm" role="alert">
-          <p>{history[11]}</p>
+        {dismissTarget === taskKey(task) && task.canDismiss && task.canOpen && task.phase !== 'completed' ? <div className="task-cancel-confirm" ref={confirmationPanel} role="alertdialog" aria-label={text[3]} aria-describedby={confirmationId}
+          onFocusCapture={() => { confirmationFocused.current = true; }}
+          onBlurCapture={event => { confirmationFocused.current = event.currentTarget.contains(event.relatedTarget); }}
+          onKeyDown={event => { if (event.key === 'Escape' && !actionPending.current) { event.preventDefault(); event.stopPropagation(); clearConfirmations(); } }}>
+          <p id={confirmationId}>{history[11]}</p>
           <button className="button-secondary" type="button" disabled={disabled || !!pending}
             onClick={() => void act(taskKey(task), async () => { await dismiss(task.accountId, task.id); setDismissTarget(null); })}>{history[13]}</button>
-          <button className="text-button" type="button" disabled={!!pending} onClick={() => setDismissTarget(null)}>{history[12]}</button>
+          <button ref={confirmationKeep} className="text-button" type="button" disabled={!!pending} onClick={() => setDismissTarget(null)}>{history[12]}</button>
         </div> : null}
-        {cancelTarget === taskKey(task) && task.canCancel ? <div className="task-cancel-confirm" role="alert">
-          <p>{actions[0]}</p>
+        {cancelTarget === taskKey(task) && task.canCancel ? <div className="task-cancel-confirm" ref={confirmationPanel} role="alertdialog" aria-label={text[4]} aria-describedby={confirmationId}
+          onFocusCapture={() => { confirmationFocused.current = true; }}
+          onBlurCapture={event => { confirmationFocused.current = event.currentTarget.contains(event.relatedTarget); }}
+          onKeyDown={event => { if (event.key === 'Escape' && !actionPending.current) { event.preventDefault(); event.stopPropagation(); clearConfirmations(); } }}>
+          <p id={confirmationId}>{actions[0]}</p>
           <button className="button-secondary" type="button" disabled={disabled || !!pending}
             onClick={() => void act(taskKey(task), async () => { await cancel(task.tabId, task.traceId); setCancelTarget(null); })}>{text[4]}</button>
-          <button className="text-button" type="button" disabled={!!pending} onClick={() => setCancelTarget(null)}>{actions[1]}</button>
+          <button ref={confirmationKeep} className="text-button" type="button" disabled={!!pending} onClick={() => setCancelTarget(null)}>{actions[1]}</button>
         </div> : null}
       </article>)}
     </div>

@@ -139,8 +139,14 @@ class BrowserAdmissionQueue {
         }
       }
       if (reconciled) { this.save(); this.publish(); }
-      for (const row of this.ordered()) {
+      // Re-read priority after each awaited acquisition. Visit each candidate at
+      // most once per pass so held/retryable tasks cannot spin the pump.
+      const candidates = new Set(this.ordered());
+      while (candidates.size) {
         if (this.closed) break;
+        const row = this.ordered().find(item => candidates.has(item));
+        if (!row) break;
+        candidates.delete(row);
         if (row.status !== 'waiting') continue;
         if (row.needsOwner || this.clock() - row.lastSeen >= 10_000 || !this.alive(row.request.helperPid)) {
           row.status = 'paused'; row.reason = 'owner-reconnect-required'; row.needsOwner = true; this.save(); this.publish(); continue;

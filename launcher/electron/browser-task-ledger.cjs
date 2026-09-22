@@ -82,8 +82,11 @@ class BrowserTaskLedger {
       return;
     }
     let submission = row.submission;
-    if (phase === 'sending' || phase === 'sending-context') submission = 'uncertain';
-    if (phase === 'context-accepted') submission = 'context-accepted';
+    // A later multipart send can be uncertain while earlier context is already
+    // accepted. Preserve the strongest durable evidence for the whole task.
+    if ((phase === 'sending' || phase === 'sending-context')
+      && submission !== 'context-accepted' && submission !== 'accepted') submission = 'uncertain';
+    if (phase === 'context-accepted' && submission !== 'accepted') submission = 'context-accepted';
     if (['accepted', 'responding', 'waiting-tools'].includes(phase)) submission = 'accepted';
     // A worker must not turn proven sending into a safe-to-retry preparation state.
     if (phase === 'preparing' && submission !== 'not-sent' && row.sequence > 0) throw new Error('Task cannot return to preparation after sending');

@@ -14,7 +14,7 @@ import type {
 import { namespacedToolName } from "../types";
 import { CHATGPT_WEB_MODEL_PREFIX } from "../chatgpt-web-models";
 import { isCollaborationTool } from "../collaboration-tools";
-import { responsesRequestSchema } from "./schema";
+import { responsesRequestSchema, toolSchema } from "./schema";
 import { compactionItemToText } from "./compaction";
 import { previousResponseReplayPrefixLength } from "./state";
 import { decodeReasoningEnvelope } from "./reasoning-envelope";
@@ -171,6 +171,14 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
   if (!tools) return undefined;
   const out: CodexTool[] = [];
   const pushFn = (t: Record<string, unknown>, namespace?: string) => {
+    // Namespaced and deferred definitions arrive through open extension envelopes, bypassing
+    // the top-level request tool schema. Enforce the same known-function contract here while
+    // leaving client-defined extension tool shapes open.
+    if (t.type === "function") {
+      const validated = toolSchema.safeParse(t);
+      if (!validated.success) throw new Error(`responses parse error: ${validated.error.message}`);
+      t = validated.data;
+    }
     const tool: CodexTool = {
       name: t.name as string,
       description: (t.description as string) ?? "",
@@ -200,7 +208,7 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
   };
   for (const t of tools) {
     if (!isObj(t)) continue;
-    if (t.type === "function" && typeof t.name === "string") {
+    if (t.type === "function") {
       pushFn(t);
     } else if (t.type === "namespace" && Array.isArray(t.tools)) {
       // Responses Lite groups ordinary native functions and the native freeform `exec` tool under
@@ -209,9 +217,9 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
       // need a distinct round-trip contract and must not be silently exposed as function calls.
       const ns = normalizedToolNamespace(t.name);
       for (const inner of t.tools as unknown[]) {
-        if (!isObj(inner) || typeof inner.name !== "string") continue;
+        if (!isObj(inner)) continue;
         if (inner.type === "function") pushFn(inner, ns);
-        else if (t.name === DEFAULT_FUNCTION_NAMESPACE && inner.type === "custom") pushFreeform(inner);
+        else if (typeof inner.name === "string" && t.name === DEFAULT_FUNCTION_NAMESPACE && inner.type === "custom") pushFreeform(inner);
       }
     }
     else if (t.type === "custom" && typeof t.name === "string") {
@@ -580,17 +588,7 @@ export function parseRequest(body: unknown, parseOptions?: {
         loadedToolSpecs.push(...specs);
         // List the EXACT wire names the model must call (flattened for namespaced specs), matching
         // how buildTools exposes them — otherwise the model guesses wrong names (e.g. the bare namespace).
-        const wireNames: string[] = [];
-        for (const spec of specs) {
-          if (spec.type === "namespace" && Array.isArray(spec.tools)) {
-            const namespace = normalizedToolNamespace(spec.name);
-            for (const inner of spec.tools as Record<string, unknown>[]) {
-              if (typeof inner.name === "string") wireNames.push(namespacedToolName(namespace, inner.name));
-            }
-          } else if (typeof spec.name === "string") {
-            wireNames.push(spec.name);
-          }
-        }
+        const wireNames = (buildTools(specs) ?? []).map(tool => namespacedToolName(tool.namespace, tool.name));
         const failed = typeof out.status === "string" && out.status !== "completed" && out.status !== "success";
         messages.push({
           role: "toolResult", toolCallId: out.call_id, toolName: "tool_search",

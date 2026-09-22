@@ -335,6 +335,7 @@ function installMockLauncher() {
   window.fixtureSetAccounts = value => { accountSnapshot = value; emit("browser", { ...browser }); };
   window.fixtureSetUpdate = value => { update = value; emit("update", update); };
   window.fixtureSetState = patch => { Object.assign(state, patch); emit("state", { ...state }); };
+  window.fixtureSetOperation = value => { operation = value; emit("operation", value); };
   if (astraScenario) {
     window.codexWebLauncher.onLifecycle = listen("lifecycle");
     window.fixtureSetLifecycle = value => emit("lifecycle", value);

@@ -57,6 +57,28 @@ test('pre-send failure, partial context and accepted response retain distinct ou
   } finally { f.cleanup(); }
 });
 
+test('later multipart sends preserve accepted evidence through failure and restart', () => {
+  const f = fixture();
+  try {
+    for (const [index, acceptedPhase, laterPhase] of [
+      [0, 'context-accepted', 'sending-context'],
+      [1, 'context-accepted', 'sending'],
+      [2, 'accepted', 'sending'],
+    ]) {
+      const id = f.ledger.start(`trace-parts-${index}`, `tab-parts-${index}`, 1);
+      f.ledger.progress(id, acceptedPhase, 1);
+      f.ledger.progress(id, laterPhase, 2);
+      assert.equal(f.ledger.get(id).phase, laterPhase);
+      assert.equal(f.ledger.get(id).submission, acceptedPhase);
+      const interrupted = new BrowserTaskLedger(f.file);
+      assert.equal(interrupted.get(id).phase, 'interrupted');
+      assert.equal(interrupted.get(id).submission, acceptedPhase);
+      f.ledger.end(id, 'failed');
+      assert.equal(new BrowserTaskLedger(f.file).get(id).phase, 'failed-after-send');
+    }
+  } finally { f.cleanup(); }
+});
+
 test('dismissing completed history preserves the retained conversation', () => {
   const f = fixture();
   try {

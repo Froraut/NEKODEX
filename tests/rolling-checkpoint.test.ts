@@ -297,3 +297,32 @@ test("Luna checkpoint preserves the server-resolved backend model when the raw b
   expect(applied.parsed.modelId).toBe("gpt-5.6-luna");
   expect(applied.parsed.options.reasoning).toBe("low");
 });
+
+
+test("Luna checkpoint preserves current-turn input inside a replayed response prefix", () => {
+  const thread = "thread_luna_current_replay";
+  const store = new ChatGptLunaCheckpointStore();
+  const answer = "Previous turn completed.";
+  const source = request(thread, "prior", [message("user", "Old task", "prior")]);
+  store.commit(source, { checkpoint, answerHash: hashChatGptLunaAnswer(answer) }, answer);
+  const standing = message("developer", "Require approval before external sends.", "prior");
+  const currentUser = message("user", "Inspect only; do not send anything.", "current");
+  const next = request(thread, "current", [
+    standing,
+    message("user", "Old task", "prior"),
+    message("assistant", answer, "prior"),
+    currentUser,
+    message("assistant", "Inspection in progress.", "current"),
+    message("user", "Also inspect the pending queue.", "current"),
+  ]);
+  next._replayPrefixLen = 5;
+  const result = store.apply(next);
+  expect(result.applied).toBeTrue();
+  const input = (result.parsed._rawBody as { input: unknown[] }).input;
+  expect(input.slice(1)).toEqual([
+    standing, currentUser,
+    message("assistant", "Inspection in progress.", "current"),
+    message("user", "Also inspect the pending queue.", "current"),
+  ]);
+  expect(extractChatGptTurnUserRevision(result.parsed)).toEqual(extractChatGptTurnUserRevision(next));
+});

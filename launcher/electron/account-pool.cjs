@@ -1102,6 +1102,16 @@ class AccountBrowserPool {
     if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw Object.assign(new Error('Global browser capacity is full'), { code: 'browser_capacity_full' });
     if (!activeTraces.has(traceId) && this.admissionQueue?.paused) throw Object.assign(new Error('New browser tasks are paused'), { code: 'account_cooldown' });
     const id = this.chooseAccount(traceId, key, retained, { ...requirement, connector });
+    const assertHistoryAvailable = () => {
+      if (this.taskLedgers?.get(id)?.storageIssue) {
+        throw Object.assign(new Error('Task history is unavailable for this account. Repair its journal before starting a task. No request was sent.'), {
+          code: 'task-history-unavailable', workStarted: false,
+        });
+      }
+    };
+    // Legacy starts bypass queue preview. Refuse before reserving an owner or
+    // consuming pacing, and recheck after readiness yields to other operations.
+    assertHistoryAvailable();
     const admissionEpoch = this.evidenceEpoch(id);
     const revealRevision = this.selectionRevision;
     const keys = [key, requirement?.routingKey].filter(Boolean);
@@ -1121,6 +1131,7 @@ class AccountBrowserPool {
       if (this.affinity.size + newKeys.length > 100000) throw new Error('Account affinity registry is full');
       await host.ready();
       requirement?.admissionSignal?.throwIfAborted();
+      assertHistoryAvailable();
       if (this.destroyed) throw new Error('Browser account pool is closed');
       if (this.workspaceSessionMutations?.get(id)?.snapshot().admissionBlocked) {
         throw Object.assign(new Error('This ChatGPT account is changing its browser identity. No request was sent.'), {

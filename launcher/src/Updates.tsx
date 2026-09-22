@@ -12,7 +12,9 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
   const copy = updateCopyFor(language);
   const failure = error || (state.status === "error" ? state.message : null);
   const failedReleaseCheck = Boolean(failure);
-  const cancellationPending = cancelling || state.status === "cancelling";
+  // The worker handoff is authoritative even while the cancellation IPC reply
+  // is still pending: from this point the installed app may be replaced.
+  const cancellationPending = state.status === "cancelling" || (cancelling && state.status !== "installing");
   const statusTitle = {
     disabled: copy.disabled, idle: copy.idle, checking: copy.checking, "up-to-date": copy.latest,
     available: copy.available, downloading: copy.downloading, verifying: copy.verifying, installing: copy.installing,
@@ -45,7 +47,7 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
           <p>{cancellationPending ? copy.cancellingBody : busy ? copy.restart : copy.automatic}</p>
           {(blocked || transitionBusy) && state.status === "available" ? <p className="updates-wait">{copy.wait}</p> : null}
           <div className="updates-actions">
-            {onCancel && (["downloading", "verifying", "cancelling"].includes(state.status) || cancelling) ? (
+            {onCancel && (["downloading", "verifying", "cancelling"].includes(state.status) || cancellationPending) ? (
               <button type="button" className="button-secondary" disabled={cancellationPending}
                 onClick={onCancel}>{cancellationPending ? copy.cancelling : copy.cancel}</button>
             ) : null}

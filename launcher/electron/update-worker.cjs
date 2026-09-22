@@ -240,8 +240,19 @@ function prepareTransaction(job, deps = {}) {
     writeJournal(transaction);
     return transaction;
   } catch (error) {
-    rollback(transaction);
-    cleanup(transaction, deps);
+    let rolledBack = false;
+    try {
+      rollback(transaction);
+      rolledBack = true;
+      cleanup(transaction, deps);
+    } catch (compensationError) {
+      const failure = new AggregateError([error, compensationError],
+        `${error.message}; preparation compensation failed: ${compensationError.message}`);
+      // The caller has not received this transaction yet. Preserve the same
+      // durable rollback fence used for guardian failures across that boundary.
+      failure.updateRelaunchDeferred = !rolledBack;
+      throw failure;
+    }
     throw error;
   }
 }
@@ -295,8 +306,10 @@ function rollback(transaction, checkpoint = () => {}) {
     writeJournal(transaction);
   }
   if (transaction.newDirectory) fs.rmSync(transaction.newDirectory, { recursive: true, force: true });
+  // Terminal in-memory state must not authorize finally-cleanup until the
+  // terminal journal has actually been persisted.
+  writeJournal({ ...transaction, phase: "rolled-back" });
   transaction.phase = "rolled-back";
-  writeJournal(transaction);
   return true;
 }
 function launchedReplacement(transaction) {
@@ -526,12 +539,11 @@ async function installUpdate(job, deps = {}) {
   } catch (error) {
     const failures = [error];
     if (!runStarted) {
-      let relaunchAllowed = !transaction;
+      let relaunchAllowed = !transaction && error?.updateRelaunchDeferred !== true;
       if (transaction) {
         try {
           rollback(transaction);
-          // rollback sets phase before writing the terminal journal. Only its
-          // successful return proves later recovery will be cleanup-only.
+          // Successful durable rollback proves later recovery is cleanup-only.
           relaunchAllowed = true;
           cleanup(transaction, deps);
         } catch (cleanupError) {

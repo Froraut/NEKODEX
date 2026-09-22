@@ -25,16 +25,17 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const signedIn = browser?.authenticated === true;
   const authenticationStatus = browser?.authenticationStatus
     ?? (signedIn ? "verified" : browser?.status === "signed-out" ? "signed-out" : "unknown");
+  const accountVerified = authenticationStatus === "verified";
   const runtime = snapshot.runtimeCapabilities ?? snapshot.lifecycle;
   const readiness = deriveWorkspaceReadiness({
     manual,
     authenticationStatus,
     catalogUnavailable,
-    smokePassed: snapshot.state.browserSmokePassed === true,
+    smokePassed: snapshot.smokePassed,
     installed: snapshot.state.coreSetupComplete === true,
     catalogVerified: snapshot.state.codexCatalogVerified === true,
     pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true,
+    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
     toolsVerified: toolsReady,
     development: snapshot.profile === "development",
     runtime: runtime ? { ...runtime, transitionActive: Boolean(snapshot.lifecycle?.transition) }
@@ -59,8 +60,8 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const toolsError = readiness.tools === "degraded"
     || (readiness.tools === "unavailable" && readiness.action === "open-tools");
   const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [
-    { icon: "accounts", label: copy.accountConnection, ready: manual || signedIn, surface: "accounts",
-      status: manual ? copy.manualShort : signedIn ? copy.connectionVerified
+    { icon: "accounts", label: copy.accountConnection, ready: manual || accountVerified, surface: "accounts",
+      status: manual ? copy.manualShort : accountVerified ? copy.connectionVerified
         : authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
           : authenticationStatus === "unknown" ? workflow.session.checkingVerification : copy.signInNeededShort },
     { error: catalogUnavailable, icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogUnavailable,
@@ -80,20 +81,21 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const setupPending = readiness.action === "open-setup";
   const toolsPending = readiness.action === "open-tools" || readiness.action === "repair-web"
     || readiness.reason === "web-repair-active";
-  const heroTitle = catalogUnavailable ? copy.catalogUnavailable
+  const catalogIsNext = readiness.reason === "catalog-unavailable";
+  const heroTitle = catalogIsNext ? copy.catalogUnavailable
     : readiness.reason === "session-unavailable" ? workflow.session.verificationUnavailable
       : toolsPending ? workflow.recovery.webTransportTitle
         : readiness.action === "open-browser" ? (nativePreserved ? copy.setupReadyModels : copy.setupChecksPassed)
           : setupPending ? copy.setupInstalledTitle : copy.overviewTitle;
-  const heroBody = catalogUnavailable ? copy.catalogFailureKeptInstall
+  const heroBody = catalogIsNext ? copy.catalogFailureKeptInstall
     : readiness.reason === "session-unavailable" ? sessionIssueCopy(snapshot.state.language ?? "en", browser?.authenticationIssue)
       : toolsPending ? (readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody)
         : readiness.action === "open-browser" ? (nativePreserved ? workflow.recovery.webTransportBody : copy.connectorAvailableNotExecuted)
           : setupPending ? (readiness.reason === "picker-confirmation-required" ? copy.setupConfirmTitle
             : readiness.reason === "catalog-waiting" ? copy.setupCatalogTitle : copy.overviewBody)
             : copy.overviewBody;
-  const heroSurface = catalogUnavailable ? "setup" : actionSurface[readiness.action];
-  const heroAction = catalogUnavailable ? copy.openRoutingChecks
+  const heroSurface = catalogIsNext ? "setup" : actionSurface[readiness.action];
+  const heroAction = catalogIsNext ? copy.openRoutingChecks
     : readiness.action === "retry-session" ? workflow.session.retryVerification
       : readiness.action === "open-accounts" ? copy.accountConnection
         : readiness.action === "repair-web" ? workflow.recovery.repairAction

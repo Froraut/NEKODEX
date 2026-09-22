@@ -143,3 +143,45 @@ test('resume is offered for an unstopped session limit and respects disabled and
   tree = view.render({ resumeRequired: false }); assert.equal(button(tree, 'pacingResume'), null);
   tree = view.render({ safety: { ...safety, stopped: true } }); assert.ok(button(tree, 'pacingResume'));
 });
+
+test('proxy host refresh preserves an unsaved draft and restore uses the newest saved proxy', () => {
+  let calls = 0;
+  const view = harness('AccountProxySettings.tsx', 'AccountProxySettings', {
+    proxy: saved, language: 'en', copy, disabled: false, save: async () => { calls++; return true; },
+  });
+  let tree = view.render();
+  url(tree).props.onChange({ target: { value: 'not-a-proxy' } });
+  tree = view.render(); url(tree).props.onBlur();
+  const latest = { mode: 'https', url: 'https://new.example:8443' };
+  tree = view.render({ proxy: latest });
+  assert.equal(field(tree, 'select').props.value, 'http');
+  assert.equal(url(tree).props.value, 'not-a-proxy');
+  assert.equal(url(tree).props['aria-invalid'], true);
+  assert.equal(button(tree, 'proxySave').props.disabled, true);
+  restore(tree).props.onClick(); tree = view.render();
+  assert.equal(field(tree, 'select').props.value, 'https');
+  assert.equal(url(tree).props.value, latest.url);
+  assert.equal(status(tree).props.children, 'accountFormSaved');
+  assert.equal(calls, 0);
+});
+
+test('proxy save acknowledges canonical host values while a clean form follows host changes', async () => {
+  let finish, submitted;
+  const view = harness('AccountProxySettings.tsx', 'AccountProxySettings', {
+    proxy: saved, language: 'en', copy, disabled: false,
+    save: value => { submitted = value; return new Promise(resolve => { finish = resolve; }); },
+  });
+  let tree = view.render();
+  const latest = { mode: 'https', url: 'https://new.example:8443' };
+  tree = view.render({ proxy: latest });
+  assert.equal(url(tree).props.value, latest.url);
+  url(tree).props.onChange({ target: { value: 'https://draft.example:443/' } });
+  tree = view.render(); field(tree, 'form').props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(submitted, { mode: 'https', url: 'https://draft.example' });
+  tree = view.render({ proxy: submitted });
+  assert.equal(url(tree).props.value, submitted.url);
+  assert.equal(field(tree, 'fieldset').props.disabled, true);
+  finish(true); await flush(); tree = view.render();
+  assert.equal(status(tree).props.children, 'accountFormSaved');
+  assert.equal(restore(tree).props.disabled, true);
+});

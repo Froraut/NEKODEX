@@ -156,3 +156,63 @@ test('task artifact guard deadline cancels an owned transfer that stops making p
     fs.rmSync(paths.root, { recursive: true, force: true });
   }
 });
+
+test('terminal artifact failures remove partial bytes without waiting for another done event', async () => {
+  const session = new EventEmitter();
+  const paths = fixture();
+  const guard = createTaskArtifactDownloadGuard(session);
+  try {
+    for (const [state, received] of [['interrupted', 3], ['completed', 0], ['completed', NaN]]) {
+      const lease = guard.register({
+        webContentsId: 42, traceId: 'trace_terminal_failure', assistantTurnId: 'assistant-turn',
+        expectedFilename: 'result.csv', taskDirectory: paths.taskDirectory, partialPath: paths.partialPath,
+      });
+      const observed = lease.completion.then(() => null, error => error);
+      const item = new FakeDownload('result.csv', 'https://chatgpt.com/result.csv', 0);
+      session.emit('will-download', {}, item, { id: 42 });
+      fs.writeFileSync(paths.partialPath, 'partial bytes');
+      item.receivedBytes = received;
+      item.emit('done', {}, state);
+      assert.ok(await observed instanceof Error);
+      assert.equal(fs.existsSync(paths.partialPath), false);
+      assert.equal(guard.has(lease.leaseId), false);
+      assert.equal(item.cancelled, false, 'terminal downloads must not be cancelled again');
+      assert.equal(item.listenerCount('done'), 0);
+      assert.equal(item.listenerCount('updated'), 0);
+    }
+  } finally {
+    guard.dispose();
+    fs.rmSync(paths.root, { recursive: true, force: true });
+  }
+});
+
+test('artifact cancellation settles before a synchronous terminal notification', async () => {
+  const session = new EventEmitter();
+  const paths = fixture();
+  const guard = createTaskArtifactDownloadGuard(session);
+  try {
+    const lease = guard.register({
+      webContentsId: 42, traceId: 'trace_sync_cancel', assistantTurnId: 'assistant-turn',
+      expectedFilename: 'result.csv', taskDirectory: paths.taskDirectory, partialPath: paths.partialPath,
+    });
+    const observed = lease.completion.then(() => null, error => error);
+    const item = new FakeDownload('result.csv', 'https://chatgpt.com/result.csv', 0);
+    let cancellations = 0;
+    item.cancel = () => {
+      cancellations += 1;
+      assert.equal(guard.has(lease.leaseId), false);
+      fs.writeFileSync(paths.partialPath, 'late partial bytes');
+      item.emit('done', {}, 'cancelled');
+    };
+    session.emit('will-download', {}, item, { id: 42 });
+    const reason = new Error('owner cancelled');
+    assert.equal(guard.cancel(lease.leaseId, reason), true);
+    assert.equal(await observed, reason);
+    assert.equal(cancellations, 1);
+    assert.equal(fs.existsSync(paths.partialPath), false);
+    assert.equal(item.listenerCount('done'), 0);
+  } finally {
+    guard.dispose();
+    fs.rmSync(paths.root, { recursive: true, force: true });
+  }
+});

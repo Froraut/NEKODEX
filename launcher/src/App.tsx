@@ -2805,8 +2805,16 @@ function SettingsSurface({
   updateCompactionModel: (value: CompactionModel | null) => void;
   updateState: (state: LauncherState) => void;
 }) {
-  const [capacity, setCapacity] = useState(snapshot.browserCapacity);
+  const capacity = snapshot.browserCapacity;
   const [capacityInput, setCapacityInput] = useState(String(snapshot.browserCapacity.configured));
+  const previousConfiguredCapacity = useRef(capacity.configured);
+  useEffect(() => {
+    const previous = previousConfiguredCapacity.current;
+    previousConfiguredCapacity.current = capacity.configured;
+    // Refresh saved/runtime evidence without overwriting an unfinished edit.
+    setCapacityInput(current => current.trim() !== "" && Number(current) === previous
+      ? String(capacity.configured) : current);
+  }, [capacity.configured]);
   const capacityValue = Number(capacityInput);
   const capacityValid = capacityInput.trim() !== "" && Number.isSafeInteger(capacityValue)
     && capacityValue >= 1 && capacityValue <= capacity.maximum;
@@ -2816,7 +2824,6 @@ function SettingsSurface({
     setError(null);
     try {
       const saved = await api!.setBrowserCapacity(capacityValue);
-      setCapacity(saved);
       updateBrowserCapacity(saved);
       setCapacityInput(String(saved.configured));
     } catch (cause) { setError(messageOf(cause)); }
@@ -2852,7 +2859,10 @@ function SettingsSurface({
     } finally { setBusy(false); }
   };
   const runDoctor = async () => {
+    if (busy) return;
     setBusy(true);
+    setDoctor(null);
+    setError(null);
     try {
       setDoctor(await api!.doctor());
     } catch (cause) {

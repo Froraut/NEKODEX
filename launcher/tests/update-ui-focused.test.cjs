@@ -101,6 +101,27 @@ const transfer = { status: "downloading", version: "6.0.0", downloadedBytes: 104
 const progressMarkup = (patch = {}, language = "en") => renderToStaticMarkup(
   React.createElement(UpdateProgress, { state: { ...transfer, ...patch }, label: "Progress", language }));
 
+test("worker handoff supersedes an outstanding cancellation request", () => {
+  const props = {
+    language: "en", currentVersion: "5.9.0", busy: true, blocked: false,
+    checking: false, cooldown: false, error: null, cancelling: true,
+    onCheck() {}, onInstall() {}, onCancel() {},
+  };
+  const copy = updateCopyFor("en");
+  const render = status => renderToStaticMarkup(React.createElement(Updates, {
+    ...props, state: { status, version: "6.0.0" },
+  }));
+  const preparing = render("verifying");
+  assert.ok(preparing.includes(renderedText(copy.cancelling)));
+  assert.ok(preparing.includes(copy.cancellingBody));
+  const handedOff = render("installing");
+  assert.ok(handedOff.includes(renderedText(copy.installing)));
+  assert.ok(handedOff.includes(copy.restart));
+  assert.ok(!handedOff.includes(copy.cancellingBody));
+  assert.ok(!handedOff.includes(copy.cancelling));
+  assert.ok(!handedOff.includes("<button"), "handoff cannot expose cancellation or another updater action");
+});
+
 test("download estimate and accessible transfer description use observed telemetry", () => {
   const markup = progressMarkup();
   const eta = "About 6 sec remaining in download";

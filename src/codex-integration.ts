@@ -682,35 +682,34 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath(), { followSymlink: true });
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());
-  const expected = new Map<string, Buffer | undefined>();
+  const completedRemovals = new Set<string>();
   const ownedAfterWrite = new Map<string, ReturnType<typeof snapshotFile>>();
   const removeJournalCopy = (snapshot: ReturnType<typeof snapshotFile>): void => {
     const latest = snapshotFile(snapshot.path);
     if (!snapshot.exists || !latest.exists || !snapshot.data || !latest.data?.equals(snapshot.data)) {
       throw new Error(`Codex integration journal changed before uninstall removed it; preserving recovery evidence: ${snapshot.path}`);
     }
-    expected.set(snapshot.path, undefined);
+    assertFileSnapshotCurrent(snapshot);
     rmSync(snapshot.path);
+    completedRemovals.add(snapshot.path);
   };
   try {
-    expected.set(configSnapshot.path, Buffer.from(restored));
     assertFileSnapshotCurrent(configSnapshot);
-    writeFileSnapshot(configSnapshot, restored, { expectedData: configSnapshot.data });
-    ownedAfterWrite.set(configSnapshot.path, snapshotFile(configSnapshot.path, { followSymlink: true }));
+    ownedAfterWrite.set(configSnapshot.path,
+      writeFileSnapshot(configSnapshot, restored, { expectedData: configSnapshot.data }));
     if (restoredHooks && hooksSnapshot) {
-      expected.set(hooksSnapshot.path, Buffer.from(restoredHooks.text));
       assertFileSnapshotCurrent(hooksSnapshot);
-      writeFileSnapshot(hooksSnapshot, restoredHooks.text, { expectedData: hooksSnapshot.data });
-      ownedAfterWrite.set(hooksSnapshot.path, snapshotFile(hooksSnapshot.path, { followSymlink: true }));
+      ownedAfterWrite.set(hooksSnapshot.path,
+        writeFileSnapshot(hooksSnapshot, restoredHooks.text, { expectedData: hooksSnapshot.data }));
     }
     if (catalogSnapshot?.exists) {
       assertFileSnapshotCurrent(catalogSnapshot);
-      expected.set(catalogSnapshot.path, undefined);
       rmSync(catalogSnapshot.path);
+      completedRemovals.add(catalogSnapshot.path);
     }
     assertFileSnapshotCurrent(modelsCacheSnapshot);
-    expected.set(modelsCacheSnapshot.path, undefined);
     rmSync(modelsCacheSnapshot.path, { force: true });
+    completedRemovals.add(modelsCacheSnapshot.path);
     // Keep the recovery copy until last. If the inactive hook reappears after
     // primary removal, the next guard aborts while recovery evidence still exists.
     assertInactiveJsonHookAbsent(journal);
@@ -722,21 +721,17 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     for (const snapshot of [recoverySnapshot, journalSnapshot, modelsCacheSnapshot, catalogSnapshot, hooksSnapshot, configSnapshot]) {
       if (!snapshot) continue;
       try {
-        if (!expected.has(snapshot.path)) continue;
-        const current = snapshotFile(snapshot.path, {
-          followSymlink: snapshot.path === configSnapshot.path
-            || snapshot.path === hooksSnapshot?.path
-            || snapshot.path === catalogSnapshot?.path
-            || snapshot.path === modelsCacheSnapshot.path,
-        });
-        const intended = expected.get(snapshot.path);
-        if (current.exists === snapshot.exists
-          && (current.data?.equals(snapshot.data ?? Buffer.alloc(0)) ?? !snapshot.data)) continue;
-        if (current.exists !== (intended !== undefined)
-          || (intended !== undefined && !current.data?.equals(intended))) {
-          throw new Error("changed after uninstall wrote it; preserving the concurrent edit");
+        const owned = ownedAfterWrite.get(snapshot.path);
+        if (owned) {
+          restoreFileSnapshot(snapshot, { expectedCurrent: owned });
+        } else if (completedRemovals.has(snapshot.path)) {
+          const current = snapshotFile(snapshot.path, { followSymlink: Boolean(snapshot.symlink) });
+          if (current.exists) {
+            throw new Error("changed after uninstall removed it; preserving the concurrent edit");
+          }
+          restoreFileSnapshot(snapshot);
         }
-        restoreFileSnapshot(snapshot, { expectedCurrent: ownedAfterWrite.get(snapshot.path) });
+        // A rejected write has no committed receipt and cannot authorize rollback.
       } catch (caught) {
         rollbackFailures.push(`${snapshot.path}: ${caught instanceof Error ? caught.message : String(caught)}`);
       }

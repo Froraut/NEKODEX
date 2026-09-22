@@ -6,7 +6,17 @@ const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 
-function loadOverview(deriveWorkspaceReadiness) {
+function loadReadinessModule(file) {
+  const compiled = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src', file + '.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 },
+  }).outputText;
+  const loaded = { exports: {} };
+  Function('module', 'exports', 'require', compiled)(loaded, loaded.exports,
+    name => name.startsWith('./') ? loadReadinessModule(name.slice(2)) : require(name));
+  return loaded.exports;
+}
+
+function loadOverview(deriveWorkspaceReadiness = loadReadinessModule('workspace-readiness').deriveWorkspaceReadiness) {
   const filename = path.join(__dirname, '../src/Overview.tsx');
   const source = fs.readFileSync(filename, 'utf8')
     .replace(/const workspaceBase = .*?;\n/, 'const workspaceBase = "base";\n')
@@ -22,6 +32,7 @@ function loadOverview(deriveWorkspaceReadiness) {
       useCatReaction: () => ({ reaction: null, play() {}, follow() {}, reset() {} }) },
     './icons': { Icon: () => null },
     './workspace-readiness': { deriveWorkspaceReadiness },
+    './setup-progress': loadReadinessModule('setup-progress'),
     './session-issue-copy': { sessionIssueCopy: () => 'This does not mean the account is signed out.' },
     './workflow-copy': { workflowCopy: () => ({
       session: { verificationUnavailable: 'Verification unavailable',
@@ -48,7 +59,7 @@ function props(browser, runtimeCapabilities = null) {
     browser,
     catalogFailure: null,
     snapshot: {
-      profile: 'production', runtimeCapabilities, lifecycle: null,
+      profile: 'production', runtimeCapabilities, lifecycle: null, smokePassed: true, mcpCredentialsConfigured: true,
       state: { browserInteractionMode: 'automatic', language: 'en', coreSetupComplete: true,
         codexCatalogVerified: true, codexPickerConfirmed: true, mcpRuntimeInstalled: true },
       browserCapacity: { active: 5 },
@@ -123,4 +134,45 @@ test('Overview never calls the workspace ready when Web is explicitly unavailabl
   assert.doesNotMatch(html, />openWorkspace</);
   assert.doesNotMatch(html, />setupChecksPassed</);
   assert.match(html, />finishSetup</);
+});
+
+
+test('Overview respects session and transition priority despite a retained catalog failure', () => {
+  const Overview = loadOverview();
+  const input = props({ authenticated: true, authenticationStatus: 'unavailable', tabs: [] });
+  input.catalogFailure = 'Catalog request failed';
+  let html = renderToStaticMarkup(React.createElement(Overview, input));
+  assert.match(html, />Retry verification</);
+  assert.match(html, /ChatGPT account: Verification unavailable/);
+  assert.doesNotMatch(html, /ChatGPT account: connectionVerified/);
+  assert.match(html, /modelsConnectionTab: catalogUnavailable/, 'catalog failure stays visible in its own row');
+  input.browser.authenticationStatus = 'verified';
+  input.snapshot.lifecycle = { transition: { kind: 'restart' }, runtimeStatus: 'starting' };
+  html = renderToStaticMarkup(React.createElement(Overview, input));
+  assert.match(html, /class="button-primary"[^>]*disabled=""[^>]*>loading</);
+  input.snapshot.lifecycle = null;
+  html = renderToStaticMarkup(React.createElement(Overview, input));
+  assert.match(html, /class="button-primary"[^>]*>openRoutingChecks</);
+});
+
+test('Overview requires current credentials before offering the Manual workspace', () => {
+  const Overview = loadOverview();
+  const input = props({ authenticated: true, authenticationStatus: 'verified', tabs: [] });
+  input.snapshot.state.browserInteractionMode = 'manual';
+  input.snapshot.mcpCredentialsConfigured = false;
+  const html = renderToStaticMarkup(React.createElement(Overview, input));
+  assert.match(html, /class="button-primary"[^>]*>Repair Web connection</);
+  assert.doesNotMatch(html, />openWorkspace</);
+});
+
+test('Overview uses the current-version browser check before offering installation', () => {
+  let received;
+  const derive = loadReadinessModule('workspace-readiness').deriveWorkspaceReadiness;
+  const Overview = loadOverview(input => { received = derive(input); return received; });
+  const input = props({ authenticated: true, authenticationStatus: 'verified', tabs: [] });
+  input.snapshot.state.coreSetupComplete = false;
+  input.snapshot.state.browserSmokePassed = true;
+  input.snapshot.smokePassed = false;
+  renderToStaticMarkup(React.createElement(Overview, input));
+  assert.equal(received.reason, 'browser-check-required');
 });

@@ -35,11 +35,14 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
   onError: (error: unknown) => void;
 }) {
   const [pending, setPending] = useState(false);
-  const [account, setAccount] = useState('all');
+  const [selectedAccount, setAccount] = useState('all');
   const text = copy[language] ?? copy.en;
   const pauseText = pauseCopy[language] ?? pauseCopy.en;
   const cancellingText = { en: 'Cancelling before sending', ru: 'Отмена до отправки', 'zh-CN': '正在取消，尚未发送', 'zh-TW': '正在取消，尚未傳送', ja: '送信前にキャンセル中', ko: '전송 전 취소 중' }[language];
   if (!queue) return null;
+  // Account removal can arrive while this panel stays mounted. Keep the visible
+  // selection and mutation scope aligned with the current account list.
+  const account = queue.accounts.some(row => row.id === selectedAccount) ? selectedAccount : 'all';
   const paused = account === 'all' ? queue.paused : queue.pausedAccounts.includes(account);
   const act = async (operation: () => Promise<unknown>) => {
     if (disabled || pending) return;

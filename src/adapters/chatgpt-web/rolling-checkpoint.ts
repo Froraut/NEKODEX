@@ -192,8 +192,12 @@ export class ChatGptLunaCheckpointStream {
 
 function currentTurnBoundary(parsed: CodexParsedRequest, input: unknown[], turnId: string): number | undefined {
   const replayPrefix = Math.min(parsed._replayPrefixLen ?? 0, input.length);
-  if (replayPrefix > 0) return replayPrefix;
   const firstCurrentItem = input.findIndex(item => itemTurnId(item) === turnId);
+  // A transport replay can include earlier rounds of this same native turn. It is not
+  // proof that those user instructions or tool results belong to completed history.
+  if (replayPrefix > 0) {
+    return firstCurrentItem >= 0 ? Math.min(replayPrefix, firstCurrentItem) : replayPrefix;
+  }
   return firstCurrentItem >= 0 ? firstCurrentItem : undefined;
 }
 

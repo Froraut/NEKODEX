@@ -125,3 +125,31 @@ test('global pause notice is localized for every supported language', () => {
     if (language !== 'en') assert.doesNotMatch(text(status), /New tasks are paused/);
   }
 });
+
+
+test('removed account resets the visible pause scope and failed operations leave controls usable', async () => {
+  const queue = queueState();
+  const errors = [], calls = [];
+  let reject;
+  let failing = true;
+  const view = queueHarness(queue, {
+    pause: (...args) => {
+      calls.push(args);
+      return failing ? new Promise((_, rejectOperation) => { reject = rejectOperation; }) : Promise.resolve();
+    },
+    onError: error => errors.push(error),
+  });
+  nodes(view.render()).find(node => node.type === 'select').props.onChange({ target: { value: 'a' } });
+  queue.accounts = queue.accounts.filter(row => row.id !== 'a');
+  assert.equal(nodes(view.render()).find(node => node.type === 'select').props.value, 'all');
+  button(view, 'Resume new tasks · All accounts').props.onClick();
+  assert.equal(button(view, 'Resume new tasks · All accounts').props.disabled, true);
+  assert.equal(nodes(view.render()).find(node => node.type === 'select').props.disabled, true);
+  const failure = new Error('pause request failed');
+  reject(failure); await flush();
+  assert.deepEqual(errors, [failure]);
+  assert.equal(button(view, 'Resume new tasks · All accounts').props.disabled, false);
+  failing = false;
+  button(view, 'Resume new tasks · All accounts').props.onClick(); await flush();
+  assert.deepEqual(calls, [[null, false], [null, false]]);
+});

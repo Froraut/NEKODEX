@@ -77,3 +77,41 @@ test('balanced preview preserves conversation affinity to unhealthy history with
     assert.deepEqual(f.pool.snapshot().taskHistoryHealth, []);
   } finally { f.close(); }
 });
+
+test('direct starts reject damaged history before pacing and recheck after account readiness', async () => {
+  const f = fixture();
+  try {
+    let pacingAdmissions = 0, hostStarts = 0;
+    const ledger = f.pool.taskLedgers.get('default');
+    const host = f.pool.hosts.get('default');
+    Object.assign(f.pool, {
+      evidenceEpoch: () => 0, selectionRevision: 0, sequence: 0,
+      unsentAdmissions: new Map(), ensureTabCapacity() {},
+      persistAffinity() {}, writeDescriptor() {}, publish() {},
+    });
+    Object.assign(host, {
+      ready: async () => {}, assertLiveConversationOwner() {},
+      beginTurn: async () => { hostStarts++; return {}; },
+    });
+    f.pool.safety.admit = () => { pacingAdmissions++; return { newSessionRecorded: false }; };
+    const start = () => f.pool.beginTurn(request.traceId, false, process.pid,
+      undefined, undefined, false, { requestedAccountId: 'default', effort: 'medium' });
+    await assert.rejects(start, { code: 'task-history-unavailable', workStarted: false });
+    assert.equal(f.pool.sequence, 0);
+    assert.equal(f.pool.lastAssigned.size, 0);
+    assert.equal(f.pool.traceOwners.size, 0);
+    assert.equal(f.pool.reservations.size, 0);
+    assert.equal(pacingAdmissions, 0);
+    assert.equal(hostStarts, 0);
+
+    ledger.storageIssue = null;
+    host.ready = async () => { ledger.storageIssue = 'task-history-unavailable'; };
+    await assert.rejects(start, { code: 'task-history-unavailable', workStarted: false });
+    assert.equal(f.pool.traceOwners.size, 0);
+    assert.equal(f.pool.reservations.size, 0);
+    assert.equal(f.pool.pendingAffinity.size, 0);
+    assert.equal(pacingAdmissions, 0);
+    assert.equal(hostStarts, 0);
+    assert.equal(fs.readFileSync(f.file, 'utf8'), f.original);
+  } finally { f.close(); }
+});

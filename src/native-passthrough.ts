@@ -191,7 +191,9 @@ function safeNativeModelId(value: unknown): string | null {
 }
 
 function tokenCount(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  // Match the durable receiver limit; invalid usage must not discard the terminal receipt.
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    && value <= 1_000_000_000 ? value : undefined;
 }
 
 function nativeReportedUsage(value: unknown): NativeReportedUsage | null {

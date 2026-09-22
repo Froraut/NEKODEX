@@ -11,9 +11,17 @@ const compiled = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 function harness(tasks, overrides = {}) {
-  const state = [], refs = [], calls = [], errors = [];
-  let stateIndex = 0, refIndex = 0;
+  const state = [], refs = [], effects = [], calls = [], errors = [];
+  let stateIndex = 0, refIndex = 0, effectIndex = 0;
   const react = { ...React,
+    useId: () => 'task-confirmation',
+    useLayoutEffect(setup, deps) {
+      const i = effectIndex++;
+      if (!effects[i] || deps.some((dep, index) => dep !== effects[i].deps[index])) {
+        effects[i]?.cleanup?.();
+        effects[i] = { setup, deps, changed: true };
+      }
+    },
     useState(initial) {
       const i = stateIndex++;
       if (!(i in state)) state[i] = initial;
@@ -29,7 +37,13 @@ function harness(tasks, overrides = {}) {
     cancel: async (...args) => calls.push(['cancel', ...args]),
     dismiss: async (...args) => calls.push(['dismiss', ...args]),
     onError: error => errors.push(error), ...overrides };
-  return { calls, errors, props, render() { stateIndex = refIndex = 0; return loaded.exports.TaskCenter(props); } };
+  return { calls, errors, props, render(commit = () => {}) {
+    stateIndex = refIndex = effectIndex = 0;
+    const tree = loaded.exports.TaskCenter(props);
+    commit(tree);
+    for (const effect of effects) if (effect.changed) { effect.changed = false; effect.cleanup = effect.setup(); }
+    return tree;
+  } };
 }
 function nodes(tree) {
   if (Array.isArray(tree)) return tree.flatMap(nodes);
@@ -57,18 +71,18 @@ function change(h, type, index, value) {
 
 test('retained failure requires confirmation, Keep preserves it, Open still works, exact account is dismissed once', async () => {
   const h = harness([task('same'), task('same', { accountId: 'b', accountName: 'Beta', tabId: 'b-tab' })]);
-  button(articles(h.render())[1], 'Dismiss').props.onClick();
+  button(articles(h.render())[1], 'Dismiss').props.onClick({ currentTarget: null });
   assert.deepEqual(h.calls, []);
-  assert.equal(nodes(articles(h.render())[0]).filter(node => node.props.role === 'alert').length, 0);
-  button(h.render(), 'Keep record').props.onClick();
+  assert.equal(nodes(articles(h.render())[0]).filter(node => node.props.role === 'alertdialog').length, 0);
+  button(h.render(), 'Keep record').props.onClick({ currentTarget: null });
   assert.deepEqual(h.calls, []);
-  assert.equal(nodes(h.render()).filter(node => node.props.role === 'alert').length, 0);
-  button(articles(h.render())[1], 'Dismiss').props.onClick();
-  button(articles(h.render())[1], 'Open conversation').props.onClick();
+  assert.equal(nodes(h.render()).filter(node => node.props.role === 'alertdialog').length, 0);
+  button(articles(h.render())[1], 'Dismiss').props.onClick({ currentTarget: null });
+  button(articles(h.render())[1], 'Open conversation').props.onClick({ currentTarget: null });
   await settle();
   assert.deepEqual(h.calls, [['open', 'b-tab']]);
   const confirm = button(h.render(), 'Close page and remove record');
-  confirm.props.onClick(); confirm.props.onClick();
+  confirm.props.onClick({ currentTarget: null }); confirm.props.onClick({ currentTarget: null });
   await settle();
   assert.deepEqual(h.calls, [['open', 'b-tab'], ['dismiss', 'b', 'same']]);
 });
@@ -76,7 +90,7 @@ test('retained failure requires confirmation, Keep preserves it, Open still work
 test('completed continuation and unavailable document keep direct dismissal', async () => {
   for (const changes of [{ phase: 'completed' }, { canOpen: false }]) {
     const h = harness([task('done', changes)]);
-    button(h.render(), 'Dismiss').props.onClick(); await settle();
+    button(h.render(), 'Dismiss').props.onClick({ currentTarget: null }); await settle();
     assert.deepEqual(h.calls, [['dismiss', 'a', 'done']]);
   }
 });
@@ -86,18 +100,18 @@ test('combined filters preserve order and records, clear restores all, hidden co
     task('uncertain', { phase: 'send-uncertain', accountId: 'b', accountName: 'Beta', model: null }),
     task('interrupted', { phase: 'interrupted', accountId: 'b', accountName: 'Beta' }), task('cancelled', { phase: 'cancelled' })];
   const before = JSON.stringify(tasks), h = harness(tasks);
-  button(articles(h.render())[2], 'Dismiss').props.onClick();
+  button(articles(h.render())[2], 'Dismiss').props.onClick({ currentTarget: null });
   change(h, 'select', 0, 'attention');
   assert.deepEqual(traces(h.render()), ['trace-uncertain', 'trace-interrupted', 'trace-cancelled']);
   change(h, 'select', 1, 'b');
   change(h, 'input', 0, ' TRACE-UNCERTAIN ');
   assert.deepEqual(traces(h.render()), ['trace-uncertain']);
   assert.ok(text(h.render()).includes('1 of 5 available records'));
-  assert.equal(nodes(h.render()).filter(node => node.props.role === 'alert').length, 0);
+  assert.equal(nodes(h.render()).filter(node => node.props.role === 'alertdialog').length, 0);
   change(h, 'input', 0, 'missing');
   assert.equal(articles(h.render()).length, 0);
   assert.ok(text(h.render()).includes('No matching tasks'));
-  button(h.render(), 'Clear filters').props.onClick();
+  button(h.render(), 'Clear filters').props.onClick({ currentTarget: null });
   assert.deepEqual(traces(h.render()), tasks.map(row => row.traceId));
   assert.deepEqual(h.calls, []); assert.equal(JSON.stringify(tasks), before);
   change(h, 'select', 0, 'active'); assert.deepEqual(traces(h.render()), ['trace-active']);
@@ -108,7 +122,7 @@ test('search matches account and model and filtered actions retain their owner',
   const h = harness([task('one'), task('two', { accountId: 'b', accountName: 'Beta', model: 'Pro', canOpen: false })]);
   change(h, 'input', 0, 'beta'); assert.deepEqual(traces(h.render()), ['trace-two']);
   change(h, 'input', 0, 'pRo'); assert.deepEqual(traces(h.render()), ['trace-two']);
-  button(h.render(), 'Dismiss').props.onClick(); await settle();
+  button(h.render(), 'Dismiss').props.onClick({ currentTarget: null }); await settle();
   assert.deepEqual(h.calls, [['dismiss', 'b', 'two']]);
 });
 
@@ -129,14 +143,78 @@ test('history failure stays visible across filtering and supplies accounts witho
 test('disabled or revoked capabilities cannot confirm; dismissal failure reports error and preserves confirmation', async () => {
   const failure = new Error('Failed');
   const h = harness([task('one')], { dismiss: async () => { throw failure; } });
-  button(h.render(), 'Dismiss').props.onClick();
+  button(h.render(), 'Dismiss').props.onClick({ currentTarget: null });
   h.props.disabled = true;
   const confirm = button(h.render(), 'Close page and remove record');
-  assert.equal(confirm.props.disabled, true); confirm.props.onClick(); await settle();
+  assert.equal(confirm.props.disabled, true); confirm.props.onClick({ currentTarget: null }); await settle();
   assert.deepEqual(h.errors, []);
   h.props.disabled = false;
-  button(h.render(), 'Close page and remove record').props.onClick(); await settle();
+  button(h.render(), 'Close page and remove record').props.onClick({ currentTarget: null }); await settle();
   assert.deepEqual(h.errors, [failure]); assert.ok(button(h.render(), 'Keep record'));
   h.props.tasks = [task('one', { canDismiss: false })];
-  assert.equal(nodes(h.render()).filter(node => node.props.role === 'alert').length, 0);
+  assert.equal(nodes(h.render()).filter(node => node.props.role === 'alertdialog').length, 0);
+});
+
+// Minimal DOM focus boundary: React commits refs before layout effects, and
+// removes the old panel after its cleanup. No app/browser/provider is launched.
+function focusHarness(h) {
+  const document = { activeElement: null, body: {} };
+  const control = () => ({ isConnected: true, disabled: false, focus() { document.activeElement = this; } });
+  const trigger = control(), keep = control(), search = control();
+  const panel = { ownerDocument: document, contains: node => node === keep };
+  let hadPanel = false;
+  return { document, trigger, keep, search,
+    render() {
+      return h.render(tree => {
+        find(tree, 'input').props.ref.current = search;
+        const dialog = nodes(tree).find(node => node.props.role === 'alertdialog');
+        if (dialog) {
+          dialog.props.ref.current = panel;
+          nodes(dialog).find(node => node.type === 'button' && node.props.ref).props.ref.current = keep;
+        } else if (hadPanel && document.activeElement === keep) document.activeElement = document.body;
+        hadPanel = !!dialog;
+      });
+    },
+  };
+}
+
+test('both confirmations focus the safe choice; Escape and Keep restore their trigger without acting', async () => {
+  for (const cancellation of [false, true]) {
+    const h = harness([task('one', cancellation ? { terminal: false, canCancel: true, canDismiss: false, phase: 'responding' } : {})]);
+    const f = focusHarness(h);
+    const start = cancellation ? 'Cancel this task' : 'Dismiss';
+    button(f.render(), start).props.onClick({ currentTarget: f.trigger });
+    let tree = f.render();
+    assert.equal(f.document.activeElement, f.keep);
+    const dialog = nodes(tree).find(node => node.props.role === 'alertdialog');
+    assert.equal(nodes(dialog).find(node => node.type === 'p').props.id, dialog.props['aria-describedby']);
+    dialog.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {} });
+    f.render(); await settle();
+    assert.equal(f.document.activeElement, f.trigger);
+    assert.deepEqual(h.calls, []);
+    button(f.render(), start).props.onClick({ currentTarget: f.trigger });
+    tree = f.render();
+    button(tree, cancellation ? 'Keep working' : 'Keep record').props.onClick();
+    f.render(); await settle();
+    assert.equal(f.document.activeElement, f.trigger);
+    assert.deepEqual(h.calls, []);
+  }
+});
+
+test('live row removal falls back to search, while filtering preserves the user focus', async () => {
+  const h = harness([task('one')]), f = focusHarness(h);
+  button(f.render(), 'Dismiss').props.onClick({ currentTarget: f.trigger }); f.render();
+  h.props.tasks = [];
+  // A child deletion can return focus to body before the parent's cleanup.
+  f.document.activeElement = f.document.body;
+  f.render(); f.trigger.isConnected = false;
+  await settle(); assert.equal(f.document.activeElement, f.search);
+
+  h.props.tasks = [task('two')]; f.trigger.isConnected = true;
+  button(f.render(), 'Dismiss').props.onClick({ currentTarget: f.trigger }); f.render();
+  f.search.focus();
+  find(f.render(), 'input').props.onChange({ target: { value: 'missing' } });
+  f.render(); await settle();
+  assert.equal(f.document.activeElement, f.search);
+  assert.deepEqual(h.calls, []);
 });

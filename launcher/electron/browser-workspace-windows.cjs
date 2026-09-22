@@ -80,6 +80,7 @@ class BrowserWorkspaceWindows {
     this.pendingPopupLeases = [];
     this.mutationLeasesByContents = new WeakMap();
     this.saveTimer = null;
+    this.pendingCaptures = new Set();
     this.persistenceFailed = false;
   }
 
@@ -171,6 +172,7 @@ class BrowserWorkspaceWindows {
       this.windows.delete(win);
       allWindows.delete(win);
       this.windowMeta.delete(win);
+      this.pendingCaptures.delete(win);
       if (!meta.preserveOnClose) {
         this.saved.delete(meta.id);
         this.persist();
@@ -201,11 +203,15 @@ class BrowserWorkspaceWindows {
     });
     contents.on("did-navigate", (_event, url) => {
       this.capture(win);
+      this.changed();
       // Legacy callers may still observe navigation. Coordinated callers verify only through
       // the generation-bound lease; running the old callback here would reintroduce the early probe.
       if (!this.beginSessionMutation) void this.onAuthNavigation?.(url);
     });
-    contents.on("did-navigate-in-page", () => this.capture(win));
+    contents.on("did-navigate-in-page", () => {
+      this.capture(win);
+      this.changed();
+    });
     contents.setWindowOpenHandler(({ url }) => {
       if (!this.allowedUrl(url)) {
         void this.external(contents, url);
@@ -339,12 +345,18 @@ class BrowserWorkspaceWindows {
   }
 
   scheduleCapture(win) {
+    this.pendingCaptures.add(win);
     if (this.saveTimer) clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null;
-      this.capture(win);
-    }, 300);
+    this.saveTimer = setTimeout(() => this.flushCaptures(), 300);
     this.saveTimer.unref?.();
+  }
+
+  flushCaptures() {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    const pending = [...this.pendingCaptures];
+    this.pendingCaptures.clear();
+    for (const win of pending) this.capture(win);
   }
 
   persist() {
@@ -362,8 +374,15 @@ class BrowserWorkspaceWindows {
 
   snapshot() {
     this.ensureManifestLoaded();
-    const liveById = new Map([...this.windowMeta].map(([win, meta]) => [meta.id, win]));
+    const liveById = new Map([...this.windowMeta]
+      .filter(([win]) => !win.isDestroyed()).map(([win, meta]) => [meta.id, win]));
     const values = [...this.saved.values()];
+    // Loading and authentication windows consume real slots even before they have
+    // a safe restore location. Keep these rows transient: never persist auth URLs.
+    for (const [win, meta] of this.windowMeta) {
+      if (win.isDestroyed() || this.saved.has(meta.id)) continue;
+      values.push({ id: meta.id, groupId: meta.groupId, location: null, restore: null });
+    }
     const items = values.map(entry => {
       const win = liveById.get(entry.id);
       const verifiedPrincipal = this.getVerifiedPrincipal();
@@ -494,11 +513,12 @@ class BrowserWorkspaceWindows {
   }
 
   async closeAll() {
+    this.flushCaptures();
     for (const win of [...this.windows]) await this.requestClose(win, true);
   }
 
   destroy() {
-    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.flushCaptures();
     for (const pending of this.pendingPopupLeases.splice(0)) {
       if (pending.timer) clearTimeout(pending.timer);
       pending.lease?.fail?.(new Error("Browser workspace closed"));

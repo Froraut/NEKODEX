@@ -276,3 +276,103 @@ test("one mutation lease covers provider redirects and settles once", async () =
     ]);
   } finally { workspaces.destroy(); }
 });
+
+test('wave3: live loading and auth windows count toward capacity without persisting unsafe locations', async () => {
+  const { BrowserWorkspaceDirectory } = require('../electron/browser-workspace-directory.cjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-workspace-live-'));
+  const file = path.join(root, 'a.json');
+  const workspaces = manager({ file });
+  const directory = new BrowserWorkspaceDirectory();
+  directory.register('a', 'Account A', workspaces);
+  const updates = [];
+  workspaces.onChanged = snapshot => updates.push(snapshot);
+  try {
+    const loading = workspaces.open({ url: 'about:blank' });
+    const auth = workspaces.open({ url: 'https://auth.openai.com/login?token=secret' });
+    const authId = workspaces.windowMeta.get(auth).id;
+    assert.equal(directory.snapshot().total, 2);
+    assert.equal(workspaces.snapshot().items.every(item => item.state === 'open' && !item.restorable && !item.temporary), true);
+    assert.equal(workspaces.focus(authId), true);
+    assert.equal(new BrowserWorkspaceManifest(file, 'a').read().entries.length, 0);
+    assert.equal(await workspaces.close(authId), true);
+    assert.equal(directory.snapshot().total, 1);
+    updates.length = 0;
+    await loading.webContents.loadURL('https://chatgpt.com/c/ready?token=secret');
+    assert.equal(updates.at(-1).items[0].location, 'https://chatgpt.com/c/ready');
+    assert.equal(updates.at(-1).items[0].restorable, true);
+    loading.webContents.url = 'https://chatgpt.com/c/next';
+    loading.webContents.emit('did-navigate-in-page');
+    assert.equal(updates.at(-1).items[0].location, 'https://chatgpt.com/c/next');
+    const entries = new BrowserWorkspaceManifest(file, 'a').read().entries;
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].location, 'https://chatgpt.com/c/next');
+    assert.equal(fs.readFileSync(file, 'utf8').includes('secret'), false);
+  } finally { workspaces.destroy(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('wave3: interleaved window moves persist both final bounds after debounce', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-workspace-bounds-'));
+  const file = path.join(root, 'a.json');
+  const workspaces = manager({ file });
+  try {
+    const first = workspaces.open({ url: 'https://chatgpt.com/c/first' });
+    const second = workspaces.open({ url: 'https://chatgpt.com/c/second' });
+    first.bounds = { x: 100, y: 150, width: 700, height: 600 };
+    first.emit('move');
+    second.bounds = { x: 300, y: 350, width: 900, height: 800 };
+    second.emit('resize');
+    await new Promise(resolve => setTimeout(resolve, 400));
+    const entries = new BrowserWorkspaceManifest(file, 'a').read().entries;
+    for (const win of [first, second]) {
+      assert.deepEqual(entries.find(entry => entry.id === workspaces.windowMeta.get(win).id).bounds, win.bounds);
+    }
+  } finally { workspaces.destroy(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('wave3: orderly close and disposal flush pending bounds before destroying windows', async () => {
+  for (const method of ['closeAll', 'destroy']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-workspace-shutdown-'));
+    const file = path.join(root, 'a.json');
+    const workspaces = manager({ file });
+    try {
+      const win = workspaces.open({ url: 'https://chatgpt.com/c/last' });
+      win.bounds = { x: 500, y: 450, width: 1200, height: 950 };
+      win.emit('resize');
+      await workspaces[method]();
+      assert.equal(win.isDestroyed(), true);
+      assert.deepEqual(new BrowserWorkspaceManifest(file, 'a').read().entries[0].bounds, win.bounds, method);
+    } finally { workspaces.destroy(); fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test('wave3 overflow: preserves previous manifest bytes and recovers when saved plus live entries fit', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-workspace-overflow-'));
+  const file = path.join(root, 'a.json');
+  const store = new BrowserWorkspaceManifest(file, 'a');
+  const workspaces = manager({ file });
+  const errors = [];
+  workspaces.onPersistenceError = error => errors.push(error);
+  try {
+    const entries = Array.from({ length: MAX_WORKSPACES }, (_, index) => ({
+      id: `saved-${index}`, groupId: 'saved', location: `https://chatgpt.com/c/${index}`,
+      restore: 'supported', principalFingerprint: PRINCIPAL_A,
+    }));
+    // Only unique valid entries consume persistence capacity.
+    store.write([...entries, entries[0], { id: 'invalid', groupId: 'saved', location: 'https://example.test/' }]);
+    const before = fs.readFileSync(file);
+    const live = workspaces.open({ url: 'https://chatgpt.com/c/new-live' });
+    const liveId = workspaces.windowMeta.get(live).id;
+    assert.equal(workspaces.snapshot().persistenceFailed, true);
+    assert.equal(workspaces.snapshot().items.length, MAX_WORKSPACES + 1);
+    assert.equal(live.isDestroyed(), false);
+    assert.match(errors.at(-1).message, /16-entry limit/);
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.equal(await workspaces.close('saved-0'), true);
+    assert.equal(workspaces.snapshot().persistenceFailed, false);
+    const persisted = new BrowserWorkspaceManifest(file, 'a').read().entries;
+    assert.equal(persisted.length, MAX_WORKSPACES);
+    assert.equal(persisted.some(entry => entry.id === 'saved-0'), false);
+    assert.equal(persisted.some(entry => entry.id === liveId), true);
+    assert.notDeepEqual(fs.readFileSync(file), before);
+  } finally { workspaces.destroy(); fs.rmSync(root, { recursive: true, force: true }); }
+});

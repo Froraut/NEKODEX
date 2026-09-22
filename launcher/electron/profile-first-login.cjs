@@ -2,7 +2,7 @@ const { verifiedCaptureTransfer, verifyCapturedAccount } = require('./chrome-ses
 const { chromeProfileErrorGuidance, safeProfileLoginError } = require('./chrome-profile-error-guidance.cjs');
 
 function createProfileFirstLogin({choose, runtime, session, dialog, window, language}) {
-  return async (onProgress, context) => {
+  const login = async (onProgress, context) => {
     const {signal}=context;
     signal?.throwIfAborted();
     let choice;
@@ -19,11 +19,21 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
       let isolatedCapture;
       try {
         isolatedCapture=await runtime.capturePasskeyLogin(onProgress,'chrome');
+        signal?.throwIfAborted();
         const identity=await verifyCapturedAccount(session,isolatedCapture,{signal,accountId:context.accountId,
           configureSession:context.configureVerificationSession});
         return verifiedCaptureTransfer(isolatedCapture,identity);
       } catch(error) {
-        if(isolatedCapture)await isolatedCapture.cleanup();
+        try { if(isolatedCapture)await isolatedCapture.cleanup(); }
+        catch { throw safeProfileLoginError({code:'existing_chrome_cleanup_failed'}); }
+        // The isolated runtime still reports these lifecycle failures as text.
+        // Preserve the caller's recovery classification using fixed diagnostics.
+        if (/(cleanup|clearing|removing|did not exit|termination|refused)/i.test(error?.message ?? '')) {
+          throw safeProfileLoginError({code:'existing_chrome_cleanup_failed'});
+        }
+        if (/timed out/i.test(error?.message ?? '')) {
+          throw safeProfileLoginError({code:'profile-login-timeout'});
+        }
         throw error;
       }
     }
@@ -45,6 +55,7 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
     let capture;
     try {
       const profileClaim=await choice.prepareCapture();
+      signal?.throwIfAborted();
       // Existing-Chrome phases belong to a different progress protocol. Keep the
       // passkey operation active/cancellable while Chrome approves and captures it.
       capture=await runtime.captureExistingChromeLogin(patch=>onProgress({phase:'importing',
@@ -90,6 +101,14 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
     } finally {
       signal?.removeEventListener('abort',abort);
       choice.cleanupCapture?.();
+    }
+  };
+  return async (...args) => {
+    try { return await login(...args); }
+    catch (error) {
+      // Every producer crosses the same boundary, including profile selection and
+      // isolated capture. Only the installer may attest that a session was restored.
+      throw safeProfileLoginError(error);
     }
   };
 }

@@ -187,3 +187,61 @@ test('reconciled incident is retained at history capacity until explicitly dismi
     assert.equal(f.queue.entries.length, 2048);
   } finally { f.close(); }
 });
+
+
+test('prioritize during acquisition selects the next live candidate and skips cancelled work', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = [];
+  const f = fixture({ clock: () => 1000, dispatch: async req => {
+    started.push(req.traceId);
+    if (req.traceId === 'trace-front-first') await gate;
+    return { surfaceId: 'a'.repeat(32) };
+  } });
+  try {
+    f.queue.pause(null, true);
+    f.queue.request(request('trace-front-first'));
+    f.queue.request(request('trace-front-second'));
+    const third = f.queue.request(request('trace-front-third'));
+    const cancelled = f.queue.request(request('trace-front-cancelled'));
+    f.queue.pause(null, false);
+    assert.deepEqual(started, ['trace-front-first']);
+    await f.queue.action(third.queueId, 'prioritize');
+    await f.queue.action(cancelled.queueId, 'cancel');
+    release(); await tick();
+    assert.deepEqual(started, ['trace-front-first', 'trace-front-third', 'trace-front-second']);
+    assert.equal(f.queue.snapshot().entries.find(row => row.id === cancelled.queueId).status, 'cancelled');
+  } finally { release(); f.close(); }
+});
+
+
+test('live candidate selection still honors pause and owner loss after an awaited acquisition', async () => {
+  let release, now = 1000;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = [];
+  const f = fixture({ clock: () => now, dispatch: async req => {
+    started.push(req.traceId);
+    if (req.traceId === 'trace-transition-first') await gate;
+    return { surfaceId: 'a'.repeat(32) };
+  } });
+  try {
+    f.queue.pause(null, true);
+    f.queue.request(request('trace-transition-first'));
+    const stale = f.queue.request(request('trace-transition-stale'));
+    const liveInput = request('trace-transition-live');
+    f.queue.request(liveInput);
+    f.queue.pause(null, false);
+    now += 10_000;
+    f.queue.request(liveInput); // Only this waiting owner is still polling.
+    f.queue.pause(null, true);
+    release(); await tick();
+    assert.deepEqual(started, ['trace-transition-first']);
+    const rows = f.queue.snapshot().entries;
+    assert.equal(rows.find(row => row.id === stale.queueId).reason, 'owner-reconnect-required');
+    assert.equal(rows.find(row => row.id === stale.queueId).canResume, false);
+    assert.equal(rows.find(row => row.traceId === liveInput.traceId).reason, 'paused-global');
+    f.queue.pause(null, false); await tick();
+    assert.deepEqual(started, ['trace-transition-first', 'trace-transition-live']);
+    assert.equal(f.queue.snapshot().entries.find(row => row.id === stale.queueId).status, 'paused');
+  } finally { release(); f.close(); }
+});

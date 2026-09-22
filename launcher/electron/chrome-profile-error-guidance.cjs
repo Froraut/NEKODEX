@@ -47,6 +47,7 @@ const EXTRA_ERRORS = Object.freeze({
   'chrome-account-unverified': 'Chrome returned an unverified ChatGPT account',
   'chrome-account-unidentified': 'ChatGPT identity has no user-visible label',
   'profile-login-cancelled': 'Sign-in cancelled',
+  'profile-login-timeout': 'Chrome sign-in timed out',
   'existing_chrome_cleanup_failed': 'Temporary Chrome sign-in cleanup failed',
 });
 

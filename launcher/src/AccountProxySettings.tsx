@@ -25,7 +25,20 @@ export function AccountProxySettings({ proxy, language, disabled, blockedReason,
   const inFlight = useRef(false);
   const statusId = useId();
   const saved = JSON.stringify(proxy);
-  useEffect(() => { setDraft(JSON.parse(saved)); setTouched(false); setFailed(false); }, [saved]);
+  const previousSaved = useRef(saved);
+  useEffect(() => {
+    const previous = JSON.parse(previousSaved.current) as AccountProxy;
+    const next = JSON.parse(saved) as AccountProxy;
+    previousSaved.current = saved;
+    // Host refreshes may bring another saved value while this form has a draft.
+    // Only replace a clean draft or acknowledge the value that was just saved.
+    const dirty = draft.mode !== previous.mode || (draft.url ?? "") !== (previous.url ?? "");
+    const acknowledged = JSON.stringify(normalizeAccountProxy(draft).value)
+      === JSON.stringify(normalizeAccountProxy(next).value);
+    if (!dirty || acknowledged) {
+      setDraft(next); setTouched(false); setFailed(false);
+    }
+  }, [saved]);
   const normalized = normalizeAccountProxy(draft);
   const changed = JSON.stringify(normalized.value) !== JSON.stringify(normalizeAccountProxy(proxy).value);
   const draftChanged = draft.mode !== proxy.mode || (draft.url ?? "") !== (proxy.url ?? "");

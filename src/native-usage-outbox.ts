@@ -16,6 +16,7 @@ function validEvent(value: unknown): value is NativeUsageTelemetryEvent {
     || e.schemaVersion !== 1 || e.source !== 'native' || !idPattern.test(e.eventId)
     || !['responses', 'responses/compact'].includes(e.endpoint)
     || ![e.requestedModelId, e.reportedModelId].every(m => m === null || (typeof m === 'string' && /^[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}$/.test(m) && !m.includes("://") && m.split("/").every(p => p && p !== "." && p !== "..")))
+    || typeof e.startedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(e.startedAt)
     || !Number.isFinite(Date.parse(e.startedAt)) || !Number.isSafeInteger(e.durationMs) || e.durationMs < 0 || e.durationMs > 7 * 86400_000
     || !['completed', 'incomplete', 'failed', 'aborted'].includes(e.outcome)
     || !Number.isInteger(e.httpStatus) || (e.httpStatus !== 0 && (e.httpStatus < 100 || e.httpStatus > 599))
@@ -32,7 +33,10 @@ function validEvent(value: unknown): value is NativeUsageTelemetryEvent {
   if (typeof e.usage !== 'object' || Array.isArray(e.usage) || e.usageStatus !== 'reported') return false;
   return ['inputTokens', 'outputTokens', 'totalTokens'].every(k => Object.hasOwn(e.usage!, k))
     && Object.entries(e.usage).every(([k, v]) => ['inputTokens', 'outputTokens', 'totalTokens', 'cachedInputTokens', 'reasoningOutputTokens'].includes(k)
-      && Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000);
+      && Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000)
+    && e.usage.totalTokens >= e.usage.inputTokens + e.usage.outputTokens
+    && (e.usage.cachedInputTokens === undefined || e.usage.cachedInputTokens <= e.usage.inputTokens)
+    && (e.usage.reasoningOutputTokens === undefined || e.usage.reasoningOutputTokens <= e.usage.outputTokens);
 }
 
 /** Separate immutable event files let a successor replay unacknowledged receipts safely. */

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { installUpdate, prepareTransaction, cleanup, rollback, recover, writeJournal } = require('../electron/update-worker.cjs');
+const { installUpdate, prepareTransaction, cleanup, rollback, recover, runTransaction, writeJournal } = require('../electron/update-worker.cjs');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-guardian-start-'));
@@ -135,3 +135,113 @@ for (const fault of ['staged-removal', 'terminal-journal', 'unregister']) {
     assert.equal(fs.existsSync(job.transactionRoot), false);
   });
 }
+
+for (const fault of ['rollback', 'cleanup']) {
+  test(`preparation ${fault} failure keeps one relaunch owner and both diagnostics`, async t => {
+    const { job, deps, calls } = fixture(t);
+    deps.registerRecovery = () => { calls.push('register'); throw new Error('registration failed'); };
+    const originalRename = fs.renameSync;
+    const journal = path.join(job.transactionRoot, 'transaction.json');
+    const renameMock = t.mock.method(fs, 'renameSync', (source, target) => {
+      if (fault === 'rollback' && target === journal
+        && JSON.parse(fs.readFileSync(source, 'utf8')).phase === 'rolled-back') {
+        throw new Error('terminal journal denied');
+      }
+      return originalRename(source, target);
+    });
+    if (fault === 'cleanup') deps.unregisterRecovery = () => { throw new Error('cleanup denied'); };
+    try {
+      await assert.rejects(installUpdate(job, deps), error => {
+        assert.match(error.message, /registration failed/);
+        assert.match(error.message, /terminal journal denied|cleanup denied/);
+        return true;
+      });
+    } finally { renameMock.mock.restore(); }
+    assert.equal(calls.filter(call => call === 'relaunch').length, fault === 'rollback' ? 0 : 1);
+    const saved = JSON.parse(fs.readFileSync(journal, 'utf8'));
+    saved.workerIdentity = null;
+    writeJournal(saved);
+    await recover(journal, { launch: deps.launch, stopReplacement: async () => {}, unregisterRecovery() {} });
+    assert.equal(calls.filter(call => call === 'relaunch').length, 1);
+    assert.equal(fs.readFileSync(path.join(job.target, 'installed'), 'utf8'), 'original installation');
+    assert.equal(fs.existsSync(job.transactionRoot), false);
+  });
+}
+
+test('transaction rollback journal failure retains recovery until later durable rollback', async t => {
+  const { job, deps, calls } = fixture(t);
+  job.identity = 'dev.codexwebgpt.launcher';
+  job.repository = 'Froraut/NEKODEX';
+  // A bounded, structurally valid macOS bundle; its synthetic binaries are only
+  // parsed by the real validator and never executed.
+  const write = (relative, contents) => {
+    const file = path.join(job.stagedApplication, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, contents, { mode: 0o755 });
+  };
+  const binary = Buffer.alloc(128);
+  binary.writeUInt32LE(0xfeedfacf, 0);
+  binary.writeUInt32LE(0x0100000c, 4);
+  binary.writeUInt32LE(2, 12);
+  binary.writeUInt32LE(1, 16);
+  binary.writeUInt32LE(72, 20);
+  binary.writeUInt32LE(0x19, 32);
+  binary.writeUInt32LE(72, 36);
+  binary.writeBigUInt64LE(128n, 80);
+  write('candidate', 'new');
+  write('Contents/MacOS/NEKODEX', binary);
+  write('Contents/Info.plist', `<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>${job.identity}</string>
+<key>CFBundleExecutable</key><string>${job.productName}</string>
+<key>CFBundlePackageType</key><string>APPL</string></dict></plist>`);
+  write('Contents/Resources/app/package.json', JSON.stringify({
+    name: 'codex-web-gpt-launcher', version: job.version,
+    updateRepository: job.repository, main: 'electron/main.cjs',
+  }));
+  write('Contents/Resources/app/electron/main.cjs', 'throw new Error("fixture must not execute");');
+  write('Contents/Resources/app/dist/index.html', '<html>candidate</html>');
+  write('Contents/Resources/runtime/manifest.json', JSON.stringify({
+    schemaVersion: 2, appVersion: job.version, platform: job.platform, arch: job.arch,
+    entrypoint: 'app/cli.js', launcher: 'bin/codex-chatgpt-web',
+  }));
+  for (const relative of ['app/cli.js', 'app/browser-helper.cjs', 'bin/codex-chatgpt-web']) {
+    write(`Contents/Resources/runtime/${relative}`, 'fixture');
+  }
+  write('Contents/Resources/runtime/runtime/bun', binary);
+  delete deps.validate; // Preparation and replacement both use the real validator.
+  deps.copyTree = (source, destination) => fs.cpSync(source, destination, { recursive: true });
+  const transaction = prepareTransaction(job, deps);
+  let reachedReplacement = false;
+  const journal = path.join(job.transactionRoot, 'transaction.json');
+  const originalRename = fs.renameSync;
+  const renameMock = t.mock.method(fs, 'renameSync', (source, target) => {
+    if (target === journal && JSON.parse(fs.readFileSync(source, 'utf8')).phase === 'rolled-back') {
+      throw new Error('terminal journal denied');
+    }
+    return originalRename(source, target);
+  });
+  try {
+    await assert.rejects(runTransaction(transaction, { ...deps,
+      checkpoint(point) {
+        if (point !== 'after-replace') return;
+        assert.equal(fs.readFileSync(path.join(job.target, 'candidate'), 'utf8'), 'new');
+        assert.deepEqual(fs.readFileSync(path.join(job.target, 'Contents/MacOS/NEKODEX')), binary);
+        assert.equal(fs.existsSync(path.join(job.target, 'installed')), false);
+        reachedReplacement = true;
+        throw new Error('replacement failed');
+      },
+      stopReplacement: async () => {},
+    }), /terminal journal denied/);
+  } finally { renameMock.mock.restore(); }
+  assert.equal(reachedReplacement, true, 'after-replace must observe the installed candidate bytes');
+  assert.deepEqual(calls, ['register'], 'no cleanup or launch before durable rollback');
+  assert.equal(fs.readFileSync(path.join(job.target, 'installed'), 'utf8'), 'original installation');
+  const saved = JSON.parse(fs.readFileSync(journal, 'utf8'));
+  assert.equal(saved.phase, 'rollback-pending-stop');
+  assert.equal(saved.rollbackReason, 'replacement failed');
+  saved.workerIdentity = null;
+  writeJournal(saved);
+  await recover(journal, { ...deps, stopReplacement: async () => {} });
+  assert.deepEqual(calls, ['register', 'relaunch', 'unregister']);
+  assert.equal(fs.existsSync(job.transactionRoot), false);
+});

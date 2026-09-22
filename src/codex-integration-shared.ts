@@ -263,6 +263,7 @@ export interface FileSnapshot {
   exists: boolean;
   data?: Buffer;
   identity?: { dev: number; ino: number };
+  mode?: number;
   symlink?: { link: string; target: string; mode: number; linkIdentity: { dev: number; ino: number }; identity: { dev: number; ino: number } };
 }
 
@@ -343,7 +344,7 @@ export function snapshotFile(path: string, options?: { followSymlink?: boolean }
   }
   if (!existsSync(path)) return { path, exists: false };
   const stat = lstatSync(path);
-  return { path, exists: true, data: readFileSync(path), identity: { dev: stat.dev, ino: stat.ino } };
+  return { path, exists: true, data: readFileSync(path), mode: stat.mode & 0o777, identity: { dev: stat.dev, ino: stat.ino } };
 }
 
 /** Write the snapshotted config target, never replace its symbolic link or follow a new target. */
@@ -354,10 +355,12 @@ export function assertFileSnapshotCurrent(snapshot: FileSnapshot): void {
       (snapshot.symlink && (!current.symlink || current.symlink.link !== snapshot.symlink.link
         || current.symlink.linkIdentity.dev !== snapshot.symlink.linkIdentity.dev
         || current.symlink.linkIdentity.ino !== snapshot.symlink.linkIdentity.ino
+        || current.symlink.mode !== snapshot.symlink.mode
         || current.symlink.target !== snapshot.symlink.target
         || current.symlink.identity.dev !== snapshot.symlink.identity.dev
         || current.symlink.identity.ino !== snapshot.symlink.identity.ino))
-      || (!snapshot.symlink && (!current.identity || current.identity.dev !== snapshot.identity?.dev
+      || (!snapshot.symlink && (current.mode !== snapshot.mode
+        || !current.identity || current.identity.dev !== snapshot.identity?.dev
         || current.identity.ino !== snapshot.identity?.ino))))) {
     throw new Error(`Codex integration file changed before the managed mutation; preserving the external edit: ${snapshot.path}`);
   }
@@ -372,11 +375,13 @@ function fileSnapshotsMatch(current: FileSnapshot, expected: FileSnapshot): bool
       && current.symlink!.link === expected.symlink.link
       && current.symlink!.linkIdentity.dev === expected.symlink.linkIdentity.dev
       && current.symlink!.linkIdentity.ino === expected.symlink.linkIdentity.ino
+      && current.symlink!.mode === expected.symlink.mode
       && current.symlink!.target === expected.symlink.target
       && current.symlink!.identity.dev === expected.symlink.identity.dev
       && current.symlink!.identity.ino === expected.symlink.identity.ino;
   }
   return Boolean(current.identity)
+    && current.mode === expected.mode
     && current.identity!.dev === expected.identity?.dev
     && current.identity!.ino === expected.identity?.ino;
 }
@@ -406,7 +411,7 @@ function commitFileSnapshot(snapshot: FileSnapshot, data: string | Uint8Array, e
       path: snapshot.path, exists: true, data: staged.data!,
       ...(snapshot.symlink
         ? { symlink: { ...snapshot.symlink, identity: staged.identity! } }
-        : { identity: staged.identity! }),
+        : { identity: staged.identity!, mode: staged.mode }),
     };
   } catch (error) {
     if (staged) {

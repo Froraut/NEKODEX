@@ -1613,3 +1613,20 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("compaction transaction cancellation takes precedence over an unconsumed handoff", async () => {
+  const store = new CompactionTransactionStore();
+  const transaction = store.begin("cancel-before-wait", 10_000);
+  try {
+    store.submit(transaction.token, transaction.handoffId, "already submitted checkpoint");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(store.wait(transaction.token, controller.signal)).rejects.toThrow("aborted");
+    await expect(store.wait(transaction.token)).rejects.toThrow("invalid, expired, or consumed");
+    expect(() => store.submit(transaction.token, transaction.handoffId, "replay"))
+      .toThrow("invalid, expired, or consumed");
+  } finally {
+    store.close();
+  }
+});

@@ -48,9 +48,11 @@ function createTaskArtifactDownloadGuard(session, options = {}) {
     try { fs.rmSync(lease.partialPath, { force: true }); } catch { /* task cleanup is best effort */ }
   };
 
-  const cancel = (lease, error) => {
+  const cancel = (lease, error, terminal = false) => {
     if (lease.settled) return;
-    if (lease.item) {
+    // Release ownership and detach handlers before cancel() can emit done synchronously.
+    settle(lease, error);
+    if (lease.item && !terminal) {
       lease.item.once('done', () => removePartial(lease));
       try { lease.item.cancel(); } catch { removePartial(lease); }
     } else removePartial(lease);
@@ -61,7 +63,6 @@ function createTaskArtifactDownloadGuard(session, options = {}) {
       : /origin|scheme|URL/.test(message) ? 'authority'
       : 'cancelled';
     report('cancelled', { leaseId: lease.id, traceId: lease.traceId, code });
-    settle(lease, error);
   };
 
   const onWillDownload = (_event, item, webContents) => {
@@ -104,12 +105,12 @@ function createTaskArtifactDownloadGuard(session, options = {}) {
     };
     lease.onDone = (_doneEvent, state) => {
       if (state !== 'completed') {
-        cancel(lease, new Error(`Artifact network transfer ended with state ${JSON.stringify(state)}`));
+        cancel(lease, new Error(`Artifact network transfer ended with state ${JSON.stringify(state)}`), true);
         return;
       }
       const receivedBytes = item.getReceivedBytes?.() ?? 0;
-      if (receivedBytes <= 0 || receivedBytes > lease.maxBytes) {
-        cancel(lease, new Error('Artifact network transfer completed with an invalid byte count'));
+      if (!Number.isSafeInteger(receivedBytes) || receivedBytes <= 0 || receivedBytes > lease.maxBytes) {
+        cancel(lease, new Error('Artifact network transfer completed with an invalid byte count'), true);
         return;
       }
       settle(lease, undefined, {
