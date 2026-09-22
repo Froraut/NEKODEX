@@ -18,9 +18,16 @@ function validEvent(value: unknown): value is NativeUsageTelemetryEvent {
     || ![e.requestedModelId, e.reportedModelId].every(m => m === null || (typeof m === 'string' && /^[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}$/.test(m) && !m.includes("://") && m.split("/").every(p => p && p !== "." && p !== "..")))
     || !Number.isFinite(Date.parse(e.startedAt)) || !Number.isSafeInteger(e.durationMs) || e.durationMs < 0 || e.durationMs > 7 * 86400_000
     || !['completed', 'incomplete', 'failed', 'aborted'].includes(e.outcome)
-    || !Number.isInteger(e.httpStatus) || e.httpStatus < 0 || e.httpStatus > 599
+    || !Number.isInteger(e.httpStatus) || (e.httpStatus !== 0 && (e.httpStatus < 100 || e.httpStatus > 599))
     || !(e.failureCategory === null || ['http-auth', 'http-rate-limit', 'http-client', 'http-server', 'transport', 'stream', 'protocol', 'aborted'].includes(e.failureCategory))
     || !['reported', 'unreported'].includes(e.usageStatus)) return false;
+  // Match the receiver's terminal-state contract before persistence and during replay.
+  // In particular, discard historical completed/protocol receipts; never invent recovery usage.
+  if ((e.httpStatus === 0 && e.failureCategory !== 'transport' && e.failureCategory !== 'aborted')
+    || (e.httpStatus !== 0 && e.failureCategory === 'transport')
+    || (e.outcome === 'completed' && e.failureCategory !== null)
+    || (e.outcome === 'aborted' && e.failureCategory !== 'aborted')
+    || (e.outcome === 'failed' && e.failureCategory === null)) return false;
   if (e.usage === null) return e.usageStatus === 'unreported';
   if (typeof e.usage !== 'object' || Array.isArray(e.usage) || e.usageStatus !== 'reported') return false;
   return ['inputTokens', 'outputTokens', 'totalTokens'].every(k => Object.hasOwn(e.usage!, k))

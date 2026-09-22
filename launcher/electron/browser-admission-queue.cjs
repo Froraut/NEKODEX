@@ -54,7 +54,8 @@ class BrowserAdmissionQueue {
           || !Number.isSafeInteger(row.createdAt) || row.createdAt < 0 || row.createdAt > 8_640_000_000_000_000) throw new Error('Invalid admission record');
         return { id: row.id, request: row.request, priority: row.priority, createdAt: row.createdAt,
           status: ['waiting', 'paused'].includes(row.status) ? 'paused' : ['admitted', 'running'].includes(row.status) ? 'interrupted' : row.status,
-          reason: ['waiting', 'paused'].includes(row.status) ? 'owner-reconnect-required' : 'previous-run',
+          reason: ['waiting', 'paused'].includes(row.status) ? 'owner-reconnect-required'
+            : row.status === 'interrupted' && row.reason === 'lease-ended' ? 'lease-ended' : 'previous-run',
           lastSeen: 0, needsOwner: true, fingerprint: fingerprint(row.request) };
       });
       if (new Set(this.entries.map(row => row.id)).size !== this.entries.length) throw new Error('Duplicate admission record');
@@ -68,6 +69,7 @@ class BrowserAdmissionQueue {
       pausedAccounts: [...this.pausedAccounts], entries: this.entries.map(row => ({
         id: row.id, request: row.request, createdAt: row.createdAt, priority: row.priority,
         status: row.status === 'admitting' ? 'waiting' : row.status,
+        ...(row.status === 'interrupted' && row.reason === 'lease-ended' ? { reason: 'lease-ended' } : {}),
       })) }) + '\n', { durable: true }); }
     catch (error) { this.storageIssue = 'queue-storage-unavailable'; throw error; }
   }
@@ -128,6 +130,15 @@ class BrowserAdmissionQueue {
     if (this.pumping || this.closed || this.storageIssue) return;
     this.pumping = true;
     try {
+      // The host can reap an issued lease without another owner poll or endTurn.
+      // Missing ownership is uncertain completion, never permission to resubmit.
+      let reconciled = false;
+      for (const row of this.entries) {
+        if (['admitted', 'running'].includes(row.status) && !this.leaseCurrent(row.request, row.result)) {
+          row.status = 'interrupted'; row.reason = 'lease-ended'; reconciled = true;
+        }
+      }
+      if (reconciled) { this.save(); this.publish(); }
       for (const row of this.ordered()) {
         if (this.closed) break;
         if (row.status !== 'waiting') continue;

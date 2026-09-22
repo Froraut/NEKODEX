@@ -334,7 +334,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
       </section>
       </>}
 
-      {(groups.length > 0 || lifetimeGroups.length > 0) ? <details className="usage-breakdown"><summary>{copy.usageDetailedBreakdown}</summary>
+      {(groups.length > 0 || lifetimeGroups.length > 0 || (visible.lifetime ?? 0) > 0 || (visible.lifetimeUnclassified ?? 0) > 0) ? <details className="usage-breakdown"><summary>{copy.usageDetailedBreakdown}</summary>
         {groups.length > 0 ? <UsageTable caption={copy.usageGroups} groups={groups} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
         {lifetimeGroups.length > 0 ? <UsageTable caption={copy.usageLifetimeGroups} groups={lifetimeGroups} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
         <p>{copy.usageLifetime}: {number(visible.lifetime ?? 0, language)} · {copy.usageSince}: {visible.startedAt ? new Date(visible.startedAt).toLocaleDateString(language) : copy.usageUnknown}</p>

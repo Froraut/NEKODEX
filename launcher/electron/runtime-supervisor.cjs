@@ -1682,6 +1682,9 @@ class RuntimeSupervisor {
       if (!await this.settleRecoveryTasks()) {
         throw new Error("Cancelled runtime recovery is still unsettled; runtime restart is deferred");
       }
+      if (this.tunnelControlControllers.size > 0) {
+        throw new Error("Previous tunnel control is still unsettled; runtime restart is deferred");
+      }
       this.shutdownRequested = false;
       this.shutdownResumeAllowed = false;
     }
@@ -1888,7 +1891,23 @@ class RuntimeSupervisor {
   }
 
   allowRestartAfterQuitFailure() {
-    if (this.shutdownRequested) this.shutdownResumeAllowed = true;
+    if (!this.shutdownRequested) return;
+    this.shutdownResumeAllowed = true;
+    // main's failed-Quit handler is synchronous. Restore supervision only when
+    // every previous owner is settled; otherwise retain the explicit-start fence.
+    if (this.stopping || this.stopPromise || this.startPromise
+      || this.recoveryTasks.size > 0 || this.tunnelControlControllers.size > 0) return;
+    let config;
+    try { config = this.readConfig(); } catch (error) {
+      this.logger.warn("runtime.failed_quit_resume_deferred", { message: errorMessage(error) });
+      return;
+    }
+    if (!config) return;
+    this.shutdownRequested = false;
+    this.shutdownResumeAllowed = false;
+    if (this.tunnel) this.startTunnelMonitor(config);
+    else if (config.mode === "full") this.scheduleRecovery("tunnel");
+    if (!this.daemon && this.launcherProfile !== "development") this.scheduleRecovery("daemon");
   }
 
   async settleRecoveryTasks() {

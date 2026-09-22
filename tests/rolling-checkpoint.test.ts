@@ -31,7 +31,7 @@ const checkpoint: ChatGptLunaCheckpoint = {
   pending: ["Inspect the remaining files."],
 };
 
-function message(role: "developer" | "user" | "assistant", text: string, turnId: string): Record<string, unknown> {
+function message(role: "system" | "developer" | "user" | "assistant", text: string, turnId: string): Record<string, unknown> {
   return {
     type: "message",
     role,
@@ -185,7 +185,7 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   expect(encoded).toContain("Compressed Luna task history");
   expect(encoded).toContain("Fresh operational contract");
   expect(encoded).toContain("Continue with the second step");
-  expect(encoded).not.toContain("Old operational contract");
+  expect(encoded).toContain("Old operational contract");
   expect(encoded).not.toContain("Original task");
   const capabilities = { localToolsEnabled: false, solAvailable: false, proAvailable: false };
   expect(estimateChatGptWebInputTokens(applied.parsed, capabilities))
@@ -234,6 +234,42 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   const stale = new ChatGptLunaCheckpointStore(path).apply(repeatedAnswerWithoutCheckpoint);
   expect(stale.applied).toBe(false);
   expect(stale.reason).toContain("source turn");
+});
+
+test.each([false, true])("Luna checkpoint preserves canonical prefix instructions with replay boundary %s", (replayed) => {
+  const threadId = `thread_luna_instructions_${replayed}`;
+  const store = new ChatGptLunaCheckpointStore();
+  const source = request(threadId, "turn_source", [message("user", "Start", "turn_source")]);
+  const answer = "First step completed.";
+  store.commit(source, { checkpoint, answerHash: hashChatGptLunaAnswer(answer) }, answer);
+  const standingSystem = { type: "message", role: "system", content: "Never disclose private customer data." };
+  const standingDeveloper = message("developer", "Ask before sending an external message.", "turn_source");
+  const currentDeveloper = message("developer", "Use concise answers.", "turn_next");
+  const next = request(threadId, "turn_next", [
+    standingSystem,
+    standingDeveloper,
+    message("user", "Start", "turn_source"),
+    message("assistant", answer, "turn_source"),
+    currentDeveloper,
+    message("user", "Continue safely", "turn_next"),
+  ]);
+  if (replayed) next._replayPrefixLen = 4;
+  const applied = store.apply(next);
+  expect(applied.applied).toBeTrue();
+  expect(applied.parsed.context.systemPrompt).toEqual(next.context.systemPrompt);
+  expect(applied.parsed.context.messages.filter(item => item.role === "developer").map(item => item.content))
+    .toEqual(next.context.messages.filter(item => item.role === "developer").map(item => item.content));
+  const raw = applied.parsed._rawBody as { input: Record<string, unknown>[] };
+  expect(raw.input.filter(item => item.role === "system" || item.role === "developer"))
+    .toEqual([standingSystem, standingDeveloper, currentDeveloper]);
+  expect(extractChatGptTurnUserRevision(applied.parsed)).toEqual(extractChatGptTurnUserRevision(next));
+  const prompt = compileChatGptWebPrompt(applied.parsed, {
+    localToolsEnabled: false, solAvailable: false, proAvailable: false,
+  });
+  expect(prompt.text).toContain(standingSystem.content);
+  expect(prompt.text).toContain("Ask before sending an external message.");
+  expect(prompt.text).toContain("Use concise answers.");
+  expect(prompt.text).toContain("Continue safely");
 });
 
 test("Luna checkpoint preserves the server-resolved backend model when the raw body carries a route slug", () => {

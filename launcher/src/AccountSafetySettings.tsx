@@ -3,11 +3,11 @@ import type { AccountNewSessionWindowStatus, AccountSafetyPolicy } from "./types
 import type { Copy } from "./i18n";
 import "./account-forms.css";
 
-export function AccountSafetySettings({ id, safety, disabled, blockedReason, copy, save, resume }: {
+export function AccountSafetySettings({ id, safety, resumeRequired = false, disabled, blockedReason, copy, save, resume }: {
   id: string;
   safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
     newSessionWindow: AccountNewSessionWindowStatus | null };
-  disabled: boolean; blockedReason?: string; copy: Copy;
+  resumeRequired?: boolean; disabled: boolean; blockedReason?: string; copy: Copy;
   save: (policy: AccountSafetyPolicy) => Promise<boolean>;
   resume: () => void;
 }) {
@@ -107,7 +107,8 @@ export function AccountSafetySettings({ id, safety, disabled, blockedReason, cop
         <button type="submit" className="button-secondary" disabled={!changed || !valid || saving}>
           {saving ? copy.accountFormSaving : copy.pacingSave}
         </button>
-        {safety.stopped ? <button type="button" className="button-secondary" onClick={resume}>{copy.pacingResume}</button> : null}
+        {safety.stopped || resumeRequired ? <button type="button" className="button-secondary"
+          onClick={() => { if (!disabled && !savingRef.current) resume(); }}>{copy.pacingResume}</button> : null}
       </fieldset>
       <p id={statusId} className={!valid || failed ? "field-error" : "field-hint"} role={!valid || failed ? "alert" : "status"}>
         {blockedReason || (!valid ? copy.accountSafetyInvalid : failed ? copy.accountFormFailed

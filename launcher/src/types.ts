@@ -110,6 +110,7 @@ export interface BrowserState {
   maxTabs: number;
   tabs: BrowserTabState[];
   tasks?: BrowserTaskState[];
+  taskHistoryHealth?: Array<{ accountId: string; accountName: string; issue: "task-history-unavailable" }>;
   queue?: BrowserQueueState;
   workspaces?: BrowserWorkspaceDirectorySnapshot;
 }

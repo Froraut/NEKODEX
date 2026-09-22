@@ -4,7 +4,7 @@ const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { BrowserWorkspaceManifest } = require("../electron/browser-workspace-manifest.cjs");
+const { BrowserWorkspaceManifest, MAX_WORKSPACES } = require("../electron/browser-workspace-manifest.cjs");
 const { BrowserWorkspaceWindows } = require("../electron/browser-workspace-windows.cjs");
 const PRINCIPAL_A = "a".repeat(64);
 
@@ -32,11 +32,11 @@ class Window extends EventEmitter {
 }
 
 function manager({ file, platform = "darwin", beginSessionMutation, onMutationBlocked,
-  principal = PRINCIPAL_A } = {}) {
+  principal = PRINCIPAL_A, accountId = "a" } = {}) {
   return new BrowserWorkspaceWindows({
     BrowserWindow: Window,
-    session: { account: "a" },
-    accountId: "a",
+    session: { account: accountId },
+    accountId,
     label: "Account A",
     platform,
     manifestPath: file,
@@ -46,6 +46,70 @@ function manager({ file, platform = "darwin", beginSessionMutation, onMutationBl
     register() {}, unregister() {}, external: async () => {}, beginSessionMutation, onMutationBlocked,
   });
 }
+
+for (const temporary of [false, true]) {
+  test(`restore preserves a live ${temporary ? 'temporary' : 'normal'} workspace and its native group`, async () => {
+    const workspaces = manager();
+    try {
+      const live = workspaces.open(temporary ? {} : { url: 'https://chatgpt.com/c/live' });
+      const meta = workspaces.windowMeta.get(live);
+      workspaces.saved.set('dormant', {
+        id: 'dormant', groupId: meta.groupId, location: 'https://chatgpt.com/c/dormant',
+        restore: 'supported', principalFingerprint: PRINCIPAL_A,
+      });
+      assert.deepEqual(workspaces.restore(), { opened: 1, skippedTemporary: 0, skippedCapacity: 0, skippedIdentity: 0 });
+      const restored = [...workspaces.windows].find(win => win !== live);
+      assert.deepEqual(live.tabs, [restored]);
+      assert.equal(workspaces.windows.size, 2);
+      const rows = workspaces.snapshot().items;
+      assert.equal(rows.filter(item => item.state === 'open').length, 2);
+      assert.equal(rows.find(item => item.id === meta.id).temporary, temporary);
+      assert.equal(workspaces.restore().opened, 0);
+      assert.equal(new Set([...workspaces.windowMeta.values()].map(item => item.id)).size, 2);
+      assert.equal(await workspaces.close('dormant'), true);
+      assert.deepEqual(workspaces.snapshot().items.map(item => item.id), [meta.id]);
+      assert.equal(live.isDestroyed(), false);
+    } finally { workspaces.destroy(); }
+  });
+}
+
+test('explicit retry restores only capacity-skipped IDs, rejoins live groups and rechecks original identity', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-workspace-retry-'));
+  const file = path.join(root, 'a.json');
+  let principal = PRINCIPAL_A;
+  const other = manager({ accountId: 'other' });
+  const workspaces = manager({ file, principal: () => principal });
+  try {
+    new BrowserWorkspaceManifest(file, 'a').write([
+      { id: 'first', groupId: 'shared', location: 'https://chatgpt.com/c/first', restore: 'supported', principalFingerprint: PRINCIPAL_A, lastActiveAt: 1 },
+      { id: 'remaining', groupId: 'shared', location: 'https://chatgpt.com/c/remaining', restore: 'supported', principalFingerprint: PRINCIPAL_A, lastActiveAt: 2 },
+      { id: 'foreign', groupId: 'shared', location: 'https://chatgpt.com/c/foreign', restore: 'supported', principalFingerprint: 'b'.repeat(64), lastActiveAt: 3 },
+    ]);
+    for (let index = 0; index < MAX_WORKSPACES - 1; index += 1) other.open();
+    assert.deepEqual(workspaces.restore(), { opened: 1, skippedTemporary: 0, skippedCapacity: 1, skippedIdentity: 1 });
+    const first = [...workspaces.windows][0];
+    assert.deepEqual(workspaces.restore(), { opened: 0, skippedTemporary: 0, skippedCapacity: 1, skippedIdentity: 1 });
+    await other.close(other.windowMeta.values().next().value.id);
+    assert.equal(workspaces.windows.size, 1, 'free capacity must not auto-open saved work');
+    principal = null;
+    assert.deepEqual(workspaces.restore(), { opened: 0, skippedTemporary: 0, skippedCapacity: 0, skippedIdentity: 2 });
+    principal = PRINCIPAL_A;
+    assert.deepEqual(workspaces.restore(), { opened: 1, skippedTemporary: 0, skippedCapacity: 0, skippedIdentity: 1 });
+    const remaining = [...workspaces.windows].find(win => win !== first);
+    assert.equal(workspaces.windowMeta.get(remaining).id, 'remaining');
+    assert.deepEqual(first.tabs, [remaining]);
+    const rows = workspaces.snapshot().items;
+    assert.deepEqual(rows.filter(item => item.state === 'open').map(item => item.id).sort(), ['first', 'remaining']);
+    assert.equal(new Set([...workspaces.windowMeta.values()].map(item => item.id)).size, 2);
+    assert.equal(rows.find(item => item.id === 'foreign').needsOriginalAccount, true);
+    assert.equal(new BrowserWorkspaceManifest(file, 'a').read().entries.find(item => item.id === 'foreign').principalFingerprint, 'b'.repeat(64));
+    assert.equal(workspaces.snapshot().restoreResult.skippedCapacity, 0);
+  } finally {
+    workspaces.destroy();
+    other.destroy();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("restore opens only safe locations in the matching account and consumes Temporary Chat placeholders", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nekodex-workspace-restore-"));

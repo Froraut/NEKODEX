@@ -451,6 +451,9 @@ class AccountBrowserPool {
       ...(this.workspaceDirectory ? { workspaces: this.workspaceSnapshot() } : {}),
       queue: this.admissionQueue ? { ...this.admissionQueue.snapshot(),
         accounts: [...labels].map(([id, label]) => ({ id, label })) } : undefined,
+      taskHistoryHealth: [...labels].flatMap(([accountId, accountName]) =>
+        this.taskLedgers?.get(accountId)?.storageIssue === 'task-history-unavailable'
+          ? [{ accountId, accountName, issue: 'task-history-unavailable' }] : []),
       tasks: [...(this.taskLedgers ?? [])].flatMap(([id, ledger]) => {
         const host = this.hosts.get(id);
         return (host?.taskSnapshot?.() ?? ledger.snapshot().map(row => ({ ...row,
@@ -1243,6 +1246,7 @@ class AccountBrowserPool {
         requestedAccountId: request.requestedAccountId ?? undefined,
       });
       const host = this.getHost(id);
+      if (this.taskLedgers.get(id)?.storageIssue === 'task-history-unavailable') return { reason: 'task-history-unavailable' };
       if (this.admissionQueue.accountPaused(id)) return { reason: 'paused-account' };
       const activeCount = [...host.turnTabs.values()].filter(tab => tab.status === 'running').length
         + [...this.reservations.values()].filter(owner => owner === id).length;

@@ -65,11 +65,42 @@ export function AccountToolsHandoff({ browser, language, disabled, onContinue }:
   useEffect(() => {
     let disposed = false;
     const api = window.codexWebLauncher!;
-    // Read only when the browser identity changes or this surface mounts. Readiness is
-    // checked again by AccountSettings; a stale banner can never finish onboarding.
+    let timer: number | undefined;
+    let inFlight = false;
+    let revision = 0;
+    const load = () => {
+      timer = undefined;
+      if (disposed || inFlight) return;
+      inFlight = true;
+      const requestedRevision = revision;
+      void api.accounts().then(value => {
+        if (!disposed && requestedRevision === revision) setPool(value);
+      }).catch(() => {
+        if (!disposed && requestedRevision === revision) setPool(null);
+      }).finally(() => {
+        inFlight = false;
+        if (!disposed && requestedRevision !== revision) schedule(false);
+      });
+    };
+    const schedule = (changed = true) => {
+      if (disposed) return;
+      if (changed) revision += 1;
+      if (timer === undefined && !inFlight) timer = window.setTimeout(load, 150);
+    };
+    // Readiness can change without a browser identity change. Coalesce host events,
+    // and discard a read overtaken by an event before fetching its replacement.
+    const unsubscribeBrowser = api.onBrowserState(() => schedule());
+    const unsubscribeOperation = api.onOperation(operation => {
+      if (operation.status !== 'running') schedule();
+    });
     setPool(null);
-    void api.accounts().then(value => { if (!disposed) setPool(value); }).catch(() => {});
-    return () => { disposed = true; };
+    load();
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      unsubscribeBrowser();
+      unsubscribeOperation();
+    };
   }, [browser.accountId, browser.authenticated, browser.authenticationStatus, browser.loginInProgress]);
   const account = pool ? accountToolsHandoffAccount(browser, pool) : null;
   if (!account) return null;

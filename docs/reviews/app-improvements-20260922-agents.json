@@ -1,0 +1,172 @@
+{
+  "task": "Two-wave NEKODEX improvements",
+  "baseline": "1e6dec01774c7ad6c6bd0788c5d7145f90be3666",
+  "branch": "codex/app-improvements-20260922",
+  "date": "2026-09-22",
+  "requestedModel": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "wave1": [
+    {
+      "lane": "overview",
+      "agent_id": "01a0c82f-c634-7cb2-8f57-b2bd6064c252",
+      "nickname": "Ramanujan"
+    },
+    {
+      "lane": "accounts-ui",
+      "agent_id": "01a0c82f-c699-7243-8246-e7697c8c9d54",
+      "nickname": "Descartes"
+    },
+    {
+      "lane": "tasks-ui",
+      "agent_id": "01a0c82f-c6fe-72d1-bff2-ce7213ad0f95",
+      "nickname": "Aristotle"
+    },
+    {
+      "lane": "workspaces-ui",
+      "agent_id": "01a0c82f-c75a-79f0-a281-c7f40f295cba",
+      "nickname": "Cicero"
+    },
+    {
+      "lane": "usage-ui",
+      "agent_id": "01a0c82f-c7ba-7011-9d8e-6dbab99b185e",
+      "nickname": "Feynman"
+    },
+    {
+      "lane": "updates-ui",
+      "agent_id": "01a0c82f-c834-7742-b3e2-305f7480a1f9",
+      "nickname": "Darwin"
+    },
+    {
+      "lane": "settings-ui",
+      "agent_id": "01a0c82f-c897-7ff3-8915-383f97a1a9d0",
+      "nickname": "Gibbs"
+    },
+    {
+      "lane": "chrome-auth",
+      "agent_id": "01a0c82f-c8f7-7050-a100-2a6da9694f3e",
+      "nickname": "Pascal"
+    },
+    {
+      "lane": "task-backend",
+      "agent_id": "01a0c82f-c959-72f2-8c56-61fdce556457",
+      "nickname": "Singer"
+    },
+    {
+      "lane": "workspace-backend",
+      "agent_id": "01a0c82f-c9c4-7272-9e22-0ea78fd89327",
+      "nickname": "Noether"
+    },
+    {
+      "lane": "native-transport",
+      "agent_id": "01a0c82f-ca34-7402-980c-fd74465f8fd6",
+      "nickname": "Hilbert"
+    },
+    {
+      "lane": "responses",
+      "agent_id": "01a0c82f-ca96-7791-bf37-b6df8c169622",
+      "nickname": "Galileo"
+    },
+    {
+      "lane": "browser-worker",
+      "agent_id": "01a0c82f-caf4-7ce1-b151-982744978523",
+      "nickname": "Turing"
+    },
+    {
+      "lane": "compaction",
+      "agent_id": "01a0c82f-cb54-7f11-b449-1ddc85de4570",
+      "nickname": "McClintock"
+    },
+    {
+      "lane": "mcp-tunnel",
+      "agent_id": "01a0c82f-cbb9-7003-9860-e877601c775d",
+      "nickname": "Euclid"
+    },
+    {
+      "lane": "runtime-updater",
+      "agent_id": "01a0c82f-cc1b-7f42-a580-cb116ed14bf9",
+      "nickname": "Ptolemy"
+    }
+  ],
+  "wave2": [
+    {
+      "lane": "overview",
+      "agent_id": "01a0c835-10df-7b90-915a-4ba79dee043a",
+      "nickname": "Raman"
+    },
+    {
+      "lane": "accounts-ui",
+      "agent_id": "01a0c835-114f-7d91-bf7e-7636ec6ef0ef",
+      "nickname": "Bacon"
+    },
+    {
+      "lane": "tasks-ui",
+      "agent_id": "01a0c835-11b7-7670-9183-98c1cf4794a7",
+      "nickname": "Huygens"
+    },
+    {
+      "lane": "workspaces-ui",
+      "agent_id": "01a0c835-1237-7fb3-93ee-f5174d2cc1b2",
+      "nickname": "Poincare"
+    },
+    {
+      "lane": "usage-ui",
+      "agent_id": "01a0c835-12aa-7e00-8d6d-103331eb9c5d",
+      "nickname": "Kepler"
+    },
+    {
+      "lane": "updates-ui",
+      "agent_id": "01a0c835-131e-7593-8d8b-14af143d6c44",
+      "nickname": "Zeno"
+    },
+    {
+      "lane": "settings-ui",
+      "agent_id": "01a0c835-1393-7073-a935-dd0a51bf8d86",
+      "nickname": "Epicurus"
+    },
+    {
+      "lane": "chrome-auth",
+      "agent_id": "01a0c835-1407-74c1-86ec-f66123b52a75",
+      "nickname": "Copernicus"
+    },
+    {
+      "lane": "task-backend",
+      "agent_id": "01a0c835-1483-7e90-86dc-61d4111a5c1a",
+      "nickname": "Parfit"
+    },
+    {
+      "lane": "workspace-backend",
+      "agent_id": "01a0c835-14ef-7740-86fa-d68a079aaa9f",
+      "nickname": "Anscombe"
+    },
+    {
+      "lane": "native-transport",
+      "agent_id": "01a0c835-155c-7032-ae88-36715af6de04",
+      "nickname": "Lovelace"
+    },
+    {
+      "lane": "responses",
+      "agent_id": "01a0c835-15cc-7ca1-9f4e-312beab36715",
+      "nickname": "Boole"
+    },
+    {
+      "lane": "browser-worker",
+      "agent_id": "01a0c835-163d-7d81-8c87-9be57eb33f04",
+      "nickname": "Boyle"
+    },
+    {
+      "lane": "compaction",
+      "agent_id": "01a0c835-16b6-7d30-baf7-8678e6bed518",
+      "nickname": "Chandrasekhar"
+    },
+    {
+      "lane": "mcp-tunnel",
+      "agent_id": "01a0c835-1728-7641-aa62-c4abcea3e3f3",
+      "nickname": "Tesla"
+    },
+    {
+      "lane": "runtime-updater",
+      "agent_id": "01a0c835-1790-7a22-a13f-e526c0c30ed1",
+      "nickname": "Einstein"
+    }
+  ]
+}

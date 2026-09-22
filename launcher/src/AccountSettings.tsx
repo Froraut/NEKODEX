@@ -627,10 +627,11 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           () => api.copyCodexLoginCode(flowForAccount.flowId, account.id))) === true : false}
         onCancelLogin={async () => { if (flowForAccount) await cancelCodexLogin(flowForAccount); }} />
       {account.safety ? <AccountSafetySettings id={account.id} safety={account.safety} copy={copy}
+        resumeRequired={account.availability?.reason === "session-limit"}
         disabled={mutationsDisabled || active || loginBoundActive} blockedReason={blockedReason}
         save={policy => run(() => api.setAccountSafety(account.id, policy))}
         resume={() => void run(() => api.resumeAccount(account.id))} /> : null}
-      {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy}
+      {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy} language={language}
         disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy} blockedReason={sessionMutationReason ?? blockedReason}
         save={value => run(() => api.setAccountProxy(account.id, value))} /> : null}
         </>;

@@ -5,6 +5,7 @@ import { useId, type CSSProperties } from "react";
 import { Icon, type IconName } from "./icons";
 import type { Copy } from "./i18n";
 import { deriveWorkspaceReadiness, type WorkspaceAction } from "./workspace-readiness";
+import { modelConnectionReadiness } from "./setup-progress";
 import { workflowCopy } from "./workflow-copy";
 import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types";
 
@@ -43,13 +44,18 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
-  const modelsReady = snapshot.state.coreSetupComplete === true
-    && (snapshot.profile === "development" || (snapshot.state.codexCatalogVerified === true
-      && snapshot.state.codexPickerConfirmed === true));
+  const modelReadiness = modelConnectionReadiness({
+    manual,
+    installed: snapshot.state.coreSetupComplete === true,
+    catalogVerified: snapshot.state.codexCatalogVerified === true,
+    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    development: snapshot.profile === "development",
+  });
+  const modelsReady = modelReadiness === "available";
   const modelStatus = catalogUnavailable ? copy.catalogUnavailable
     : modelsReady ? (manual ? copy.setupInstalledTitle : copy.connectionVerified)
-      : snapshot.state.codexCatalogVerified !== true ? copy.modelsWaitingShort
-        : snapshot.state.codexPickerConfirmed !== true ? copy.modelsConfirmShort : copy.connectionPending;
+      : modelReadiness === "catalog-pending" ? copy.modelsWaitingShort
+        : modelReadiness === "picker-pending" ? copy.modelsConfirmShort : copy.connectionPending;
   const toolsError = readiness.tools === "degraded"
     || (readiness.tools === "unavailable" && readiness.action === "open-tools");
   const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [

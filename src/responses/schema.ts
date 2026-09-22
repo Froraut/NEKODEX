@@ -150,7 +150,11 @@ export const toolSchema = z.object({
   strict: z.boolean().optional(),
 });
 
-const builtinToolSchema = z.object({ type: z.string() }).loose();
+// Extension tools remain open-ended, but known function tools must satisfy toolSchema.
+const builtinToolSchema = z.object({ type: z.string() }).loose().refine(
+  tool => tool.type !== "function",
+  { message: "function tool must satisfy its schema" },
+);
 
 const hostedToolType = z.enum([
   "web_search_preview", "file_search", "computer_use_preview",

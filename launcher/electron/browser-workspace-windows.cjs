@@ -396,7 +396,6 @@ class BrowserWorkspaceWindows {
   restore() {
     this.ensureManifestLoaded();
     const currentPrincipal = this.getVerifiedPrincipal();
-    if (this.restoreAttempted && this.restorePrincipal === currentPrincipal) return this.restoreResult;
     this.restoreAttempted = true;
     this.restorePrincipal = currentPrincipal;
     let opened = 0;
@@ -405,7 +404,15 @@ class BrowserWorkspaceWindows {
     let skippedIdentity = 0;
     const entries = [...this.saved.values()];
     const restoredGroups = new Map();
+    const liveIds = new Set();
+    for (const [win, meta] of this.windowMeta) {
+      if (win.isDestroyed()) continue;
+      liveIds.add(meta.id);
+      if (!restoredGroups.has(meta.groupId)) restoredGroups.set(meta.groupId, win);
+    }
     for (const entry of entries) {
+      // Capture stores live windows alongside dormant entries, including Temporary Chat.
+      if (liveIds.has(entry.id)) continue;
       if (entry.restore !== "supported" || !entry.location) {
         skippedTemporary += 1;
         this.saved.delete(entry.id);

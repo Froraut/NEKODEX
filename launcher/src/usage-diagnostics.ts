@@ -61,7 +61,7 @@ export interface RankedUsageDiagnosticGroup<T extends UsageDiagnosticGroupLike =
 
 export interface UsageAttentionFact<T extends UsageDiagnosticGroupLike = UsageDiagnosticGroupLike>
   extends RankedUsageDiagnosticGroup<T> {
-  kind: "failures" | "duration";
+  kind: "failures" | "duration" | "median";
 }
 
 const finiteCount = (value: number): number => Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
@@ -140,6 +140,7 @@ export function usageAttentionFacts<T extends UsageDiagnosticGroupLike>(
   for (const item of rankUsageDiagnosticGroups(groups, source)) {
     if (item.eligibility.failureCount > 0) facts.push({ ...item, kind: "failures" });
     else if (item.eligibility.eligible.p95) facts.push({ ...item, kind: "duration" });
+    else if (item.eligibility.eligible.median) facts.push({ ...item, kind: "median" });
     if (facts.length === boundedLimit) break;
   }
   return facts;

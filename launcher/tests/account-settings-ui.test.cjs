@@ -339,3 +339,32 @@ test("account tools check keeps its explicit account even when another account i
   assert.deepEqual(checks, [{ id: "a", connector: true }]);
   delete global.window;
 });
+
+test('wave2 session-limit resume stays account-scoped and preserves active-work gating', async () => {
+  const resumed = [];
+  const safety = { policy: {}, stopped: false, cooldownUntil: 0, newSessionWindow: null };
+  function findSafety(node) {
+    if (!node || typeof node !== 'object') return null;
+    if (node.props?.safety === safety) return node;
+    for (const child of [node.props?.children].flat(Infinity)) {
+      const found = findSafety(child); if (found) return found;
+    }
+    return null;
+  }
+  try {
+    for (const [reason, activeTurns, required, disabled] of [
+      ['session-limit', 0, true, false], ['session-limit', 1, true, true],
+      ['cooldown', 0, false, false], [null, 0, false, false],
+    ]) {
+      const view = accountHarness(Promise.resolve(null), null, {
+        safety, activeTurns, availability: { eligible: reason === null, reason, retryAt: null },
+      }, 'a', { resumeAccount: async id => { resumed.push(id); return view.api.accounts(); } });
+      view.render(); view.effects()[0](); await flush();
+      const props = findSafety(view.render()).props;
+      assert.equal(props.resumeRequired, required);
+      assert.equal(props.disabled, disabled);
+      if (required && !disabled) { props.resume(); await flush(); }
+    }
+    assert.deepEqual(resumed, ['a']);
+  } finally { delete global.window; }
+});

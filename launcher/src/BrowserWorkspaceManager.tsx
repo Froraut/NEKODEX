@@ -64,6 +64,9 @@ export function BrowserWorkspaceManager({
   if (!account) return null;
   const saved = account.items.filter(item => item.state === "saved").length;
   const busy = disabled || pending !== null;
+  const restoreVisible = saved > 0 || (account.manifestStatus === "uninitialized" && !account.restoreAttempted);
+  const restoreBlocked = busy || snapshot.total >= snapshot.maximum || Boolean(account.sessionMutation)
+    || (saved > 0 && !account.items.some(item => item.state === "saved" && item.restorable));
 
   return <section className="browser-workspace-manager" aria-labelledby="browser-workspace-title">
     <div className="browser-workspace-manager-heading">
@@ -73,7 +76,7 @@ export function BrowserWorkspaceManager({
       </div>
       <label>
         <span>{copy.account}</span>
-        <select value={account.accountId} disabled={busy} onChange={event => setAccountId(event.target.value)}>
+        <select className="settings-select" value={account.accountId} disabled={busy} onChange={event => setAccountId(event.target.value)}>
           {snapshot.accounts.map(candidate => <option value={candidate.accountId} key={candidate.accountId}>{candidate.label}</option>)}
         </select>
       </label>
@@ -85,11 +88,11 @@ export function BrowserWorkspaceManager({
     {!snapshot.nativeTabs ? <p className="browser-workspace-platform-note">{copy.tabsMacOnly}</p> : null}
 
     <div className="browser-workspace-manager-actions">
-      <button type="button" disabled={busy || snapshot.total >= snapshot.maximum}
+      <button type="button" className="button-secondary" disabled={busy || snapshot.total >= snapshot.maximum}
         onClick={() => void run("new-window", () => onOpen(account.accountId, false))}>{copy.newWindow}</button>
-      {snapshot.nativeTabs ? <button type="button" disabled={busy || snapshot.total >= snapshot.maximum}
+      {snapshot.nativeTabs ? <button type="button" className="button-secondary" disabled={busy || snapshot.total >= snapshot.maximum}
         onClick={() => void run("new-tab", () => onOpen(account.accountId, true))}>{copy.newTab}</button> : null}
-      {(saved > 0 || account.manifestStatus === "uninitialized") && !account.restoreAttempted ? <button type="button" disabled={busy}
+      {restoreVisible ? <button type="button" className="button-secondary" disabled={restoreBlocked}
         onClick={() => void run("restore", () => onRestore(account.accountId))}>{copy.restore}{saved > 0 ? ` (${saved})` : ""}</button> : null}
     </div>
 

@@ -70,6 +70,8 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
   const scoped = source ? groups.filter(group => group.source === source) : [];
   const ranked = source ? rankUsageDiagnosticGroups(scoped, source) : [];
   const facts = source ? usageAttentionFacts(scoped, source) : [];
+  const hasComparableGroups = ranked.some(({ eligibility }) =>
+    eligibility.eligible.failureRate || eligibility.eligible.median || eligibility.eligible.p95);
   const toggle = () => {
     const next = !open;
     setOpen(next);
@@ -84,13 +86,18 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
     </div>
     {!ranked.length ? <p className="usage-diagnostic-empty">{copy.noComparison}</p> : <>
       {facts.length ? <div className="usage-diagnostic-facts">{facts.map(({ group, eligibility, kind }) => {
-        const insufficient = kind === "failures" ? !eligibility.eligible.failureRate : !eligibility.eligible.p95;
+        const insufficient = kind === "failures" && !eligibility.eligible.failureRate;
         return <article key={`${groupKey(group)}:${kind}`} className={insufficient ? "is-insufficient" : undefined}>
           <strong>{identity(group, accounts, copy)}</strong>
-          <span>{kind === "failures" ? failures(group, failureLabels, language) : `${copy.p95}: ${duration(eligibility.p95Ms, language)}`}</span>
-          <small>{insufficient ? copy.insufficientEvidence : replace(copy.knownOutcomes, { count: eligibility.knownOutcomes })}</small>
+          <span>{kind === "failures" ? failures(group, failureLabels, language)
+            : kind === "median" ? `${copy.median}: ${duration(eligibility.medianMs, language)}`
+            : `${copy.p95}: ${duration(eligibility.p95Ms, language)}`}</span>
+          {kind === "failures"
+            ? <small>{insufficient ? copy.insufficientEvidence : replace(copy.knownOutcomes, { count: eligibility.knownOutcomes })}</small>
+            : <><small>{replace(copy.durationSamples, { count: eligibility.observedSamples })}</small>
+              <small>{replace(copy.coverage, { observed: eligibility.observedSamples, eligible: eligibility.eligibleSamples, count: `${eligibility.observedSamples}/${eligibility.eligibleSamples}` })}</small></>}
         </article>;
-      })}</div> : <p className="usage-diagnostic-empty">{copy.noComparison}</p>}
+      })}</div> : hasComparableGroups ? null : <p className="usage-diagnostic-empty">{copy.noComparison}</p>}
       {open ? <div id="usage-diagnostic-details" className="usage-diagnostic-details" ref={detailsRef} tabIndex={-1}>
         <p>{copy.notBestModel}</p>
         <div className="usage-table-scroll"><table className="usage-diagnostic-table">

@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { extname } from "node:path";
+import { parseDataUrl } from "../image";
+import { chatGptWebInputImageExtension } from "./input-image-validation";
 import { selectedSkillFile, skillFileTokens, type ChatGptSkillFile } from "./skill-attachments";
 import {
   chatGptWebImageTokenReserve,
@@ -24,6 +27,8 @@ export interface ChatGptWebPromptImage {
 
 export interface ChatGptWebPromptFile {
   ref: string;
+  /** Original verified filename, before transport collision resolution. */
+  originalName?: string;
   name: string;
   mimeType: string;
   base64: string;
@@ -268,6 +273,32 @@ const DROPPED_IMAGE_NOTE =
 interface ImageBudget {
   seen: number;
   dropped: number;
+  reservedNames: Set<string>;
+  usedNames: Set<string>;
+}
+
+// Manual attachments may live on a case-insensitive, Unicode-normalizing filesystem.
+function transportNameKey(name: string): string {
+  return name.normalize("NFKC").toLowerCase();
+}
+
+function transportFileName(name: string, budget: ImageBudget): string {
+  if (!budget.usedNames.has(transportNameKey(name))) {
+    budget.usedNames.add(transportNameKey(name));
+    return name;
+  }
+  const extension = extname(name);
+  const stem = name.slice(0, name.length - extension.length);
+  for (let version = 2; ; version += 1) {
+    const suffix = `--${version}${extension}`;
+    if (suffix.length >= 160) throw new Error("Attachment extension leaves no room for a unique transport filename");
+    // The verified filename contract is 160 UTF-16 code units; do not split a surrogate pair.
+    const prefix = stem.slice(0, 160 - suffix.length).replace(/[\uD800-\uDBFF]$/, "");
+    const candidate = `${prefix}${suffix}`;
+    if (budget.reservedNames.has(transportNameKey(candidate)) || budget.usedNames.has(transportNameKey(candidate))) continue;
+    budget.usedNames.add(transportNameKey(candidate));
+    return candidate;
+  }
 }
 
 function inputContent(
@@ -286,13 +317,15 @@ function inputContent(
   return semantic.map(part => {
     if (part.type === "text") return { type: "text", text: part.text };
     if (part.type === "file") {
-      const existing = files.find(file => file.sha256 === part.sha256 && file.name === part.name);
+      const existing = files.find(file => file.sha256 === part.sha256 && (file.originalName ?? file.name) === part.name);
       const ref = existing?.ref ?? `codex-input-file-${files.length + 1}`;
-      if (!existing) files.push({ ref, ...part });
+      const name = existing?.name ?? transportFileName(part.name, budget);
+      if (!existing) files.push({ ref, ...part, name, originalName: part.name });
       return {
         type: "file_attachment",
         attachment_ref: ref,
-        filename: part.name,
+        filename: name,
+        original_filename: part.name,
         mime_type: part.mimeType,
         size: part.size,
         sha256: part.sha256,
@@ -714,15 +747,36 @@ export function compileChatGptWebPrompt(
   const build = (sourceMessages: readonly CodexMessage[]): CompiledChatGptWebPrompt => {
     const images: ChatGptWebPromptImage[] = [];
     const files: ChatGptWebPromptFile[] = [];
+    // Reserve generated names before projecting documents, regardless of history order.
+    const skillFiles: ChatGptSkillFile[] = [];
+    for (const message of sourceMessages) {
+      if (!attachSkills || message.role !== "user" || message.origin !== "codex_skill") continue;
+      const file = selectedSkillFile(message);
+      const existing = skillFiles.find(candidate => candidate.name === file.name);
+      if (existing && existing.text !== file.text) throw new Error("Skill attachment digest collision");
+      if (!existing) skillFiles.push(file);
+    }
+    const parts = sourceMessages.flatMap(message => (
+      message.role === "assistant" || typeof message.content === "string" ? [] : message.content
+    ));
+    const retainedImages = parts.filter(part => part.type === "image" && !isOnePixelPngDataUrl(part.imageUrl))
+      .slice(-CHATGPT_MAX_INPUT_IMAGES);
+    const usedNames = new Set(skillFiles.map(file => transportNameKey(file.name)));
+    retainedImages.forEach((part, index) => {
+      if (part.type !== "image") return;
+      const parsedImage = parseDataUrl(part.imageUrl);
+      const extension = parsedImage && chatGptWebInputImageExtension(parsedImage.mediaType);
+      if (extension) usedNames.add(transportNameKey(`codex-input-image-${index + 1}.${extension}`));
+    });
     const budget: ImageBudget = {
       seen: 0,
       dropped: Math.max(0, countChatGptContextImages(sourceMessages) - CHATGPT_MAX_INPUT_IMAGES),
+      usedNames,
+      reservedNames: new Set([...usedNames, ...parts.flatMap(part => part.type === "file" ? [transportNameKey(part.name)] : [])]),
     };
-    const skillFiles: ChatGptSkillFile[] = [];
     const messages = sourceMessages.map(message => {
       if (attachSkills && message.role === "user" && message.origin === "codex_skill") {
         const file = selectedSkillFile(message);
-        if (!skillFiles.some(existing => existing.name === file.name)) skillFiles.push(file);
         return { role: "user", origin: "codex_skill", content: [{ type: "skill_attachment", filename: file.name }] };
       }
       return messageEnvelope(message, images, files, budget);
@@ -732,7 +786,7 @@ export function compileChatGptWebPrompt(
     ] : [];
     const fileContract = files.length ? [
       "Each file_attachment refers to the exact named file attached to this message (the final commit in multipart mode). Read the actual attachment bytes. If an attachment is unavailable or its displayed name differs from the manifest, report that limitation and do not infer contents from its filename.",
-      `Attachment manifest: ${promptDelimitedJson(files.map(file => ({ ref: file.ref, filename: file.name, mime_type: file.mimeType, size: file.size, sha256: file.sha256 })))}`,
+      `Attachment manifest: ${promptDelimitedJson(files.map(file => ({ ref: file.ref, filename: file.name, original_filename: file.originalName ?? file.name, mime_type: file.mimeType, size: file.size, sha256: file.sha256 })))}`,
     ] : [];
     const attachments = skillFiles.length ? { skillFiles } : {};
     const answerContract = captureLunaCheckpoint

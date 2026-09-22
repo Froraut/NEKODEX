@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppConfig } from "./config";
-import { getConfigPath, loadConfig, saveConfig } from "./config";
+import { getConfigPath, loadConfig, preserveUtf8Bom } from "./config";
 import {
   codexInterruptHookCommand,
   codexInterruptHookHash,
@@ -32,6 +32,7 @@ import {
   writeIntegrationState,
 } from "./codex-integration-shared";
 import type {
+  FileSnapshot,
   AnyCodexIntegrationJournal,
   CodexIntegrationJournal,
   InstallCodexIntegrationOptions,
@@ -247,39 +248,15 @@ export function setCodexSubagentProtocol(
     throw new Error("Codex integration is disconnected; reconnect it before changing the subagent protocol");
   }
   const nextConfig = { ...config, subagentProtocol: protocol };
-  // The runtime catalog and Codex feature surface are two halves of one protocol selection. If
-  // either write fails, restore every participant so the next launcher/Codex restart cannot load a
-  // split V1/V2 state.
-  const snapshots = [
-    getConfigPath(),
-    getCodexConfigPath(),
-    getCodexHooksPath(),
-    getCodexModelsCachePath(),
-    getCodexJournalPath(),
-    getCodexJournalRecoveryPath(),
-  ].map(path => snapshotFile(path, {
-    followSymlink: path === getCodexConfigPath() || path === getCodexHooksPath(),
-  }));
-  try {
-    const journal = installCodexIntegration(nextConfig);
-    saveConfig(nextConfig);
-    return journal;
-  } catch (error) {
-    const rollbackFailures: string[] = [];
-    for (const snapshot of [...snapshots].reverse()) {
-      try {
-        restoreFileSnapshot(snapshot);
-      } catch (rollbackError) {
-        rollbackFailures.push(
-          `${snapshot.path}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
-        );
-      }
-    }
-    const primary = error instanceof Error ? error.message : String(error);
-    throw new Error(rollbackFailures.length > 0
-      ? `${primary}; subagent protocol rollback also failed: ${rollbackFailures.join("; ")}`
-      : primary);
-  }
+  // Runtime and integration writes share the same ownership-aware compensation boundary.
+  // In particular, never compensate an already-compensated inner failure a second time.
+  const runtime = snapshotFile(getConfigPath(), { followSymlink: true });
+  return installCodexIntegrationState(nextConfig, {}, [{
+    path: runtime.path,
+    data: preserveUtf8Bom(`${JSON.stringify(nextConfig, null, 2)}\n`, runtime.data?.toString("utf8") ?? ""),
+    followSymlink: true,
+    expectedSnapshot: runtime,
+  }]);
 }
 
 export function preflightCodexIntegration(
@@ -374,11 +351,19 @@ export function installCodexIntegration(
   config: AppConfig,
   options: InstallCodexIntegrationOptions = {},
 ): CodexIntegrationJournal {
+  return installCodexIntegrationState(config, options);
+}
+
+function installCodexIntegrationState(
+  config: AppConfig,
+  options: InstallCodexIntegrationOptions,
+  runtimeWrites: Array<{ path: string; data: string; followSymlink: boolean; expectedSnapshot: FileSnapshot }> = [],
+): CodexIntegrationJournal {
   const configPath = getCodexConfigPath();
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
   const configExists = existsSync(configPath);
   const currentText = configExists ? readFileSync(configPath, "utf8") : "";
-  const existing = readJournal({ reconcileInactiveHook: false });
+  const existing = readJournal({ reconcileInactiveHook: false, repair: runtimeWrites.length === 0 });
   const installedUrl = routeUrl(config);
   let hooksJson = currentHooksJson();
   if (existing?.version === 2 && existing.uninstalling) {
@@ -466,7 +451,7 @@ export function installCodexIntegration(
       updated,
       { path: configPath, data: patched.text },
       [getCodexModelsCachePath()],
-      patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : [],
+      [...(patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : []), ...runtimeWrites],
     );
     return updated;
   }
@@ -512,7 +497,7 @@ export function installCodexIntegration(
     journal,
     { path: configPath, data: patched.text },
     [getCodexModelsCachePath()],
-    patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : [],
+    [...(patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : []), ...runtimeWrites],
   );
   if (existing?.version === 2 && existsSync(existing.catalogPath)) rmSync(existing.catalogPath);
   return journal;

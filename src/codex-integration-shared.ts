@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { AppConfig, SubagentProtocol } from "./config";
@@ -263,7 +263,7 @@ export interface FileSnapshot {
   exists: boolean;
   data?: Buffer;
   identity?: { dev: number; ino: number };
-  symlink?: { link: string; target: string; mode: number; identity: { dev: number; ino: number } };
+  symlink?: { link: string; target: string; mode: number; linkIdentity: { dev: number; ino: number }; identity: { dev: number; ino: number } };
 }
 
 export interface InstallCodexIntegrationOptions {
@@ -333,6 +333,7 @@ export function snapshotFile(path: string, options?: { followSymlink?: boolean }
         data: readFileSync(target),
         symlink: {
           link,
+          linkIdentity: { dev: stat.dev, ino: stat.ino },
           target,
           mode: targetStat.mode & 0o777,
           identity: { dev: targetStat.dev, ino: targetStat.ino },
@@ -351,6 +352,8 @@ export function assertFileSnapshotCurrent(snapshot: FileSnapshot): void {
   if (current.exists !== snapshot.exists
     || (snapshot.exists && (!current.data?.equals(snapshot.data ?? Buffer.alloc(0)) ||
       (snapshot.symlink && (!current.symlink || current.symlink.link !== snapshot.symlink.link
+        || current.symlink.linkIdentity.dev !== snapshot.symlink.linkIdentity.dev
+        || current.symlink.linkIdentity.ino !== snapshot.symlink.linkIdentity.ino
         || current.symlink.target !== snapshot.symlink.target
         || current.symlink.identity.dev !== snapshot.symlink.identity.dev
         || current.symlink.identity.ino !== snapshot.symlink.identity.ino))
@@ -367,6 +370,8 @@ function fileSnapshotsMatch(current: FileSnapshot, expected: FileSnapshot): bool
   if (expected.symlink) {
     return Boolean(current.symlink)
       && current.symlink!.link === expected.symlink.link
+      && current.symlink!.linkIdentity.dev === expected.symlink.linkIdentity.dev
+      && current.symlink!.linkIdentity.ino === expected.symlink.linkIdentity.ino
       && current.symlink!.target === expected.symlink.target
       && current.symlink!.identity.dev === expected.symlink.identity.dev
       && current.symlink!.identity.ino === expected.symlink.identity.ino;
@@ -376,11 +381,51 @@ function fileSnapshotsMatch(current: FileSnapshot, expected: FileSnapshot): bool
     && current.identity!.ino === expected.identity?.ino;
 }
 
+// Capture the inode before publication. Reading the destination after a write can
+// accidentally claim another process's replacement as our rollback receipt.
+function commitFileSnapshot(snapshot: FileSnapshot, data: string | Uint8Array, expected?: FileSnapshot): FileSnapshot {
+  const target = snapshot.symlink?.target ?? snapshot.path;
+  const staging = `${target}.integration-${randomUUID()}`;
+  let staged: FileSnapshot | undefined;
+  try {
+    atomicWriteFile(staging, data, snapshot.symlink
+      ? { mode: snapshot.symlink.mode, protectDirectory: false } : undefined);
+    staged = snapshotFile(staging);
+    const delays = [25, 50, 100, 150, 250, 350, 500];
+    for (let attempt = 0; ; attempt++) {
+      // Backoff lets other writers run; every publication attempt needs a fresh guard.
+      if (expected) assertFileSnapshotCurrent(expected);
+      try { renameSync(staging, target); break; } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        const delay = delays[attempt];
+        if (process.platform !== "win32" || !["EBUSY", "EPERM", "EACCES"].includes(code ?? "") || delay === undefined) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      }
+    }
+    return {
+      path: snapshot.path, exists: true, data: staged.data!,
+      ...(snapshot.symlink
+        ? { symlink: { ...snapshot.symlink, identity: staged.identity! } }
+        : { identity: staged.identity! }),
+    };
+  } catch (error) {
+    if (staged) {
+      try {
+        assertFileSnapshotCurrent(staged);
+        rmSync(staging);
+      } catch (cleanup) {
+        throw new AggregateError([error, cleanup], `${String(error)}; integration staging cleanup also failed: ${String(cleanup)}`, { cause: error });
+      }
+    }
+    throw error;
+  }
+}
+
 export function writeFileSnapshot(
   snapshot: FileSnapshot,
   data: string | Uint8Array,
   options?: { expectedData?: Uint8Array; expectedSnapshot?: FileSnapshot },
-): void {
+): FileSnapshot {
   const expectedSnapshot = options?.expectedSnapshot;
   if (expectedSnapshot || options?.expectedData !== undefined) {
     const current = snapshotFile(snapshot.path, {
@@ -395,10 +440,12 @@ export function writeFileSnapshot(
   }
   const symlink = snapshot.symlink;
   if (!symlink) {
-    atomicWriteFile(snapshot.path, data);
-    return;
+    return commitFileSnapshot(snapshot, data,
+      expectedSnapshot ?? (options?.expectedData !== undefined ? snapshot : undefined));
   }
-  if (!lstatSync(snapshot.path).isSymbolicLink()
+  const linkStat = lstatSync(snapshot.path);
+  if (!linkStat.isSymbolicLink()
+    || linkStat.dev !== symlink.linkIdentity.dev || linkStat.ino !== symlink.linkIdentity.ino
     || readlinkSync(snapshot.path) !== symlink.link
     || realpathSync(snapshot.path) !== symlink.target
     || (() => {
@@ -408,13 +455,13 @@ export function writeFileSnapshot(
     })()) {
     throw new Error(`Codex config symlink changed during the operation: ${snapshot.path}`);
   }
-  atomicWriteFile(symlink.target, data, { mode: symlink.mode, protectDirectory: false });
+  return commitFileSnapshot(snapshot, data, expectedSnapshot ?? snapshot);
 }
 
 export function restoreFileSnapshot(snapshot: FileSnapshot, options?: { expectedCurrent?: FileSnapshot }): void {
   if (snapshot.exists) {
     if (!snapshot.data) throw new Error(`File snapshot is missing data: ${snapshot.path}`);
-    if (snapshot.symlink && !existsSync(snapshot.path)) {
+    if (snapshot.symlink && !options?.expectedCurrent && !existsSync(snapshot.path)) {
       const targetStat = lstatSync(snapshot.symlink.target);
       if (targetStat.dev !== snapshot.symlink.identity.dev || targetStat.ino !== snapshot.symlink.identity.ino) {
         throw new Error(`Codex integration symlink target changed before rollback; preserving the external edit: ${snapshot.path}`);
@@ -441,6 +488,7 @@ export function writeFilesWithCompensation(
     followSymlink?: boolean;
     expectedData?: Uint8Array;
     managed?: boolean;
+    expectedSnapshot?: FileSnapshot;
   }>,
   removals: string[] = [],
 ): void {
@@ -451,7 +499,7 @@ export function writeFilesWithCompensation(
   })]));
   const guardedWrites = writes.map(write => ({
     ...write,
-    expectedSnapshot: write.managed ? snapshots.get(write.path) : undefined,
+    expectedSnapshot: write.expectedSnapshot ?? (write.managed ? snapshots.get(write.path) : undefined),
   }));
   const startedWrites = new Set<string>();
   const startedRemovals = new Set<string>();
@@ -467,11 +515,11 @@ export function writeFilesWithCompensation(
         }
       }
       startedWrites.add(write.path);
-      writeFileSnapshot(snapshots.get(write.path)!, write.data, {
+      const committed = writeFileSnapshot(snapshots.get(write.path)!, write.data, {
         expectedData: write.expectedData,
         expectedSnapshot: write.expectedSnapshot,
       });
-      ownedAfterWrite.set(write.path, snapshotFile(write.path, { followSymlink: write.followSymlink }));
+      ownedAfterWrite.set(write.path, committed);
     }
     for (const removal of removals) {
       const snapshot = snapshots.get(removal)!;
@@ -518,7 +566,7 @@ export function writeIntegrationState(
   journal: AnyCodexIntegrationJournal,
   configWrite?: { path: string; data: string },
   removals: string[] = [],
-  additionalWrites: Array<{ path: string; data: string; followSymlink?: boolean }> = [],
+  additionalWrites: Array<{ path: string; data: string; followSymlink?: boolean; expectedSnapshot?: FileSnapshot }> = [],
 ): void {
   const data = serializeJournal(journal);
   // The recovery copy records intent and the primary copy records commit. If the process stops

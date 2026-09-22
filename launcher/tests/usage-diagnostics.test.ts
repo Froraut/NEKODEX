@@ -79,6 +79,29 @@ describe("usage diagnostic eligibility", () => {
 });
 
 describe("usage diagnostic ranking", () => {
+  test("selects median facts at 5–19 qualified samples and p95 only at 20", () => {
+    for (const count of [4, 5, 19, 20]) {
+      const facts = usageAttentionFacts([web({
+        accepted: count, completed: count, failed: 0, cancelled: 0,
+        knownOutcomeTotal: count, knownOutcomeCompletionRate: 1,
+        failures: [], classifiedFailureSamples: 0,
+        durations: { observedSamples: count, eligibleSamples: count, medianMs: 1_000, p95Ms: 4_000 },
+      })], "web");
+      expect(facts.map(fact => fact.kind)).toEqual(count < 5 ? [] : [count < 20 ? "median" : "duration"]);
+      if (count >= 5 && count < 20) expect(facts[0].eligibility.p95Ms).toBeNull();
+    }
+    expect(usageAttentionFacts([web({ failed: 0,
+      durations: { observedSamples: 5, eligibleSamples: 10, medianMs: 1_000, p95Ms: 4_000 },
+    })], "web")).toEqual([]);
+    const facts = usageAttentionFacts([
+      web({ accountId: "median", failed: 0 }),
+      web({ accountId: "failure", failed: 1 }),
+      web({ accountId: "p95", failed: 0,
+        durations: { observedSamples: 20, eligibleSamples: 20, medianMs: 1_000, p95Ms: 4_000 } }),
+    ], "web");
+    expect(facts.map(fact => fact.kind)).toEqual(["failures", "duration"]);
+  });
+
   test("sorts attention and eligible comparisons deterministically without manufacturing zero metrics", () => {
     const groups = [
       web({ accountId: "stable-first", accepted: 40, failed: 0, knownOutcomeTotal: 40,

@@ -119,3 +119,71 @@ test('closing a queue during acquisition cannot start the next waiting owner', a
     assert.equal(f.queue.snapshot().entries.find(row => row.traceId === 'trace-close-second').status, 'waiting');
   } finally { release(); f.close(); }
 });
+
+for (const status of ['admitted', 'running']) {
+  test(`pump reconciles a lost ${status} lease durably without resubmission or unsent cleanup`, async () => {
+    const { AccountBrowserPool } = require('../electron/account-pool.cjs');
+    const tabs = new Map();
+    const pool = { hosts: new Map([['default', { turnTabs: tabs }]]) };
+    let dispatches = 0;
+    const f = fixture({
+      leaseCurrent: (req, lease) => AccountBrowserPool.prototype.admissionLeaseCurrent.call(pool, req, lease),
+      dispatch: async req => {
+        dispatches++;
+        const surfaceId = String(dispatches).repeat(32);
+        tabs.set(req.traceId, { ...req, status: 'running', surfaceId });
+        return { surfaceId };
+      },
+      releaseUnsent: () => { throw new Error('Missing lease does not prove not-sent'); },
+    });
+    let restored;
+    try {
+      const lost = request(`trace-lost-${status}`), live = request(`trace-live-${status}`);
+      const queued = f.queue.request(lost); await tick();
+      const lease = f.queue.request(lost);
+      if (status === 'running') f.queue.acknowledge(lost.traceId, lost.helperPid, lease.surfaceId);
+      f.queue.request(live); await tick();
+      // A replacement with the same trace but another surface/helper is not this lease.
+      tabs.set(lost.traceId, { ...tabs.get(lost.traceId), surfaceId: 'f'.repeat(32), helperPid: process.pid + 1 });
+      await f.queue.pump();
+      const orphan = f.queue.snapshot().entries.find(row => row.id === queued.queueId);
+      assert.equal(orphan.status, 'interrupted');
+      assert.equal(orphan.reason, 'lease-ended');
+      assert.equal(orphan.canDismiss, true);
+      assert.equal(orphan.canResume, false);
+      assert.equal(f.queue.entries.find(row => row.request.traceId === live.traceId).status, 'admitted');
+      assert.throws(() => f.queue.request(lost), error => error.code === 'queue_task_ended');
+      tabs.delete(lost.traceId); await f.queue.pump();
+      assert.equal(dispatches, 2);
+      const saved = JSON.parse(fs.readFileSync(f.options.file, 'utf8')).entries.find(row => row.id === queued.queueId);
+      assert.equal(saved.status, 'interrupted'); assert.equal(saved.reason, 'lease-ended');
+      restored = new BrowserAdmissionQueue(f.options);
+      assert.equal(restored.snapshot().entries.find(row => row.id === queued.queueId).reason, 'lease-ended');
+      await restored.pump(); assert.equal(dispatches, 2);
+      await f.queue.action(queued.queueId, 'dismiss');
+      assert.equal(f.queue.entries.some(row => row.id === queued.queueId), false);
+    } finally { restored?.close(); f.close(); }
+  });
+}
+
+test('reconciled incident is retained at history capacity until explicitly dismissed', async () => {
+  let current = true, dispatches = 0;
+  const f = fixture({ leaseCurrent: () => current, dispatch: async () => { dispatches++; return { surfaceId: 'a'.repeat(32) }; } });
+  try {
+    const queued = f.queue.request(request('trace-capacity-orphan')); await tick();
+    const { randomUUID } = require('node:crypto');
+    const template = f.queue.entries[0];
+    f.queue.entries.push(...Array.from({ length: 2047 }, (_, index) => ({ ...template,
+      id: randomUUID(), request: request(`trace-incident-${index}`), status: 'interrupted', reason: 'previous-run' })));
+    current = false; await f.queue.pump();
+    assert.equal(f.queue.snapshot().entries.length, 2048);
+    assert.throws(() => f.queue.request(request('trace-capacity-new')), /Review and dismiss/);
+    assert.equal(dispatches, 1);
+    await f.queue.action(queued.queueId, 'dismiss');
+    assert.equal(f.queue.entries.length, 2047);
+    current = true;
+    f.queue.request(request('trace-capacity-new')); await tick();
+    assert.equal(dispatches, 2);
+    assert.equal(f.queue.entries.length, 2048);
+  } finally { f.close(); }
+});

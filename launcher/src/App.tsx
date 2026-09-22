@@ -638,6 +638,7 @@ function Onboarding({
   return (
     <main
       className="welcome"
+      lang={selectedLanguage}
     >
       <header className="welcome-top draggable">
         <div className="welcome-brand no-drag">
@@ -667,6 +668,7 @@ function Onboarding({
                   active={selectedLanguage === code}
                   key={code}
                   label={option.label}
+                  language={code}
                   marker={option.marker}
                   onClick={() => setSelectedLanguage(code)}
                 />
@@ -1230,6 +1232,7 @@ function LauncherShell({
                 action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
                 onError={cause => setError(messageOf(cause))} />
               <TaskCenter tasks={browser?.tasks ?? []} language={language} disabled={transitionBusy}
+                historyHealth={browser?.taskHistoryHealth}
                 open={async tabId => { await api!.selectBrowserTab(tabId); navigateSurface('browser'); }}
                 cancel={(tabId, traceId) => api!.closeBrowserTab(tabId, traceId)}
                 dismiss={(accountId, id) => api!.dismissTask(accountId, id)}
@@ -2825,6 +2828,7 @@ function SettingsSurface({
   const [turnsCancelled, setTurnsCancelled] = useState<string | null>(null);
   const taskCopy = taskControlCopy[language] ?? taskControlCopy.en;
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const [routeDiagnosticsGeneration, setRouteDiagnosticsGeneration] = useState(0);
   const codexStatus = codexSettingsStatus(snapshot.state, devProfile, Boolean(catalogFailure));
   const proModelBusy = busy
     || operation?.status === "running"
@@ -2929,6 +2933,7 @@ function SettingsSurface({
       if (!result.cancelled) {
         updateState(result.state);
         setIntegrationRemoved(true);
+        setRouteDiagnosticsGeneration((generation) => generation + 1);
       }
     } catch (cause) {
       setError(messageOf(cause));
@@ -3113,6 +3118,7 @@ function SettingsSurface({
 
       <SectionHeading label={copy.diagnostics} spaced />
       {!devProfile ? <RouteDiagnostics
+        key={routeDiagnosticsGeneration}
         disabled={busy || operation?.status === "running" || browser?.navigationLocked === true}
         language={language}
         readReport={() => api!.routeDiagnostics()}
@@ -3598,11 +3604,13 @@ function DoctorSummary({ copy, language, report }: { copy: Copy; language: Langu
 function WelcomeOption({
   active,
   label,
+  language,
   marker,
   onClick,
 }: {
   active: boolean;
   label: string;
+  language: Language;
   marker: string;
   onClick: () => void;
 }) {
@@ -3610,6 +3618,7 @@ function WelcomeOption({
     <button
       aria-checked={active}
       className={`welcome-option${active ? " is-active" : ""}`}
+      lang={language}
       onClick={onClick}
       role="radio"
       tabIndex={active ? 0 : -1}

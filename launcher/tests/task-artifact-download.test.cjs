@@ -32,6 +32,39 @@ function fixture() {
   return { root, taskDirectory, partialPath: path.join(taskDirectory, '.result.csv.partial') };
 }
 
+for (const scenario of [
+  { name: 'advertised bytes exceed the limit', url: 'https://chatgpt.com/result.csv', bytes: 11, error: /byte limit/ },
+  { name: 'URL is untrusted', url: 'https://example.com/result.csv', bytes: 1, error: /not trusted/ },
+  { name: 'save path setup fails', url: 'https://chatgpt.com/result.csv', bytes: 1, error: /save path failed/, failSave: true },
+]) {
+  test(`early artifact rejection settles and releases ownership when ${scenario.name}`, { timeout: 1000 }, async () => {
+    const session = new EventEmitter();
+    const paths = fixture();
+    const guard = createTaskArtifactDownloadGuard(session);
+    try {
+      const lease = guard.register({
+        webContentsId: 42, traceId: 'trace_early_reject', assistantTurnId: 'assistant-turn',
+        expectedFilename: 'result.csv', taskDirectory: paths.taskDirectory, partialPath: paths.partialPath,
+        maxBytes: 10,
+      });
+      const observed = lease.completion.then(() => assert.fail('rejected artifact resolved'), error => error);
+      const item = new FakeDownload('result.csv', scenario.url, scenario.bytes);
+      if (scenario.failSave) item.setSavePath = () => { throw new Error('save path failed'); };
+      assert.doesNotThrow(() => session.emit('will-download', {}, item, { id: 42 }));
+      assert.equal(item.cancelled, true);
+      assert.equal(guard.has(lease.leaseId), false);
+      assert.match((await observed).message, scenario.error);
+      assert.equal(guard.cancel(lease.leaseId), false);
+      fs.writeFileSync(paths.partialPath, 'late partial data');
+      item.emit('done', {}, 'cancelled');
+      assert.equal(fs.existsSync(paths.partialPath), false);
+    } finally {
+      guard.dispose();
+      fs.rmSync(paths.root, { recursive: true, force: true });
+    }
+  });
+}
+
 test('task artifact guard bounds matching DownloadItem bytes and leaves unrelated downloads untouched', async () => {
   const session = new EventEmitter();
   const paths = fixture();

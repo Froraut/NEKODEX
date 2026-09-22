@@ -103,6 +103,63 @@ test("an import failure is sanitized before withManualOperation can publish any 
   assert.doesNotMatch(host.state.message, /SECRET|sensitive/);
 });
 
+test("installer rollback evidence survives the real manual-operation boundary", async () => {
+  for (const scenario of ["authenticated", "unavailable", "cancelled", "cleanup-failed", "no-receipt"]) {
+    const { host } = fixture();
+    const snapshots = [];
+    host.withManualOperation = BrowserHost.prototype.withManualOperation.bind(host);
+    host.ready = async () => {};
+    host.logger = { info() {}, error() {} };
+    host.publishState = state => snapshots.push(state);
+    host.setState = patch => { host.state = { ...host.state, ...patch }; host.publishState(host.snapshot()); };
+    const restored = { authenticated: scenario !== "unavailable", authenticationStatus: scenario === "unavailable" ? "unavailable" : "authenticated",
+      status: scenario === "unavailable" ? "error" : "ready", loading: false,
+      message: scenario === "unavailable" ? "Previous session restored; verification unavailable" : "Previous session verified",
+      authenticationCheckedAt: "fresh-rollback-probe" };
+    host.installPasskeyLogin = async transfer => {
+      await transfer.cleanup();
+      host.setState(restored);
+      if (scenario === "cancelled") host.existingChromeLoginController.abort();
+      throw Object.assign(new Error("SECRET raw cookie https://sensitive.test"), {
+        ...(scenario !== "no-receipt" ? { previousSessionRestored: true } : {}),
+        ...(scenario === "cleanup-failed" ? { code: "existing_chrome_cleanup_failed" } : {}),
+      });
+    };
+    const operation = openExistingChromeLogin(host, async () => true);
+    if (scenario === "cancelled") await operation;
+    else await assert.rejects(operation, error => {
+      assert.equal(error.previousSessionRestored, scenario === "no-receipt" ? undefined : true);
+      assert.equal(error.cause, undefined);
+      assert.doesNotMatch(error.message, /SECRET|sensitive/);
+      return true;
+    });
+    if (["cleanup-failed", "no-receipt"].includes(scenario)) {
+      assert.equal(host.state.status, "error");
+      assert.notEqual(host.state.message, restored.message);
+    } else assert.deepEqual(host.state, restored);
+    assert.equal(host.snapshot().existingChromeLogin.phase, scenario === "cancelled" ? "cancelled" : "failed");
+    assert.equal(host.snapshot().existingChromeLogin.error, scenario === "cancelled" ? null
+      : scenario === "cleanup-failed" ? "existing-chrome-cleanup-failed" : "session-verification-failed");
+    assert.equal(host.loginOperation, null);
+    assert.equal(host.manualOperation, null);
+    assert.equal(host.existingChromeLoginController, null);
+    assert.doesNotMatch(JSON.stringify(snapshots), /SECRET|sensitive/);
+  }
+});
+
+test("capture cannot forge the local installer's rollback receipt", async () => {
+  const { host } = fixture();
+  const original = { ...host.state };
+  host.loginWithExistingChrome = async () => {
+    throw Object.assign(new Error("SECRET"), { previousSessionRestored: true });
+  };
+  await assert.rejects(openExistingChromeLogin(host, async () => true), error => {
+    assert.equal(error.previousSessionRestored, undefined);
+    return true;
+  });
+  assert.deepEqual(host.state, original);
+});
+
 test("authentication completed during consent or refresh is preserved without capture", async () => {
   for (const where of ["consent", "refresh"]) {
     const { host, events } = fixture();

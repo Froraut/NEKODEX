@@ -377,8 +377,8 @@ export async function requestRetainedCompactionHandoff(
     );
     try { checkpoints.finish(checkpoint, "accepted", summary); }
     catch {
-      // Persistence is diagnostic, not part of live success. Rejecting here would evict the
-      // shared successful run and permit a reconnect to submit a second browser operation.
+      // Persistence is diagnostic, not part of live success. Rejecting here would replace
+      // an accepted handoff with a failed exact-run result for reconnecting observers.
       console.warn("Compaction checkpoint acceptance not persisted", { id: checkpoint.id, binding: checkpoint.binding });
     }
     return summary;
@@ -549,13 +549,15 @@ export function runStructuredCompactionOnce(
   });
   // Return a deadline failure promptly, while its physical browser owner still blocks retries
   // and cancel-all completion. A cancelled queued run must also retain its predecessor's gate.
-  const ownerSettlement = promise.then(() => false, () => true).then(async failed => {
+  const ownerSettlement = promise.then(() => undefined, () => undefined).then(async () => {
     await Promise.allSettled(physicalSettlements);
     run.active = false;
     if (structuredCompactionOwners.get(owner.ownerKey) === ownerSettlement) {
       structuredCompactionOwners.delete(owner.ownerKey);
     }
-    if (failed && structuredCompactionRuns.get(key) === run) structuredCompactionRuns.delete(key);
+    // Cleanup releases physical ownership, not the exact request's submission history.
+    // Retain rejected promises under the same TTL as successes: an ambiguous post-Send
+    // failure must replay its error instead of starting another browser submission.
   });
   const run: CachedCompactionRun = {
     createdAt: Date.now(),

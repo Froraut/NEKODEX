@@ -236,7 +236,15 @@ function currentTurnInput(parsed: CodexParsedRequest, turnId: string): unknown[]
   const boundary = currentTurnBoundary(parsed, input, turnId);
   if (boundary === undefined) return undefined;
   const suffix = input.slice(boundary);
-  return suffix.length > 0 ? suffix : undefined;
+  if (suffix.length === 0) return undefined;
+  // A checkpoint is assistant-owned history and cannot replace canonical instructions.
+  // Later messages do not prove supersession; preserve every prefix instruction verbatim
+  // and in order, even when the current suffix includes more system/developer messages.
+  const instructions = input.slice(0, boundary).filter(value => {
+    const item = record(value);
+    return item?.role === "system" || item?.role === "developer";
+  });
+  return [...instructions, ...suffix];
 }
 
 function checkpointContext(checkpoint: ChatGptLunaCheckpoint): string {

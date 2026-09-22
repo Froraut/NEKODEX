@@ -39,17 +39,17 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
             <span aria-hidden="true">{index < phase ? <Icon name="check" /> : index + 1}</span>{stage}
           </li>)}
         </ol> : null}
-        {busy && phase < 1 && !cancellationPending ? <UpdateProgress key={candidate ?? "pending"} state={state} label={copy.progress} /> : null}
+        {busy && phase < 1 && !cancellationPending ? <UpdateProgress key={candidate ?? "pending"} state={state} label={copy.progress} language={language} /> : null}
         {failure ? <p className="updates-error" role="alert">{failure}</p> : null}
         {state.status === "disabled" ? <p>{copy.disabledBody}</p> : <>
           <p>{cancellationPending ? copy.cancellingBody : busy ? copy.restart : copy.automatic}</p>
-          {blocked && state.status === "available" ? <p className="updates-wait">{copy.wait}</p> : null}
+          {(blocked || transitionBusy) && state.status === "available" ? <p className="updates-wait">{copy.wait}</p> : null}
           <div className="updates-actions">
             {onCancel && (["downloading", "verifying", "cancelling"].includes(state.status) || cancelling) ? (
               <button type="button" className="button-secondary" disabled={cancellationPending}
                 onClick={onCancel}>{cancellationPending ? copy.cancelling : copy.cancel}</button>
             ) : null}
-            {state.status === "available" ? <button type="button" className="button-primary" disabled={blocked || busy || checking} onClick={onInstall}>
+            {state.status === "available" ? <button type="button" className="button-primary" disabled={blocked || transitionBusy || busy || checking} onClick={onInstall}>
               <Icon name="update" />{copy.install}
             </button> : null}
             {!busy ? <button type="button" className={state.status === "available" ? "button-secondary" : "button-primary"} disabled={transitionBusy || checking || cooldown || state.status === "checking"} onClick={onCheck}>

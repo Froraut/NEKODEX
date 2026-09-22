@@ -1,11 +1,20 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { AccountProxy } from "./types";
+import type { AccountProxy, Language } from "./types";
 import type { Copy } from "./i18n";
 import { normalizeAccountProxy } from "./account-proxy-validation";
 import "./account-forms.css";
 
-export function AccountProxySettings({ proxy, disabled, blockedReason, copy, save }: {
-  proxy: AccountProxy; disabled: boolean; blockedReason?: string; copy: Copy;
+const restoreSavedProxyCopy: Record<Language, string> = {
+  en: "Restore saved proxy",
+  ru: "Восстановить сохранённый прокси",
+  "zh-CN": "恢复已保存的代理",
+  "zh-TW": "還原已儲存的代理",
+  ja: "保存済みのプロキシに戻す",
+  ko: "저장된 프록시 복원",
+};
+
+export function AccountProxySettings({ proxy, language, disabled, blockedReason, copy, save }: {
+  proxy: AccountProxy; language: Language; disabled: boolean; blockedReason?: string; copy: Copy;
   save: (value: AccountProxy) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState(proxy);
@@ -19,6 +28,7 @@ export function AccountProxySettings({ proxy, disabled, blockedReason, copy, sav
   useEffect(() => { setDraft(JSON.parse(saved)); setTouched(false); setFailed(false); }, [saved]);
   const normalized = normalizeAccountProxy(draft);
   const changed = JSON.stringify(normalized.value) !== JSON.stringify(normalizeAccountProxy(proxy).value);
+  const draftChanged = draft.mode !== proxy.mode || (draft.url ?? "") !== (proxy.url ?? "");
   const needsUrl = !["system", "direct"].includes(draft.mode);
   const invalid = normalized.error && (touched || Boolean(draft.url));
   const errorText = normalized.error === "pac" ? copy.accountProxyPacInvalid
@@ -28,6 +38,10 @@ export function AccountProxySettings({ proxy, disabled, blockedReason, copy, sav
     inFlight.current = true; setSaving(true); setFailed(false);
     try { if (!await save(normalized.value)) { setFailed(true); } }
     finally { inFlight.current = false; setSaving(false); }
+  };
+  const restoreSaved = () => {
+    if (disabled || inFlight.current || !draftChanged) return;
+    setDraft({ ...proxy }); setTouched(false); setFailed(false);
   };
   return <details className="account-form-panel account-proxy">
     <summary>{copy.accountProxy}</summary>
@@ -48,6 +62,8 @@ export function AccountProxySettings({ proxy, disabled, blockedReason, copy, sav
         <button type="submit" className="button-secondary" disabled={!changed || !normalized.value || saving}>
           {saving ? copy.accountFormSaving : copy.proxySave}
         </button>
+        <button type="button" className="button-secondary" disabled={!draftChanged || saving}
+          onClick={restoreSaved}>{restoreSavedProxyCopy[language]}</button>
       </fieldset>
       <p id={statusId} className={invalid || failed ? "field-error" : "field-hint"} role={invalid || failed ? "alert" : "status"}>
         {blockedReason || (invalid ? errorText : failed ? copy.accountFormFailed : saving ? copy.accountFormSaving

@@ -25,7 +25,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     needsOriginalAccount: "Needs the original ChatGPT account",
     restored: (count: number) => `${count} workspace${count === 1 ? "" : "s"} restored`,
     skippedTemporary: (count: number) => `${count} Temporary Chat workspace${count === 1 ? " was" : "s were"} not restored`,
-    skippedCapacity: (count: number) => `${count} saved workspace${count === 1 ? " is" : "s are"} waiting for a free window slot`,
+    skippedCapacity: (count: number) => `${count} saved workspace${count === 1 ? " is" : "s are"} waiting for a free window slot; choose Restore saved workspaces after freeing a slot`,
     skippedIdentity: (count: number) => `${count} saved workspace${count === 1 ? " needs" : "s need"} its original ChatGPT account`,
   },
   ru: {
@@ -40,7 +40,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     needsOriginalAccount: "Нужен исходный аккаунт ChatGPT",
     restored: (count: number) => `Восстановлено окон: ${count}`,
     skippedTemporary: (count: number) => `Не восстановлено Temporary Chat: ${count}`,
-    skippedCapacity: (count: number) => `Ожидают свободного места: ${count}`,
+    skippedCapacity: (count: number) => `Ожидают свободного места: ${count}. Освободите место и нажмите «Восстановить сохранённые окна».`,
     skippedIdentity: (count: number) => `Требуют исходный аккаунт ChatGPT: ${count}`,
   },
   "zh-CN": {
@@ -55,7 +55,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     needsOriginalAccount: "需要原始 ChatGPT 账户",
     restored: (count: number) => `已恢复 ${count} 个工作区`,
     skippedTemporary: (count: number) => `${count} 个 Temporary Chat 工作区未恢复`,
-    skippedCapacity: (count: number) => `${count} 个已保存工作区正在等待可用窗口`,
+    skippedCapacity: (count: number) => `${count} 个已保存工作区正在等待可用窗口；腾出空间后请选择“恢复已保存的工作区”`,
     skippedIdentity: (count: number) => `${count} 个已保存工作区需要原始 ChatGPT 账户`,
   },
   "zh-TW": {
@@ -70,7 +70,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     needsOriginalAccount: "需要原始 ChatGPT 帳戶",
     restored: (count: number) => `已還原 ${count} 個工作區`,
     skippedTemporary: (count: number) => `${count} 個 Temporary Chat 工作區未還原`,
-    skippedCapacity: (count: number) => `${count} 個已儲存工作區正在等待可用視窗`,
+    skippedCapacity: (count: number) => `${count} 個已儲存工作區正在等待可用視窗；騰出空間後請選擇「還原已儲存的工作區」`,
     skippedIdentity: (count: number) => `${count} 個已儲存工作區需要原始 ChatGPT 帳戶`,
   },
   ja: {
@@ -85,7 +85,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     needsOriginalAccount: "元の ChatGPT アカウントが必要です",
     restored: (count: number) => `${count} 件のワークスペースを復元しました`,
     skippedTemporary: (count: number) => `${count} 件の Temporary Chat は復元されませんでした`,
-    skippedCapacity: (count: number) => `${count} 件の保存済みワークスペースは空き待ちです`,
+    skippedCapacity: (count: number) => `${count} 件の保存済みワークスペースは空き待ちです。空きを作り「保存済みワークスペースを復元」を選択してください`,
     skippedIdentity: (count: number) => `${count} 件の保存済みワークスペースには元の ChatGPT アカウントが必要です`,
   },
   ko: {
@@ -100,7 +100,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     needsOriginalAccount: "원래 ChatGPT 계정이 필요함",
     restored: (count: number) => `작업 공간 ${count}개 복원됨`,
     skippedTemporary: (count: number) => `Temporary Chat 작업 공간 ${count}개는 복원되지 않음`,
-    skippedCapacity: (count: number) => `저장된 작업 공간 ${count}개가 빈 창을 기다리는 중`,
+    skippedCapacity: (count: number) => `저장된 작업 공간 ${count}개가 빈 창을 기다리는 중입니다. 공간을 확보한 후 저장된 작업 공간 복원을 선택하세요`,
     skippedIdentity: (count: number) => `저장된 작업 공간 ${count}개에 원래 ChatGPT 계정이 필요함`,
   },
 };

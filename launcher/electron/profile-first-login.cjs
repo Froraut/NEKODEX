@@ -1,4 +1,5 @@
 const { verifiedCaptureTransfer, verifyCapturedAccount } = require('./chrome-session-identity.cjs');
+const { chromeProfileErrorGuidance, safeProfileLoginError } = require('./chrome-profile-error-guidance.cjs');
 
 function createProfileFirstLogin({choose, runtime, session, dialog, window, language}) {
   return async (onProgress, context) => {
@@ -75,16 +76,17 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
           actualIdentityConfirmed:!previous||previous.principalFingerprint!==identity.principalFingerprint,
         }});
     } catch(error) {
-      choice.rollbackBinding();
-      if(capture)await capture.cleanup();
-      if (!signal?.aborted && error?.code!=='profile-login-cancelled') await dialog.showMessageBox(window(), {type:'error',
+      let failure = safeProfileLoginError(error);
+      // A cleanup failure must not be hidden by cancellation or expose private paths.
+      try { choice.rollbackBinding(); }
+      catch { failure = safeProfileLoginError({code:'existing_chrome_cleanup_failed'}); }
+      try { if(capture)await capture.cleanup(); }
+      catch { failure = safeProfileLoginError({code:'existing_chrome_cleanup_failed'}); }
+      if ((!signal?.aborted && failure.code!=='profile-login-cancelled')
+        || failure.code==='existing_chrome_cleanup_failed') await dialog.showMessageBox(window(), {type:'error',
         message:ru?'Вход не подключён':'Sign-in was not connected',
-        detail:error?.code==='chrome-account-mismatch'
-          ? (ru?'Chrome вернул другой ранее привязанный аккаунт ChatGPT. Текущая сессия NEKODEX и сохранённая привязка не изменены.':'Chrome returned a different previously bound ChatGPT account. The current NEKODEX session and saved binding were not changed.')
-          : error?.code==='chrome-profile-claim-missing'
-            ? (ru?'Не удалось найти служебную вкладку выбранного профиля через разрешённое соединение Chrome. Оставьте окно выбранного профиля открытым и повторите подключение. Сессия NEKODEX не изменена.':'The selected profile’s connection tab was not found through the approved Chrome connection. Keep the selected profile window open and retry connecting. The NEKODEX session was not changed.')
-            : (ru?'Не удалось подтвердить вход из выбранного Chrome. Проверьте вход в ChatGPT и разрешение Chrome на подключение. Сессия NEKODEX и сохранённая привязка не изменены.':'Could not verify sign-in from the selected Chrome profile. Check ChatGPT sign-in and Chrome connection approval. The NEKODEX session and saved binding were not changed.'),buttons:['OK']});
-      throw error;
+        detail:chromeProfileErrorGuidance(failure.code, ru?'ru':'en'),buttons:['OK']});
+      throw failure;
     } finally {
       signal?.removeEventListener('abort',abort);
       choice.cleanupCapture?.();

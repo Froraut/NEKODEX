@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { unzipSync } from "fflate";
 import type { AppConfig, BrowserInteractionMode, TunnelConfig } from "./config";
@@ -217,24 +217,52 @@ function manifestPath(): string {
   return join(getConfigDir(), "bin", "tunnel-client-manifest.json");
 }
 
-function acquireTunnelInstallLock(lockPath: string): () => Error | undefined {
+export function acquireTunnelInstallLock(
+  lockPath: string,
+  io: Pick<typeof import("node:fs"), "writeFileSync" | "fsyncSync" | "closeSync"> = { writeFileSync, fsyncSync, closeSync },
+): () => Error | undefined {
   const token = randomUUID();
   let fd: number | undefined;
+  let owned: { dev: number; ino: number } | undefined;
+  const ownsEntry = () => {
+    const entry = lstatSync(lockPath, { throwIfNoEntry: false });
+    return entry?.isFile() && owned && entry.dev === owned.dev && entry.ino === owned.ino;
+  };
   try {
     fd = openSync(lockPath, "wx", 0o600);
-    writeFileSync(fd, `${token}\n`);
-    fsyncSync(fd);
-    closeSync(fd);
+    owned = fstatSync(fd);
+    io.writeFileSync(fd, `${token}\n`);
+    io.fsyncSync(fd);
+    io.closeSync(fd);
+    fd = undefined;
   } catch (error) {
-    if (fd !== undefined) closeSync(fd);
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error("Tunnel client installation is already in progress; preserving the existing installation");
+    const cleanupErrors: unknown[] = [];
+    // Keep the descriptor open until identity comparison, so its inode cannot be reused.
+    if (owned) {
+      try {
+        if (ownsEntry()) unlinkSync(lockPath);
+        else if (lstatSync(lockPath, { throwIfNoEntry: false })) {
+          cleanupErrors.push(new Error("Tunnel client installation lock ownership changed; preserving the lock"));
+        }
+      } catch (cleanup) { cleanupErrors.push(cleanup); }
+    }
+    if (fd !== undefined) {
+      try { io.closeSync(fd); } catch (cleanup) { cleanupErrors.push(cleanup); }
+    }
+    if (cleanupErrors.length) {
+      throw new AggregateError([error, ...cleanupErrors],
+        `${error instanceof Error ? error.message : String(error)}; tunnel lock cleanup also failed: ${cleanupErrors.map(String).join("; ")}`,
+        { cause: error });
+    }
+    if (fd === undefined && (error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("Tunnel client installation is already in progress; preserving the existing installation", { cause: error });
     }
     throw error;
   }
   return () => {
     try {
-      if (readFileSync(lockPath, "utf8") !== `${token}\n`) {
+      if (!ownsEntry() || readFileSync(lockPath, "utf8") !== `${token}\n`) {
+        if (!lstatSync(lockPath, { throwIfNoEntry: false })) return undefined;
         return new Error("Tunnel client installation lock ownership changed; preserving the lock");
       }
       unlinkSync(lockPath);

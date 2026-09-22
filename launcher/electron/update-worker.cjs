@@ -504,23 +504,57 @@ async function main() {
   const job = validateJob(JSON.parse(fs.readFileSync(jobPath, "utf8")));
   appendLog(job, `waiting for exact launcher process ${job.parentPid} before installing v${job.version}`);
   await waitForParent(job.parentPid, job.parentIdentity);
+  await installUpdate(job);
+}
+
+// The guardian is a pre-replacement boundary. Once runTransaction is entered,
+// that function alone owns rollback/relaunch, including its pending-stop fence.
+async function installUpdate(job, deps = {}) {
   let transaction;
+  let guard;
+  let runStarted = false;
   try {
-    transaction = prepareTransaction(job);
-    const guard = spawn(transaction.runtime, [path.join(transaction.root, "update-worker.cjs"),
+    transaction = (deps.prepareTransaction || prepareTransaction)(job, deps);
+    guard = (deps.spawn || spawn)(transaction.runtime, [path.join(transaction.root, "update-worker.cjs"),
       path.join(transaction.root, "transaction.json"), "--guard"], {
       detached: true, stdio: ["pipe", "ignore", "ignore"], windowsHide: true,
     });
     await new Promise((resolve, reject) => { guard.once("spawn", resolve); guard.once("error", reject); });
     guard.unref();
-    await runTransaction(transaction);
-    guard.stdin.end();
+    runStarted = true;
+    await (deps.runTransaction || runTransaction)(transaction, deps);
   } catch (error) {
-    appendLog(job, `update failed: ${error.stack || error.message}`);
-    if (!transaction) await launch(executableFor(job));
-    throw error;
+    const failures = [error];
+    if (!runStarted) {
+      let relaunchAllowed = !transaction;
+      if (transaction) {
+        try {
+          rollback(transaction);
+          // rollback sets phase before writing the terminal journal. Only its
+          // successful return proves later recovery will be cleanup-only.
+          relaunchAllowed = true;
+          cleanup(transaction, deps);
+        } catch (cleanupError) {
+          failures.push(new Error(`prepared update rollback/cleanup failed: ${cleanupError.message}`, { cause: cleanupError }));
+        }
+      }
+      // Leave a nonterminal prepared transaction's relaunch to recovery. A
+      // cleanup error after durable rollback does not transfer that ownership.
+      if (relaunchAllowed) {
+        try { await (deps.launch || launch)(executableFor(job)); }
+        catch (launchError) {
+          failures.push(new Error(`previous application relaunch failed: ${launchError.message}`, { cause: launchError }));
+        }
+      }
+    }
+    const failure = failures.length === 1 ? error
+      : new AggregateError(failures, failures.map(item => item.message).join("; "));
+    appendLog(job, `update failed: ${failure.stack || failure.message}`);
+    throw failure;
+  } finally {
+    guard?.stdin?.end();
   }
 }
-module.exports = { cleanup, commit, executableFor, launch, main, operation, prepareTransaction, processAlive, waitForParent,
+module.exports = { cleanup, commit, executableFor, installUpdate, launch, main, operation, prepareTransaction, processAlive, waitForParent,
   recover, replace, rollback, runTransaction, stopReplacement, waitForReadiness, writeJournal };
 if (require.main === module) void main().catch(() => process.exit(1));

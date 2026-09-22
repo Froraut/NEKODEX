@@ -426,25 +426,60 @@ test("retained compaction deadline bounds browser settlement after the control h
   expect(transactionAborted).toBeTrue();
 });
 
-test("a rejected exact compaction run is evicted while a successful run remains replayable", async () => {
-  const key = `exact-retry-${Date.now()}-${Math.random()}`;
+test("a rejected exact compaction replays its failure after cleanup and releases its physical owner", async () => {
+  const key = `exact-failure-${Date.now()}-${Math.random()}`;
   const owner = { ownerKey: `owner-${key}`, traceIds: [`trace-${key}`] };
+  const failure = new Error("ambiguous failure after Send");
+  let releasePhysical!: () => void;
+  const physical = new Promise<void>(resolve => { releasePhysical = resolve; });
   let starts = 0;
-  await expect(runStructuredCompactionOnce(key, owner, async () => {
+  const failed = runStructuredCompactionOnce(key, owner, async (_signal, retain) => {
     starts += 1;
-    throw new Error("first handoff failed");
-  })).rejects.toThrow("first handoff failed");
-  await Bun.sleep(0);
-  expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
-
-  const retry = runStructuredCompactionOnce(key, owner, async () => {
-    starts += 1;
-    return "recovered checkpoint";
+    retain(physical);
+    throw failure;
   });
-  expect(runStructuredCompactionOnce(key, owner, async () => "must not start")).toBe(retry);
-  await expect(retry).resolves.toBe("recovered checkpoint");
-  await expect(existingStructuredCompactionRun(key, owner)).resolves.toBe("recovered checkpoint");
-  expect(starts).toBe(2);
+  await expect(failed).rejects.toBe(failure);
+  let nextStarted = false;
+  const next = runStructuredCompactionOnce(`${key}-next`, owner, async () => {
+    nextStarted = true;
+    return "next checkpoint";
+  });
+  try {
+    await Bun.sleep(0);
+    expect(nextStarted).toBeFalse();
+  } finally {
+    releasePhysical();
+  }
+  await expect(next).resolves.toBe("next checkpoint");
+  expect(nextStarted).toBeTrue();
+  expect(existingStructuredCompactionRun(key, owner)).toBe(failed);
+  const replay = runStructuredCompactionOnce(key, owner, async () => {
+    starts += 1;
+    return "must not resend";
+  });
+  expect(replay).toBe(failed);
+  await expect(replay).rejects.toBe(failure);
+  await expect(existingStructuredCompactionRun(`${key}-next`, owner)).resolves.toBe("next checkpoint");
+  expect(starts).toBe(1);
+});
+
+test("a rejected exact compaction tombstone expires under the existing bounded retention policy", async () => {
+  const originalNow = Date.now;
+  let now = originalNow();
+  const key = `exact-failure-ttl-${now}-${Math.random()}`;
+  const owner = { ownerKey: `owner-${key}`, traceIds: [] };
+  Date.now = () => now;
+  try {
+    const failed = runStructuredCompactionOnce(key, owner, async () => { throw new Error("failed"); });
+    await expect(failed).rejects.toThrow("failed");
+    await Bun.sleep(0);
+    now += 29 * 60_000;
+    expect(existingStructuredCompactionRun(key, owner)).toBe(failed);
+    now += 2 * 60_000;
+    expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test("operator cancellation aborts the shared structured compaction owner", async () => {
@@ -466,7 +501,7 @@ test("operator cancellation aborts the shared structured compaction owner", asyn
   expect(await cancelStructuredCompactionTrace(traceId, new Error("operator cancelled"))).toBe(1);
   await expect(run).rejects.toThrow("operator cancelled");
   expect(aborted).toBeTrue();
-  expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
+  await expect(existingStructuredCompactionRun(key, owner)).rejects.toThrow("operator cancelled");
 });
 
 test("native interruption before registration prevents the detached compaction from starting", async () => {
@@ -1391,10 +1426,13 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
   let releasePhysical!: () => void;
   const physicalSettlement = new Promise<void>(resolve => { releasePhysical = resolve; });
   let browserStarts = 0;
+  let sends = 0;
   let cancelled = false;
   let fallbackTrace = "";
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
+    turn.onSendActivated?.();
+    sends += 1;
     fallbackTrace = turn.traceId;
     started();
     turn.abortSignal!.addEventListener("abort", () => { cancelled = true; }, { once: true });
@@ -1430,8 +1468,10 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
     expect(events.filter(event => event.type === "error")).toHaveLength(2);
     expect(events.some(event => event.type === "done")).toBeFalse();
     await observe();
-    expect(browserStarts).toBe(2);
-    expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+    expect(browserStarts).toBe(1);
+    expect(sends).toBe(1);
+    expect(events.filter(event => event.type === "error")).toHaveLength(3);
+    expect(events.some(event => event.type === "done")).toBeFalse();
   } finally {
     releasePhysical();
     await Promise.allSettled(runs);

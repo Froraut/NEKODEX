@@ -36,6 +36,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "host",
 ]);
 
+/** Fetch-compatible transport: response bodies use the runtime's automatic decompression. */
 export type NativeFetch = (request: Request) => Promise<Response>;
 
 export type NativeImageEndpoint = "images/generations" | "images/edits";
@@ -429,7 +430,8 @@ export function observeNativeResponseBody(
         const httpFailure = failureCategoryForHttp(options.httpStatus);
         const outcome = terminal?.outcome ?? (httpFailure ? "failed"
           : options.eventStream || inspectionDisabled ? "incomplete" : "completed");
-        finalize(outcome, terminal?.failureCategory ?? httpFailure
+        // A terminal's explicit null means success/incompletion without a protocol failure.
+        finalize(outcome, terminal ? terminal.failureCategory : httpFailure
           ?? ((options.eventStream || inspectionDisabled) ? "protocol" : null));
         controller.close();
         return;
@@ -652,8 +654,9 @@ export async function forwardNativeCodexRequest(
     })}`);
   }
   const responseHeaders = endToEndHeaders(upstream.headers);
-  // fetch exposes decompressed image JSON; retaining gzip/br would make Codex decode it twice.
-  if (imageRequest) responseHeaders.delete("content-encoding");
+  // NativeFetch exposes decoded bodies on every endpoint, including upstream errors.
+  // Retaining gzip/br would make the downstream client decode those bytes twice.
+  responseHeaders.delete("content-encoding");
   const isEventStream = (upstream.headers.get("content-type") ?? "")
     .toLowerCase()
     .includes("text/event-stream");

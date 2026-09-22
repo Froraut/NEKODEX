@@ -21,6 +21,7 @@ function installMockLauncher() {
   }
   const language = ["en", "ru", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
   const benefitsScenario = scenario.startsWith("benefits-");
+  const astraScenario = scenario === "benefits-astra";
   const listeners = {};
   const emit = (name, value) => (listeners[name] || []).forEach((listener) => listener(value));
   const listen = (name) => (listener) => {
@@ -146,6 +147,25 @@ function installMockLauncher() {
   let startupAttempts = 0;
   const calls = [];
   window.fixtureCalls = calls;
+  if (astraScenario) {
+    browser.accountId = "fixture-primary";
+    browser.tasks = [
+      { id: "task-complete", traceId: "trace-complete", accountId: "fixture-primary", accountName: "Primary", model: "High", phase: "completed", submission: "accepted", terminal: true, canOpen: false, canCancel: false, canDismiss: true, retrySafe: false },
+      { id: "task-uncertain", traceId: "trace-review-uncertain", accountId: "fixture-primary", accountName: "Primary", model: "Pro", phase: "send-uncertain", submission: "uncertain", terminal: true, canOpen: true, canCancel: false, canDismiss: true, retrySafe: false },
+      { id: "task-active", traceId: "trace-active", accountId: "fixture-secondary", accountName: "Secondary", model: "Medium", phase: "responding", submission: "accepted", terminal: false, canOpen: true, canCancel: true, canDismiss: false, retrySafe: false },
+    ].map((task, index) => ({ ...task, tabId: `tab-${task.id}`, createdAt: Date.now() - 60000, updatedAt: Date.now(), sequence: index + 1 }));
+    browser.queue = { paused: true, pausedAccounts: ["fixture-primary"], storageIssue: null,
+      accounts: [{ id: "fixture-primary", label: "Primary" }, { id: "fixture-secondary", label: "Secondary" }],
+      entries: [{ id: 'queued-history', traceId: 'trace-waiting-for-history', accountId: 'fixture-primary', status: 'waiting', reason: 'task-history-unavailable', createdAt: Date.now(), position: 1, retryAt: null, ownerConnected: true, canCancel: false, canPrioritize: false, canResume: false, canDismiss: false }] };
+    browser.workspaces = { platform: "darwin", nativeTabs: true, maximum: 8, total: 1, accounts: [
+      { accountId: "fixture-primary", label: "Primary", nativeTabs: true, restoreAttempted: true,
+        restoreResult: { opened: 0, skippedTemporary: 0, skippedCapacity: 1, skippedIdentity: 0 }, manifestStatus: "ready",
+        items: [
+          { id: "workspace-live", groupId: "group-1", state: "open", kind: "window", title: "Current conversation", location: "https://chatgpt.com/c/live", restorable: true, needsOriginalAccount: false, temporary: false, active: true },
+          { id: "workspace-saved", groupId: "group-1", state: "saved", kind: "tab", title: "Saved conversation", location: "https://chatgpt.com/c/saved", restorable: true, needsOriginalAccount: false, temporary: false, active: false },
+        ] },
+    ] };
+  }
   window.codexWebLauncher = {
     snapshot: async () => {
       if (scenario === "startup-error" && startupAttempts++ === 0) throw new Error("Error invoking remote method 'launcher:snapshot': Error: Fixture runtime unavailable");
@@ -189,6 +209,33 @@ function installMockLauncher() {
       emit("browser", { ...browser }); return { ...browser };
     },
     accounts: async () => accountSnapshot,
+    browserWorkspaceSnapshot: async () => browser.workspaces ?? { platform: "darwin", nativeTabs: true, maximum: 8, total: 0, accounts: [] },
+    restoreBrowserWorkspaces: async (accountId) => {
+      calls.push(["restore-workspaces", accountId]);
+      const account = browser.workspaces.accounts.find(row => row.accountId === accountId);
+      const saved = account.items.filter(item => item.state === "saved");
+      saved.forEach(item => { item.state = "open"; });
+      browser.workspaces.total += saved.length;
+      account.restoreResult = { opened: saved.length, skippedTemporary: 0, skippedCapacity: 0, skippedIdentity: 0 };
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    dismissTask: async (accountId, id) => {
+      calls.push(["dismiss-task", accountId, id]);
+      browser.tasks = browser.tasks.filter(task => task.accountId !== accountId || task.id !== id);
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    pauseQueue: async (accountId, paused) => {
+      calls.push(["pause-queue", accountId, paused]);
+      if (accountId === null) browser.queue.paused = paused;
+      else browser.queue.pausedAccounts = paused ? [...new Set([...browser.queue.pausedAccounts, accountId])] : browser.queue.pausedAccounts.filter(id => id !== accountId);
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    uninstallIntegration: async () => {
+      calls.push(["uninstall-integration"]);
+      if (window.fixtureCancelUninstall) return { cancelled: true };
+      state.coreSetupComplete = false; state.codexCatalogVerified = false; state.codexPickerConfirmed = false;
+      emit("state", { ...state }); return { cancelled: false, state: { ...state } };
+    },
     refreshAccountAuthentication: async (id) => {
       calls.push(["account-auth-refresh", id]);
       accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(account => account.id === id
@@ -284,6 +331,14 @@ function installMockLauncher() {
       emit("state", { ...state }); return { ...state };
     },
   };
+  window.fixtureSetBrowser = patch => { Object.assign(browser, patch); emit("browser", { ...browser }); };
+  window.fixtureSetAccounts = value => { accountSnapshot = value; emit("browser", { ...browser }); };
+  window.fixtureSetUpdate = value => { update = value; emit("update", update); };
+  window.fixtureSetState = patch => { Object.assign(state, patch); emit("state", { ...state }); };
+  if (astraScenario) {
+    window.codexWebLauncher.onLifecycle = listen("lifecycle");
+    window.fixtureSetLifecycle = value => emit("lifecycle", value);
+  }
 }
 
 function createFixtureServer() { return http.createServer((request, response) => {

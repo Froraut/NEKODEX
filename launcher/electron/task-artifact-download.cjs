@@ -35,8 +35,10 @@ function createTaskArtifactDownloadGuard(session, options = {}) {
     if (lease.settled) return;
     lease.settled = true;
     clearTimeout(lease.timer);
-    lease.item?.removeListener('updated', lease.onUpdated);
-    lease.item?.removeListener('done', lease.onDone);
+    for (const [event, listener] of [['updated', lease.onUpdated], ['done', lease.onDone]]) {
+      if (typeof listener !== 'function') continue;
+      try { lease.item?.removeListener(event, listener); } catch { /* cleanup must not strand completion */ }
+    }
     leases.delete(lease.id);
     if (error) lease.reject(error);
     else lease.resolve(receipt);
