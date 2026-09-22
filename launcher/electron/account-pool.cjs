@@ -1,3 +1,4 @@
+const { createSnapshotPublisher } = require("./browser-state-publication.cjs");
 const { projectAccountBrowserSnapshot } = require('./account-browser-snapshot.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -38,6 +39,8 @@ function newWebSessionReservationId(accountId, traceId, nonce = randomUUID()) {
 class AccountBrowserPool {
   constructor(options) {
     this.options = options;
+    this.observationSourceId = randomUUID();
+    this.observationRevision = 0;
     this.logger = options.logger;
     this.registry = createAccountRegistry(options.coreHome);
     this.taskLedgers = new Map(this.registry.snapshot().accounts.map(account => [account.id,
@@ -200,6 +203,7 @@ class AccountBrowserPool {
         this.invalidateEvidence(id);
       },
       publishState: () => this.publish(),
+      requestStatePublication: () => this.publish(),
     }); } finally { this.creatingHosts.delete(id); }
     const write = host.writeDescriptor.bind(host);
     host.writeDescriptor = () => { write(); this.writeDescriptor(); };
@@ -307,13 +311,18 @@ class AccountBrowserPool {
     return this.reservations.size > 0
       || [...this.turnTabs.values()].some(tab => tab.status === 'running');
   }
+  observationStamp() {
+    return { sourceId: this.observationSourceId, revision: this.observationRevision ?? 0 };
+  }
   accountSnapshot() {
     const config = this.registry.snapshot();
-    return { ...config, accounts: config.accounts.map(account => {
+    const reservedByAccount = new Map();
+    for (const id of this.reservations.values()) reservedByAccount.set(id, (reservedByAccount.get(id) ?? 0) + 1);
+    return { ...config, observation: this.observationStamp(), accounts: config.accounts.map(account => {
       const host = this.hosts.get(account.id);
       const capabilities = this.capabilities.get(account.id);
       const activeTurns = host ? [...host.turnTabs.values()].filter(tab => tab.status === 'running').length : 0;
-      const reserved = [...this.reservations.values()].filter(id => id === account.id).length;
+      const reserved = reservedByAccount.get(account.id) ?? 0;
       return { ...account, proxy: this.network.get(account.id), safety: this.safety.snapshot(account.id), authenticated: host?.state.authenticated === true,
         authenticationStatus: host?.state.authenticationStatus,
         authenticationIssue: host?.state.authenticationIssue ?? null,
@@ -419,6 +428,7 @@ class AccountBrowserPool {
     // Only the selected account needs native navigation/title observations.
     // Other accounts contribute turn rows, never a second full host snapshot.
     return projectAccountBrowserSnapshot({
+      observation: this.observationStamp(),
       selectedId: registry.selectedId, accounts: registry.accounts, selectedState,
       maxTabs: this.options.maxTabs,
       workspaces: this.workspaceDirectory ? this.workspaceSnapshot() : undefined,
@@ -443,7 +453,15 @@ class AccountBrowserPool {
       if (!authenticated && previous !== false) this.invalidateEvidence(id);
       this.publishedAuthentication.set(id, authenticated);
     }
-    if (this.hosts.size) this.options.publishState?.(this.snapshot());
+    this.observationRevision = (this.observationRevision ?? 0) + 1;
+    if (!this.options.publishState) return;
+    this.snapshotPublisher ??= createSnapshotPublisher({
+      read: () => this.snapshot(),
+      send: state => this.options.publishState(state),
+      available: () => !this.destroyed && !this.creatingHosts.size && this.hosts.size > 0,
+      onError: error => this.logger.warn('browser.snapshot_publish_failed', { errorType: error?.name ?? 'Error' }),
+    });
+    this.snapshotPublisher.request();
   }
   writeDescriptor() {
     if (this.destroyed) return;
@@ -1432,6 +1450,7 @@ class AccountBrowserPool {
   }
   destroy() {
     this.destroyed = true;
+    this.snapshotPublisher?.dispose();
     this.admissionQueue?.close();
     for (const coordinator of this.workspaceSessionMutations?.values() ?? []) {
       coordinator.invalidate('Browser account pool closed');

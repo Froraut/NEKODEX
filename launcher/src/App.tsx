@@ -1,5 +1,6 @@
 import { useLocaleCopy } from './useLocaleCopy';
 import { LocaleNotice } from './LocaleNotice';
+import { newerBrowserState } from './snapshot-observation';
 import { createLauncherLogStore, type LauncherLogStore } from './launcher-log-store';
 import { deferredSurface } from './deferred-surface';
 import { Onboarding } from "./Onboarding";
@@ -205,8 +206,8 @@ export function App() {
         : current);
     });
     const unsubscribeBrowser = api.onBrowserState(next => {
-      if (!initialized) pendingBrowser = next;
-      else setBrowser(next);
+      if (!initialized) pendingBrowser = newerBrowserState(pendingBrowser, next);
+      else setBrowser(current => newerBrowserState(current, next));
     });
     const unsubscribeOperation = api.onOperation((next) => {
       const lifecycleRevision = (next as OperationState & { revision?: number }).revision;
@@ -292,7 +293,7 @@ export function App() {
         update: pendingUpdate ?? next.update,
         smokePassed: smokePassedForState(latestState, next.version),
       });
-      setBrowser(pendingBrowser ?? next.browser);
+      setBrowser(newerBrowserState(next.browser, pendingBrowser));
       logStore.seed(next.logs, pendingLogs);
       setOperation(latestOperation);
       if (latestState.browserInteractionMode !== "manual" && latestState.codexCatalogVerified !== true && lifecycle?.catalog?.status === "failed") {

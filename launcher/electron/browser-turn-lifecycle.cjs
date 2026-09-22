@@ -1,3 +1,4 @@
+const { publishBrowserSnapshot } = require("./browser-state-publication.cjs");
 const { randomBytes } = require("node:crypto");
 const { processRunning } = require("./process-tree.cjs");
 const { refreshTurnLeasesAfterSuspension, sweepGapIndicatesSuspension } = require("./turn-suspension.cjs");
@@ -49,7 +50,7 @@ class BrowserTurnLifecycle {
       throw new Error('Task progress does not match a live browser owner');
     }
     this.context.ledger.progress(tab.taskRecordId, phase, sequence);
-    this.presentation.publishState?.(this.presentation.snapshot());
+    publishBrowserSnapshot(this.presentation);
   }
 
   async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel) {
@@ -288,7 +289,7 @@ class BrowserTurnLifecycle {
     }
     this.presentation.afterRemoval(tab);
     this.presentation.syncViewVisibility();
-    this.presentation.publishState?.(this.presentation.snapshot());
+    publishBrowserSnapshot(this.presentation);
     this.presentation.writeDescriptor();
   }
 
@@ -434,7 +435,7 @@ class BrowserTurnLifecycle {
       if (reveal) this.presentation.selectedTabId = existing.id;
       if (reveal) this.presentation.show();
       else this.presentation.syncViewVisibility();
-      this.presentation.publishState?.(this.presentation.snapshot());
+      publishBrowserSnapshot(this.presentation);
       this.presentation.writeDescriptor();
       this.logger.info("browser.tab_reused", { tabId: existing.id, traceId });
       return {
@@ -455,7 +456,7 @@ class BrowserTurnLifecycle {
     if (reveal) this.presentation.selectedTabId = tab.id;
     if (reveal) this.presentation.show();
     else this.presentation.syncViewVisibility();
-    this.presentation.publishState?.(this.presentation.snapshot());
+    publishBrowserSnapshot(this.presentation);
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.tabs.size });
     this.presentation.writeDescriptor();
     return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false, connectorBound: false,
@@ -500,7 +501,7 @@ class BrowserTurnLifecycle {
     if (status !== 'completed' && !cancelledByUser && tab.taskRecordId) {
       // Preserve the exact document for inspection. It is not a reusable continuation and
       // cannot be silently reclaimed as an ordinary completed tab.
-      this.presentation.publishState?.(this.presentation.snapshot()); this.presentation.writeDescriptor();
+      publishBrowserSnapshot(this.presentation); this.presentation.writeDescriptor();
       return { cancelledByUser };
     }
     if (status === "completed"
@@ -512,7 +513,7 @@ class BrowserTurnLifecycle {
       tab.lastHeartbeatAt = Date.now();
       if (hideAfterTurn && !this.context.activeTraceId) this.presentation.hide();
       this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
-      this.presentation.publishState?.(this.presentation.snapshot());
+      publishBrowserSnapshot(this.presentation);
       this.presentation.writeDescriptor();
       return { cancelledByUser };
     }

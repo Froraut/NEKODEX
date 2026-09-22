@@ -1,3 +1,4 @@
+const { publishBrowserSnapshot } = require("./browser-state-publication.cjs");
 const { BrowserArtifactTransfers } = require("./browser-artifact-transfers.cjs");
 const { BrowserManualTurns, manualPromptDigest, MANUAL_SUBMIT_TIMEOUT_MS, MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS } = require("./browser-manual-turns.cjs");
 const { BrowserTurnLifecycle, TURN_HEARTBEAT_SWEEP_MS } = require("./browser-turn-lifecycle.cjs");
@@ -340,7 +341,7 @@ function manualTurnsFor(host) {
     presentation: {
       activate: tab => { host.selectedTabId = tab.id; host.showWindow(); host.show(); },
       snapshot: () => host.snapshot(),
-      publish: () => host.publishState?.(host.snapshot()),
+      publish: () => publishBrowserSnapshot(host),
       writeDescriptor: () => host.writeDescriptor(),
     },
   });
@@ -383,7 +384,7 @@ function turnLifecycleFor(host) {
       syncPowerSaveBlocker: () => host.syncPowerSaveBlocker(),
       syncViewVisibility: () => host.syncViewVisibility(),
       snapshot: () => host.snapshot(),
-      publishState: state => host.publishState?.(state),
+      requestStatePublication: () => publishBrowserSnapshot(host),
       writeDescriptor: () => host.writeDescriptor(),
       show: () => host.show(),
       hide: () => host.hide(),
@@ -491,6 +492,7 @@ class BrowserHost {
     partition = "persist:codex-web-gpt-chatgpt",
     profile = "production",
     publishState,
+    requestStatePublication,
     showWindow = () => {},
     clipboardApi = clipboard,
     dialogApi = dialog,
@@ -554,6 +556,7 @@ class BrowserHost {
     this.taskLedger = taskLedger ?? new BrowserTaskLedger(path.join(path.dirname(descriptorPath), `tasks-${this.accountId}.json`));
     this.profile = profile;
     this.publishState = publishState;
+    this.requestStatePublication = requestStatePublication;
     this.showWindow = showWindow;
     this.clipboard = clipboardApi;
     this.dialog = dialogApi;
@@ -761,7 +764,7 @@ class BrowserHost {
         controller.signal.removeEventListener("abort", onAbort);
         if (this.readOnlyInspection === inspection) {
           this.readOnlyInspection = null;
-          this.publishState?.(this.snapshot());
+          publishBrowserSnapshot(this);
         }
       });
     return inspection.done;
@@ -1104,7 +1107,7 @@ class BrowserHost {
       tab.message = "The ChatGPT page changed. Start a new turn to resend the full context.";
       contents.stop();
       this.syncPowerSaveBlocker();
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
       return true;
     };
     const blockForeignNavigation = (event, url) => {
@@ -1114,7 +1117,7 @@ class BrowserHost {
         ? "ChatGPT requires a fresh sign-in; finish this turn, then sign in from Setup"
         : "External pages cannot replace this ChatGPT task tab";
       this.logger.warn("browser.turn_navigation_blocked", { tabId: tab.id, traceId: tab.traceId });
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     };
     contents.on("will-navigate", blockForeignNavigation);
     contents.on("will-redirect", (event, url, _inPlace, mainFrame) => {
@@ -1126,7 +1129,7 @@ class BrowserHost {
       if (!mainFrame || !allowedTurnUrl(url)) return;
       tab.url = url;
       tab.loading = true;
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-navigate", (_event, url) => {
       // Electron emits did-navigate for a committed main-frame document only. Even a brief
@@ -1138,12 +1141,12 @@ class BrowserHost {
     });
     contents.on("did-start-loading", () => {
       tab.loading = true;
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-stop-loading", () => {
       tab.loading = false;
       tab.url = contents.getURL();
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-finish-load", () => {
       tab.url = contents.getURL();
@@ -1153,32 +1156,32 @@ class BrowserHost {
       tab.bootstrapReady = httpsOrigin(tab.url) === CHATGPT_ORIGIN;
       this.syncViewVisibility();
       if (browserInteractionModeFor(this) !== "automatic") {
-        this.publishState?.(this.snapshot());
+        publishBrowserSnapshot(this);
         return;
       }
       if (tab.initializingSurface) {
-        this.publishState?.(this.snapshot());
+        publishBrowserSnapshot(this);
         return;
       }
       void this.markTurnTabSurface(tab).then(
-        () => this.publishState?.(this.snapshot()),
+        () => publishBrowserSnapshot(this),
         (error) => {
           tab.status = "error";
           tab.message = `Browser ownership failed: ${error instanceof Error ? error.message : String(error)}`;
           this.syncPowerSaveBlocker();
-          this.publishState?.(this.snapshot());
+          publishBrowserSnapshot(this);
         },
       );
     });
     contents.on("page-title-updated", (_event, title) => {
       if (browserInteractionModeFor(this) !== "automatic") return;
       if (typeof title === "string" && title.trim()) tab.pageTitle = title.trim();
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
       if (mainFrame && invalidateForeignNavigation(url)) return;
       if (mainFrame) tab.url = url;
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {
       if (!mainFrame || errorCode === -3) return;
@@ -1262,16 +1265,16 @@ class BrowserHost {
       invalidateConversation(url, inPlace);
       tab.url = url;
       tab.loading = true;
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-start-loading", () => {
       tab.loading = true;
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-stop-loading", () => {
       tab.loading = false;
       tab.url = contents.getURL();
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-finish-load", () => {
       tab.url = contents.getURL();
@@ -1279,14 +1282,14 @@ class BrowserHost {
       tab.rendererReady = true;
       tab.bootstrapReady = tab.url.startsWith(CHATGPT_ORIGIN);
       this.syncViewVisibility();
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
       if (mainFrame) {
         invalidateConversation(url, true);
         tab.url = url;
       }
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {
       if (!mainFrame || errorCode === -3) return;
@@ -1724,7 +1727,7 @@ class BrowserHost {
       visible: this.visible,
       surfaceActive: this.surfaceActive,
     };
-    this.publishState?.(this.snapshot());
+    publishBrowserSnapshot(this);
   }
 
   retireAuthenticatedIdentity() {
@@ -1873,7 +1876,7 @@ class BrowserHost {
     this.selectedTabId = "home";
     this.syncViewVisibility();
     if (this.visible && this.surfaceActive) this.activeView().webContents.focus();
-    this.publishState?.(this.snapshot());
+    publishBrowserSnapshot(this);
     this.writeDescriptor();
   }
 
@@ -1897,7 +1900,7 @@ class BrowserHost {
     this.selectedTabId = tabId;
     this.syncViewVisibility();
     if (this.visible && this.surfaceActive) this.activeView().webContents.focus();
-    this.publishState?.(this.snapshot());
+    publishBrowserSnapshot(this);
     this.writeDescriptor();
     return this.snapshot();
   }
@@ -2370,10 +2373,10 @@ class BrowserHost {
     const tracked = operation.finally(() => {
       if (this.loginOperation === tracked) this.loginOperation = null;
       if (this.embeddedLoginController === controller) this.embeddedLoginController = null;
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     this.loginOperation = tracked;
-    this.publishState?.(this.snapshot());
+    publishBrowserSnapshot(this);
     return tracked;
   }
 
@@ -2635,17 +2638,17 @@ class BrowserHost {
         && this.embeddedLoginController === embeddedController ? embeddedLogin : null;
       if (this.passkeyLoginOperation === tracked) this.passkeyLoginOperation = null;
       if (this.passkeyLoginController === controller) this.passkeyLoginController = null;
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
     });
     this.loginOperation = tracked;
     this.passkeyLoginOperation = tracked;
-    this.publishState?.(this.snapshot());
+    publishBrowserSnapshot(this);
     return tracked;
   }
 
   updatePasskeyProgress(patch) {
     this.passkeyProgress = { ...this.passkeyProgress, ...patch };
-    this.publishState?.(this.snapshot());
+    publishBrowserSnapshot(this);
   }
 
   async cancelPasskeyLogin(cancelCapture) {
@@ -3395,7 +3398,7 @@ class BrowserHost {
     this.manualOperation = name;
     const contents = this.view?.webContents;
     try {
-      this.publishState?.(this.snapshot());
+      publishBrowserSnapshot(this);
       if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(false);
       return await action();
     } catch (error) {
@@ -3408,7 +3411,7 @@ class BrowserHost {
       // Native renderer bookkeeping must not retain the operation lease if it throws.
       this.manualOperation = null;
       try { if (contents && !contents.isDestroyed()) contents.setBackgroundThrottling(true); }
-      finally { this.publishState?.(this.snapshot()); }
+      finally { publishBrowserSnapshot(this); }
     }
   }
 

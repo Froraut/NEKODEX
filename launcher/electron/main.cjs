@@ -1245,7 +1245,8 @@ function registerIpc({ logger, stateStore }) {
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
     });
     send("launcher:state-changed", state);
-    if (interactionModeChange) send("launcher:browser-state", browserHost.snapshot());
+    // Advance the pool observation after the saved mode changes; do not send an unstamped refresh.
+    if (interactionModeChange) browserHost.publish();
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return { ok: true, stdout: result.stdout };
   });
@@ -1308,7 +1309,7 @@ function registerIpc({ logger, stateStore }) {
         codexRestartRequired: !IS_DEV_PROFILE,
       });
       send("launcher:state-changed", state);
-      send("launcher:browser-state", browserHost.snapshot());
+      browserHost.publish();
       if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
       return state;
     } finally {
@@ -1410,7 +1411,7 @@ function registerIpc({ logger, stateStore }) {
       } : {}),
     });
     send("launcher:state-changed", state);
-    send("launcher:browser-state", browserHost.snapshot());
+    browserHost.publish();
     if (!IS_DEV_PROFILE && result.configured) startCatalogVerificationMonitor({ logger, stateStore });
     return { state, credentialsRequired: false, targetMode: mode };
   });

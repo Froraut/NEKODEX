@@ -1,3 +1,4 @@
+const { publishBrowserSnapshot } = require("./browser-state-publication.cjs");
 const { isExistingChromeErrorCode, existingChromeError } = require("./existing-chrome-errors.cjs");
 const ACTIVE_PHASES = new Set(["consent", "preparing", "file-access", "discovering", "waiting-for-chrome", "reading-session", "verifying", "cancelling"]);
 const CAPTURE_PHASES = new Set(["discovering", "waiting-for-chrome", "reading-session"]);
@@ -57,7 +58,7 @@ function updateExistingChromeProgress(host, patch) {
   if (typeof patch.phase === "string") {
     host.logger?.info?.("browser.existing_chrome_progress", { phase: patch.phase });
   }
-  host.publishState?.(host.snapshot());
+  publishBrowserSnapshot(host);
 }
 
 function safeImportError(error, cleanupFailed = false, verifying = false) {
@@ -197,11 +198,11 @@ function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } =
       phase: host.existingChromeProgress?.phase ?? "not-needed",
       previousLoginPending: Boolean(host.loginOperation || host.sessionRefreshOperation),
     });
-    host.publishState?.(host.snapshot());
+    publishBrowserSnapshot(host);
   }).then(() => host.snapshot());
   host.loginOperation = tracked;
   host.existingChromeLoginOperation = tracked;
-  host.publishState?.(host.snapshot());
+  publishBrowserSnapshot(host);
   return tracked;
 }
 

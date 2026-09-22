@@ -59,6 +59,7 @@ separate facts.
 | Updates | [controller](launcher/electron/update.cjs), [release policy](launcher/electron/update-release-policy.cjs), [staging](launcher/electron/update-staging.cjs), [validation](launcher/electron/update-validation.cjs), [worker](launcher/electron/update-worker.cjs) | Packaged repository/channel selects candidates; signature validation, preparation, handoff and detached installation are separate owners. |
 | Usage | [Native contract](src/usage/native-contract.ts), [outbox](src/native-usage-outbox.ts), [durable store](launcher/electron/usage-store.cjs), [report projection](launcher/electron/usage-report.cjs) | Receipt validation and persistence remain independent of UI aggregation. Preserve unknown fields and source/account scope. |
 | UI | [App](launcher/src/App.tsx), [deferred surfaces](launcher/src/deferred-surface.tsx), [presentation log store](launcher/src/launcher-log-store.ts), [Onboarding](launcher/src/Onboarding.tsx), [Accounts](launcher/src/AccountSettings.tsx), [Browser](launcher/src/BrowserSurface.tsx), [Activity](launcher/src/ActivitySurface.tsx), [Task Center](launcher/src/TaskCenter.tsx), [Settings](launcher/src/SettingsSurface.tsx) | App owns shell/navigation/shared snapshots. Optional screens load on navigation; logs update subscribed views instead of App. Feature surfaces and hooks own local drafts/actions; late results stay with their original account/query/flow. |
+| Presentation observations | [publication scheduler](launcher/electron/browser-state-publication.cjs), [account reader](launcher/src/account-snapshot-controller.ts), [observation comparison](launcher/src/snapshot-observation.ts) | Pool invalidation stays synchronous; presentation snapshots coalesce per event-loop turn. Source/revision stamps order observations, not authorization. |
 | Localization | [locale catalog](launcher/src/locale-catalog.ts), [subscription hook](launcher/src/useLocaleCopy.ts), [language selection](launcher/src/language-selection.ts), [message facade](launcher/src/i18n.ts) | English is immediately available. Other dictionaries load independently and share pending requests. Prepare before saving; a superseded preparation cannot overwrite the latest choice. |
 | DEV harness | [CLI](src/dev-chat/cli.ts), [driver](src/dev-chat/driver.ts), [session store](src/dev-chat/session.ts), [context fixtures](src/dev-chat/context-fixtures.ts), [transport](src/dev-chat/transport.ts) | Isolated DEV state and inert generated content are distinct. The harness attaches to the launcher's existing DEV tunnel rather than taking over supervision. |
 | Build and distribution | [runtime bundler](scripts/build-runtime-bundle.ts), [owned build output](scripts/build-output.cjs), [launcher scripts](launcher/scripts), [CI](.github/workflows/ci.yml), [release workflow](.github/workflows/release.yml) | Generated output must be owned before replacement. Development checks precede separately authorized packaging/publication. |
@@ -121,6 +122,24 @@ observations for other hosts; no cached authentication/navigation state is
 introduced. Usage projection filters receipts once and sorts each duration set
 once for both median and p95, without changing the durable store or unknown-data
 semantics.
+
+Browser hosts owned by the account pool signal changes through
+`requestStatePublication`; standalone hosts retain synchronous `publishState`.
+The pool immediately invalidates authentication evidence and advances its
+observation revision, then schedules one fresh aggregate snapshot with
+`setImmediate`. Manual turns, turn lifecycle and Chrome sign-in use the same
+publication port. Main's mode/setup changes publish through the pool so the
+revision advances after preference changes. Pending publication is cancelled
+on pool destruction; projection errors are reported without wedging later updates.
+
+Browser and account snapshots carry an optional `observation: {sourceId, revision}`.
+The source identifies this pool instance. App keeps the newest same-source browser
+state at startup and during live notifications. The account read controller accepts
+an overtaken request only if its host stamp covers the latest event; mutation
+receipts, explicit refreshes and operation completion still retire older requests.
+Superseded source IDs are retained in a bounded retired-source set. Legacy snapshots
+retain conservative arrival/local-revision behavior. Stamps never grant session,
+account or task authority. Account availability counts reservations once per read.
 
 The task ledger owns an ID index over its current records. Regular saves publish
 records and the index only after durable writing succeeds; failed writes preserve

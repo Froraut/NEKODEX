@@ -82,7 +82,10 @@ export interface BrowserWorkspaceDirectorySnapshot {
   accounts: BrowserWorkspaceAccount[];
 }
 
+export interface SnapshotObservation { sourceId: string; revision: number; }
+
 export interface BrowserState {
+  observation?: SnapshotObservation;
   accountId?: string;
   accountName?: string;
   status: "idle" | "loading" | "signed-out" | "ready" | "testing" | "running" | "error";
@@ -374,6 +377,7 @@ export interface CodexLoginProgress {
 }
 
 export interface AccountPoolSnapshot {
+  observation?: SnapshotObservation;
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;

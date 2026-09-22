@@ -23,6 +23,9 @@ Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) a
 | Change visible reasoning/commentary projection | `browser-visible-trace.ts` | Preserve append-only deltas and retained-byte bounds; DOM acquisition is separate. |
 | Change connector personalization or cleanup | `browser-personalization.ts` | Mutating preflight owns its deadline and cleanup; failed persistent cleanup must remain distinguishable from ordinary cancellation. |
 | Extend browser diagnostic evidence | `browser-diagnostics.ts` | Capture structure/counts by default, retain bounded private files, and keep screenshots explicitly opted in. Diagnostics do not own turn lifecycle. |
+| Publish browser presentation changes | `launcher/electron/browser-state-publication.cjs`, composed in `account-pool.cjs` | Signal from pooled hosts without building discarded snapshots. Keep evidence retirement immediate and cancel queued publication on destruction. Main mode/setup changes must use pool publication to advance the observation revision. |
+| Read account state in the renderer | `account-snapshot-controller.ts`, wrapped by `useAccountPoolSnapshot.ts` | A covering host revision can settle a notification race. Mutation/operation epochs still retire old reads; preserve unavailable-state guards and legacy fallback. |
+| Merge browser state | `snapshot-observation.ts`, composed in `App.tsx` | Keep the newest same-source observation across startup snapshot/event races. A stamp is ordering metadata, never account authority. |
 | Add an attachment representation | `src/adapters/chatgpt-web/attachment-payloads.ts` | File authorization stays in `src/responses/file-content.ts`; selected skills and image/document validation retain their distinct rules. |
 | Change multipart transport or capacity | `prompt-multipart-contract.ts`, `browser-input-policy.ts` | Prompt compilation chooses content; stage/commit formatting and account/input capacity are separately testable contracts. |
 | Add an output file format | `src/adapters/chatgpt-web/artifact-format.ts` | Verified storage is in `artifact-storage.ts`; transport and lease authority remain with acquisition/host owners. |
@@ -84,5 +87,10 @@ size sampling uses `measure-ui-work.cjs --startup-only --language=ru`; it counts
 all requested scripts, including the selected language chunk. Task probes are
 `measure-task-history.cjs` (compiled UI, synthetic rows) and
 `measure-task-lookup.cjs <baseline-ref>` (isolated valid synthetic journal).
+
+`launcher/scripts/measure-browser-publication.cjs <baseline-ref>` compares actual
+host/pool methods on an inert four-account history fixture. Its JSON byte count is
+a serialization proxy, not Electron wire traffic. `account-observation-ui-preview.cjs`
+checks startup/live stale notifications, covered account reads and genuine updates.
 
 Source publication, development verification, packaging and installed runtime are separate outcomes. This refactor does not change the release version or authorize a release.

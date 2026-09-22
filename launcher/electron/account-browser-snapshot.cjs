@@ -1,10 +1,10 @@
 /** Pure cross-account display projection; never owns hosts, ledgers or leases. */
-function projectAccountBrowserSnapshot({ selectedId, accounts, selectedState, accountTabs,
+function projectAccountBrowserSnapshot({ observation, selectedId, accounts, selectedState, accountTabs,
   taskHistories, workspaces, queue, maxTabs }) {
   const labels = new Map(accounts.map(({ id, label }) => [id, label]));
   const historyIssues = new Map(taskHistories.map(({ accountId, issue }) => [accountId, issue]));
   return {
-    ...selectedState, accountId: selectedId, accountName: labels.get(selectedId), maxTabs,
+    ...selectedState, observation, accountId: selectedId, accountName: labels.get(selectedId), maxTabs,
     ...(workspaces ? { workspaces } : {}),
     queue: queue ? { ...queue, accounts: accounts.map(({ id, label }) => ({ id, label })) } : undefined,
     taskHistoryHealth: accounts.filter(({ id }) => historyIssues.get(id) === 'task-history-unavailable')

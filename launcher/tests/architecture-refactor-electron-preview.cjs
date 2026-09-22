@@ -49,6 +49,10 @@ test('source Electron uses the refactored renderer and real isolated preload', {
     assert.equal(snapshot.profilePaths.codexHome, path.join(profile, 'codex-home'));
     assert.equal(snapshot.state.browserInteractionMode, 'manual');
     assert.equal(snapshot.state.coreSetupComplete, false);
+    const accountSnapshot = await page.evaluate(() => window.codexWebLauncher.accounts());
+    assert.equal(accountSnapshot.observation.sourceId, snapshot.browser.observation.sourceId);
+    assert.ok(accountSnapshot.observation.revision >= snapshot.browser.observation.revision);
+    identity.observationSourceId = accountSnapshot.observation.sourceId;
     identity.version = snapshot.version;
     identity.profilePaths = snapshot.profilePaths;
     identity.title = await page.title();

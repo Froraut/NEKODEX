@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AccountPoolSnapshot } from './types';
+import { createAccountSnapshotController } from './account-snapshot-controller';
 
 type PoolApi = Pick<NonNullable<Window['codexWebLauncher']>, 'accounts' | 'onBrowserState' | 'onOperation'>;
 
@@ -12,50 +13,25 @@ export function useAccountPoolSnapshot({ api, initial = 'scheduled', identity = 
   const [loading, setLoading] = useState(true);
   const controller = useRef<{ invalidate: () => void; apply: (value: AccountPoolSnapshot) => void } | null>(null);
   useEffect(() => {
-    let disposed = false, inFlight = false, revision = 0;
-    let timer: number | undefined;
-    const load = () => {
-      timer = undefined;
-      if (disposed || inFlight) return;
-      inFlight = true;
-      setLoading(true);
-      const requestedRevision = revision;
-      void api.accounts().then(value => {
-        if (disposed || requestedRevision !== revision) return;
-        setSnapshot(value); setFailed(false);
-      }).catch(() => {
-        if (disposed || requestedRevision !== revision) return;
-        setFailed(true);
-        if (!retainOnFailure) setSnapshot(null);
-      }).finally(() => {
-        inFlight = false;
-        if (disposed) return;
-        if (requestedRevision !== revision) schedule(false);
-        else setLoading(false);
-      });
-    };
-    const schedule = (invalidate = true) => {
-      if (disposed) return;
-      if (invalidate) revision += 1;
-      if (timer === undefined && !inFlight) timer = window.setTimeout(load, 150);
-    };
-    controller.current = {
-      invalidate: () => schedule(),
-      apply(value) {
-        // Retire every older read before accepting a mutation receipt.
-        revision += 1;
-        setSnapshot(value); setFailed(false);
-        schedule(false);
+    const reader = createAccountSnapshotController({
+      read: () => api.accounts(),
+      defer(action) {
+        const timer = window.setTimeout(action, 150);
+        return () => window.clearTimeout(timer);
       },
-    };
-    setSnapshot(null); setFailed(false); setLoading(true);
-    const unsubscribeBrowser = api.onBrowserState(() => schedule());
-    const unsubscribeOperation = api.onOperation(operation => {
-      if (operation.status !== 'running') schedule();
+      onSnapshot(value) { setSnapshot(value); setFailed(false); },
+      onLoading: setLoading,
+      onFailure() { setFailed(true); if (!retainOnFailure) setSnapshot(null); },
     });
-    if (initial === 'immediate') load(); else schedule();
+    controller.current = { invalidate: reader.refresh, apply: reader.apply };
+    setSnapshot(null); setFailed(false); setLoading(true);
+    const unsubscribeBrowser = api.onBrowserState(reader.observe);
+    const unsubscribeOperation = api.onOperation(operation => {
+      if (operation.status !== 'running') reader.refresh();
+    });
+    reader.start(initial === 'immediate');
     return () => {
-      disposed = true; window.clearTimeout(timer);
+      reader.dispose();
       unsubscribeBrowser(); unsubscribeOperation(); controller.current = null;
     };
   }, [api, initial, identity, retainOnFailure]);
