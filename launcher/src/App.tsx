@@ -1,22 +1,20 @@
+import { createLauncherLogStore, type LauncherLogStore } from './launcher-log-store';
+import { deferredSurface } from './deferred-surface';
 import { Onboarding } from "./Onboarding";
-import { ActivitySurface } from "./ActivitySurface";
 import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
-import { SettingsSurface } from './SettingsSurface';
 import { IconButton, StateDot, ContentSurface, PrimaryButton, McpMark, messageOf, useModalFocus, Switch } from './launcher-ui';
 import { runtimeCapabilities, currentToolProof } from './launcher-readiness';
 
-import { TaskCenter, taskCenterTitle } from './TaskCenter';
+import { taskCenterTitle } from './task-center-copy';
 import { QueueControls } from './QueueControls';
 import type { CompactionModel } from "./types";
 import { modelConnectionReadiness } from "./setup-progress";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
-import { AccountSettings } from "./AccountSettings";
 import { AccountToolsHandoff } from "./AccountToolsOnboarding";
 
-import { Updates } from "./Updates";
 import { updateCopyFor } from "./update-copy";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -30,6 +28,11 @@ import "./connections.css";
 import "./connection-recovery.css";
 import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, Language, LauncherLifecycle as LifecycleProjection, LauncherSnapshot, LauncherState, LogRecord, OperationState, ProModelVersion, Surface } from "./types";
 
+const ActivitySurface = deferredSurface(async () => ({ default: (await import('./ActivitySurface')).ActivitySurface }));
+const AccountSettings = deferredSurface(async () => ({ default: (await import('./AccountSettings')).AccountSettings }));
+const SettingsSurface = deferredSurface(async () => ({ default: (await import('./SettingsSurface')).SettingsSurface }));
+const TaskCenter = deferredSurface(async () => ({ default: (await import('./TaskCenter')).TaskCenter }));
+const Updates = deferredSurface(async () => ({ default: (await import('./Updates')).Updates }));
 const api = window.codexWebLauncher;
 const COMPACT_SIDEBAR_QUERY = "(max-width: 860px)";
 
@@ -45,7 +48,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
   const [browser, setBrowser] = useState<BrowserState | null>(null);
   const [operation, setOperation] = useState<OperationState | null>(null);
-  const [logs, setLogs] = useState<LogRecord[]>([]);
+  const [logStore] = useState(createLauncherLogStore);
   const [error, setError] = useState<string | null>(null);
   const [catalogFailure, setCatalogFailure] = useState<string | null>(null);
   const catalogAlert = useRef<string | null>(null);
@@ -248,7 +251,7 @@ export function App() {
         pendingLogs.push(record);
         if (pendingLogs.length > 300) pendingLogs.shift();
       }
-      else setLogs((current) => [...current.slice(-299), record]);
+      else logStore.append(record);
     });
     const unsubscribeUpdate = api.onUpdateState((update) => {
       if (!initialized) pendingUpdate = update;
@@ -285,10 +288,7 @@ export function App() {
         smokePassed: smokePassedForState(latestState, next.version),
       });
       setBrowser(pendingBrowser ?? next.browser);
-      const unseenLogs = pendingLogs.filter(record => !next.logs.some(existing =>
-        existing.at === record.at && existing.level === record.level && existing.event === record.event
-          && JSON.stringify(existing.detail) === JSON.stringify(record.detail)));
-      setLogs([...next.logs, ...unseenLogs].slice(-300));
+      logStore.seed(next.logs, pendingLogs);
       setOperation(latestOperation);
       if (latestState.browserInteractionMode !== "manual" && latestState.codexCatalogVerified !== true && lifecycle?.catalog?.status === "failed") {
         setCatalogFailure(copyFor(latestState.language ?? "en").catalogFailureKeptInstall);
@@ -325,10 +325,11 @@ export function App() {
       unsubscribeBrowser();
       unsubscribeOperation();
       unsubscribeLog();
+      logStore.cancelPendingNotification();
       unsubscribeUpdate();
       unsubscribeLifecycle();
     };
-  }, [startupAttempt, refreshMetadata, acceptLifecycle]);
+  }, [startupAttempt, refreshMetadata, acceptLifecycle, logStore]);
 
   const updateState = useCallback((state: LauncherState) => {
     stateRevision.current += 1;
@@ -415,7 +416,7 @@ export function App() {
             copy={copy}
             key="launcher"
             language={language}
-            logs={logs}
+            logStore={logStore}
             operation={visibleOperation}
             setError={setError}
             snapshot={snapshot}
@@ -438,7 +439,7 @@ function LauncherShell({
   error,
   copy,
   language,
-  logs,
+  logStore,
   operation,
   setError,
   snapshot,
@@ -454,7 +455,7 @@ function LauncherShell({
   error: string | null;
   copy: Copy;
   language: Language;
-  logs: LogRecord[];
+  logStore: LauncherLogStore;
   operation: OperationState | null;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
@@ -917,10 +918,10 @@ function LauncherShell({
             key={surface}
           >
             {surface === "overview" ? <Overview copy={copy} browser={browser} catalogFailure={catalogFailure}
-              snapshot={snapshot} toolsReady={toolProof} logs={logs} navigate={navigateSurface}
+              snapshot={snapshot} toolsReady={toolProof} logStore={logStore} navigate={navigateSurface}
               openTab={(tabId) => void openBrowserTab(tabId)} /> : null}
             {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
-              <AccountSettings copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
+              <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
                 setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
                 focusAccountId={accountToolsTargetId}
                 toolsSetup={{ runtimeConfigured: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
@@ -936,7 +937,7 @@ function LauncherShell({
               <QueueControls queue={browser?.queue} language={language} disabled={transitionBusy}
                 action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
                 onError={cause => setError(messageOf(cause))} />
-              <TaskCenter tasks={browser?.tasks ?? []} language={language} disabled={transitionBusy}
+              <TaskCenter loadCopy={copy} tasks={browser?.tasks ?? []} language={language} disabled={transitionBusy}
                 historyHealth={browser?.taskHistoryHealth}
                 open={async tabId => { await api!.selectBrowserTab(tabId); navigateSurface('browser'); }}
                 cancel={(tabId, traceId) => api!.closeBrowserTab(tabId, traceId)}
@@ -1013,15 +1014,15 @@ function LauncherShell({
               />
             ) : null}
             {surface === "activity" ? (
-              <ActivitySurface transitionBusy={transitionBusy} copy={copy} language={language} logs={logs} setError={setError} />
+              <ActivitySurface loadCopy={copy} transitionBusy={transitionBusy} copy={copy} language={language} logStore={logStore} setError={setError} />
             ) : null}
-            {surface === "updates" ? <Updates language={language} currentVersion={snapshot.version}
+            {surface === "updates" ? <Updates loadCopy={copy} language={language} currentVersion={snapshot.version}
               state={snapshot.update} busy={updateBusy} blocked={updateBlocked} checking={updateCheckBusy}
               cooldown={updateCheckCooldown} error={updateError} transitionBusy={transitionBusy}
               onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()}
               cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} /> : null}
             {surface === "settings" ? (
-              <SettingsSurface
+              <SettingsSurface loadCopy={copy}
                 browser={browser}
                 catalogFailure={catalogFailure}
                 showModelSetup={() => navigateSurface("setup")}

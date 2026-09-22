@@ -1656,6 +1656,10 @@ class BrowserHost {
     this.logger.info("browser.cloudflare_challenge_recovered", { url });
   }
 
+  turnTabSnapshots() {
+    return [...this.turnTabs.values()].map(tab => this.tabSnapshot(tab));
+  }
+
   snapshot() {
     const contents = this.activeView()?.webContents;
     const selected = this.selectedTurnTab();
@@ -1693,7 +1697,7 @@ class BrowserHost {
       tabs: this.turnTabs.size > 0
         ? [
             ...(this.selectedTabId === "home" ? [homeTab] : []),
-            ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
+            ...this.turnTabSnapshots(),
           ]
         : [homeTab],
       maxTabs: this.maxTabs,

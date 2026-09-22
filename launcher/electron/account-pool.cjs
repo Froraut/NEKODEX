@@ -1,3 +1,4 @@
+const { projectAccountBrowserSnapshot } = require('./account-browser-snapshot.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
@@ -413,29 +414,27 @@ class AccountBrowserPool {
     return this.evidenceEpoch(id) === epoch;
   }
   snapshot() {
-    const selected = this.registry.snapshot().selectedId;
-    const state = this.selectedHost().snapshot();
-    const labels = new Map(this.registry.snapshot().accounts.map(account => [account.id, account.label]));
-    return { ...state, accountId: selected, accountName: labels.get(selected),
-      ...(this.workspaceDirectory ? { workspaces: this.workspaceSnapshot() } : {}),
-      queue: this.admissionQueue ? { ...this.admissionQueue.snapshot(),
-        accounts: [...labels].map(([id, label]) => ({ id, label })) } : undefined,
-      taskHistoryHealth: [...labels].flatMap(([accountId, accountName]) =>
-        this.taskLedgers?.get(accountId)?.storageIssue === 'task-history-unavailable'
-          ? [{ accountId, accountName, issue: 'task-history-unavailable' }] : []),
-      tasks: [...(this.taskLedgers ?? [])].flatMap(([id, ledger]) => {
-        const host = this.hosts.get(id);
-        return (host?.taskSnapshot?.() ?? ledger.snapshot().map(row => ({ ...row,
+    const registry = this.registry.snapshot();
+    const selectedState = this.getHost(registry.selectedId).snapshot();
+    // Only the selected account needs native navigation/title observations.
+    // Other accounts contribute turn rows, never a second full host snapshot.
+    return projectAccountBrowserSnapshot({
+      selectedId: registry.selectedId, accounts: registry.accounts, selectedState,
+      maxTabs: this.options.maxTabs,
+      workspaces: this.workspaceDirectory ? this.workspaceSnapshot() : undefined,
+      queue: this.admissionQueue?.snapshot(),
+      accountTabs: [...this.hosts].map(([accountId, host]) => ({ accountId,
+        tabs: accountId === registry.selectedId ? selectedState.tabs : host.turnTabSnapshots() })),
+      taskHistories: [...(this.taskLedgers ?? [])].map(([accountId, ledger]) => ({ accountId,
+        issue: ledger.storageIssue,
+        tasks: this.hosts.get(accountId)?.taskSnapshot?.() ?? ledger.snapshot().map(row => ({ ...row,
           canOpen: false, canCancel: false, canDismiss: row.terminal,
           retrySafe: row.terminal && row.submission === 'not-sent',
-        }))).map(task => ({ ...task, accountId: id, accountName: labels.get(id) }));
-      }).sort((a, b) => b.createdAt - a.createdAt),
-      maxTabs: this.options.maxTabs,
-      tabs: [...state.tabs.filter(tab => tab.id === 'home'), ...[...this.hosts].flatMap(([id, host]) =>
-        host.snapshot().tabs.filter(tab => tab.id !== 'home').map(tab => ({ ...tab,
-          active: id === selected && tab.active, accountId: id,
-          title: `${labels.get(id)} · ${tab.title}` }))) ] };
+        })),
+      })),
+    });
   }
+
   publish() {
     if (this.destroyed || this.creatingHosts.size) return;
     for (const [id, host] of this.hosts) {

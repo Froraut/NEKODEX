@@ -1,23 +1,25 @@
+import type { LauncherLogStore } from './launcher-log-store';
 import { sessionIssueCopy } from "./session-issue-copy";
 import { CatTail } from "./CatTail";
 import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
-import { useId, type CSSProperties } from "react";
+import { useId, useSyncExternalStore, type CSSProperties } from "react";
 import { Icon, type IconName } from "./icons";
 import type { Copy } from "./i18n";
 import { deriveWorkspaceReadiness, type WorkspaceAction } from "./workspace-readiness";
 import { modelConnectionReadiness } from "./setup-progress";
 import { workflowCopy } from "./workflow-copy";
-import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types";
+import type { BrowserState, LauncherSnapshot, Surface } from "./types";
 
 const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
 const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
 
-export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logs, navigate, openTab }: {
+export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logStore, navigate, openTab }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
   catalogFailure: string | null;
   toolsReady: boolean;
-  logs: LogRecord[]; navigate: (surface: Surface) => void; openTab: (tabId: string) => void;
+  logStore: LauncherLogStore; navigate: (surface: Surface) => void; openTab: (tabId: string) => void;
 }) {
+  const logs = useSyncExternalStore(logStore.subscribe, logStore.getSnapshot);
   const overviewId = useId();
   const workflow = workflowCopy(snapshot.state.language ?? "en");
   const manual = snapshot.state.browserInteractionMode === "manual";
@@ -165,7 +167,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
           </section>
           <section className="overview-activity" aria-live="polite" aria-atomic="false">
             <div className="overview-section-heading"><h2>{copy.recentActivity}</h2><button className="text-button" type="button" onClick={() => navigate("activity")}>{copy.viewAllShort}<Icon name="chevron" /></button></div>
-            {logs.length ? <ul>{logs.slice(-8).reverse().map((log, index) => <li key={`${log.at}-${index}`}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{log.event.replaceAll(/[._-]+/g, " ")}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
+            {logs.length ? <ul>{logs.slice(-8).reverse().map(({ id, record: log }) => <li key={id}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{log.event.replaceAll(/[._-]+/g, " ")}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
               : <div className="overview-empty"><Icon name="logs" /><div><strong>{copy.activityEmpty}</strong><p>{copy.activityEmptyBody}</p></div></div>}
           </section>
         </div>

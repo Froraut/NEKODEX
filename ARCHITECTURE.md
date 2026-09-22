@@ -54,11 +54,11 @@ separate facts.
 | Tunnel | [installation/control](src/tunnel.ts), [status interpretation](src/tunnel-status.ts), [service](src/tunnel-service.ts) | Inventory/diagnostics parsing has no process authority. Installation, credentials and readiness remain separate steps. |
 | Electron composition | [main](launcher/electron/main.cjs), [preload](launcher/electron/preload.cjs), [IPC registrars](launcher/electron/ipc), [control server](launcher/electron/control-server.cjs) | Main owns guarded IPC and composition. Renderer inputs and helper calls cross validation/admission boundaries. |
 | Browser ownership | [host](launcher/electron/browser-host.cjs), [turn lifecycle](launcher/electron/browser-turn-lifecycle.cjs), [Manual turns](launcher/electron/browser-manual-turns.cjs), [artifact transfers](launcher/electron/browser-artifact-transfers.cjs), [workspaces](launcher/electron/browser-workspace-windows.cjs) | One shared tab map. Ledger settlement precedes removal receipts. Manual policy uses explicit ports; artifact delivery rechecks exact ownership after awaiting download. |
-| Accounts/authentication | [account pool](launcher/electron/account-pool.cjs), [registry](launcher/electron/account-registry.cjs), [operation leases](launcher/electron/account-operation-leases.cjs), [Codex login](launcher/electron/codex-login.cjs), [browser login](src/browser-login.ts) | Preserve account/principal/flow identity and exact operation leases. Temporary verification failure does not establish logout; unconfirmed child shutdown does not release ownership. |
+| Accounts/authentication | [account pool](launcher/electron/account-pool.cjs), [browser display projection](launcher/electron/account-browser-snapshot.cjs), [registry](launcher/electron/account-registry.cjs), [operation leases](launcher/electron/account-operation-leases.cjs), [Codex login](launcher/electron/codex-login.cjs), [browser login](src/browser-login.ts) | Preserve account/principal/flow identity and exact operation leases. Only the selected host supplies full navigation observations; other hosts supply turn rows. Display projection has no session authority. Temporary verification failure does not establish logout. |
 | Runtime supervision | [runtime host](launcher/electron/runtime.cjs), [supervisor](launcher/electron/runtime-supervisor.cjs), [generation store](launcher/electron/runtime-generation.cjs), [tunnel policy](launcher/electron/runtime-tunnel-policy.cjs), [output decoder](launcher/electron/runtime-output.cjs) | RuntimeHost owns setup transitions; supervisor owns daemon/tunnel processes and readiness. Decode split UTF-8 once and bound every log line independently of raw capture. |
 | Updates | [controller](launcher/electron/update.cjs), [release policy](launcher/electron/update-release-policy.cjs), [staging](launcher/electron/update-staging.cjs), [validation](launcher/electron/update-validation.cjs), [worker](launcher/electron/update-worker.cjs) | Packaged repository/channel selects candidates; signature validation, preparation, handoff and detached installation are separate owners. |
 | Usage | [Native contract](src/usage/native-contract.ts), [outbox](src/native-usage-outbox.ts), [durable store](launcher/electron/usage-store.cjs), [report projection](launcher/electron/usage-report.cjs) | Receipt validation and persistence remain independent of UI aggregation. Preserve unknown fields and source/account scope. |
-| UI | [App](launcher/src/App.tsx), [Onboarding](launcher/src/Onboarding.tsx), [Accounts](launcher/src/AccountSettings.tsx), [Browser](launcher/src/BrowserSurface.tsx), [Activity](launcher/src/ActivitySurface.tsx), [Task Center](launcher/src/TaskCenter.tsx), [Settings](launcher/src/SettingsSurface.tsx) | App owns shell/navigation/shared snapshots. Feature surfaces and hooks own local drafts/actions; late results stay with their original account/query/flow. |
+| UI | [App](launcher/src/App.tsx), [deferred surfaces](launcher/src/deferred-surface.tsx), [presentation log store](launcher/src/launcher-log-store.ts), [Onboarding](launcher/src/Onboarding.tsx), [Accounts](launcher/src/AccountSettings.tsx), [Browser](launcher/src/BrowserSurface.tsx), [Activity](launcher/src/ActivitySurface.tsx), [Task Center](launcher/src/TaskCenter.tsx), [Settings](launcher/src/SettingsSurface.tsx) | App owns shell/navigation/shared snapshots. Optional screens load on navigation; logs update subscribed views instead of App. Feature surfaces and hooks own local drafts/actions; late results stay with their original account/query/flow. |
 | DEV harness | [CLI](src/dev-chat/cli.ts), [driver](src/dev-chat/driver.ts), [session store](src/dev-chat/session.ts), [context fixtures](src/dev-chat/context-fixtures.ts), [transport](src/dev-chat/transport.ts) | Isolated DEV state and inert generated content are distinct. The harness attaches to the launcher's existing DEV tunnel rather than taking over supervision. |
 | Build and distribution | [runtime bundler](scripts/build-runtime-bundle.ts), [owned build output](scripts/build-output.cjs), [launcher scripts](launcher/scripts), [CI](.github/workflows/ci.yml), [release workflow](.github/workflows/release.yml) | Generated output must be owned before replacement. Development checks precede separately authorized packaging/publication. |
 
@@ -93,6 +93,23 @@ Resolve paths through [core configuration](src/config.ts) and the
 [launcher profile](launcher/electron/profile.cjs). Do not embed an individual
 developer's worktree, account, token or home directory in application code.
 
+Renderer presentation work is separate from runtime correctness. Accounts,
+Settings, Task Center, Activity and Updates load through a shared Suspense/error
+boundary on first use; a failed feature load leaves shell navigation available
+and offers an explicit renderer reload. The initial shell and IPC subscriptions
+remain mounted. The log store retains the latest 300 records, reconciles startup
+events with the initial snapshot and gives rows stable local identities. Only
+Overview and Activity subscribe; notifications during bursts are grouped at
+100 ms without relying on animation frames. Unsubscribing the last view cancels
+the timer. Durable logs and immediate lifecycle/error/task events remain owned
+by their existing layers. Activity usage aggregation does not rerender for logs.
+
+Account snapshots compose one full selected-host observation plus tab-only
+observations for other hosts; no cached authentication/navigation state is
+introduced. Usage projection filters receipts once and sorts each duration set
+once for both median and p95, without changing the durable store or unknown-data
+semantics.
+
 | State | Owner and rule |
 | --- | --- |
 | Runtime config / Codex integration | Setup, file transactions and integration journal; compare the snapshot that produced the candidate. |
@@ -123,6 +140,12 @@ developer's worktree, account, token or home directory in application code.
 - Close task-owned temporary browsers/processes and remove disposable profiles;
   preserve production and unrelated work. Do not publish installable assets as a
   side effect of a source refactor.
+- For an explicit performance comparison, [measure UI work](launcher/scripts/measure-ui-work.cjs)
+  against a freshly built renderer and [compare usage projection](launcher/scripts/measure-usage-projection.cjs)
+  against a supplied Git ref. Both use synthetic data; their timings/React commit
+  counts do not measure provider latency or installed-app startup. See the
+  [performance review](docs/reviews/performance-refactor-20260922.md) for the
+  recorded comparison and targeted behavior checks.
 
 ## Keeping this architecture current
 

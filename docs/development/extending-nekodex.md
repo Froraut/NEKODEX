@@ -37,6 +37,7 @@ Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) a
 | Extend the helper output protocol | `src/adapters/chatgpt-web/browser-helper-protocol.ts` | Update the typed producer and runtime decoder together; unknown or malformed frames remain rejected. |
 | Add a browser control operation | `src/launcher-browser-control.ts` | Descriptor authority is in `launcher-browser-descriptor.ts`; CDP attachment stays behind `launcher-browser-host.ts`. |
 | Change account read/exclusive operations | `launcher/electron/account-operation-leases.cjs` | Account policy and admission remain in `account-pool.cjs`. |
+| Change the cross-account browser snapshot | `launcher/electron/account-browser-snapshot.cjs` | Pure display projection consumes one full selected-host observation and tab-only rows for other hosts. Pool, hosts and ledgers retain ownership; do not cache session evidence. |
 | Change browser turn ownership | `launcher/electron/browser-turn-lifecycle.cjs` | Keep one turn map and preserve durable ledger → removal → receipt ordering; Electron presentation stays in the host. |
 | Change Manual prompt/confirmation/cancellation policy | `launcher/electron/browser-manual-turns.cjs` | The host supplies the existing tab/signal maps and explicit lifecycle/presentation ports. Native views and registry removal stay with their existing owners. |
 | Change artifact transfer ownership | `launcher/electron/browser-artifact-transfers.cjs` | The network download guard owns writes; transfer leases must revalidate exact tab and lease ownership after awaiting completion. |
@@ -46,8 +47,10 @@ Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) a
 | Extend runtime validation | `launcher/electron/runtime-config-contract.cjs` | Setup compatibility and permission to start a runtime are separate entry points. |
 | Extend an application screen | `launcher/src/Onboarding.tsx`, `ActivitySurface.tsx`, `SetupSurface.tsx`, `McpSurface.tsx`, `SettingsSurface.tsx`, `BrowserSurface.tsx` | `App.tsx` owns navigation, shared snapshots and native browser placement. `BrowserSurface.tsx` owns browser controls; `ManualTurnGuide.tsx` owns prompt presentation and its countdown. |
 | Add account UI actions | `useAccountPoolSnapshot.ts`, `useAccountCodexLogin.ts` | Preserve captured account/flow identity and invalidate older reads when applying a mutation receipt. |
+| Add a screen loaded on navigation | `deferred-surface.tsx`, composed in `App.tsx` | Keep startup/IPC ownership in App, loading/error recovery local to the feature, and shared labels outside the deferred module. A browser-cached failed module needs explicit reload. |
+| Display live logs | `launcher-log-store.ts`, subscribed by Overview and Activity | Retain 300 ordered records with stable IDs, reconcile snapshot/events, batch presentation notifications and cancel unused timers. Do not route logs back through App state or delay task/error/lifecycle IPC. |
 | Add a Task Center action | `task-center-model.ts`, `task-center-copy.ts`, `TaskActionConfirmation.tsx` | Backend capabilities authorize actions; phase labels alone do not. Task Center retains focus restoration. |
-| Add a usage report section | `useUsageReport.ts`, `UsageCalendar.tsx`, `launcher/electron/usage-report.cjs` | Query identity, report projection and durable storage remain separate. |
+| Add a usage report section | `useUsageReport.ts`, `UsageCalendar.tsx`, `launcher/electron/usage-report.cjs` | Query identity, report projection and durable storage remain separate. Reuse the filtered receipt set and one sort per duration summary; preserve unknown coverage. Log changes must not trigger usage recomputation. |
 | Add synthetic DEV context | `src/dev-chat/context-fixtures.ts` | Named chat persistence remains in `session.ts`; generated content stays explicitly inert. |
 
 ## Working across boundaries
@@ -65,5 +68,11 @@ For persistent changes, use the snapshot that produced the candidate. A later re
 Use the smallest behavioral scenario that distinguishes the new contract from the old behavior. Exercise deferred completion, cancellation or write failure when those boundaries are affected; prove the fixture reaches the intended boundary before injecting the fault. Reuse unchanged checks, avoid source-text/count assertions, and keep one integrated build/UI owner.
 
 The renderer preview in `launcher/tests/fixtures/ui-preview.cjs` supplies synthetic IPC without accounts or provider requests. `launcher/tests/architecture-refactor-ui-preview.cjs` covers the changed safety/workspace/usage flows; existing focused previews cover navigation and task/Settings behavior. These fixtures do not establish live account, updater, provider or installed-app behavior.
+
+`launcher/tests/performance-ui-preview.cjs` exercises deferred screen loading,
+offscreen log retention, stable filtered rows and failed-load recovery, including
+paused animation frames. The bounded `launcher/scripts/measure-ui-work.cjs` and
+`measure-usage-projection.cjs <baseline-ref>` probes produce comparative evidence;
+they are not default startup tasks or broad regression suites.
 
 Source publication, development verification, packaging and installed runtime are separate outcomes. This refactor does not change the release version or authorize a release.

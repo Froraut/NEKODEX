@@ -53,8 +53,11 @@ test('source Electron uses the refactored renderer and real isolated preload', {
     identity.profilePaths = snapshot.profilePaths;
     identity.title = await page.title();
     identity.screens = [];
-    for (const label of ['Overview', 'Accounts', 'Task center', 'Connections', 'Settings']) {
+    for (const [label, selector] of [['Overview', '.overview-activity'], ['Accounts', '.account-settings'],
+      ['Task center', '.task-center'], ['Connections', '.setup-list'], ['Activity', '.activity-filters'],
+      ['Updates', '.updates-surface'], ['Settings', '.settings-list']]) {
       await page.locator('.sidebar-item').filter({ hasText: label }).first().click();
+      await page.locator(selector).first().waitFor();
       identity.screens.push(label);
     }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);

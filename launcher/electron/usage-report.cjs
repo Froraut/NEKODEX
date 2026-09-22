@@ -9,22 +9,18 @@ function reportPeriod(observedAt, days) {
       const date = new Date(first); date.setDate(first.getDate() + offset); return dayOf(date);
     }) };
 }
-function quantile(values, fraction) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)];
-}
-
-function median(values) {
-  if (!values.length) return null;
+function durationSummary(values) {
+  if (!values.length) return { observedSamples: 0, medianMs: null, p95Ms: null };
+  // One detached sort serves both statistics. Receipt order/state stay intact.
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  return { observedSamples: sorted.length,
+    medianMs: sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2,
+    p95Ms: sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] };
 }
 
 function diagnosticDurations(values, eligibleSamples) {
-  return { observedSamples: values.length, eligibleSamples,
-    medianMs: median(values), p95Ms: quantile(values, 0.95) };
+  return { ...durationSummary(values), eligibleSamples };
 }
 
 function diagnosticFailures(counts, expected) {
@@ -128,9 +124,9 @@ function projectNativeUsage(state, days, observedAt, health) {
     metrics.knownOutcomeTotal = metrics.completed + metrics.incomplete + metrics.failed + metrics.cancelled;
     metrics.unrecorded = metrics.total - metrics.knownOutcomeTotal;
     metrics.knownOutcomeCompletionRate = metrics.knownOutcomeTotal ? metrics.completed / metrics.knownOutcomeTotal : null;
-    const rowKeys = new Set(rows.map(nativeRowKey)), durations = [];
+    const rowKeys = new Set(rows.map(nativeRowKey)), durations = [], includedReceipts = [];
     for (const receipt of Object.values(state.native.receipts)) {
-      if (rowKeys.has(receipt.key)) durations.push(receipt.durationMs);
+      if (rowKeys.has(receipt.key)) { durations.push(receipt.durationMs); includedReceipts.push(receipt); }
     }
     const failures = new Map();
     const tokenSums = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedInputTokens: 0,
@@ -153,12 +149,11 @@ function projectNativeUsage(state, days, observedAt, health) {
       reportedSamples: tokenSums.reportedSamples, unreportedSamples: tokenSums.unreportedSamples,
       cachedInputReportedSamples: tokenSums.cachedInputReportedSamples,
       reasoningReportedSamples: tokenSums.reasoningOutputReportedSamples };
-    const diagnosticGroups = nativeDiagnosticGroups(rows,
-      Object.values(state.native.receipts).filter(receipt => rowKeys.has(receipt.key)));
+    const diagnosticGroups = nativeDiagnosticGroups(rows, includedReceipts);
     return { available: true, startedAt: state.startedAt, lifetime: state.native.lifetime,
       lifetimeGroups: Object.values(state.native.lifetimeGroups).map(publicNativeAggregate), lifetimeUnclassified: 0,
       recovered: health.recovered, backupAvailable: health.backupAvailable, rows: rows.map(publicNativeAggregate), ...base, metrics,
-      durations: { observedSamples: durations.length, medianMs: median(durations), p95Ms: quantile(durations, 0.95) },
+      durations: durationSummary(durations),
       failures: [...failures].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
       diagnosticGroups, calendar: calendar.map(publicNativeAggregate), tokens };
   }
@@ -190,10 +185,11 @@ function projectWebUsage(state, { days, accountId }, accountMetadata, observedAt
     metrics.unrecorded = metrics.total - metrics.knownOutcomeTotal;
     metrics.knownOutcomeCompletionRate = metrics.knownOutcomeTotal ? metrics.completed / metrics.knownOutcomeTotal : null;
 
-    const includedKeys = new Set(rows.map(rowKey)), durations = [], owners = new Set(), failureCounts = new Map();
+    const includedKeys = new Set(rows.map(rowKey)), durations = [], includedReceipts = [], owners = new Set(), failureCounts = new Map();
     let observedMessages = 0, observedFailures = 0;
     for (const saved of Object.values(state.receipts)) {
       if (!includedKeys.has(saved.key)) continue;
+      includedReceipts.push(saved);
       observedMessages++; owners.add(saved.owner);
       if (saved.outcome !== null && Number.isSafeInteger(saved.durationMs)) durations.push(saved.durationMs);
       if (saved.outcome === 'failed') {
@@ -213,13 +209,12 @@ function projectWebUsage(state, { days, accountId }, accountMetadata, observedAt
     }
     const lifetimeGroups = Object.values(state.lifetimeGroups).filter(row => accountId === null || row.accountId === accountId);
     const lifetimeUnclassified = accountId === null || accountId === UNKNOWN_ACCOUNT_ID ? state.lifetimeUnclassified : 0;
-    const diagnosticGroups = webDiagnosticGroups(rows,
-      Object.values(state.receipts).filter(receipt => includedKeys.has(receipt.key)));
+    const diagnosticGroups = webDiagnosticGroups(rows, includedReceipts);
     return { available: true, startedAt: state.startedAt,
       lifetime: lifetimeGroups.reduce((sum, row) => sum + row.accepted, lifetimeUnclassified),
       lifetimeGroups: structuredClone(lifetimeGroups), lifetimeUnclassified, recovered: health.recovered,
       backupAvailable: health.backupAvailable, rows: structuredClone(rows), ...base, metrics,
-      durations: { observedSamples: durations.length, medianMs: median(durations), p95Ms: quantile(durations, 0.95) },
+      durations: durationSummary(durations),
       failures: [...failureCounts].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
       diagnosticGroups, calendar };
 }
