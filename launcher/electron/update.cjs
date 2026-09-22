@@ -1,7 +1,7 @@
-const crypto = require("node:crypto");
+const { sha256 } = require("./update-asset-hash.cjs");
+const { stageAuthenticatedUpdate } = require("./update-staging.cjs");
 const fs = require("node:fs");
 const https = require("node:https");
-const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { Transform } = require("node:stream");
@@ -287,22 +287,6 @@ async function downloadFile(url, destination, {
   }
 }
 
-function sha256(filePath) {
-  const hash = crypto.createHash("sha256");
-  const fd = fs.openSync(filePath, "r");
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
-  try {
-    for (;;) {
-      const count = fs.readSync(fd, buffer, 0, buffer.length, null);
-      if (count === 0) break;
-      hash.update(buffer.subarray(0, count));
-    }
-  } finally {
-    fs.closeSync(fd);
-  }
-  return hash.digest("hex");
-}
-
 function macApplicationPath(executablePath) {
   const match = /^(.*\.app)[\\/]Contents[\\/]MacOS[\\/][^\\/]+$/.exec(executablePath);
   if (!match?.[1]) throw new Error(`Could not resolve the macOS application bundle from ${executablePath}`);
@@ -583,83 +567,14 @@ function createUpdateController({
       transition({ status: "downloading", version: available.version });
       let tempRoot;
       try {
-        throwIfAborted(active.controller.signal);
-        tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-update-"));
-        const metadataText = await deps.downloadText(available.metadataUrl, 512 * 1024, {
-          signal: active.controller.signal,
+        const staged = await stageAuthenticatedUpdate({
+          available, repository, platform, arch, executablePath, runtimeExecutable,
+          logsDirectory, deps, signal: active.controller.signal, onProgress: transition,
+          expectedChecksum, buildJob, logger,
         });
-        throwIfAborted(active.controller.signal);
-        const metadata = deps.verifyReleaseMetadata(metadataText, { repository, tag: `v${available.version}`, version: available.version });
-        const authenticatedAsset = metadata.assets.find(asset => asset.name === available.assetName);
-        if (!authenticatedAsset || authenticatedAsset.size !== available.assetBytes) {
-          throw new Error("Signed release metadata does not match the selected asset size");
-        }
-        const checksums = await deps.downloadText(available.checksumsUrl, 2 * 1024 * 1024, {
-          signal: active.controller.signal,
-        });
-        throwIfAborted(active.controller.signal);
-        const expected = expectedChecksum(checksums, available.assetName);
-        if (expected !== authenticatedAsset.sha256) throw new Error("Checksums do not match independently authenticated release metadata");
-        const assetPath = path.join(tempRoot, available.assetName);
-        const cacheRoot = path.join(logsDirectory, "..", "update-downloads");
-        fs.mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
-        const cachedAsset = path.join(cacheRoot, `${expected}-${available.assetName}`);
-        if (fs.existsSync(cachedAsset) && (fs.lstatSync(cachedAsset).isSymbolicLink()
-          || !fs.lstatSync(cachedAsset).isFile())) throw new Error("Unsafe cached update asset");
-        if (fs.existsSync(cachedAsset) && deps.sha256(cachedAsset) !== expected) {
-          fs.rmSync(cachedAsset);
-          throw new Error("Cached update checksum mismatch; removed damaged cache, retry download");
-        }
-        if (!fs.existsSync(cachedAsset)) await deps.downloadFile(available.assetUrl, cachedAsset, {
-          expectedBytes: available.assetBytes, expectedSha256: expected,
-          onProgress: progress => {
-            if (!active.controller.signal.aborted) {
-              transition({ status: "downloading", version: available.version, ...progress });
-            }
-          },
-          signal: active.controller.signal,
-        });
-        throwIfAborted(active.controller.signal);
-        transition({ status: "verifying", version: available.version });
-        await fs.promises.copyFile(cachedAsset, assetPath);
-        throwIfAborted(active.controller.signal);
-        const actual = deps.sha256(assetPath);
-        if (actual !== expected) throw new Error(`SHA-256 verification failed for ${available.assetName}`);
-        throwIfAborted(active.controller.signal);
-
-        const stagingRoot = path.join(tempRoot, "stage");
-        if (platform === "darwin") await deps.extractMac(assetPath, stagingRoot, { signal: active.controller.signal });
-        if (platform === "win32") await deps.extractWindows(assetPath, stagingRoot, { signal: active.controller.signal });
-        if (platform === "linux") {
-          fs.chmodSync(assetPath, 0o755);
-          await deps.extractLinux(assetPath, stagingRoot, { signal: active.controller.signal });
-          throwIfAborted(active.controller.signal);
-          const runnerSource = deps.linuxRunnerSource();
-          fs.copyFileSync(runnerSource, path.join(tempRoot, "linux-appimage-runner.sh"));
-          fs.chmodSync(path.join(tempRoot, "linux-appimage-runner.sh"), 0o755);
-        }
-        throwIfAborted(active.controller.signal);
-
-        const workerPath = path.join(tempRoot, "update-worker.cjs");
-        for (const filename of ["update-worker.cjs", "update-validation.cjs", "update-recovery.cjs", "update-launcher.cjs"]) {
-          fs.copyFileSync(path.join(__dirname, filename), path.join(tempRoot, filename));
-        }
-        const job = buildJob({
-          version: available.version,
-          platform,
-          arch,
-          executablePath,
-          assetPath,
-          stagingRoot,
-          tempRoot,
-          runtimeExecutable,
-          repository,
-          logPath: path.join(logsDirectory, "update-worker.log"),
-        });
-        deps.validateStagedApplication(job.stagedApplication, job);
-        throwIfAborted(active.controller.signal);
-        const jobPath = path.join(tempRoot, "job.json");
-        fs.writeFileSync(jobPath, `${JSON.stringify(job)}\n`, { mode: 0o600 });
+        // Successful return transfers ownership from staging to this controller.
+        tempRoot = staged.tempRoot;
+        const { workerPath, jobPath } = staged;
         // Give cancellation IPC one final turn after synchronous validation. Once
         // handoff starts, only the existing quit-failure rollback may stop the worker.
         await new Promise(resolve => setImmediate(resolve));
@@ -673,7 +588,7 @@ function createUpdateController({
         return { child, tempRoot, version: available.version };
       } catch (error) {
         const cancelled = active.controller.signal.aborted && !active.handoffCommitted;
-        let cleanupError = null;
+        let cleanupError = error?.stagingCleanupError || (error?.preserveStaging === true ? error : null);
         if (tempRoot) {
           if (error?.preserveStaging === true) {
             cleanupError = error;

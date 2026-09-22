@@ -5,7 +5,7 @@ import {
   parseChatGptWebCompactionModel,
   type ChatGptWebCompactionModel,
 } from "./chatgpt-web-compaction-policy";
-import { loadConfig, saveConfig } from "./config";
+import { loadConfigWithSnapshot, saveConfig } from "./config";
 
 export async function runCompactionModelConfigCommand(args: string[]): Promise<void> {
   const [action, rawModel, ...rest] = args;
@@ -28,7 +28,7 @@ export async function runCompactionModelConfigCommand(args: string[]): Promise<v
   }
 
   const authorizedDescriptorPath = authorizeLauncherControl("compaction model configuration");
-  const config = loadConfig();
+  const { config, snapshot } = loadConfigWithSnapshot();
   if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath
     || resolve(config.browserHostDescriptorPath) !== resolve(authorizedDescriptorPath)) {
     throw new Error("Launcher authorization does not own this configuration");
@@ -39,6 +39,6 @@ export async function runCompactionModelConfigCommand(args: string[]): Promise<v
   // The daemon samples this value when the next eligible compaction starts.
   if (model === undefined) delete config.compactionModel;
   else config.compactionModel = model;
-  saveConfig(config);
+  saveConfig(config, snapshot);
   process.stdout.write(`${JSON.stringify({ compactionModel: model ?? null })}\n`);
 }

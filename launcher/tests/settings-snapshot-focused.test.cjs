@@ -5,10 +5,10 @@ const path = require('node:path');
 const ts = require('typescript');
 
 // Exercise the actual Settings component without booting Electron or its IPC.
-const source = ts.createSourceFile('App.tsx', fs.readFileSync(path.join(__dirname, '../src/App.tsx'), 'utf8'),
+const source = ts.createSourceFile('SettingsSurface.tsx', fs.readFileSync(path.join(__dirname, '../src/SettingsSurface.tsx'), 'utf8'),
   ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const component = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'SettingsSurface');
-const compiled = ts.transpileModule(component.getText(source), { compilerOptions: {
+const compiled = ts.transpileModule(component.getText(source).replace(/^export /, ''), { compilerOptions: {
   target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React,
 } }).outputText;
 const copy = new Proxy({ browserCapacityStatus: 'Active {active}; saved {saved}', capacityInvalid: 'Maximum {max}' },

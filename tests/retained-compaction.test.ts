@@ -8,6 +8,7 @@ import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker
 import { ChatGptCompactionHandoffAccepted, chatGptRetainedConversationUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 import {
   MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+  createCompactionRunRegistry,
   cancelAllStructuredCompactions,
   cancelStructuredCompactionNativeTurn,
   cancelStructuredCompactionTrace,
@@ -645,25 +646,27 @@ test("structured compaction rejects incomplete native interruption identities", 
 
 test("active compaction settles canonical tool results before the separate retained handoff", async () => {
   const completed: Array<{ callId: string; result: BrokerToolResult }> = [];
+  let accounting = 0;
+  let revoked = 0;
   const compactionTokens: string[] = [];
   let finishBrowser!: (answer: string) => void;
   const browser = new Promise<string>(resolve => { finishBrowser = resolve; });
   const broker = {
-    requestCompaction: (token: string) => { compactionTokens.push(token); return 0; },
-    compactionDeliveryCount: () => 0,
+    requestCompaction: async (token: string) => { compactionTokens.push(token); return 0; },
+    compactionDeliveryCount: async () => 0,
     completeTool: async (_token: string, callId: string, result: BrokerToolResult) => {
       completed.push({ callId, result });
       if (callId === "call_two") {
         finishBrowser("Ordinary final after canonical results.");
       }
     },
-    revoke() {},
-  } as unknown as TurnBroker;
+    revoke() { revoked += 1; },
+  };
   const source = new ChatGptTurnSession({
     mode: "tools",
     token: Promise.resolve("turn_active"),
     externalProgress: {
-      recordToolResult() {},
+      recordToolResult() { accounting += 1; },
     } as never,
     browser,
     physicalSettlement: browser.then(() => undefined),
@@ -685,6 +688,9 @@ test("active compaction settles canonical tool results before the separate retai
     answer: "Ordinary final after canonical results.",
     compactionInstructionDelivered: false,
   });
+  expect(accounting).toBe(2);
+  expect(source.outstanding()).toHaveLength(0);
+  expect(revoked).toBe(1);
   expect(compactionTokens).toEqual(["turn_active"]);
   expect(completed.map(entry => entry.callId)).toEqual(["call_one", "call_two"]);
   expect(JSON.stringify(completed[0])).not.toContain(CODEX_ACTIVE_COMPACTION_REQUEST_MARKER);
@@ -789,16 +795,16 @@ test("active compaction aborts its source when the shared handoff deadline expir
   expect(cancellations).toBe(1);
 });
 
-test("Manual mode active compaction returns through its explicit completion control", async () => {
+test.each([0, 1])("Manual mode active compaction returns through its explicit completion control with queued deliveries %s", async (queued) => {
   const completed: BrokerToolResult[] = [];
   const broker = {
-    requestCompaction: () => 0,
-    compactionDeliveryCount: () => 0,
+    requestCompaction: async () => queued,
+    compactionDeliveryCount: async () => queued,
     completeTool: async (_token: string, _callId: string, result: BrokerToolResult) => {
       completed.push(result);
     },
     revoke() {},
-  } as unknown as TurnBroker;
+  };
   const source = new ChatGptTurnSession({
     mode: "tools",
     token: Promise.resolve("turn_active_zero_risk"),
@@ -823,7 +829,11 @@ test("Manual mode active compaction returns through its explicit completion cont
 
   await expect(settleActiveZeroRiskCompactionSource(parsed, source, broker))
     .resolves.toBe("Manual mode checkpoint");
-  expect(JSON.stringify(completed)).toContain("Return only the complete checkpoint summary to Codex with codex_turn_complete");
+  if (queued === 0) {
+    expect(JSON.stringify(completed)).toContain("Return only the complete checkpoint summary to Codex with codex_turn_complete");
+  } else {
+    expect(completed).toEqual([{ content: [{ type: "text", text: "one" }] }]);
+  }
   expect(JSON.stringify(completed)).not.toContain("CODEX_ACTIVE_COMPACTION_CHECKPOINT_");
 });
 
@@ -1630,3 +1640,36 @@ test("compaction transaction cancellation takes precedence over an unconsumed ha
     store.close();
   }
 });
+
+
+test("isolated compaction registry keeps cancelled queued ownership beyond retention", async () => {
+  let now = 0;
+  const registry = createCompactionRunRegistry(() => now);
+  let release!: () => void;
+  const physical = new Promise<void>(resolve => { release = resolve; });
+  const owner = { ownerKey: "isolated-owner", traceIds: ["first"] };
+  const first = registry.runStructuredCompactionOnce("first", owner, async (_signal, retain) => {
+    retain(physical);
+    throw new Error("logical timeout");
+  });
+  await expect(first).rejects.toThrow("logical timeout");
+  let queuedStarted = false;
+  const queued = registry.runStructuredCompactionOnce("queued", { ...owner, traceIds: ["queued"] }, async () => {
+    queuedStarted = true;
+    return "unexpected";
+  });
+  void queued.catch(() => {});
+  let cancelledSettled = false;
+  const cancellation = registry.cancelStructuredCompactionTrace("queued", new Error("cancel queued"))
+    .then(count => { cancelledSettled = true; return count; });
+  await expect(queued).rejects.toThrow("cancel queued");
+  now = 31 * 60_000;
+  await expect(registry.existingStructuredCompactionRun("first", owner)!).rejects.toThrow("logical timeout");
+  expect(registry.activeStructuredCompactionCount()).toBe(2);
+  expect(cancelledSettled).toBe(false);
+  expect(queuedStarted).toBe(false);
+  release();
+  expect(await cancellation).toBe(1);
+  expect(registry.activeStructuredCompactionCount()).toBe(0);
+  expect(registry.existingStructuredCompactionRun("first", owner)).toBeUndefined();
+}, 5000);

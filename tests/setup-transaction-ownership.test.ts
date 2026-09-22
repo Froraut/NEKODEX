@@ -7,6 +7,7 @@ import * as config from "../src/config";
 import * as tunnel from "../src/tunnel";
 import { restoreFileSnapshot, snapshotFile } from "../src/codex-integration-shared";
 
+let onInspect: () => void = () => {};
 let finalCommit: () => void = () => { throw new Error("FINAL_COMMIT_FAULT"); };
 let status: "stopped" | "running" | "unknown" = "running";
 let reachedConnect = false;
@@ -21,7 +22,7 @@ mock.module("../src/service", () => ({ getServiceStatus: absentService, assertSe
 mock.module("../src/tunnel-service", () => ({ getTunnelServiceStatus: absentService,
   installTunnelService: () => { throw new Error("unexpected service install"); }, restartTunnelService: () => {},
   stopTunnelService: () => {}, uninstallTunnelService: () => {}, tunnelServiceDefinitionMatches: () => false }));
-mock.module("../src/launcher-browser-host", () => ({ inspectLauncherBrowserHost: async () => ({ solAvailable: false, extraHighAvailable: false, proAvailable: false }) }));
+mock.module("../src/launcher-browser-host", () => ({ inspectLauncherBrowserHost: async () => { onInspect(); return { solAvailable: false, extraHighAvailable: false, proAvailable: false }; } }));
 mock.module("../src/codex-integration", () => ({ preflightCodexIntegration: () => {},
   readCodexSubagentProtocol: () => "compatibility-v1", installCodexIntegration: () => finalCommit() }));
 mock.module("../src/tunnel", () => ({ ...tunnel, installTunnelClient: async (_before: unknown, onInstalled: Function) => {
@@ -160,3 +161,22 @@ test("writer receipts preserve BOM and refuse same-byte key/client replacements 
     expect(lstatSync(manifest).mode & 0o777).toBe(0o400);
   });
 });
+
+for (const scenario of ["production", "development", "absent"] as const) {
+  test(`original config read rejects concurrent inspection edit: ${scenario}`, async () => isolated(async () => {
+    const original = config.defaultConfig();
+    original.browserHost = "launcher";
+    original.browserHostDescriptorPath = base.browserHostDescriptorPath;
+    if (scenario === "development") { original.purpose = "dev-harness"; original.appName = original.automaticAppName = "Codex Native4 DEV"; }
+    if (scenario !== "absent") config.saveConfig(original);
+    const external = Buffer.from(JSON.stringify({ ...original, proModelVersion: "6" }) + "\n");
+    let reachedInspection = false;
+    onInspect = () => { reachedInspection = true; writeFileSync(config.getConfigPath(), external); };
+    try {
+      const run = scenario === "development" ? setupDevProfile : setup;
+      await expect(run({ ...base, mode: "browser-only" })).rejects.toThrow("preserving the concurrent edit");
+      expect(reachedInspection).toBe(true);
+      expect(readFileSync(config.getConfigPath()).equals(external)).toBe(true);
+    } finally { onInspect = () => {}; }
+  }));
+}

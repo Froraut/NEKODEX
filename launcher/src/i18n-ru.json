@@ -584,6 +584,7 @@
   "accountProxySocksPort": "Укажите порт в URL SOCKS5.",
   "accountFormFailed": "Не удалось сохранить эти настройки. Проверьте сведения об ошибке и повторите попытку.",
   "accountSafetyInvalid": "Используйте целые числа в указанных диапазонах.",
+  "accountSafetyRestore": "Восстановить сохранённые настройки",
   "launcherRuntimeRestartTitle": "Перезапустите NEKODEX, чтобы завершить обновление",
   "launcherRuntimeRestartBody": "Обновлённое приложение использует прежнюю рабочую среду выполнения. Когда задачи завершатся, перезапустите NEKODEX, чтобы активировать новую среду выполнения.",
   "launcherRuntimeRestartAction": "Перезапустить NEKODEX",

@@ -16,6 +16,7 @@ function harness(file, name, initialProps, api = {}) {
       if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial;
       return [slots[i], value => { slots[i] = typeof value === 'function' ? value(slots[i]) : value; }];
     },
+    useRef(initial) { const i = cursor++; return slots[i] ??= { current: initial }; },
     useMemo(fn) { return fn(); },
     useEffect(fn, deps) {
       const i = cursor++;

@@ -27,7 +27,7 @@ import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
 import { parseChatGptWebProModelVersion, type ChatGptWebProModelVersion } from "./chatgpt-web-models";
 import { AsyncEventQueue } from "./event-queue";
-import { readJsonRequestBody } from "./http-body";
+import { createInternalJsonRequest, readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
 import { createHash } from "node:crypto";
 import { augmentNativeModelCatalog } from "./model-catalog";
@@ -67,292 +67,10 @@ import type { ProviderAdapter } from "./adapters/base";
 import { VERSION } from "./version";
 import { HermesIntegration, type HermesContext } from "./hermes-integration";
 
-type HttpTrackedEndpoint = "models" | "responses" | "compact" | "search" | "unspecified" | NativeImageEndpoint;
-
-export interface NativeCodexTurnIdentity {
-  threadId: string;
-  turnId: string;
-}
-
-export interface HttpStreamFailureEvidence {
-  httpTurnId: number;
-  endpoint: HttpTrackedEndpoint;
-  reader: "client" | "windows_lifecycle";
-  platform: NodeJS.Platform;
-  chunks: number;
-  bytes: number;
-  errorName: string;
-  errorCode: string;
-}
-
-type HttpStreamFailureReporter = (evidence: HttpStreamFailureEvidence) => void;
-
-function safeStreamErrorField(value: unknown, fallback: string): string {
-  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value)
-    ? value
-    : fallback;
-}
-
-function streamFailureEvidence(
-  error: unknown,
-  httpTurnId: number,
-  endpoint: HttpTrackedEndpoint,
-  reader: HttpStreamFailureEvidence["reader"],
-  platform: NodeJS.Platform,
-  chunks: number,
-  bytes: number,
-): HttpStreamFailureEvidence {
-  const candidate = error !== null && typeof error === "object"
-    ? error as { name?: unknown; code?: unknown }
-    : {};
-  return {
-    httpTurnId,
-    endpoint,
-    reader,
-    platform,
-    chunks,
-    bytes,
-    errorName: safeStreamErrorField(candidate.name, "Error"),
-    errorCode: safeStreamErrorField(candidate.code, "unknown"),
-  };
-}
-
-const reportHttpStreamFailure: HttpStreamFailureReporter = evidence => {
-  console.warn(`[codex-chatgpt-web] http_stream_failed ${JSON.stringify(evidence)}`);
-};
-
-function emitHttpStreamFailure(
-  reporter: HttpStreamFailureReporter,
-  evidence: HttpStreamFailureEvidence,
-): void {
-  try {
-    reporter(evidence);
-  } catch {
-    // Diagnostics are a side channel: they must never replace the source stream error or retain
-    // HTTP turn ownership after the client has already observed that failure.
-  }
-}
-
-export class HttpTurnCounter {
-  private readonly active = new Map<number, {
-    abort: AbortController;
-    done: Promise<void>;
-    finish: () => void;
-    identity?: NativeCodexTurnIdentity;
-    web?: boolean;
-  }>();
-  private readonly interrupted = new Map<string, unknown>();
-  private nextId = 1;
-
-  private identityKey(identity: NativeCodexTurnIdentity): string {
-    return `${identity.threadId}\u0000${identity.turnId}`;
-  }
-
-  private rememberInterrupted(identity: NativeCodexTurnIdentity, reason: unknown): void {
-    const key = this.identityKey(identity);
-    this.interrupted.delete(key);
-    this.interrupted.set(key, reason);
-    while (this.interrupted.size > 1_024) {
-      const oldest = this.interrupted.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      this.interrupted.delete(oldest);
-    }
-  }
-
-  constructor(private readonly reportStreamFailure: HttpStreamFailureReporter = reportHttpStreamFailure) {}
-
-  count(): number {
-    return this.active.size;
-  }
-
-  webCount(): number {
-    return [...this.active.values()].filter(turn => turn.web).length;
-  }
-
-  async cancelAll(reason: unknown = new Error("Active HTTP turns cancelled")): Promise<number> {
-    const turns = [...this.active.values()];
-    for (const turn of turns) {
-      if (!turn.abort.signal.aborted) turn.abort.abort(reason);
-    }
-    await Promise.all(turns.map(turn => turn.done));
-    return turns.length;
-  }
-
-  async cancelTurn(
-    identity: NativeCodexTurnIdentity,
-    reason: unknown = new DOMException("Codex turn interrupted", "AbortError"),
-  ): Promise<number> {
-    const cancellation = this.beginCancelTurn(identity, reason);
-    await cancellation.settlement;
-    return cancellation.cancelled;
-  }
-
-  beginCancelTurn(
-    identity: NativeCodexTurnIdentity,
-    reason: unknown = new DOMException("Codex turn interrupted", "AbortError"),
-  ): { cancelled: number; settlement: Promise<void> } {
-    this.rememberInterrupted(identity, reason);
-    const turns = [...this.active.values()].filter(turn => (
-      turn.identity?.threadId === identity.threadId && turn.identity.turnId === identity.turnId
-    ));
-    for (const turn of turns) {
-      if (!turn.abort.signal.aborted) turn.abort.abort(reason);
-    }
-    return {
-      cancelled: turns.length,
-      settlement: Promise.all(turns.map(turn => turn.done)).then(() => undefined),
-    };
-  }
-
-  async track(
-    run: (
-      signal: AbortSignal,
-      bindIdentity: (identity: NativeCodexTurnIdentity) => void,
-      bindWeb: () => void,
-    ) => Promise<Response>,
-    clientSignal?: AbortSignal,
-    platform: NodeJS.Platform = process.platform,
-    endpoint: HttpTrackedEndpoint = "unspecified",
-  ): Promise<Response> {
-    const id = this.nextId++;
-    const abort = new AbortController();
-    let finish!: () => void;
-    const done = new Promise<void>(resolve => { finish = resolve; });
-    const tracked: {
-      abort: AbortController;
-      done: Promise<void>;
-      finish: () => void;
-      identity?: NativeCodexTurnIdentity;
-      web?: boolean;
-    } = { abort, done, finish };
-    this.active.set(id, tracked);
-    let released = false;
-    let clientAbortListener: (() => void) | undefined;
-    let streamAbortListener: (() => void) | undefined;
-    const release = () => {
-      if (released) return;
-      released = true;
-      this.active.delete(id);
-      if (clientSignal && clientAbortListener) {
-        clientSignal.removeEventListener("abort", clientAbortListener);
-        clientAbortListener = undefined;
-      }
-      if (streamAbortListener) abort.signal.removeEventListener("abort", streamAbortListener);
-      finish();
-    };
-    clientAbortListener = () => abort.abort(clientSignal?.reason);
-    if (clientSignal?.aborted) abort.abort(clientSignal.reason);
-    else clientSignal?.addEventListener("abort", clientAbortListener, { once: true });
-
-    try {
-      const response = await run(abort.signal, identity => {
-        if (!identity.threadId.trim() || !identity.turnId.trim()) {
-          throw new Error("Native Codex turn identity must contain a threadId and turnId");
-        }
-        if (tracked.identity
-          && (tracked.identity.threadId !== identity.threadId || tracked.identity.turnId !== identity.turnId)) {
-          throw new Error("An HTTP request cannot change its native Codex turn identity");
-        }
-        tracked.identity = identity;
-        const interruptedReason = this.interrupted.get(this.identityKey(identity));
-        if (interruptedReason !== undefined && !abort.signal.aborted) abort.abort(interruptedReason);
-      }, () => { tracked.web = true; });
-      if (!response.body) {
-        release();
-        return response;
-      }
-      if (abort.signal.aborted) {
-        await response.body.cancel(abort.signal.reason).catch(() => {});
-        release();
-        return new Response(null, { status: 499, statusText: "Client Closed Request" });
-      }
-
-      if (platform !== "win32") {
-        // Bun's async-pull teardown bug is Windows-only. On Darwin/Linux, preserve the direct
-        // pull chain: it keeps HTTP backpressure native and lets a client body cancellation reach
-        // the original SSE reader without an eagerly drained tee branch racing the socket writer.
-        const reader = response.body.getReader();
-        const reportStreamFailure = this.reportStreamFailure;
-        let chunks = 0;
-        let bytes = 0;
-        streamAbortListener = () => {
-          void reader.cancel(abort.signal.reason).catch(() => {}).finally(release);
-        };
-        abort.signal.addEventListener("abort", streamAbortListener, { once: true });
-        const body = new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            try {
-              const chunk = await reader.read();
-              if (chunk.done) {
-                release();
-                controller.close();
-                return;
-              }
-              chunks += 1;
-              bytes += chunk.value.byteLength;
-              controller.enqueue(chunk.value);
-            } catch (error) {
-              if (!abort.signal.aborted) {
-                emitHttpStreamFailure(reportStreamFailure, streamFailureEvidence(
-                  error,
-                  id,
-                  endpoint,
-                  "client",
-                  platform,
-                  chunks,
-                  bytes,
-                ));
-              }
-              release();
-              controller.error(error);
-            }
-          },
-          async cancel(reason) {
-            try {
-              await reader.cancel(reason);
-            } finally {
-              release();
-            }
-          },
-        });
-        return new Response(body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        });
-      }
-
-      // Keep Bun's Windows response free of a custom async pull callback. A TransformStream
-      // supplies a demand-driven native readable instead of teeing into an eager observer.
-      // With zero readable high-water mark, upstream delivery waits for client demand.
-      let chunks = 0;
-      let bytes = 0;
-      const delivery = new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          chunks += 1;
-          bytes += chunk.byteLength;
-          controller.enqueue(chunk);
-        },
-      }, { highWaterMark: 64 * 1024, size: chunk => chunk?.byteLength ?? 0 }, { highWaterMark: 0 });
-      void response.body.pipeTo(delivery.writable, { signal: abort.signal }).catch(error => {
-        if (!abort.signal.aborted) {
-          emitHttpStreamFailure(this.reportStreamFailure, streamFailureEvidence(
-            error, id, endpoint, "windows_lifecycle", platform, chunks, bytes,
-          ));
-        }
-      }).finally(release);
-      const clientBody = delivery.readable;
-      return new Response(clientBody, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
-    } catch (error) {
-      release();
-      throw error;
-    }
-  }
-}
+import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./http-turn-lifecycle";
+export { HttpTurnCounter, type NativeCodexTurnIdentity, type HttpStreamFailureEvidence } from "./http-turn-lifecycle";
+import { ServerAdmission } from "./server-admission";
+import { inferenceRoutePolicy, type InferenceRoutePolicy } from "./server-route-policy";
 
 type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 
@@ -897,13 +615,8 @@ export async function compactRequest(
     );
   }
   const input = Array.isArray(raw.input) ? raw.input : [];
-  const headers = new Headers(req.headers);
-  headers.set("content-type", "application/json");
-  const internal = new Request("http://127.0.0.1/v1/responses", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ ...raw, stream: false, input: [...input, { type: "compaction_trigger" }] }),
-    signal: req.signal,
+  const internal = createInternalJsonRequest(req, "http://127.0.0.1/v1/responses", {
+    ...raw, stream: false, input: [...input, { type: "compaction_trigger" }],
   });
   const response = await responseRequest(internal, config, adapterFactory, options);
   if (!response.ok) return response;
@@ -947,13 +660,6 @@ export async function compactRequest(
   return Response.json({ output: buildCompactV1Output(extractCompactUserMessages(input), summary) });
 }
 
-const JSON_REQUEST_PATHS = new Set([
-  "/v1/responses",
-  "/hermes/v1/responses",
-  "/v1/responses/compact",
-  "/v1/alpha/search",
-]);
-
 /**
  * Loopback is not itself a browser-origin boundary. Reject rebinding authorities and browser
  * cross-site requests before reading a body or starting any account-backed work. Native Codex
@@ -981,7 +687,8 @@ function localHttpRequestRejection(req: Request, url: URL, port: number): Respon
   if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") {
     return formatErrorResponse(403, "permission_error", "Cross-site browser requests are not allowed");
   }
-  if (req.method === "POST" && JSON_REQUEST_PATHS.has(url.pathname)) {
+  if (inferenceRoutePolicy(req.method, url.pathname)?.requiresJson
+    || (req.method === "POST" && url.pathname === "/hermes/v1/responses")) {
     const mediaType = (req.headers.get("content-type") ?? "").split(";", 1)[0]!.trim().toLowerCase();
     if (mediaType !== "application/json") {
       return formatErrorResponse(415, "invalid_request_error", "This endpoint requires application/json");
@@ -996,7 +703,7 @@ export function startServer(
     fetchUpstream?: NativeFetch;
     adapterFactory?: ChatGptWebAdapterFactory;
     readProModelVersion?: () => ChatGptWebProModelVersion | undefined;
-  readCompactionModel?: () => ChatGptWebCompactionModel | undefined;
+    readCompactionModel?: () => ChatGptWebCompactionModel | undefined;
   } = {},
 ): Bun.Server<undefined> & { disposeSignalHandlers(): void } {
   if (config.purpose === "dev-harness") {
@@ -1012,19 +719,19 @@ export function startServer(
     ? "starting"
     : "not-required";
   let brokerFailureCode: string | undefined;
-  let draining = false;
+  const admission = new ServerAdmission();
   // Launcher-owned Full mode reports tunnel readiness separately from the local listener.
   // Standalone hosts retain their existing tunnel service contract.
   const requiresTunnelSignal = config.mode === "full" && config.browserHost === "launcher";
   let tunnelReady = !requiresTunnelSignal;
   let tunnelStatusRevision = 0;
   const brokerReady = () => !turnBroker || brokerState === "ready";
-  const acceptingNative = () => !draining;
-  const acceptingTurns = () => !draining && !launcherDetached && brokerReady() && tunnelReady;
+  const acceptingNative = () => admission.accepting;
+  const acceptingTurns = () => admission.accepting && !launcherDetached && brokerReady() && tunnelReady;
   const admissionFailure = () => formatErrorResponse(
     503,
     "server_error",
-    draining
+    admission.draining
       ? "NEKODEX is restarting; retry after it is ready."
       : launcherDetached
         ? "Open NEKODEX to use ChatGPT Web. Native Codex models remain available in the background."
@@ -1070,12 +777,35 @@ export function startServer(
     const actual = Buffer.from(header);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   };
+  const trackInference = (
+    req: Request,
+    policy: InferenceRoutePolicy,
+    run: Parameters<HttpTurnCounter["track"]>[0],
+  ): Promise<Response> | Response => {
+    if (!(policy.admission === "web" ? acceptingTurns() : acceptingNative())) return admissionFailure();
+    return httpTurns.track(run, req.signal, process.platform, policy.endpoint);
+  };
+  const responseOptions = (
+    bindIdentity: (identity: NativeCodexTurnIdentity) => void,
+    bindWeb: () => void,
+  ): ResponseRequestOptions => ({
+    onTurnIdentity: bindIdentity,
+    webAdmission: () => {
+      if (!acceptingTurns()) return admissionFailure();
+      bindWeb();
+      return undefined;
+    },
+    fetchUpstream: dependencies.fetchUpstream,
+    ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
+    ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
+  });
   const server = Bun.serve({
     hostname: config.host,
     port: config.port,
     idleTimeout: 0,
     async fetch(req) {
       const url = new URL(req.url);
+      const policy = inferenceRoutePolicy(req.method, url.pathname);
       const rejection = localHttpRequestRejection(req, url, server.port!);
       if (rejection) return rejection;
       if (url.pathname.startsWith("/hermes/")) {
@@ -1110,7 +840,7 @@ export function startServer(
           accepting_turns: acceptingTurns(),
           native_accepting_turns: acceptingNative(),
           web_accepting_turns: acceptingTurns(),
-          draining,
+          draining: admission.draining,
           broker_ready: brokerReady(),
           broker_state: brokerState,
           tunnel_ready: tunnelReady,
@@ -1138,7 +868,7 @@ export function startServer(
           launcherDetached = true;
           turnBroker?.setExternalOwnersAccepted(false);
           const current = activity();
-          if (!backgroundRuntime || !nativeNetworkBackgroundReady() || draining
+          if (!backgroundRuntime || !nativeNetworkBackgroundReady() || admission.draining
             || current.active_web_http_turns || current.active_browser_turns || current.active_compaction_runs) {
             launcherDetached = previous;
             turnBroker?.setExternalOwnersAccepted(acceptingTurns());
@@ -1181,14 +911,19 @@ export function startServer(
       }
       if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        draining = url.pathname === "/admin/drain";
+        if (url.pathname === "/admin/drain") admission.drain();
+        else if (!admission.resume()) {
+          return Response.json({ status: "refused", reason: "Runtime shutdown is committed",
+            accepting_turns: false, native_accepting_turns: false, web_accepting_turns: false,
+            draining: true, ...activity() }, { status: 409 });
+        }
         turnBroker?.setExternalOwnersAccepted(acceptingTurns());
         return Response.json({
           status: "ok",
           accepting_turns: acceptingTurns(),
           native_accepting_turns: acceptingNative(),
           web_accepting_turns: acceptingTurns(),
-          draining,
+          draining: admission.draining,
           broker_ready: brokerReady(),
           broker_state: brokerState,
           tunnel_ready: tunnelReady,
@@ -1315,23 +1050,24 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/shutdown") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         const current = activity();
-        if (!draining || current.active_http_turns > 0 || current.active_browser_turns > 0
+        if (!admission.draining || current.active_http_turns > 0 || current.active_browser_turns > 0
           || current.active_compaction_runs > 0) {
           return Response.json(
             {
               status: "refused",
-              accepting_turns: !draining,
+              accepting_turns: admission.accepting,
               ...current,
             },
             { status: 409 },
           );
         }
+        admission.beginShutdown();
+        turnBroker?.setExternalOwnersAccepted(false);
         setTimeout(shutdown, 0);
         return Response.json({ status: "ok", accepting_turns: false, ...current });
       }
-      if (req.method === "GET" && url.pathname === "/v1/models") {
-        if (!acceptingNative()) return admissionFailure();
-        return httpTurns.track(async signal => {
+      if (policy?.endpoint === "models") {
+        return trackInference(req, policy, async signal => {
           const request = ++modelCatalogRequests;
           const recordResult = (response: Response, failure?: ModelCatalogFailure): Response => {
             const result = { request, at: new Date().toISOString(), status: response.status, ...(failure ? { failure } : {}) };
@@ -1365,7 +1101,7 @@ export function startServer(
             lastSuccessfulModelCatalogRequestAt = new Date().toISOString();
           }
           return recordResult(response, failure);
-        }, req.signal, process.platform, "models");
+        });
       }
       if (req.method === "GET" && url.pathname === "/v1/responses") {
         return new Response("Responses WebSocket transport is not enabled on this local route", {
@@ -1373,83 +1109,29 @@ export function startServer(
           headers: { "content-type": "text/plain; charset=utf-8" },
         });
       }
-      if (req.method === "POST" && url.pathname === "/v1/responses") {
-        if (!acceptingNative()) return admissionFailure();
-        return httpTurns.track(
-          (signal, bindIdentity, bindWeb) => responseRequest(
-            new Request(req, { signal }),
-            config,
-            dependencies.adapterFactory,
-            {
-              onTurnIdentity: bindIdentity,
-              webAdmission: () => {
-                if (!acceptingTurns()) return admissionFailure();
-                bindWeb();
-                return undefined;
-              },
-              fetchUpstream: dependencies.fetchUpstream,
-              ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
-              ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
-            },
-          ),
-          req.signal,
-          process.platform,
-          "responses",
-        );
+      if (policy?.endpoint === "responses" || policy?.endpoint === "compact") {
+        const handler = policy.endpoint === "responses" ? responseRequest : compactRequest;
+        return trackInference(req, policy, (signal, bindIdentity, bindWeb) => handler(
+          new Request(req, { signal }), config, dependencies.adapterFactory,
+          responseOptions(bindIdentity, bindWeb),
+        ));
       }
-      if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
-        if (!acceptingNative()) return admissionFailure();
-        return httpTurns.track(
-          (signal, bindIdentity, bindWeb) => compactRequest(
-            new Request(req, { signal }),
-            config,
-            dependencies.adapterFactory,
-            {
-              onTurnIdentity: bindIdentity,
-              webAdmission: () => {
-                if (!acceptingTurns()) return admissionFailure();
-                bindWeb();
-                return undefined;
-              },
-              fetchUpstream: dependencies.fetchUpstream,
-              ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
-              ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
-            },
-          ),
-          req.signal,
-          process.platform,
-          "compact",
-        );
+      if (policy?.endpoint === "search") {
+        return trackInference(req, policy,
+          signal => nativeSearchRequest(new Request(req, { signal }), dependencies.fetchUpstream));
       }
-      if (req.method === "POST" && url.pathname === "/v1/alpha/search") {
-        if (!acceptingNative()) return admissionFailure();
-        return httpTurns.track(
-          signal => nativeSearchRequest(new Request(req, { signal }), dependencies.fetchUpstream),
-          req.signal,
-          process.platform,
-          "search",
-        );
-      }
-      if (req.method === "POST"
-        && (url.pathname === "/v1/images/generations" || url.pathname === "/v1/images/edits")) {
-        if (!acceptingNative()) return admissionFailure();
-        const endpoint: NativeImageEndpoint = url.pathname === "/v1/images/generations"
-          ? "images/generations"
-          : "images/edits";
-        return httpTurns.track(
-          signal => nativeImagesRequest(new Request(req, { signal }), endpoint, dependencies.fetchUpstream),
-          req.signal,
-          process.platform,
-          endpoint,
-        );
+      if (policy?.endpoint === "images/generations" || policy?.endpoint === "images/edits") {
+        const endpoint = policy.endpoint;
+        return trackInference(req, policy,
+          signal => nativeImagesRequest(new Request(req, { signal }), endpoint, dependencies.fetchUpstream));
       }
       return new Response("Not found", { status: 404 });
     },
   });
   function shutdown(): void {
+    admission.beginShutdown();
     if (shutdownPromise) return;
     disposeSignalHandlers();
-    draining = true;
     turnBroker?.setExternalOwnersAccepted(false);
     const reason = new Error("Runtime shutting down");
     // Signal-driven shutdown can arrive without an idle drain. Revoke detached compaction

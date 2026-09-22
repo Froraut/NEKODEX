@@ -17,7 +17,8 @@ function fixture() {
   const primary = { ...secondary, accountId:'default', openPasskeyLogin(){throw Error('Wrong account');} };
   const registry = {snapshot:()=>({selectedId:SECOND,accounts:[{id:'default'},{id:SECOND}]})};
   const pool = Object.assign(Object.create(AccountBrowserPool.prototype), {registry, hosts:new Map([['default',primary],[SECOND,secondary]]),
-    accountOperations:new Map(), accountReadOperations:new Map(), reservations:new Map(), networkOperation:null, loginOperation:null,
+    pendingAffinity:new Map(), unsentAdmissions:new Map(), authenticationRefreshOperations:new Map(),
+    reservations:new Map(), networkOperation:null, loginOperation:null,
     existingChromeImportLease:null, destroyed:false });
   return {pool,secondary,finishCapture};
 }
@@ -30,8 +31,9 @@ test('secondary account owns passkey import and prevents selection or a conflict
   await assert.rejects(pool.selectAccount('default'),/passkey sign-in/);
   finishCapture({authenticated:true});
   assert.deepEqual(await pending,{authenticated:true});
-  assert.equal(pool.accountOperations.size,0);
   assert.equal(pool.passkeyImportLease,null);
+  const release = pool.acquireAccountOperation(SECOND,'after import');
+  release();
 });
 
 test('owned embedded login hands off without releasing the successor account guard', async () => {
@@ -40,7 +42,6 @@ test('owned embedded login hands off without releasing the successor account gua
   assert.ok(secondary.embeddedLoginController);
   const passkey=pool.openPasskeyLogin();
   await login;
-  assert.equal(pool.accountOperations.size,0);
   assert.equal(pool.accountMutationOperationLabel(SECOND),'ChatGPT passkey login');
   assert.equal(pool.currentOperation(),'ChatGPT passkey login');
   assert.throws(()=>pool.acquireAccountOperation(SECOND,'other'),/busy/);

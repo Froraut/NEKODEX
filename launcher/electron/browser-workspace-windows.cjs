@@ -175,8 +175,7 @@ class BrowserWorkspaceWindows {
       this.windowMeta.delete(win);
       this.pendingCaptures.delete(win);
       if (!meta.preserveOnClose) {
-        this.saved.delete(meta.id);
-        this.persist();
+        meta.removalResult = this.removeSavedWorkspace(meta.id);
       }
       if (this.lastWindow === win) this.lastWindow = [...this.windows].at(-1) ?? null;
       this.changed();
@@ -480,22 +479,24 @@ class BrowserWorkspaceWindows {
     return false;
   }
 
+  removeSavedWorkspace(workspaceId) {
+    const previous = new Map(this.saved);
+    this.saved.delete(workspaceId);
+    const result = this.persist();
+    // Overflow permits successive removals to reach capacity. A storage failure
+    // keeps the saved retry row even when its native window has already closed.
+    if (!result.ok && !result.overflow) this.saved = previous;
+    return result;
+  }
+
   async close(workspaceId) {
     this.ensureManifestLoaded();
     const match = [...this.windowMeta].find(([, meta]) => meta.id === workspaceId);
     if (!match) {
       if (!this.saved.has(workspaceId)) return false;
-      const previous = new Map(this.saved);
-      this.saved.delete(workspaceId);
-      const result = this.persist();
-      // Overflow must allow successive removals to reach capacity. Storage errors
-      // instead retain the target so the same explicit action can be retried.
-      if (!result.ok && !result.overflow) {
-        this.saved = previous;
-        this.changed();
-        throw result.error;
-      }
+      const result = this.removeSavedWorkspace(workspaceId);
       this.changed();
+      if (!result.ok && !result.overflow) throw result.error;
       return true;
     }
     await this.requestClose(match[0], false);
@@ -505,7 +506,10 @@ class BrowserWorkspaceWindows {
   requestClose(win, preserve) {
     if (win.isDestroyed()) return Promise.resolve();
     const meta = this.windowMeta.get(win);
-    if (meta) meta.preserveOnClose = preserve;
+    if (meta) {
+      meta.preserveOnClose = preserve;
+      meta.removalResult = null;
+    }
     const contents = win.webContents;
     return new Promise((resolve, reject) => {
       const finish = error => {
@@ -515,7 +519,12 @@ class BrowserWorkspaceWindows {
         if (error && meta) meta.preserveOnClose = false;
         error ? reject(error) : resolve();
       };
-      const closed = () => finish();
+      // bind() registered its closed handler first, so durable removal has settled
+      // before this observer resolves the manager's request.
+      const closed = () => {
+        const result = meta?.removalResult;
+        finish(result && !result.ok && !result.overflow ? result.error : null);
+      };
       const blocked = () => finish(new Error("Finish or save work in the browser window before closing it"));
       const timer = setTimeout(blocked, 5_000);
       win.once("closed", closed);

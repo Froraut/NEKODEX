@@ -585,6 +585,7 @@
   "accountProxySocksPort": "SOCKS5 URL 必須包含連接埠。",
   "accountFormFailed": "無法儲存這些設定。請檢查錯誤詳細資料後再試一次。",
   "accountSafetyInvalid": "請使用顯示範圍內的整數。",
+  "accountSafetyRestore": "還原已儲存的原則",
   "launcherRuntimeRestartTitle": "重新啟動 NEKODEX 以完成更新",
   "launcherRuntimeRestartBody": "更新後的應用程式正在使用先前可正常運作的執行階段。任務完成後，請重新啟動 NEKODEX 以啟用新的執行階段。",
   "launcherRuntimeRestartAction": "重新啟動 NEKODEX"

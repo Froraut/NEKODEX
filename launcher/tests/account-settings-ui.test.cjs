@@ -16,6 +16,7 @@ function load(compiled, overrides) {
   const loaded = { exports: {} };
   Function("module", "exports", "require", compiled)(loaded, loaded.exports,
     name => Object.hasOwn(overrides, name) ? overrides[name]
+      : ['./useAccountPoolSnapshot', './useAccountCodexLogin'].includes(name) ? load(compile(name.slice(2) + '.ts'), overrides)
       : name === './account-availability' ? load(compile('account-availability.ts'), {})
       : name === './AccountReadiness' ? load(compile('AccountReadiness.tsx'), {})
       : name === './AccountToolsOnboarding' ? { AccountToolsOnboarding: () => null } : require(name));
@@ -57,8 +58,8 @@ test("a failed quota load is rendered inline as an alert", () => {
 });
 
 function accountHarness(snapshotPromise, refreshValue, accountOverrides = {}, selectedId = "a", apiOverrides = {}) {
-  const state = [], refs = [];
-  let stateIndex = 0, refIndex = 0, effects = [], stateUpdates = 0;
+  const state = [], refs = [], effectSlots = [];
+  let stateIndex = 0, refIndex = 0, effectIndex = 0, effects = [], stateUpdates = 0;
   const react = {
     ...React,
     useState(initial) {
@@ -71,7 +72,18 @@ function accountHarness(snapshotPromise, refreshValue, accountOverrides = {}, se
       if (!(index in refs)) refs[index] = { current: initial };
       return refs[index];
     },
-    useEffect(callback) { effects.push(callback); },
+    useEffect(callback, deps) {
+      const index = effectIndex++;
+      const previous = effectSlots[index];
+      if (!previous || deps.some((value, i) => !Object.is(value, previous.deps[i]))) {
+        effects.push(() => {
+          previous?.cleanup?.();
+          const slot = { deps, cleanup: callback() };
+          effectSlots[index] = slot;
+          return () => { slot.cleanup?.(); slot.cleanup = undefined; };
+        });
+      }
+    },
   };
   function AccountCodexControls() { return null; }
   const api = {
@@ -111,11 +123,15 @@ function accountHarness(snapshotPromise, refreshValue, accountOverrides = {}, se
     accountsSelect: "Select", accountsCheck: "Check", accountsCheckConnector: "Check tools", accountsAdd: "Add",
     accountsLabel: "Label", accountsManual: "Manual mode", accountsBusyTasks: "Busy {count}",
   };
+  const setError = () => {};
   return {
-    render() { stateIndex = 0; refIndex = 0; effects = []; return AccountSettings({ copy, language: "en", openBrowser() {}, setError() {}, manual: false,
+    render() { stateIndex = 0; refIndex = 0; effectIndex = 0; effects = []; return AccountSettings({ copy, language: "en", openBrowser() {}, setError, manual: false,
       toolsSetup: { runtimeConfigured: true, connectorName: 'Codex Native6', urls: {} },
       focusAccountId: null, onSetupTools() {} }); },
-    effects: () => effects,
+    flushEffects() {
+      const cleanups = effects.splice(0).map(effect => effect());
+      return () => cleanups.forEach(cleanup => cleanup?.());
+    },
     stateUpdates: () => stateUpdates,
     AccountCodexControls,
     api,
@@ -150,8 +166,8 @@ for (const delayed of [true, false]) {
         refreshAccountCodexQuota() { providerRefreshes += 1; throw new Error("unexpected provider refresh"); },
         refreshAccountCodexQuotas() { providerRefreshes += 1; throw new Error("unexpected batch refresh"); },
       });
-      view.render(); view.effects()[0](); await flush();
-      view.render(); view.effects()[2]();
+      view.render(); view.flushEffects(); await flush();
+      view.render(); view.flushEffects();
       assert.equal(snapshotReads, 1, "deferred snapshot IPC boundary was reached");
       assert.equal(findCodexControls(view.render()).props.quota, null);
       if (delayed) now += 2_000;
@@ -161,7 +177,7 @@ for (const delayed of [true, false]) {
       const timers = new Map();
       window.setTimeout = (callback, delay) => { const id = timers.size + 1; timers.set(id, { callback, delay }); return id; };
       window.clearTimeout = id => timers.delete(id);
-      const cleanup = view.effects()[3]();
+      const cleanup = view.flushEffects();
       if (!delayed) {
         assert.equal(findCodexControls(tree).props.quotaDisabledReason, "Rate limited");
         assert.equal(findButton(tree, "Refresh all").props.disabled, true);
@@ -174,7 +190,7 @@ for (const delayed of [true, false]) {
         assert.equal(view.stateUpdates(), beforeWakeup + 1, "deadline wakes component state");
         cleanup();
         tree = view.render();
-        view.effects()[3]();
+        view.flushEffects();
       }
       assert.equal(findCodexControls(tree).props.quotaDisabledReason, undefined);
       assert.equal(findButton(tree, "Refresh all").props.disabled, false);
@@ -204,8 +220,8 @@ test("a rejected hydration marks only that account as failed", async () => {
   let rejectSnapshot;
   const pendingSnapshot = new Promise((_resolve, reject) => { rejectSnapshot = reject; });
   const view = accountHarness(pendingSnapshot, null);
-  view.render(); view.effects()[0](); await flush();
-  view.render(); view.effects()[2]();
+  view.render(); view.flushEffects(); await flush();
+  view.render(); view.flushEffects();
   rejectSnapshot(new Error("quota unavailable"));
   await flush();
   const controls = findCodexControls(view.render());
@@ -220,10 +236,10 @@ test("a newer successful refresh clears failure and supersedes a late hydration 
   const quota = { availability: "available", coverage: "reported_buckets", additionalBuckets: [] };
   const view = accountHarness(pendingSnapshot, quota);
   view.render();
-  view.effects()[0]();
+  view.flushEffects();
   await flush();
   view.render();
-  view.effects()[2]();
+  view.flushEffects();
   let controls = findCodexControls(view.render());
   await controls.props.onRefreshQuota();
   rejectSnapshot(new Error("late hydration failure"));
@@ -236,7 +252,7 @@ test("a newer successful refresh clears failure and supersedes a late hydration 
 
 test("disabled selection references its visible readiness explanation", async () => {
   const view = accountHarness(Promise.resolve(null), null, { checked: false, connectorReady: false }, "other");
-  view.render(); view.effects()[0](); await flush();
+  view.render(); view.flushEffects(); await flush();
   const tree = view.render();
   const buttons = [];
   (function visit(node) {
@@ -271,7 +287,7 @@ test("unavailable authentication preserves identity, fails closed, and offers sc
     retries += 1;
     return { mode: "selected", selectedId: "other", accounts: [verified] };
   } });
-  view.render(); view.effects()[0](); await flush();
+  view.render(); view.flushEffects(); await flush();
   let tree = view.render();
   assert.match(renderToStaticMarkup(tree), /a@example\.test/);
   assert.equal(findButton(tree, "Select").props.disabled, true);
@@ -295,7 +311,7 @@ test("batch quota refresh retains old values until current-epoch partial result 
   const view = accountHarness(Promise.resolve(oldQuota), null, {}, "a", {
     refreshAccountCodexQuotas: () => portfolio,
   });
-  view.render(); view.effects()[0](); await flush(); view.render(); view.effects()[2](); await flush();
+  view.render(); view.flushEffects(); await flush(); view.render(); view.flushEffects(); await flush();
   let tree = view.render();
   const refreshAll = findButton(tree, "Refresh all");
   refreshAll.props.onClick();
@@ -337,7 +353,7 @@ test("unavailable authentication retry is blocked by active ownership with a vis
   const view = accountHarness(Promise.resolve(null), null, {
     authenticated: false, authenticationStatus: "unavailable", activeTurns: 1,
   }, "other", { refreshAccountAuthentication: async () => { retries += 1; return view.api.accounts(); } });
-  view.render(); view.effects()[0](); await flush();
+  view.render(); view.flushEffects(); await flush();
   const tree = view.render();
   assert.equal(findButton(tree, "Sign in"), null);
   const retry = findButton(tree, "Retry verification");
@@ -362,7 +378,7 @@ test("stale batch cleanup releases its busy owner after account evidence changes
     accounts: async () => ({ mode: "selected", selectedId: "a", accounts: [account(accountReads++ === 0 ? 1 : 2)] }),
     refreshAccountCodexQuotas: () => portfolio,
   });
-  view.render(); view.effects()[0](); await flush(); view.render(); view.effects()[2](); await flush();
+  view.render(); view.flushEffects(); await flush(); view.render(); view.flushEffects(); await flush();
   findButton(view.render(), "Refresh all").props.onClick();
   view.api.browserStateChanged({}); await flush(); view.render();
   resolvePortfolio({ generatedAt: "2026-09-21T11:00:00Z", rows: [{ accountId: "a", evidenceEpoch: 1,
@@ -380,7 +396,7 @@ test("account tools check keeps its explicit account even when another account i
   const view = accountHarness(Promise.resolve(null), null, { connectorReady: false }, "b", {
     checkAccount: async (id, connector) => { checks.push({ id, connector }); return view.api.accounts(); },
   });
-  view.render(); view.effects()[0](); await flush();
+  view.render(); view.flushEffects(); await flush();
   function findTools(node) {
     if (!node || typeof node !== "object") return null;
     if (typeof node.props?.onVerify === "function" && node.props?.account?.id) return node;
@@ -416,7 +432,7 @@ test('wave2 session-limit resume stays account-scoped and preserves active-work 
       const view = accountHarness(Promise.resolve(null), null, {
         safety, activeTurns, availability: { eligible: reason === null, reason, retryAt: null },
       }, 'a', { resumeAccount: async id => { resumed.push(id); return view.api.accounts(); } });
-      view.render(); view.effects()[0](); await flush();
+      view.render(); view.flushEffects(); await flush();
       const props = findSafety(view.render()).props;
       assert.equal(props.resumeRequired, required);
       assert.equal(props.disabled, disabled);

@@ -1,3 +1,4 @@
+import type { ResolvedCodexFile } from "../../responses/file-content";
 import { createHash } from "node:crypto";
 import { extname } from "node:path";
 import { parseDataUrl } from "../image";
@@ -25,17 +26,10 @@ export interface ChatGptWebPromptImage {
   detail?: string;
 }
 
-export interface ChatGptWebPromptFile {
+export interface ChatGptWebPromptFile extends ResolvedCodexFile {
   ref: string;
   /** Original verified filename, before transport collision resolution. */
   originalName?: string;
-  name: string;
-  mimeType: string;
-  base64: string;
-  size: number;
-  sha256: string;
-  source: "inline" | "authorized_file_id";
-  fileId?: string;
 }
 
 export interface CompiledChatGptWebPrompt {

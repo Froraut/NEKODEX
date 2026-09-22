@@ -1,3 +1,5 @@
+import { chatGptDocumentFilePayloads } from "./attachment-payloads";
+import type { HelperOutputMessage } from "./browser-helper-protocol";
 import { validateSkillFiles } from "./skill-attachments";
 import { createProcessLineReader } from "./process-line-reader";
 import { CHATGPT_HELPER_DIAGNOSTIC_BYTES } from "./resource-budgets";
@@ -5,7 +7,6 @@ import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
 import {
   ChatGptBrowserWorker,
-  chatGptDocumentFilePayloads,
   closeChatGptBrowserWorkers,
   type BrowserTurn,
   type ChatGptCompletionFenceStart,
@@ -98,7 +99,7 @@ const diagnosticOutput = createProcessLineWriter(stderr, handleOutputFailure, {
   maxPendingBytes: 1024 * 1024,
 });
 
-const writeProtocol = (message: unknown): boolean => protocolOutput.write(JSON.stringify(message));
+const writeProtocol = (message: HelperOutputMessage): boolean => protocolOutput.write(JSON.stringify(message));
 
 const diagnostic = (...values: unknown[]): void => {
   diagnosticOutput.write(values.map(value => typeof value === "string" ? value : JSON.stringify(value)).join(" "));

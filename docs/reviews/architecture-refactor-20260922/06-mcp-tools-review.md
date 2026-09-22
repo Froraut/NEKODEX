@@ -1,0 +1,49 @@
+# Lane 06 — MCP tools and environment
+
+Baseline verified: `53d17361f3e9c81910055a7e2c18759ffce458bc` in `/Users/alex/Dev/nekodex-refactor-20260922`. Read-only source review; **no tests or builds run**, no apps launched, no accounts/providers accessed, no agents spawned. Only this report was written. Recommendations below are implementation proposals, not runtime verification.
+
+Reviewed the MCP server/main/diagnostics/escalation modules and tunnel/service code. Read the relevant delivered-results and integration sections of `app-improvements-20260922.md`, `app-improvements-wave3-20260922.md`, and `app-improvements-waves4-5-20260922.md`. Their committed-write receipts, lock cleanup, exact uninstall ownership and uncertain-connect compensation are already present; they are not new findings. Applied `right-size-test-runs` to the proposed checks.
+
+## 06-mcp-tools-F1 — Extract tool routing and native registrations from transport lifecycle
+
+**Classification:** worthwhile architecture improvement; no claim that current dispatch is generally broken. Priority: medium.
+
+**Evidence / extension cost.** `src/adapters/chatgpt-web/mcp-server.ts` is 1,315 lines. It combines tool visibility and schema projection (134–237), gateway catalog/result/program generation (299–550), broker activity acquisition/settlement (577–660), synchronous invocation and whole-binding retirement (687–731), invocation resolution (754–814), six native convenience registrations (816–1016), discovery (1018–1119), and synchronous/owned-operation registration (1121–1283). Adding a native convenience tool currently requires editing the same closure that owns cancellation and turn retirement. Gateway name exclusions are separately constructed in nested invocation, browser invocation and inventory (743–750, 782–788, 1062–1078); wait-tool policy is separately projected into direct schemas, nested descriptions and dispatch validation. These are real extension seams, not merely a large line count.
+
+**Concrete change.** Extract `mcp-tool-routing.ts` for the existing pure visibility, schema/description projection, gateway program generation and invocation resolution. Give it an explicit immutable policy input (`contract`, `allowWebSubagents`) and the claimed environment per call. Return the existing selected `CodexTool` plus payload; do not let it acquire bindings, execute tools or cache authority. Centralize construction of outer-name/spawn exclusions there. Keep separate code paths where their current semantics differ, including command-gateway candidate selection and approval-schema refusal.
+
+Extract the six convenience registrations into `mcp-native-tools.ts`, with a narrow context containing contract/reference parsing, `withClaimedTurn`, `invoke`, and `invokeNestedNative`. Register tools explicitly; no extensible plugin loader or generic middleware framework is needed. Keep `mcp-server.ts` as composition root and owner of broker activity cleanup, synchronous timeout/release, compaction handoff, and owned-operation lifecycle. Preserve its existing exported helper imports with re-exports so current consumers need not migrate in this lane.
+
+**Caller evidence and boundaries.** `mcp-main.ts:14–42` supplies mode options; `src/tunnel.ts:519–542` derives the actual MCP command. Synchronous `codex_tool_call` resolves then invokes at `mcp-server.ts:1160–1163`; `codex_tool_start` uses the same resolver before `invoke_async` at 1207–1225. Both must continue through one routing implementation. `tests/security-fixes-mcp.test.ts:112–168` already exercises denied raw exec for synchronous and owned dispatch plus permitted structured nested calls. Preserve the static bridge-name deny set (32–46), including names not registered in the selected mode: deriving that deny set from only active registrations could reopen hidden outer tools. `command-escalation.ts:49–73` remains the fail-closed authority for advertised approval fields. Do not replace it with inferred gateway capability.
+
+**Benefit.** New convenience tools become local registration changes; new routing constraints have one shared location for synchronous and owned calls. Broker teardown remains reviewable independently of schemas and generated JavaScript.
+
+**Write set A:** `src/adapters/chatgpt-web/mcp-server.ts`, new sibling `mcp-tool-routing.ts`, new sibling `mcp-native-tools.ts`, and only focused additions if needed in `tests/security-fixes-mcp.test.ts`. No edits to broker, tunnel, CLI, diagnostics, or escalation required.
+
+**Smallest meaningful verification (implementation wave only).** Reuse the three existing security MCP cases, the single command-gateway error/unsupported-option case in `tests/four-wave-gateway.test.ts`, and the selected “exposes start and completion while hiding the bridge namespace” case in `tests/zero-risk-mcp-lifecycle.test.ts`. Run only those files/name filters; each command has a **30-second wall-clock maximum**, with existing local stub broker/stdio fixtures and cleanup. Assert callable results/refusals, not source-string layout. Parent owns integrated type/build checks. Do not run the full lifecycle suite or introduce a real tunnel.
+
+## 06-mcp-tools-F2 — Separate environment syntax from provenance, fixing encoded cwd selection
+
+**Classification:** architecture improvement with a source-confirmed compatibility defect. Priority: medium.
+
+**Evidence / trigger.** `src/adapters/chatgpt-web/environment.ts` mixes raw-message provenance and historical selection (454–484, 606–765) with XML/path/sandbox interpretation (485–580, 767–881). Metadata corroboration and final environment construction both parse cwd/roots, but normalization occurs at different stages.
+
+In the supported legacy multi-environment shape, `environmentCwdMatches` collects raw XML cwd text at **812–815** and compares it directly to decoded metadata paths at **820–824**. Decoding happens later in `uniqueAbsolutePaths` at **828–835**, after a candidate must already have been selected. For metadata workspace `/work/A&B`, XML cwd `/work/A&amp;B`, and a second unrelated environment `/other`, neither the exact nor contained comparison selects the legitimate project. The result is an empty candidate list and rejection as missing cwd. This follows directly from source; it was not executed during review. The existing supported-shape fixture at `tests/environment.test.ts:443–460` uses unescaped paths and misses the case.
+
+**Concrete change.** Extract `environment-envelope.ts` with explicit raw-to-decoded path helpers and the existing syntactic cwd selection, root extraction and sandbox interpretation. Decode/trim each XML path **once before identity comparison** and retain the decoded value through final normalization. Metadata paths are already literal filesystem strings and must not be XML-decoded. Include a literal entity-looking filename control (`&amp;` in the actual directory name, encoded as `&amp;amp;`) to prevent accidental double decoding.
+
+Keep current-turn attribution, developer-gap checks, replay precedence, current-malformed-envelope rejection, visualization-root exception and claim entry points in `environment.ts`; preserve its public exports. Metadata corroboration and final construction should consume the same envelope/path interpretation. Do not introduce a broad XML parser migration, permissive fallback, or claim-to-authority promotion. Preserve exception categories: callers distinguish missing trustworthy context from explicitly invalid context.
+
+**Caller evidence.** `thread-environment.ts:270–375` first resolves a trusted environment, then permits narrowly checked rollout recovery only for `MissingTrustedCodexEnvironmentError`. Continuation/steering claims are compared with current rollout authority at 334–359; trailing deltas are pathless corroboration at 285–306. These callers must remain unchanged. `codex-rollout-environment.ts` and compaction/delegation consumers retain their independent authority checks. This lane does not own their cache, rollout or continuation state machines.
+
+**Benefit.** Supporting another envelope shape requires one parser change while provenance remains visibly separate. The same extraction repairs a deterministic false rejection without broadening workspace grants.
+
+**Write set B (disjoint from A):** `src/adapters/chatgpt-web/environment.ts`, new sibling `environment-envelope.ts`, and focused cases in `tests/environment.test.ts`. Keep the defect fix and extraction with the same writer.
+
+**Smallest meaningful verification (implementation wave only).** Add encoded legacy cwd success plus entity-looking filename preservation. Select the existing ambiguous legacy cwd refusal, malformed cwd refusal, primary-environment selection and unprovenanced developer-gap refusal as controls. Name-filter only these cases, **30-second wall-clock maximum per command**. No SQLite/corpus sweep, provider request or app launch. Parent integrates types and coordinates any environment-store checks with the lane owning that store.
+
+## Ownership and explicit no-change decisions
+
+One lane-06 implementation owner can deliver A then B; no other agent should edit either coupled source file concurrently. Parent owns acceptance, the exactly-16 implementation wave, cross-lane integration, build/UI plans, Git and publication. No UI change belongs in this source-only lane.
+
+Keep `mcp-diagnostics.ts` and `command-escalation.ts` intact: their narrow existing boundaries are useful. No additional tunnel/service refactor is recommended now: extraction would cross recent setup compensation ownership without a comparably strong feature-extension benefit. Preserve install snapshots, identity/mode receipts, rollback callbacks, service deadlines, command quoting and all tunnel/workspace grants. The proposals require no new credentials, tunnels, account association, consent behavior or production route changes.

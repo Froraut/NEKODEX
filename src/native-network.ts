@@ -90,6 +90,25 @@ function fetchWithProxy(request: Request, proxy: string): Promise<Response> {
   return fetch(request, { proxy });
 }
 
+/** Cancel only this caller's wait; the cache owns the shared refresh and its deadline. */
+function waitForRoute(resolveRoute: () => Promise<string>, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    resolveRoute().then(proxy => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(proxy);
+    }, error => {
+      signal.removeEventListener("abort", onAbort);
+      reject(error);
+    });
+  });
+}
+
 /** Validated routes live in the daemon; GUI refresh runs off the request critical path. */
 export async function fetchNativeCodex(request: Request): Promise<Response> {
   request.signal.throwIfAborted();
@@ -119,7 +138,7 @@ export async function fetchNativeCodex(request: Request): Promise<Response> {
     }
     throw error;
   }
-  const proxy = await routes.resolve(request.url, async () => {
+  const proxy = await waitForRoute(() => routes.resolve(request.url, async () => {
     try {
       const controlTimeout = AbortSignal.timeout(2_000);
       const response = await fetch(`${descriptor.control.endpoint}/v1/network/resolve-proxy`, {
@@ -144,7 +163,7 @@ export async function fetchNativeCodex(request: Request): Promise<Response> {
       }
       throw error;
     }
-  }, transientProxyError);
+  }, transientProxyError), request.signal);
   request.signal.throwIfAborted();
   return fetchWithProxy(request, proxy);
 }

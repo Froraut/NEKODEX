@@ -1,3 +1,4 @@
+import { useFeatureAction } from "./useFeatureAction";
 import { useEffect, useMemo, useState } from "react";
 import type { BrowserWorkspaceDirectorySnapshot, BrowserWorkspaceItem, Language } from "./types";
 import { browserWindowCopy } from "./browser-window-copy";
@@ -39,8 +40,10 @@ export function BrowserWorkspaceManager({
   const initial = selectedAccountId && snapshot.accounts.some(account => account.accountId === selectedAccountId)
     ? selectedAccountId : snapshot.accounts[0]?.accountId ?? "";
   const [accountId, setAccountId] = useState(initial);
-  const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ accountId: string; message: string } | null>(null);
+  const { pending, run: runAction } = useFeatureAction<{ accountId: string; action: string }>(disabled, (cause, identity) => {
+    setError({ accountId: identity.accountId, message: cause instanceof Error ? cause.message : String(cause) });
+  });
 
   useEffect(() => {
     if (!snapshot.accounts.some(account => account.accountId === accountId)) setAccountId(initial);
@@ -51,14 +54,12 @@ export function BrowserWorkspaceManager({
     [accountId, snapshot.accounts],
   );
 
-  const run = async (key: string, action: () => Promise<unknown>) => {
-    setPending(key);
-    setError(null);
-    try { await action(); } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setPending(null);
-    }
+  const run = (key: string, action: () => Promise<unknown>) => {
+    if (!account) return;
+    return runAction({ accountId: account.accountId, action: key }, async () => {
+      setError(null);
+      await action();
+    });
   };
 
   if (!account) return null;
@@ -82,7 +83,7 @@ export function BrowserWorkspaceManager({
       </label>
     </div>
 
-    {error ? <p className="browser-workspace-error" role="alert">{error}</p> : null}
+    {error?.accountId === account.accountId ? <p className="browser-workspace-error" role="alert">{error.message}</p> : null}
     {account.persistenceFailed ? <p className="browser-workspace-error" role="status">{copy.saveFailed}</p> : null}
     {account.sessionMutation ? <p className="browser-workspace-platform-note" role="status">{copy.identityChanging}</p> : null}
     {!snapshot.nativeTabs ? <p className="browser-workspace-platform-note">{copy.tabsMacOnly}</p> : null}

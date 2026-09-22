@@ -1,22 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useUsageReport, type UsageLoader } from "./useUsageReport";
+import { UsageCalendar, completeCalendar, dateLabel } from "./UsageCalendar";
+import { useMemo } from "react";
 import type { Copy } from "./i18n";
 import type {
-  UsageCalendarDay,
   UsageFailureCode,
   UsageGroup,
   Language,
-  UsageQuery,
   UsageRangeDays,
   UsageSource,
   UsageSnapshot,
 } from "./types";
-import { aggregateUsageGroups, normalizedUsageSnapshot, usageReportCsv, type UsageDisplayGroup } from "./usage-statistics";
+import { aggregateUsageGroups, usageReportCsv, type UsageDisplayGroup } from "./usage-statistics";
 import { UsageInsights } from "./UsageInsights";
 import { workflowCopy } from "./workflow-copy";
 import "./usage-lifetime.css";
 
+const loadUsage: UsageLoader = query => window.codexWebLauncher!.usage(query);
 const ranges: UsageRangeDays[] = [1, 7, 30, 90];
-const filterKey = ({ days, source, accountId = null }: UsageQuery) => `${source}:${days}:${source === "web" ? accountId ?? "all" : "native"}`;
 const number = (value: number, language: Language) => value.toLocaleString(language);
 
 const groupLabel = (row: UsageGroup, copy: Copy, source: UsageSource) => {
@@ -43,24 +43,6 @@ function duration(value: number | null, copy: Copy, language: Language) {
   return copy.usageMinutes.replace("{value}", (value / 60_000).toLocaleString(language, { maximumFractionDigits: 1 }));
 }
 
-function dateLabel(day: string, language: Language, options: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" }) {
-  const date = new Date(`${day}T00:00:00Z`);
-  return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(language, { ...options, timeZone: "UTC" }).format(date) : day;
-}
-
-function completeCalendar(report: UsageSnapshot): UsageCalendarDay[] {
-  const present = new Map(report.calendar.map(day => [day.day, day]));
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(report.period.startDay);
-  if (!match) return report.calendar;
-  const first = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Array.from({ length: report.period.days }, (_, index) => {
-    const date = new Date(first + index * 86_400_000);
-    const day = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-    return present.get(day) ?? { day, total: 0, completed: 0, failed: 0, cancelled: 0,
-      ...(report.source === "native" ? { incomplete: 0 } : {}), unrecorded: 0 };
-  });
-}
-
 function exportReport(report: UsageSnapshot) {
   const scope = report.source === "native" ? "native-recorded-only"
     : report.selectedAccountId !== null ? "selected-account" : "all-accounts";
@@ -73,103 +55,8 @@ function exportReport(report: UsageSnapshot) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function CalendarChart({ calendar, language, totalLabel }: { calendar: UsageCalendarDay[]; language: Language; totalLabel: string }) {
-  const maximum = Math.max(1, ...calendar.map(day => day.total));
-  return <div className="usage-calendar" aria-hidden="true">
-    <div className="usage-calendar-bars">
-      {calendar.map(day => {
-        const height = day.total ? Math.max(5, day.total / maximum * 100) : 2;
-        const segment = (value: number) => day.total ? `${value / day.total * 100}%` : "0%";
-        return <div className="usage-calendar-column" key={day.day} title={`${dateLabel(day.day, language)} · ${totalLabel}: ${day.total}`}>
-          <span className={`usage-calendar-bar${day.total ? "" : " is-zero"}`} style={{ height: `${height}%` }}>
-            <i className="is-completed" style={{ height: segment(day.completed) }} />
-            <i className="is-failed" style={{ height: segment(day.failed) }} />
-            <i className="is-cancelled" style={{ height: segment(day.cancelled) }} />
-            <i className="is-incomplete" style={{ height: segment(day.incomplete ?? 0) }} />
-            <i className="is-unrecorded" style={{ height: segment(day.unrecorded) }} />
-          </span>
-        </div>;
-      })}
-    </div>
-    <div className="usage-calendar-axis"><span>{dateLabel(calendar[0]?.day ?? "", language)}</span><span>{dateLabel(calendar.at(-1)?.day ?? "", language)}</span></div>
-  </div>;
-}
-
-function CalendarTable({ calendar, copy, language, showIncomplete, showUnrecorded, totalLabel }: { calendar: UsageCalendarDay[]; copy: Copy; language: Language; showIncomplete: boolean; showUnrecorded: boolean; totalLabel: string }) {
-  return <div className="usage-table-scroll"><table className="usage-calendar-table">
-    <caption>{copy.usageCalendarTable}</caption>
-    <thead><tr><th scope="col">{copy.usageDate}</th><th scope="col">{totalLabel}</th><th scope="col">{copy.usageCompleted}</th><th scope="col">{copy.usageFailed}</th><th scope="col">{copy.usageAborted}</th>{showIncomplete ? <th scope="col">{copy.usageIncomplete}</th> : null}{showUnrecorded ? <th scope="col">{copy.usageUnrecorded}</th> : null}</tr></thead>
-    <tbody>{calendar.map(day => <tr key={day.day}><th scope="row">{dateLabel(day.day, language, { year: "numeric", month: "short", day: "numeric" })}</th><td>{number(day.total, language)}</td><td>{number(day.completed, language)}</td><td>{number(day.failed, language)}</td><td>{number(day.cancelled, language)}</td>{showIncomplete ? <td>{number(day.incomplete ?? 0, language)}</td> : null}{showUnrecorded ? <td>{number(day.unrecorded, language)}</td> : null}</tr>)}</tbody>
-  </table></div>;
-}
-
 export function UsageDashboard({ copy, language }: { copy: Copy; language: Language }) {
-  const [filters, setFilters] = useState<UsageQuery>({ days: 7, source: "web", accountId: null });
-  const activeKey = filterKey(filters);
-  const cache = useRef(new Map<string, UsageSnapshot>());
-  const [result, setResult] = useState<{ key: string; report: UsageSnapshot } | null>(null);
-  const [error, setError] = useState<{ key: string; message: string } | null>(null);
-  const [refreshing, setRefreshing] = useState<string | null>(null);
-  const [retryAttempt, setRetryAttempt] = useState(0);
-  const [knownAccounts, setKnownAccounts] = useState<UsageSnapshot["accounts"]>([]);
-  const [showTable, setShowTable] = useState(false);
-  const rawVisible = result?.key === activeKey ? result.report : cache.current.get(activeKey) ?? null;
-  const visible = useMemo(() => normalizedUsageSnapshot(rawVisible), [rawVisible]);
-  const visibleError = error?.key === activeKey ? error.message : null;
-  const changeFilters = (next: UsageQuery) => {
-    setError(current => current?.key === filterKey(next) ? current : null);
-    setRefreshing(filterKey(next));
-    setFilters(next);
-  };
-  const rememberReport = (key: string, report: UsageSnapshot) => {
-    cache.current.delete(key);
-    cache.current.set(key, report);
-    while (cache.current.size > 12) {
-      const oldest = cache.current.keys().next().value;
-      if (oldest === undefined) break;
-      cache.current.delete(oldest);
-    }
-  };
-
-  useEffect(() => {
-    let disposed = false;
-    let pending = false;
-    const key = filterKey(filters);
-    const refresh = async () => {
-      if (document.hidden || pending) return;
-      pending = true;
-      setRefreshing(key);
-      try {
-        const next = await window.codexWebLauncher!.usage({ days: filters.days, source: filters.source,
-          ...(filters.source === "web" ? { accountId: filters.accountId ?? null } : {}) });
-        if (disposed) return;
-        if (!next.available) {
-          setError({ key, message: next.error ?? copy.usageUnavailable });
-          return;
-        }
-        rememberReport(key, next);
-        setResult({ key, report: next });
-        if (filters.source === "web") setKnownAccounts(next.accounts);
-        setError(current => current?.key === key ? null : current);
-      } catch {
-        if (!disposed) setError({ key, message: copy.usageUnavailable });
-      } finally {
-        pending = false;
-        if (!disposed) setRefreshing(current => current === key ? null : current);
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
-    const resume = () => { if (!document.hidden) void refresh(); };
-    document.addEventListener("visibilitychange", resume);
-    window.addEventListener("focus", resume);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", resume);
-      window.removeEventListener("focus", resume);
-    };
-  }, [filters.days, filters.source, filters.accountId, copy.usageUnavailable, retryAttempt]);
+  const { filters, visible, visibleError, refreshing, knownAccounts, changeFilters, retry } = useUsageReport(loadUsage, copy.usageUnavailable);
 
   const groups = useMemo(() => aggregateUsageGroups(visible?.rows ?? [], visible?.source ?? filters.source,
     (row, source) => groupLabel(row, copy, source)), [visible, copy, filters.source]);
@@ -193,7 +80,6 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
     aborted: copy.usageAborted,
   };
   const calendar = visible ? completeCalendar(visible) : [];
-  const activeDays = calendar.filter(day => day.total > 0).length;
   const rate = visible?.metrics.knownOutcomeCompletionRate;
   const generatedAt = visible?.generatedAt ? new Date(visible.generatedAt) : null;
   const stale = Boolean(visible && visibleError);
@@ -228,18 +114,15 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
       <label>{copy.usageRange}<select aria-label={copy.usageRange} className="settings-select" value={filters.days} onChange={event => changeFilters({ ...filters, days: Number(event.target.value) as UsageRangeDays })}>
         {ranges.map(value => <option key={value} value={value}>{value === 1 ? copy.usageOneDay : `${value} ${copy.usageDays}`}</option>)}
       </select></label>
-      {refreshing === activeKey ? <span className="usage-refreshing" role="status">{visible ? copy.usageRefreshing : copy.loading}</span> : null}
+      {refreshing ? <span className="usage-refreshing" role="status">{visible ? copy.usageRefreshing : copy.loading}</span> : null}
     </div>
 
     {visibleError ? <div className={`usage-notice${stale ? " is-stale" : " is-error"}`} role={stale ? "status" : "alert"}>
       <strong>{stale ? copy.usageStaleTitle : copy.usageUnavailable}</strong><span>{stale ? copy.usageStaleBody : visibleError}</span>
-      <button className="button-secondary" type="button" disabled={refreshing === activeKey} onClick={() => {
-        setRefreshing(activeKey);
-        setRetryAttempt(value => value + 1);
-      }}>{refreshing === activeKey ? copy.loading : copy.retry}</button>
+      <button className="button-secondary" type="button" disabled={refreshing} onClick={retry}>{refreshing ? copy.loading : copy.retry}</button>
     </div> : null}
 
-    {!visible ? refreshing === activeKey ? <div className="usage-loading" role="status">{copy.loading}</div> : visibleError ? null : <div className="usage-loading" role="status">{emptyCopy}</div> : <>
+    {!visible ? refreshing ? <div className="usage-loading" role="status">{copy.loading}</div> : visibleError ? null : <div className="usage-loading" role="status">{emptyCopy}</div> : <>
       <div className="usage-report-meta">
         <span>{copy.usagePeriod.replace("{start}", dateLabel(visible.period.startDay, language)).replace("{end}", dateLabel(visible.period.endDay, language))}</span>
         <span>{copy.usageUpdated.replace("{time}", generatedAt && Number.isFinite(generatedAt.getTime()) ? generatedAt.toLocaleString(language) : copy.usageUnknown)}</span>
@@ -287,13 +170,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
         <p>{copy.usageTokenCoverage.replace("{reported}", number(visible.tokens.reportedSamples, language)).replace("{unreported}", number(visible.tokens.unreportedSamples, language))}</p>
       </section> : null}
 
-      <section className="usage-calendar-section" aria-labelledby="usage-calendar-title">
-        <div className="usage-section-heading"><div><h3 id="usage-calendar-title">{copy.usageCalendar}</h3><p>{calendarSummary.replace("{total}", number(visible.metrics.total, language)).replace("{active}", number(activeDays, language)).replace("{days}", number(visible.period.days, language))}</p></div>
-          <button className="text-button" type="button" aria-expanded={showTable} onClick={() => setShowTable(value => !value)}>{showTable ? copy.usageHideTable : copy.usageShowTable}</button>
-        </div>
-        <CalendarChart calendar={calendar} language={language} totalLabel={totalLabel} />
-        {showTable ? <CalendarTable calendar={calendar} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
-      </section>
+      <UsageCalendar report={visible} copy={copy} language={language} />
 
       <section className="usage-failures" aria-labelledby="usage-failures-title"><h3 id="usage-failures-title">{copy.usageFailures}</h3>
         {visible.failures.some(item => item.count > 0) ? <ul>{visible.failures.filter(item => item.count > 0).map(item => <li key={item.code}><span>{failureLabels[item.code]}</span><strong>{number(item.count, language)}</strong></li>)}</ul> : <p>{copy.usageNoFailures}</p>}

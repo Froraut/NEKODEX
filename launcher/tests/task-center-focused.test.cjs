@@ -7,9 +7,22 @@ const React = require('react');
 
 // Same isolated hook/event harness used by account-settings-ui.test.cjs.
 // Exercises component callbacks, without an app, provider or browser process.
-const compiled = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/TaskCenter.tsx'), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.ReactJSX },
-}).outputText;
+const compiledModules = new Map();
+function compile(filename) {
+  if (!compiledModules.has(filename)) compiledModules.set(filename, ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.ReactJSX },
+    fileName: filename,
+  }).outputText);
+  return compiledModules.get(filename);
+}
+// Expand the extracted, hook-free presentation component once per render so
+// event traversal and the simulated ref commit observe the same element tree.
+function presentationTree(tree) {
+  if (Array.isArray(tree)) return tree.map(presentationTree);
+  if (!React.isValidElement(tree)) return tree;
+  if (typeof tree.type === 'function') return presentationTree(tree.type(tree.props));
+  return { ...tree, props: { ...tree.props, children: presentationTree(tree.props.children) } };
+}
 function harness(tasks, overrides = {}) {
   const state = [], refs = [], effects = [], calls = [], errors = [];
   let stateIndex = 0, refIndex = 0, effectIndex = 0;
@@ -29,9 +42,23 @@ function harness(tasks, overrides = {}) {
     },
     useRef(initial) { const i = refIndex++; return refs[i] ??= { current: initial }; },
   };
-  const loaded = { exports: {} };
-  Function('module', 'exports', 'require', compiled)(loaded, loaded.exports,
-    name => name === 'react' ? react : name.endsWith('.css') ? {} : require(name));
+  const modules = new Map();
+  function load(filename) {
+    if (modules.has(filename)) return modules.get(filename).exports;
+    const loaded = { exports: {} };
+    modules.set(filename, loaded);
+    Function('module', 'exports', 'require', compile(filename))(loaded, loaded.exports, name => {
+      if (name === 'react') return react;
+      if (name.endsWith('.css')) return {};
+      if (!name.startsWith('.')) return require(name);
+      const base = path.resolve(path.dirname(filename), name);
+      const resolved = [base, `${base}.ts`, `${base}.tsx`].find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+      if (!resolved) throw new Error(`Unresolved local test dependency: ${name} from ${filename}`);
+      return load(resolved);
+    });
+    return loaded.exports;
+  }
+  const { TaskCenter } = load(path.join(__dirname, '../src/TaskCenter.tsx'));
   const props = { tasks, language: 'en', disabled: false,
     open: async (...args) => calls.push(['open', ...args]),
     cancel: async (...args) => calls.push(['cancel', ...args]),
@@ -39,7 +66,7 @@ function harness(tasks, overrides = {}) {
     onError: error => errors.push(error), ...overrides };
   return { calls, errors, props, render(commit = () => {}) {
     stateIndex = refIndex = effectIndex = 0;
-    const tree = loaded.exports.TaskCenter(props);
+    const tree = presentationTree(TaskCenter(props));
     commit(tree);
     for (const effect of effects) if (effect.changed) { effect.changed = false; effect.cleanup = effect.setup(); }
     return tree;

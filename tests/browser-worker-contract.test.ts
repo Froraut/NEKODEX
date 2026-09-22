@@ -3606,7 +3606,8 @@ test("both response loops check explicit Stopped thinking before acknowledging f
     expect(failure).toBeGreaterThan(0);
     expect(acknowledgement).toBeGreaterThan(failure);
   }
-  expect((worker.match(/domHealthTracker\.clearMissingResponse\(\)/g) ?? []).length).toBe(2);
+  // Live-progress suspension wiring and terminal grace behavior are covered by
+  // browser-response-policy.test.ts; avoid coupling this guard to policy method names.
 });
 
 test("proven MCP progress vetoes every terminal DOM conclusion, not just a missing response", () => {

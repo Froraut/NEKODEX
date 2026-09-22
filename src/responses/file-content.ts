@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename, extname } from "node:path";
+import { extname } from "node:path";
 
 export const CODEX_INPUT_FILE_MAX_BYTES = 20_000_000;
 export const CODEX_INPUT_FILES_MAX_BYTES = 50_000_000;
@@ -45,7 +45,7 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
 
 export function sanitizeCodexFileName(value: string): string {
   const normalized = value.normalize("NFKC").trim();
-  if (!normalized || normalized.length > 160 || basename(normalized) !== normalized
+  if (!normalized || normalized.length > 160 || /[\/\\]/.test(normalized)
     || /[\u0000-\u001f\u007f]/.test(normalized) || normalized === "." || normalized === "..") {
     throw new Error("input_file filename must be a plain filename of at most 160 characters");
   }
@@ -65,16 +65,24 @@ export function codexFileMimeType(name: string, declared?: string): string {
   return mimeType;
 }
 
-function decodedBase64(value: string, label: string): Buffer {
+export function decodeCodexFileBase64(value: string, label: string): Buffer {
   const compact = value.replace(/\s+/g, "");
   if (!compact || compact.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
     throw new Error(`${label} must contain valid base64 bytes`);
   }
-  const bytes = Buffer.from(compact, "base64");
-  if (bytes.length === 0 || bytes.toString("base64").replace(/=+$/, "") !== compact.replace(/=+$/, "")) {
+  const padding = compact.endsWith("==") ? 2 : compact.endsWith("=") ? 1 : 0;
+  const size = compact.length / 4 * 3 - padding;
+  if (size > CODEX_INPUT_FILE_MAX_BYTES) {
+    throw new Error(`${label} exceeds the 20 MB per-file limit`);
+  }
+  // Canonical padding requires the unused bits of the final sextet to be zero.
+  // Check these directly, without allocating a second encoded copy of the bytes.
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const last = alphabet.indexOf(compact[compact.length - padding - 1]!);
+  if (size === 0 || (padding === 2 && (last & 15) !== 0) || (padding === 1 && (last & 3) !== 0)) {
     throw new Error(`${label} must contain canonical base64 bytes`);
   }
-  return bytes;
+  return Buffer.from(compact, "base64");
 }
 
 function assertFileSignature(bytes: Uint8Array, mimeType: string, name: string): void {
@@ -130,7 +138,7 @@ export function resolveInlineCodexFile(filename: string | undefined, fileData: u
   if (typeof fileData !== "string") throw new Error("input_file.file_data must be a base64 string or base64 data URL");
   const dataUrl = /^data:([^;,]+);base64,(.*)$/s.exec(fileData);
   const declaredMimeType = dataUrl?.[1];
-  const bytes = decodedBase64(dataUrl?.[2] ?? fileData, "input_file.file_data");
+  const bytes = decodeCodexFileBase64(dataUrl?.[2] ?? fileData, "input_file.file_data");
   const inferredExtension = declaredMimeType
     ? Object.entries(EXTENSION_MIME_TYPES).find(([, mimeType]) => mimeType === declaredMimeType.toLowerCase())?.[0]
     : undefined;

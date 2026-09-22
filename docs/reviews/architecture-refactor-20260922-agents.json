@@ -1,0 +1,233 @@
+{
+  "baseline": "53d17361f3e9c81910055a7e2c18759ffce458bc",
+  "model": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "review": [
+    {
+      "id": "01-http-server",
+      "title": "HTTP server and service boundaries",
+      "agent_id": "01a0c90c-fc74-7692-8270-4582266d5e9a",
+      "nickname": "Mill",
+      "status": "completed"
+    },
+    {
+      "id": "02-responses",
+      "title": "Responses parsing and durable conversation state",
+      "agent_id": "01a0c90c-fce6-75c1-b4df-2d1fe7b24670",
+      "nickname": "Linnaeus",
+      "status": "completed"
+    },
+    {
+      "id": "03-adapter-execution",
+      "title": "ChatGPT adapter and turn execution",
+      "agent_id": "01a0c90c-fd57-77c1-992c-e2a46104c122",
+      "nickname": "Chandrasekhar",
+      "status": "completed"
+    },
+    {
+      "id": "04-turn-broker",
+      "title": "Turn broker, delegation, environment authority",
+      "agent_id": "01a0c90c-fdcb-7483-9338-d2f0a13bcbf7",
+      "nickname": "Gibbs",
+      "status": "completed"
+    },
+    {
+      "id": "05-browser-worker",
+      "title": "Browser worker/model selection",
+      "agent_id": "01a0c90c-fe39-7550-aee5-20af003c2ff9",
+      "nickname": "Hilbert",
+      "status": "completed"
+    },
+    {
+      "id": "06-mcp-tools",
+      "title": "MCP transport, tools, environment",
+      "agent_id": "01a0c90c-fea6-7683-9a82-8b55f41d783a",
+      "nickname": "Banach",
+      "status": "completed"
+    },
+    {
+      "id": "07-files-prompts",
+      "title": "Files, artifacts and prompt construction",
+      "agent_id": "01a0c90c-ff17-7d22-890b-94785fa23a51",
+      "nickname": "Carson",
+      "status": "completed"
+    },
+    {
+      "id": "08-compaction",
+      "title": "Compaction/checkpoint lifecycle",
+      "agent_id": "01a0c90c-ff8f-7390-97d0-fefb4e325096",
+      "nickname": "Volta",
+      "status": "completed"
+    },
+    {
+      "id": "09-native",
+      "title": "Native forwarding, routing and usage outbox",
+      "agent_id": "01a0c90d-0006-77d3-aa61-e5c5c500c285",
+      "nickname": "Lovelace",
+      "status": "completed"
+    },
+    {
+      "id": "10-setup-config",
+      "title": "Configuration, setup and integration",
+      "agent_id": "01a0c90d-006d-7153-822c-7e5e32a4a159",
+      "nickname": "Pascal",
+      "status": "completed"
+    },
+    {
+      "id": "11-electron-ipc",
+      "title": "Electron main/preload/control interfaces",
+      "agent_id": "01a0c90d-00e8-74f2-bb04-d2131e0d9bb7",
+      "nickname": "Euler",
+      "status": "completed"
+    },
+    {
+      "id": "12-accounts-auth",
+      "title": "Accounts, login and identity lifecycle",
+      "agent_id": "01a0c90d-018b-78f1-95a7-960a15680f3f",
+      "nickname": "Einstein",
+      "status": "completed"
+    },
+    {
+      "id": "13-browser-state",
+      "title": "Browser host, queues, task ledger and workspaces",
+      "agent_id": "01a0c90d-0209-7db1-9871-494a1de18e0b",
+      "nickname": "Russell",
+      "status": "completed"
+    },
+    {
+      "id": "14-runtime-updates",
+      "title": "Runtime supervision, update recovery and storage",
+      "agent_id": "01a0c90d-0286-7713-a11e-e0fd7f563981",
+      "nickname": "James",
+      "status": "completed"
+    },
+    {
+      "id": "15-app-accounts-ui",
+      "title": "App shell, account settings and onboarding renderer",
+      "agent_id": "01a0c90d-030e-7fe3-b24c-15d51fcc6ded",
+      "nickname": "Schrodinger",
+      "status": "completed"
+    },
+    {
+      "id": "16-feature-ui",
+      "title": "Task, queue, workspaces, usage and update renderer",
+      "agent_id": "01a0c90d-0389-7b31-8c32-1e1d9d122e37",
+      "nickname": "Lagrange",
+      "status": "completed"
+    }
+  ],
+  "implementation": [
+    {
+      "id": "01-http-server",
+      "title": "HTTP server and service boundaries",
+      "agent_id": "01a0c910-fdcc-7090-846d-6066f8bcb405",
+      "nickname": "Leibniz",
+      "status": "completed"
+    },
+    {
+      "id": "02-responses",
+      "title": "Responses parsing and durable conversation state",
+      "agent_id": "01a0c910-fe34-7ee1-ad4e-0d0e24b308f3",
+      "nickname": "McClintock",
+      "status": "completed"
+    },
+    {
+      "id": "03-adapter-execution",
+      "title": "ChatGPT adapter and turn execution",
+      "agent_id": "01a0c910-feb1-74b3-bc56-097d31d578ba",
+      "nickname": "Harvey",
+      "status": "completed"
+    },
+    {
+      "id": "04-turn-broker",
+      "title": "Turn broker, delegation, environment authority",
+      "agent_id": "01a0c910-ff23-71a2-83ed-7c2f5ce8bd39",
+      "nickname": "Epicurus",
+      "status": "completed"
+    },
+    {
+      "id": "05-browser-worker",
+      "title": "Browser worker/model selection",
+      "agent_id": "01a0c910-ff94-79a0-b2c3-0b485ef41593",
+      "nickname": "Popper",
+      "status": "completed"
+    },
+    {
+      "id": "06-mcp-tools",
+      "title": "MCP transport, tools, environment",
+      "agent_id": "01a0c911-000a-7dd1-bb0d-784be0ee2393",
+      "nickname": "Locke",
+      "status": "completed"
+    },
+    {
+      "id": "07-files-prompts",
+      "title": "Files, artifacts and prompt construction",
+      "agent_id": "01a0c911-007d-7472-9707-6f154fe0e1b3",
+      "nickname": "Euclid",
+      "status": "completed"
+    },
+    {
+      "id": "08-compaction",
+      "title": "Compaction/checkpoint lifecycle",
+      "agent_id": "01a0c911-00ea-74b2-b493-52c75c40eeeb",
+      "nickname": "Kepler",
+      "status": "completed"
+    },
+    {
+      "id": "09-native",
+      "title": "Native forwarding, routing and usage outbox",
+      "agent_id": "01a0c911-0164-7cc1-bbfd-e63db95fa48a",
+      "nickname": "Rawls",
+      "status": "completed"
+    },
+    {
+      "id": "10-setup-config",
+      "title": "Configuration, setup and integration",
+      "agent_id": "01a0c911-01d6-7163-b2da-c9e579d44ebc",
+      "nickname": "Turing",
+      "status": "completed"
+    },
+    {
+      "id": "11-electron-ipc",
+      "title": "Electron main/preload/control interfaces",
+      "agent_id": "01a0c911-0247-7ca0-a740-a2805abb0457",
+      "nickname": "Anscombe",
+      "status": "completed"
+    },
+    {
+      "id": "12-accounts-auth",
+      "title": "Accounts, login and identity lifecycle",
+      "agent_id": "01a0c911-02c1-7b32-a719-d516bff5934f",
+      "nickname": "Ohm",
+      "status": "completed"
+    },
+    {
+      "id": "13-browser-state",
+      "title": "Browser host, queues, task ledger and workspaces",
+      "agent_id": "01a0c911-033b-7262-9848-184bd444db82",
+      "nickname": "Raman",
+      "status": "completed"
+    },
+    {
+      "id": "14-runtime-updates",
+      "title": "Runtime supervision, update recovery and storage",
+      "agent_id": "01a0c911-03bd-7243-88b7-cf3efff75c8e",
+      "nickname": "Poincare",
+      "status": "completed"
+    },
+    {
+      "id": "15-app-accounts-ui",
+      "title": "App shell, account settings and onboarding renderer",
+      "agent_id": "01a0c911-0449-7122-bbfd-d1625aa5dc1a",
+      "nickname": "Galileo",
+      "status": "completed"
+    },
+    {
+      "id": "16-feature-ui",
+      "title": "Task, queue, workspaces, usage and update renderer",
+      "agent_id": "01a0c911-04d2-7a90-b7bb-82e7de77f38f",
+      "nickname": "Goodall",
+      "status": "completed"
+    }
+  ]
+}

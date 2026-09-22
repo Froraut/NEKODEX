@@ -12,21 +12,32 @@ export function AccountSafetySettings({ id, safety, resumeRequired = false, disa
   resume: () => void;
 }) {
   const normalizedPolicy = { ...safety.policy, newSessionWindow: safety.policy.newSessionWindow ?? null };
-  const [draft, setDraft] = useState(normalizedPolicy);
-  const [windowEnabled, setWindowEnabled] = useState(normalizedPolicy.newSessionWindow !== null);
-  const [windowLimit, setWindowLimit] = useState(normalizedPolicy.newSessionWindow?.limit.toString() ?? "");
-  const [windowMinutes, setWindowMinutes] = useState(normalizedPolicy.newSessionWindow?.minutes.toString() ?? "");
+  const toDraft = (policy: AccountSafetyPolicy) => ({
+    policy, windowEnabled: policy.newSessionWindow != null,
+    windowLimit: policy.newSessionWindow?.limit.toString() ?? "",
+    windowMinutes: policy.newSessionWindow?.minutes.toString() ?? "",
+  });
+  const [rawDraft, setRawDraft] = useState(() => toDraft(normalizedPolicy));
+  const { policy: draft, windowEnabled, windowLimit, windowMinutes } = rawDraft;
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
   const savingRef = useRef(false);
   const statusId = useId();
   const saved = JSON.stringify(normalizedPolicy);
+  const previous = useRef({ id, saved, raw: JSON.stringify(toDraft(normalizedPolicy)) });
+  const submitted = useRef<{ id: string; saved: string; raw: string } | null>(null);
   useEffect(() => {
-    const policy = JSON.parse(saved) as AccountSafetyPolicy;
-    setDraft(policy);
-    setWindowEnabled(policy.newSessionWindow !== null);
-    setWindowLimit(policy.newSessionWindow?.limit.toString() ?? "");
-    setWindowMinutes(policy.newSessionWindow?.minutes.toString() ?? "");
+    const policy: AccountSafetyPolicy = JSON.parse(saved);
+    const next = toDraft(policy);
+    const prior = previous.current;
+    const receipt = submitted.current;
+    previous.current = { id, saved, raw: JSON.stringify(next) };
+    setRawDraft(current => {
+      const raw = JSON.stringify(current);
+      const acknowledged = receipt?.id === id && receipt.saved === saved && receipt.raw === raw;
+      return prior.id !== id || raw === prior.raw || acknowledged ? next : current;
+    });
+    if (prior.id !== id) { savingRef.current = false; setSaving(false); submitted.current = null; }
     setFailed(false);
   }, [id, saved]);
   const fields = [
@@ -51,6 +62,7 @@ export function AccountSafetySettings({ id, safety, resumeRequired = false, disa
   const valid = fields.every(([key, , min, max]) => Number.isInteger(draft[key]) && draft[key] >= min && draft[key] <= max)
     && windowValid;
   const changed = JSON.stringify(candidate) !== saved;
+  const dirty = JSON.stringify(rawDraft) !== JSON.stringify(toDraft(normalizedPolicy));
   const windowStatus = safety.newSessionWindow ?? null;
   const windowResetsAt = windowStatus?.resetsAt ?? null;
   const windowStatusText = windowStatus === null
@@ -63,8 +75,15 @@ export function AccountSafetySettings({ id, safety, resumeRequired = false, disa
   const submit = async () => {
     if (disabled || savingRef.current || !changed || !valid) return;
     savingRef.current = true; setSaving(true); setFailed(false);
-    try { if (!await save(candidate)) setFailed(true); }
-    finally { savingRef.current = false; setSaving(false); }
+    const receipt = { id, saved: JSON.stringify(candidate), raw: JSON.stringify(rawDraft) };
+    submitted.current = receipt;
+    try {
+      if (!await save(candidate) && submitted.current === receipt) { submitted.current = null; setFailed(true); }
+    } catch {
+      if (submitted.current === receipt) { submitted.current = null; setFailed(true); }
+    } finally {
+      if (previous.current.id === id) { savingRef.current = false; setSaving(false); }
+    }
   };
   return <details className="account-safety account-form-panel">
     <summary>{copy.pacingTitle}</summary>
@@ -74,13 +93,13 @@ export function AccountSafetySettings({ id, safety, resumeRequired = false, disa
     <form onSubmit={event => { event.preventDefault(); void submit(); }}>
       <fieldset disabled={disabled || saving} aria-describedby={statusId}>
         <label className="account-policy-enabled"><span><input type="checkbox" checked={draft.enabled}
-          onChange={event => { setFailed(false); setDraft({ ...draft, enabled: event.target.checked }); }} /> {copy.pacingEnabled}</span></label>
+          onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, policy: { ...draft, enabled: event.target.checked } }); }} /> {copy.pacingEnabled}</span></label>
         {fields.map(([key, label, min, max]) => <label key={key}>
           {label}
           <input type="number" min={min} max={max} step={1} required
             aria-describedby={statusId} aria-invalid={!Number.isInteger(draft[key]) || draft[key] < min || draft[key] > max}
             value={Number.isFinite(draft[key]) ? draft[key] : ""}
-            onChange={event => { setFailed(false); setDraft({ ...draft, [key]: event.target.valueAsNumber }); }} />
+            onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, policy: { ...draft, [key]: event.target.valueAsNumber } }); }} />
         </label>)}
         <section className="account-new-session-window" aria-labelledby={`${statusId}-window-title`}>
           <h3 id={`${statusId}-window-title`}>{copy.newSessionWindowTitle}</h3>
@@ -90,29 +109,34 @@ export function AccountSafetySettings({ id, safety, resumeRequired = false, disa
             ? <p className="field-hint">{copy.newSessionWindowNextSlot}: {new Date(windowResetsAt).toLocaleString()}</p>
             : windowStatus ? <p className="field-hint">{copy.newSessionWindowNoSessions}</p> : null}
           <label className="account-policy-enabled"><span><input type="checkbox" checked={windowEnabled}
-            onChange={event => { setFailed(false); setWindowEnabled(event.target.checked); }} /> {copy.newSessionWindowEnabled}</span></label>
+            onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowEnabled: event.target.checked }); }} /> {copy.newSessionWindowEnabled}</span></label>
           {windowEnabled ? <div className="account-new-session-window-fields">
             <label>{copy.newSessionWindowLimit}
               <input type="number" min={1} max={10_000} step={1} required aria-describedby={statusId}
                 aria-invalid={!Number.isInteger(parsedWindowLimit) || parsedWindowLimit < 1 || parsedWindowLimit > 10_000}
-                value={windowLimit} onChange={event => { setFailed(false); setWindowLimit(event.target.value); }} />
+                value={windowLimit} onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowLimit: event.target.value }); }} />
             </label>
             <label>{copy.newSessionWindowMinutes}
               <input type="number" min={1} max={525_600} step={1} required aria-describedby={statusId}
                 aria-invalid={!Number.isInteger(parsedWindowMinutes) || parsedWindowMinutes < 1 || parsedWindowMinutes > 525_600}
-                value={windowMinutes} onChange={event => { setFailed(false); setWindowMinutes(event.target.value); }} />
+                value={windowMinutes} onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowMinutes: event.target.value }); }} />
             </label>
           </div> : null}
         </section>
         <button type="submit" className="button-secondary" disabled={!changed || !valid || saving}>
           {saving ? copy.accountFormSaving : copy.pacingSave}
         </button>
+        <button type="button" className="button-secondary" disabled={disabled || saving || !dirty}
+          onClick={() => {
+            if (disabled || savingRef.current) return;
+            setRawDraft(toDraft(normalizedPolicy)); setFailed(false); submitted.current = null;
+          }}>{copy.accountSafetyRestore}</button>
         {safety.stopped || resumeRequired ? <button type="button" className="button-secondary"
           onClick={() => { if (!disabled && !savingRef.current) resume(); }}>{copy.pacingResume}</button> : null}
       </fieldset>
       <p id={statusId} className={!valid || failed ? "field-error" : "field-hint"} role={!valid || failed ? "alert" : "status"}>
         {blockedReason || (!valid ? copy.accountSafetyInvalid : failed ? copy.accountFormFailed
-          : saving ? copy.accountFormSaving : changed ? copy.accountFormUnsaved : copy.accountFormSaved)}
+          : saving ? copy.accountFormSaving : dirty ? copy.accountFormUnsaved : copy.accountFormSaved)}
       </p>
     </form>
   </details>;

@@ -15,12 +15,13 @@ function picker(options: {
   descriptionTexts?: readonly string[];
   modelOptions?: Array<{ role: string; name: string; version: string }>;
 } = {}) {
-  let version = "6", value = 0, submenu = false;
+  let version = "6", value = 0, submenu = false, expanded = false;
+  let actualVersion = options.actualVersion;
   let pinnedVersion: string | undefined;
   let keyboardFailure: string | undefined;
   const actions: string[] = [];
   const hidden = {
-    filter() { return this; }, last() { return this; }, getByText() { return this; },
+    filter() { return this; }, last() { return this; }, getByText() { return this; }, count: async () => 0,
     isVisible: async () => false,
     waitFor: ({ signal }: { signal: AbortSignal }) => new Promise<void>((_, reject) => {
       signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
@@ -44,10 +45,11 @@ function picker(options: {
     isVisible: async () => !submenu, waitFor: async () => {},
   };
   const control = {
+    filter() { return this; }, first() { return this; }, count: async () => 1, innerText: async () => "Selected effort",
     last() { return this; }, waitFor: async () => {}, isVisible: async () => true,
     getAttribute: async (name: string) => name === "aria-controls" ? "picker"
-      : name === "aria-expanded" ? "true" : null,
-    click: async () => { submenu = false; },
+      : name === "aria-expanded" ? String(expanded) : null,
+    click: async () => { submenu = false; expanded = true; },
   };
   const versionTrigger = {
     count: async () => 1, waitFor: async () => {},
@@ -81,61 +83,61 @@ function picker(options: {
       return radio(args.name);
     },
   };
-  const composer = { locator: () => ({ locator: () => control }) };
+  const composer = { isEditable: async () => true, locator: () => ({ locator: () => control, getByTestId: () => ({
+    waitFor: async () => {}, isEnabled: async () => true, press: async () => { actions.push("SEND"); },
+  }) }) };
   const page = {
     evaluate: async (fn: unknown, ids: string[]) => {
       expect(ids).toEqual(["picker-value", "picker-instructions"]);
       const descriptions = options.descriptionTexts ?? [
-        `${options.actualVersion ?? version} ${["Instant", "Medium", "High", "Extra High", "Pro"][value]}，第 ${value + 1} 项，共 5 项。`,
+        `${actualVersion ?? version} ${["Instant", "Medium", "High", "Extra High", "Pro"][value]}，第 ${value + 1} 项，共 5 项。`,
         observedPicker.descriptions["picker-instructions"],
       ];
-      const previousDocument = (globalThis as any).document;
-      (globalThis as any).document = {
+      const previousDocument = Reflect.get(globalThis, "document");
+      Reflect.set(globalThis, "document", {
         getElementById: (id: string) => {
           const index = ids.indexOf(id);
           return index < 0 ? null : { textContent: descriptions[index] };
         },
-      };
+      });
       try {
         return (fn as (descriptionIds: string[]) => unknown)(ids);
       } finally {
-        if (previousDocument === undefined) delete (globalThis as any).document;
-        else (globalThis as any).document = previousDocument;
+        if (previousDocument === undefined) Reflect.deleteProperty(globalThis, "document");
+        else Reflect.set(globalThis, "document", previousDocument);
       }
     },
     locator: (selector: string) => selector === '[id="picker"]' || selector === CHATGPT_EFFORT_MENU_SELECTOR ? menu
       : selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR ? container : hidden,
+    url: () => "https://chatgpt.com/",
     keyboard: { press: async () => {
+      expanded = false;
       if (keyboardFailure) throw new Error(keyboardFailure);
     } },
     isClosed: () => false,
   };
-  const select = (ChatGptBrowserWorker.prototype as unknown as {
+  interface WorkerFixture {
+    activeComposer: () => Promise<unknown>;
+    waitForSubmissionAcceptedWithRecovery: () => Promise<string>;
     selectModelAndEffort(...args: unknown[]): Promise<unknown>;
-  }).selectModelAndEffort;
+    sendAttachedPrompt(...args: unknown[]): Promise<unknown>;
+  }
+  const worker: WorkerFixture = Object.create(ChatGptBrowserWorker.prototype);
+  worker.activeComposer = async () => composer;
+  worker.waitForSubmissionAcceptedWithRecovery = async () => "user_turn";
   return {
     actions,
     state: () => ({ version, value }),
     setEffort: (next: number) => { value = next; },
-    failKeyboardCleanup: (message = "keyboard cleanup failed") => { keyboardFailure = message; },
-    select: (requested: string | undefined, effort = "max", stageVersion?: string) => select.call(
-      { activeComposer: async () => composer }, page, "gpt-5.6-sol", effort,
+    drift: (next: string) => { actualVersion = next; },
+    failKeyboardCleanup: () => { keyboardFailure = "keyboard cleanup failed"; },
+    select: (requested: string | undefined, effort = "max", stageVersion?: string) => worker.selectModelAndEffort(
+      page, "gpt-5.6-sol", effort,
       { localToolsEnabled: false, solAvailable: true, proAvailable: true, proModelVersion: requested },
-      undefined, stageVersion,
-    ),
-    send: async (requested: string) => {
-      const send = (ChatGptBrowserWorker.prototype as unknown as {
-        sendAttachedPrompt(...args: unknown[]): Promise<unknown>;
-      }).sendAttachedPrompt;
-      const form = { locator: () => control, getByTestId: () => ({
-        waitFor: async () => {}, isEnabled: async () => true,
-        press: async () => { actions.push("SEND"); },
-      }) };
-      return send.call({ activeComposer: async () => ({ locator: () => form }),
-        waitForSubmissionAcceptedWithRecovery: async () => "user_turn",
-      }, page, {}, undefined, undefined, undefined, undefined, undefined, undefined,
-      { modelVersion: requested, effort: "max", uiEffortIndex: 4 });
-    },
+      undefined, stageVersion),
+    send: (requested: string) => worker.sendAttachedPrompt(page, {}, async () => { actions.push("READY"); }, undefined, undefined,
+      { onSendActivated: async () => { actions.push("ACTIVATED"); } }, undefined, undefined, undefined,
+      { modelVersion: requested, effort: "max", uiEffortIndex: 4 }),
   };
 }
 
@@ -206,15 +208,23 @@ test("Latest must still prove version 6, not silently follow a future model", as
 });
 
 test("a version reset during connector or file attachment prevents the send activation", async () => {
-  const fixture = picker({ actualVersion: "6" });
+  const fixture = picker();
+  await fixture.select("5.6");
+  fixture.drift("6");
   await expect(fixture.send("5.6")).rejects.toThrow("5.6");
+  expect(fixture.actions).toContain("READY");
+  expect(fixture.actions).not.toContain("ACTIVATED");
   expect(fixture.actions).not.toContain("SEND");
 });
 
 test("menu cleanup failure cannot mask a pre-send model mismatch", async () => {
-  const fixture = picker({ actualVersion: "6" });
+  const fixture = picker();
+  await fixture.select("5.6");
+  fixture.drift("6");
   fixture.failKeyboardCleanup();
   await expect(fixture.send("5.6")).rejects.toThrow("5.6");
+  expect(fixture.actions).toContain("READY");
+  expect(fixture.actions).not.toContain("ACTIVATED");
   expect(fixture.actions).not.toContain("SEND");
 });
 
@@ -223,6 +233,8 @@ test("menu cleanup failure still blocks a send after successful verification", a
   await fixture.select("5.6");
   fixture.failKeyboardCleanup();
   await expect(fixture.send("5.6")).rejects.toThrow("keyboard cleanup failed");
+  expect(fixture.actions).toContain("READY");
+  expect(fixture.actions).not.toContain("ACTIVATED");
   expect(fixture.actions).not.toContain("SEND");
 });
 
@@ -232,6 +244,7 @@ test("a verified 5.6 Pro selection permits one send", async () => {
   await fixture.select("5.6");
   expect(fixture.actions.filter(action => action === "open-versions")).toHaveLength(1);
   await fixture.send("5.6");
+  expect(fixture.actions.slice(-3)).toEqual(["READY", "ACTIVATED", "SEND"]);
   expect(fixture.actions.filter(action => action === "SEND")).toHaveLength(1);
 });
 
@@ -240,6 +253,8 @@ test("an effort reset to non-Pro prevents the send even when the version still m
   await fixture.select("5.6");
   fixture.setEffort(2);
   await expect(fixture.send("5.6")).rejects.toThrow("5.6");
+  expect(fixture.actions).toContain("READY");
+  expect(fixture.actions).not.toContain("ACTIVATED");
   expect(fixture.actions).not.toContain("SEND");
 });
 

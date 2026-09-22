@@ -1,43 +1,10 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, lstatSync, openSync, fsyncSync, closeSync } from "node:fs";
 import { join } from "node:path";
-import type { NativeUsageTelemetryEvent } from "./native-usage-telemetry";
+import { validNativeUsageEvent, type NativeUsageTelemetryEvent } from "./usage/native-contract";
 
 const MAX_EVENTS = 512;
 const MAX_AGE_MS = 23 * 60 * 60 * 1000; // Inside the receiver's 24-hour delivery window.
-const fields = ['schemaVersion', 'eventId', 'source', 'endpoint', 'requestedModelId', 'reportedModelId',
-  'startedAt', 'durationMs', 'outcome', 'httpStatus', 'failureCategory', 'usageStatus', 'usage'];
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-
-// Only aggregate telemetry is retained. Never persist prompts, responses, headers or credentials.
-function validEvent(value: unknown): value is NativeUsageTelemetryEvent {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const e = value as NativeUsageTelemetryEvent;
-  if (Object.keys(e).length !== fields.length || fields.some(k => !Object.hasOwn(e, k))
-    || e.schemaVersion !== 1 || e.source !== 'native' || !idPattern.test(e.eventId)
-    || !['responses', 'responses/compact'].includes(e.endpoint)
-    || ![e.requestedModelId, e.reportedModelId].every(m => m === null || (typeof m === 'string' && /^[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}$/.test(m) && !m.includes("://") && m.split("/").every(p => p && p !== "." && p !== "..")))
-    || typeof e.startedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(e.startedAt)
-    || !Number.isFinite(Date.parse(e.startedAt)) || !Number.isSafeInteger(e.durationMs) || e.durationMs < 0 || e.durationMs > 7 * 86400_000
-    || !['completed', 'incomplete', 'failed', 'aborted'].includes(e.outcome)
-    || !Number.isInteger(e.httpStatus) || (e.httpStatus !== 0 && (e.httpStatus < 100 || e.httpStatus > 599))
-    || !(e.failureCategory === null || ['http-auth', 'http-rate-limit', 'http-client', 'http-server', 'transport', 'stream', 'protocol', 'aborted'].includes(e.failureCategory))
-    || !['reported', 'unreported'].includes(e.usageStatus)) return false;
-  // Match the receiver's terminal-state contract before persistence and during replay.
-  // In particular, discard historical completed/protocol receipts; never invent recovery usage.
-  if ((e.httpStatus === 0 && e.failureCategory !== 'transport' && e.failureCategory !== 'aborted')
-    || (e.httpStatus !== 0 && e.failureCategory === 'transport')
-    || (e.outcome === 'completed' && e.failureCategory !== null)
-    || (e.outcome === 'aborted' && e.failureCategory !== 'aborted')
-    || (e.outcome === 'failed' && e.failureCategory === null)) return false;
-  if (e.usage === null) return e.usageStatus === 'unreported';
-  if (typeof e.usage !== 'object' || Array.isArray(e.usage) || e.usageStatus !== 'reported') return false;
-  return ['inputTokens', 'outputTokens', 'totalTokens'].every(k => Object.hasOwn(e.usage!, k))
-    && Object.entries(e.usage).every(([k, v]) => ['inputTokens', 'outputTokens', 'totalTokens', 'cachedInputTokens', 'reasoningOutputTokens'].includes(k)
-      && Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000)
-    && e.usage.totalTokens >= e.usage.inputTokens + e.usage.outputTokens
-    && (e.usage.cachedInputTokens === undefined || e.usage.cachedInputTokens <= e.usage.inputTokens)
-    && (e.usage.reasoningOutputTokens === undefined || e.usage.reasoningOutputTokens <= e.usage.outputTokens);
-}
 
 /** Separate immutable event files let a successor replay unacknowledged receipts safely. */
 export class NativeUsageOutbox {
@@ -60,7 +27,7 @@ export class NativeUsageOutbox {
         let e: unknown;
         try { e = JSON.parse(readFileSync(file, 'utf8')); }
         catch { unlinkSync(file); continue; }
-        if (!validEvent(e) || `${e.eventId}.json` !== name
+        if (!validNativeUsageEvent(e) || `${e.eventId}.json` !== name
           || Date.parse(e.startedAt) + e.durationMs < this.clock() - MAX_AGE_MS
           || Date.parse(e.startedAt) + e.durationMs > this.clock() + 60_000) {
           unlinkSync(file);
@@ -74,7 +41,7 @@ export class NativeUsageOutbox {
     return events;
   }
   put(event: NativeUsageTelemetryEvent): void {
-    if (!validEvent(event)) throw new Error('Invalid native usage event');
+    if (!validNativeUsageEvent(event)) throw new Error('Invalid native usage event');
     const raw = JSON.stringify(event);
     if (Buffer.byteLength(raw) > 4096) throw new Error('Native usage event too large');
     const pending = this.pending();

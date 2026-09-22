@@ -585,6 +585,7 @@
   "accountProxySocksPort": "SOCKS5 URL에 포트를 포함하세요.",
   "accountFormFailed": "이 설정을 저장하지 못했습니다. 오류 세부 정보를 확인하고 다시 시도하세요.",
   "accountSafetyInvalid": "표시된 범위 안의 정수를 사용하세요.",
+  "accountSafetyRestore": "저장된 정책 복원",
   "launcherRuntimeRestartTitle": "업데이트를 완료하려면 NEKODEX 다시 시작",
   "launcherRuntimeRestartBody": "업데이트된 앱이 이전에 정상 작동하던 런타임을 사용하고 있습니다. 작업이 끝나면 NEKODEX를 다시 시작해 새 런타임을 활성화하세요.",
   "launcherRuntimeRestartAction": "NEKODEX 다시 시작"

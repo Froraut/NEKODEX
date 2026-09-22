@@ -12,7 +12,7 @@ const { BrowserAdmissionQueue } = require('./browser-admission-queue.cjs');
 const { BrowserWorkspaceDirectory } = require('./browser-workspace-directory.cjs');
 const { AccountSessionMutationCoordinator } = require('./browser-workspace-session-mutations.cjs');
 
-const ACCOUNT_READ_SETTLEMENT_TIMEOUT_MS = 10_000;
+const { AccountOperationLeases, validateRead, validateExclusive } = require('./account-operation-leases.cjs');
 
 function validateWorkspaceId(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 128
@@ -45,8 +45,7 @@ class AccountBrowserPool {
     this.network = new AccountNetwork(options.coreHome);
     this.usage = new UsageStore(options.coreHome);
     this.networkOperation = null;
-    this.accountOperations = new Map();
-    this.accountReadOperations = new Map();
+    this.operationLeases = new AccountOperationLeases();
     this.authenticationRefreshOperations = new Map();
     this.existingChromeImportLease = null;
     this.hosts = new Map();
@@ -113,6 +112,7 @@ class AccountBrowserPool {
       return typeof value === 'function' ? value.bind(host) : value;
     } });
   }
+  leases() { return this.operationLeases ??= new AccountOperationLeases(); }
   selectedHost() { return this.getHost(this.registry.snapshot().selectedId); }
   workspaceCoordinator(id) {
     validateAccountId(id);
@@ -150,10 +150,10 @@ class AccountBrowserPool {
     for (const [traceId, admission] of this.unsentAdmissions) {
       if (admission.id === accountId) blockers.push({ kind: 'unsent-admission', id: traceId });
     }
-    const operation = this.accountOperations.get(accountId);
-    if (operation) blockers.push({ kind: 'account-operation', id: operation.label });
-    const read = this.accountReadOperations?.get(accountId)?.values().next().value;
-    if (read) blockers.push({ kind: 'inspection', id: read.label });
+    const operation = this.leases().exclusiveLabel(accountId);
+    if (operation) blockers.push({ kind: 'account-operation', id: operation });
+    const read = this.leases().readLabel(accountId);
+    if (read) blockers.push({ kind: 'inspection', id: read });
     if (this.authenticationRefreshOperations.get(accountId)) {
       blockers.push({ kind: 'inspection', id: 'session verification' });
     }
@@ -226,8 +226,8 @@ class AccountBrowserPool {
     if (this.networkOperation) return 'Account network configuration';
     if (this.addingAccount) return 'ChatGPT account addition';
     if (this.loginOperation) return 'ChatGPT account login';
-    const reserved = this.accountOperations.values().next().value;
-    if (reserved) return reserved.label;
+    const reserved = this.leases().firstExclusiveLabel();
+    if (reserved) return reserved;
     return [...this.hosts.values()].map(host => host.currentOperation()).find(Boolean) || null;
   }
   accountOperationLabel(id) {
@@ -239,8 +239,8 @@ class AccountBrowserPool {
   accountMutationOperationLabel(id) {
     validateAccountId(id);
     if (this.passkeyImportLease?.id === id) return 'ChatGPT passkey login';
-    const reserved = this.accountOperations.get(id);
-    if (reserved) return reserved.label;
+    const reserved = this.leases().exclusiveLabel(id);
+    if (reserved) return reserved;
     if (this.networkOperation === id) return 'Account network configuration';
     if (this.loginOperation?.id === id) return 'ChatGPT account login';
     if (this.workspaceSessionMutations?.get(id)?.snapshot().admissionBlocked) return 'browser workspace sign-in';
@@ -256,50 +256,25 @@ class AccountBrowserPool {
   }
   accountReadOperationLabel(id) {
     validateAccountId(id);
-    return this.accountReadOperations?.get(id)?.values().next().value?.label ?? null;
+    return this.leases().readLabel(id);
   }
   acquireAccountReadOperation(id, label, cancel) {
     if (this.destroyed) throw new Error('ChatGPT account pool is closed');
     if (this.inspectionsPaused) throw new Error('Account reads are paused for launcher restart');
     validateAccountId(id);
-    if (typeof label !== 'string' || !label.trim() || label.trim().length > 80
-      || /[\u0000-\u001f\u007f]/.test(label) || typeof cancel !== 'function') {
-      throw new Error('Account read operation requires a printable label and cancellation callback');
-    }
+    validateRead(label, cancel);
     this.getHost(id);
     const mutation = this.accountMutationOperationLabel(id);
     if (mutation) {
       throw new Error(`This ChatGPT account is busy with ${mutation}; retry after it finishes`);
     }
-    const token = Symbol('account-read-operation');
-    let resolveSettled;
-    const settled = new Promise(resolve => { resolveSettled = resolve; });
-    const operation = Object.freeze({ label: label.trim(), token, cancel, settled });
-    this.accountReadOperations ??= new Map();
-    const operations = this.accountReadOperations.get(id) ?? new Map();
-    operations.set(token, operation);
-    this.accountReadOperations.set(id, operations);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const current = this.accountReadOperations.get(id);
-      if (current?.get(token) === operation) {
-        current.delete(token);
-        if (current.size === 0) this.accountReadOperations.delete(id);
-      }
-      resolveSettled();
-    };
+    return this.leases().acquireRead(id, label, cancel);
   }
   acquireAccountOperation(id, label) {
     if (this.destroyed) throw new Error('ChatGPT account pool is closed');
     validateAccountId(id);
-    if (typeof label !== 'string' || !label.trim() || label.trim().length > 80
-      || /[\u0000-\u001f\u007f]/.test(label)) {
-      throw new Error('Account operation label must contain 1 to 80 printable characters');
-    }
-    const host = this.getHost(id);
-    const normalizedLabel = label.trim();
+    validateExclusive(label);
+    this.getHost(id);
     const conflict = this.accountOperationError(id);
     if (conflict) throw conflict;
     const readLabel = this.accountReadOperationLabel(id);
@@ -309,15 +284,7 @@ class AccountBrowserPool {
     if (this.canMutateAccountSession({ accountId: id }).allowed !== true) {
       throw new Error('Finish this account’s active or acquiring tasks before starting the account operation');
     }
-    const token = Symbol('account-operation');
-    const reservation = Object.freeze({ label: normalizedLabel, token });
-    this.accountOperations.set(id, reservation);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      if (this.accountOperations.get(id)?.token === token) this.accountOperations.delete(id);
-    };
+    return this.leases().acquireExclusive(id, label);
   }
   closeTurnAdmission(reason = 'launcher shutdown') {
     if (typeof reason !== 'string' || !reason || reason.length > 80) throw new Error('Turn admission reason is invalid');
@@ -689,9 +656,9 @@ class AccountBrowserPool {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
     for (const account of this.registry.snapshot().accounts.filter(account => account.enabled)) {
       if (this.inspectionsPaused || this.destroyed) break;
-      const reserved = this.accountOperations.get(account.id);
+      const reserved = this.leases().exclusiveLabel(account.id);
       if (reserved) {
-        this.logger.info('browser.account_refresh_deferred', { accountId: account.id, operation: reserved.label });
+        this.logger.info('browser.account_refresh_deferred', { accountId: account.id, operation: reserved });
         continue;
       }
       const host = this.getHost(account.id);
@@ -1456,20 +1423,7 @@ class AccountBrowserPool {
   async persistSession() { await Promise.all([...this.hosts.values()].map(host => host.persistSession())); }
   async cancelReadOnlyInspections() {
     this.inspectionsPaused = true;
-    const reads = [...(this.accountReadOperations?.values() ?? [])]
-      .flatMap(operations => [...operations.values()]);
-    for (const read of reads) {
-      try { read.cancel(); } catch {}
-    }
-    let settlementTimer;
-    const readSettlement = Promise.race([
-      Promise.allSettled(reads.map(read => read.settled)),
-      new Promise((_, reject) => {
-        settlementTimer = setTimeout(() => reject(new Error('Account read cancellation timed out')),
-          ACCOUNT_READ_SETTLEMENT_TIMEOUT_MS);
-        settlementTimer.unref?.();
-      }),
-    ]).finally(() => clearTimeout(settlementTimer));
+    const readSettlement = this.leases().cancelAndDrain();
     const results = await Promise.allSettled([
       ...[...this.hosts.values()].map(host => host.cancelReadOnlyInspection()),
       readSettlement,
@@ -1484,13 +1438,7 @@ class AccountBrowserPool {
       coordinator.invalidate('Browser account pool closed');
     }
     this.existingChromeImportLease = null;
-    this.accountOperations.clear();
-    for (const operations of this.accountReadOperations?.values() ?? []) {
-      for (const read of operations.values()) {
-        try { read.cancel(); } catch {}
-      }
-    }
-    this.accountReadOperations?.clear();
+    this.leases().destroy();
     for (const unregister of this.workspaceRegistrations.values()) unregister();
     this.workspaceRegistrations.clear();
     for (const host of this.hosts.values()) host.destroy();

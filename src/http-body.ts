@@ -87,3 +87,12 @@ export async function readJsonRequestBody(
   const text = new TextDecoder("utf-8", { fatal: true }).decode(decoded);
   return JSON.parse(text) as unknown;
 }
+
+/** Replace a decoded wire representation while preserving request authority and cancellation. */
+export function createInternalJsonRequest(source: Request, url: string, body: unknown): Request {
+  const headers = new Headers(source.headers);
+  headers.delete("content-encoding");
+  headers.delete("content-length");
+  headers.set("content-type", "application/json");
+  return new Request(url, { method: "POST", headers, body: JSON.stringify(body), signal: source.signal });
+}

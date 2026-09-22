@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { atomicWriteFile } from "../src/config";
 import { parseRequest } from "../src/responses/parser";
 import { extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
@@ -367,4 +368,42 @@ test("Luna checkpoint preserves current-turn input inside a replayed response pr
     message("user", "Also inspect the pending queue.", "current"),
   ]);
   expect(extractChatGptTurnUserRevision(result.parsed)).toEqual(extractChatGptTurnUserRevision(next));
+});
+
+
+test("Luna checkpoint failed persistence never publishes or resurrects the candidate", () => {
+  const root = mkdtempSync(join(tmpdir(), "luna-checkpoint-rollback-"));
+  roots.push(root);
+  const path = join(root, "checkpoints.json");
+  let failWrite = false;
+  let reachedCandidateWrite = false;
+  const store = new ChatGptLunaCheckpointStore(path, Date.now, (target, contents) => {
+    if (failWrite) {
+      const payload = JSON.parse(typeof contents === "string" ? contents : new TextDecoder().decode(contents));
+      reachedCandidateWrite = payload.checkpoints.some((entry: { sourceTurnId: string }) => entry.sourceTurnId === "failed");
+      throw new Error("injected pre-replacement write failure");
+    }
+    return atomicWriteFile(target, contents);
+  });
+  const commit = (turn: string, answer: string) => store.commit(
+    request("rollback-thread", turn, [message("user", "Work", turn)]),
+    { checkpoint, answerHash: hashChatGptLunaAnswer(answer) }, answer,
+  );
+  const apply = (turn: string, answer: string) => new ChatGptLunaCheckpointStore(path).apply(
+    request("rollback-thread", "next", [message("assistant", answer, turn), message("user", "Continue", "next")]),
+  ).applied;
+  commit("predecessor", "Durable answer");
+  expect(apply("predecessor", "Durable answer")).toBe(true);
+  const before = readFileSync(path, "utf8");
+  failWrite = true;
+  expect(() => commit("failed", "Failed answer")).toThrow("injected pre-replacement write failure");
+  expect(reachedCandidateWrite).toBe(true);
+  expect(readFileSync(path, "utf8")).toBe(before);
+  failWrite = false;
+  expect(apply("failed", "Failed answer")).toBe(false);
+  expect(apply("predecessor", "Durable answer")).toBe(true);
+  commit("later", "Later answer");
+  expect(apply("later", "Later answer")).toBe(true);
+  expect(apply("failed", "Failed answer")).toBe(false);
+  expect(readFileSync(path, "utf8")).not.toContain(hashChatGptLunaAnswer("Failed answer"));
 });

@@ -1,3 +1,5 @@
+import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
+import { useAccountCodexLogin } from "./useAccountCodexLogin";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { AccountSafetySettings } from "./AccountSafetySettings";
@@ -9,7 +11,7 @@ import { QuotaPortfolioSummary } from "./QuotaPortfolioSummary";
 import { accountCodexCopyFor, type Copy } from "./i18n";
 import { sessionIssueCopy } from "./session-issue-copy";
 import { workflowCopy } from "./workflow-copy";
-import type { AccountPoolSnapshot, AccountQuotaSnapshot, CodexLoginProgress, Language, LauncherSnapshot } from "./types";
+import type { AccountPoolSnapshot, AccountQuotaSnapshot, Language, LauncherSnapshot } from "./types";
 import "./account-codex.css";
 import "./quota-portfolio.css";
 
@@ -47,14 +49,11 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   const api = window.codexWebLauncher!;
   const codexCopy = accountCodexCopyFor(language);
   const workflow = workflowCopy(language);
-  const [state, setState] = useState<AccountPoolSnapshot | null>(null);
+  const { snapshot: state, failed: loadFailed, retry: retryPool, applyReceipt } = useAccountPoolSnapshot({ api });
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
   const actionInFlight = useRef(false);
   const retryRef = useRef<HTMLButtonElement | null>(null);
-  const refreshRef = useRef<() => void>(() => {});
   const [quotas, setQuotas] = useState<Map<string, AccountQuotaSnapshot | null>>(new Map());
   const [quotaFailures, setQuotaFailures] = useState<Set<string>>(new Set());
   const [quotaRefreshing, setQuotaRefreshing] = useState<Set<string>>(new Set());
@@ -74,61 +73,12 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   const authInFlight = useRef(new Set<string>());
   const authRevisions = useRef(new Map<string, number>());
   const [authRefreshing, setAuthRefreshing] = useState<Set<string>>(new Set());
-  const [login, setLogin] = useState<CodexLoginProgress | null>(null);
-  const [loginSnapshotStatus, setLoginSnapshotStatus] = useState<"loading" | "ready" | "failed">("loading");
-  const [loginAttempt, setLoginAttempt] = useState(0);
-  const [startingAccountId, setStartingAccountId] = useState<string | null>(null);
-  const startingId = useRef<string | null>(null);
-  const loginRevision = useRef(0);
-  const loginActionInFlight = useRef(false);
-  const [loginAction, setLoginAction] = useState<{ accountId: string; kind: "open" | "copy" | "cancel" } | null>(null);
-  const loginLockedId = login && (login.active || login.settling) ? login.accountId : null;
-  const loginLockedIdRef = useRef<string | null>(null);
-  loginLockedIdRef.current = loginLockedId;
+  const { login, loginSnapshotStatus, startingAccountId, startingId, loginAction, loginLockedId,
+    loginLockedIdRef, startCodexLogin, cancelCodexLogin, openCodexLogin, copyCodexLoginCode, retryLogin
+  } = useAccountCodexLogin({ api, transitionBusy, loadFailed,
+    isQuotaBusy: id => quotaInFlight.current.has(id), setError });
   quotaAccountEvidence.current = new Map((state?.accounts ?? [])
     .map(account => [account.id, quotaEvidenceFor(account)] as const));
-  useEffect(() => {
-    let disposed = false;
-    let timer: number | undefined;
-    let inFlight = false;
-    let revision = 0;
-    const load = () => {
-      timer = undefined;
-      if (disposed || inFlight) return;
-      inFlight = true;
-      const requestedRevision = revision;
-      void api.accounts().then(value => {
-        if (disposed || requestedRevision !== revision) return;
-        setState(value);
-        setLoadFailed(false);
-      }).catch(() => {
-        if (disposed || requestedRevision !== revision) return;
-        setLoadFailed(true);
-      }).finally(() => {
-        inFlight = false;
-        if (!disposed && requestedRevision !== revision) schedule(false);
-      });
-    };
-    const schedule = (changed = true) => {
-      if (disposed) return;
-      if (changed && (inFlight || timer === undefined)) revision += 1;
-      if (timer === undefined && !inFlight) timer = window.setTimeout(load, 150);
-    };
-    refreshRef.current = () => schedule();
-    // The host publishes the selected browser view even when another account changes.
-    const unsubscribeBrowser = api.onBrowserState(() => schedule());
-    const unsubscribeOperation = api.onOperation(operation => {
-      if (operation.status !== "running") schedule();
-    });
-    schedule();
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-      unsubscribeBrowser();
-      unsubscribeOperation();
-      refreshRef.current = () => {};
-    };
-  }, [api, setError, attempt]);
   useEffect(() => {
     if (loadFailed && state === null) retryRef.current?.focus();
   }, [loadFailed, state === null]);
@@ -188,69 +138,6 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       Math.min(2_147_483_647, Math.max(0, nextChange - Date.now()) + 50));
     return () => window.clearTimeout(timer);
   }, [quotaClock, quotas]);
-
-  useEffect(() => {
-    let disposed = false;
-    const revision = ++loginRevision.current;
-    void api.codexLoginSnapshot().then(value => {
-      if (!disposed && loginRevision.current === revision) {
-        setLogin(value);
-        setLoginSnapshotStatus("ready");
-      }
-    }).catch(error => {
-      if (!disposed && loginRevision.current === revision) {
-        setLoginSnapshotStatus("failed");
-        setError(error instanceof Error ? error.message : String(error));
-      }
-    });
-    return () => {
-      disposed = true;
-      loginRevision.current += 1;
-    };
-  }, [api, setError, loginAttempt]);
-
-  useEffect(() => {
-    if (!login || (!login.active && !login.settling) || loginSnapshotStatus !== "ready") return;
-    const { flowId, accountId, deadlineAt } = login;
-    const revision = ++loginRevision.current;
-    const deadline = Date.parse(deadlineAt);
-    const remainingSeconds = Number.isFinite(deadline)
-      ? Math.max(0, Math.ceil((deadline - Date.now()) / 1_000)) : 600;
-    const maximumPolls = login.settling ? 105 : Math.min(660, remainingSeconds + 45);
-    let disposed = false;
-    let inFlight = false;
-    let polls = 0;
-    let consecutiveFailures = 0;
-    let timer: number | undefined;
-    const schedule = () => {
-      if (disposed || loginRevision.current !== revision || timer !== undefined) return;
-      if (polls >= maximumPolls) { setLoginSnapshotStatus("failed"); return; }
-      timer = window.setTimeout(poll, 1_000);
-    };
-    const poll = () => {
-      timer = undefined;
-      if (disposed || inFlight || loginRevision.current !== revision || polls >= maximumPolls) return;
-      polls += 1;
-      inFlight = true;
-      void api.codexLoginStatus(flowId, accountId).then(next => {
-        if (disposed || loginRevision.current !== revision) return;
-        consecutiveFailures = 0;
-        setLogin(next);
-        if (next.active || next.settling) schedule();
-      }).catch(() => {
-        if (disposed || loginRevision.current !== revision) return;
-        consecutiveFailures += 1;
-        if (consecutiveFailures >= 3) setLoginSnapshotStatus("failed");
-        else schedule();
-      }).finally(() => { inFlight = false; });
-    };
-    schedule();
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-      if (loginRevision.current === revision) loginRevision.current += 1;
-    };
-  }, [api, login?.active, login?.accountId, login?.deadlineAt, login?.flowId, login?.phase, login?.settling, loginSnapshotStatus]);
 
   const refreshQuota = async (id: string) => {
     if (transitionBusy || loadFailed || loginLockedIdRef.current === id
@@ -361,8 +248,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     try {
       const next = await api.refreshAccountAuthentication(id);
       if (authRevisions.current.get(id) === revision && quotaAccountEvidence.current.get(id) === evidence) {
-        setState(next);
-        refreshRef.current();
+        applyReceipt(next);
       }
     } catch (error) {
       if (authRevisions.current.get(id) === revision) setError(error instanceof Error ? error.message : String(error));
@@ -376,58 +262,13 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     }
   };
 
-  const startCodexLogin = async (id: string) => {
-    if (transitionBusy || loadFailed || quotaInFlight.current.has(id) || startingId.current !== null || login?.active || login?.settling || loginSnapshotStatus !== "ready") return;
-    startingId.current = id;
-    setStartingAccountId(id);
-    setError(null);
-    const revision = ++loginRevision.current;
-    try {
-      const next = await api.startCodexLogin(id);
-      if (loginRevision.current === revision) setLogin(next);
-    } catch (error) {
-      if (loginRevision.current === revision) {
-        try {
-          const current = await api.codexLoginSnapshot();
-          if (loginRevision.current === revision) setLogin(current);
-        } catch { /* The original start error remains the actionable failure. */ }
-        if (loginRevision.current === revision) setError(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      if (startingId.current === id) {
-        startingId.current = null;
-        setStartingAccountId(null);
-      }
-    }
-  };
-
-  const runLoginAction = async <T,>(accountId: string, kind: "open" | "copy" | "cancel", action: () => Promise<T>) => {
-    if (loginActionInFlight.current || (transitionBusy && kind !== "cancel")) return null;
-    loginActionInFlight.current = true;
-    setLoginAction({ accountId, kind });
-    setError(null);
-    try { return await action(); }
-    catch (error) { setError(error instanceof Error ? error.message : String(error)); return null; }
-    finally { loginActionInFlight.current = false; setLoginAction(null); }
-  };
-
-  const cancelCodexLogin = async (progress: CodexLoginProgress) => {
-    const next = await runLoginAction(progress.accountId, "cancel",
-      () => api.cancelCodexLogin(progress.flowId, progress.accountId));
-    if (next) {
-      loginRevision.current += 1;
-      setLogin(next);
-    }
-  };
-
   const run = async (action: () => Promise<AccountPoolSnapshot>) => {
     if (transitionBusy || loadFailed || actionInFlight.current) return false;
     actionInFlight.current = true;
     setBusy(true); setError(null);
     try {
       const next = await action();
-      setState(next);
-      refreshRef.current();
+      applyReceipt(next);
       return true;
     }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); return false; }
@@ -435,7 +276,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   };
   const retryAccounts = () => {
     setError(null);
-    setAttempt(value => value + 1);
+    retryPool();
   };
   if (!state) return <div className={`account-loading${loadFailed ? " is-error" : ""}`}
     role={loadFailed ? "alert" : "status"} aria-live="polite">{loadFailed
@@ -479,8 +320,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       <p>{codexCopy.loginStatusUnavailable}</p>
       <button type="button" className="button-secondary" onClick={() => {
         setError(null);
-        setLoginSnapshotStatus("loading");
-        setLoginAttempt(value => value + 1);
+        retryLogin();
       }}>{copy.retry}</button>
     </div> : null}
     <div className="account-routing">
@@ -586,7 +426,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           aria-describedby={describedBy(credentialActionReason)}
           title={sessionMutationReason} onClick={() => void run(async () => {
           const next = await api.selectAccount(account.id);
-          setState(next);
+          applyReceipt(next);
           openBrowser();
           await api.openAccountLogin(account.id);
           return api.accounts();
@@ -624,10 +464,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         loginDisabledReason={loginDisabledReason}
         loginAction={loginAction?.accountId === account.id ? loginAction.kind : null}
         onStartLogin={() => startCodexLogin(account.id)}
-        onOpenLogin={async () => { if (flowForAccount) await runLoginAction(account.id, "open",
-          () => api.openCodexLogin(flowForAccount.flowId, account.id)); }}
-        onCopyCode={async () => flowForAccount ? (await runLoginAction(account.id, "copy",
-          () => api.copyCodexLoginCode(flowForAccount.flowId, account.id))) === true : false}
+        onOpenLogin={async () => { if (flowForAccount) await openCodexLogin(flowForAccount); }}
+        onCopyCode={async () => flowForAccount ? await copyCodexLoginCode(flowForAccount) : false}
         onCancelLogin={async () => { if (flowForAccount) await cancelCodexLogin(flowForAccount); }} />
       {account.safety ? <AccountSafetySettings id={account.id} safety={account.safety} copy={copy}
         resumeRequired={account.availability?.reason === "session-limit"}

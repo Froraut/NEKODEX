@@ -1,5 +1,5 @@
 const fs = require('node:fs');
-const crypto = require('node:crypto');
+const { sha256 } = require('./update-asset-hash.cjs');
 const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
@@ -106,10 +106,9 @@ async function downloadAuthenticatedAsset(url, destination, {
     clearTimeout(freshness);
     freshness = undefined;
     if (bytes !== expectedBytes) throw new Error('Incomplete update download; partial retained');
-    const hash = crypto.createHash('sha256');
-    await pipeline(createReadStream(partial), hash, { signal: controller.signal });
+    const digest = await sha256(partial, { signal: controller.signal, createReadStream });
     if (controller.signal.aborted) throw controller.signal.reason;
-    if (hash.digest('hex') !== expectedSha256) {
+    if (digest !== expectedSha256) {
       invalid = true; throw new Error('Update SHA-256 does not match signed metadata');
     }
     fs.renameSync(partial, destination);

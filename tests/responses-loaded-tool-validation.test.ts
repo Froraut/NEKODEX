@@ -52,3 +52,36 @@ test("tool discovery advertises only callable wire names using the same projecti
   const result = parsed.context.messages.find(message => message.role === "toolResult");
   expect(result?.content).toBe("Tool search loaded these tools — they are now in your available tools. Call one by its EXACT name: exec, records__lookup, tool_search.");
 });
+
+test("discovery and active tools share collaboration policy with declared precedence", () => {
+  const body = { model: "chatgpt-web/medium", tools: [
+    { type: "function", name: "lookup", description: "declared" },
+  ], input: [{ type: "tool_search_output", call_id: "search", tools: [
+    { type: "function", name: "spawn_agent" },
+    { type: "function", name: "lookup", description: "loaded" },
+    { type: "namespace", name: "records", tools: [{ type: "function", name: "lookup" }] },
+  ] }] };
+  const blocked = parseRequest(body, { allowWebSubagents: false });
+  expect(blocked.context.tools?.map(tool => tool.name)).toEqual(["lookup", "lookup"]);
+  expect(blocked.context.tools?.[0]?.description).toBe("declared");
+  expect(blocked.context.messages[0]?.content).not.toContain("spawn_agent");
+  expect(blocked.context.messages[0]?.content).toContain("records__lookup");
+  const enabled = parseRequest(body, { allowWebSubagents: true });
+  expect(enabled.context.tools?.some(tool => tool.name === "spawn_agent")).toBe(true);
+  expect(enabled.context.messages[0]?.content).toContain("spawn_agent");
+});
+
+test("blocked-only discovery does not advertise callable tools and preserves failure status", () => {
+  for (const status of ["completed", "failed"]) {
+    const parsed = parseRequest({ model: "chatgpt-web/medium", input: [{
+      type: "tool_search_output", call_id: "search", status,
+      tools: [{ type: "function", name: "spawn_agent" }],
+    }] }, { allowWebSubagents: false });
+    expect(parsed.context.tools).toBeUndefined();
+    const result = parsed.context.messages[0];
+    expect(result?.role).toBe("toolResult");
+    if (result?.role !== "toolResult") throw new Error("discovery result missing");
+    expect(result.content).toBe(status === "failed" ? "Tool search failed (status: failed)." : "Tool search returned no tools.");
+    expect(result.isError).toBe(status === "failed");
+  }
+});

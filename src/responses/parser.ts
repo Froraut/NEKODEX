@@ -8,13 +8,11 @@ import type {
   CodexRequestOptions,
   CodexTextContent,
   CodexThinkingContent,
-  CodexTool,
   CodexToolCall,
 } from "../types";
 import { namespacedToolName } from "../types";
-import { CHATGPT_WEB_MODEL_PREFIX } from "../chatgpt-web-models";
-import { isCollaborationTool } from "../collaboration-tools";
-import { responsesRequestSchema, toolSchema } from "./schema";
+import { availableTools, mapToolChoice, projectAvailableTools } from "./tool-projection";
+import { responsesRequestSchema } from "./schema";
 import { compactionItemToText } from "./compaction";
 import { previousResponseReplayPrefixLength } from "./state";
 import { decodeReasoningEnvelope } from "./reasoning-envelope";
@@ -106,35 +104,6 @@ function outputTextOf(blocks: unknown[] | string | undefined): CodexTextContent[
   return out;
 }
 
-function mapToolChoice(value: unknown): CodexRequestOptions["toolChoice"] {
-  if (value === undefined || value === null) return undefined;
-  if (value === "auto" || value === "none" || value === "required") return value;
-  if (isObj(value) && "type" in value) {
-    const t = (value as { type: string }).type;
-    if ((t === "function" || t === "custom") && "name" in value) {
-      return { name: (value as { name: string }).name };
-    }
-    if (t === "allowed_tools" && Array.isArray(value.tools)) {
-      const names = value.tools
-        .map(allowedToolName)
-        .filter((name): name is string => Boolean(name));
-      return names.length > 0
-        ? { allowedTools: [...new Set(names)], mode: value.mode === "required" ? "required" : "auto" }
-        : "none";
-    }
-    return "auto";
-  }
-  return undefined;
-}
-
-function allowedToolName(tool: unknown): string | undefined {
-  if (!isObj(tool)) return undefined;
-  if (typeof tool.name === "string" && tool.name.length > 0) return tool.name;
-  if (tool.type === "web_search" || tool.type === "web_search_preview") return "web_search";
-  if (tool.type === "tool_search") return "tool_search";
-  return undefined;
-}
-
 function parseTextControls(value: unknown): Pick<CodexRequestOptions, "verbosity" | "outputFormat"> {
   if (!isObj(value)) return {};
   const out: Pick<CodexRequestOptions, "verbosity" | "outputFormat"> = {};
@@ -157,104 +126,6 @@ function parseTextControls(value: unknown): Pick<CodexRequestOptions, "verbosity
     };
   }
   return out;
-}
-
-const DEFAULT_FUNCTION_NAMESPACE = "functions";
-
-function normalizedToolNamespace(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 && value !== DEFAULT_FUNCTION_NAMESPACE
-    ? value
-    : undefined;
-}
-
-function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
-  if (!tools) return undefined;
-  const out: CodexTool[] = [];
-  const pushFn = (t: Record<string, unknown>, namespace?: string) => {
-    // Namespaced and deferred definitions arrive through open extension envelopes, bypassing
-    // the top-level request tool schema. Enforce the same known-function contract here while
-    // leaving client-defined extension tool shapes open.
-    if (t.type === "function") {
-      const validated = toolSchema.safeParse(t);
-      if (!validated.success) throw new Error(`responses parse error: ${validated.error.message}`);
-      t = validated.data;
-    }
-    const tool: CodexTool = {
-      name: t.name as string,
-      description: (t.description as string) ?? "",
-      parameters: (t.parameters ?? {}) as Record<string, unknown>,
-    };
-    if (t.strict !== undefined) tool.strict = t.strict as boolean;
-    if (namespace) tool.namespace = namespace;
-    out.push(tool);
-  };
-  const pushFreeform = (t: Record<string, unknown>) => {
-    const tool: CodexTool = {
-      name: t.name as string,
-      description: (t.description as string) ?? "",
-      parameters: {
-        type: "object",
-        properties: {
-          input: {
-            type: "string",
-            description: "Raw tool input. For apply_patch, begin exactly with `*** Begin Patch` (no trailing `***`), then use its standard patch envelope.",
-          },
-        },
-        required: ["input"],
-      },
-      freeform: true,
-    };
-    out.push(tool);
-  };
-  for (const t of tools) {
-    if (!isObj(t)) continue;
-    if (t.type === "function") {
-      pushFn(t);
-    } else if (t.type === "namespace" && Array.isArray(t.tools)) {
-      // Responses Lite groups ordinary native functions and the native freeform `exec` tool under
-      // the default `functions` namespace. Flatten normal functions from every namespace, and the
-      // official freeform variant only from that default namespace. Non-default custom namespaces
-      // need a distinct round-trip contract and must not be silently exposed as function calls.
-      const ns = normalizedToolNamespace(t.name);
-      for (const inner of t.tools as unknown[]) {
-        if (!isObj(inner)) continue;
-        if (inner.type === "function") pushFn(inner, ns);
-        else if (typeof inner.name === "string" && t.name === DEFAULT_FUNCTION_NAMESPACE && inner.type === "custom") pushFreeform(inner);
-      }
-    }
-    else if (t.type === "custom" && typeof t.name === "string") {
-      // Freeform custom tool (e.g. apply_patch). Chat models can't emit a lark grammar, so expose a
-      // function with a single string `input` carrying the raw tool body; the bridge relays the model's
-      // call back as a custom_tool_call (Codex's freeform handler rejects a function_call → fatal abort).
-      pushFreeform(t);
-    }
-    else if (t.type === "tool_search") {
-      // Client-executed tool discovery — the gateway to deferred tools (subagents, extra MCP tools).
-      // Expose as a function so chat models can call it; the bridge relays it as a tool_search_call.
-      out.push({
-        name: "tool_search",
-        description: (t.description as string) ?? "Search for additional tools to load for the next turn.",
-        parameters: (isObj(t.parameters) ? t.parameters : {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "Search query for tools to load." },
-            limit: { type: "number", description: "Maximum number of tools to return." },
-          },
-          required: ["query"],
-        }) as Record<string, unknown>,
-        toolSearch: true,
-      });
-    }
-    else if (typeof t.name === "string" && t.type !== "web_search" && t.type !== "image_generation") {
-      // Any other named tool (for example a native computer-use tool type this parser does not
-      // model) is client-executed. Pass it through as a function so the routed model can call it
-      // naturally and the bridge can relay it as a function_call.
-      pushFn(t);
-    }
-    // Only the OpenAI-hosted server-side tools (web_search, image_generation) are intentionally
-    // dropped — they're executed by OpenAI and can't be relayed to a routed chat model.
-  }
-  return out.length > 0 ? out : undefined;
 }
 
 function ensureAssistantPlaceholder(messages: CodexMessage[], modelId: string, now: number): CodexAssistantMessage {
@@ -328,6 +199,7 @@ export function parseRequest(body: unknown, parseOptions?: {
     throw new Error(`responses parse error: ${parsed.error.message}`);
   }
   const data = parsed.data;
+  const toolPolicy = { model: data.model, allowWebSubagents: parseOptions?.allowWebSubagents };
   const now = Date.now();
   const messages: CodexMessage[] = [];
   const systemPrompt: string[] = [];
@@ -370,7 +242,7 @@ export function parseRequest(body: unknown, parseOptions?: {
         // Codex Desktop responses_lite WS path: tools ride INSIDE input as an
         // `additional_tools` item ({type, role, tools:[...]}) instead of body.tools.
         // Same spec wire shapes (function/namespace/custom/tool_search) — collect and
-        // merge through the exact buildTools path so surface detection (collabSurface)
+        // merge through the same projection contract so surface detection (collabSurface)
         // and chat-model tool listing see them. The item itself never becomes a message;
         // the native passthrough keeps it verbatim in _rawBody.
         const at = item as { tools?: unknown[] };
@@ -584,11 +456,11 @@ export function parseRequest(body: unknown, parseOptions?: {
         // Pair the tool_search call with its result so the model sees what was loaded.
         const out = item as { call_id: string; status?: string; tools?: unknown[] };
         if (!out.call_id) throw new Error("tool_search_output requires a nonempty call_id");
-        const specs = Array.isArray(out.tools) ? (out.tools as Record<string, unknown>[]) : [];
+        const specs = Array.isArray(out.tools) ? out.tools : [];
         loadedToolSpecs.push(...specs);
         // List the EXACT wire names the model must call (flattened for namespaced specs), matching
-        // how buildTools exposes them — otherwise the model guesses wrong names (e.g. the bare namespace).
-        const wireNames = (buildTools(specs) ?? []).map(tool => namespacedToolName(tool.namespace, tool.name));
+        // the active tool projection — otherwise the model guesses wrong names (e.g. the bare namespace).
+        const wireNames = projectAvailableTools(specs, toolPolicy).map(tool => namespacedToolName(tool.namespace, tool.name));
         const failed = typeof out.status === "string" && out.status !== "completed" && out.status !== "success";
         messages.push({
           role: "toolResult", toolCallId: out.call_id, toolName: "tool_search",
@@ -629,18 +501,10 @@ export function parseRequest(body: unknown, parseOptions?: {
     }
   }
 
-  const declaredTools = buildTools(data.tools as unknown[] | undefined) ?? [];
-  const loadedTools = buildTools(loadedToolSpecs) ?? [];
-  const seenTools = new Set<string>();
-  const webModel = typeof data.model === "string" && data.model.startsWith(CHATGPT_WEB_MODEL_PREFIX);
-  const mergedTools = [...declaredTools, ...loadedTools]
-    .filter(t => {
-      if (webModel && parseOptions?.allowWebSubagents === false && isCollaborationTool(t)) return false;
-      const k = namespacedToolName(t.namespace, t.name);
-      if (seenTools.has(k)) return false;
-      seenTools.add(k);
-      return true;
-    });
+  const mergedTools = availableTools([
+    ...projectAvailableTools(data.tools, toolPolicy),
+    ...projectAvailableTools(loadedToolSpecs, toolPolicy),
+  ], toolPolicy);
   const context: CodexContext = {
     ...(systemPrompt.length > 0 ? { systemPrompt } : {}),
     messages,

@@ -1,19 +1,21 @@
-import { existsSync, readFileSync } from "node:fs";
+import { transitionSetupConfig, meaningfulRuntimeChange, type SetupOptions } from "./setup-policy";
+export type { SetupOptions } from "./setup-policy";
+import { fileSnapshotsMatch as sameSnapshot } from "./file-transactions";
+import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import type { AppConfig, BrowserInteractionMode, RuntimeMode, SubagentProtocol } from "./config";
+import type { AppConfig, BrowserInteractionMode, RuntimeMode } from "./config";
 import {
   currentRuntimeCommand,
   defaultBrokerEndpoint,
   defaultConfig,
   getConfigPath,
-  loadConfigForSetup,
-  resolveInteractionConnectorIdentities,
+  readConfigForSetup,
+  type ConfigRead,
   saveConfig,
   tunnelConfigForInteractionMode,
-  ZERO_RISK_CHATGPT_CONNECTOR_NAME,
 } from "./config";
 import {
   browserLoginStateExists,
@@ -49,30 +51,6 @@ import { getTunnelServiceStatus, installTunnelService, restartTunnelService, sto
 import { runChecked, runCommand } from "./process";
 import { VERSION } from "./version";
 
-export interface SetupOptions {
-  mode: RuntimeMode;
-  browserInteractionMode?: BrowserInteractionMode;
-  subagentProtocol?: SubagentProtocol;
-  port?: number;
-  chromeExecutablePath?: string;
-  browserHostDescriptorPath?: string;
-  refreshAccountCapabilities?: boolean;
-  forceLogin?: boolean;
-  autoApproveToolCalls?: boolean;
-  experimentalBiggerContext?: boolean;
-  experimentalSkillAttachments?: boolean;
-  allowWebSubagents?: boolean;
-  experimentalFreshConversationPerTurn?: boolean;
-  experimentalAsyncToolOperations?: boolean;
-  zeroRiskProEnabled?: boolean;
-  replaceCodexRoute?: boolean;
-  restartService?: boolean;
-  acknowledgedUnofficial?: boolean;
-  tunnelId?: string;
-  runtimeKeyFile?: string;
-  runtimeKeyValue?: string;
-}
-
 export interface SetupResult {
   mode: RuntimeMode;
   configPath: string;
@@ -91,6 +69,7 @@ interface PreparedSetup {
   existing: AppConfig | undefined;
   config: AppConfig;
   launcherOwned: boolean;
+  read: ConfigRead;
 }
 
 export interface DevProfileSetupResult {
@@ -135,86 +114,15 @@ export function existingFullSetupCredentials(
   };
 }
 
-function loadExistingConfig(): AppConfig | undefined {
-  if (!existsSync(getConfigPath())) return undefined;
-  return loadConfigForSetup();
+/** Identity comes from the same before-image as the migrated candidate. */
+function activeConnectorIdentityMigrationRequired(config: AppConfig, read: ConfigRead): boolean {
+  return read.persistedIdentity !== undefined && read.persistedIdentity !== config.appName;
 }
 
-/** Setup loads a migrated copy, so compare the persisted active name before deciding whether
- * the existing tunnel profile can be reused. Inactive mode identities do not touch this tunnel. */
-function activeConnectorIdentityMigrationRequired(config: AppConfig): boolean {
-  const path = getConfigPath();
-  if (!existsSync(path)) return false;
-  const raw = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, "")) as Record<string, unknown>;
-  return typeof raw.appName === "string" && raw.appName !== config.appName;
-}
-
-function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
-  return JSON.stringify({
-    mode: before.mode,
-    subagentProtocol: before.subagentProtocol,
-    releaseVersion: before.releaseVersion,
-    host: before.host,
-    port: before.port,
-    contextWindow: before.contextWindow,
-    appName: before.appName,
-    automaticAppName: before.automaticAppName,
-    manualAppName: before.manualAppName,
-    browserHost: before.browserHost,
-    browserInteractionMode: before.browserInteractionMode,
-    browserHostDescriptorPath: before.browserHostDescriptorPath,
-    chromeExecutablePath: before.chromeExecutablePath,
-    storageStatePath: before.storageStatePath,
-    brokerSocketPath: before.brokerSocketPath,
-    headed: before.headed,
-    solAvailable: before.solAvailable,
-    extraHighAvailable: before.extraHighAvailable,
-    proAvailable: before.proAvailable,
-    experimentalBiggerContext: before.experimentalBiggerContext,
-    allowWebSubagents: before.allowWebSubagents,
-    experimentalSkillAttachments: before.experimentalSkillAttachments,
-    experimentalFreshConversationPerTurn: before.experimentalFreshConversationPerTurn,
-    experimentalAsyncToolOperations: before.experimentalAsyncToolOperations,
-    zeroRiskProEnabled: before.zeroRiskProEnabled,
-    autoApproveToolCalls: before.autoApproveToolCalls,
-    controlToken: before.controlToken,
-    runtimeCommand: before.runtimeCommand,
-    tunnel: before.tunnel,
-    automaticTunnel: before.automaticTunnel,
-    manualTunnel: before.manualTunnel,
-  }) !== JSON.stringify({
-    mode: after.mode,
-    subagentProtocol: after.subagentProtocol,
-    releaseVersion: after.releaseVersion,
-    host: after.host,
-    port: after.port,
-    contextWindow: after.contextWindow,
-    appName: after.appName,
-    automaticAppName: after.automaticAppName,
-    manualAppName: after.manualAppName,
-    browserHost: after.browserHost,
-    browserInteractionMode: after.browserInteractionMode,
-    browserHostDescriptorPath: after.browserHostDescriptorPath,
-    chromeExecutablePath: after.chromeExecutablePath,
-    storageStatePath: after.storageStatePath,
-    brokerSocketPath: after.brokerSocketPath,
-    headed: after.headed,
-    solAvailable: after.solAvailable,
-    extraHighAvailable: after.extraHighAvailable,
-    proAvailable: after.proAvailable,
-    experimentalBiggerContext: after.experimentalBiggerContext,
-    allowWebSubagents: after.allowWebSubagents,
-    experimentalSkillAttachments: after.experimentalSkillAttachments,
-    experimentalFreshConversationPerTurn: after.experimentalFreshConversationPerTurn,
-    experimentalAsyncToolOperations: after.experimentalAsyncToolOperations,
-    zeroRiskProEnabled: after.zeroRiskProEnabled,
-    autoApproveToolCalls: after.autoApproveToolCalls,
-    controlToken: after.controlToken,
-    runtimeCommand: after.runtimeCommand,
-    tunnel: after.tunnel,
-    automaticTunnel: after.automaticTunnel,
-    manualTunnel: after.manualTunnel,
-  });
+function assertConfigReadCurrent(read: ConfigRead): void {
+  if (!sameSnapshot(snapshotFile(read.snapshot.path), read.snapshot)) {
+    throw new Error("Setup config changed during setup; preserving the concurrent edit");
+  }
 }
 
 export function tunnelWorkerRuntimeChanged(before: AppConfig | undefined, after: AppConfig): boolean {
@@ -276,107 +184,12 @@ async function waitForProxy(config: AppConfig, timeoutMs = 10_000): Promise<void
   throw new Error(`Responses proxy did not become ready: ${lastError}`);
 }
 
-function baseConfig(
-  existing: AppConfig | undefined,
-  options: SetupOptions,
-  profile: "production" | "development" = "production",
-): AppConfig {
-  const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
-  config.mode = options.mode;
-  if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
-  if (options.experimentalAsyncToolOperations !== undefined) {
-    config.experimentalAsyncToolOperations = options.experimentalAsyncToolOperations;
-  }
-  // Changing to a non-tool mode disables async transport; an explicit incompatible request still fails.
-  if (options.experimentalAsyncToolOperations === undefined
-    && (config.mode !== "full" || config.browserInteractionMode !== "automatic")) {
-    config.experimentalAsyncToolOperations = false;
-  }
-  if (options.experimentalAsyncToolOperations === undefined && existing?.browserInteractionMode === "manual"
-    && config.mode === "full" && config.browserInteractionMode === "automatic") {
-    config.experimentalAsyncToolOperations = /^(Codex Native5|Codex Native6)( DEV)?$/.test(existing.automaticAppName);
-  }
-  // A first Full setup defaults to Native6. Ordinary updates preserve an established schema.
-  if (options.experimentalAsyncToolOperations === undefined && config.mode === "full"
-    && config.browserInteractionMode === "automatic" && (!existing || existing.mode !== "full")) {
-    config.experimentalAsyncToolOperations = true;
-  }
-  if (config.experimentalAsyncToolOperations
-    && (config.mode !== "full" || config.browserInteractionMode !== "automatic")) {
-    throw new Error(
-      "Async tool operations require automatic Full mode; pass --synchronous-tool-operations before switching mode",
-    );
-  }
-  Object.assign(config, resolveInteractionConnectorIdentities(
-    config.browserInteractionMode,
-    profile,
-    config.experimentalAsyncToolOperations,
-    options.experimentalAsyncToolOperations === undefined ? existing?.automaticAppName ?? config.automaticAppName : undefined,
-  ));
-  if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
-  config.releaseVersion = VERSION;
-  config.runtimeCommand = currentRuntimeCommand();
-  if (options.port !== undefined) {
-    if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65_535) throw new Error("--port must be an integer from 1 to 65535");
-    config.port = options.port;
-  }
-  if (options.chromeExecutablePath) config.chromeExecutablePath = options.chromeExecutablePath;
-  if (options.browserHostDescriptorPath) {
-    config.browserHost = "launcher";
-    config.browserHostDescriptorPath = options.browserHostDescriptorPath;
-    config.brokerSocketPath = defaultBrokerEndpoint();
-  } else if (options.chromeExecutablePath) {
-    config.browserHost = "managed-chrome";
-    delete config.browserHostDescriptorPath;
-  }
-  if (options.autoApproveToolCalls !== undefined) config.autoApproveToolCalls = options.autoApproveToolCalls;
-  if (options.experimentalFreshConversationPerTurn !== undefined) {
-    config.experimentalFreshConversationPerTurn = options.experimentalFreshConversationPerTurn;
-  }
-  if (options.allowWebSubagents !== undefined) config.allowWebSubagents = options.allowWebSubagents;
-  if (options.experimentalSkillAttachments !== undefined) {
-    config.experimentalSkillAttachments = options.experimentalSkillAttachments;
-  }
-  if (options.experimentalBiggerContext !== undefined) {
-    config.experimentalBiggerContext = options.experimentalBiggerContext;
-  }
-  if (options.zeroRiskProEnabled !== undefined) {
-    if (config.browserInteractionMode !== "manual") {
-      throw new Error("Manual mode Pro can be configured only with --zero-risk-browser-interaction");
-    }
-    config.zeroRiskProEnabled = options.zeroRiskProEnabled;
-  }
-  if (config.browserInteractionMode === "manual") {
-    if (options.refreshAccountCapabilities) {
-      throw new Error("Manual mode cannot refresh account capabilities");
-    }
-    if (options.forceLogin) {
-      throw new Error("Manual mode uses the launcher's existing ChatGPT session; --login is unavailable");
-    }
-    if (options.experimentalSkillAttachments === true) {
-      throw new Error("Manual mode does not support Skills as files");
-    }
-    if (options.experimentalBiggerContext === true) {
-      throw new Error("Manual mode does not support Bigger Context");
-    }
-    if (config.mode !== "full") {
-      throw new Error(`Manual mode requires --full so ${ZERO_RISK_CHATGPT_CONNECTOR_NAME} can signal start, tools, and completion`);
-    }
-    if (config.browserHost !== "launcher") {
-      throw new Error("Manual mode requires the Launcher; pass --browser-host-descriptor from the running Launcher");
-    }
-    config.experimentalBiggerContext = false;
-    config.experimentalSkillAttachments = false;
-    config.experimentalFreshConversationPerTurn = false;
-    config.solAvailable = false;
-    config.extraHighAvailable = false;
-    config.proAvailable = false;
-  }
-  if (options.acknowledgedUnofficial) config.acknowledgedUnofficialAt = new Date().toISOString();
-  if (!config.acknowledgedUnofficialAt) {
-    throw new Error("Setup requires explicit acknowledgement that this is unofficial browser automation. Pass --acknowledge-unofficial.");
-  }
-  return config;
+function baseConfig(existing: AppConfig | undefined, options: SetupOptions, profile: "production" | "development" = "production"): AppConfig {
+  return transitionSetupConfig(existing, options, {
+    defaults: existing ?? defaultConfig(options.mode), profile, version: VERSION,
+    runtimeCommand: currentRuntimeCommand(), brokerEndpoint: defaultBrokerEndpoint(),
+    acknowledgementTime: new Date().toISOString(),
+  });
 }
 
 async function inspectLauncherCapabilities(
@@ -401,16 +214,6 @@ async function inspectLauncherCapabilities(
       : existing!.extraHighAvailable ?? existing!.proAvailable,
     proAvailable: detectCapabilities ? inspected.proAvailable === true : existing!.proAvailable,
   };
-}
-
-// Match the shared snapshot receipt contract for preflight and compensation decisions.
-function sameSnapshot(left: FileSnapshot, right: FileSnapshot): boolean {
-  if (left.path !== right.path || left.exists !== right.exists) return false;
-  if (!left.exists) return true;
-  return Boolean(left.data?.equals(right.data ?? Buffer.alloc(0)))
-    && Boolean(left.identity && right.identity)
-    && left.mode === right.mode && left.identity?.dev === right.identity?.dev
-    && left.identity?.ino === right.identity?.ino;
 }
 
 /** A failed connect is not evidence of a stopped runtime. Probe with the candidate client;
@@ -549,7 +352,8 @@ async function bootstrapTunnelProfile(
 }
 
 function prepareSetup(options: SetupOptions): PreparedSetup {
-  const existing = loadExistingConfig();
+  const read = readConfigForSetup();
+  const existing = read.config;
   if (existing?.purpose === DEV_CONFIG_PURPOSE) {
     throw new Error("A DEV harness configuration cannot be installed into Codex");
   }
@@ -566,7 +370,7 @@ function prepareSetup(options: SetupOptions): PreparedSetup {
       + "Use the NEKODEX launcher on Windows or Linux.",
     );
   }
-  return { existing, config, launcherOwned };
+  return { existing, config, launcherOwned, read };
 }
 
 /** Re-bootstrap the exact definition restored by rollback; installers regenerate plist bytes. */
@@ -613,12 +417,12 @@ export function preflightSetup(options: SetupOptions): void {
 }
 
 export async function setup(options: SetupOptions): Promise<SetupResult> {
-  const { existing, config, launcherOwned } = prepareSetup(options);
+  const { existing, config, launcherOwned, read } = prepareSetup(options);
   preflightCodexIntegration(config, {
     replaceExistingRoute: options.replaceCodexRoute,
   });
   const connectorIdentityMigrating = config.mode === "full"
-    && activeConnectorIdentityMigrationRequired(config);
+    && activeConnectorIdentityMigrationRequired(config, read);
   const connectorVerificationReset = Boolean(existing
     && (existing.appName !== config.appName
       || existing.experimentalAsyncToolOperations !== config.experimentalAsyncToolOperations));
@@ -694,6 +498,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       proAvailable = inspected.proAvailable;
     }
   }
+  assertConfigReadCurrent(read);
   config.solAvailable = solAvailable === true;
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
@@ -707,6 +512,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     );
   }
   if (beforeService.loaded && preliminaryChange && existing) await assertServiceIdle(existing);
+  assertConfigReadCurrent(read);
   const runtimeKeyPath = managedRuntimeKeyPath(config.browserInteractionMode);
   const runtimeKeyBeforeRoute = snapshotFile(runtimeKeyPath);
   let runtimeKeyAfterRoute = runtimeKeyBeforeRoute;
@@ -715,7 +521,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   // The final Codex route write can still lose a race with edits made after preflight.
   // Keep the setup-owned files' original bytes so that a failed commit can compensate
   // without replacing a concurrent user edit.
-  const configBeforeRoute = snapshotFile(getConfigPath());
+  const configBeforeRoute = read.snapshot;
   const servicePath = beforeService.definitionPath;
   const serviceBeforeRoute = servicePath ? snapshotFile(servicePath) : undefined;
   const tunnelServiceBeforeRoute = getTunnelServiceStatus();
@@ -1094,7 +900,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
  * launcher supervises only the isolated MCP tunnel after this transaction commits.
  */
 export async function setupDevProfile(options: SetupOptions): Promise<DevProfileSetupResult> {
-  const existing = loadExistingConfig();
+  const read = readConfigForSetup();
+  const existing = read.config;
   if (existing && existing.purpose !== DEV_CONFIG_PURPOSE) {
     throw new Error("DEV profile home contains a non-DEV configuration; refusing to repurpose it");
   }
@@ -1121,6 +928,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
   }
 
+  assertConfigReadCurrent(read);
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
   // Direct DEV setup has no verified launcher owner/idle-drain handshake. Require an
   // explicitly stopped old alias before any key, client, profile, or config mutation.
@@ -1153,7 +961,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   let keyOwned = keyBefore;
   const clientBefore = snapshotTunnelClientInstallation();
   let clientOwned = clientBefore;
-  const configBefore = snapshotFile(getConfigPath());
+  const configBefore = read.snapshot;
   let configReceipt: FileSnapshot | undefined;
   let profileBefore: FileSnapshot | undefined;
   let profileOwned: FileSnapshot | undefined;
@@ -1170,7 +978,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
       profileBefore = snapshotFile(profilePath);
       profileOwned = profileBefore;
       if (!profileBefore.exists || tunnelWorkerRuntimeChanged(existing, config)
-        || activeConnectorIdentityMigrationRequired(config) || explicitTunnelChange) {
+        || activeConnectorIdentityMigrationRequired(config, read) || explicitTunnelChange) {
         await bootstrapTunnelProfile(config,
           () => { validationTunnelRunning = true; profileOwned = snapshotFile(profilePath); },
           () => { validationTunnelRunning = false; },

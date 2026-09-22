@@ -138,7 +138,7 @@ function validateAccountReadResponse(value) {
 }
 
 function waitForChildClose(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  if (childStopped(child)) return Promise.resolve(true);
   return new Promise(resolve => {
     let settled = false;
     const finish = value => {
@@ -154,14 +154,35 @@ function waitForChildClose(child, timeoutMs) {
   });
 }
 
-async function stopOwnedChild(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  if (child.stdin && !child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.end();
-  if (await waitForChildClose(child, STOP_GRACE_MS)) return;
-  try { terminateOwnedProcessTree(child, "SIGTERM"); } catch { /* Retry below with the exact owned tree. */ }
-  if (await waitForChildClose(child, KILL_GRACE_MS)) return;
-  terminateOwnedProcessTree(child, "SIGKILL");
-  await waitForChildClose(child, KILL_GRACE_MS);
+const childStops = new WeakMap();
+const closedChildren = new WeakSet();
+function childStopped(child) {
+  return !child || closedChildren.has(child) || child.exitCode !== null || child.signalCode !== null;
+}
+function stopOwnedChild(child) {
+  if (childStopped(child)) return Promise.resolve();
+  // Keep a failed receipt until this exact child is observed exiting. Retrying
+  // start/destroy must not silently grant a second owner of the shared auth store.
+  const existing = childStops.get(child);
+  if (existing) return existing;
+  child.once("close", () => closedChildren.add(child));
+  const stopping = (async () => {
+    try {
+      if (child.stdin && !child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.end();
+      if (await waitForChildClose(child, STOP_GRACE_MS)) return;
+      try { terminateOwnedProcessTree(child, "SIGTERM"); } catch { /* Try the exact owned tree again. */ }
+      if (await waitForChildClose(child, KILL_GRACE_MS)) return;
+      try { terminateOwnedProcessTree(child, "SIGKILL"); } catch { /* Exit observation remains authoritative. */ }
+      if (await waitForChildClose(child, KILL_GRACE_MS)) return;
+    } catch { /* Never surface process details or private login output. */ }
+    if (!childStopped(child)) {
+      throw Object.assign(new Error("Official Codex account service closure could not be confirmed"), {
+        code: "codex_cleanup_failed",
+      });
+    }
+  })();
+  childStops.set(child, stopping);
+  return stopping;
 }
 
 function childEnvironment(codexHome, environment = process.env) {
@@ -256,6 +277,7 @@ function createCodexLoginController({
       verificationUrl: reveal ? current.verificationUrl : null,
       userCode: reveal ? current.userCode : null,
       error: current.error,
+      cleanupError: current.cleanupError ?? null,
       scope: "shared-codex-auth-store",
       authOutcome: current.authOutcome,
       cancelStatus: current.cancelStatus,
@@ -279,6 +301,16 @@ function createCodexLoginController({
     logger?.info?.("codex.login_phase", { phase, accountId: current.accountId });
   }
 
+  async function stopFlowChild(current) {
+    try {
+      await stopOwnedChild(current.child);
+      current.cleanupError = null;
+    } catch (error) {
+      current.cleanupError = { code: "codex_cleanup_failed", message: error.message };
+      throw error;
+    }
+  }
+
   function fail(current, code) {
     if (flow !== current || !ACTIVE_PHASES.has(current.phase)) return;
     setPhase(current, "failed", {
@@ -288,7 +320,7 @@ function createCodexLoginController({
       verificationUrl: null,
       userCode: null,
     });
-    void stopOwnedChild(current.child).catch(() => {});
+    void stopFlowChild(current).catch(() => {});
   }
 
   function send(current, method, params = {}, timeoutMs = RPC_TIMEOUT_MS) {
@@ -394,7 +426,7 @@ function createCodexLoginController({
           });
         }
       } finally {
-        await stopOwnedChild(current.child).catch(() => {});
+        await stopFlowChild(current).catch(() => {});
       }
       return snapshot(current, { revealDeviceCode: false });
     })().finally(() => {
@@ -430,7 +462,7 @@ function createCodexLoginController({
         cancelStatus: null,
         requiresIdentityConfirmation: false,
       });
-      await stopOwnedChild(current.child);
+      await stopFlowChild(current);
       return snapshot(current, { revealDeviceCode: false });
     }
 
@@ -458,7 +490,7 @@ function createCodexLoginController({
       authOutcome: "cancelled",
       requiresIdentityConfirmation: false,
     });
-    await stopOwnedChild(current.child);
+    await stopFlowChild(current);
     return snapshot(current, { revealDeviceCode: false });
   }
 
@@ -538,7 +570,7 @@ function createCodexLoginController({
       error.code = "login_in_progress";
       throw error;
     }
-    if (flow?.child) await stopOwnedChild(flow.child);
+    if (flow?.child) await stopFlowChild(flow);
 
     const executable = resolveCodexExecutable({
       explicitPath: codexPath, environment, homeDir, platform,
@@ -621,7 +653,7 @@ function createCodexLoginController({
       setPhase(current, "waiting");
       current.timer = setTimeout(() => {
         if (flow !== current || !ACTIVE_PHASES.has(current.phase)) return;
-        void cancelFlow(current, "login_timed_out");
+        void cancelFlow(current, "login_timed_out").catch(() => {});
       }, loginTimeoutMs);
       return snapshot(current);
     } catch (error) {
@@ -640,7 +672,7 @@ function createCodexLoginController({
   function status({ flowId, accountId } = {}) {
     const current = requireFlow(flowId, accountId);
     if (ACTIVE_PHASES.has(current.phase) && !ownershipCurrent(current.accountId)) {
-      void cancelFlow(current, "account_ownership_changed");
+      void cancelFlow(current, "account_ownership_changed").catch(() => {});
     }
     return snapshot(current);
   }
@@ -659,7 +691,7 @@ function createCodexLoginController({
   async function destroy() {
     if (!flow) return;
     if (ACTIVE_PHASES.has(flow.phase)) await cancelFlow(flow);
-    await stopOwnedChild(flow.child);
+    await stopFlowChild(flow);
   }
 
   return Object.freeze({ start, status, cancel, destroy, selectionLock, reconcileOwnership });

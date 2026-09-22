@@ -3,34 +3,8 @@ import { NativeUsageOutbox } from "./native-usage-outbox";
 import { randomUUID } from "node:crypto";
 import { readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
 
-export type NativeUsageOutcome = "completed" | "incomplete" | "failed" | "aborted";
-export type NativeUsageFailureCategory = "http-auth" | "http-rate-limit" | "http-client"
-  | "http-server" | "transport" | "stream" | "protocol" | "aborted";
-
-export interface NativeReportedUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cachedInputTokens?: number;
-  reasoningOutputTokens?: number;
-}
-
-export interface NativeUsageTelemetryEvent {
-  schemaVersion: 1;
-  eventId: string;
-  source: "native";
-  endpoint: "responses" | "responses/compact";
-  requestedModelId: string | null;
-  reportedModelId: string | null;
-  startedAt: string;
-  durationMs: number;
-  outcome: NativeUsageOutcome;
-  /** Upstream HTTP status, or 0 when transport/abort ended before any response. */
-  httpStatus: number;
-  failureCategory: NativeUsageFailureCategory | null;
-  usageStatus: "reported" | "unreported";
-  usage: NativeReportedUsage | null;
-}
+import type { NativeUsageTelemetryEvent } from "./usage/native-contract";
+export type { NativeUsageOutcome, NativeUsageFailureCategory, NativeReportedUsage, NativeUsageTelemetryEvent } from "./usage/native-contract";
 
 const DELIVERY_TIMEOUT_MS = 1_000;
 let outbox: NativeUsageOutbox | undefined;

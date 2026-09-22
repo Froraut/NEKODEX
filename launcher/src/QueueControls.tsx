@@ -1,3 +1,4 @@
+import { useFeatureAction } from "./useFeatureAction";
 import { useState } from 'react';
 import type { BrowserQueueState, Language } from './types';
 
@@ -43,7 +44,8 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
   pause: (accountId: string | null, paused: boolean) => Promise<unknown>;
   onError: (error: unknown) => void;
 }) {
-  const [pending, setPending] = useState(false);
+  const { pending: pendingAction, run: act } = useFeatureAction<string>(disabled, onError);
+  const pending = pendingAction !== null;
   const [selectedAccount, setAccount] = useState('all');
   const text = copy[language] ?? copy.en;
   const pauseText = pauseCopy[language] ?? pauseCopy.en;
@@ -53,10 +55,6 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
   // selection and mutation scope aligned with the current account list.
   const account = queue.accounts.some(row => row.id === selectedAccount) ? selectedAccount : 'all';
   const paused = account === 'all' ? queue.paused : queue.pausedAccounts.includes(account);
-  const act = async (operation: () => Promise<unknown>) => {
-    if (disabled || pending) return;
-    setPending(true); try { await operation(); } catch (error) { onError(error); } finally { setPending(false); }
-  };
   const labels = new Map(queue.accounts.map(row => [row.id, row.label]));
   const scopeLabel = account === 'all' ? text[12] : labels.get(account) ?? account;
   const entries = [...queue.entries].sort((a, b) => Number(a.canDismiss) - Number(b.canDismiss)
@@ -69,7 +67,7 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
         {queue.accounts.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
       </select>
       <button type="button" className="button-secondary" disabled={disabled || pending || !!queue.storageIssue}
-        onClick={() => void act(() => pause(account === 'all' ? null : account, !paused))}>{paused ? text[2] : text[1]} · {scopeLabel}</button>
+        onClick={() => void act(`pause:${account}`, () => pause(account === 'all' ? null : account, !paused))}>{paused ? text[2] : text[1]} · {scopeLabel}</button>
     </div>
     <p>{text[3]}</p>
     {queue.paused ? <div>
@@ -93,10 +91,10 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
         <p><code>{row.traceId}</code>{['waiting', 'paused', 'admitting', 'cancelling', 'cancelled', 'failed'].includes(row.status) ? ` · ${text[4]}` : ''}</p>
         {row.retryAt ? <p><time dateTime={new Date(row.retryAt).toISOString()}>{new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'medium' }).format(row.retryAt)}</time></p> : null}
         <div className="task-center-actions">
-          {row.canCancel ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(() => action(row.id, 'cancel'))}>{text[5]}</button> : null}
-          {row.canPrioritize ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(() => action(row.id, 'prioritize'))}>{text[6]}</button> : null}
-          {row.canResume ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(() => action(row.id, 'resume'))}>{text[7]}</button> : null}
-          {row.canDismiss ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(() => action(row.id, 'dismiss'))}>{text[8]}</button> : null}
+          {row.canCancel ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(`cancel:${row.id}`, () => action(row.id, 'cancel'))}>{text[5]}</button> : null}
+          {row.canPrioritize ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(`prioritize:${row.id}`, () => action(row.id, 'prioritize'))}>{text[6]}</button> : null}
+          {row.canResume ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(`resume:${row.id}`, () => action(row.id, 'resume'))}>{text[7]}</button> : null}
+          {row.canDismiss ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(`dismiss:${row.id}`, () => action(row.id, 'dismiss'))}>{text[8]}</button> : null}
         </div>
       </article>;
     })}
