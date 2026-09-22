@@ -117,4 +117,6 @@ Focused existing fixtures were migrated only where assigned for the changed modu
 
 The subsequent [focused review and implementation](architecture-refactor-followup-20260922.md) further separates Browser/Manual UI and Native stream interpretation, repairs login observation races and adds inline account recovery. It reuses this branch and PR; the completed two agent waves above remain unchanged.
 
+The [heavy browser module refactor](browser-heavy-refactor-20260922.md) continues with DOM observation, personalization, diagnostics, Manual handoff policy and artifact leases, including a confirmed late-receipt ownership race.
+
 Branch: `codex/architecture-refactor-20260922`, based on latest completed `codex/app-improvements-20260922` revision `53d1736`. Version remains `5.9.0-nekodex.5`. This is a source/development refactor; installed app and release assets are separate. The canonical `/Users/alex/Dev/nekodex` checkout and its unrelated branding inventory are preserved.

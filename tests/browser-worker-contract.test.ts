@@ -1779,7 +1779,7 @@ test("an aborted connector proof clears its mention before the preflight release
     },
   };
   const menuRows = {
-    filter: () => appResult,
+    filter: (options: { visible?: boolean }) => options.visible ? menuRows : appResult,
   };
   const composer = {
     fill: async (_value: string, { signal }: { signal?: AbortSignal }) => {
@@ -1805,8 +1805,10 @@ test("an aborted connector proof clears its mention before the preflight release
           calls.push("escape");
         },
       };
-      expect(selector).toContain("__menu-item");
-      return menuRows;
+      expect(selector).toBe(".popover");
+      const popup = { filter: () => popup, count: async () => 0,
+        locator: (rows: string) => { expect(rows).toContain("__menu-item"); return menuRows; } };
+      return popup;
     },
   };
   const prototype = ChatGptBrowserWorker.prototype as unknown as {
@@ -3314,7 +3316,7 @@ function detectStoppedThinkingInFixture(html: string): boolean {
   const { createDocument } = require("@mixmark-io/domino") as {
     createDocument: (html: string) => Document;
   };
-  const worker = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");
+  const worker = readFileSync("src/adapters/chatgpt-web/browser-response-dom.ts", "utf8");
   const source = worker.split("// CHATGPT_STOPPED_THINKING_BEGIN")[1]?.split("// CHATGPT_STOPPED_THINKING_END")[0];
   if (!source) throw new Error("stopped-thinking detector sentinels are missing");
   const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
@@ -3497,21 +3499,27 @@ test("browser DOM health fails closed on a vanished or empty ChatGPT response", 
   expect(missingCompletionAction.update(completedWithoutMarker, 1_750)).toContain("DOM may have changed");
 });
 
-test("stalled-turn diagnostics record DOM metrics without response or overlay content", () => {
-  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  const start = workerSource.indexOf("private async stalledTurnDiagnostic");
-  const end = workerSource.indexOf("private async runExclusive", start);
-  const diagnosticSource = workerSource.slice(start, end);
-  expect(diagnosticSource).toContain("textChars:");
-  expect(diagnosticSource).toContain("htmlChars:");
-  expect(diagnosticSource).not.toContain("innerText.trim()");
-  expect(diagnosticSource).toContain('innerText ?? candidate.textContent ?? ""');
-  expect(diagnosticSource).not.toMatch(/\btext:\s*(?:root|candidate)\.innerText/);
-  expect(diagnosticSource).not.toMatch(/\bariaLabel:\s*candidate\.getAttribute/);
+test("stalled-turn diagnostics record DOM metrics without response or overlay content", async () => {
+  const { stalledTurnDiagnostic } = await import("../src/adapters/chatgpt-web/browser-diagnostics");
+  const candidate = { tagName: "BUTTON", innerText: "private overlay content",
+    getAttribute: (name: string) => name === "aria-label" ? "private label" : null };
+  const root = { innerText: "private answer", innerHTML: "<p>private answer</p>",
+    querySelectorAll: () => [candidate] };
+  const context = createContext({ getComputedStyle: () => ({ visibility: "visible", display: "block" }) });
+  const evaluate = (fn: Function, value: unknown) => runInContext(`(${fn.toString()})`, context)(value);
+  const response = { count: async () => 1, evaluate: async (fn: Function) => evaluate(fn, root) };
+  const page = { locator: () => ({ evaluateAll: async (fn: Function) => evaluate(fn, [candidate]) }) };
+  const diagnostic = await stalledTurnDiagnostic(page as unknown as Page, response as any);
+  const parsed = JSON.parse(diagnostic);
+  expect(parsed.response.textChars).toBe(root.innerText.length);
+  expect(parsed.response.htmlChars).toBe(root.innerHTML.length);
+  expect(parsed.response.descriptors[0].ariaLabelChars).toBe("private label".length);
+  expect(parsed.overlays[0].textChars).toBe(candidate.innerText.length);
+  expect(diagnostic).not.toContain("private");
 });
 
 test("browser completion requires ChatGPT's response-scoped copy action", () => {
-  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-response-dom.ts", import.meta.url), "utf8");
   const sessionSource = readFileSync(new URL("../src/chatgpt-session.ts", import.meta.url), "utf8");
   expect(sessionSource).toContain('button[data-testid="copy-turn-action-button"]');
   expect(workerSource).toContain("CHATGPT_COMPLETION_ACTION_SELECTOR");
@@ -3770,9 +3778,9 @@ test("the shipped commentary classifier separates answer Markdown from reasoning
       body: { querySelectorAll: (selector: string) => ArrayLike<HTMLElement> };
     };
   };
-  const worker = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");
+  const worker = readFileSync("src/adapters/chatgpt-web/browser-response-dom.ts", "utf8");
   const source = worker.split("// CHATGPT_COMMENTARY_CLASSIFIER_BEGIN")[1]?.split("// CHATGPT_COMMENTARY_CLASSIFIER_END")[0];
-  if (!source) throw new Error("commentary classifier sentinels are missing from browser-worker.ts");
+  if (!source) throw new Error("commentary classifier sentinels are missing from browser-response-dom.ts");
   const javascript = source
     .replace(/:\s*HTMLElement\[\]/g, "")
     .replace(/\):\s*\{[^}]*\}\s*=>/, ") =>");
@@ -3832,9 +3840,9 @@ test("embedded chart hydration cannot replace Markdown answer content with rende
     createDocument(html: string): { body: HTMLElement };
     createWindow(): { HTMLElement: unknown; Node: unknown };
   };
-  const worker = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");
+  const worker = readFileSync("src/adapters/chatgpt-web/browser-response-dom.ts", "utf8");
   const source = worker.split("// CHATGPT_MARKDOWN_CONTENT_BEGIN")[1]?.split("// CHATGPT_MARKDOWN_CONTENT_END")[0];
-  if (!source) throw new Error("Markdown content projection is missing from browser-worker.ts");
+  if (!source) throw new Error("Markdown content projection is missing from browser-response-dom.ts");
   const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
   const window = createWindow();
   const { contentFor, textFor } = new Function("HTMLElement", "Node",

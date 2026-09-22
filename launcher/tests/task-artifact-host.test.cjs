@@ -7,6 +7,34 @@ const path = require('node:path');
 const test = require('node:test');
 const { BrowserHost } = require('../electron/browser-host.cjs');
 
+test('late artifact receipt is rejected after release or exact surface retirement', async () => {
+  for (const retire of ['release', 'surface']) {
+    const coreHome = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-artifact-race-'));
+    let complete, registration;
+    const tab = { traceId: 'trace_late_123', helperPid: 4321, surfaceId: 'S'.repeat(32),
+      status: 'running', interactionMode: 'automatic', view: { webContents: { id: 77, isDestroyed: () => false } } };
+    const completed = [];
+    const host = Object.assign(Object.create(BrowserHost.prototype), {
+      coreHome, turnTabs: new Map([['tab', tab]]), artifactLeases: new Map(),
+      logger: { info(event) { completed.push(event); }, warn() {} },
+      artifactDownloads: {
+        register(input) { registration = input; return { leaseId: 'late-lease', completion: new Promise(resolve => { complete = resolve; }) }; },
+        cancel() { return true; },
+      },
+    });
+    try {
+      const { leaseId } = host.registerArtifactDownload(tab.traceId, tab.helperPid, tab.surfaceId, 'assistant', 'result.csv', 100, 1000);
+      const pending = host.waitArtifactDownload(tab.traceId, tab.helperPid, tab.surfaceId, leaseId);
+      assert.equal(registration.webContentsId, 77, 'exact registered surface was reached before retirement');
+      if (retire === 'release') host.releaseArtifactDownloads(tab.traceId, tab.helperPid, new Error('turn retired'));
+      else tab.status = 'ready';
+      complete({ partialPath: registration.partialPath, receivedBytes: 3, downloadAuthority: 'chatgpt.com' });
+      await assert.rejects(pending, /owner|lease|released/i);
+      assert.equal(completed.includes('browser.artifact_lease_completed'), false);
+    } finally { fs.rmSync(coreHome, { recursive: true, force: true }); }
+  }
+});
+
 test('browser host computes artifact paths and enforces exact active turn ownership', async () => {
   const coreHome = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-artifact-host-'));
   const surfaceId = 'T'.repeat(32);

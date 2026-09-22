@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { _electron: electron } = require('playwright-core');
 const output = path.resolve(__dirname, '../output/playwright/architecture-refactor');
 test('source Electron uses the refactored renderer and real isolated preload', { timeout: 25000 }, async () => {
@@ -28,7 +29,16 @@ test('source Electron uses the refactored renderer and real isolated preload', {
     child = app.process();
     identity.pid = child.pid;
     child.stderr?.on('data', chunk => { stderr += chunk.toString(); });
-    page = await app.firstWindow();
+    // Electron exposes guest WebContents as Playwright pages too. The first page
+    // may be a zero-width browser host; bind only the exact source renderer.
+    const rendererUrl = pathToFileURL(path.resolve(__dirname, '../dist/index.html')).href;
+    const selectionDeadline = Date.now() + 4000;
+    while (!page && Date.now() < selectionDeadline) {
+      page = app.windows().find(candidate => candidate.url() === rendererUrl);
+      if (!page) await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.ok(page, 'source renderer window was not found');
+    identity.rendererUrl = page.url();
     page.setDefaultTimeout(4000);
     page.on('pageerror', error => errors.push(error.message));
     await page.locator('.app-shell').waitFor();
@@ -59,7 +69,8 @@ test('source Electron uses the refactored renderer and real isolated preload', {
     identity.pageErrors = errors;
     identity.stderr = stderr;
     if (app) identity.windows = await Promise.all(app.windows().map(async candidate => ({ url: candidate.url(), title: await candidate.title(), body: await candidate.locator('body').innerText() })));
-    if (page) await page.screenshot({ path: path.join(output, 'source-electron-failure.png') });
+    if (page) await page.screenshot({ path: path.join(output, 'source-electron-failure.png') })
+      .catch(captureError => { identity.captureError = String(captureError); });
     throw error;
   } finally {
     try {

@@ -1,10 +1,12 @@
+const { BrowserArtifactTransfers } = require("./browser-artifact-transfers.cjs");
+const { BrowserManualTurns, manualPromptDigest, MANUAL_SUBMIT_TIMEOUT_MS, MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS } = require("./browser-manual-turns.cjs");
 const { BrowserTurnLifecycle, TURN_HEARTBEAT_SWEEP_MS } = require("./browser-turn-lifecycle.cjs");
 const { BrowserWorkspaceWindows } = require("./browser-workspace-windows.cjs");
 const { authenticationIssue } = require("./authentication-issue.cjs");
 const { validateAccountId } = require("./account-registry.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
-const { createHash, randomBytes, randomUUID } = require("node:crypto");
+const { randomBytes } = require("node:crypto");
 const { setTimeout: delay } = require("node:timers/promises");
 const { clipboard, dialog, BrowserWindow, WebContentsView, powerMonitor, powerSaveBlocker, session: electronSession, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
@@ -17,7 +19,6 @@ const {
   verifyConnectorWithBrowserHelper,
 } = require("./browser-helper-verifier.cjs");
 const { validateConnectorName } = require("./connector-identity.cjs");
-const { processRunning } = require("./process-tree.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
 const { captureOwnedSession, disposeOwnedSessionSnapshot, restoreOwnedSession } = require("./owned-session-rollback.cjs");
@@ -46,12 +47,6 @@ const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Ch
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
 const { DEFAULT_BROWSER_CAPACITY, validateBrowserCapacity } = require("./browser-capacity.cjs");
-const MANUAL_SUBMIT_TIMEOUT_MS = 30_000;
-const MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS = 120_000;
-const MAX_MANUAL_TERMINAL_SIGNALS = 256;
-const MAX_MANUAL_PROMPT_CHARS = 1_000_000;
-const MAX_TASK_ARTIFACT_LEASES = 10;
-const MAX_ACCOUNT_ARTIFACT_LEASES = 64;
 const INTERACTION_MODE_CHANGE_OPERATION = "browser interaction mode change";
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 800, height: 600 });
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
@@ -295,10 +290,6 @@ function isChatGptCloudflareChallengeResponse(details) {
     && responseHeaderIncludes(details.responseHeaders, "cf-mitigated", "challenge");
 }
 
-function manualPromptDigest(prompt) {
-  return createHash("sha256").update(prompt, "utf8").digest("hex");
-}
-
 function browserInteractionModeFor(host) {
   const savedMode = host.getBrowserInteractionMode?.();
   // Setup commits the runtime before the launcher publishes its state. Keep the new descriptor
@@ -320,6 +311,39 @@ function requireAutomaticBrowserInspection(host, operation) {
     error.code = "manual_browser_inspection_disabled";
     throw error;
   }
+}
+
+function artifactTransfersFor(host) {
+  return host.artifactTransfers ??= new BrowserArtifactTransfers({
+    tabs: host.turnTabs, leases: host.artifactLeases, downloads: host.artifactDownloads,
+    coreHome: host.coreHome, logger: host.logger,
+  });
+}
+
+function manualTurnsFor(host) {
+  return host.manualTurns ??= new BrowserManualTurns({
+    tabs: host.turnTabs,
+    terminals: host.manualTerminalSignals,
+    completions: host.manualCompletionSignals,
+    logger: host.logger,
+    context: {
+      get manualOperation() { return host.manualOperation; },
+      get clipboard() { return host.clipboard; },
+      get cancelTurn() { return typeof host.cancelTurn === "function" ? traceId => host.cancelTurn(traceId) : null; },
+      submitTimeoutSec: () => host.getManualSubmitTimeoutSec(),
+    },
+    lifecycle: {
+      assertLiveConversationOwner: (...args) => host.assertLiveConversationOwner(...args),
+      removeTurnTab: (...args) => host.removeTurnTab(...args),
+      createManualTurnTab: (...args) => host.createManualTurnTab(...args),
+    },
+    presentation: {
+      activate: tab => { host.selectedTabId = tab.id; host.showWindow(); host.show(); },
+      snapshot: () => host.snapshot(),
+      publish: () => host.publishState?.(host.snapshot()),
+      writeDescriptor: () => host.writeDescriptor(),
+    },
+  });
 }
 
 function turnLifecycleFor(host) {
@@ -877,19 +901,7 @@ class BrowserHost {
   }
 
   disposeManualTurn(tab, shutdown = false) {
-    if (tab.interactionMode === "manual") {
-      if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
-      tab.manualDeadlineTimer = null;
-      tab.manualDeadlineAt = null;
-      tab.prompt = null;
-      tab.promptDigest = null;
-      for (const resolve of tab.manualWaiters || []) resolve({ status: "cancelled" });
-      tab.manualWaiters?.clear();
-      if (shutdown || !tab.manualTerminalResolutionSuppressed) {
-        for (const resolve of tab.manualTerminalWaiters || []) resolve({ status: "cancelled" });
-      }
-      tab.manualTerminalWaiters?.clear();
-    }
+    return manualTurnsFor(this).disposeManualTurn(tab, shutdown);
   }
 
   presentAfterTurnRemoval(tab) {
@@ -1891,120 +1903,31 @@ class BrowserHost {
   }
 
   artifactOwner(traceId, helperPid, surfaceId) {
-    const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
-    if (!tab || tab.interactionMode !== 'automatic' || tab.status !== 'running'
-      || tab.helperPid !== helperPid || tab.surfaceId !== surfaceId
-      || tab.view.webContents.isDestroyed()) {
-      throw new Error('Artifact download owner does not match an active browser turn surface');
-    }
-    return tab;
+    return artifactTransfersFor(this).artifactOwner(traceId, helperPid, surfaceId);
   }
 
   registerArtifactDownload(traceId, helperPid, surfaceId, assistantTurnId, expectedFilename, maxBytes, deadlineMs) {
-    const tab = this.artifactOwner(traceId, helperPid, surfaceId);
-    if (typeof assistantTurnId !== 'string' || assistantTurnId.length < 1 || assistantTurnId.length > 256
-      || /[\u0000-\u001f\u007f]/.test(assistantTurnId)
-      || typeof expectedFilename !== 'string' || expectedFilename.length < 1 || expectedFilename.length > 160
-      || path.basename(expectedFilename) !== expectedFilename || /[\u0000-\u001f\u007f]/.test(expectedFilename)
-      || !Number.isFinite(maxBytes) || maxBytes <= 0 || maxBytes > 50_000_000
-      || !Number.isFinite(deadlineMs) || deadlineMs <= 0 || deadlineMs > 60_000) {
-      throw new Error('Artifact download registration is invalid');
-    }
-    const ownerLeaseCount = [...this.artifactLeases.values()].filter(
-      lease => lease.traceId === traceId && lease.helperPid === helperPid,
-    ).length;
-    if (ownerLeaseCount >= MAX_TASK_ARTIFACT_LEASES
-      || this.artifactLeases.size >= MAX_ACCOUNT_ARTIFACT_LEASES) {
-      throw new Error('Artifact download lease capacity is full');
-    }
-    const artifactRoot = path.join(this.coreHome, 'artifacts');
-    fs.mkdirSync(artifactRoot, { recursive: true, mode: 0o700 });
-    const rootInfo = fs.lstatSync(artifactRoot);
-    if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('Artifact root is not a real directory');
-    const taskDirectory = path.join(artifactRoot, traceId);
-    fs.mkdirSync(taskDirectory, { recursive: true, mode: 0o700 });
-    const taskInfo = fs.lstatSync(taskDirectory);
-    if (!taskInfo.isDirectory() || taskInfo.isSymbolicLink()) throw new Error('Artifact task directory is not a real directory');
-    const partialPath = path.join(taskDirectory, `.network-${randomUUID()}.partial`);
-    const registered = this.artifactDownloads.register({
-      webContentsId: tab.view.webContents.id,
-      traceId,
-      assistantTurnId,
-      expectedFilename,
-      taskDirectory,
-      partialPath,
-      maxBytes,
-      deadlineMs,
-    });
-    const lease = {
-      leaseId: registered.leaseId,
-      traceId,
-      helperPid,
-      surfaceId,
-      assistantTurnId,
-      expectedFilename,
-      partialPath,
-      released: false,
-      settled: false,
-      outcome: null,
-    };
-    lease.outcome = registered.completion.then(receipt => {
-      lease.settled = true;
-      if (lease.released) this.cleanupArtifactPartial(lease);
-      return { receipt };
-    }, error => {
-      lease.settled = true;
-      return { error: error instanceof Error ? error : new Error(String(error)) };
-    });
-    this.artifactLeases.set(lease.leaseId, lease);
-    this.logger.info('browser.artifact_lease_registered', { traceId, leaseId: lease.leaseId });
-    return { leaseId: lease.leaseId };
+    return artifactTransfersFor(this).registerArtifactDownload(traceId, helperPid, surfaceId, assistantTurnId, expectedFilename, maxBytes, deadlineMs);
   }
 
   artifactLease(traceId, helperPid, surfaceId, leaseId) {
-    const lease = this.artifactLeases.get(leaseId);
-    if (!lease || lease.traceId !== traceId || lease.helperPid !== helperPid || lease.surfaceId !== surfaceId) {
-      throw new Error('Artifact download lease ownership mismatch');
-    }
-    return lease;
+    return artifactTransfersFor(this).artifactLease(traceId, helperPid, surfaceId, leaseId);
   }
 
   async waitArtifactDownload(traceId, helperPid, surfaceId, leaseId) {
-    this.artifactOwner(traceId, helperPid, surfaceId);
-    const lease = this.artifactLease(traceId, helperPid, surfaceId, leaseId);
-    const outcome = await lease.outcome;
-    if (outcome.error) throw outcome.error;
-    this.logger.info('browser.artifact_lease_completed', {
-      traceId,
-      leaseId,
-      receivedBytes: outcome.receipt.receivedBytes,
-      downloadAuthority: outcome.receipt.downloadAuthority,
-    });
-    return { ...outcome.receipt, helperPid, surfaceId };
+    return artifactTransfersFor(this).waitArtifactDownload(traceId, helperPid, surfaceId, leaseId);
   }
 
   cleanupArtifactPartial(lease) {
-    // This is the host-created path, never a helper-provided receipt or promoted artifact.
-    try { fs.rmSync(lease.partialPath, { force: true }); }
-    catch { this.logger.warn('browser.artifact_partial_cleanup_failed', { leaseId: lease.leaseId }); }
+    return artifactTransfersFor(this).cleanupArtifactPartial(lease);
   }
 
   cancelArtifactDownload(traceId, helperPid, surfaceId, leaseId, reason) {
-    const lease = this.artifactLease(traceId, helperPid, surfaceId, leaseId);
-    lease.released = true;
-    const cancelled = this.artifactDownloads.cancel(leaseId, new Error(reason || 'Artifact download cancelled'));
-    if (!cancelled) this.cleanupArtifactPartial(lease);
-    this.artifactLeases.delete(leaseId);
-    return { cancelled };
+    return artifactTransfersFor(this).cancelArtifactDownload(traceId, helperPid, surfaceId, leaseId, reason);
   }
 
   releaseArtifactDownloads(traceId, helperPid, reason) {
-    for (const [leaseId, lease] of this.artifactLeases) {
-      if (lease.traceId !== traceId || lease.helperPid !== helperPid) continue;
-      lease.released = true;
-      if (!this.artifactDownloads.cancel(leaseId, reason)) this.cleanupArtifactPartial(lease);
-      this.artifactLeases.delete(leaseId);
-    }
+    return artifactTransfersFor(this).releaseArtifactDownloads(traceId, helperPid, reason);
   }
 
   rememberUserCancelledTurn(traceId, helperPid) {
@@ -2279,432 +2202,63 @@ class BrowserHost {
   }
 
   rememberManualTerminal(traceId, helperPid, status) {
-    this.manualTerminalSignals.delete(traceId);
-    this.manualTerminalSignals.set(traceId, { helperPid, status });
-    while (this.manualTerminalSignals.size > MAX_MANUAL_TERMINAL_SIGNALS) {
-      const oldest = this.manualTerminalSignals.keys().next();
-      if (oldest.done) break;
-      this.manualTerminalSignals.delete(oldest.value);
-    }
+    return manualTurnsFor(this).rememberManualTerminal(traceId, helperPid, status);
   }
 
   rememberManualCompletion(traceId, helperPid) {
-    this.manualCompletionSignals.delete(traceId);
-    this.manualCompletionSignals.set(traceId, { helperPid });
-    while (this.manualCompletionSignals.size > MAX_MANUAL_TERMINAL_SIGNALS) {
-      const oldest = this.manualCompletionSignals.keys().next();
-      if (oldest.done) break;
-      this.manualCompletionSignals.delete(oldest.value);
-    }
+    return manualTurnsFor(this).rememberManualCompletion(traceId, helperPid);
   }
 
   signalManualTerminal(tab, status) {
-    if (tab.interactionMode !== "manual") return;
-    if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
-    tab.manualDeadlineTimer = null;
-    tab.manualDeadlineAt = null;
-    tab.manualState = status === "timeout" ? "timed-out" : status;
-    tab.lastHeartbeatAt = Date.now();
-    tab.prompt = null;
-    tab.promptDigest = null;
-    this.rememberManualTerminal(tab.traceId, tab.helperPid, status);
-    for (const resolve of tab.manualWaiters || []) resolve({ status });
-    tab.manualWaiters?.clear();
-    for (const resolve of tab.manualTerminalWaiters || []) resolve({ status });
-    tab.manualTerminalWaiters?.clear();
+    return manualTurnsFor(this).signalManualTerminal(tab, status);
   }
 
   armManualTurnDeadline(tab) {
-    if (tab.interactionMode !== "manual"
-      || tab.manualState !== "awaiting-user"
-      || !tab.manualDeadlineAt) return;
-    if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
-    const delay = Math.max(0, tab.manualDeadlineAt - Date.now());
-    tab.manualDeadlineTimer = setTimeout(() => {
-      if (this.turnTabs.get(tab.id) !== tab
-        || tab.manualState !== "awaiting-user") return;
-      const timeoutSeconds = Math.round(tab.manualSubmitTimeoutMs / 1_000);
-      tab.status = "error";
-      tab.message = `Prompt submission was not confirmed within ${timeoutSeconds} seconds`;
-      this.signalManualTerminal(tab, "timeout");
-      this.publishState?.(this.snapshot());
-      this.logger.warn("browser.manual_turn_timed_out", {
-        tabId: tab.id,
-        traceId: tab.traceId,
-        phase: "sent-confirmation",
-      });
-    }, delay);
-    tab.manualDeadlineTimer.unref?.();
+    return manualTurnsFor(this).armManualTurnDeadline(tab);
   }
 
   writeManualPrompt(prompt) {
-    if (!this.clipboard || typeof this.clipboard.writeText !== "function") {
-      throw new Error("Electron clipboard is unavailable");
-    }
-    this.clipboard.writeText(prompt);
+    return manualTurnsFor(this).writeManualPrompt(prompt);
   }
 
   beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false) {
-    if (this.manualOperation) {
-      throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
-    }
-    if (typeof prompt !== "string" || prompt.length < 1 || prompt.length > MAX_MANUAL_PROMPT_CHARS) {
-      throw new Error(`Manual prompt must contain between 1 and ${MAX_MANUAL_PROMPT_CHARS} characters`);
-    }
-    if (resumePrompt !== undefined
-      && (typeof resumePrompt !== "string"
-        || resumePrompt.length < 1
-        || resumePrompt.length > MAX_MANUAL_PROMPT_CHARS)) {
-      throw new Error(`Manual resume prompt must contain between 1 and ${MAX_MANUAL_PROMPT_CHARS} characters`);
-    }
-    if (typeof compaction !== "boolean") throw new Error("Manual compaction flag must be boolean");
-    const configuredSubmitSec = this.getManualSubmitTimeoutSec();
-    const submitMs = Number.isInteger(configuredSubmitSec) && configuredSubmitSec >= 30 && configuredSubmitSec <= 600
-      ? configuredSubmitSec * 1000 : 120_000;
-    const manualSubmitTimeoutMs = compaction
-      ? Math.max(MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS, submitMs) : submitMs;
-    const completion = this.manualCompletionSignals.get(traceId);
-    if (completion) {
-      throw new Error(completion.helperPid === helperPid
-        ? `Manual mode turn ${traceId} is already completed`
-        : `Manual mode turn ${traceId} is owned by another process`);
-    }
-    const terminal = this.manualTerminalSignals.get(traceId);
-    if (terminal?.helperPid === helperPid) {
-      const error = new Error(terminal.status === "timeout"
-        ? `Manual mode turn ${traceId} timed out before Sent confirmation`
-        : `Manual mode turn ${traceId} is already ${terminal.status}`);
-      error.code = terminal.status === "timeout" ? "manual_turn_timed_out" : "turn_cancelled";
-      throw error;
-    }
-    const sameTrace = [...this.turnTabs.values()].find(tab => tab.traceId === traceId);
-    this.assertLiveConversationOwner(traceId, conversationKey);
-    if (sameTrace) {
-      if (sameTrace.interactionMode !== "manual") {
-        throw new Error(`Browser turn ${traceId} already belongs to automatic interaction`);
-      }
-      if (sameTrace.helperPid !== helperPid) {
-        if (processRunning(sameTrace.helperPid)) {
-          throw new Error(`Manual mode turn ${traceId} is owned by another process`);
-        }
-        this.signalManualTerminal(sameTrace, "failed");
-        this.removeTurnTab(sameTrace, true);
-        this.rememberManualTerminal(traceId, helperPid, "failed");
-        const error = new Error(
-          `Manual mode turn ${traceId} lost its original runtime owner and cannot be resumed; start a new Codex turn`,
-        );
-        error.code = "manual_turn_owner_lost";
-        throw error;
-      }
-      if (sameTrace.manualSubmitTimeoutMs !== manualSubmitTimeoutMs) {
-        throw new Error(`Manual mode turn ${traceId} was retried with a different compaction mode`);
-      }
-      const retryPrompt = sameTrace.manualConversationReused ? resumePrompt : prompt;
-      if (typeof retryPrompt !== "string"
-        || sameTrace.promptDigest !== manualPromptDigest(retryPrompt)) {
-        throw new Error(`Manual mode turn ${traceId} was retried with a different prompt`);
-      }
-      sameTrace.helperPid = helperPid;
-      this.selectedTabId = sameTrace.id;
-      this.showWindow();
-      this.show();
-      this.publishState?.(this.snapshot());
-      return {
-        tabId: sameTrace.id,
-        reused: true,
-        deadlineAt: sameTrace.manualDeadlineAt ? new Date(sameTrace.manualDeadlineAt).toISOString() : null,
-        state: sameTrace.manualState,
-      };
-    }
-    const retained = conversationKey
-      ? [...this.turnTabs.values()].filter(tab => (
-          tab.interactionMode === "manual"
-          && tab.status === "ready"
-          && tab.conversationKey === conversationKey
-        ))
-      : [];
-    if (retained.length > 1) {
-      throw new Error(`Manual ChatGPT conversation ${conversationKey} owns multiple browser tabs`);
-    }
-    let tab = retained[0];
-    if (tab) {
-      if (typeof resumePrompt !== "string" || !resumePrompt) {
-        throw new Error("A retained Manual mode conversation requires an incremental resume prompt");
-      }
-      this.writeManualPrompt(resumePrompt);
-      tab.traceId = traceId;
-      tab.helperPid = helperPid;
-      tab.status = "running";
-      tab.loading = false;
-      tab.message = "Paste the copied prompt, add any images yourself because Manual mode cannot transfer them, choose a model and effort, then press Sent";
-      tab.manualState = "awaiting-user";
-      tab.manualSubmitTimeoutMs = manualSubmitTimeoutMs;
-      tab.manualDeadlineAt = Date.now() + manualSubmitTimeoutMs;
-      tab.prompt = resumePrompt;
-      tab.promptDigest = manualPromptDigest(resumePrompt);
-      tab.manualConversationReused = true;
-      tab.sentAt = null;
-      tab.manualTerminalResolutionSuppressed = false;
-    } else {
-      tab = this.createManualTurnTab(
-        traceId,
-        helperPid,
-        conversationKey,
-        prompt,
-        manualSubmitTimeoutMs,
-      );
-      try {
-        this.writeManualPrompt(prompt);
-      } catch (error) {
-        this.signalManualTerminal(tab, "failed");
-        this.removeTurnTab(tab, true);
-        throw error;
-      }
-    }
-    this.armManualTurnDeadline(tab);
-    this.selectedTabId = tab.id;
-    this.showWindow();
-    this.show();
-    this.publishState?.(this.snapshot());
-    this.writeDescriptor();
-    this.logger.info("browser.manual_turn_started", {
-      tabId: tab.id,
-      traceId,
-      reused: retained.length === 1,
-    });
-    return {
-      tabId: tab.id,
-      reused: retained.length === 1,
-      deadlineAt: new Date(tab.manualDeadlineAt).toISOString(),
-      state: tab.manualState,
-    };
+    return manualTurnsFor(this).beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction);
   }
 
   async waitManualSent(traceId, helperPid, observerTimeoutMs = 35_000) {
-    const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
-    if (!tab) {
-      const terminal = this.manualTerminalSignals.get(traceId);
-      if (terminal?.helperPid === helperPid) return { status: terminal.status };
-      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
-    }
-    if (tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      throw new Error(`Manual mode turn ${traceId} ownership is invalid`);
-    }
-    if (["sent", "running", "completed"].includes(tab.manualState)) {
-      return { status: "sent", sentAt: tab.sentAt };
-    }
-    if (tab.manualState !== "awaiting-user") {
-      return { status: tab.manualState === "timed-out" ? "timeout" : tab.manualState };
-    }
-    return await new Promise((resolve) => {
-      let settled = false;
-      const finish = (result) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(observerTimer);
-        tab.manualWaiters.delete(finish);
-        resolve(result);
-      };
-      const observerTimer = setTimeout(() => finish({ status: "pending" }), observerTimeoutMs);
-      observerTimer.unref?.();
-      tab.manualWaiters.add(finish);
-    });
+    return manualTurnsFor(this).waitManualSent(traceId, helperPid, observerTimeoutMs);
   }
 
   async waitManualTerminal(traceId, helperPid, observerTimeoutMs = 35_000) {
-    const terminal = this.manualTerminalSignals.get(traceId);
-    if (terminal?.helperPid === helperPid) return { status: terminal.status };
-    const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
-    if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
-    }
-    return await new Promise((resolve) => {
-      let settled = false;
-      const finish = (result) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(observerTimer);
-        tab.manualTerminalWaiters.delete(finish);
-        resolve(result);
-      };
-      const observerTimer = setTimeout(() => finish({ status: "pending" }), observerTimeoutMs);
-      observerTimer.unref?.();
-      tab.manualTerminalWaiters.add(finish);
-    });
+    return manualTurnsFor(this).waitManualTerminal(traceId, helperPid, observerTimeoutMs);
   }
 
   copyManualPrompt(tabId) {
-    const tab = this.turnTabs.get(tabId);
-    if (!tab || tab.interactionMode !== "manual" || typeof tab.prompt !== "string") {
-      throw new Error("Manual prompt is no longer available");
-    }
-    this.writeManualPrompt(tab.prompt);
-    this.logger.info("browser.manual_prompt_copied", { tabId: tab.id, traceId: tab.traceId });
-    return this.snapshot();
+    return manualTurnsFor(this).copyManualPrompt(tabId);
   }
 
   confirmManualSent(tabId) {
-    const tab = this.turnTabs.get(tabId);
-    if (!tab || tab.interactionMode !== "manual") throw new Error("Manual mode tab does not exist");
-    if (tab.manualState !== "awaiting-user") {
-      if (["sent", "running", "completed"].includes(tab.manualState)) return this.snapshot();
-      throw new Error("Manual mode turn can no longer be marked as sent");
-    }
-    if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
-    tab.manualDeadlineTimer = null;
-    tab.manualState = "sent";
-    // Sent ends the human handoff deadline. Model thinking is owned by the live turn and
-    // remains cancellable through its helper or tab, including before the first MCP bind.
-    tab.manualDeadlineAt = null;
-    tab.sentAt = new Date().toISOString();
-    tab.prompt = null;
-    tab.message = "Prompt sent; waiting for ChatGPT to start through the Codex harness";
-    for (const resolve of tab.manualWaiters) resolve({ status: "sent", sentAt: tab.sentAt });
-    tab.manualWaiters.clear();
-    this.publishState?.(this.snapshot());
-    this.logger.info("browser.manual_prompt_confirmed", { tabId: tab.id, traceId: tab.traceId });
-    return this.snapshot();
+    return manualTurnsFor(this).confirmManualSent(tabId);
   }
 
   markManualTurnStarted(traceId, helperPid) {
-    const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
-    if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
-    }
-    if (tab.manualState !== "sent" && tab.manualState !== "running") {
-      throw new Error(`Manual mode turn ${traceId} was not confirmed as sent`);
-    }
-    if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
-    tab.manualDeadlineTimer = null;
-    tab.manualDeadlineAt = null;
-    tab.manualState = "running";
-    tab.message = "ChatGPT is working through the Codex harness";
-    tab.lastHeartbeatAt = Date.now();
-    this.publishState?.(this.snapshot());
-    return this.snapshot();
+    return manualTurnsFor(this).markManualTurnStarted(traceId, helperPid);
   }
 
   endManualTurn(traceId, helperPid, status, retain = false) {
-    const completion = this.manualCompletionSignals.get(traceId);
-    if (completion?.helperPid === helperPid) return { cancelledByUser: false };
-    const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
-    if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      const terminal = this.manualTerminalSignals.get(traceId);
-      if (terminal?.helperPid === helperPid) return { cancelledByUser: terminal.status === "cancelled" };
-      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
-    }
-    if (tab.manualState === "completed") {
-      this.rememberManualCompletion(traceId, helperPid);
-      return { cancelledByUser: false };
-    }
-    if (tab.manualCancellation?.status === "pending") {
-      const error = new Error(`Manual mode turn ${traceId} cancellation is still pending`);
-      error.code = "manual_cancel_pending";
-      throw error;
-    }
-    if (tab.manualCancellation?.status === "failed") {
-      const error = new Error(`Manual mode turn ${traceId} cancellation was not acknowledged`);
-      error.code = "manual_cancel_failed";
-      throw error;
-    }
-    if (status === "completed" && tab.manualState !== "sent" && tab.manualState !== "running") {
-      throw new Error(`Manual mode turn ${traceId} cannot complete before Sent confirmation`);
-    }
-    if (status === "completed" && retain && tab.conversationKey) {
-      if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
-      tab.manualDeadlineTimer = null;
-      tab.manualDeadlineAt = null;
-      tab.prompt = null;
-      tab.promptDigest = null;
-      tab.manualState = "completed";
-      tab.status = "ready";
-      tab.message = "Task completed";
-      tab.loading = false;
-      tab.lastHeartbeatAt = Date.now();
-      this.rememberManualCompletion(traceId, helperPid);
-      this.publishState?.(this.snapshot());
-      return { cancelledByUser: false };
-    }
-    const cancelledByUser = this.manualTerminalSignals.get(traceId)?.status === "cancelled";
-    if (status === "completed") {
-      if (tab.manualDeadlineTimer) clearTimeout(tab.manualDeadlineTimer);
-      tab.manualDeadlineTimer = null;
-      tab.manualDeadlineAt = null;
-      tab.prompt = null;
-      tab.promptDigest = null;
-      tab.manualState = "completed";
-      tab.manualTerminalResolutionSuppressed = true;
-      this.rememberManualCompletion(traceId, helperPid);
-    } else {
-      this.signalManualTerminal(tab, status === "aborted" ? "cancelled" : status);
-    }
-    this.removeTurnTab(tab, false);
-    return { cancelledByUser };
+    return manualTurnsFor(this).endManualTurn(traceId, helperPid, status, retain);
   }
 
   cancelManualTurn(traceId, helperPid) {
-    const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
-    if (!tab) {
-      const terminal = this.manualTerminalSignals.get(traceId);
-      if (terminal?.helperPid === helperPid && terminal.status === "cancelled") {
-        return { cancelledByUser: true, status: "cancelled" };
-      }
-    }
-    if (!tab || tab.interactionMode !== "manual" || tab.helperPid !== helperPid) {
-      throw new Error(`Manual mode turn ownership mismatch: no browser tab owns ${traceId}`);
-    }
-    if (tab.status === "running") return this.startManualCancellation(tab, "control");
-    this.signalManualTerminal(tab, "cancelled");
-    this.removeTurnTab(tab, true);
-    return { cancelledByUser: true, status: "cancelled" };
+    return manualTurnsFor(this).cancelManualTurn(traceId, helperPid);
   }
 
   startManualCancellation(tab, source) {
-    if (tab.manualCancellation?.status === "pending") {
-      return { cancelledByUser: true, status: "pending" };
-    }
-    if (typeof this.cancelTurn !== "function") {
-      tab.manualCancellation = { status: "failed", source };
-      tab.message = "Cancellation could not reach the launcher-owned runtime; the browser tab remains open";
-      this.publishState?.(this.snapshot());
-      const error = new Error(`Manual mode turn ${tab.traceId} has no launcher cancellation handler`);
-      error.code = "manual_cancel_unavailable";
-      throw error;
-    }
-    tab.manualCancellation = { status: "pending", source };
-    const cancellation = Promise.resolve()
-      .then(() => this.cancelTurn(tab.traceId))
-      .then(() => {
-        if (this.turnTabs.get(tab.id) !== tab) return;
-        tab.manualCancellation = { status: "acknowledged", source };
-        this.signalManualTerminal(tab, "cancelled");
-        this.removeTurnTab(tab, true);
-      })
-      .catch((error) => {
-        if (this.turnTabs.get(tab.id) === tab) {
-          tab.manualCancellation = { status: "failed", source };
-          tab.message = "Runtime cancellation was not acknowledged; the browser tab remains open";
-          this.publishState?.(this.snapshot());
-        }
-        this.logger.warn("browser.manual_turn_cancel_failed", {
-          tabId: tab.id,
-          traceId: tab.traceId,
-          errorType: error?.name || "Error",
-        });
-        throw error;
-      });
-    tab.manualCancellation.promise = cancellation;
-    // The synchronous control endpoint returns a recoverable pending result. Keep the rejection
-    // observed here so a failed runtime cancellation cannot become an unhandled rejection.
-    cancellation.catch(() => {});
-    return { cancelledByUser: true, status: "pending" };
+    return manualTurnsFor(this).startManualCancellation(tab, source);
   }
 
   async cancelManualTab(tab, source) {
-    const result = this.startManualCancellation(tab, source);
-    if (result.status !== "pending") return result;
-    await tab.manualCancellation.promise;
-    return { cancelledByUser: true, status: "cancelled" };
+    return manualTurnsFor(this).cancelManualTab(tab, source);
   }
 
   exactRetainedTurnTab(conversationKey, connectorIdentity) {
@@ -3895,8 +3449,7 @@ class BrowserHost {
 
   destroy() {
     this.destroyed = true;
-    this.artifactDownloads?.dispose();
-    this.artifactLeases?.clear();
+    if (this.artifactDownloads) artifactTransfersFor(this).dispose();
     this.readOnlyInspection?.controller.abort(new Error("Browser host closed"));
     this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));
     this.existingChromeLoginController?.abort(new Error("Existing Chrome sign-in cancelled during launcher shutdown"));

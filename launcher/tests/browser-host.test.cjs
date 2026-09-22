@@ -2736,6 +2736,7 @@ function manualTurnFixture() {
     manualTerminalSignals: new Map(),
     manualCompletionSignals: new Map(),
     manualOperation: null,
+    getManualSubmitTimeoutSec: () => 30,
     selectedTabId: "home",
     clipboard: { writeText: value => clipboardWrites.push(value) },
     logger: { info() {}, warn() {}, error() {} },
@@ -2791,6 +2792,47 @@ test("manual start is idempotent and never exposes its private prompt in snapsho
   assert.deepEqual(clipboardWrites, ["private prompt"]);
   assert.equal(JSON.stringify(fixture.snapshot()).includes("private prompt"), false);
   for (const tab of fixture.turnTabs.values()) clearTimeout(tab.manualDeadlineTimer);
+});
+
+test("extracted Manual cancellation preserves a live tab on failure and removes it only after acknowledgement", async () => {
+  const { fixture } = manualTurnFixture();
+  let resolveCancel, rejectCancel, calls = 0;
+  fixture.cancelTurn = trace => {
+    assert.equal(trace, 'manual_cancel_owned'); calls++;
+    return new Promise((resolve, reject) => { resolveCancel = resolve; rejectCancel = reject; });
+  };
+  const { tabId } = fixture.beginManualTurn('manual_cancel_owned', process.pid, 'private prompt');
+  fixture.confirmManualSent(tabId);
+  const tab = fixture.turnTabs.get(tabId);
+  const terminal = fixture.waitManualTerminal(tab.traceId, tab.helperPid);
+  assert.equal(fixture.cancelManualTurn(tab.traceId, tab.helperPid).status, 'pending');
+  await Promise.resolve(); assert.equal(calls, 1);
+  rejectCancel(new Error('runtime unavailable'));
+  await assert.rejects(tab.manualCancellation.promise, /runtime unavailable/);
+  assert.equal(fixture.turnTabs.get(tabId), tab);
+  assert.equal(tab.manualState, 'sent');
+  assert.equal(tab.manualCancellation.status, 'failed');
+  assert.equal(fixture.cancelManualTurn(tab.traceId, tab.helperPid).status, 'pending');
+  await Promise.resolve(); assert.equal(calls, 2);
+  resolveCancel(); await tab.manualCancellation.promise;
+  assert.deepEqual(await terminal, { status: 'cancelled' });
+  assert.equal(fixture.turnTabs.has(tabId), false);
+});
+
+test("extracted Manual cancellation cannot retire a replacement tab after a delayed acknowledgement", async () => {
+  const { fixture } = manualTurnFixture();
+  let acknowledge;
+  fixture.cancelTurn = () => new Promise(resolve => { acknowledge = resolve; });
+  const { tabId } = fixture.beginManualTurn('manual_cancel_old', process.pid, 'old prompt');
+  fixture.confirmManualSent(tabId);
+  const old = fixture.turnTabs.get(tabId);
+  fixture.cancelManualTurn(old.traceId, old.helperPid); await Promise.resolve();
+  const replacement = { ...old, traceId: 'manual_replacement', manualCancellation: null };
+  fixture.turnTabs.set(tabId, replacement);
+  acknowledge(); await old.manualCancellation.promise;
+  assert.equal(fixture.turnTabs.get(tabId), replacement);
+  assert.equal(replacement.manualState, 'sent');
+  assert.equal(fixture.manualTerminalSignals.has('manual_replacement'), false);
 });
 
 test("manual confirmation deadlines end at Sent so slow model startup can still complete", async (t) => {
