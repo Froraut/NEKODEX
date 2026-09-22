@@ -1,6 +1,6 @@
 # Extending NEKODEX
 
-This map describes the module boundaries introduced by the September 22, 2026 refactor. Start a feature at its domain boundary and keep its lifecycle owner in charge. Existing facade exports remain available to avoid forcing every caller to migrate at once.
+Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) and [module map](module-map.json). Start a feature at its domain boundary and keep its lifecycle owner in charge. Existing facade exports remain available to avoid forcing every caller to migrate at once.
 
 ## Where changes belong
 
@@ -9,6 +9,8 @@ This map describes the module boundaries introduced by the September 22, 2026 re
 | Add an HTTP inference route | `src/server-route-policy.ts`, composed in `src/server.ts` | Stream settlement is in `http-turn-lifecycle.ts`; shutdown admission is in `server-admission.ts`. |
 | Transform an incoming JSON request | `src/http-body.ts` | Rebuilt bytes need matching headers; native passthrough may intentionally preserve original wire bytes. |
 | Add a Responses tool representation | `src/responses/tool-projection.ts` | Discovery announcements and callable tools must use the same availability policy; request ordering stays in `parser.ts`. |
+| Change output encoding | `src/responses/output-policy.ts`, `json-output.ts`, `src/bridge.ts` | Share wire conventions; JSON projection never owns SSE backpressure, cancellation or terminal delivery. |
+| Change continuation identity | `src/responses/continuation-scope.ts`, `continuation-owner.ts` | Derive and compare scope without importing persistence; `state.ts` remains the durable owner. |
 | Change continuation serialization | `src/responses/state-snapshot.ts` | Live ownership, retention and write scheduling stay in `state.ts`. |
 | Add a turn runtime capability | `src/adapters/chatgpt-web/turn-runtime.ts` | Adapter orchestration stays in `index.ts`; session replay is in `turn-session.ts`; cross-session retirement stays in `turn-execution.ts`. |
 | Change response event delivery | `src/adapters/chatgpt-web/turn-round-delivery.ts` | Journal the whole event batch before observer delivery; reconnect must not submit another browser turn. |
@@ -22,6 +24,7 @@ This map describes the module boundaries introduced by the September 22, 2026 re
 | Change connector personalization or cleanup | `browser-personalization.ts` | Mutating preflight owns its deadline and cleanup; failed persistent cleanup must remain distinguishable from ordinary cancellation. |
 | Extend browser diagnostic evidence | `browser-diagnostics.ts` | Capture structure/counts by default, retain bounded private files, and keep screenshots explicitly opted in. Diagnostics do not own turn lifecycle. |
 | Add an attachment representation | `src/adapters/chatgpt-web/attachment-payloads.ts` | File authorization stays in `src/responses/file-content.ts`; selected skills and image/document validation retain their distinct rules. |
+| Change multipart transport or capacity | `prompt-multipart-contract.ts`, `browser-input-policy.ts` | Prompt compilation chooses content; stage/commit formatting and account/input capacity are separately testable contracts. |
 | Add an output file format | `src/adapters/chatgpt-web/artifact-format.ts` | Verified storage is in `artifact-storage.ts`; transport and lease authority remain with acquisition/host owners. |
 | Change compaction bookkeeping | `src/adapters/chatgpt-web/compaction-run-registry.ts` | Logical cancellation and physical settlement remain distinct; active-source delivery policy is in `active-compaction-source.ts`. |
 | Change a rolling checkpoint | `rolling-checkpoint-format.ts` and `rolling-checkpoint-projection.ts` | `rolling-checkpoint.ts` owns persistence and publishes memory state only after a successful disk-backed commit. |
@@ -29,6 +32,7 @@ This map describes the module boundaries introduced by the September 22, 2026 re
 | Interpret Native SSE or JSON usage | `src/native-terminal-inspector.ts` | Bounded interpretation stops at `[DONE]`; `native-response-body.ts` owns byte delivery, cancellation and one telemetry receipt. Diagnostics cannot interrupt a completed stream. |
 | Change native usage receipts | `src/usage/native-contract.ts` | Delivery and durable outbox ownership remain separate; provider-unknown tokens must not become zero. |
 | Add a setup/configuration option | `src/setup-policy.ts` and `src/config-policy.ts` | Capture the original read snapshot before asynchronous work. `file-transactions.ts` owns publication/rollback receipts; setup owns side-effect order. |
+| Interpret tunnel status or launch diagnostics | `src/tunnel-status.ts`, `launcher/electron/runtime-tunnel-policy.cjs` | Parsing/command policy does not own installation, credentials or runtime supervision. |
 | Add a browser/account IPC method | `launcher/electron/ipc/browser-handlers.cjs` or `account-handlers.cjs` | Use the already-guarded registration callback. Authorization, lifecycle admission and application wiring remain in `main.cjs`. |
 | Extend the helper output protocol | `src/adapters/chatgpt-web/browser-helper-protocol.ts` | Update the typed producer and runtime decoder together; unknown or malformed frames remain rejected. |
 | Add a browser control operation | `src/launcher-browser-control.ts` | Descriptor authority is in `launcher-browser-descriptor.ts`; CDP attachment stays behind `launcher-browser-host.ts`. |
@@ -37,11 +41,14 @@ This map describes the module boundaries introduced by the September 22, 2026 re
 | Change Manual prompt/confirmation/cancellation policy | `launcher/electron/browser-manual-turns.cjs` | The host supplies the existing tab/signal maps and explicit lifecycle/presentation ports. Native views and registry removal stay with their existing owners. |
 | Change artifact transfer ownership | `launcher/electron/browser-artifact-transfers.cjs` | The network download guard owns writes; transfer leases must revalidate exact tab and lease ownership after awaiting completion. |
 | Change update preparation | `launcher/electron/update-staging.cjs` | Before staging returns it owns cleanup; the controller owns handoff after return. Hashing is abortable; uncertain extractor exit preserves staging. |
+| Select an update release | `launcher/electron/update-release-policy.cjs` | Preserve packaged repository, channel and platform checks. Download, signature validation and installation stay separate. |
+| Read child process logs | `launcher/electron/runtime-output.cjs` | Preserve split UTF-8, bound each line and keep raw capture limits independent. Process ownership stays with the caller. |
 | Extend runtime validation | `launcher/electron/runtime-config-contract.cjs` | Setup compatibility and permission to start a runtime are separate entry points. |
-| Extend an application screen | `launcher/src/SetupSurface.tsx`, `McpSurface.tsx`, `SettingsSurface.tsx`, `BrowserSurface.tsx` | `App.tsx` owns navigation, shared snapshots and native browser placement. `BrowserSurface.tsx` owns browser controls; `ManualTurnGuide.tsx` owns prompt presentation and its countdown. |
+| Extend an application screen | `launcher/src/Onboarding.tsx`, `ActivitySurface.tsx`, `SetupSurface.tsx`, `McpSurface.tsx`, `SettingsSurface.tsx`, `BrowserSurface.tsx` | `App.tsx` owns navigation, shared snapshots and native browser placement. `BrowserSurface.tsx` owns browser controls; `ManualTurnGuide.tsx` owns prompt presentation and its countdown. |
 | Add account UI actions | `useAccountPoolSnapshot.ts`, `useAccountCodexLogin.ts` | Preserve captured account/flow identity and invalidate older reads when applying a mutation receipt. |
 | Add a Task Center action | `task-center-model.ts`, `task-center-copy.ts`, `TaskActionConfirmation.tsx` | Backend capabilities authorize actions; phase labels alone do not. Task Center retains focus restoration. |
 | Add a usage report section | `useUsageReport.ts`, `UsageCalendar.tsx`, `launcher/electron/usage-report.cjs` | Query identity, report projection and durable storage remain separate. |
+| Add synthetic DEV context | `src/dev-chat/context-fixtures.ts` | Named chat persistence remains in `session.ts`; generated content stays explicitly inert. |
 
 ## Working across boundaries
 

@@ -1,3 +1,4 @@
+const { collectCapturedRuntimeOutput: collect } = require("./runtime-output.cjs");
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -18,8 +19,6 @@ const { parsePasskeyProgress } = require("./passkey-login-progress.cjs");
 const { RuntimeGenerationStore } = require("./runtime-generation.cjs");
 const existingChromeRuntime = require("./existing-chrome-runtime.cjs");
 
-const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
-const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
 const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
 const MCP_SETUP_TIMEOUT_MS = 10 * 60_000;
 const UNINSTALL_TIMEOUT_MS = 2 * 60_000;
@@ -27,32 +26,6 @@ const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
 const PASSKEY_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const MAX_PASSKEY_STATE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_PASSKEY_MARKER_FILE_BYTES = 64 * 1024;
-function collect(stream, chunks, onLine, onError, retainOutput = true) {
-  let buffered = "";
-  let bytes = 0;
-  stream.on("data", (chunk) => {
-    bytes += chunk.length;
-    if (retainOutput && bytes <= MAX_CAPTURE_BYTES) chunks.push(chunk);
-    buffered += chunk.toString("utf8");
-    for (;;) {
-      const newline = buffered.indexOf("\n");
-      if (newline < 0) break;
-      const line = buffered.slice(0, newline).trimEnd();
-      buffered = buffered.slice(newline + 1);
-      if (line) onLine(line);
-    }
-    if (buffered.length > MAX_RUNTIME_LOG_LINE_CHARS) {
-      onLine(`${buffered.slice(0, MAX_RUNTIME_LOG_LINE_CHARS)}…[truncated]`);
-      buffered = "";
-    }
-  });
-  stream.on("end", () => {
-    const line = buffered.trim();
-    if (line) onLine(line);
-  });
-  stream.on("error", (error) => onError?.(error));
-}
-
 function resolveUserPath(value) {
   if (value === "~") return os.homedir();
   if (value.startsWith("~/") || value.startsWith("~\\")) {

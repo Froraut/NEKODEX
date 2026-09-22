@@ -1,21 +1,21 @@
+import { Onboarding } from "./Onboarding";
+import { ActivitySurface } from "./ActivitySurface";
 import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
 import { SettingsSurface } from './SettingsSurface';
-import { IconButton, StateDot, ContentSurface, SecondaryButton, handleRadioGroupKeys, PrimaryButton, McpMark, messageOf, useModalFocus, InteractionModePicker, Switch } from './launcher-ui';
+import { IconButton, StateDot, ContentSurface, PrimaryButton, McpMark, messageOf, useModalFocus, Switch } from './launcher-ui';
 import { runtimeCapabilities, currentToolProof } from './launcher-readiness';
 
 import { TaskCenter, taskCenterTitle } from './TaskCenter';
 import { QueueControls } from './QueueControls';
 import type { CompactionModel } from "./types";
 import { modelConnectionReadiness } from "./setup-progress";
-import languages from "../electron/languages.json";
 import { BrandMark } from "./BrandMark";
 import { Overview } from "./Overview";
 import { AccountSettings } from "./AccountSettings";
 import { AccountToolsHandoff } from "./AccountToolsOnboarding";
 
-import { UsageDashboard } from "./UsageDashboard";
 import { Updates } from "./Updates";
 import { updateCopyFor } from "./update-copy";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
@@ -429,150 +429,6 @@ export function App() {
         )}
         {error && !snapshot.state.onboardingComplete ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
     </div>
-  );
-}
-
-function Onboarding({
-  language,
-  setError,
-  snapshot,
-  updateState,
-}: {
-  language: Language;
-  setError: (error: string | null) => void;
-  snapshot: LauncherSnapshot;
-  updateState: (state: LauncherState) => void;
-}) {
-  const [stage, setStage] = useState<"language" | "interaction" | "support">(
-    snapshot.state.language ? "interaction" : "language",
-  );
-  const [selectedLanguage, setSelectedLanguage] = useState<Language>(language);
-  const [selectedInteractionMode, setSelectedInteractionMode] = useState<BrowserInteractionMode>(
-    snapshot.state.browserInteractionMode,
-  );
-  const [localBusy, setBusy] = useState(false);
-  const busy = localBusy || Boolean(snapshot.lifecycle?.transition);
-  const localized = copyFor(selectedLanguage);
-  const isLanguage = stage === "language";
-  const isInteraction = stage === "interaction";
-  const stageIndex = isLanguage ? 0 : isInteraction ? 1 : 2;
-
-  const chooseLanguage = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setLanguage(selectedLanguage));
-      setStage("interaction");
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const finish = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.completeOnboarding(selectedLanguage, selectedInteractionMode));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <main
-      className="welcome"
-      lang={selectedLanguage}
-    >
-      <header className="welcome-top draggable">
-        <div className="welcome-brand no-drag">
-          <BrandMark small />
-          <span>{localized.product}</span>
-          {snapshot.profile === "development" ? <em className="dev-profile-badge">{localized.devBadge}</em> : null}
-        </div>
-        <span className="welcome-version no-drag">v{snapshot.version}</span>
-      </header>
-
-        <section
-          className="welcome-stage"
-          key={stage}
-        >
-          <span className="welcome-kicker">0{stageIndex + 1}</span>
-          <h1>{isLanguage
-            ? localized.chooseLanguage
-            : isInteraction ? localized.interactionMode : localized.welcomeReady}</h1>
-          <p>{isLanguage
-            ? localized.chooseLanguageHint
-            : isInteraction ? localized.interactionModeOnboardingBody : localized.welcomeReadyBody}</p>
-
-          {isLanguage ? (
-            <div className="welcome-options" role="radiogroup" aria-label={localized.chooseLanguage} onKeyDown={handleRadioGroupKeys}>
-              {(Object.entries(languages) as Array<[Language, { label: string; marker: string }]>).map(([code, option]) => (
-                <WelcomeOption
-                  active={selectedLanguage === code}
-                  key={code}
-                  label={option.label}
-                  language={code}
-                  marker={option.marker}
-                  onClick={() => setSelectedLanguage(code)}
-                />
-              ))}
-            </div>
-          ) : isInteraction ? (
-            <InteractionModePicker
-              className="welcome-interaction-mode-picker"
-              copy={localized}
-              disabled={busy}
-              mode={selectedInteractionMode}
-              onChange={setSelectedInteractionMode}
-            />
-          ) : (
-            <div className="welcome-features">
-              {([
-                ["accounts", localized.welcomeAccounts, localized.welcomeAccountsBody],
-                ["mcp", localized.welcomeTools, localized.welcomeToolsBody],
-                ["settings", localized.welcomePrivacy, localized.welcomePrivacyBody],
-              ] as const).map(([icon, title, body]) => <div key={icon}><Icon name={icon} /><span><strong>{title}</strong><small>{body}</small></span></div>)}
-            </div>
-          )}
-        </section>
-
-      <footer className="welcome-footer">
-        <div>
-          {!isLanguage ? (
-            <button
-              className="text-button"
-              disabled={busy}
-              onClick={() => setStage(isInteraction ? "language" : "interaction")}
-              type="button"
-            >
-              {localized.previous}
-            </button>
-          ) : null}
-        </div>
-        <div className="welcome-progress" aria-label={`${stageIndex + 1} / 3`}>
-          {[0, 1, 2].map(index => (
-            <span
-              className={index < stageIndex ? "is-complete" : index === stageIndex ? "is-active" : ""}
-              key={index}
-            />
-          ))}
-        </div>
-        <PrimaryButton
-          disabled={busy}
-          onClick={isLanguage
-            ? chooseLanguage
-            : isInteraction ? () => setStage("support") : finish}
-        >
-          {stage === "support" ? localized.finishWelcome : localized.continue}
-        </PrimaryButton>
-      </footer>
-    </main>
   );
 }
 
@@ -1282,94 +1138,6 @@ function SidebarItem({
   );
 }
 
-function ActivitySurface({
-  copy,
-  transitionBusy,
-  language,
-  logs,
-  setError,
-}: {
-  copy: Copy;
-  transitionBusy: boolean;
-  language: Language;
-  logs: LogRecord[];
-  setError: (error: string | null) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [level, setLevel] = useState("all");
-  const visibleLogs = logs.filter(record => (level === "all" || record.level === level)
-    && `${humanEvent(record.event)} ${logDetail(record.detail)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  return (
-    <ContentSurface subtitle={copy.activitySubtitle} title={copy.activityTitle}>
-      <UsageDashboard copy={copy} language={language} />
-      <div className="section-heading activity-heading">
-        <span>{copy.recentActivity}</span>
-        <SecondaryButton
-          icon="external"
-          disabled={transitionBusy}
-          onClick={() => void api!.exportLogs().catch((cause) => setError(messageOf(cause)))}
-        >
-          {copy.exportSafeLog}
-        </SecondaryButton>
-      </div>
-      <div className="activity-filters">
-        <input type="search" aria-label={copy.searchActivity} placeholder={copy.searchActivity} value={query} onChange={event => setQuery(event.target.value)} />
-        <select className="settings-select" aria-label={copy.eventLevel} value={level} onChange={event => setLevel(event.target.value)}>
-          <option value="all">{copy.allEvents}</option><option value="error">{copy.errorEvents}</option><option value="warning">{copy.warningEvents}</option><option value="info">{copy.infoEvents}</option><option value="debug">{copy.debugEvents}</option>
-        </select>
-      </div>
-      <div className="activity-table">
-        {visibleLogs.length === 0 ? (
-          <div className="surface-empty">
-            <Icon name="logs" />
-            <span>{logs.length ? copy.noMatchingEvents : copy.noLogs}</span>
-          </div>
-        ) : null}
-        {[...visibleLogs].reverse().map((record, index) => (
-          <div className="activity-row" key={`${record.at}-${record.event}-${index}`}>
-            <StateDot state={record.level === "error" ? "error" : record.level === "warning" ? "busy" : "ready"} />
-            <div>
-              <strong>{humanEvent(record.event)}</strong>
-              <span>{logDetail(record.detail)}</span>
-            </div>
-            <time>{formatTime(record.at, language)}</time>
-          </div>
-        ))}
-      </div>
-    </ContentSurface>
-  );
-}
-
-function WelcomeOption({
-  active,
-  label,
-  language,
-  marker,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  language: Language;
-  marker: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      aria-checked={active}
-      className={`welcome-option${active ? " is-active" : ""}`}
-      lang={language}
-      onClick={onClick}
-      role="radio"
-      tabIndex={active ? 0 : -1}
-      type="button"
-    >
-      <span>{marker}</span>
-      <strong>{label}</strong>
-      {active ? <Icon name="check" /> : null}
-    </button>
-  );
-}
-
 function ActionDot({ pulse = false, tone }: { pulse?: boolean; tone: "required" | "optional" | "success" | "error" }) {
   return <i aria-hidden="true" className={`action-dot is-${tone}${pulse ? " is-pulse" : ""}`} />;
 }
@@ -1463,28 +1231,4 @@ function FatalMessage({ message, onRetry, retryLabel }: {
       {onRetry ? <PrimaryButton onClick={onRetry}>{retryLabel}</PrimaryButton> : null}
     </main>
   );
-}
-
-function humanEvent(value: string): string {
-  return value.split(".").map((part) => part.replaceAll("_", " ")).join(" · ");
-}
-
-function logDetail(detail: Record<string, unknown>): string {
-  const entries = Object.entries(detail).filter(([, value]) => value !== undefined && value !== null);
-  if (entries.length === 0) return "";
-  return entries
-    .slice(0, 3)
-    .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
-    .join(" · ");
-}
-
-function formatTime(value: string, language: Language): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleTimeString(languages[language].locale, {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
 }

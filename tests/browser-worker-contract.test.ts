@@ -2923,7 +2923,7 @@ test("browser preflight separates model context from one-message transport limit
     "gpt-5.6-sol",
     "medium",
     pro,
-    515_000,
+    500_000,
   )).not.toThrow();
   expect(() => assertChatGptWebInputWithinLimits(
     111_193,
@@ -2931,7 +2931,7 @@ test("browser preflight separates model context from one-message transport limit
     "gpt-5.6-sol",
     "medium",
     pro,
-    515_001,
+    500_000,
   )).toThrow("103,000-token ChatGPT browser message boundary");
   expect(() => assertChatGptWebInputWithinLimits(
     112_192,
@@ -3103,7 +3103,8 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
   const plus = { localToolsEnabled: false, solAvailable: true, proAvailable: false };
   const pro = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
   const extraHighOnly = { ...plus, extraHighAvailable: true };
-  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", extraHighOnly, 100_000, 600_000).effort).toBe("xhigh");
+  // Extra High visibility does not establish the larger Pro-account input envelope.
+  expect(() => resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", extraHighOnly, 100_000, 600_000)).toThrow("No ChatGPT effort");
   expect(() => resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", extraHighOnly, 104_000, 1_200_000))
     .toThrow("No ChatGPT effort available");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 30_000, 200_000).effort).toBe("low");
@@ -3131,7 +3132,7 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
     300_000,
   )).toThrow("No ChatGPT effort");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 100_000, 500_000).effort).toBe("low");
-  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 100_000, 600_000).effort).toBe("medium");
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 100_000, 600_000).effort).toBe("max");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 104_000, 1_200_000).effort).toBe("max");
   expect(() => resolveChatGptWebMultipartStagingMode(
     "gpt-5.6-luna",
@@ -3154,7 +3155,7 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
       finalMessageTokens: 1_000,
       finalMessageChars: 4_000,
     },
-  )).not.toThrow();
+  )).toThrow("two or six context parts");
 });
 
 test("browser diagnostics redact context envelopes and capability values", () => {

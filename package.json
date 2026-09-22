@@ -33,6 +33,8 @@
     "audit": "bun audit",
     "check-version": "bun run scripts/check-version.ts",
     "typecheck": "bun x --no-install --bun tsc --noEmit",
+    "architecture:check": "bun run scripts/architecture-map.ts --check",
+    "architecture:update": "bun run scripts/architecture-map.ts --write",
     "licenses": "bun run scripts/generate-third-party-notices.ts --include-launcher",
     "clean": "bun run scripts/clean.ts",
     "build": "bun run scripts/build-runtime-bundle.ts",

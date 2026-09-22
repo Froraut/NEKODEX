@@ -28,7 +28,7 @@ async function open(setup, width = 1280, scenario = 'benefits-astra') {
     await route.fulfill({ response, body: await response.text() + '\n;(' + setup.toString() + ')();' });
   });
   await page.goto(base + '/?scenario=' + scenario + '&language=en');
-  await page.locator('.app-shell').waitFor();
+  await page.locator(scenario === 'onboarding' ? '.welcome' : '.app-shell').waitFor();
   return { page, errors };
 }
 async function navigate(page, label) {
@@ -217,6 +217,42 @@ test('refactor follow-up Manual browser prompt preserves pending confirmation an
     await capture(page, 'followup-manual-confirm-compact');
     await page.evaluate(() => window.fixtureConfirmManual());
     await page.waitForFunction(() => !document.querySelector('.manual-turn-guide button:last-child')?.disabled);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('project refactor onboarding keeps mode choice through completion without external actions', { timeout: 12000 }, async () => {
+  const { page, errors } = await open(null, 760, 'onboarding');
+  try {
+    await page.locator('.welcome').getByRole('radio').nth(1).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('button', { name: 'Open launcher', exact: true }).click();
+    await page.locator('.app-shell').waitFor();
+    assert.equal(await page.evaluate(async () => (await window.codexWebLauncher.snapshot()).state.browserInteractionMode), 'manual');
+    assert.deepEqual(await page.evaluate(() => window.fixtureCalls.filter(call => ['onboarding', 'social'].includes(call[0]))), [['onboarding']]);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('project refactor Activity keeps log filtering and export independent of usage reports', { timeout: 12000 }, async () => {
+  const { page, errors } = await open(() => {
+    const read = window.codexWebLauncher.snapshot;
+    window.codexWebLauncher.snapshot = async () => ({ ...await read(), logs: [
+      { at: '2026-09-22T12:00:00Z', level: 'error', event: 'worker.failed', detail: { phase: 'fixture' } },
+      { at: '2026-09-22T12:01:00Z', level: 'info', event: 'worker.ready', detail: {} },
+    ] });
+    window.codexWebLauncher.exportLogs = async () => { window.fixtureCalls.push(['export-safe-logs']); };
+  });
+  try {
+    await navigate(page, 'Activity');
+    assert.equal(await page.locator('.activity-row').count(), 2);
+    await page.locator('.activity-filters select').selectOption('error');
+    assert.equal(await page.locator('.activity-row').count(), 1);
+    await page.locator('.activity-filters input').fill('ready');
+    assert.equal(await page.locator('.activity-row').count(), 0);
+    await page.locator('.activity-heading button').click();
+    assert.deepEqual(await page.evaluate(() => window.fixtureCalls.filter(call => call[0] === 'export-safe-logs')), [['export-safe-logs']]);
+    await capture(page, 'project-activity-filter');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });

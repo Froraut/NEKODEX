@@ -99,10 +99,10 @@ git clone https://github.com/Froraut/NEKODEX.git nekodex
 cd nekodex
 bun install --frozen-lockfile
 bun install --frozen-lockfile --cwd launcher
-bun run dev:launcher
+bun run launcher:dev
 ```
 
-[DEV setup](docs/dev-chat.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [Transactional updates](docs/transactional-updates.md) · [Security policy](SECURITY.md)
+[DEV setup](docs/dev-chat.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Transactional updates](docs/transactional-updates.md) · [Security policy](SECURITY.md)
 
 Local packaging does not establish publisher signing or notarization. See the [release workflow](.github/workflows/release.yml) for platform delivery. Use the English README for current product details; [Russian](README.ru.md), [Chinese](README.zh-CN.md) and [Japanese](README.ja.md) guides have separate update histories.
 

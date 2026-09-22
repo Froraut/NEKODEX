@@ -138,7 +138,7 @@ test("macOS passkey sign-in is additive and displays a separate Chrome continuat
 });
 
 test("onboarding can finish without visiting external social pages", () => {
-  const onboarding = appSource.slice(appSource.indexOf("function Onboarding("), appSource.indexOf("function LauncherShell("));
+  const onboarding = fs.readFileSync(path.join(launcherRoot, "src", "Onboarding.tsx"), "utf8");
   assert.doesNotMatch(onboarding, /disabled=\{[^}]*githubOpened|disabled=\{[^}]*xOpened/);
   assert.doesNotMatch(electronMain, /if \(!current\.githubOpened \|\| !current\.xOpened\)/);
 });

@@ -1,4 +1,7 @@
-# Architecture
+# Runtime modes and operational contracts
+
+For the maintained source/module map, ownership boundaries and update procedure, start with
+[NEKODEX architecture](../ARCHITECTURE.md). This companion retains the detailed mode and protocol contracts.
 
 ```text
 Codex app / CLI
