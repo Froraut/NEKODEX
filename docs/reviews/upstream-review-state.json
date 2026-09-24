@@ -2,53 +2,58 @@
   "schemaVersion": 1,
   "upstream": "miuuyy/codex-chatgpt-web",
   "fork": "Froraut/NEKODEX",
-  "updatedAt": "2026-09-21T09:50:16.924333+00:00",
+  "updatedAt": "2026-09-24T14:27:12.836207+00:00",
   "lastCompleteScan": {
-    "at": "2026-09-21T09:14:47.086909+00:00",
+    "at": "2026-09-24T14:08:45.913847+00:00",
     "repository": "miuuyy/codex-chatgpt-web",
     "paginationComplete": true,
-    "openIssues": 26,
-    "openPulls": 11,
-    "recentClosedPulls": 19,
-    "closedUpdatedSince": "2026-09-19",
-    "scope": "Open issues and PRs plus recently updated closed PRs; not all historical closed issues."
+    "openIssues": 20,
+    "openPulls": 3,
+    "recentClosedPulls": 17,
+    "recentClosedIssues": 46,
+    "closedUpdatedSince": "2026-09-21T09:14:47.086909+00:00",
+    "reviewedRecords": 86,
+    "scope": "All open issues and PRs plus all issue/PR records updated since the previous complete scan. Final delta 663 and its diagnostic ZIP reviewed; all 20 PR heads rechecked unchanged."
   },
   "lastReviewed": {
     "pull": {
-      "number": 593,
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/593"
+      "number": 604,
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/604"
     },
     "issue": {
-      "number": 339,
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/339"
+      "number": 663,
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/663"
     }
   },
   "maxReviewedNumber": {
-    "pull": 615,
-    "issue": 614
+    "pull": 658,
+    "issue": 663
   },
   "notes": [
-    "Current scan has per-item source timestamps and PR head SHAs. Unvisited historical records retain their prior recheck flags.",
-    "Review disposition does not mean implemented or released. See the linked batch report for selected implementation and verification."
+    "Exact records and historical gaps are retained. A maximum number is a navigation hint, not coverage proof.",
+    "v6.0.0 commit 212ceef2acac9d6ee0f3c9037abfaf4ad8ff9827 and follow-up 757942251222ee0f71953c35636679c6d92dd636 reviewed against fork base afd9e5a.",
+    "Current source implementation and verification: 115792667386478cd1fd5c391b8795cede90a8e7. No installed app, production account, tunnel or release changed.",
+    "Last actually revisited PR is 604 (replacement socket proof); highest reviewed PR is 658. Last issue is 663, including the final comment/attachment refresh."
   ],
   "items": {
     "issue:339": {
       "kind": "issue",
       "number": 339,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/339",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-21T08:48:26Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T01:11:49Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "already_hardened_keep_stale_calls_rejected: The latest evidence shows server-side generations can continue after ChatGPT displays an error, and upstream 5.0.8 automatically retried six submitted attempts, multiplying retired claims. Local code disables automatic replay once submission began, retains exact sessions across observer reconnects, and retires capabilities only after physical browser settlement plus admitted observer tails. A delayed call after proven terminal retirement must still be rejected; reactivating its token could execute stale side effects.",
+      "decision": "safeguards_present_underlying_live_race_unresolved: Local broker lease/retirement safeguards exist, but the maintainer explicitly says this issue is not fixed. The submitted-generation lifetime race remains unproven and unresolved; do not mark it fixed by v6.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "A remote generation may still attempt a connector call after the browser reports a terminal provider error; local code can reject it but cannot prove or cancel ChatGPT's server-side generation from this evidence. No live provider fault injection was performed in this lane."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:374": {
       "kind": "issue",
@@ -84,33 +89,35 @@
       "kind": "issue",
       "number": 407,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/407",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-18T22:56:52Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:44Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "retry-conflict-addressed-capacity-cause-unproven",
+      "decision": "external_account_or_platform_evidence_required: Two different symptoms were bundled. Maintainer found no correlated underlying Codex error for the capacity claim; later close requests a fresh trace. The report does not demonstrate local overload or a bridge defect.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The maintainer's latest comment still requests the underlying Codex HTTP/SSE error; the generic message does not establish overload, quota, or a bridge defect. The fresh capacity presentation and reused-task conflict need separate timestamps and traces."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:408": {
       "kind": "issue",
       "number": 408,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/408",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-18T23:46:21Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T01:02:22Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "split_disposition_tool_loss_mitigated_goal_terminal_unproven: The comments split this issue into two mechanisms. Retained-chat tool loss is issue 428 and already has fresh-chat isolation. Goal nontermination after tools are restored is not shown to be a bridge omission: Native6 inventory exposes current outer tools and codex_tool_call can invoke an advertised update_goal. The supplied model distribution is explicitly uncontrolled and no trace shows update_goal advertised, discovered, called, rejected, or hidden.",
+      "decision": "not_applicable_model_execution: Later evidence shows update_goal was callable through both direct and nested registries; in the reported goal run tools worked but the model did not call it. This is model/tool selection evidence, not a demonstrated bridge failure.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No failing goal trace establishes whether update_goal was in the outer registry or whether the model attempted discovery. The generic inventory path is available but does not guarantee model tool choice."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:410": {
       "kind": "issue",
@@ -176,17 +183,18 @@
       "kind": "issue",
       "number": 418,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/418",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-21T08:48:27Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T01:02:24Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "not_confirmed_source_defect: The latest fresh-task data point proves the connector was selected 1/1 but the model chose web search and made no MCP call; explicitly naming the tool or changing AGENTS guidance made the same request succeed. That is instruction/model tool choice, distinct from issue 428's absent retained connector. Local prompt guidance already requires actual local tools for local effects while preserving native instruction priority.",
+      "decision": "external_account_or_platform_evidence_required: The supplied fresh-task example showed a connector selected but no MCP call; explicit tool guidance changed model behavior. It does not demonstrate bridge rejection or hidden local tools.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "Older comments and screenshots may include other causes; the latest trace does not prove all no-tool reports are model choice. No local account reproduction was performed."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:420": {
       "kind": "issue",
@@ -222,33 +230,35 @@
       "kind": "issue",
       "number": 423,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/423",
-      "reviewedAt": "2026-09-19",
-      "sourceUpdatedAt": null,
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T13:10:37Z",
       "headSha": null,
-      "status": "historical_review",
-      "decision": "See retained assessment; not a fresh review.",
+      "status": "reviewed",
+      "decision": "external_account_or_platform_evidence_required: Screenshot-based safety refusal is a ChatGPT/Codex policy response. No local bridge error trace demonstrates a product defect; closing the report does not establish a local fix.",
       "evidence": [
-        "docs/reviews/2026-09-14-investigation.md",
-        "docs/reviews/2026-09-19-upstream-assessment.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "recheckRequired": true,
-      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:424": {
       "kind": "issue",
       "number": 424,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/424",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-18T22:56:42Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:20Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "partially_applicable_covered_by_authenticated_compaction_adaptation: The report proves a fresh fallback browser summary followed immediately by missing trusted environment, but not that the fallback handoff itself was rejected for the same reason as PR 601. Current NEKODEX already reconstructs environment from current native rollout and now handles the two observed compaction summary placements only when that rollout proves identical authority. This addresses the concrete missing-environment shape without claiming every issue-424 browser handoff failure is fixed.",
+      "decision": "covered_by_v6: The prior evidence showed a post-compaction missing trusted environment. v6 resolves authority from the exact current native rollout and supports constrained continuation metadata; this covers the missing-environment shape without proving the old account incident’s entire cause.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The 2026-09-10 account/browser failure was not reproduced locally. The original retained viewport failure, fallback summary transport, and subsequent continuation may contain additional failure boundaries. The narrow adaptation does not add cached-authority fallback and does not include closed PR 568."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:425": {
       "kind": "issue",
@@ -269,17 +279,18 @@
       "kind": "issue",
       "number": 426,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/426",
-      "reviewedAt": "2026-09-21T09:22:25Z",
-      "sourceUpdatedAt": "2026-09-18T22:56:41Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T09:33:49Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "Do not port a new #426-specific timeout or label the residual stall fixed. The confirmed orphan cancellation/accounting defect is already present in current NEKODEX; the original large-context preparation stall and proposed Bigger Context flag mismatch remain unproven.",
+      "decision": "covered_by_v6: The report demonstrated a local admission gap for contexts above the single-part budget. The v6 input-size/resource-budget and scheduling paths include bounded preparation for oversized turns; maintainer acknowledged the fix. The historical issue is not a fresh runtime reproduction.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No fresh failing #426 trace was supplied for current NEKODEX 5.9.0-nekodex.1. The exact unresolved await before browser-helper stage=browser_page is not identified by the issue body or comments. Source correctness of the cancellation path does not prove the original customer scenario is fixed on every account, payload shape, or platform."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:427": {
       "kind": "issue",
@@ -300,17 +311,18 @@
       "kind": "issue",
       "number": 428,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/428",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-19T12:23:21Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T02:52:24Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "already_present_opt_in_fresh_chat_isolation: Multiple comments establish selectedConnectorCount=0 on retained follow-ups and restored 1/1 selection on forced fresh chats. NEKODEX already has the bounded upstream remedy: an opt-in persisted Fresh chat for every turn setting that withholds conversationKey and resends complete task context so the connector is attached again. It does not force a fragile retained-chat mention path.",
+      "decision": "covered_by_v6: Retained ChatGPT conversations can omit connector selection on later turns. v6 adds a new-browser-chat-per-turn option that preserves the Codex task while reattaching the connector; this is a mitigation with added context transfer, not proof every retained-chat failure is fixed.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "Fresh chat is opt-in and resends more context; it does not repair ChatGPT's retained connector pill semantics. The issue's separate DOM/stream failures on large fresh prompts remain outside this disposition."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:431": {
       "kind": "issue",
@@ -346,33 +358,35 @@
       "kind": "issue",
       "number": 436,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/436",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-18T23:46:24Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:11Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "diagnostic-gap-partially-overlaps-localization",
+      "decision": "external_account_or_platform_evidence_required: The failing label/preflight was ChatGPT website-language dependent. Maintainer asks for failing menu snapshot and explicitly did not attribute this report to language. English is the supported setting; no captured current failure establishes a local defect.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The reporter did not provide the requested structural checkpoint JSON or manual @codex menu result. The large prompt and GPU observation do not establish the preflight cause."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:437": {
       "kind": "issue",
       "number": 437,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/437",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-18T22:56:29Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:07Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "external_catalog_or_selector_state_needs_current_reproduction: The report concerns an intermittent ChatGPT connector menu row on legacy Native2, not broker or token ownership. Current local code selects exact Native6 identity, detects duplicate/exact selected pills, distinguishes missing catalog rows from uninstall, and performs one controlled catalog refresh when the stale-catalog classifier applies.",
+      "decision": "external_account_or_platform_evidence_required: Intermittent no-tool screenshots do not show whether Codex Native2 was attached or selected. Maintainer requested the actual failing connector menu/snapshot; no bridge rejection is demonstrated.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "Screenshots and a legacy safe log cannot establish the current Native6 catalog state. No Windows live reproduction or current ChatGPT connector menu capture was performed."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:438": {
       "kind": "issue",
@@ -394,17 +408,18 @@
       "kind": "issue",
       "number": 441,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/441",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-18T22:56:25Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:21:10Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "provider-error-already-contained-after-submission",
+      "decision": "partially_covered_by_v6: The old report describes generic failures when continuing a large retained thread. v6 has bounded multipart/input sizing and distinguishes known size rejection from generic provider errors, addressing the context-size pathway only. It does not prove every “Something went wrong” provider incident is fixed.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The provider-side reason for Something went wrong is still unknown and comments mix message-too-long, multipart acknowledgement, and generic service failures. No diagnostic attachment was downloaded or current live failure reproduced."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:443": {
       "kind": "issue",
@@ -503,17 +518,18 @@
       "kind": "issue",
       "number": 452,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/452",
-      "reviewedAt": "2026-09-19",
-      "sourceUpdatedAt": null,
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T21:06:23Z",
       "headSha": null,
-      "status": "historical_review",
-      "decision": "See retained assessment; not a fresh review.",
+      "status": "reviewed",
+      "decision": "external_account_or_platform_evidence_required: The report concerns whether a specific Windows Codex installation loaded the managed model route after restart. Setup/doctor success alone does not prove the native app’s active catalog. The issue requested read-only runtime details; no source-level defect is established by the current evidence.",
       "evidence": [
-        "docs/reviews/2026-09-14-investigation.md",
-        "docs/reviews/2026-09-19-upstream-assessment.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "recheckRequired": true,
-      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:457": {
       "kind": "issue",
@@ -549,17 +565,18 @@
       "kind": "issue",
       "number": 466,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/466",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-18T22:56:07Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:35:42Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "substantially-addressed-for-selection-persistence",
+      "decision": "external_account_or_platform_evidence_required: Screenshots show model-selection trouble on the second message, but the report lacks an exact failure trace or diagnostic sequence. It does not isolate catalog, account, or browser state.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The issue has no final error or safe log, and the screenshots do not identify whether the failing layer was the Codex catalog, ChatGPT selector, or account gate. No Windows retained-turn reproduction was performed."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:467": {
       "kind": "issue",
@@ -640,33 +657,35 @@
       "kind": "issue",
       "number": 484,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/484",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-18T22:55:58Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:25Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "manual_mode_contract_no_native6_fix: The evidence shows successful Manual/Zero Risk tool calls but no codex_turn_complete event. That is outside Native6 automatic completion. Current Manual mode requires an explicit request-bound completion call, rejects completion while calls remain active, and waits on launcher terminal state or cancellation. Synthesizing completion from visible ChatGPT text would bypass the connector's final-answer ownership contract.",
+      "decision": "covered_by_v6: The old report combines a long Zero Risk turn with trusted-environment loss. v6 keeps authority tied to the exact turn/rollout and makes terminal delivery explicit; maintainer requested a fresh reproduction before attributing remaining failures.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "This disposition does not explain why ChatGPT omitted codex_turn_complete in the reported account/session. No Manual mode live reproduction was performed and no Native6 code path is implicated by the report."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:485": {
       "kind": "issue",
       "number": 485,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/485",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-18T22:55:57Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:39Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "likely_already_mitigated_no_new_completion_relaxation: The reporter corrected the failing mode to Full harness and found a pending connector approval dialog, making the likely cause an unhandled approval rather than generic completion DOM loss. Current local code recognizes dialog and non-dialog approval cards, waits for manual action or applies only one-shot auto-approval, and keeps completed-turn evidence fail-closed.",
+      "decision": "not_applicable_without_approval_evidence: The reporter corrected the setup: this was Full Harness with an open connector approval prompt. The later evidence points to required user approval/Allow all actions state, not a demonstrated completion detector defect.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The reporter did not publish a final post-approval retest confirming disappearance of the failure. No current live approval dialog or changed ChatGPT completion DOM was reproduced here."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:489": {
       "kind": "issue",
@@ -702,17 +721,18 @@
       "kind": "issue",
       "number": 542,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/542",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-21T08:48:25Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T01:02:19Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "fail_closed_unknown_token_not_local_retirement: The latest comment distinguishes five never-issued tokens from retired bindings; two have lengths impossible for the broker's 37-character turn_ plus base64url token. Local exact-map rejection is correct and the prompt already demands unchanged reuse. This evidence points to model/connector/environment routing or token transcription, not local retirement of the current channel.",
+      "decision": "external_account_or_platform_evidence_required: The historical report alleged same-turn token revocation. Later correlated cases included tokens never issued by this broker; current report lacks a complete version-correlated timeline. Do not weaken token validation on this evidence.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The supplied upstream logs are not a local Native6 reproduction and do not identify which ChatGPT connector endpoint received each malformed token. The report also contains separate retired-token cases tracked under issue 339."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:543": {
       "kind": "issue",
@@ -733,48 +753,52 @@
       "kind": "issue",
       "number": 545,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/545",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-18T22:55:45Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:34Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "already-addressed-by-current-completion-contract",
+      "decision": "covered_by_v6_pending_retest: v6 response DOM extraction was changed for the reported layout family; this issue has no retest on v5.0.8 and was closed pending current reproduction. Keep the old case distinct from a confirmed current failure.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The report was from v5.0.6 and explicitly was not retested on v5.0.8; no current Windows run was performed. Dropping completion-action or response-identity checks would risk accepting a stale or tool-pending response."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:546": {
       "kind": "issue",
       "number": 546,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/546",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-19T11:11:15Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T21:28:15Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "insufficient-evidence-two-causes-conflated",
+      "decision": "external_account_or_platform_evidence_required: The capacity banner text is not diagnostic: a later comment provides only an aborted trace and no matching server request. Related #639 reports a concrete turn_id conflict, but exact request/timestamps are needed before deciding whether safe validation rejected stale Codex input or local state is wrong.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The issue body gives no underlying HTTP/SSE error for the generic capacity presentation and comments add no correlated trace. Capacity and turn_id conflict are separate failures and cannot share one inferred root cause."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:547": {
       "kind": "issue",
       "number": 547,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/547",
-      "reviewedAt": "2026-09-19",
-      "sourceUpdatedAt": null,
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-21T19:47:49Z",
       "headSha": null,
-      "status": "historical_review",
-      "decision": "See retained assessment; not a fresh review.",
+      "status": "reviewed",
+      "decision": "partially_covered_retry_storm_only: v6 maps the recognized “too many requests” condition to a non-retryable account cooldown, preventing automatic repeated submissions that can consume allowance. It does not wait for the same submitted browser generation to recover and return its response; later comments describe that distinct desired behavior without a correlated current trace.",
       "evidence": [
-        "docs/reviews/2026-09-19-upstream-assessment.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "recheckRequired": true,
-      "scopeNote": "Imported documented prior review; exact source updatedAt/full head fingerprint was not retained."
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:549": {
       "kind": "issue",
@@ -855,49 +879,52 @@
       "kind": "issue",
       "number": 561,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/561",
-      "reviewedAt": "2026-09-21T09:22:25Z",
-      "sourceUpdatedAt": "2026-09-18T22:55:32Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:15Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "Do not port an issue-specific compaction fix from #561. The supplied safe log proves real instability but does not establish that the new Temporary Chat or compaction handoff caused it. Add cancellation provenance and investigate Windows native transport separately.",
+      "decision": "covered_by_v6_pending_retest: The old Windows case ties compaction to a fresh Temporary Chat and failed continuation. v6 has structured compaction handoff and rollout-bound environment recovery, but the issue’s maintainer explicitly asked for a post-update reproduction; do not claim the exact account incident was retested.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The diagnostic export is privacy-sanitized and does not contain the browser-turn artifact directories referenced by checkpoint paths. The export does not identify which UI actor or automated path invoked cancel-active-turns, nor why the final broker token was retired. No controlled Windows reproduction without operator cancellation was run in this review. The report's claim that external Chrome/CUA control broke after compaction is not represented by direct CUA transport events in the supplied export."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:564": {
       "kind": "issue",
       "number": 564,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/564",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-19T00:47:26Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:54:40Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "substantially-addressed-for-effort-reset-class",
+      "decision": "covered_by_v6: The later issue #610 isolated the Plus-account locked Pro effort; v6 detects the unavailable effort and avoids activating the upgrade modal. The original prompt-edit error should be reported separately if it persists at an available effort.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The exact Plus account attachment failure was not reproduced and may also be the separate Extra High paywall in issue 610. Current safeguards prove selection consistency; they do not prove account entitlement."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:570": {
       "kind": "issue",
       "number": 570,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/570",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-20T19:49:04Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:05:02Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "partially-addressed-needs-current-trace",
+      "decision": "external_account_or_platform_evidence_required: The report mixes intermittent viewport failures with successful phone notification and successful turns. The latest maintainer request is for a trace/time-matched response-visible or turn-failed diagnostic; current evidence does not isolate the failing attempt.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The issue's attached safe log was not downloaded and no current NEKODEX failure was reproduced. A visible iPhone notification does not prove that the currently bound browser DOM or exact launcher surface remained readable."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "pull:412": {
       "kind": "pull",
@@ -1458,17 +1485,18 @@
       "kind": "pull",
       "number": 589,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/589",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-19T15:20:47Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:47Z",
       "headSha": "534fbefa9a51ec60518561ca937a3b8e51320245",
       "status": "reviewed",
-      "decision": "defer-no-direct-port",
+      "decision": "not_adopted: Private-bundle/CDP tokenizer rewriting is fragile and no local profiled need establishes its necessity.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-browser.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The PR reports individual Linux CPU-profile observations, but no corresponding NEKODEX profile was collected in this review. The patch depends on a minified function signature and a conversation-small asset URL pattern, pauses the remote script with CDP, and assigns a module-local function at runtime. Unknown or already-loaded document timing can leave the debugger hook ineffective while still attached until cleanup."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "pull:590": {
       "kind": "pull",
@@ -1535,273 +1563,1072 @@
       "kind": "pull",
       "number": 615,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/615",
-      "reviewedAt": "2026-09-21T09:22:25Z",
-      "sourceUpdatedAt": "2026-09-21T09:00:49Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-21T09:26:56Z",
       "headSha": "505f9a03bcd35afb8cd0e22301c27ab4f5573a1f",
       "status": "reviewed",
-      "decision": "Do not merge or cherry-pick PR615 or its budgeting commit into NEKODEX. No implementation is recommended for this batch. The observed message-boundary and attachment-routing ideas remain design candidates only and require an evidence-stamped, account-aware transport contract before any implementation scope is proposed.",
+      "decision": "not_adopted: Broad alternative runtime mixes speculative envelope/image changes, silent stream resync, session-file rewriting and fallback startup. Retain measured multipart and owned continuation paths.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-runtime.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No tests, builds, live account probes, installed-app changes, or branch changes were run, as requested. The PR author's live token measurements and claimed Windows verification were reviewed as untrusted external evidence and were not independently reproduced. No maintainer review or CI result existed on the observed PR head, so there is no upstream adjudication of the identified design risks. The attached PR carries unrelated compatibility and launcher changes; this disposition is specifically for NEKODEX message budgeting, compaction, resume safety, and their direct dependencies."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "pull:613": {
       "kind": "pull",
       "number": 613,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/613",
-      "reviewedAt": "2026-09-21T09:17:50Z",
-      "sourceUpdatedAt": "2026-09-21T08:01:47Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:30Z",
       "headSha": "49d3383c298f80cd4c5bdcc02489b3b6b255a62a",
       "status": "reviewed",
-      "decision": "Adapted the state-before-hook and boundary-line-ending behavior to NEKODEX's more defensive locator; corrected its restoration ranges after parent verification found excess owned blank lines; also added narrow missing-end-marker handling after reviewing Evan commits 4afd449a2caddcb412496682b02bdd713432c228 and 108cd5f1ce1df55776fbfe346a49800aff446691. Direct cherry-pick remains rejected because both external stacks diverge from local ownership and route handling.",
+      "decision": "adapted_followup: Reordered trust already supported; adapt 7579422 semantic TOML/inline array range edits with command/hash ownership and existing JSON trust preserved.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-setup-platform.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The upstream PR has no comments, reviews or status checks recorded at review time. No test, typecheck, build or live config reproduction was run in this lane. Parent verification is final: the state-before-hook and exact-separator affected rerun passed in 12ms; prior unchanged foreign-ambiguity and missing-end-marker passes were reused; root TypeScript and renderer build passed. The adaptation intentionally retains NEKODEX's existing fail-closed marker, hash, group-index, uniqueness, full-document parse and restoration checks rather than importing the upstream locator wholesale."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "issue:612": {
       "kind": "issue",
       "number": 612,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/612",
-      "reviewedAt": "2026-09-21T09:17:50Z",
-      "sourceUpdatedAt": "2026-09-21T07:56:11Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:28:16Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "Confirmed applicable to the legacy TOML interrupt-hook path and addressed by the bounded PR 613 adaptation; exact outside-owned bytes are preserved when the journaled form still matches, and the corrected separator case awaits parent rerun.",
+      "decision": "covered_by_v6: The semantic-equivalence normalization for Codex’s reordered interrupt trust table and whitespace is in the v6 hook handling. Maintainer confirms inclusion in v6.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "Issue evidence is an upstream report and was treated as untrusted input until matched to the local source path. The exact reporter config was not executed or read from a live account or installed app. No comments were present on the issue at review time."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "pull:600": {
       "kind": "pull",
       "number": 600,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/600",
-      "reviewedAt": "2026-09-21T09:17:50Z",
-      "sourceUpdatedAt": "2026-09-20T08:58:56Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T23:17:27Z",
       "headSha": "7a8d13b12e299e7641388ec9a79a6069cbe6748f",
       "status": "reviewed",
-      "decision": "Partially adapted the confirmed Windows staged-executable lock gap and primary-error preservation. Rejected broad stale-file deletion and untracked-binary adoption because they conflict with NEKODEX's stricter snapshot, lock and manual-recovery ownership policy.",
+      "decision": "already_present: Bounded owned Windows cleanup and CAS rollback already cover the issue; reject untracked binary adoption and staging sweeps.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-setup-platform.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No Windows machine or locked executable was exercised in this lane. No test, typecheck, build, package or installer run was performed; parent owns verification. The upstream PR has no comments, reviews or status checks recorded at review time. Stale files from earlier processes remain a manual-recovery concern; this change deliberately cleans only the current attempt's known staged path."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "issue:614": {
       "kind": "issue",
       "number": 614,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/614",
-      "reviewedAt": "2026-09-21T09:17:50Z",
-      "sourceUpdatedAt": "2026-09-21T08:24:18Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:28:19Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "Confirmed as a documentation defect. Updated the canonical guidance to replace the old max_threads alias instead of defining both aliases; no runtime config mutation was added.",
+      "decision": "covered_by_v6_documentation: Troubleshooting now instructs replacing legacy max_threads when adding max_concurrent_threads_per_session. This is user-owned Codex configuration guidance, not automatic config mutation.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The reported Codex 0.155.1 matrix was not re-executed because this lane was instructed to run no commands that exercise tests or runtime behavior. No comments were present on the issue at review time. The fix is intentionally documentation-only because NEKODEX does not own this user-selected concurrency setting."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "pull:598": {
       "kind": "pull",
       "number": 598,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/598",
-      "reviewedAt": "2026-09-21T09:17:50Z",
-      "sourceUpdatedAt": "2026-09-20T04:58:00Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:50Z",
       "headSha": "c5f0c2d34e4c49028e6945db5568f95c707eaaed",
       "status": "reviewed",
-      "decision": "Deferred with no edit. The use case is plausible, but the upstream renderer-only gates are insufficient for NEKODEX because production startup can adopt, upgrade, start and reconnect a configured local runtime, and setup/MCP mutations remain callable through IPC. A broad host-only mode requires direct local evidence and an explicit lifecycle design.",
+      "decision": "not_needed: Separate browser-host-only deployment does not match integrated NEKODEX runtime/account ownership.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-runtime.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No local EADDRINUSE reproduction or concrete NEKODEX deployment requiring a separate browser-host process was supplied or observed. No browser-host mode source was edited, as explicitly directed. The upstream PR has no comments, reviews or status checks recorded at review time."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "pull:604": {
       "kind": "pull",
       "number": 604,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/604",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-20T21:52:50Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:35Z",
       "headSha": "80aa4cbe4743ac6d4e8a1b9810cd51ff72884619",
       "status": "reviewed",
-      "decision": "reject_current_patch_requires_coordinated_endpoint_lock_protocol: The reported Bun behavior is applicable: local close checks its recorded inode only after Server.close(), so an old server can unlink a newer listener at the same pathname. PR 604's park-and-restore algorithm is nevertheless unsafe to port. Parking races pathname replacement, waiting for close can make the replacement unreachable behind an old accepted connection, and exists-then-rename restoration can overwrite a newer replacement B. The attempted local adaptation was removed after independent counter-review. Existing inode-checked cleanup remains unchanged because it is stronger than importing a known displacement race, although it does not solve Bun's close-time unlink.",
+      "decision": "adapted_independently: Bun replacement-socket failure reproduced. Bind a private socket and publish a hard-linked endpoint; close of an old broker preserves replacement reachability. Reject moving another live endpoint.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-runtime.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The applicable Bun close-time unlink remains unresolved in this lane. Adding a lock only to this close path would not serialize an older or newer process whose start path does not acquire the same lock. An externally replaced endpoint may be owned by a process outside the local in-memory broker registry; pathname existence and inode observation alone do not authorize parking or restoration. No portable no-overwrite Unix-socket restoration primitive was established here; symlink/hard-link socket behavior was not assumed or tested. No broker source or broker regression test remains from the rejected adaptation."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "pull:601": {
       "kind": "pull",
       "number": 601,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/601",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-21T02:36:40Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:14Z",
       "headSha": "4262f921f520c64d5190d3461f6978a453d63479",
       "status": "reviewed",
-      "decision": "adapted_with_native_rollout_authority: The local direct environment walker had the same adjacency gap for both observed Codex 0.155 compaction shapes. The adaptation is placed in the canonical thread-environment owner: it projects only the two exact message layouts into the existing metadata/sandbox parser, then accepts the claim only when the current native rollout proves the same thread, turn, cwd, roots, writable roots, and sandbox authority. Nonempty item IDs are structural bounds only and grant no authority.",
+      "decision": "adapted: Recover summary-only continuation from a verified completed checkpoint; preserve mixed task instructions, reject later ambiguous instructions, and bound retained source payloads.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-runtime.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The focused regression was written but not executed by this lane. The lower-level environment extractor remains unchanged; the fix applies through ChatGptThreadEnvironmentStore, which is the adapter's canonical environment owner. The projection accepts only message layouts containing exactly one environment envelope and at least one recognized native compaction summary; it does not implement PR 568 pathless cached-authority fallback or the unreviewed post-close delta. A current native rollout is mandatory; an unavailable rollout remains a terminal missing-environment result."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "pull:593": {
       "kind": "pull",
       "number": 593,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/593",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-20T18:44:00Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T23:02:26Z",
       "headSha": "507b84fdb2420252a88e993727dfe34aa2d406d7",
       "status": "reviewed",
-      "decision": "already_present_stricter: NEKODEX already normalizes the exact current-turn send_message_to_thread function output before revision selection. Its implementation is stricter than the PR because it also requires namespace=codex_app, a UUID-shaped source thread, non-self delegation, exact turn metadata, and a matching local Codex rollout/journal delivery before promoting the text to a user or parent instruction.",
+      "decision": "already_present: Keep exact native-rollout authenticated delegation; a serialized codex_app envelope alone grants no parent authority.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-runtime.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No live cross-thread desktop follow-up was performed in this lane. Normalization requires accessible current native rollout state; it intentionally fails closed after unauthenticated restart."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "issue:595": {
       "kind": "issue",
       "number": 595,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/595",
-      "reviewedAt": "2026-09-21T09:39:38Z",
-      "sourceUpdatedAt": "2026-09-20T10:05:02Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:29:17Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "broader_candidate_device_scoped_connector_identity: The report is sparse, but its two-device trigger is architecturally plausible locally: Native6 uses one fixed connector name while turn tokens and broker ownership are process-local. A connector endpoint routed to the other device must reject the token; accepting or refreshing it would violate local machine and turn ownership.",
+      "decision": "external_account_setup_guidance: The two-device logs show each machine rejecting the other machine’s token because both use one Tunnel ID. Tokens are process-local; create a distinct tunnel/connector per concurrent host. This is account/tunnel configuration, not a local token-lifecycle correction.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The issue has no correlated token hashes, connector endpoints, or per-device broker timelines. No multi-device ChatGPT account reproduction was performed locally. A device-scoped connector naming/migration design exceeds the authorized narrow files."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "pull:611": {
       "kind": "pull",
       "number": 611,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/611",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-21T06:55:31Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:43Z",
       "headSha": "93dc6fcc72f1cb18cfecedcbe4eab29b1a648335",
       "status": "reviewed",
-      "decision": "applicable-concept-not-direct-port",
+      "decision": "not_adopted: Broad localization table does not establish a fix at focus/connector boundary. Keep structural fallback and exact selected-connector data keyword.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-browser.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No non-English live ChatGPT surface was exercised. The PR's hand-written locale regex has no source provenance and covers only a subset of ChatGPT locales. No resource-backed current personalization-label set was available from the reviewed material; ui-labels.ts therefore remained unchanged even after ownership was added."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "pull:603": {
       "kind": "pull",
       "number": 603,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/603",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-20T21:52:19Z",
-      "headSha": "59585817f79e233a414f9f03565a7ae7a76dc083",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:18Z",
+      "headSha": "5f3193ee7bb3d6af8c2daa3c60e443639f7e3410",
       "status": "reviewed",
-      "decision": "implemented-narrow-adaptation",
+      "decision": "already_present: Retain multipart cooldown checks and fresh model/effort proof between accepted stages.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-browser.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No multipart live account reproduction or automated test was run. The adaptation preserves local cancellation, suspension-clock, pinned-version, and diagnostic behavior rather than copying the upstream loop verbatim."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "pull:602": {
       "kind": "pull",
       "number": 602,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/602",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-20T18:43:48Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:39Z",
       "headSha": "c6e2a2521091824488c71bc15846c91afa29bf3c",
       "status": "reviewed",
-      "decision": "implemented-narrow-adaptation-with-stricter-semantics",
+      "decision": "adapted_narrowly: Keep explicit picker failure; detect locked effort ticks in capability discovery and before Send, without inferring quota exhaustion.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-browser.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No exhausted-Pro account or entitlement-change surface was exercised. The upstream proposal used 429 for every missing Pro row; the local adaptation avoids asserting a rate limit without explicit retry evidence."
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     },
     "issue:610": {
       "kind": "issue",
       "number": 610,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/610",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-21T06:46:15Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:28:13Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "stale-capability-gate-implemented-transactional-probe-assigned-elsewhere",
+      "decision": "covered_by_candidate_worktree: The current shared uncommitted browser-model-selection changes detect locked effort positions before selecting them; this matches the Plus upgrade-modal issue. Treat as candidate coverage pending integration/verification, not as behavior present in the named baseline commit.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "No Plus account paywall was reproduced. The transactional capability-publication fix in src/chatgpt-session.ts is owned by a separate agent and is not part of this browser report."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:609": {
       "kind": "issue",
       "number": 609,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/609",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-21T06:46:05Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:02Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "confirmed-label-gap-with-existing-structural-fallback",
+      "decision": "not_applicable_supported_locale_scope: The Czech-language control-label failure is real under that locale, while current supported automation guidance requires the ChatGPT website in English. The maintainer added that configuration guidance; no broader localization guarantee is implied.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "The reporter's Czech DOM and checkpoints were not available locally. No resource-backed current personalization-label set was obtainable from the reviewed material, so no label-list source edit was made."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:606": {
       "kind": "issue",
       "number": 606,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/606",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-20T21:37:44Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:05:00Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "needs-current-nekodex-reproduction-after-newer-recovery-code",
+      "decision": "unresolved_local_candidate_needs_trace: Reporter says the browser-only smoke failure also reproduced on isolated DEV from then-current main, which is stronger than an account-only claim, but supplied thread evidence still lacks the requested full safe exports and structural checkpoint. v6 lifecycle/viewport paths are relevant; root cause and candidate coverage remain undetermined in this review.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "Linux was not exercised and the attached local diagnostic exports were not downloaded. The issue contains one success and one failure, but no DOM checkpoint proving why Enter or viewport acquisition stalled."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
     },
     "issue:605": {
       "kind": "issue",
       "number": 605,
       "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/605",
-      "reviewedAt": "2026-09-21T09:31:00Z",
-      "sourceUpdatedAt": "2026-09-20T20:52:08Z",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:35:41Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "already-contained-by-current-source",
+      "decision": "external_account_or_platform_evidence_required: The user sees ChatGPT return “Something went wrong” after submitting a large retained context. The record does not establish whether the trigger is context size, site generation, or bridge handling; maintainer appropriately marks cause unconfirmed.",
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
       ],
-      "sourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
       "recheckRequired": false,
-      "scopeNote": "This prevents repeated automatic replay; it does not make ChatGPT accept the 104k-token multipart acknowledgement or prove the provider-side cause. No current live resume was attempted."
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:483": {
+      "kind": "issue",
+      "number": 483,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/483",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-24T09:39:09Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6: Reporter later confirmed the smoke test passed and models installed. Treat as resolved in that observed account/session; no independent claim about all smoke failures follows.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:558": {
+      "kind": "issue",
+      "number": 558,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/558",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-21T12:14:39Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "not_applicable: The item requests complete deletion and contains no actionable product report or technical evidence. It is closed; no source decision is indicated.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:617": {
+      "kind": "issue",
+      "number": 617,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/617",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-21T14:45:12Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6_pending_retest: The issue’s final diagnosis points to an authentication-probe navigation race; maintainer says its fix is in v6. No fresh account retest is included in this issue.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:618": {
+      "kind": "issue",
+      "number": 618,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/618",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:03:58Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6: The later-turn native-tool loss overlaps #428’s retained-chat connector omission. v6’s per-turn new browser chat reattaches the connector; no separate proven failure remains in this record.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:619": {
+      "kind": "issue",
+      "number": 619,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/619",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:28:22Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6_pending_retest: The issue is missing trusted cwd after compaction on an old release. v6 resolves current authority from the native rollout and bounds pathless continuation claims; this is relevant coverage, while exact historical account reproduction remains absent.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:620": {
+      "kind": "issue",
+      "number": 620,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/620",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-21T11:52:04Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6: The setup CLI accepts the legitimate connector name in DEV and production contexts; the issue’s requested change is represented in current setup policy/configuration.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:621": {
+      "kind": "issue",
+      "number": 621,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/621",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:48Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_account_or_platform_evidence_required: The Chinese report describes old-task model rejection while new tasks still invoke local tools. That does not identify whether the retained browser conversation, selected model, or Codex route is stale; it needs a current time-matched trace.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:622": {
+      "kind": "issue",
+      "number": 622,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/622",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T01:02:16Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_account_or_platform_evidence_required: This is a tracking issue for ChatGPT safety refusals and model-reported tool/token failures. Reports within it include distinct mechanisms; model narration/screenshots are not equivalent to a failed native tool result. No single local correction follows.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:624": {
+      "kind": "issue",
+      "number": 624,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/624",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:28:25Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6_pending_retest: The reported close operation races an already-cancelled multipart browser turn. v6 has lifecycle admission and owned-turn cancellation/settlement coordination; the issue does not contain a current-release retest.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:626": {
+      "kind": "issue",
+      "number": 626,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/626",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:57Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6_pending_retest: The Windows report concerns psmux being mistaken for tmux during setup. Current runtime/setup capability detection has platform-specific process/terminal checks, but the issue has no post-v6 retest.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:628": {
+      "kind": "issue",
+      "number": 628,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/628",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:28:29Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_account_or_platform_evidence_required: The issue reports a Linux packaged browser sign-in page that fails to render. Browser engine, distribution dependencies, and WebKit/WebView environment are implicated; no safe local source-level fix is established by the captured report.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:629": {
+      "kind": "issue",
+      "number": 629,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/629",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:36:23Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_tunnel_path_evidence_required: Passive traces show a token matching the registered hash but zero broker claims/commands, locating the loss before the observed local process. Later maintainer telemetry explains counters at INFO, but the evidence still cannot distinguish missing tunnel delivery from received-but-unforwarded work.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:630": {
+      "kind": "issue",
+      "number": 630,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/630",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:05:13Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_tool_permission_evidence_required: Native MCP events show the file-info call reached and failed at the filesystem tool. The tool server’s exact error and allowed-directory policy are missing; Codex Full Access does not override a separate MCP server root.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:631": {
+      "kind": "issue",
+      "number": 631,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/631",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T01:02:26Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_account_or_platform_evidence_required: The trace demonstrates a streamed text block changed after a tool round and the bridge rejected the conflict. Reporter has not supplied the requested visible-tab/video evidence showing whether ChatGPT itself removed the block; source output validation is the relevant guard, but the cause and safe correction are unresolved.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:633": {
+      "kind": "issue",
+      "number": 633,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/633",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:03:53Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6: The reported absent native tools on a retained follow-up aligns with #428. The v6 new-browser-chat-per-turn setting reattaches the connector in a clean conversation.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:634": {
+      "kind": "issue",
+      "number": 634,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/634",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:04:53Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_account_or_platform_evidence_required: Connector creation failed in ChatGPT’s Plugins UI. The local tunnel/harness health checks cannot create or prove an account-side connector; subsequent missing menu row is expected if creation did not succeed.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:635": {
+      "kind": "issue",
+      "number": 635,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/635",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T16:56:15Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6: The issue reports loss of Markdown link destinations. Reporter retested on v6 and confirms plain and bold links now preserve destinations; remaining malformed text was already in browser output.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:636": {
+      "kind": "issue",
+      "number": 636,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/636",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T23:32:25Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "not_applicable_codex_desktop_limit: The screenshot shows Codex’s native usage-limit banner disabling Send before the request reaches this bridge. The supported workaround changes the separate Codex login; it does not affect the launcher’s ChatGPT account limits.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:637": {
+      "kind": "issue",
+      "number": 637,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/637",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T00:24:19Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_candidate_worktree: The shared uncommitted selector changes separate and verify selected model family and effort, matching the requested independent GPT-5.6 Sol pin. Candidate coverage is not yet in the named baseline commit.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:639": {
+      "kind": "issue",
+      "number": 639,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/639",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T11:40:18Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "needs_correlated_local_trace: The detailed error is the bridge’s strict current-user/turn_id consistency guard; the generic “capacity” text is not evidence of actual quota. It may be rejecting stale or malformed Codex input correctly, or expose a local identity mismatch. #546 is the shared thread; a matched current request and rollout is needed before changing this safety check.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:640": {
+      "kind": "issue",
+      "number": 640,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/640",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:21:49Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_v6: Maintainer reproduced a false-positive conflict when Codex rewrote a semantically unchanged Interrupt hook; v6 hook normalization preserves unrelated config and rejects actual command/trust changes. Setup/removal were reported successful after the correction.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:642": {
+      "kind": "issue",
+      "number": 642,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/642",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:21:51Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "covered_by_candidate_worktree: The current shared uncommitted model-selection change recognizes Korean “최신”; this matches the reported Korean label omission. Treat as candidate coverage pending integration/verification, not as behavior present in the named baseline commit.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:643": {
+      "kind": "issue",
+      "number": 643,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/643",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T11:40:15Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "not_applicable_supported_locale_and_fixed_effort: The captured UI was Russian, outside supported ChatGPT control locales; GPT-6 Pro uses fixed effort by design. This report does not demonstrate a defect within the supported English UI.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:645": {
+      "kind": "issue",
+      "number": 645,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/645",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:36:32Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "adapted_documentation: Updated root TROUBLESHOOTING.md to the actual Connections → Install into Codex → Reinstall action. No product behavior changed.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:646": {
+      "kind": "issue",
+      "number": 646,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/646",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:30:38Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_account_or_platform_evidence_required: This combines an account-specific Business Teams Premium 5x plan, automatic compaction model selection, and input-size behavior. The reporter has not provided the requested plan/model controls or safe logs; weekly usage limits do not establish context input capacity.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:647": {
+      "kind": "issue",
+      "number": 647,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/647",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T17:30:43Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "not_applicable_upstream_limits_ui_absent: The upstream account-plan Limits UI was not adopted on this branch. Local Native quota/session observations and Web/native usage receipts are distinct features. Do not claim local Pro 5x heading detection.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:648": {
+      "kind": "issue",
+      "number": 648,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/648",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T16:56:04Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "adapted_narrow_observed_label: Adapted the observed French Latest label alongside Korean with independent family/radio/effort proof. This does not add broad French launcher localization or prove all French website controls.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:651": {
+      "kind": "issue",
+      "number": 651,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/651",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:01:03Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "not_applicable_codex_desktop_limit: The report is consistent with the Codex Desktop usage-limit state disabling Send before bridge submission; a comment points to the same account-switch workaround. No local request reaches NEKODEX.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:652": {
+      "kind": "issue",
+      "number": 652,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/652",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:36:35Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_install_environment_evidence_required: The user’s Linux update failure is attributed in follow-up to running an AppImage without the stable installer-wrapper path. This is an install-method/package state issue; the report is from 5.0.8 and does not demonstrate missing shared libraries in current source.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:653": {
+      "kind": "issue",
+      "number": 653,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/653",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:59:51Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "present_in_shared_candidate_worktree_uncommitted: Baseline afd9e5a accepted a one-pixel intersection. Current shared candidate implements a 96 px by 32 px visible-title-bar threshold; a regression case is present in window-state.test.cjs. Uncommitted; tests not run here.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:655": {
+      "kind": "issue",
+      "number": 655,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/655",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:59:53Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "present_in_shared_candidate_worktree_uncommitted: Baseline afd9e5a restored only the active log. Current candidate readRecent loads rotated then active logs and caps combined history; a regression case is present in logging.test.cjs. Uncommitted; tests not run here.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:657": {
+      "kind": "issue",
+      "number": 657,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/657",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:29:20Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "present_in_shared_candidate_worktree_uncommitted: Baseline afd9e5a compared only path strings and wrote in place. Current candidate checks file identity and atomically replaces the destination; symlink/hard-link regression coverage is present in logging.test.cjs. Uncommitted; tests not run here.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:659": {
+      "kind": "issue",
+      "number": 659,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/659",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:29:22Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "present_in_shared_candidate_worktree_uncommitted: Baseline installer retried API errors after 2 and 4 seconds. Current candidate detects rate-limit responses, reports reset information and documents the known-version route while retaining checksum/signature checks. Uncommitted; quota exhaustion is external.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:660": {
+      "kind": "issue",
+      "number": 660,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/660",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:33:18Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "not_applicable_codex_desktop_limit: Maintainer links the same issue to OpenAI Codex’s Send-disabled behavior and documents switching the Codex login while keeping the launcher’s ChatGPT login. This is before bridge submission.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:661": {
+      "kind": "issue",
+      "number": 661,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/661",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:29:28Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_live_browser_ui_evidence_required: Reporter provides a specific successful-vs-failing checkpoint sequence and says the ChatGPT UI changed, but the account page works manually and the safe export has not been attached. This points to an external DOM/session-surface change; no selector update is justified without the failing DOM/checkpoint capture.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:662": {
+      "kind": "issue",
+      "number": 662,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/662",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-24T13:20:01Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_live_browser_ui_evidence_required: Logs report repeated session inspection timeouts and the same “login/new chat surface unavailable” message after a stated ChatGPT UI update. This is credible account/browser evidence, but no live DOM or current app reproduction here establishes which selector or navigation boundary failed. Correlate with #661.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "issue:663": {
+      "kind": "issue",
+      "number": 663,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/issues/663",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-24T13:48:54Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "external_live_browser_setup_evidence_required: Reviewed the public diagnostic ZIP (14,700 JSONL events). It corroborates successful smoke runs followed by repeated automatic core-setup session-inspection failures; Manual startup succeeds. The export lacks the failing composer DOM/structure needed to establish a precise selector or session cause. Preserve that distinction and do not infer expired login from the aggregate error.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-issues.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Review completed against current source and public evidence. Source coverage does not establish a live reporter-account reproduction; see decision and lane verification limits."
+    },
+    "pull:616": {
+      "kind": "pull",
+      "number": 616,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/616",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-21T09:35:47Z",
+      "headSha": "64362fd2a802c5fdb2869ea66c0ea055c6451972",
+      "status": "reviewed",
+      "decision": "not_adopted: Same broad alternative design as 615; committed-stream resync and unrelated session/startup changes violate retained contracts.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-runtime.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
+    },
+    "pull:623": {
+      "kind": "pull",
+      "number": 623,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/623",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-22T22:35:22Z",
+      "headSha": "3420e522f046a217c4d57cbcad2e4c425232cd79",
+      "status": "reviewed",
+      "decision": "adapted: Cancellation reaches the direct acquisition and exact owned document; keep queue cancel/ack lifecycle distinct.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-browser.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
+    },
+    "pull:627": {
+      "kind": "pull",
+      "number": 627,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/627",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T02:33:26Z",
+      "headSha": "eaeb42ad140b3eae9d01208e93ab96f64edd688f",
+      "status": "reviewed",
+      "decision": "adapted: Print restart guidance only after successful changed route action, on stderr while preserving stdout JSON.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-setup-platform.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
+    },
+    "pull:638": {
+      "kind": "pull",
+      "number": 638,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/638",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T03:05:33Z",
+      "headSha": "37677cf79259c60f94fa5f953ca5f75f9b0136f7",
+      "status": "reviewed",
+      "decision": "rejected: Generated session/state logs and regressions to release policy are not suitable changes; actual release reviewed separately.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-setup-platform.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
+    },
+    "pull:649": {
+      "kind": "pull",
+      "number": 649,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/649",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T16:56:10Z",
+      "headSha": "06dc7b830a978b11828f5fff89a0d19f8cc946c4",
+      "status": "reviewed",
+      "decision": "adapted_narrowly: Accept observed French/Korean Latest labels with independent family/radio/effort proof; retain NEKODEX locale architecture.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-browser.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
+    },
+    "pull:650": {
+      "kind": "pull",
+      "number": 650,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/650",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:29:14Z",
+      "headSha": "c3dcadf1712b025400a2d1bea6484247c9356d5a",
+      "status": "reviewed",
+      "decision": "rejected: Brief-only filter removes current tool results and active system/developer constraints; do not substitute directBrief for canonical execution context.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-runtime.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
+    },
+    "pull:654": {
+      "kind": "pull",
+      "number": 654,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/654",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:59:56Z",
+      "headSha": "1cb4acb6461a80765e7c1bfb446fc7b16cdf9f5f",
+      "status": "reviewed",
+      "decision": "adapted: Require a usable titlebar overlap before restoring saved window placement.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-launcher-prs.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
+    },
+    "pull:656": {
+      "kind": "pull",
+      "number": 656,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/656",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-23T20:59:58Z",
+      "headSha": "90adf9dc9f37349cfef85448536bb9d72d4449b7",
+      "status": "reviewed",
+      "decision": "adapted: Restore rotated then current Activity records using bounded reads and one combined retention limit.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-launcher-prs.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
+    },
+    "pull:658": {
+      "kind": "pull",
+      "number": 658,
+      "url": "https://github.com/miuuyy/codex-chatgpt-web/pull/658",
+      "reviewedAt": "2026-09-24T14:27:12.836207+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:29:33Z",
+      "headSha": "f3173055eea2976aebdd4cb3c62faeb3ac0f489c",
+      "status": "reviewed",
+      "decision": "adapted: Reject symlink/hardlink source-log aliases and export by private atomic destination replacement.",
+      "evidence": [
+        "docs/reviews/2026-09-24-upstream-v6.md",
+        "docs/reviews/2026-09-24-v6-launcher-prs.md"
+      ],
+      "sourceRevision": "115792667386478cd1fd5c391b8795cede90a8e7",
+      "recheckRequired": false,
+      "scopeNote": "Exact PR body/comments/reviews/patch and local equivalents reviewed; adaptation is independent of upstream merge state. No installed-app/release claim."
     }
   }
 }
