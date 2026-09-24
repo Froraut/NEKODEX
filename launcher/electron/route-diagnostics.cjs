@@ -30,7 +30,7 @@ function withCatalogObservation(report, health, config, expectedPid) {
   const count = current && Number.isSafeInteger(health.successful_model_catalog_requests)
     && health.successful_model_catalog_requests >= 0 ? health.successful_model_catalog_requests : null;
   const receipt = current ? catalogReceipt(health.last_model_catalog_result) : null;
-  const failed = receipt?.status >= 400;
+  const failed = receipt?.status >= 300;
   const timestamp = health?.last_successful_model_catalog_request_at;
   const lastAt = count > 0 && typeof timestamp === "string" && timestamp.length <= 64
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp)

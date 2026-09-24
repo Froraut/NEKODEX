@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-test("native networking uses its validated bootstrap route when the launcher descriptor is absent", async () => {
+test("bootstrap fallback serves responses but only explicit global transport permits background readiness", async () => {
   const environmentProxyKeys = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] as const;
   const previousEnvironmentProxies = new Map(environmentProxyKeys.map(key => [key, process.env[key]]));
   const previousFetch = globalThis.fetch;
@@ -19,7 +19,7 @@ test("native networking uses its validated bootstrap route when the launcher des
   }) as typeof fetch;
   try {
     const network = await import(new URL("../src/native-network.ts?background-fallback-test", import.meta.url).href);
-    expect(network.nativeNetworkBackgroundReady()).toBe(true);
+    expect(network.nativeNetworkBackgroundReady()).toBe(false);
     const response = await network.fetchNativeCodex(
       new Request("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body: "{}" }),
     );
@@ -28,6 +28,17 @@ test("native networking uses its validated bootstrap route when the launcher des
       url: "https://chatgpt.com/backend-api/codex/responses",
       proxy: "http://127.0.0.1:48123",
     }]);
+    // A working exact-URL fallback still cannot promise all endpoints after GUI quit.
+    expect(network.nativeNetworkBackgroundReady()).toBe(false);
+    process.env.CODEX_CHATGPT_WEB_NATIVE_PROXY = "http://127.0.0.1:48124";
+    expect(network.nativeNetworkBackgroundReady()).toBe(true);
+    process.env.CODEX_CHATGPT_WEB_NATIVE_PROXY = "socks5://127.0.0.1:48124";
+    process.env.HTTPS_PROXY = "http://127.0.0.1:48125";
+    expect(network.nativeNetworkBackgroundReady()).toBe(false);
+    delete process.env.CODEX_CHATGPT_WEB_NATIVE_PROXY;
+    expect(network.nativeNetworkBackgroundReady()).toBe(true);
+    delete process.env.HTTPS_PROXY;
+    expect(network.nativeNetworkBackgroundReady()).toBe(false);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousDescriptor === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR;

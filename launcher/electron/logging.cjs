@@ -5,8 +5,10 @@ const { renameAtomicFile } = require("./atomic-file.cjs");
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
 const MAX_STREAM_ERROR_LOG_BYTES = 256 * 1024;
 const MAX_MEMORY_RECORDS = 300;
+const MAX_READ_BYTES_PER_LOG = MAX_LOG_BYTES;
 const MAX_LOG_STRING_CHARS = 16 * 1024;
 const SENSITIVE_LOG_KEY_PATTERN = /(?:authorization|cookie|runtimeKey|controlToken)/i;
+let exportSequence = 0;
 
 function redactText(value) {
   const redacted = value
@@ -54,17 +56,61 @@ function sanitizeForExport(value, seen = new WeakSet()) {
   );
 }
 
+function readLogLines(filePath) {
+  const descriptor = fs.openSync(filePath, "r");
+  try {
+    const size = fs.fstatSync(descriptor).size;
+    const length = Math.min(size, MAX_READ_BYTES_PER_LOG);
+    const start = size - length;
+    const bytes = Buffer.alloc(length);
+    let read = 0;
+    while (read < length) {
+      const count = fs.readSync(descriptor, bytes, read, length - read, start + read);
+      if (count === 0) break;
+      read += count;
+    }
+    const lines = bytes.subarray(0, read).toString("utf8").split(/\r?\n/);
+    // A bounded tail can start inside a JSON record or a UTF-8 sequence.
+    if (start > 0) lines.shift();
+    return lines.filter(Boolean);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function isSourceLogAlias(sourcePaths, destination) {
+  const destinationStat = fs.statSync(destination, { throwIfNoEntry: false });
+  for (const sourcePath of sourcePaths) {
+    if (path.resolve(sourcePath) === destination) return true;
+    if (!destinationStat) continue;
+    const sourceStat = fs.statSync(sourcePath, { throwIfNoEntry: false });
+    if (sourceStat && sourceStat.dev === destinationStat.dev && sourceStat.ino === destinationStat.ino) return true;
+  }
+  return false;
+}
+
+function writeExportAtomically(destination, content) {
+  fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+  const temporary = `${destination}.tmp-${process.pid}-${Date.now()}-${++exportSequence}`;
+  try {
+    fs.writeFileSync(temporary, content, { flag: "wx", mode: 0o600 });
+    renameAtomicFile(temporary, destination);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
 function exportSanitizedLogs({ filePath, destinationPath }) {
   const sourcePaths = [`${filePath}.1`, filePath];
   const destination = path.resolve(destinationPath);
-  if (sourcePaths.some(sourcePath => path.resolve(sourcePath) === destination)) {
+  if (isSourceLogAlias(sourcePaths, destination)) {
     throw new Error("Refusing to overwrite a launcher source log with an exported diagnostic");
   }
   const records = [];
   for (const sourcePath of sourcePaths) {
     let lines;
     try {
-      lines = fs.readFileSync(sourcePath, "utf8").split(/\r?\n/).filter(Boolean);
+      lines = readLogLines(sourcePath);
     } catch (error) {
       if (error && error.code === "ENOENT") continue;
       throw error;
@@ -87,13 +133,12 @@ function exportSanitizedLogs({ filePath, destinationPath }) {
       } catch {}
     }
   }
-  fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(
+  // Replace the selected directory entry atomically. A link swapped in after
+  // the identity check cannot redirect an in-place write into a source log.
+  writeExportAtomically(
     destination,
     records.length > 0 ? `${records.map(record => JSON.stringify(record)).join("\n")}\n` : "",
-    { mode: 0o600 },
   );
-  if (process.platform !== "win32") fs.chmodSync(destination, 0o600);
   return records.length;
 }
 
@@ -114,33 +159,33 @@ function sanitize(value, seen = new WeakSet()) {
 }
 
 function readRecent(filePath) {
-  try {
-    return fs.readFileSync(filePath, "utf8")
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .slice(-MAX_MEMORY_RECORDS)
-      .flatMap((line) => {
-        try {
-          const record = JSON.parse(line);
-          if (!record
-            || typeof record.at !== "string"
-            || !["debug", "info", "warning", "error"].includes(record.level)
-            || typeof record.event !== "string") return [];
-          return [{
-            at: record.at,
-            level: record.level,
-            event: record.event,
-            detail: record.detail && typeof record.detail === "object"
-              ? sanitize(record.detail)
-              : {},
-          }];
-        } catch {
-          return [];
-        }
-      });
-  } catch {
-    return [];
+  const records = [];
+  for (const sourcePath of [`${filePath}.1`, filePath]) {
+    let lines;
+    try {
+      lines = readLogLines(sourcePath);
+    } catch {
+      continue;
+    }
+    for (const line of lines.slice(-MAX_MEMORY_RECORDS)) {
+      try {
+        const record = JSON.parse(line);
+        if (!record
+          || typeof record.at !== "string"
+          || !["debug", "info", "warning", "error"].includes(record.level)
+          || typeof record.event !== "string") continue;
+        records.push({
+          at: record.at,
+          level: record.level,
+          event: record.event,
+          detail: record.detail && typeof record.detail === "object"
+            ? sanitize(record.detail)
+            : {},
+        });
+      } catch {}
+    }
   }
+  return records.slice(-MAX_MEMORY_RECORDS);
 }
 
 function createLogger({ filePath, publish }) {

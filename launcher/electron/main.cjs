@@ -1,5 +1,10 @@
+const { registerBrowserHandlers } = require("./ipc/browser-handlers.cjs");
+const { registerAccountHandlers } = require("./ipc/account-handlers.cjs");
+const { createChromeProfileChoice } = require("./chrome-profile-choice.cjs");
+const { createProfileFirstLogin } = require("./profile-first-login.cjs");
 const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
+const { syncConversationPreferences, changeConversationPreference } = require("./conversation-preferences.cjs");
 const { createCodexAccountTools } = require("./codex-account-tools.cjs");
 const { MANUAL_CONNECTOR_NAME, automaticConnectorName, isLegacyConnectorName } = require("./connector-identity.cjs");
 const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapacity } = require("./browser-capacity.cjs");
@@ -54,7 +59,6 @@ const { CHROME_SETTINGS_ADDRESS, confirmExistingChromeImport } = require("./exis
 const { selectChromeConnectionFile } = require("./existing-chrome-file-access.cjs");
 const {
   createStateStore,
-  nextSessionRefreshReminderAt,
   validateSidebarState,
 } = require("./state.cjs");
 const {
@@ -906,6 +910,21 @@ function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(
     ipcMain, logger, channel, lifecycleAdmission.guard(channel, handler), authorize,
   );
+  const syncConversationState = owner => {
+    if (owner) lifecycleAdmission.assertOwner(owner);
+    return syncConversationPreferences({
+      stateStore,
+      config: runtimeHost.runtimeConfigSnapshot().config,
+      browserHost,
+      busy: (!owner && lifecycleAdmission.busy()) || Boolean(runtimeHost.currentOperation()),
+      publish: state => send("launcher:state-changed", state),
+    });
+  };
+  const changeConversationState = (label, change) => {
+    if (shutdownInProgress || quitting || exitCommitted) throw new Error("NEKODEX is shutting down");
+    return changeConversationPreference({ lifecycleAdmission, browserHost, runtimeHost, label, change,
+      sync: syncConversationState, shouldReopen: () => !exitCommitted });
+  };
   handle("launcher:snapshot", async () => ({
     profile: LAUNCHER_PROFILE.kind,
     profilePaths: {
@@ -913,7 +932,11 @@ function registerIpc({ logger, stateStore }) {
       codexHome: LAUNCHER_PROFILE.codexHome,
       userData: launcherUserData,
     },
-    state: lifecycleAdmission.busy() ? stateStore.read() : ensureRuntimeProofCurrent(stateStore),
+    state: (() => {
+      if (lifecycleAdmission.busy()) return stateStore.read();
+      syncConversationState();
+      return ensureRuntimeProofCurrent(stateStore);
+    })(),
     proModelVersion: runtimeHost.proModelVersion(),
     compactionModel: runtimeHost.compactionModel(),
     browserCapacity: browserCapacitySnapshot(),
@@ -980,82 +1003,17 @@ function registerIpc({ logger, stateStore }) {
     return true;
   });
 
-  handle("launcher:browser-bounds", (event, bounds) => {
-    browserHost?.setBounds(validateBounds(bounds), event.sender.getZoomFactor());
-    return true;
-  });
-  handle("launcher:browser-surface-active", (_event, active) => browserHost.setSurfaceActive(active === true));
-  handle("launcher:browser-show", () => browserHost.reveal(
-    stateStore.read().browserInteractionMode === "automatic",
-  ));
-  handle("launcher:browser-hide", () => { browserHost?.hide(); return browserHost?.snapshot(); });
-  handle("launcher:browser-navigate", (_event, action) => browserHost.navigate(action));
-  handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
-  handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
-  handle("launcher:browser-tab-close", (_event, tabId, expectedTraceId) => browserHost.closeTab(tabId, expectedTraceId));
-  handle("launcher:manual-prompt-copy", (_event, tabId) => browserHost.copyManualPrompt(tabId));
-  handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost.confirmManualSent(tabId));
-  handle("launcher:browser-login", async () => {
-    const browser = await browserHost.openLogin();
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
-    return browser;
-  });
-  handle("launcher:browser-passkey-login", async () => {
-    const browser = await browserHost.openPasskeyLogin();
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
-    return browser;
-  });
-  handle("launcher:browser-passkey-login-continue", () => {
-    if (browserHost.snapshot().passkeyLogin?.canImport !== true) throw new Error("No passkey sign-in is waiting for Continue");
-    return runtimeHost.continuePasskeyLogin();
-  });
-  handle("launcher:browser-passkey-login-reveal", () => {
-    if (browserHost.snapshot().passkeyLogin?.canReveal !== true) throw new Error("No dedicated Chrome sign-in is waiting");
-    return runtimeHost.revealPasskeyLogin();
-  });
-  handle("launcher:browser-passkey-login-cancel", () => browserHost.cancelPasskeyLogin(() => runtimeHost.cancelPasskeyLogin()));
-  handle("launcher:browser-existing-chrome-login", async () => {
-    const browser = await browserHost.openExistingChromeLogin(() => confirmExistingChromeImport(dialog, mainWindow, stateStore.read().language));
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
-    return browser;
-  });
-  handle("launcher:browser-existing-chrome-login-cancel", () => browserHost.cancelExistingChromeLogin(() => runtimeHost.cancelExistingChromeLogin()));
-  handle("launcher:browser-existing-chrome-file-access", async () => {
-    const browser = await browserHost.allowExistingChromeFileAccess(signal => selectChromeConnectionFile({
+  registerBrowserHandlers({
+    handle, getBrowserHost: () => browserHost, getRuntimeHost: () => runtimeHost,
+    stateStore, validateBounds, send, platform: process.platform,
+    invalidateAccountProof: () => invalidateAccountProof(stateStore),
+    confirmExistingChromeImport: () => confirmExistingChromeImport(dialog, mainWindow, stateStore.read().language),
+    selectChromeConnectionFile: signal => selectChromeConnectionFile({
       dialog, window: mainWindow, homeDir: app.getPath("home"), language: stateStore.read().language, signal,
       isCurrent: () => browserHost.existingChromeLoginController?.signal === signal
         && stateStore.read().browserInteractionMode === "automatic" && mainWindow && !mainWindow.isDestroyed(),
-    }));
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
-    return browser;
-  });
-  handle("launcher:browser-existing-chrome-settings-copy", () => {
-    clipboard.writeText(CHROME_SETTINGS_ADDRESS);
-    return true;
-  });
-  handle("launcher:browser-logout", async () => {
-    invalidateAccountProof(stateStore);
-    const browser = await browserHost.logout();
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return { browser, state };
-  });
-  handle("launcher:session-reminder-dismiss", () => {
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return state;
+    }),
+    copyChromeSettingsAddress: () => clipboard.writeText(CHROME_SETTINGS_ADDRESS),
   });
   handle("launcher:browser-smoke", async () => {
     if (stateStore.read().browserInteractionMode === "manual") {
@@ -1170,8 +1128,15 @@ function registerIpc({ logger, stateStore }) {
 
   handle("launcher:doctor", () => IS_DEV_PROFILE ? runtimeHost.devDoctor() : runtimeHost.doctor());
   handle("launcher:route-diagnostics", () => runtimeHost.routeDiagnostics());
-  handle("launcher:cancel-turns", () => {
+  handle("launcher:cancel-turns", async () => {
     if (IS_DEV_PROFILE) throw new Error("DEV chat turns are owned by the repository CLI process");
+    const translations = require('./task-control-copy.json');
+    const copy = translations[stateStore.read().language] ?? translations.en;
+    const confirmation = await dialog.showMessageBox(mainWindow, {
+      type: 'warning', title: copy.all, message: copy.all, detail: copy.detail,
+      buttons: [copy.cancel, copy.confirm], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (confirmation.response !== 1) return { cancelled: true };
     return runtimeHost.cancelActiveTurns();
   });
   handle("launcher:uninstall-integration", async () => {
@@ -1300,7 +1265,8 @@ function registerIpc({ logger, stateStore }) {
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
     });
     send("launcher:state-changed", state);
-    if (interactionModeChange) send("launcher:browser-state", browserHost.snapshot());
+    // Advance the pool observation after the saved mode changes; do not send an unstamped refresh.
+    if (interactionModeChange) browserHost.publish();
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return { ok: true, stdout: result.stdout };
   });
@@ -1363,7 +1329,7 @@ function registerIpc({ logger, stateStore }) {
         codexRestartRequired: !IS_DEV_PROFILE,
       });
       send("launcher:state-changed", state);
-      send("launcher:browser-state", browserHost.snapshot());
+      browserHost.publish();
       if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
       return state;
     } finally {
@@ -1392,13 +1358,11 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:fresh-conversation", async (_event, enabled) => {
     if (typeof enabled !== "boolean") throw new Error("Fresh conversation per turn must be a boolean");
-    if (browserHost.activeTraceId || browserHost.currentOperation()) {
-      throw new Error("Finish or cancel active ChatGPT turns before changing Fresh conversation per turn");
-    }
-    const result = await runtimeHost.setFreshConversation(enabled === true);
-    const state = stateStore.update({ experimentalFreshConversationPerTurn: result.enabled });
-    send("launcher:state-changed", state);
-    return state;
+    return changeConversationState("browser conversation retention change", () => runtimeHost.setFreshConversation(enabled));
+  });
+  handle("launcher:use-saved-chats", async (_event, enabled) => {
+    if (typeof enabled !== "boolean") throw new Error("Saved chat preference must be a boolean");
+    return changeConversationState("saved ChatGPT conversation change", () => runtimeHost.setUseSavedChats(enabled));
   });
   handle("launcher:cancel-context-change", async () => contextChangeQueue.cancel());
   handle("launcher:confirm-codex-models", async () => {
@@ -1465,53 +1429,34 @@ function registerIpc({ logger, stateStore }) {
       } : {}),
     });
     send("launcher:state-changed", state);
-    send("launcher:browser-state", browserHost.snapshot());
+    browserHost.publish();
     if (!IS_DEV_PROFILE && result.configured) startCatalogVerificationMonitor({ logger, stateStore });
     return { state, credentialsRequired: false, targetMode: mode };
   });
-  handle("launcher:accounts", () => browserHost.accountSnapshot());
-  handle("launcher:account-codex-quota-snapshot", (_event, id) => accountToolsService.quotaSnapshot(id));
-  handle("launcher:account-codex-quota-refresh", (_event, id) => accountToolsService.refreshQuota(id));
-  handle("launcher:codex-login-snapshot", () => accountToolsService.snapshot());
-  handle("launcher:codex-login-start", (_event, id) => {
-    if (quitting || shutdownInProgress || runtimeHost.currentOperation()) throw new Error("Finish the current runtime operation before Codex sign-in");
-    return accountToolsService.start(id);
+  registerAccountHandlers({
+    handle, getBrowserHost: () => browserHost, getAccountToolsService: () => accountToolsService,
+    isRuntimeBusy: () => quitting || shutdownInProgress || runtimeHost.currentOperation(),
+    invalidateAccountProof: () => invalidateAccountProof(stateStore),
   });
-  handle("launcher:codex-login-status", (_event, flowId, id) => accountToolsService.status(flowId, id));
-  handle("launcher:codex-login-open", (_event, flowId, id) => accountToolsService.open(flowId, id));
-  handle("launcher:codex-login-cancel", (_event, flowId, id) => accountToolsService.cancel(flowId, id));
-  handle("launcher:codex-login-copy-code", (_event, flowId, id) => accountToolsService.copyCode(flowId, id));
-  handle("launcher:account-add", (_event, label) => browserHost.addAccount(label));
-  handle("launcher:account-select", async (_event, id) => {
-    invalidateAccountProof(stateStore);
-    return browserHost.selectAccount(id);
-  });
-  handle("launcher:account-enabled", (_event, id, enabled) => {
-    return browserHost.setAccountEnabled(id, enabled);
-  });
-  handle("launcher:account-proxy", (_event, id, value) => {
-    accountToolsService.assertAccountMutable(id);
-    return browserHost.setAccountProxy(id, value);
-  });
-  handle("launcher:account-safety", (_event, id, policy) => browserHost.setAccountSafety(id, policy));
-  handle("launcher:account-resume", (_event, id) => browserHost.resumeAccount(id));
-  handle("launcher:account-mode", (_event, mode) => browserHost.setAccountMode(mode));
-  handle("launcher:account-login", (_event, id) => {
-    accountToolsService.assertAccountMutable(id);
-    return browserHost.openAccountLogin(id);
-  });
-  handle("launcher:account-check", async (_event, id, connector) => {
-    const selectedAccountId = browserHost.snapshot().accountId;
+  // Narrow Web repair remains a supervisor-owned transition. It may preserve healthy native work,
+  // but renderer authority cannot bypass app-wide operations or active Web/manual turns.
+  handle("launcher:repair-web-route", async () => {
+    const operation = currentGlobalOperation();
+    if (operation) throw new Error(`Finish ${operation} before repairing the Web route`);
+    if (browserHost?.hasActiveTurns()) {
+      return { status: "unavailable", reason: "Finish active Web or Manual work before repairing the Web route" };
+    }
+    if (!runtimeSupervisor?.repairWebRoute) {
+      return { status: "unavailable", reason: "Web route repair is unavailable in this runtime" };
+    }
+    const repairOwner = lifecycleAdmission.acquire("Web route repair");
     try {
-      return await browserHost.checkAccount(id, connector === true);
-    } catch (error) {
-      // A failed check for the account currently shown by the launcher makes
-      // the global proof unusable. A check for an account that is no longer
-      // selected must not erase proof established for the newer selection.
-      if (selectedAccountId === id && browserHost.snapshot().accountId === id) {
-        invalidateAccountProof(stateStore);
-      }
-      throw error;
+      lifecycleAdmission.assertOwner(repairOwner);
+      const competingOperation = currentGlobalOperation();
+      if (competingOperation) throw new Error(`Finish ${competingOperation} before repairing the Web route`);
+      return await runtimeSupervisor.repairWebRoute();
+    } finally {
+      lifecycleAdmission.release(repairOwner);
     }
   });
   handle("launcher:browser-capacity", async (_event, value) => {
@@ -1681,6 +1626,7 @@ async function requestQuit({ admissionHeld = false, restart = false, stopRuntime
     if (browserHost?.hasActiveTurns()) {
       throw new Error("Finish or cancel active tasks before quitting NEKODEX");
     }
+    await browserHost?.closeWorkspaceWindows();
     // Session persistence is a recoverable preflight. Keep every owner intact if it fails.
     await browserHost?.persistSession();
     const operationAfterPersistence = currentGlobalOperation();
@@ -1812,9 +1758,6 @@ async function start() {
       autoStart: false,
     });
   }
-  if (stateStore.read().sessionRefreshReminderAt === null) {
-    stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-  }
   const persistedState = stateStore.read();
   if (persistedState.coreSetupComplete === true && persistedState.codexCatalogVerified === undefined) {
     stateStore.update({
@@ -1876,8 +1819,8 @@ async function start() {
     launcherProfile: LAUNCHER_PROFILE.kind,
     publishOperation,
     publishCapabilities: capability => lifecycleProjection.update(capability),
-    // Prime a known transport for GUI absence. While the GUI is alive, each native request
-    // still resolves the current system route through its authenticated control channel.
+    // Prime the daemon-owned route. While the GUI is alive, bounded background refreshes
+    // use its authenticated control channel without holding every native request.
     nativeProxyEnvironmentProvider: async () => {
       try {
         const proxy = await resolveNativeRequestProxy(
@@ -1943,6 +1886,17 @@ async function start() {
     stateStore.update({ browserInteractionMode: configuredInteractionMode });
   }
   startupPhase = "browser";
+  const profileFirstLogin = createProfileFirstLogin({
+    choose: createChromeProfileChoice({
+      root: path.join(app.getPath("home"), "Library", "Application Support", "Google", "Chrome"),
+      coreHome: CORE_HOME, BrowserWindow, window: () => mainWindow,
+      // Existing-profile metadata and launches are deliberately paired to macOS Stable Chrome.
+      // A configured Beta/Canary/Chromium executable remains available through isolated sign-in;
+      // its unrelated "Profile N" directory must never be selected from Stable's catalog.
+      executable: () => "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      language: () => stateStore.read().language,
+    }), runtime: runtimeHost, session, dialog, window: () => mainWindow, language: () => stateStore.read().language,
+  });
   browserHost = new AccountBrowserPool({
     skipInitialNavigation: launcherSmokeTest,
     getManualSubmitTimeoutSec: () => stateStore.read().manualSubmitTimeoutSec,
@@ -1956,10 +1910,13 @@ async function start() {
     getConnectorName: () => runtimeHost.browserConnectorName(),
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
-    loginWithPasskey: onProgress => runtimeHost.capturePasskeyLogin(onProgress, stateStore.read().passkeyBrowser),
+    loginWithPasskey: (onProgress, context) => stateStore.read().passkeyBrowser === "firefox"
+      ? runtimeHost.capturePasskeyLogin(onProgress, "firefox") : profileFirstLogin(onProgress, context),
+    loginWithChromeProfile: profileFirstLogin,
     loginWithExistingChrome: (onProgress, options) => runtimeHost.captureExistingChromeLogin(onProgress, options),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
+    workspaceDisplays: () => screen.getAllDisplays(),
     publishState: (state) => send("launcher:browser-state", state),
     showWindow: showMainWindow,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,

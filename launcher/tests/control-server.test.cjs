@@ -105,21 +105,52 @@ test("browser control server authenticates and owns turn visibility", async () =
       }),
     });
     assert.equal(end.status, 200);
-    assert.deepEqual(calls, [
-      [
-        "start",
-        "abcdef123456",
-        true,
-        process.pid,
-        "a".repeat(64),
-        "Codex Native4",
-        true,
-      ],
-      ["heartbeat", "abcdef123456", process.pid, true],
-      ["end", "abcdef123456", process.pid, "completed", true, undefined, true, true],
-    ]);
+    assert.deepEqual(calls[0].slice(0, 7), ["start", "abcdef123456", true, process.pid,
+      "a".repeat(64), "Codex Native4", true]);
+    assert.equal(calls[0][9] instanceof AbortSignal, true);
+    assert.deepEqual(calls[1].slice(0, 4), ["heartbeat", "abcdef123456", process.pid, true]);
+    assert.deepEqual(calls[2].slice(0, 8), ["end", "abcdef123456", process.pid,
+      "completed", true, undefined, true, true]);
     assert.equal(logs.some(([, event]) => event === "browser.turn_started"), true);
     assert.equal(logs.some(([, event]) => event === "browser.turn_ended"), true);
+  } finally {
+    await server.close();
+  }
+});
+
+test("disconnected direct turn-start aborts its exact acquisition", async () => {
+  let reportBegin;
+  const began = new Promise(resolve => { reportBegin = resolve; });
+  let aborted = 0;
+  const server = await new BrowserControlServer({
+    logger: { info() {}, warn() {}, error() {} },
+    getBrowserHost: () => ({
+      browserInteractionMode: () => "automatic",
+      beginTurn(...args) {
+        const signal = args.at(-1);
+        reportBegin();
+        return new Promise((_resolve, reject) => signal.addEventListener("abort", () => {
+          aborted++;
+          reject(signal.reason);
+        }, { once: true }));
+      },
+    }),
+    getPreferences: () => ({ showBrowserDuringTurns: false }),
+  }).start();
+  try {
+    const controller = new AbortController();
+    const descriptor = server.descriptor();
+    const request = fetch(`${descriptor.endpoint}/v1/turn/start`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${descriptor.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ phase: "start", traceId: "disconnect123456", helperPid: process.pid }),
+      signal: controller.signal,
+    });
+    await began;
+    controller.abort();
+    await assert.rejects(request, { name: "AbortError" });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(aborted, 1);
   } finally {
     await server.close();
   }
@@ -227,6 +258,7 @@ test("manual control keeps start idempotency separate from long Sent observation
       resumePrompt: "incremental prompt",
       conversationKey: "c".repeat(64),
       compaction: true,
+      useSavedChats: true,
     })).status, 200);
     assert.equal((await post("/v1/manual/wait-sent", owner)).status, 200);
     assert.equal((await post("/v1/manual/wait-terminal", owner)).status, 200);
@@ -236,6 +268,8 @@ test("manual control keeps start idempotency separate from long Sent observation
     assert.equal(calls[0][3], prompt);
     assert.equal(calls[0][5], "incremental prompt");
     assert.equal(calls[0][6], true);
+    assert.equal(calls[0][7], true);
+    assert.equal((await post("/v1/manual/start", { ...owner, prompt, useSavedChats: "yes" })).status, 400);
     assert.equal(calls[1][0], "wait");
     assert.equal(calls[2][0], "wait-terminal");
     assert.equal(logs.some(([, detail]) => JSON.stringify(detail).includes(prompt)), false);

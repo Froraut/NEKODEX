@@ -1,68 +1,118 @@
+import type { LauncherLogStore } from './launcher-log-store';
+import { sessionIssueCopy } from "./session-issue-copy";
 import { CatTail } from "./CatTail";
 import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
-import { useId, type CSSProperties } from "react";
+import { useId, useSyncExternalStore, type CSSProperties } from "react";
 import { Icon, type IconName } from "./icons";
 import type { Copy } from "./i18n";
+import { deriveWorkspaceReadiness, type WorkspaceAction } from "./workspace-readiness";
 import { modelConnectionReadiness } from "./setup-progress";
-import type { BrowserState, LauncherSnapshot, LogRecord, Surface } from "./types";
+import { workflowCopy } from "./workflow-copy";
+import type { BrowserState, LauncherSnapshot, Surface } from "./types";
 
 const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
 const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
 
-export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logs, navigate, openTab }: {
+export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logStore, navigate, openTab }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
   catalogFailure: string | null;
   toolsReady: boolean;
-  logs: LogRecord[]; navigate: (surface: Surface) => void; openTab: (tabId: string) => void;
+  logStore: LauncherLogStore; navigate: (surface: Surface) => void; openTab: (tabId: string) => void;
 }) {
+  const logs = useSyncExternalStore(logStore.subscribe, logStore.getSnapshot);
   const overviewId = useId();
+  const workflow = workflowCopy(snapshot.state.language ?? "en");
   const manual = snapshot.state.browserInteractionMode === "manual";
   const catalogUnavailable = !manual && Boolean(catalogFailure);
   const signedIn = browser?.authenticated === true;
-  const models = modelConnectionReadiness({ manual,
+  const authenticationStatus = browser?.authenticationStatus
+    ?? (signedIn ? "verified" : browser?.status === "signed-out" ? "signed-out" : "unknown");
+  const accountVerified = authenticationStatus === "verified";
+  const runtime = snapshot.runtimeCapabilities ?? snapshot.lifecycle;
+  const readiness = deriveWorkspaceReadiness({
+    manual,
+    authenticationStatus,
+    catalogUnavailable,
+    smokePassed: snapshot.smokePassed,
     installed: snapshot.state.coreSetupComplete === true,
     catalogVerified: snapshot.state.codexCatalogVerified === true,
     pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-    development: snapshot.profile === "development" });
-  const modelsReady = models === "available";
-  const ready = modelsReady && toolsReady && (manual || signedIn);
-  const workspaceReady = modelsReady && (manual || signedIn);
-  const runtime = snapshot.runtimeCapabilities ?? snapshot.lifecycle;
-  const toolsTransportUnavailable = snapshot.state.mcpRuntimeInstalled && runtime
-    && ["degraded", "failed", "recovering", "starting", "stopping"].includes(runtime.tunnelStatus);
-  const heroOpensWorkspace = workspaceReady && !toolsTransportUnavailable && !catalogUnavailable;
+    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
+    toolsVerified: toolsReady,
+    development: snapshot.profile === "development",
+    runtime: runtime ? { ...runtime, transitionActive: Boolean(snapshot.lifecycle?.transition) }
+      : { transitionActive: Boolean(snapshot.lifecycle?.transition) },
+  });
   const activeTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
+  const modelReadiness = modelConnectionReadiness({
+    manual,
+    installed: snapshot.state.coreSetupComplete === true,
+    catalogVerified: snapshot.state.codexCatalogVerified === true,
+    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    development: snapshot.profile === "development",
+  });
+  const modelsReady = modelReadiness === "available";
   const modelStatus = catalogUnavailable ? copy.catalogUnavailable
     : modelsReady ? (manual ? copy.setupInstalledTitle : copy.connectionVerified)
-      : models === "picker-pending" ? copy.modelsConfirmShort
-        : models === "catalog-pending" ? copy.modelsWaitingShort : copy.connectionPending;
+      : modelReadiness === "catalog-pending" ? copy.modelsWaitingShort
+        : modelReadiness === "picker-pending" ? copy.modelsConfirmShort : copy.connectionPending;
+  const toolsError = readiness.tools === "degraded"
+    || (readiness.tools === "unavailable" && readiness.action === "open-tools");
   const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [
-    { icon: "accounts", label: copy.accountConnection, ready: manual || signedIn, surface: "accounts",
-      status: manual ? copy.manualShort : signedIn ? copy.connectionVerified : copy.signInNeededShort },
+    { icon: "accounts", label: copy.accountConnection, ready: manual || accountVerified, surface: "accounts",
+      status: manual ? copy.manualShort : accountVerified ? copy.connectionVerified
+        : authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
+          : authenticationStatus === "unknown" ? workflow.session.checkingVerification : copy.signInNeededShort },
     { error: catalogUnavailable, icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogUnavailable,
       surface: "setup", status: modelStatus },
-    { error: Boolean(toolsTransportUnavailable), icon: "mcp", label: copy.toolsConnectionTab, ready: toolsReady, surface: "mcp",
-      status: toolsTransportUnavailable ? copy.localToolsUnavailable : toolsReady ? copy.connectorVerified : copy.connectorNotVerified },
+    { error: toolsError, icon: "mcp", label: copy.toolsConnectionTab,
+      ready: readiness.tools === "ready", surface: "mcp",
+      status: toolsError
+        ? copy.localToolsUnavailable : toolsReady ? copy.connectorVerified : copy.connectorNotVerified },
   ];
-  const heroTitle = catalogUnavailable ? copy.catalogUnavailable
-    : toolsTransportUnavailable ? copy.localToolsUnavailable : ready ? copy.setupChecksPassed
-      : (manual || signedIn) && snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : copy.overviewTitle;
-  const heroBody = catalogUnavailable ? copy.catalogFailureKeptInstall
-    : toolsTransportUnavailable ? runtime?.nativeAvailability === "ready" ? copy.localToolsUnavailableNativeBody : copy.localToolsUnavailableBody
-    : ready ? copy.connectorAvailableNotExecuted
-      : (manual || signedIn) && snapshot.state.coreSetupComplete
-        ? models === "picker-pending" ? copy.setupConfirmTitle : models === "catalog-pending" ? copy.setupCatalogTitle : copy.manageToolsConnection
-        : copy.overviewBody;
+  const actionSurface: Partial<Record<WorkspaceAction, Surface>> = {
+    "retry-session": "accounts", "open-accounts": "accounts", "open-setup": "setup",
+    "open-tools": "mcp", "repair-web": "mcp", "open-browser": "browser",
+  };
+  const nativePreserved = readiness.native === "ready"
+    && (readiness.web === "degraded" || readiness.web === "unavailable"
+      || readiness.tools === "degraded" || readiness.tools === "unavailable");
+  const setupPending = readiness.action === "open-setup";
+  const toolsPending = readiness.action === "open-tools" || readiness.action === "repair-web"
+    || readiness.reason === "web-repair-active";
+  const catalogIsNext = readiness.reason === "catalog-unavailable";
+  const heroTitle = catalogIsNext ? copy.catalogUnavailable
+    : readiness.reason === "session-unavailable" ? workflow.session.verificationUnavailable
+      : toolsPending ? workflow.recovery.webTransportTitle
+        : readiness.action === "open-browser" ? (nativePreserved ? copy.setupReadyModels : copy.setupChecksPassed)
+          : setupPending ? copy.setupInstalledTitle : copy.overviewTitle;
+  const heroBody = catalogIsNext ? copy.catalogFailureKeptInstall
+    : readiness.reason === "session-unavailable" ? sessionIssueCopy(snapshot.state.language ?? "en", browser?.authenticationIssue)
+      : toolsPending ? (readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody)
+        : readiness.action === "open-browser" ? (nativePreserved ? workflow.recovery.webTransportBody : copy.connectorAvailableNotExecuted)
+          : setupPending ? (readiness.reason === "picker-confirmation-required" ? copy.setupConfirmTitle
+            : readiness.reason === "catalog-waiting" ? copy.setupCatalogTitle : copy.overviewBody)
+            : copy.overviewBody;
+  const heroSurface = catalogIsNext ? "setup" : actionSurface[readiness.action];
+  const heroAction = catalogIsNext ? copy.openRoutingChecks
+    : readiness.action === "retry-session" ? workflow.session.retryVerification
+      : readiness.action === "open-accounts" ? copy.accountConnection
+        : readiness.action === "repair-web" ? workflow.recovery.repairAction
+          : readiness.action === "open-tools" ? copy.manageToolsConnection
+          : readiness.action === "open-browser" ? copy.openWorkspace
+            : readiness.action === "open-setup" ? copy.finishSetup
+              : readiness.reason === "web-repair-active" ? workflow.recovery.repairing : copy.loading;
   return <section className="content-surface overview-surface is-page-scroll">
     <div className="content-scroll overview-scroll">
       <header className="overview-heading"><div><h1>{copy.overview}</h1><p>{copy.overviewSubtitle}</p></div><span className="workspace-location"><Icon name="globe" />{copy.localWorkspace}</span></header>
       <section className="workspace-intro" aria-labelledby="overview-intro-heading">
         <div className="intro-copy"><h2 id="overview-intro-heading">{heroTitle}</h2>
           <p>{heroBody}</p>
-          <button className="button-primary" type="button" onClick={() => navigate(toolsTransportUnavailable ? "mcp" : heroOpensWorkspace ? "browser" : "setup")}>{toolsTransportUnavailable ? copy.manageToolsConnection : heroOpensWorkspace ? copy.openWorkspace : copy.finishSetup}<Icon name="forward" /></button>
+          <button className="button-primary" type="button" disabled={!heroSurface}
+            onClick={() => { if (heroSurface) navigate(heroSurface); }}>{heroAction}<Icon name="forward" /></button>
         </div>
         <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>
       </section>
@@ -72,9 +122,6 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
             <strong className="overview-work-count">{active}</strong>
             <div className="overview-work-copy">
               <h2 id={`${overviewId}-runs`} title={copy.overviewActiveRunsBody}>{copy.overviewActiveRuns}</h2>
-              {!heroOpensWorkspace ? <button className="overview-inline-action" type="button" onClick={() => navigate("browser")}>
-                {copy.openWorkspace}<Icon name="forward" />
-              </button> : null}
             </div>
           </div>
           <div className="overview-work-preferences">
@@ -120,7 +167,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
           </section>
           <section className="overview-activity" aria-live="polite" aria-atomic="false">
             <div className="overview-section-heading"><h2>{copy.recentActivity}</h2><button className="text-button" type="button" onClick={() => navigate("activity")}>{copy.viewAllShort}<Icon name="chevron" /></button></div>
-            {logs.length ? <ul>{logs.slice(-8).reverse().map((log, index) => <li key={`${log.at}-${index}`}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{log.event.replaceAll(/[._-]+/g, " ")}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
+            {logs.length ? <ul>{logs.slice(-8).reverse().map(({ id, record: log }) => <li key={id}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{log.event.replaceAll(/[._-]+/g, " ")}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
               : <div className="overview-empty"><Icon name="logs" /><div><strong>{copy.activityEmpty}</strong><p>{copy.activityEmptyBody}</p></div></div>}
           </section>
         </div>

@@ -128,6 +128,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
     expect(received.authorization).toBe("Bearer launcher-control-token-0123456789abcdefghijklmnop");
     expect(received.body).toEqual({
       phase: "start",
+      mutationId: expect.any(String),
       traceId: "abc123def456",
       helperPid: process.pid,
       conversationKey: "a".repeat(64),
@@ -142,6 +143,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
     });
     expect(received.body).toEqual({
       phase: "heartbeat",
+      mutationId: expect.any(String),
       traceId: "abc123def456",
       helperPid: process.pid,
       refreshViewport: true,
@@ -156,6 +158,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
     })).resolves.toEqual({ cancelledByUser: false });
     expect(received.body).toEqual({
       phase: "end",
+      mutationId: expect.any(String),
       traceId: "abc123def456",
       helperPid: process.pid,
       status: "completed",

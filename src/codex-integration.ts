@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppConfig } from "./config";
-import { getConfigPath, loadConfig, saveConfig } from "./config";
+import { getConfigPath, loadConfig, preserveUtf8Bom } from "./config";
 import {
   codexInterruptHookCommand,
   codexInterruptHookHash,
@@ -32,6 +32,7 @@ import {
   writeIntegrationState,
 } from "./codex-integration-shared";
 import type {
+  FileSnapshot,
   AnyCodexIntegrationJournal,
   CodexIntegrationJournal,
   InstallCodexIntegrationOptions,
@@ -247,39 +248,15 @@ export function setCodexSubagentProtocol(
     throw new Error("Codex integration is disconnected; reconnect it before changing the subagent protocol");
   }
   const nextConfig = { ...config, subagentProtocol: protocol };
-  // The runtime catalog and Codex feature surface are two halves of one protocol selection. If
-  // either write fails, restore every participant so the next launcher/Codex restart cannot load a
-  // split V1/V2 state.
-  const snapshots = [
-    getConfigPath(),
-    getCodexConfigPath(),
-    getCodexHooksPath(),
-    getCodexModelsCachePath(),
-    getCodexJournalPath(),
-    getCodexJournalRecoveryPath(),
-  ].map(path => snapshotFile(path, {
-    followSymlink: path === getCodexConfigPath() || path === getCodexHooksPath(),
-  }));
-  try {
-    const journal = installCodexIntegration(nextConfig);
-    saveConfig(nextConfig);
-    return journal;
-  } catch (error) {
-    const rollbackFailures: string[] = [];
-    for (const snapshot of [...snapshots].reverse()) {
-      try {
-        restoreFileSnapshot(snapshot);
-      } catch (rollbackError) {
-        rollbackFailures.push(
-          `${snapshot.path}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
-        );
-      }
-    }
-    const primary = error instanceof Error ? error.message : String(error);
-    throw new Error(rollbackFailures.length > 0
-      ? `${primary}; subagent protocol rollback also failed: ${rollbackFailures.join("; ")}`
-      : primary);
-  }
+  // Runtime and integration writes share the same ownership-aware compensation boundary.
+  // In particular, never compensate an already-compensated inner failure a second time.
+  const runtime = snapshotFile(getConfigPath(), { followSymlink: true });
+  return installCodexIntegrationState(nextConfig, {}, [{
+    path: runtime.path,
+    data: preserveUtf8Bom(`${JSON.stringify(nextConfig, null, 2)}\n`, runtime.data?.toString("utf8") ?? ""),
+    followSymlink: true,
+    expectedSnapshot: runtime,
+  }]);
 }
 
 export function preflightCodexIntegration(
@@ -374,11 +351,19 @@ export function installCodexIntegration(
   config: AppConfig,
   options: InstallCodexIntegrationOptions = {},
 ): CodexIntegrationJournal {
+  return installCodexIntegrationState(config, options);
+}
+
+function installCodexIntegrationState(
+  config: AppConfig,
+  options: InstallCodexIntegrationOptions,
+  runtimeWrites: Array<{ path: string; data: string; followSymlink: boolean; expectedSnapshot: FileSnapshot }> = [],
+): CodexIntegrationJournal {
   const configPath = getCodexConfigPath();
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
   const configExists = existsSync(configPath);
   const currentText = configExists ? readFileSync(configPath, "utf8") : "";
-  const existing = readJournal({ reconcileInactiveHook: false });
+  const existing = readJournal({ reconcileInactiveHook: false, repair: runtimeWrites.length === 0 });
   const installedUrl = routeUrl(config);
   let hooksJson = currentHooksJson();
   if (existing?.version === 2 && existing.uninstalling) {
@@ -466,7 +451,7 @@ export function installCodexIntegration(
       updated,
       { path: configPath, data: patched.text },
       [getCodexModelsCachePath()],
-      patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : [],
+      [...(patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : []), ...runtimeWrites],
     );
     return updated;
   }
@@ -512,7 +497,7 @@ export function installCodexIntegration(
     journal,
     { path: configPath, data: patched.text },
     [getCodexModelsCachePath()],
-    patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : [],
+    [...(patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : []), ...runtimeWrites],
   );
   if (existing?.version === 2 && existsSync(existing.catalogPath)) rmSync(existing.catalogPath);
   return journal;
@@ -697,35 +682,34 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath(), { followSymlink: true });
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());
-  const expected = new Map<string, Buffer | undefined>();
+  const completedRemovals = new Set<string>();
   const ownedAfterWrite = new Map<string, ReturnType<typeof snapshotFile>>();
   const removeJournalCopy = (snapshot: ReturnType<typeof snapshotFile>): void => {
     const latest = snapshotFile(snapshot.path);
     if (!snapshot.exists || !latest.exists || !snapshot.data || !latest.data?.equals(snapshot.data)) {
       throw new Error(`Codex integration journal changed before uninstall removed it; preserving recovery evidence: ${snapshot.path}`);
     }
-    expected.set(snapshot.path, undefined);
+    assertFileSnapshotCurrent(snapshot);
     rmSync(snapshot.path);
+    completedRemovals.add(snapshot.path);
   };
   try {
-    expected.set(configSnapshot.path, Buffer.from(restored));
     assertFileSnapshotCurrent(configSnapshot);
-    writeFileSnapshot(configSnapshot, restored, { expectedData: configSnapshot.data });
-    ownedAfterWrite.set(configSnapshot.path, snapshotFile(configSnapshot.path, { followSymlink: true }));
+    ownedAfterWrite.set(configSnapshot.path,
+      writeFileSnapshot(configSnapshot, restored, { expectedData: configSnapshot.data }));
     if (restoredHooks && hooksSnapshot) {
-      expected.set(hooksSnapshot.path, Buffer.from(restoredHooks.text));
       assertFileSnapshotCurrent(hooksSnapshot);
-      writeFileSnapshot(hooksSnapshot, restoredHooks.text, { expectedData: hooksSnapshot.data });
-      ownedAfterWrite.set(hooksSnapshot.path, snapshotFile(hooksSnapshot.path, { followSymlink: true }));
+      ownedAfterWrite.set(hooksSnapshot.path,
+        writeFileSnapshot(hooksSnapshot, restoredHooks.text, { expectedData: hooksSnapshot.data }));
     }
     if (catalogSnapshot?.exists) {
       assertFileSnapshotCurrent(catalogSnapshot);
-      expected.set(catalogSnapshot.path, undefined);
       rmSync(catalogSnapshot.path);
+      completedRemovals.add(catalogSnapshot.path);
     }
     assertFileSnapshotCurrent(modelsCacheSnapshot);
-    expected.set(modelsCacheSnapshot.path, undefined);
     rmSync(modelsCacheSnapshot.path, { force: true });
+    completedRemovals.add(modelsCacheSnapshot.path);
     // Keep the recovery copy until last. If the inactive hook reappears after
     // primary removal, the next guard aborts while recovery evidence still exists.
     assertInactiveJsonHookAbsent(journal);
@@ -737,21 +721,17 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     for (const snapshot of [recoverySnapshot, journalSnapshot, modelsCacheSnapshot, catalogSnapshot, hooksSnapshot, configSnapshot]) {
       if (!snapshot) continue;
       try {
-        if (!expected.has(snapshot.path)) continue;
-        const current = snapshotFile(snapshot.path, {
-          followSymlink: snapshot.path === configSnapshot.path
-            || snapshot.path === hooksSnapshot?.path
-            || snapshot.path === catalogSnapshot?.path
-            || snapshot.path === modelsCacheSnapshot.path,
-        });
-        const intended = expected.get(snapshot.path);
-        if (current.exists === snapshot.exists
-          && (current.data?.equals(snapshot.data ?? Buffer.alloc(0)) ?? !snapshot.data)) continue;
-        if (current.exists !== (intended !== undefined)
-          || (intended !== undefined && !current.data?.equals(intended))) {
-          throw new Error("changed after uninstall wrote it; preserving the concurrent edit");
+        const owned = ownedAfterWrite.get(snapshot.path);
+        if (owned) {
+          restoreFileSnapshot(snapshot, { expectedCurrent: owned });
+        } else if (completedRemovals.has(snapshot.path)) {
+          const current = snapshotFile(snapshot.path, { followSymlink: Boolean(snapshot.symlink) });
+          if (current.exists) {
+            throw new Error("changed after uninstall removed it; preserving the concurrent edit");
+          }
+          restoreFileSnapshot(snapshot);
         }
-        restoreFileSnapshot(snapshot, { expectedCurrent: ownedAfterWrite.get(snapshot.path) });
+        // A rejected write has no committed receipt and cannot authorize rollback.
       } catch (caught) {
         rollbackFailures.push(`${snapshot.path}: ${caught instanceof Error ? caught.message : String(caught)}`);
       }

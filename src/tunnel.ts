@@ -1,5 +1,8 @@
+import { safeTunnelDetail, tunnelCommandOutput, tunnelConnectLaunchError, parseTunnelStatus, type TunnelRuntimeStatus } from "./tunnel-status";
+export { tunnelCommandOutput, tunnelConnectLaunchError, parseTunnelStatus, type TunnelRuntimeStatus } from "./tunnel-status";
+import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./codex-integration-shared";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { unzipSync } from "fflate";
 import type { AppConfig, BrowserInteractionMode, TunnelConfig } from "./config";
@@ -22,6 +25,7 @@ const MAX_ZIP_ENTRIES = 128;
 const MAX_BINARY_BYTES = 100 * 1024 * 1024;
 export const TUNNEL_READY_TIMEOUT_MS = 120_000;
 const TUNNEL_STATUS_POLL_INTERVAL_MS = 1_000;
+const WINDOWS_REMOVE_RETRY_DELAYS_MS = [100, 200, 500, 1_000, 2_000] as const;
 
 interface TunnelInstallManifest {
   version: 1;
@@ -32,6 +36,7 @@ interface TunnelInstallManifest {
 }
 
 interface TunnelInstallFile {
+  identity?: { dev: number; ino: number };
   bytes?: Uint8Array;
   mode?: number;
 }
@@ -41,7 +46,7 @@ export interface TunnelClientInstallSnapshot {
   manifest: TunnelInstallFile;
 }
 
-function installFileSnapshot(path: string, executable = false): TunnelInstallFile {
+function installFileSnapshot(path: string): TunnelInstallFile {
   const entry = lstatSync(path, { throwIfNoEntry: false });
   if (!entry) return {};
   if (entry.isSymbolicLink()) {
@@ -52,13 +57,14 @@ function installFileSnapshot(path: string, executable = false): TunnelInstallFil
   }
   return {
     bytes: new Uint8Array(readFileSync(path)),
-    ...(executable && process.platform !== "win32" ? { mode: entry.mode & 0o777 } : {}),
+    mode: entry.mode & 0o777,
+    identity: { dev: entry.dev, ino: entry.ino },
   };
 }
 
 export function snapshotTunnelClientInstallation(): TunnelClientInstallSnapshot {
   return {
-    binary: installFileSnapshot(binaryPath(), true),
+    binary: installFileSnapshot(binaryPath()),
     manifest: installFileSnapshot(manifestPath()),
   };
 }
@@ -66,7 +72,8 @@ export function snapshotTunnelClientInstallation(): TunnelClientInstallSnapshot 
 function sameInstallFile(left: TunnelInstallFile, right: TunnelInstallFile): boolean {
   return Boolean(left.bytes) === Boolean(right.bytes)
     && (!left.bytes || Boolean(right.bytes && Buffer.from(left.bytes).equals(right.bytes)))
-    && left.mode === right.mode;
+    && left.mode === right.mode
+    && left.identity?.dev === right.identity?.dev && left.identity?.ino === right.identity?.ino;
 }
 
 function sameInstallation(left: TunnelClientInstallSnapshot, right: TunnelClientInstallSnapshot): boolean {
@@ -74,7 +81,7 @@ function sameInstallation(left: TunnelClientInstallSnapshot, right: TunnelClient
     && sameInstallFile(left.manifest, right.manifest);
 }
 
-/** Restore only bytes and executable mode still matching this install attempt. */
+/** Restore only files whose bytes, inode and permissions still match this install attempt. */
 export function restoreTunnelClientInstallation(
   before: TunnelClientInstallSnapshot,
   owned: TunnelClientInstallSnapshot,
@@ -88,12 +95,11 @@ export function restoreTunnelClientInstallation(
   }
   if (!sameInstallFile(before.binary, owned.binary)) {
     if (before.binary.bytes) {
-      atomicWriteFile(binaryPath(), before.binary.bytes);
-      if (process.platform !== "win32") chmodSync(binaryPath(), before.binary.mode!);
+      atomicWriteFile(binaryPath(), before.binary.bytes, { mode: before.binary.mode });
     } else rmSync(binaryPath(), { force: true });
   }
   if (!sameInstallFile(before.manifest, owned.manifest)) {
-    if (before.manifest.bytes) atomicWriteFile(manifestPath(), before.manifest.bytes);
+    if (before.manifest.bytes) atomicWriteFile(manifestPath(), before.manifest.bytes, { mode: before.manifest.mode });
     else rmSync(manifestPath(), { force: true });
   }
 }
@@ -216,24 +222,52 @@ function manifestPath(): string {
   return join(getConfigDir(), "bin", "tunnel-client-manifest.json");
 }
 
-function acquireTunnelInstallLock(lockPath: string): () => Error | undefined {
+export function acquireTunnelInstallLock(
+  lockPath: string,
+  io: Pick<typeof import("node:fs"), "writeFileSync" | "fsyncSync" | "closeSync"> = { writeFileSync, fsyncSync, closeSync },
+): () => Error | undefined {
   const token = randomUUID();
   let fd: number | undefined;
+  let owned: { dev: number; ino: number } | undefined;
+  const ownsEntry = () => {
+    const entry = lstatSync(lockPath, { throwIfNoEntry: false });
+    return entry?.isFile() && owned && entry.dev === owned.dev && entry.ino === owned.ino;
+  };
   try {
     fd = openSync(lockPath, "wx", 0o600);
-    writeFileSync(fd, `${token}\n`);
-    fsyncSync(fd);
-    closeSync(fd);
+    owned = fstatSync(fd);
+    io.writeFileSync(fd, `${token}\n`);
+    io.fsyncSync(fd);
+    io.closeSync(fd);
+    fd = undefined;
   } catch (error) {
-    if (fd !== undefined) closeSync(fd);
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error("Tunnel client installation is already in progress; preserving the existing installation");
+    const cleanupErrors: unknown[] = [];
+    // Keep the descriptor open until identity comparison, so its inode cannot be reused.
+    if (owned) {
+      try {
+        if (ownsEntry()) unlinkSync(lockPath);
+        else if (lstatSync(lockPath, { throwIfNoEntry: false })) {
+          cleanupErrors.push(new Error("Tunnel client installation lock ownership changed; preserving the lock"));
+        }
+      } catch (cleanup) { cleanupErrors.push(cleanup); }
+    }
+    if (fd !== undefined) {
+      try { io.closeSync(fd); } catch (cleanup) { cleanupErrors.push(cleanup); }
+    }
+    if (cleanupErrors.length) {
+      throw new AggregateError([error, ...cleanupErrors],
+        `${error instanceof Error ? error.message : String(error)}; tunnel lock cleanup also failed: ${cleanupErrors.map(String).join("; ")}`,
+        { cause: error });
+    }
+    if (fd === undefined && (error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("Tunnel client installation is already in progress; preserving the existing installation", { cause: error });
     }
     throw error;
   }
   return () => {
     try {
-      if (readFileSync(lockPath, "utf8") !== `${token}\n`) {
+      if (!ownsEntry() || readFileSync(lockPath, "utf8") !== `${token}\n`) {
+        if (!lstatSync(lockPath, { throwIfNoEntry: false })) return undefined;
         return new Error("Tunnel client installation lock ownership changed; preserving the lock");
       }
       unlinkSync(lockPath);
@@ -243,6 +277,42 @@ function acquireTunnelInstallLock(lockPath: string): () => Error | undefined {
       return error instanceof Error ? error : new Error(String(error));
     }
   };
+}
+
+export async function removeTunnelInstallFile(
+  path: string,
+  options: {
+    platform?: NodeJS.Platform;
+    remove?: (path: string) => void;
+    wait?: (delayMs: number) => Promise<void>;
+    retryDelaysMs?: readonly number[];
+  } = {},
+): Promise<void> {
+  const platform = options.platform ?? process.platform;
+  const remove = options.remove ?? (target => rmSync(target, { force: true }));
+  const wait = options.wait ?? (delayMs => new Promise(resolve => setTimeout(resolve, delayMs)));
+  const retryDelays = options.retryDelaysMs ?? WINDOWS_REMOVE_RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      remove(path);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const retryable = platform === "win32" && (code === "EBUSY" || code === "EPERM");
+      if (!retryable || attempt >= retryDelays.length) throw error;
+      await wait(retryDelays[attempt]!);
+    }
+  }
+}
+
+function tunnelInstallCleanupError(primary: unknown, cleanup: unknown): Error {
+  const primaryMessage = primary instanceof Error ? primary.message : String(primary);
+  const cleanupMessage = cleanup instanceof Error ? cleanup.message : String(cleanup);
+  return new AggregateError(
+    [primary, cleanup],
+    `${primaryMessage}; temporary tunnel-client cleanup also failed: ${cleanupMessage}`,
+    { cause: primary },
+  );
 }
 
 export async function installTunnelClient(
@@ -297,16 +367,23 @@ export async function installTunnelClient(
   mkdirSync(dirname(executable), { recursive: true, mode: 0o700 });
   const stagedExecutable = `${executable}.install-${process.pid}-${randomUUID()}${process.platform === "win32" ? ".exe" : ""}`;
   atomicWriteFile(stagedExecutable, binary);
-  let version: ReturnType<typeof runChecked>;
+  let verificationError: unknown;
   try {
     if (process.platform !== "win32") chmodSync(stagedExecutable, 0o700);
-    version = runChecked(stagedExecutable, ["--version"], { timeout: 10_000 });
+    const version = runChecked(stagedExecutable, ["--version"], { timeout: 10_000 });
     if (!version.stdout.includes(TUNNEL_VERSION) && !version.stderr.includes(TUNNEL_VERSION)) {
       throw new Error(`Installed tunnel-client did not report version ${TUNNEL_VERSION}`);
     }
-  } finally {
-    rmSync(stagedExecutable, { force: true });
+  } catch (error) {
+    verificationError = error;
   }
+  try {
+    await removeTunnelInstallFile(stagedExecutable);
+  } catch (cleanupError) {
+    if (verificationError) throw tunnelInstallCleanupError(verificationError, cleanupError);
+    throw cleanupError;
+  }
+  if (verificationError) throw verificationError;
   const manifest: TunnelInstallManifest = {
     version: 1,
     tunnelClientVersion: TUNNEL_VERSION,
@@ -321,27 +398,26 @@ export async function installTunnelClient(
   const releaseInstallLock = acquireTunnelInstallLock(`${manifestFile}.lock`);
   let binaryWritten = false;
   let manifestWritten = false;
-  let ownedBinaryMode = 0o600;
+  let ownedBinary = beforeInstall.binary;
+  let ownedManifest = beforeInstall.manifest;
   let failure: Error | undefined;
   try {
     if (!sameInstallation(snapshotTunnelClientInstallation(), beforeInstall)) {
       throw new Error("Tunnel client changed while the upgrade was prepared; preserving the concurrent edit");
     }
-    atomicWriteFile(executable, binary);
+    const binaryReceipt = atomicWriteFile(executable, binary, { mode: process.platform === "win32" ? 0o600 : 0o700 });
+    ownedBinary = { bytes: binary, mode: binaryReceipt.mode, identity: binaryReceipt.identity };
     binaryWritten = true;
-    if (process.platform !== "win32") {
-      chmodSync(executable, 0o700);
-      ownedBinaryMode = 0o700;
-    }
-    atomicWriteFile(manifestFile, manifestBytes);
+    const manifestReceipt = atomicWriteFile(manifestFile, manifestBytes);
+    ownedManifest = { bytes: manifestBytes, mode: manifestReceipt.mode, identity: manifestReceipt.identity };
     manifestWritten = true;
   } catch (error) {
     try {
       restoreTunnelClientInstallation(beforeInstall, {
         binary: binaryWritten
-          ? { bytes: binary, ...(process.platform !== "win32" ? { mode: ownedBinaryMode } : {}) }
+          ? ownedBinary
           : beforeInstall.binary,
-        manifest: manifestWritten ? { bytes: manifestBytes } : beforeInstall.manifest,
+        manifest: manifestWritten ? ownedManifest : beforeInstall.manifest,
       });
     } catch (rollbackError) {
       failure = new Error(`${error instanceof Error ? error.message : String(error)}; tunnel-client rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
@@ -359,8 +435,8 @@ export async function installTunnelClient(
   }
   if (failure) throw failure;
   onInstalled?.({
-    binary: { bytes: binary, ...(process.platform !== "win32" ? { mode: 0o700 } : {}) },
-    manifest: { bytes: manifestBytes },
+    binary: ownedBinary,
+    manifest: ownedManifest,
   });
   return executable;
 }
@@ -368,8 +444,8 @@ export async function installTunnelClient(
 export function installRuntimeKey(
   sourcePath: string,
   interactionMode: BrowserInteractionMode = "automatic",
-  onWritten?: (bytes: Uint8Array) => void,
-  expectedBefore?: Uint8Array | null,
+  onWritten?: (bytes: Uint8Array, receipt: FileSnapshot) => void,
+  expectedBefore?: Uint8Array | null | FileSnapshot,
 ): string {
   if (!existsSync(sourcePath)) throw new Error(`Tunnel runtime key file does not exist: ${sourcePath}`);
   const key = readFileSync(sourcePath);
@@ -387,21 +463,24 @@ export function managedRuntimeKeyPath(interactionMode: BrowserInteractionMode = 
 export function installRuntimeKeyBytes(
   key: Uint8Array | string,
   interactionMode: BrowserInteractionMode = "automatic",
-  onWritten?: (bytes: Uint8Array) => void,
-  expectedBefore?: Uint8Array | null,
+  onWritten?: (bytes: Uint8Array, receipt: FileSnapshot) => void,
+  expectedBefore?: Uint8Array | null | FileSnapshot,
 ): string {
   const bytes = typeof key === "string" ? new TextEncoder().encode(key.trim()) : key;
   if (bytes.byteLength === 0 || bytes.byteLength > 64 * 1024) throw new Error("Tunnel runtime key is empty or unexpectedly large");
   const destination = managedRuntimeKeyPath(interactionMode);
-  if (expectedBefore !== undefined) {
+  const expectedSnapshot = expectedBefore && "path" in expectedBefore ? expectedBefore : undefined;
+  if (expectedBefore !== undefined && !expectedSnapshot) {
+    const expectedBytes = expectedBefore as Uint8Array | null;
     const current = existsSync(destination) ? readFileSync(destination) : null;
-    if ((current === null) !== (expectedBefore === null)
-      || (current !== null && expectedBefore !== null && !current.equals(expectedBefore))) {
+    if ((current === null) !== (expectedBytes === null)
+      || (current !== null && expectedBytes !== null && !current.equals(expectedBytes))) {
       throw new Error("Tunnel runtime key changed after setup took its snapshot; preserving the concurrent edit");
     }
   }
-  atomicWriteFile(destination, bytes);
-  onWritten?.(bytes);
+  const before = expectedSnapshot ?? snapshotFile(destination);
+  const receipt = writeFileSnapshot(before, bytes, { expectedSnapshot: before });
+  onWritten?.(bytes, receipt);
   return destination;
 }
 
@@ -518,118 +597,40 @@ export function stopTunnel(config: AppConfig, signal?: AbortSignal): void {
     && !/not found|not running|unknown alias|\balias\b[^\r\n]{0,160}\bis not known\b/i.test(
       `${result.stdout}\n${result.stderr}`,
     )) {
+    // tunnel-client 0.0.12 can clear its saved PID after a SIGTERM timeout.
+    // A subsequent "stopped" inventory is not proof of exit; check the PID in its stop receipt.
+    if (tunnelStopProcessExited(result.stdout, settings.alias)) {
+      console.warn("[codex-chatgpt-web] tunnel stop timed out; OS confirmed process exit");
+      return;
+    }
     throw new Error(`Failed to stop tunnel runtime: ${result.stderr.trim() || result.stdout.trim()}`);
   }
 }
 
-export interface TunnelRuntimeStatus {
-  ok: boolean;
-  processRunning: boolean;
-  healthy: boolean;
-  ready: boolean;
-  state?: string;
-  detail: string;
-}
-
-export function tunnelCommandOutput(result: {
-  status: number;
-  stdout: string;
-  stderr: string;
-}): string {
-  const stdout = result.stdout.trim();
-  const stderr = result.stderr.trim();
-  return result.status === 0
-    ? (stdout || stderr)
-    : [stderr, stdout].filter(Boolean).join("\n");
-}
-
-function safeTunnelDetail(value: unknown): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  return text
-    .replace(/tunnel_[a-f0-9]{32}/g, "[tunnel-id]")
-    .replace(/sk-[A-Za-z0-9_-]{12,}/g, "[redacted-key]")
-    .slice(0, 2_000);
-}
-
-function nestedRecord(value: unknown, key: string): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const nested = (value as Record<string, unknown>)[key];
-  return nested && typeof nested === "object" && !Array.isArray(nested)
-    ? nested as Record<string, unknown>
-    : undefined;
-}
-
-function runtimeLogTail(parsed: Record<string, unknown>): string | undefined {
-  const launchTail = nestedRecord(parsed, "launch_diagnostics")?.log_tail;
-  if (typeof launchTail === "string" && launchTail.trim()) return launchTail.trim();
-  const statusTail = nestedRecord(nestedRecord(parsed, "local"), "log")?.tail;
-  return typeof statusTail === "string" && statusTail.trim() ? statusTail.trim() : undefined;
-}
-
-export function tunnelConnectLaunchError(output: string): string | undefined {
-  let parsed: Record<string, unknown>;
+export function tunnelStopProcessExited(
+  output: string,
+  alias: string,
+  probe: (pid: number) => void = pid => process.kill(pid, 0),
+): boolean {
+  let pid: number;
   try {
-    parsed = JSON.parse(output) as Record<string, unknown>;
-  } catch {
-    return "tunnel-client returned non-JSON connect output";
-  }
-  const running = parsed.running === true;
-  const healthy = parsed.healthy === true;
-  const ready = parsed.ready === true;
-  if (running && healthy) return undefined;
-  const diagnostics = nestedRecord(parsed, "launch_diagnostics");
-  const exitCode = typeof parsed.exit_code === "number" ? parsed.exit_code
-    : typeof diagnostics?.exit_code === "number" ? diagnostics.exit_code
-      : undefined;
-  const remoteError = typeof parsed.remote_error === "string" && parsed.remote_error.trim()
-    ? parsed.remote_error.trim()
-    : undefined;
-  const logTail = runtimeLogTail(parsed);
-  return safeTunnelDetail([
-    `running=${running}`,
-    `healthy=${healthy}`,
-    `ready=${ready}`,
-    ...(exitCode !== undefined ? [`exit_code=${exitCode}`] : []),
-    ...(remoteError ? [`remote_error=${remoteError}`] : []),
-    ...(logTail ? [`runtime_log=${logTail}`] : []),
-    ...(!remoteError && !logTail ? ["runtime did not complete a healthy launch"] : []),
-  ].join("; "));
+    const receipt = JSON.parse(output) as { alias?: unknown; stop_error?: unknown };
+    if (receipt.alias !== alias || typeof receipt.stop_error !== "string") return false;
+    const match = /^process ([1-9]\d*) did not exit after SIGTERM$/.exec(receipt.stop_error);
+    if (!match) return false;
+    pid = Number(match[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 1) return false;
+  } catch { return false; }
+  try { probe(pid); }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+  return false;
 }
 
-export function parseTunnelStatus(output: string, alias: string, exitStatus = 0): TunnelRuntimeStatus {
-  if (exitStatus !== 0) {
-    return { ok: false, processRunning: false, healthy: false, ready: false, detail: safeTunnelDetail(output) };
-  }
-  try {
-    const parsed = JSON.parse(output) as Record<string, unknown>;
-    if (!Array.isArray(parsed.entries)) throw new Error("local inventory has no entries array");
-    const matches = parsed.entries.filter(entry => entry && typeof entry === "object" && entry.alias === alias);
-    if (matches.length > 1) throw new Error("local inventory contains duplicate aliases");
-    const state = matches.length === 0 ? "stopped" : matches[0].runtime_state;
-    if (!["stopped", "starting", "healthy", "ready"].includes(state)) {
-      throw new Error("local inventory has an unsupported runtime state");
-    }
-    // tunnel-client 0.0.12 derives inventory state from the local process and health probes.
-    const processRunning = state !== "stopped";
-    const healthy = state === "healthy" || state === "ready";
-    const ready = state === "ready";
-    const ok = processRunning && healthy && ready;
-    const detail = ok
-      ? "process_running=true healthy=true ready=true"
-      : safeTunnelDetail([
-        `process_running=${processRunning}`,
-        `healthy=${healthy}`,
-        `ready=${ready}`,
-        `state=${state}`,
-        ...(matches.length === 0 ? ["local_inventory=absent"] : []),
-      ].join("; "));
-    return { ok, processRunning, healthy, ready, state, detail };
-  } catch (error) {
-    return { ok: false, processRunning: false, healthy: false, ready: false, detail: `tunnel-client returned invalid local inventory: ${safeTunnelDetail(error instanceof Error ? error.message : String(error))}` };
-  }
-}
-
-export function tunnelStatus(config: AppConfig, signal?: AbortSignal): TunnelRuntimeStatus {
+export function tunnelStatus(
+  config: AppConfig,
+  signal?: AbortSignal,
+  timeoutMs = 10_000,
+): TunnelRuntimeStatus {
   throwIfAborted(signal);
   const settings = tunnel(config);
   if (!existsSync(settings.binaryPath)) {
@@ -638,7 +639,7 @@ export function tunnelStatus(config: AppConfig, signal?: AbortSignal): TunnelRun
   const result = runCommand(
     settings.binaryPath,
     ["runtimes", "cleanup", "--json"],
-    { timeout: 10_000, signal },
+    { timeout: timeoutMs, signal },
   );
   throwIfAborted(signal);
   return parseTunnelStatus(tunnelCommandOutput(result), settings.alias, result.status);
@@ -648,27 +649,49 @@ export async function waitForTunnelReady(
   config: AppConfig,
   timeoutMs = TUNNEL_READY_TIMEOUT_MS,
   signal?: AbortSignal,
+  options: {
+    now?: () => number;
+    probe?: (config: AppConfig, signal: AbortSignal | undefined, timeoutMs: number) => TunnelRuntimeStatus;
+    wait?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
+  } = {},
 ): Promise<TunnelRuntimeStatus> {
   throwIfAborted(signal);
-  const deadline = Date.now() + timeoutMs;
-  let status = tunnelStatus(config, signal);
-  while (!status.ok && Date.now() < deadline) {
-    const pause = Math.min(TUNNEL_STATUS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()));
-    await new Promise<void>((resolveWait, rejectWait) => {
+  const now = options.now ?? Date.now;
+  const probe = options.probe ?? tunnelStatus;
+  const wait = options.wait ?? ((delayMs: number, waitSignal?: AbortSignal) => new Promise<void>((resolveWait, rejectWait) => {
       const onAbort = () => {
         clearTimeout(timer);
-        rejectWait(signal?.reason instanceof Error
-          ? signal.reason
+        rejectWait(waitSignal?.reason instanceof Error
+          ? waitSignal.reason
           : new DOMException("The operation was aborted", "AbortError"));
       };
       const timer = setTimeout(() => {
-        signal?.removeEventListener("abort", onAbort);
+        waitSignal?.removeEventListener("abort", onAbort);
         resolveWait();
-      }, pause);
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-    });
-    status = tunnelStatus(config, signal);
+      }, delayMs);
+      waitSignal?.addEventListener("abort", onAbort, { once: true });
+      if (waitSignal?.aborted) onAbort();
+    }));
+  const deadline = now() + Math.max(0, timeoutMs);
+  const initialRemaining = deadline - now();
+  if (initialRemaining <= 0) {
+    return {
+      ok: false,
+      processRunning: false,
+      healthy: false,
+      ready: false,
+      detail: "Tunnel readiness deadline elapsed before status probe",
+    };
+  }
+  let status = probe(config, signal, Math.min(10_000, initialRemaining));
+  while (!status.ok) {
+    const remainingBeforeWait = deadline - now();
+    if (remainingBeforeWait <= 0) break;
+    await wait(Math.min(TUNNEL_STATUS_POLL_INTERVAL_MS, remainingBeforeWait), signal);
+    throwIfAborted(signal);
+    const remainingBeforeProbe = deadline - now();
+    if (remainingBeforeProbe <= 0) break;
+    status = probe(config, signal, Math.min(10_000, remainingBeforeProbe));
   }
   return status;
 }

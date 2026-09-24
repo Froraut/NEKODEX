@@ -114,6 +114,33 @@ test("setup validates the port before performing runtime work", async () => {
   }
 });
 
+test("saved and Temporary Chat setup flags are exclusive and reach setup validation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-chat-choice-"));
+  const env = {
+    ...process.env,
+    CODEX_HOME: join(root, "codex"),
+    CODEX_CHATGPT_WEB_HOME: join(root, "app"),
+  };
+  try {
+    const conflict = await runCli([
+      "setup", "--browser-only", "--saved-chats", "--temporary-chats", "--acknowledge-unofficial",
+    ], env);
+    expect(conflict.exitCode).toBe(1);
+    expect(conflict.stderr).toContain("Choose --saved-chats or --temporary-chats");
+    for (const flag of ["--saved-chats", "--temporary-chats"]) {
+      const accepted = await runCli([
+        "setup", "--browser-only", flag, "--port", "0", "--acknowledge-unofficial",
+      ], env);
+      expect(accepted.exitCode).toBe(1);
+      expect(accepted.stderr).toContain("--port must be an integer");
+      expect(accepted.stderr).not.toContain("Unknown arguments");
+    }
+    expect(existsSync(join(root, "app", "config.json"))).toBeFalse();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("setup browser-interaction flags are explicit and mutually exclusive", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-interaction-"));
   try {

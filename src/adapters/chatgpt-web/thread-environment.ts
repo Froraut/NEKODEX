@@ -1,25 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { atomicWriteFile } from "../../config";
 import { getCodexHome } from "../../codex-integration-shared";
 import type { CodexParsedRequest } from "../../types";
-import {
-  extractChatGptTurnEnvironment,
-  extractChatGptCompactionSourceRevision,
-  extractChatGptContinuationEnvironmentClaim,
-  extractChatGptSteeringEnvironmentClaim,
-  extractChatGptTurnIdentity,
-  extractChatGptThreadSpawnLineage,
-  extractChatGptRootThreadMetadata,
-  hasCurrentChatGptEnvironmentContext,
-  hasRawChatGptEnvironmentContext,
-  unattributedChatGptEnvironmentMessages,
-  isChatGptCompactionContinuation,
-  MissingTrustedCodexEnvironmentError,
-  type ChatGptSandboxPolicy,
-  type ChatGptTurnEnvironment,
-} from "./environment";
+import type { ChatGptSandboxPolicy, ChatGptTurnEnvironment } from "./environment";
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
+import { resolveThreadEnvironment, pathIdentity, contains } from "./thread-environment-resolver";
 import { canonicalChatGptStatePath, withChatGptStateFileLock } from "./state-file-lock";
 
 interface StoredThreadEnvironment {
@@ -49,16 +35,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
-}
-
-function pathIdentity(value: string): string {
-  const normalized = resolve(value);
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function contains(root: string, path: string): boolean {
-  const rel = relative(pathIdentity(root), pathIdentity(path));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 function absolutePaths(value: unknown, field: string): string[] {
@@ -126,19 +102,6 @@ function authority(environment: ChatGptTurnEnvironment, updatedAt: number): Stor
   };
 }
 
-function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironment): boolean {
-  const samePaths = (a: string[], b: string[]): boolean => {
-    const expected = new Set(b.map(pathIdentity));
-    return a.length === expected.size && a.every(path => expected.has(pathIdentity(path)));
-  };
-  return pathIdentity(left.cwd) === pathIdentity(right.cwd)
-    && samePaths(left.roots, right.roots)
-    && samePaths(left.writableRoots, right.writableRoots)
-    && left.sandboxPolicy.type === right.sandboxPolicy.type
-    && (left.sandboxPolicy.type === "dangerFullAccess" || (right.sandboxPolicy.type !== "dangerFullAccess"
-      && left.sandboxPolicy.networkAccess === right.sandboxPolicy.networkAccess));
-}
-
 /**
  * Codex emits its trusted environment envelope when a task starts or its environment changes,
  * not on every follow-up. This store carries only that trusted authority across turns. Tool
@@ -165,89 +128,15 @@ export class ChatGptThreadEnvironmentStore {
   }
 
   resolve(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
-    // Hermes owns execution and approvals. The bridge itself receives no filesystem authority,
-    // and its producer scope never enters the persistent native Codex environment cache.
-    if (parsed._hermesContext) return {
-      producer: "hermes",
-      cwd: parsed._hermesContext.root, roots: [parsed._hermesContext.root], writableRoots: [],
-      sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: parsed.context.tools ?? [],
-    };
-    const identity = extractChatGptTurnIdentity(parsed);
-    try {
-      const environment = extractChatGptTurnEnvironment(parsed);
-      if (identity.threadId) this.set(identity.threadId, environment);
-      return environment;
-    } catch (error) {
-      if (!(error instanceof MissingTrustedCodexEnvironmentError) || !identity.threadId) throw error;
-      const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
-      const lineage = extractChatGptThreadSpawnLineage(parsed);
-      const currentCompaction = hasCurrentContext && isChatGptCompactionContinuation(parsed);
-      const historicalMessages = hasCurrentContext && !currentCompaction && lineage
-        ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
-      const steeringClaim = hasCurrentContext && !currentCompaction
-        ? extractChatGptSteeringEnvironmentClaim(parsed) : undefined;
-      if (hasCurrentContext && !currentCompaction && !historicalMessages && !steeringClaim) throw error;
-      const currentClaim = currentCompaction ? extractChatGptContinuationEnvironmentClaim(parsed) : steeringClaim;
-      const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
-      // Automatic compaction has a current turn_context; standalone compaction has only its
-      // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
-      const compactionSourceTurnId = parsed._compactionRequest
-        ? extractChatGptCompactionSourceRevision(parsed).turnId : undefined;
-      if (rolloutIdentity && identity.turnId) {
-        const rolloutEnvironment = resolveCurrentCodexRolloutEnvironment({
-          codexHome: this.codexHome,
-          ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
-          lineage: rolloutIdentity,
-          turnId: identity.turnId,
-          ...(compactionSourceTurnId ? { compactionSourceTurnId } : {}),
-          ...(historicalMessages ? { historicalEnvironmentMessages: historicalMessages } : {}),
-          tools: parsed.context.tools,
-        });
-        if (rolloutEnvironment) {
-          if (currentClaim && !sameAuthority(currentClaim, rolloutEnvironment)) {
-            throw new Error(`${currentCompaction ? "Compaction continuation" : "Steering"} environment conflicts with its current Codex rollout`);
-          }
-          this.set(rolloutIdentity.threadId, rolloutEnvironment);
-          return rolloutEnvironment;
-        }
-      }
-      // History may reuse this thread's earned authority, but never masks a current invalid
-      // update or authorizes inheritance from a different thread (#567).
-      const hasRawContext = hasRawChatGptEnvironmentContext(parsed);
-      if (hasRawContext && hasCurrentContext) throw error;
-      const sameThread = this.get(identity.threadId);
-      if (sameThread) return {
-        cwd: sameThread.cwd,
-        roots: sameThread.roots,
-        writableRoots: sameThread.writableRoots,
-        sandboxPolicy: sameThread.sandboxPolicy,
-        tools: parsed.context.tools ?? [],
-      };
-
-      if (hasRawContext || !lineage) throw error;
-      const parent = this.get(lineage.parentThreadId);
-      if (!parent) throw error;
-      if (lineage.sandboxType !== parent.sandboxPolicy.type) {
-        throw new Error("ChatGPT Web subagent sandbox metadata conflicts with its trusted parent thread");
-      }
-      if (lineage.workspaceRoots.length > 0 && !lineage.workspaceRoots.some(root => contains(root, parent.cwd))) {
-        throw new Error("ChatGPT Web subagent workspace metadata does not contain its trusted parent cwd");
-      }
-      if (lineage.workspaceRoots.some(root => !parent.roots.some(parentRoot => (
-        contains(parentRoot, root) || contains(root, parentRoot)
-      )))) {
-        throw new Error("ChatGPT Web subagent workspace metadata conflicts with its trusted parent roots");
-      }
-      const inherited: ChatGptTurnEnvironment = {
-        cwd: parent.cwd,
-        roots: parent.roots,
-        writableRoots: parent.writableRoots,
-        sandboxPolicy: parent.sandboxPolicy,
-        tools: parsed.context.tools ?? [],
-      };
-      this.set(lineage.threadId, inherited);
-      return inherited;
-    }
+    const decision = resolveThreadEnvironment(parsed, {
+      readCache: threadId => this.get(threadId),
+      resolveRollout: options => resolveCurrentCodexRolloutEnvironment({
+        ...options, codexHome: this.codexHome,
+        ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
+      }),
+    });
+    if (decision.persistForThreadId) this.set(decision.persistForThreadId, decision.environment);
+    return decision.environment;
   }
 
   private get(threadId: string): StoredThreadEnvironment | undefined {

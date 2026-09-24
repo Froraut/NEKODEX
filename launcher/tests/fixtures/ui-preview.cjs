@@ -1,6 +1,9 @@
 // Credential-free UI fixture. Build the renderer first, then run this file with
 // Node or Bun and open the loopback URL it prints. No Electron or ChatGPT calls.
-// Scenarios: ?scenario=embedded, passkey, onboarding, startup-error, existing-chrome-failed
+// Scenarios: ?scenario=embedded, passkey, passkey-failed, onboarding, startup-error,
+// existing-chrome-failed, setup-fresh, manual-tools, accounts-failed, update-active, diagnostics-redirect,
+// benefits-auth-unavailable, benefits-portfolio-mixed, benefits-insights, benefits-repair-success,
+// benefits-repair-failure
 // Add &no-animation-frames=true to keep requestAnimationFrame callbacks permanently paused.
 const http = require("node:http");
 const fs = require("node:fs");
@@ -16,7 +19,9 @@ function installMockLauncher() {
     window.requestAnimationFrame = () => { window.fixtureAnimationRequests++; return 1; };
     window.cancelAnimationFrame = () => {};
   }
-  const language = ["en", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
+  const language = ["en", "ru", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
+  const benefitsScenario = scenario.startsWith("benefits-");
+  const astraScenario = scenario === "benefits-astra";
   const listeners = {};
   const emit = (name, value) => (listeners[name] || []).forEach((listener) => listener(value));
   const listen = (name) => (listener) => {
@@ -28,8 +33,9 @@ function installMockLauncher() {
     autoStart: false, keepRunningOnClose: true, showBrowserDuringTurns: true, browserInteractionMode: "automatic",
     experimentalBiggerContext: false, zeroRiskProEnabled: false, sidebarOpen: true, sidebarWidth: 252,
     browserSmokePassed: false, browserSmokeVersion: null, coreSetupComplete: false, codexCatalogVerified: false,
-    mcpGuideStep: 0, sessionRefreshReminderAt: null,
+    mcpGuideStep: 0,
   };
+  if (scenario === "manual-tools") state.browserInteractionMode = "manual";
   const browser = {
     status: "signed-out", message: "Fixture sign-in", url: "https://auth.openai.com/auth_challenge/passkey", title: "Sign in",
     authenticated: false, visible: true, surfaceActive: false, loading: false, canGoBack: true, canGoForward: true,
@@ -37,14 +43,38 @@ function installMockLauncher() {
     activeTabId: "fixture-home", maxTabs: 5,
     tabs: [
       { id: "fixture-home", traceId: null, title: "Sign in", status: "signed-out", loading: false, active: true, closable: false },
-      { id: "fixture-help", traceId: null, title: "Fixture tab", status: "idle", loading: false, active: false, closable: false },
+      { id: "fixture-help", traceId: null, title: "Fixture tab", status: "idle", loading: false, active: false, closable: true },
     ],
   };
-  if (scenario === "models-ready" || scenario === "tools-pending") {
-    Object.assign(state, { coreSetupComplete: true, codexCatalogVerified: true, browserSmokePassed: true,
-      browserSmokeVersion: "fixture", mcpRuntimeInstalled: scenario === "tools-pending", mcpSetupComplete: false });
+  if (scenario === "setup-fresh" || scenario === "diagnostics-redirect") {
+    Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: null, visible: false });
+  }
+  if (scenario === "passkey-failed") {
+    Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: "passkey", visible: false,
+      passkeyLogin: { phase: "failed", startedAt: new Date().toISOString(), deadlineAt: new Date().toISOString(),
+        active: false, canImport: false, canReveal: false, canCancel: false,
+        error: "passkey-verification-failed", revealError: null } });
+  }
+  if (scenario === "models-ready" || scenario === "tools-pending" || benefitsScenario) {
+    Object.assign(state, { coreSetupComplete: true, codexCatalogVerified: true, codexPickerConfirmed: true, browserSmokePassed: true,
+      browserSmokeVersion: "fixture", mcpRuntimeInstalled: scenario === "tools-pending" || benefitsScenario,
+      mcpSetupComplete: benefitsScenario });
     Object.assign(browser, { authenticated: true, accountLabel: "fixture@example.test", status: "ready",
+      authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T10:00:00.000Z",
+      lastVerifiedAt: "2026-09-21T10:00:00.000Z",
       navigationLocked: false, loginInProgress: false, loginKind: null, visible: false });
+  }
+  if (scenario === "benefits-auth-unavailable") {
+    Object.assign(browser, { authenticated: false, authenticationStatus: "unavailable",
+      authenticationCheckedAt: "2026-09-21T10:08:00.000Z", lastVerifiedAt: "2026-09-21T09:55:00.000Z",
+      accountLabel: "retained@example.test", status: "error", message: "Fixture authentication check unavailable" });
+  }
+  if (scenario === "benefits-repair-success" || scenario === "benefits-repair-failure") {
+    // Native readiness is a runtime capability, not a BrowserTab. Keep only an idle retained
+    // browser tab: an active Web/manual turn would correctly make tunnel repair ineligible.
+    browser.activeTabId = "fixture-retained-tab";
+    browser.tabs = [{ id: "fixture-retained-tab", traceId: null, title: "Retained workspace tab",
+      status: "idle", loading: false, active: true, closable: true, interactionMode: "automatic" }];
   }
   let operation = scenario === "passkey" ? { name: "passkey-login", status: "running", message: "Waiting in Chrome" } : null;
   if (scenario === "existing-chrome-failed") {
@@ -53,18 +83,89 @@ function installMockLauncher() {
         active: false, canCancel: false, canCopySettings: true, canAllowFileAccess: true, error: "chrome-profile-access-denied" } });
     operation = { name: "existing-chrome-login", status: "failed", message: "Fixture Chrome access was denied" };
   }
-  let update = scenario === "update-recheck" ? { status: "error", message: "Fixture offline" } : { status: "disabled" };
+  if (scenario === "passkey-secondary" || scenario === "passkey-secondary-error") {
+    state.launcherRestartRequired = true;
+    browser.accountId = "12345678-1234-4123-8123-123456789abc";
+    browser.accountName = "Secondary";
+    browser.tabs[0].title = "Verifying it's you… - OpenAI account authentication";
+  }
+  let update = scenario === "update-recheck" ? { status: "error", message: "Fixture offline" }
+    : scenario === "update-active" ? { status: "verifying", version: "9.9.9" }
+      : scenario === "update-missing-speed" ? { status: "downloading", version: "9.9.9", downloadedBytes: 4096, totalBytes: 8192 }
+        : { status: "disabled" };
+  const defaultPolicy = { enabled: false, minIntervalSec: 10, maxConcurrent: 1, breakAfterMinutes: 30,
+    breakMinutes: 5, maxSessionMinutes: 240, cooldownMinutes: 3, newSessionWindow: null };
+  let accountSnapshot = { selectedId: "fixture-primary", mode: "selected", accounts: [
+    { id: "fixture-primary", label: "Primary", enabled: true, authenticated: true, accountLabel: "primary@example.test",
+      authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T10:00:00.000Z", lastVerifiedAt: "2026-09-21T10:00:00.000Z",
+      activeTurns: 0, checked: true, connectorReady: true, evidenceEpoch: 1, proxy: { mode: "system" },
+      safety: { policy: defaultPolicy, cooldownUntil: 0, stopped: false, newSessionWindow: null } },
+    { id: "fixture-secondary", label: "Secondary", enabled: true, authenticated: true, accountLabel: "secondary@example.test",
+      authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T09:50:00.000Z", lastVerifiedAt: "2026-09-21T09:50:00.000Z",
+      activeTurns: 0, checked: false, connectorReady: false, evidenceEpoch: 1, proxy: { mode: "system" },
+      safety: { policy: defaultPolicy, cooldownUntil: 0, stopped: false, newSessionWindow: null } },
+    { id: "fixture-tertiary", label: "Tertiary", enabled: true, authenticated: false, accountLabel: "retained@example.test",
+      authenticationStatus: "unavailable", authenticationCheckedAt: "2026-09-21T10:08:00.000Z", lastVerifiedAt: "2026-09-21T09:40:00.000Z",
+      activeTurns: 0, checked: false, connectorReady: false, evidenceEpoch: 3, proxy: { mode: "system" },
+      safety: { policy: defaultPolicy, cooldownUntil: 0, stopped: false, newSessionWindow: null } },
+  ] };
+  if (scenario === "benefits-auth-diagnostics") {
+    Object.assign(browser, { authenticated: false, authenticationStatus: "unavailable", authenticationIssue: "access", accountId: "fixture-primary", url: "https://chatgpt.com/?temporary-chat=true", status: "error" });
+    Object.assign(accountSnapshot.accounts[0], { authenticated: false, authenticationStatus: "unavailable", authenticationIssue: "access" });
+  }
+  if (!benefitsScenario) accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.slice(0, 2) };
+  const quotaNow = Date.now();
+  const quota = { availability: "available", coverage: "reported_buckets", accountId: "fixture-primary",
+    planType: "plus", accountBucket: { id: "account", name: "Account", normalModelSlug: null,
+      allowed: true, limitReached: false,
+      primary: { usedPercent: 10, remainingPercent: 90, windowDurationMins: 300, resetsAt: null },
+      secondary: { usedPercent: null, remainingPercent: null, windowDurationMins: null, resetsAt: null } },
+    additionalBuckets: [], additionalBucketsTruncated: false, fetchedAt: new Date(quotaNow).toISOString(),
+    checkedAt: new Date(quotaNow).toISOString(), freshness: "fresh", freshUntil: new Date(quotaNow + 5 * 60_000).toISOString(), refreshError: null };
+  const retainedQuota = { ...quota, accountId: "fixture-secondary", freshness: "stale",
+    fetchedAt: new Date(quotaNow - 4 * 60 * 60_000).toISOString(), checkedAt: new Date(quotaNow).toISOString(),
+    freshUntil: new Date(quotaNow - 3 * 60 * 60_000).toISOString(),
+    refreshError: "quota-refresh-unavailable", accountBucket: { ...quota.accountBucket,
+      primary: { ...quota.accountBucket.primary, usedPercent: 45, remainingPercent: 55 } } };
+  let quotaFailed = scenario === "accounts-failed";
+  let diagnosticChecks = 0;
+  let runtimeCapabilities = benefitsScenario ? { runtimeStatus: "ready", nativeAvailability: "ready", webAvailability: "ready",
+    tunnelStatus: "ready", tunnelRepair: { eligible: false, active: false, reason: null } } : undefined;
+  if (scenario === "benefits-repair-success" || scenario === "benefits-repair-failure") {
+    runtimeCapabilities = { runtimeStatus: "degraded", nativeAvailability: "ready", webAvailability: "degraded",
+      tunnelStatus: "failed", tunnelRepair: { eligible: true, active: false, reason: "tunnel-unavailable" } };
+  }
   const snapshot = () => ({
-    profile: scenario === "models-ready" || scenario === "tools-pending" ? "production" : "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
+    profile: scenario === "models-ready" || scenario === "tools-pending" || benefitsScenario ? "production" : "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
     connectorNames: { automatic: "Fixture connector", manual: "Fixture manual" }, mcpCredentialsConfigured: scenario === "tools-pending",
     logs: [], urls: { github: "https://github.com/Froraut/NEKODEX", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
     browserCapacity: { configured: 16, active: 16, maximum: 1000, restartRequired: false },
     platform: "darwin", packaged: false, version: "fixture", smokePassed: state.browserSmokePassed, operation, update,
+    ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
   });
   let startupAttempts = 0;
   const calls = [];
   window.fixtureCalls = calls;
+  if (astraScenario) {
+    browser.accountId = "fixture-primary";
+    browser.tasks = [
+      { id: "task-complete", traceId: "trace-complete", accountId: "fixture-primary", accountName: "Primary", model: "High", phase: "completed", submission: "accepted", terminal: true, canOpen: false, canCancel: false, canDismiss: true, retrySafe: false },
+      { id: "task-uncertain", traceId: "trace-review-uncertain", accountId: "fixture-primary", accountName: "Primary", model: "Pro", phase: "send-uncertain", submission: "uncertain", terminal: true, canOpen: true, canCancel: false, canDismiss: true, retrySafe: false },
+      { id: "task-active", traceId: "trace-active", accountId: "fixture-secondary", accountName: "Secondary", model: "Medium", phase: "responding", submission: "accepted", terminal: false, canOpen: true, canCancel: true, canDismiss: false, retrySafe: false },
+    ].map((task, index) => ({ ...task, tabId: `tab-${task.id}`, createdAt: Date.now() - 60000, updatedAt: Date.now(), sequence: index + 1 }));
+    browser.queue = { paused: true, pausedAccounts: ["fixture-primary"], storageIssue: null,
+      accounts: [{ id: "fixture-primary", label: "Primary" }, { id: "fixture-secondary", label: "Secondary" }],
+      entries: [{ id: 'queued-history', traceId: 'trace-waiting-for-history', accountId: 'fixture-primary', status: 'waiting', reason: 'task-history-unavailable', createdAt: Date.now(), position: 1, retryAt: null, ownerConnected: true, canCancel: false, canPrioritize: false, canResume: false, canDismiss: false }] };
+    browser.workspaces = { platform: "darwin", nativeTabs: true, maximum: 8, total: 1, accounts: [
+      { accountId: "fixture-primary", label: "Primary", nativeTabs: true, restoreAttempted: true,
+        restoreResult: { opened: 0, skippedTemporary: 0, skippedCapacity: 1, skippedIdentity: 0 }, manifestStatus: "ready",
+        items: [
+          { id: "workspace-live", groupId: "group-1", state: "open", kind: "window", title: "Current conversation", location: "https://chatgpt.com/c/live", restorable: true, needsOriginalAccount: false, temporary: false, active: true },
+          { id: "workspace-saved", groupId: "group-1", state: "saved", kind: "tab", title: "Saved conversation", location: "https://chatgpt.com/c/saved", restorable: true, needsOriginalAccount: false, temporary: false, active: false },
+        ] },
+    ] };
+  }
   window.codexWebLauncher = {
     snapshot: async () => {
       if (scenario === "startup-error" && startupAttempts++ === 0) throw new Error("Error invoking remote method 'launcher:snapshot': Error: Fixture runtime unavailable");
@@ -72,18 +173,25 @@ function installMockLauncher() {
     },
     recheckUpdate: async () => { calls.push(["update-recheck"]); update = { status: "up-to-date" }; emit("update", update); return update; },
     onStateChanged: listen("state"), onBrowserState: listen("browser"), onOperation: listen("operation"), onLog: listen("log"), onUpdateState: listen("update"),
-    setBrowserBounds: async () => true,
+    setBrowserBounds: async bounds => { window.fixtureBounds = bounds; return true; },
     setBrowserSurfaceActive: async (active) => { browser.surfaceActive = active; return { ...browser }; },
+    openBrowserWindow: async asTab => { calls.push(["browser-window", asTab]); return {count:1}; },
     showBrowser: async () => { browser.visible = true; emit("browser", { ...browser }); return { ...browser }; },
     hideBrowser: async () => { browser.visible = false; emit("browser", { ...browser }); return { ...browser }; },
     navigateBrowser: async (action) => { calls.push(["navigate", action]); return { ...browser }; },
     setupHermes: async () => { calls.push(["hermes"]); return { provider: "codex-web", defaultChanged: false }; },
     openPasskeyLogin: async () => {
-      calls.push(["passkey"]); browser.loginKind = "passkey";
+      calls.push(["passkey"]);
+      if (scenario === "passkey-secondary-error") throw new Error("passkey-capture-failed");
+      browser.loginKind = "passkey";
+      browser.passkeyLogin = { phase: "waiting", active: true, canImport: true, canReveal: true, canCancel: true,
+        startedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 180000).toISOString(), error: null };
       operation = { name: "passkey-login", status: "running", message: "Waiting in Chrome" };
       emit("browser", { ...browser }); emit("operation", operation); return { ...browser };
     },
     continuePasskeyLogin: async () => { calls.push(["continue"]); return true; },
+    revealPasskeyLogin: async () => { calls.push(["passkey-reveal"]); return true; },
+    cancelPasskeyLogin: async () => { calls.push(["passkey-cancel"]); return true; },
     openExistingChromeLogin: async () => { calls.push(["existing-chrome-retry"]); return { ...browser }; },
     cancelExistingChromeLogin: async () => { calls.push(["existing-chrome-cancel"]); return { ...browser }; },
     allowExistingChromeFileAccess: async () => { calls.push(["existing-chrome-file-access"]); return { ...browser }; },
@@ -92,6 +200,130 @@ function installMockLauncher() {
       calls.push(["tab", tabId]); browser.tabs = browser.tabs.map((tab) => ({ ...tab, active: tab.id === tabId }));
       emit("browser", { ...browser }); return { ...browser };
     },
+    closeBrowserTab: async (tabId) => {
+      calls.push(["close-tab", tabId]);
+      const closing = browser.tabs.find(tab => tab.id === tabId);
+      browser.tabs = browser.tabs.filter(tab => tab.id !== tabId);
+      if (closing?.active && browser.tabs.length) browser.tabs = browser.tabs.map((tab, index) => ({ ...tab, active: index === 0 }));
+      browser.activeTabId = browser.tabs.find(tab => tab.active)?.id ?? null;
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    accounts: async () => accountSnapshot,
+    browserWorkspaceSnapshot: async () => browser.workspaces ?? { platform: "darwin", nativeTabs: true, maximum: 8, total: 0, accounts: [] },
+    restoreBrowserWorkspaces: async (accountId) => {
+      calls.push(["restore-workspaces", accountId]);
+      const account = browser.workspaces.accounts.find(row => row.accountId === accountId);
+      const saved = account.items.filter(item => item.state === "saved");
+      saved.forEach(item => { item.state = "open"; });
+      browser.workspaces.total += saved.length;
+      account.restoreResult = { opened: saved.length, skippedTemporary: 0, skippedCapacity: 0, skippedIdentity: 0 };
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    dismissTask: async (accountId, id) => {
+      calls.push(["dismiss-task", accountId, id]);
+      browser.tasks = browser.tasks.filter(task => task.accountId !== accountId || task.id !== id);
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    pauseQueue: async (accountId, paused) => {
+      calls.push(["pause-queue", accountId, paused]);
+      if (accountId === null) browser.queue.paused = paused;
+      else browser.queue.pausedAccounts = paused ? [...new Set([...browser.queue.pausedAccounts, accountId])] : browser.queue.pausedAccounts.filter(id => id !== accountId);
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    uninstallIntegration: async () => {
+      calls.push(["uninstall-integration"]);
+      if (window.fixtureCancelUninstall) return { cancelled: true };
+      state.coreSetupComplete = false; state.codexCatalogVerified = false; state.codexPickerConfirmed = false;
+      emit("state", { ...state }); return { cancelled: false, state: { ...state } };
+    },
+    refreshAccountAuthentication: async (id) => {
+      calls.push(["account-auth-refresh", id]);
+      accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(account => account.id === id
+        ? { ...account, authenticated: true, authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T10:10:00.000Z",
+          lastVerifiedAt: "2026-09-21T10:10:00.000Z" } : account) };
+      if (id === accountSnapshot.selectedId) Object.assign(browser, { authenticated: true, authenticationStatus: "verified",
+        authenticationCheckedAt: "2026-09-21T10:10:00.000Z", lastVerifiedAt: "2026-09-21T10:10:00.000Z", status: "ready" });
+      return accountSnapshot;
+    },
+    accountCodexQuotaSnapshot: async (id) => {
+      calls.push(["quota-snapshot", id]);
+      if (quotaFailed && id === "fixture-primary") throw new Error("Fixture quota unavailable");
+      return id === "fixture-primary" ? quota : id === "fixture-secondary" && benefitsScenario ? retainedQuota : null;
+    },
+    refreshAccountCodexQuota: async (id) => {
+      calls.push(["quota-refresh", id]); quotaFailed = false; return { ...quota, accountId: id };
+    },
+    codexLoginSnapshot: async () => null,
+    onCodexLogin: listen("codex-login"),
+    setAccountMode: async (mode) => { accountSnapshot = { ...accountSnapshot, mode }; return accountSnapshot; },
+    setAccountEnabled: async () => accountSnapshot,
+    selectAccount: async (id) => { accountSnapshot = { ...accountSnapshot, selectedId: id }; return accountSnapshot; },
+    checkAccount: async () => accountSnapshot,
+    addAccount: async () => accountSnapshot,
+    removeAccount: async () => accountSnapshot,
+    setAccountProxy: async () => accountSnapshot,
+    setAccountSafety: async () => accountSnapshot,
+    resumeAccount: async () => accountSnapshot,
+    refreshAccountCodexQuotas: async () => ({ generatedAt: "2026-09-21T10:10:00.000Z", rows: [
+      { accountId: "fixture-primary", evidenceEpoch: 1, status: "updated", snapshot: quota, reason: null },
+      { accountId: "fixture-secondary", evidenceEpoch: 1, status: "retained", snapshot: retainedQuota, reason: "quota-refresh-unavailable" },
+      { accountId: "fixture-tertiary", evidenceEpoch: 3, status: "unavailable", snapshot: null, reason: "authentication-unavailable" },
+    ].filter(row => accountSnapshot.accounts.some(account => account.id === row.accountId)) }),
+    startCodexLogin: async () => { calls.push(["start-codex-login"]); return null; },
+    usage: async (query) => ({ available: true, rows: [], generatedAt: "2026-09-21T10:00:00.000Z", timeZone: "UTC",
+      source: query.source, period: { startDay: "2026-09-21", endDay: "2026-09-21", days: query.days },
+      selectedAccountId: query.accountId ?? null,
+      accounts: accountSnapshot.accounts.map(account => ({ id: account.id, label: account.label, available: true })),
+      metrics: scenario === "benefits-insights"
+        ? { total: 27, completed: 22, failed: 4, cancelled: 1, unrecorded: 0,
+          knownOutcomeTotal: 27, knownOutcomeCompletionRate: 22 / 27 }
+        : { total: 0, completed: 0, failed: 0, cancelled: 0, unrecorded: 0,
+          knownOutcomeTotal: 0, knownOutcomeCompletionRate: null },
+      durations: scenario === "benefits-insights"
+        ? { observedSamples: 24, medianMs: 4100, p95Ms: 9200 }
+        : { observedSamples: 0, medianMs: null, p95Ms: null }, failures: [], calendar: [],
+      ...(scenario === "benefits-insights" ? { diagnosticGroups: [
+        { source: "web", accountId: "fixture-primary", mode: "automatic", effort: "high", modelVersion: "5.6-sol",
+          modelVersionSource: "observed", messageKind: "task",
+          accepted: 24, completed: 20, failed: 3, cancelled: 1, incomplete: 0, knownOutcomeTotal: 24,
+          knownOutcomeCompletionRate: 20 / 24, durations: { observedSamples: 22, eligibleSamples: 24, medianMs: 4100, p95Ms: 9200 },
+          failures: [{ code: "timeout", count: 2 }, { code: "browser_failure", count: 1 }], classifiedFailureSamples: 3 },
+        { source: "web", accountId: "fixture-secondary", mode: "automatic", effort: "medium", modelVersion: "5.6-sol",
+          modelVersionSource: "observed", messageKind: "task",
+          accepted: 3, completed: 2, failed: 1, cancelled: 0, incomplete: 0, knownOutcomeTotal: 3,
+          knownOutcomeCompletionRate: null, durations: { observedSamples: 2, eligibleSamples: 3, medianMs: null, p95Ms: null },
+          failures: [{ code: "transport", count: 1 }], classifiedFailureSamples: 1 },
+        { source: "native", endpoint: "responses", modelId: "gpt-5.6-sol", modelIdSource: "requested",
+          accepted: 3, completed: 2, failed: 1, cancelled: 0, incomplete: 0, knownOutcomeTotal: 3,
+          knownOutcomeCompletionRate: null, durations: { observedSamples: 2, eligibleSamples: 3, medianMs: null, p95Ms: null },
+          failures: [{ code: "transport", count: 1 }], classifiedFailureSamples: 1 },
+      ] } : {}) }),
+    repairWebRoute: async () => {
+      calls.push(["repair-web-route"]);
+      runtimeCapabilities = { ...runtimeCapabilities, tunnelRepair: { eligible: false, active: true, reason: null } };
+      if (scenario === "benefits-repair-failure") {
+        runtimeCapabilities = { runtimeStatus: "degraded", nativeAvailability: "ready", webAvailability: "degraded",
+          tunnelStatus: "failed", tunnelRepair: { eligible: true, active: false, reason: "tunnel-restart-failed" } };
+        return { status: "unavailable", reason: "tunnel-restart-failed" };
+      }
+      runtimeCapabilities = { runtimeStatus: "ready", nativeAvailability: "ready", webAvailability: "ready",
+        tunnelStatus: "ready", tunnelRepair: { eligible: false, active: false, reason: null } };
+      return { status: "recovered", reason: null };
+    },
+    routeDiagnostics: async () => {
+      diagnosticChecks++;
+      const failed = diagnosticChecks === 1;
+      return { schemaVersion: 1, codexHome: "/fixture/codex", configPath: "/fixture/config.toml", profilePath: null,
+        configStatus: "loaded", profile: null, provider: "nekodex", providerSource: "root", customProvider: false,
+        modelCatalogOverride: false, installed: true, active: true, routeMatches: true, issueCodes: [],
+        catalog: { status: "observed", successfulRequests: 1, lastSuccessfulAt: "2026-09-21T10:00:00.000Z",
+          lastResult: { request: failed ? 2 : 3, at: failed ? "2026-09-21T10:05:00.000Z" : "2026-09-21T10:06:00.000Z",
+            status: failed ? 302 : 200, ...(failed ? { failure: { stage: "upstream", code: "redirect" } } : {}) } } };
+    },
+    cancelUpdatePreparation: async () => {
+      calls.push(["cancel-update"]); update = { status: "installing", version: "9.9.9" }; emit("update", update);
+      return { status: "too-late" };
+    },
     setLanguage: async (next) => { state.language = next; emit("state", { ...state }); return { ...state }; },
     openSocial: async (target) => { calls.push(["social", target]); state[target === "github" ? "githubOpened" : "xOpened"] = true; return { ...state }; },
     completeOnboarding: async (nextLanguage, browserInteractionMode) => {
@@ -99,6 +331,15 @@ function installMockLauncher() {
       emit("state", { ...state }); return { ...state };
     },
   };
+  window.fixtureSetBrowser = patch => { Object.assign(browser, patch); emit("browser", { ...browser }); };
+  window.fixtureSetAccounts = value => { accountSnapshot = value; emit("browser", { ...browser }); };
+  window.fixtureSetUpdate = value => { update = value; emit("update", update); };
+  window.fixtureSetState = patch => { Object.assign(state, patch); emit("state", { ...state }); };
+  window.fixtureSetOperation = value => { operation = value; emit("operation", value); };
+  if (astraScenario) {
+    window.codexWebLauncher.onLifecycle = listen("lifecycle");
+    window.fixtureSetLifecycle = value => emit("lifecycle", value);
+  }
 }
 
 function createFixtureServer() { return http.createServer((request, response) => {

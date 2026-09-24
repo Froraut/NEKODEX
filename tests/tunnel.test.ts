@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { TUNNEL_VERSION, parseTunnelStatus, tunnelClientInstallAction, tunnelCommandOutput, tunnelConnectLaunchError } from "../src/tunnel";
+import {
+  TUNNEL_VERSION,
+  parseTunnelStatus,
+  removeTunnelInstallFile,
+  tunnelClientInstallAction,
+  tunnelCommandOutput,
+  tunnelConnectLaunchError,
+  tunnelStopProcessExited,
+} from "../src/tunnel";
 
 test("pins the fixed tunnel-client and migrates only the previously shipped version", () => {
   expect(TUNNEL_VERSION).toBe("0.0.12");
@@ -7,6 +15,33 @@ test("pins the fixed tunnel-client and migrates only the previously shipped vers
   expect(tunnelClientInstallAction("0.0.10")).toBe("upgrade");
   expect(() => tunnelClientInstallAction("0.0.11")).toThrow("not a trusted upgrade source");
   expect(() => tunnelClientInstallAction("9.9.9")).toThrow("not a trusted upgrade source");
+});
+
+test("Windows tunnel install cleanup retries transient file locks with bounded backoff", async () => {
+  const waits: number[] = [];
+  let attempts = 0;
+  await removeTunnelInstallFile("staged.exe", {
+    platform: "win32",
+    remove() {
+      attempts += 1;
+      if (attempts < 4) throw Object.assign(new Error("locked"), { code: "EBUSY" });
+    },
+    wait: async delay => { waits.push(delay); },
+    retryDelaysMs: [10, 20, 30, 40],
+  });
+  expect(attempts).toBe(4);
+  expect(waits).toEqual([10, 20, 30]);
+});
+
+test("stop timeout is accepted only when the exact reported process has exited", () => {
+  const receipt = JSON.stringify({ alias: "ours", stop_error: "process 4242 did not exit after SIGTERM" });
+  expect(tunnelStopProcessExited(receipt, "ours", pid => {
+    expect(pid).toBe(4242);
+    throw Object.assign(new Error("gone"), { code: "ESRCH" });
+  })).toBe(true);
+  expect(tunnelStopProcessExited(receipt, "other", () => { throw new Error("unexpected probe"); })).toBe(false);
+  expect(tunnelStopProcessExited(receipt, "ours", () => {})).toBe(false);
+  expect(tunnelStopProcessExited("stopped", "ours", () => { throw new Error("unexpected probe"); })).toBe(false);
 });
 
 describe("tunnel status boundary", () => {

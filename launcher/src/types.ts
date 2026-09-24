@@ -3,8 +3,9 @@ import languages from "../electron/languages.json";
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
+export type AuthenticationStatus = "unknown" | "verified" | "signed-out" | "unavailable";
 export type ProModelVersion = "5.6" | "5.5" | "6";
-export type Surface = "overview" | "accounts" | "browser" | "setup" | "mcp" | "activity" | "settings" | "updates";
+export type Surface = "overview" | "accounts" | "browser" | "tasks" | "setup" | "mcp" | "activity" | "settings" | "updates";
 
 export interface LauncherState {
   version: 1;
@@ -23,6 +24,7 @@ export interface LauncherState {
   experimentalAsyncToolOperations: boolean;
   allowWebSubagents: boolean;
   experimentalFreshConversationPerTurn: boolean;
+  useSavedChats: boolean;
   pendingBiggerContext?: boolean | null;
   contextChangeApplying?: boolean;
   contextChangeError?: string | null;
@@ -46,10 +48,45 @@ export interface LauncherState {
   runtimeMigrationPending?: boolean;
   launcherRestartRequired?: boolean;
   mcpGuideStep: number;
-  sessionRefreshReminderAt: string | null;
 }
 
+export interface BrowserWorkspaceItem {
+  id: string;
+  groupId: string;
+  state: "open" | "saved";
+  kind: "window" | "tab";
+  title: string | null;
+  location: string | null;
+  restorable: boolean;
+  needsOriginalAccount: boolean;
+  temporary: boolean;
+  active: boolean;
+}
+
+export interface BrowserWorkspaceAccount {
+  accountId: string;
+  label: string;
+  nativeTabs: boolean;
+  items: BrowserWorkspaceItem[];
+  restoreAttempted: boolean;
+  restoreResult: { opened: number; skippedTemporary: number; skippedCapacity: number; skippedIdentity: number } | null;
+  manifestStatus: string;
+  persistenceFailed?: boolean;
+  sessionMutation?: { generation: number; sourceId: string; reason: string; startedAt: number } | null;
+}
+
+export interface BrowserWorkspaceDirectorySnapshot {
+  platform: string;
+  nativeTabs: boolean;
+  maximum: number;
+  total: number;
+  accounts: BrowserWorkspaceAccount[];
+}
+
+export interface SnapshotObservation { sourceId: string; revision: number; }
+
 export interface BrowserState {
+  observation?: SnapshotObservation;
   accountId?: string;
   accountName?: string;
   status: "idle" | "loading" | "signed-out" | "ready" | "testing" | "running" | "error";
@@ -57,6 +94,10 @@ export interface BrowserState {
   url: string;
   title: string;
   authenticated: boolean;
+  authenticationStatus?: AuthenticationStatus;
+  authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "unknown" | null;
+  authenticationCheckedAt?: string | null;
+  lastVerifiedAt?: string | null;
   accountLabel?: string | null;
   visible: boolean;
   surfaceActive: boolean;
@@ -72,6 +113,29 @@ export interface BrowserState {
   activeTabId: string;
   maxTabs: number;
   tabs: BrowserTabState[];
+  tasks?: BrowserTaskState[];
+  taskHistoryHealth?: Array<{ accountId: string; accountName: string; issue: "task-history-unavailable" }>;
+  queue?: BrowserQueueState;
+  workspaces?: BrowserWorkspaceDirectorySnapshot;
+}
+
+export interface BrowserQueueState {
+  paused: boolean; pausedAccounts: string[]; storageIssue: string | null;
+  accounts: Array<{ id: string; label: string }>;
+  entries: Array<{ id: string; traceId: string; accountId: string | null;
+    status: 'waiting' | 'paused' | 'admitting' | 'cancelling' | 'cancelled' | 'failed' | 'interrupted';
+    reason: string | null; createdAt: number; position: number; retryAt: number | null;
+    ownerConnected: boolean; canCancel: boolean; canPrioritize: boolean; canResume: boolean; canDismiss: boolean }>;
+}
+
+export interface BrowserTaskState {
+  model: string | null;
+  id: string; traceId: string; tabId: string; accountId: string; accountName: string;
+  createdAt: number; updatedAt: number; sequence: number;
+  phase: 'preparing' | 'sending-context' | 'context-accepted' | 'sending' | 'accepted' | 'responding' | 'waiting-tools'
+    | 'completed' | 'failed-before-send' | 'send-uncertain' | 'failed-after-send' | 'cancelled' | 'interrupted';
+  submission: 'not-sent' | 'unknown' | 'uncertain' | 'context-accepted' | 'accepted';
+  terminal: boolean; canOpen: boolean; canCancel: boolean; canDismiss: boolean; retrySafe: boolean;
 }
 
 export interface ExistingChromeLoginProgress {
@@ -181,6 +245,40 @@ export interface UsageDurations {
 export type UsageFailureCode = "rate_limit" | "safety_stop" | "timeout" | "browser_failure" | "other" | "unknown"
   | "http-auth" | "http-rate-limit" | "http-client" | "http-server" | "transport" | "stream" | "protocol" | "aborted";
 export interface UsageFailure { code: UsageFailureCode; count: number; }
+export interface UsageDiagnosticDurations {
+  observedSamples: number;
+  eligibleSamples: number;
+  medianMs: number | null;
+  p95Ms: number | null;
+}
+interface UsageDiagnosticGroupBase {
+  accepted: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  knownOutcomeTotal: number;
+  knownOutcomeCompletionRate: number | null;
+  durations: UsageDiagnosticDurations;
+  failures: UsageFailure[];
+  classifiedFailureSamples: number;
+}
+export interface WebUsageDiagnosticGroup extends UsageDiagnosticGroupBase {
+  source: "web";
+  accountId: string;
+  effort: string;
+  modelVersion: string;
+  modelVersionSource: "observed" | "pinned" | "unknown";
+  mode: string;
+  messageKind: "task" | "context_stage" | "compaction" | "unknown";
+}
+export interface NativeUsageDiagnosticGroup extends UsageDiagnosticGroupBase {
+  source: "native";
+  endpoint: "responses" | "responses/compact";
+  modelId: string;
+  modelIdSource: "reported" | "requested" | "unknown";
+  incomplete?: number;
+}
+export type UsageDiagnosticGroup = WebUsageDiagnosticGroup | NativeUsageDiagnosticGroup;
 export interface UsageCalendarDay {
   day: string; total: number; completed: number; failed: number; cancelled: number; incomplete?: number; unrecorded: number;
 }
@@ -207,6 +305,7 @@ export interface UsageSnapshot {
   metrics: UsageMetrics;
   durations: UsageDurations;
   failures: UsageFailure[];
+  diagnosticGroups?: UsageDiagnosticGroup[];
   calendar: UsageCalendarDay[];
   tokens?: UsageTokenReport;
 }
@@ -220,6 +319,14 @@ export interface AccountSafetyPolicy {
   breakMinutes: number;
   maxSessionMinutes: number;
   cooldownMinutes: number;
+  newSessionWindow: { limit: number; minutes: number } | null;
+}
+export interface AccountNewSessionWindowStatus {
+  used: number;
+  remaining: number;
+  limit: number;
+  windowMinutes: number;
+  resetsAt: number | null;
 }
 export interface AccountQuotaWindow {
   usedPercent: number | null;
@@ -240,6 +347,20 @@ export interface AccountQuotaSnapshot {
   accountBucket: AccountQuotaBucket;
   additionalBuckets: AccountQuotaBucket[];
   additionalBucketsTruncated: boolean;
+  freshness?: "fresh" | "stale";
+  freshUntil?: string | null;
+  refreshError?: string | null;
+}
+export interface AccountQuotaPortfolioRow {
+  accountId: string;
+  evidenceEpoch: number;
+  status: "updated" | "retained" | "unavailable" | "skipped";
+  snapshot: AccountQuotaSnapshot | null;
+  reason: string | null;
+}
+export interface AccountQuotaPortfolioResult {
+  generatedAt: string;
+  rows: AccountQuotaPortfolioRow[];
 }
 export interface CodexLoginProgress {
   flowId: string; accountId: string;
@@ -257,11 +378,17 @@ export interface CodexLoginProgress {
 }
 
 export interface AccountPoolSnapshot {
+  observation?: SnapshotObservation;
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
+    capabilities?: { solAvailable: boolean | null; extraHighAvailable: boolean | null; proAvailable: boolean | null } | null;
+    availability?: { eligible: boolean; reason: string | null; retryAt: number | null };
+    authenticationStatus?: AuthenticationStatus;
+  authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "unknown" | null; authenticationCheckedAt?: string | null; lastVerifiedAt?: string | null;
     proxy: AccountProxy;
-    safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean };
+    safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
+      newSessionWindow: AccountNewSessionWindowStatus | null };
     accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number }>;
 }
 
@@ -278,10 +405,13 @@ export interface RuntimeCapabilities {
   nativeAvailability: "unknown" | "ready" | "degraded" | "unavailable";
   webAvailability: "unknown" | "ready" | "degraded" | "unavailable";
   tunnelStatus: string;
+  brokerReady?: boolean | null;
+  tunnelReady?: boolean | null;
   releaseVersion: string | null;
   daemonPid: number | null;
   tunnelPid: number | null;
   detail: string | null;
+  tunnelRepair?: { eligible: boolean; reason: string; active: boolean };
 }
 
 export interface LauncherLifecycle extends RuntimeCapabilities {
@@ -368,12 +498,21 @@ export interface LauncherApi {
   openExternal(url: string): Promise<boolean>;
   setBrowserBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<boolean>;
   setBrowserSurfaceActive(active: boolean): Promise<BrowserState>;
+  openBrowserWindow(asTab?: boolean): Promise<{ count: number }>;
+  browserWorkspaceSnapshot(): Promise<BrowserWorkspaceDirectorySnapshot>;
+  openBrowserWorkspace(accountId: string, options: { asTab: boolean }): Promise<BrowserState>;
+  restoreBrowserWorkspaces(accountId: string): Promise<BrowserState>;
+  focusBrowserWorkspace(accountId: string, workspaceId: string): Promise<BrowserState>;
+  closeBrowserWorkspace(accountId: string, workspaceId: string): Promise<BrowserState>;
   showBrowser(): Promise<BrowserState>;
   hideBrowser(): Promise<BrowserState>;
   navigateBrowser(action: "back" | "forward" | "reload"): Promise<BrowserState>;
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;
   closeBrowserTab(tabId: string, expectedTraceId?: string | null): Promise<BrowserState>;
+  dismissTask(accountId: string, id: string): Promise<BrowserState>;
+  queueAction(id: string, action: 'cancel' | 'resume' | 'prioritize' | 'dismiss'): Promise<BrowserState>;
+  pauseQueue(accountId: string | null, paused: boolean): Promise<BrowserState>;
   copyManualPrompt(tabId: string): Promise<BrowserState>;
   confirmManualSent(tabId: string): Promise<BrowserState>;
   openLogin(): Promise<BrowserState>;
@@ -386,12 +525,12 @@ export interface LauncherApi {
   allowExistingChromeFileAccess(): Promise<BrowserState>;
   copyExistingChromeSettingsAddress(): Promise<boolean>;
   logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
-  dismissSessionReminder(): Promise<LauncherState>;
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
   verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;
   routeDiagnostics(): Promise<RouteDiagnosticsReport>;
-  cancelTurns(): Promise<{ stdout: string }>;
+  cancelTurns(): Promise<{ cancelled: true } | { cancelled: false; cancelledHttpTurns: number;
+    cancelledBrowserTurns: number; cancelledCompactionRuns: number | null }>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
   setupMcp(input: {
@@ -404,13 +543,16 @@ export interface LauncherApi {
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setFreshConversation(enabled: boolean): Promise<LauncherState>;
+  setUseSavedChats(enabled: boolean): Promise<LauncherState>;
   setWebSubagents(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setAsyncToolOperations(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   accounts(): Promise<AccountPoolSnapshot>;
+  refreshAccountAuthentication(id: string): Promise<AccountPoolSnapshot>;
   accountCodexQuotaSnapshot(id: string): Promise<AccountQuotaSnapshot | null>;
   refreshAccountCodexQuota(id: string): Promise<AccountQuotaSnapshot>;
+  refreshAccountCodexQuotas(): Promise<AccountQuotaPortfolioResult>;
   codexLoginSnapshot(): Promise<CodexLoginProgress | null>;
   startCodexLogin(id: string): Promise<CodexLoginProgress>;
   codexLoginStatus(flowId: string, id: string): Promise<CodexLoginProgress>;
@@ -442,6 +584,7 @@ export interface LauncherApi {
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   usage(query: number | UsageQuery): Promise<UsageSnapshot>;
+  repairWebRoute(): Promise<{ status: "recovered" | "unavailable"; reason: string | null }>;
   logs(limit?: number): Promise<LogRecord[]>;
   exportLogs(): Promise<string | null>;
   installUpdate(): Promise<boolean>;

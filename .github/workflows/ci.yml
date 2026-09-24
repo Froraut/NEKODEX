@@ -43,6 +43,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: bun scripts/focused-pr-check.ts
+      - name: Check architecture map and documented paths
+        if: runner.os == 'Linux'
+        run: bun run architecture:check
       - name: Validate launcher installer with Windows PowerShell 5.1
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: powershell

@@ -9,10 +9,13 @@ function load(file, overrides = {}) {
   const source = fs.readFileSync(path.join(__dirname, "../src", file), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const loaded = { exports: {} };
-  Function("module", "exports", "require", compiled)(loaded, loaded.exports, name => overrides[name] || require(name));
+  Function("module", "exports", "require", compiled)(loaded, loaded.exports, name => overrides[name]
+    || (name === './profile-login-copy' ? load('profile-login-copy.ts')
+      : name.startsWith('./') && name.endsWith('.json') ? require(path.join(__dirname, '../src', name)) : require(name)));
   return loaded.exports;
 }
-const { copyFor } = load("i18n.ts");
+const { copyFor, loadLanguage } = require("./fixtures/load-renderer-module.cjs").loadRendererModule("i18n.ts");
+test.before(() => Promise.all(["en", "zh-CN", "ja"].map(loadLanguage)));
 const { ExistingChromeLoginGuide, existingChromeFailureText } = load("ExistingChromeLoginGuide.tsx");
 const progress = (phase, overrides = {}) => ({
   phase, startedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 120000).toISOString(),

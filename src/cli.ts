@@ -44,6 +44,8 @@ Usage:
   codex-chatgpt-web setup --full --tunnel-id ID --runtime-key-file PATH [options]
   codex-chatgpt-web login
   codex-chatgpt-web doctor [--json]
+  codex-chatgpt-web compaction-checkpoints list
+  codex-chatgpt-web compaction-checkpoints show ID --binding HASH
   codex-chatgpt-web route <status|connect|disconnect|diagnostics> [--profile NAME]
   codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web config pro-model-version <follow|5.6|5.5|6> --launcher-control
@@ -91,6 +93,8 @@ Setup options:
   --inline-skills             Keep selected skills inline (default)
   --fresh-conversation         Start each automatic turn with complete context in a new chat
   --retained-conversation      Reuse the current conversation (default)
+  --saved-chats                Keep task conversations in ChatGPT history
+  --temporary-chats            Use Temporary Chat for task conversations (default)
   --allow-web-subagents        Allow delegation from ChatGPT Web tasks
   --no-web-subagents           Disable Web delegation; native models are unchanged
   --standard-context           Disable experimental multi-message context
@@ -157,10 +161,14 @@ async function loginCommand(args: string[]): Promise<void> {
   const existingChrome = takeFlag(args, "--existing-chrome");
   const consentUserProfile = takeFlag(args, "--consent-user-profile");
   const selectedChromeDiscovery = takeFlag(args, "--selected-chrome-discovery");
+  const selectedChromeProfileClaim = takeFlag(args, "--selected-chrome-profile-claim");
   if (selectedChromeDiscovery && (!existingChrome || !launcherControl || !consentUserProfile)) {
     throw new Error("Selected Chrome discovery requires the owned launcher consent route");
   }
-  if ((existingChrome || consentUserProfile) && !launcherControl) {
+  if (selectedChromeProfileClaim && (!existingChrome || !launcherControl || !consentUserProfile)) {
+    throw new Error("Selected Chrome profile claim requires the owned launcher consent route");
+  }
+  if ((existingChrome || consentUserProfile || selectedChromeProfileClaim) && !launcherControl) {
     throw new Error("Existing Chrome import requires explicit consent in the launcher");
   }
   if (!launcherControl) {
@@ -188,11 +196,13 @@ async function loginCommand(args: string[]): Promise<void> {
     if (!consentUserProfile || chromeExecutablePath || !storageStatePath || !isAbsolute(storageStatePath)) {
       throw new Error("Existing Chrome import requires explicit profile consent and an absolute --storage-state path");
     }
-    const control = createExistingChromeLoginControl(undefined, { selectedDiscovery: selectedChromeDiscovery });
+    const control = createExistingChromeLoginControl(undefined, { selectedDiscovery: selectedChromeDiscovery,
+      selectedProfileClaim: selectedChromeProfileClaim });
     try {
       await captureExistingChromeLoginToFile({ ...defaultConfig(), storageStatePath }, {
         consent: true, signal: control.signal,
         ...(selectedChromeDiscovery ? { discoveryData: control.discoveryData! } : {}),
+        ...(selectedChromeProfileClaim ? { profileClaim: control.profileClaim! } : {}),
         onProgress: progress => stdout.write(`@codex-chrome-import:${JSON.stringify(progress)}\n`),
       });
     } catch (error) {
@@ -276,6 +286,10 @@ async function setupCommand(args: string[]): Promise<void> {
   const retainedConversation = takeFlag(args, "--retained-conversation");
   if (freshConversation && retainedConversation) throw new Error("Choose fresh or retained conversations");
   if (freshConversation || retainedConversation) options.experimentalFreshConversationPerTurn = freshConversation;
+  const savedChats = takeFlag(args, "--saved-chats");
+  const temporaryChats = takeFlag(args, "--temporary-chats");
+  if (savedChats && temporaryChats) throw new Error("Choose --saved-chats or --temporary-chats");
+  if (savedChats || temporaryChats) options.useSavedChats = savedChats;
   const allowWebSubagents = takeFlag(args, "--allow-web-subagents");
   const noWebSubagents = takeFlag(args, "--no-web-subagents");
   if (allowWebSubagents && noWebSubagents) throw new Error("Choose one Web subagent setting");
@@ -363,6 +377,38 @@ async function doctorCommand(args: string[]): Promise<void> {
   if (!report.ok) process.exitCode = 1;
 }
 
+async function compactionCheckpointsCommand(args: string[]): Promise<void> {
+  const action = args.shift();
+  if (action !== "list" && action !== "show") {
+    throw new Error("Compaction checkpoints supports read-only list or show; no automatic resume or replay");
+  }
+  if (action === "list") {
+    assertNoArgs(args);
+    const { CompactionCheckpointStore } = await import("./adapters/chatgpt-web/compaction-checkpoint-store");
+    const checkpoints = new CompactionCheckpointStore().listDiagnostics();
+    stdout.write(`${JSON.stringify({ checkpoints, automaticResume: false }, null, 2)}\n`);
+    return;
+  }
+  const id = args.shift();
+  const binding = takeOption(args, "--binding");
+  assertNoArgs(args);
+  if (!id || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id)) {
+    throw new Error("Invalid checkpoint id; use the exact UUID from list");
+  }
+  if (!binding || !/^[a-f0-9]{64}$/.test(binding)) {
+    throw new Error("An exact checkpoint --binding HASH from list is required");
+  }
+  const { CompactionCheckpointStore } = await import("./adapters/chatgpt-web/compaction-checkpoint-store");
+  const store = new CompactionCheckpointStore();
+  const expected = { id, binding };
+  const checkpoint = store.readDiagnostic(expected);
+  if (!checkpoint) throw new Error("Checkpoint unavailable, expired, invalid, or binding mismatch");
+  const summary = store.readSummary(expected);
+  // JSON escapes terminal control characters in provider-authored text. This explicit read
+  // never feeds a summary to the model or reconstructs a broker capability.
+  stdout.write(`${JSON.stringify({ checkpoint, ...(summary === undefined ? {} : { summary }), automaticResume: false }, null, 2)}\n`);
+}
+
 async function routeCommand(args: string[]): Promise<void> {
   const action = args.shift() ?? "status";
   if (action === "diagnostics") {
@@ -389,6 +435,9 @@ async function routeCommand(args: string[]): Promise<void> {
         : undefined;
   if (!result) throw new Error(`Unknown route action: ${action}`);
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if ("changed" in result && result.changed) {
+    process.stderr.write("Fully quit Codex, including background processes, and reopen it to reload the route.\n");
+  }
 }
 
 async function subagentsCommand(args: string[]): Promise<void> {
@@ -592,6 +641,7 @@ async function main(): Promise<void> {
   else if (command === "setup") await setupCommand(args);
   else if (command === "login") await loginCommand(args);
   else if (command === "doctor" || command === "status") await doctorCommand(args);
+  else if (command === "compaction-checkpoints") await compactionCheckpointsCommand(args);
   else if (command === "route") await routeCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "config") {

@@ -45,8 +45,8 @@ Usage:
   codex-chatgpt-web dev launcher
   codex-chatgpt-web dev status [--json]
   codex-chatgpt-web dev config pro-model-version <follow|5.6|5.5|6> --launcher-control
-  codex-chatgpt-web dev setup --browser-only [--automatic-browser-interaction]
-  codex-chatgpt-web dev setup --full --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction]
+  codex-chatgpt-web dev setup --browser-only [--automatic-browser-interaction] [--saved-chats|--temporary-chats]
+  codex-chatgpt-web dev setup --full --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction] [--saved-chats|--temporary-chats]
   codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
   codex-chatgpt-web dev list
 
@@ -55,12 +55,16 @@ Repository shortcut:
   bun run dev:chat NAME "message"
   bun run dev:chat NAME
 
+DEV setup chat storage:
+  --saved-chats        Keep DEV conversations in ChatGPT history
+  --temporary-chats    Use Temporary Chat (default)
+
 Interactive commands:
   /status              Show estimated next-turn context occupancy
   /fill TOKENS         Append deterministic inert context without opening ChatGPT
   /send-fill TOKENS    Send deterministic inert text through the live browser now
   /compact             Run the real browser compaction path now
-  /model MODEL         Select zero-risk, luna, think, light, medium, high, extra-high, or pro
+  /model MODEL         Select zero-risk, luna, think, light, medium, high, extra-high, pro, or a named GPT route
   /reset yes           Clear this named DEV chat and create a new thread identity
   /help                Show this command list
   /exit                Exit
@@ -199,7 +203,7 @@ function modelFromCli(value: string | undefined): DevChatModel | undefined {
   const normalized = value.trim().toLowerCase();
   const slug = normalized.startsWith("chatgpt-web/") ? normalized : `chatgpt-web/${normalized}`;
   if (!(DEV_CHAT_MODELS as readonly string[]).includes(slug)) {
-    throw new Error(`Unknown DEV model ${JSON.stringify(value)}; choose zero-risk, luna, think, light, medium, high, extra-high, or pro`);
+    throw new Error(`Unknown DEV model ${JSON.stringify(value)}; choose zero-risk, luna, think, light, medium, high, extra-high, pro, gpt-5.6-luna, gpt-5.6-sol-instant, gpt-5.6-sol, gpt-5.6-pro, or gpt-6-pro`);
   }
   return slug as DevChatModel;
 }
@@ -255,9 +259,10 @@ function printHeader(
   status: DevContextStatus,
   mode: "browser-only" | "full",
   biggerContext: boolean,
+  useSavedChats: boolean,
 ): void {
   stdout.write(`${bold("Codex Web GPT DEV")} · ${created ? "created" : "continued"} chat ${cyan(state.name)}\n`);
-  stdout.write(`model ${state.model} · ${mode === "full" ? "tools explicitly simulated" : "browser-only, no outer tools"} · live launcher browser\n`);
+  stdout.write(`model ${state.model} · ${useSavedChats ? "saved ChatGPT chats" : "temporary ChatGPT chats"} · ${mode === "full" ? "tools explicitly simulated" : "browser-only, no outer tools"} · live launcher browser\n`);
   stdout.write(`context ${statusLine(status)}\n`);
   if (biggerContext) {
     stdout.write(`${yellow("Bigger Context experimental")} · adaptive 1/2/3-message context · same-agent compaction handoff · elevated rate-limit/cooldown risk\n`);
@@ -492,6 +497,9 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (automaticBrowserInteraction && manualBrowserInteraction) {
       throw new Error("Choose at most one browser interaction mode");
     }
+    const savedChats = takeFlag(args, "--saved-chats");
+    const temporaryChats = takeFlag(args, "--temporary-chats");
+    if (savedChats && temporaryChats) throw new Error("Choose --saved-chats or --temporary-chats");
     const asyncToolOperations = takeFlag(args, "--async-tool-operations");
     const synchronousToolOperations = takeFlag(args, "--synchronous-tool-operations");
     if (asyncToolOperations && synchronousToolOperations) {
@@ -515,6 +523,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
       ...(asyncToolOperations || synchronousToolOperations
         ? { experimentalAsyncToolOperations: asyncToolOperations }
         : {}),
+      ...(savedChats || temporaryChats ? { useSavedChats: savedChats } : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
     });
@@ -575,7 +584,8 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (requestedModel && opened.state.model !== requestedModel) {
       driver.setModel(opened.state, requestedModel);
     }
-    printHeader(opened.state, opened.created, driver.status(opened.state), runtimeConfig.mode, features.biggerContext);
+    printHeader(opened.state, opened.created, driver.status(opened.state), runtimeConfig.mode,
+      features.biggerContext, runtimeConfig.useSavedChats);
     if (message) await executeMessage(driver, opened.state, message);
     else await interactive(driver, opened.state);
   } catch (error) {

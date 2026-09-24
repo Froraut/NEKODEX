@@ -18,16 +18,16 @@
 
 ## Download
 
-**5.9.0-nekodex.1 · prerelease**
+**6.0.0-nekodex.1 · prerelease**
 
 | Platform | Package | Delivery |
 | --- | --- | --- |
-| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.1/NEKODEX-5.9.0-nekodex.1-mac-arm64.dmg) | Developer ID signed and notarized |
-| macOS 13+ · Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.1/NEKODEX-5.9.0-nekodex.1-mac-x64.dmg) | Developer ID signed and notarized |
-| Linux x64 | [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.1/codex-web-gpt-5.9.0-nekodex.1-linux-x64.AppImage) | Authenticated release metadata |
+| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.1/NEKODEX-6.0.0-nekodex.1-mac-arm64.dmg) | Developer ID signed and notarized |
+| macOS 13+ · Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.1/NEKODEX-6.0.0-nekodex.1-mac-x64.dmg) | Developer ID signed and notarized |
+| Linux x64 | [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.1/codex-web-gpt-6.0.0-nekodex.1-linux-x64.AppImage) | Authenticated release metadata |
 | Windows x64 | [Preview artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml) | Unsigned preview; outside authenticated updates |
 
-[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v5.9.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.1/checksums.txt) · [Release authenticity](docs/release-signing.md)
+[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v6.0.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.1/checksums.txt) · [Release authenticity](docs/release-signing.md)
 
 On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later releases, use **Updates → Download and restart** inside the app. Account profiles and settings stay in place. Finish active tasks first.
 
@@ -40,6 +40,7 @@ On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later relea
 | **Accounts** | Separate saved ChatGPT sessions, selected or balanced routing, per-account Codex allowance refresh, and official Codex device sign-in. |
 | **Connections** | Model setup and local-tool setup together, with the exact connector identity and independent readiness checks. |
 | **Browser** | Embedded, task-bound ChatGPT conversations. Continuing work stays with its owning account. |
+| **Task center** | Submission stages, inspectable failures, a bounded waiting queue, priority, and global or per-account pause of new Web work. |
 | **Activity** | Separate Web and Native statistics, lifetime history, outcomes, observed durations and CSV export. |
 | **Updates** | Download progress, cancellation before installation, package verification and guarded restart/recovery. |
 
@@ -98,10 +99,10 @@ git clone https://github.com/Froraut/NEKODEX.git nekodex
 cd nekodex
 bun install --frozen-lockfile
 bun install --frozen-lockfile --cwd launcher
-bun run dev:launcher
+bun run launcher:dev
 ```
 
-[DEV setup](docs/dev-chat.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [Transactional updates](docs/transactional-updates.md) · [Security policy](SECURITY.md)
+[DEV setup](docs/dev-chat.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Transactional updates](docs/transactional-updates.md) · [Security policy](SECURITY.md)
 
 Local packaging does not establish publisher signing or notarization. See the [release workflow](.github/workflows/release.yml) for platform delivery. Use the English README for current product details; [Russian](README.ru.md), [Chinese](README.zh-CN.md) and [Japanese](README.ja.md) guides have separate update histories.
 

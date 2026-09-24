@@ -240,8 +240,19 @@ function prepareTransaction(job, deps = {}) {
     writeJournal(transaction);
     return transaction;
   } catch (error) {
-    rollback(transaction);
-    cleanup(transaction, deps);
+    let rolledBack = false;
+    try {
+      rollback(transaction);
+      rolledBack = true;
+      cleanup(transaction, deps);
+    } catch (compensationError) {
+      const failure = new AggregateError([error, compensationError],
+        `${error.message}; preparation compensation failed: ${compensationError.message}`);
+      // The caller has not received this transaction yet. Preserve the same
+      // durable rollback fence used for guardian failures across that boundary.
+      failure.updateRelaunchDeferred = !rolledBack;
+      throw failure;
+    }
     throw error;
   }
 }
@@ -295,8 +306,10 @@ function rollback(transaction, checkpoint = () => {}) {
     writeJournal(transaction);
   }
   if (transaction.newDirectory) fs.rmSync(transaction.newDirectory, { recursive: true, force: true });
+  // Terminal in-memory state must not authorize finally-cleanup until the
+  // terminal journal has actually been persisted.
+  writeJournal({ ...transaction, phase: "rolled-back" });
   transaction.phase = "rolled-back";
-  writeJournal(transaction);
   return true;
 }
 function launchedReplacement(transaction) {
@@ -395,9 +408,10 @@ async function waitForReadiness(transaction, { timeoutMs = 90_000, graceMs = 1_0
   throw new Error("Replacement launcher did not prove readiness before its deadline");
 }
 function commit(transaction) {
-  // The commit reaches disk before deleting any byte of the prior installation.
+  // Only a durable commit may authorize cleanup or suppress compensation.
+  // Keep the live phase nonterminal if journal publication fails.
+  writeJournal({ ...transaction, phase: "committed" });
   transaction.phase = "committed";
-  writeJournal(transaction);
   for (const op of transaction.operations) fs.rmSync(op.previous, { recursive: true, force: true });
   // Linux retains the old version and old runner for a separate explicit cleanup.
 }
@@ -504,23 +518,56 @@ async function main() {
   const job = validateJob(JSON.parse(fs.readFileSync(jobPath, "utf8")));
   appendLog(job, `waiting for exact launcher process ${job.parentPid} before installing v${job.version}`);
   await waitForParent(job.parentPid, job.parentIdentity);
+  await installUpdate(job);
+}
+
+// The guardian is a pre-replacement boundary. Once runTransaction is entered,
+// that function alone owns rollback/relaunch, including its pending-stop fence.
+async function installUpdate(job, deps = {}) {
   let transaction;
+  let guard;
+  let runStarted = false;
   try {
-    transaction = prepareTransaction(job);
-    const guard = spawn(transaction.runtime, [path.join(transaction.root, "update-worker.cjs"),
+    transaction = (deps.prepareTransaction || prepareTransaction)(job, deps);
+    guard = (deps.spawn || spawn)(transaction.runtime, [path.join(transaction.root, "update-worker.cjs"),
       path.join(transaction.root, "transaction.json"), "--guard"], {
       detached: true, stdio: ["pipe", "ignore", "ignore"], windowsHide: true,
     });
     await new Promise((resolve, reject) => { guard.once("spawn", resolve); guard.once("error", reject); });
     guard.unref();
-    await runTransaction(transaction);
-    guard.stdin.end();
+    runStarted = true;
+    await (deps.runTransaction || runTransaction)(transaction, deps);
   } catch (error) {
-    appendLog(job, `update failed: ${error.stack || error.message}`);
-    if (!transaction) await launch(executableFor(job));
-    throw error;
+    const failures = [error];
+    if (!runStarted) {
+      let relaunchAllowed = !transaction && error?.updateRelaunchDeferred !== true;
+      if (transaction) {
+        try {
+          rollback(transaction);
+          // Successful durable rollback proves later recovery is cleanup-only.
+          relaunchAllowed = true;
+          cleanup(transaction, deps);
+        } catch (cleanupError) {
+          failures.push(new Error(`prepared update rollback/cleanup failed: ${cleanupError.message}`, { cause: cleanupError }));
+        }
+      }
+      // Leave a nonterminal prepared transaction's relaunch to recovery. A
+      // cleanup error after durable rollback does not transfer that ownership.
+      if (relaunchAllowed) {
+        try { await (deps.launch || launch)(executableFor(job)); }
+        catch (launchError) {
+          failures.push(new Error(`previous application relaunch failed: ${launchError.message}`, { cause: launchError }));
+        }
+      }
+    }
+    const failure = failures.length === 1 ? error
+      : new AggregateError(failures, failures.map(item => item.message).join("; "));
+    appendLog(job, `update failed: ${failure.stack || failure.message}`);
+    throw failure;
+  } finally {
+    guard?.stdin?.end();
   }
 }
-module.exports = { cleanup, commit, executableFor, launch, main, operation, prepareTransaction, processAlive, waitForParent,
+module.exports = { cleanup, commit, executableFor, installUpdate, launch, main, operation, prepareTransaction, processAlive, waitForParent,
   recover, replace, rollback, runTransaction, stopReplacement, waitForReadiness, writeJournal };
 if (require.main === module) void main().catch(() => process.exit(1));

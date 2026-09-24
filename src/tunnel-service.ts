@@ -1,8 +1,9 @@
+import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./codex-integration-shared";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { AppConfig } from "./config";
-import { atomicWriteFile, getConfigDir } from "./config";
+import { getConfigDir } from "./config";
 import { isMissingLaunchdService, runCommand, runChecked } from "./process";
 
 const LABEL = "io.github.codex-chatgpt-web.tunnel";
@@ -126,7 +127,7 @@ export function tunnelServiceDefinitionMatches(config: AppConfig): boolean {
 
 export function installTunnelService(
   config: AppConfig,
-  onDefinitionWritten?: (definition: { path: string; data: string }) => void,
+  onDefinitionWritten?: (definition: { path: string; data: string; receipt: FileSnapshot }) => void,
   signal?: AbortSignal,
 ): TunnelServiceStatus {
   throwIfAborted(signal);
@@ -136,6 +137,7 @@ export function installTunnelService(
   if (!existsSync(tunnel.binaryPath)) throw new Error(`Tunnel client is missing: ${tunnel.binaryPath}`);
   if (!existsSync(profile)) throw new Error(`Tunnel profile is missing: ${profile}`);
   const current = getTunnelServiceStatus(LAUNCHCTL_PRINT_TIMEOUT_MS, signal);
+  const before = snapshotFile(plistPath());
   const next = tunnelServiceDefinition(config);
   if (current.loaded && (!current.installed || readFileSync(plistPath(), "utf8") !== next)) {
     throw new Error("Refusing to replace a loaded tunnel service definition; stop it before installing the update");
@@ -145,8 +147,8 @@ export function installTunnelService(
   mkdirSync(join(getConfigDir(), "logs"), { recursive: true, mode: 0o700 });
   if (!current.installed || readFileSync(plistPath(), "utf8") !== next) {
     throwIfAborted(signal);
-    atomicWriteFile(plistPath(), next);
-    onDefinitionWritten?.({ path: plistPath(), data: next });
+    const receipt = writeFileSnapshot(before, next, { expectedSnapshot: before });
+    onDefinitionWritten?.({ path: plistPath(), data: next, receipt });
   }
   if (!current.loaded) {
     throwIfAborted(signal);

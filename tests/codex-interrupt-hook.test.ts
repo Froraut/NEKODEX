@@ -10,6 +10,7 @@ import {
   codexInterruptHookCommand,
   codexInterruptHookHash,
   installCodexInterruptHook,
+  installCodexInterruptHookCommand,
   installCodexInterruptHookTrust,
   restoreCodexInterruptHookTrust,
   restoreCodexInterruptHook,
@@ -17,6 +18,54 @@ import {
   verifyCodexInterruptHookTrust,
   verifyCodexInterruptHookRestored,
 } from "../src/codex-interrupt-hook";
+
+test("retains hook ownership after native TOML escaping and inline serialization", () => {
+  const original = 'model = "example"\n\n[mcp_servers.notes]\ncommand = "user-mcp"\n';
+  const command = '"C:\\Program Files\\Bridge\\runtime.exe" "hook" "interrupt"';
+  const { text, installed } = installCodexInterruptHookCommand(original, "/fixture/config.toml", command);
+  const literal = text.replace(JSON.stringify(command), `'${command}'`);
+  const inline = original + `\n[hooks]\nInterrupt = [{ hooks = [{ type = 'command', command = '${command}', timeout = 3 }] }]\n`
+    + `[hooks.state.'${installed.stateKey}']\ntrusted_hash = '${installed.trustedHash}'\n${MANAGED_INTERRUPT_HOOK_END}\n`;
+  for (const value of [literal, inline, literal.replace(/^#.*interrupt.*\n/gm, "")]) {
+    expect(Bun.TOML.parse(value)).toEqual(Bun.TOML.parse(text));
+    verifyCodexInterruptHook(value, installed);
+    const restored = restoreCodexInterruptHook(value, installed);
+    const parsed = Bun.TOML.parse(restored) as {
+      hooks?: { Interrupt?: unknown[]; state?: Record<string, unknown> };
+      mcp_servers: { notes: { command: string } };
+    };
+    expect(parsed.mcp_servers.notes.command).toBe("user-mcp");
+    expect(parsed.hooks?.Interrupt).toBeUndefined();
+    expect(parsed.hooks?.state).toBeUndefined();
+    expect(restored).toContain('[mcp_servers.notes]\ncommand = "user-mcp"');
+    verifyCodexInterruptHookRestored(restored);
+    for (const changed of [
+      value.replace(command, command + " --changed"),
+      value.replace("timeout = 3", "timeout = 9"),
+      value.replace(installed.trustedHash, "sha256:changed"),
+    ]) {
+      expect(changed).not.toBe(value);
+      expect(() => restoreCodexInterruptHook(changed, installed)).toThrow("changed after setup");
+    }
+  }
+});
+
+test("removes only the owned inline Interrupt element and preserves other settings", () => {
+  const original = "[[hooks.Interrupt]]\n[[hooks.Interrupt.hooks]]\ntype = 'command'\ncommand = 'user-hook'\n";
+  const { installed } = installCodexInterruptHookCommand(original, "/fixture/config.toml", "bridge-hook");
+  const serialized = `[hooks]\nInterrupt = [\n { hooks = [{ type = 'command', command = 'user-hook' }] },\n { hooks = [{ type = 'command', command = 'bridge-hook', timeout = 3 }] },\n]\n`
+    + `[hooks.state.'${installed.stateKey}']\ntrusted_hash = '${installed.trustedHash}'\n`
+    + "\n[other]\ntext = '''\n[[hooks.Interrupt]]\ncommand = 'example, not a hook'\n'''\n";
+  const restored = restoreCodexInterruptHook(serialized, installed);
+  expect((Bun.TOML.parse(restored) as { hooks: { Interrupt: unknown[] } }).hooks.Interrupt)
+    .toEqual([{ hooks: [{ type: "command", command: "user-hook" }] }]);
+  expect(restored).toContain("text = '''\n[[hooks.Interrupt]]\ncommand = 'example, not a hook'\n'''");
+  const next = installCodexInterruptHookCommand(restored, "/fixture/config.toml", "new-bridge-hook");
+  expect(next.installed.groupIndex).toBe(1);
+  verifyCodexInterruptHook(next.text, next.installed);
+  expect(Bun.TOML.parse(restoreCodexInterruptHook(next.text, next.installed)))
+    .toEqual(Bun.TOML.parse(restored));
+});
 
 test("installs one narrowly trusted Interrupt hook and restores the exact Codex config", () => {
   const original = [
@@ -318,6 +367,50 @@ test("preserves foreign tables inserted between the managed command and trust st
   }
 });
 
+test("restores a managed trust state moved before its hook with normalized boundary whitespace", () => {
+  for (const ending of ["\n", "\r\n"]) {
+    const original = [
+      'model = "gpt-5.6-sol"',
+      "",
+      "[mcp_servers.user_owned]",
+      'command = "user-tool"',
+      "",
+    ].join(ending);
+    const installed = installCodexInterruptHook(original, "/Users/test/.codex/config.toml", {
+      runtimeCommand: ["/opt/runtime"],
+    });
+    const state = [
+      `[hooks.state.${JSON.stringify(installed.installed.stateKey)}]`,
+      `trusted_hash = ${JSON.stringify(installed.installed.trustedHash)}`,
+      "",
+    ].join(ending);
+    const reordered = installed.text
+      .replace(state, "")
+      .replace(MANAGED_INTERRUPT_HOOK_START, state + MANAGED_INTERRUPT_HOOK_START)
+      .replace(
+        `timeout = 3${ending}${ending}${MANAGED_INTERRUPT_HOOK_END}`,
+        `timeout = 3${ending}${MANAGED_INTERRUPT_HOOK_END}`,
+      );
+
+    expect(Bun.TOML.parse(reordered)).toEqual(Bun.TOML.parse(installed.text));
+    verifyCodexInterruptHook(reordered, installed.installed);
+    const restored = restoreCodexInterruptHook(reordered, installed.installed);
+    expect(Bun.TOML.parse(restored)).toEqual(Bun.TOML.parse(original));
+    expect(restored).toContain('[mcp_servers.user_owned]');
+    expect(restored).toContain('command = "user-tool"');
+    verifyCodexInterruptHookRestored(restored);
+
+    for (const changed of [
+      reordered.replace("timeout = 3", "timeout = 2"),
+      reordered.replace(installed.installed.trustedHash, "sha256:" + "a".repeat(64)),
+      reordered + state,
+    ]) {
+      expect(() => verifyCodexInterruptHook(changed, installed.installed)).toThrow("changed after setup");
+      expect(() => restoreCodexInterruptHook(changed, installed.installed)).toThrow("changed after setup");
+    }
+  }
+});
+
 test("foreign table interleaving does not permit changed or ambiguous hook ownership", () => {
   const installed = installCodexInterruptHook('model = "gpt-5.6-sol"\n', "/Users/test/.codex/config.toml", {
     runtimeCommand: ["/opt/runtime"],
@@ -394,5 +487,27 @@ test("restores a hook whose end comment moved before unchanged definitions witho
       const markerInsideValue = original + 'description = """\n' + movedComment + '"""\n' + mcp + definitions;
       expect(() => restoreCodexInterruptHook(markerInsideValue, installed.installed)).toThrow("markers changed after setup");
     }
+  }
+});
+
+test("restores an unchanged legacy hook after native formatting removes its end marker", () => {
+  const original = 'model = "gpt-5.6-sol"\n';
+  const installed = installCodexInterruptHook(original, "/Users/test/.codex/config.toml", {
+    runtimeCommand: ["/opt/runtime"],
+  });
+  const foreign = '\n[mcp_servers.user_owned]\ncommand = "user-tool"\n';
+  const rewritten = installed.text.replace(`${MANAGED_INTERRUPT_HOOK_END}\n`, "") + foreign;
+
+  verifyCodexInterruptHook(rewritten, installed.installed);
+  const restored = restoreCodexInterruptHook(rewritten, installed.installed);
+  expect(restored).toBe(original + foreign);
+  verifyCodexInterruptHookRestored(restored);
+
+  for (const changed of [
+    rewritten.replace("timeout = 3", "timeout = 2"),
+    rewritten.replace(installed.installed.trustedHash, "sha256:" + "a".repeat(64)),
+    rewritten + `\n${MANAGED_INTERRUPT_HOOK_START}\n`,
+  ]) {
+    expect(() => verifyCodexInterruptHook(changed, installed.installed)).toThrow("changed after setup");
   }
 });

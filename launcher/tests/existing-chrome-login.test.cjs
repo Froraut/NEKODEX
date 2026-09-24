@@ -103,6 +103,63 @@ test("an import failure is sanitized before withManualOperation can publish any 
   assert.doesNotMatch(host.state.message, /SECRET|sensitive/);
 });
 
+test("installer rollback evidence survives the real manual-operation boundary", async () => {
+  for (const scenario of ["authenticated", "unavailable", "cancelled", "cleanup-failed", "no-receipt"]) {
+    const { host } = fixture();
+    const snapshots = [];
+    host.withManualOperation = BrowserHost.prototype.withManualOperation.bind(host);
+    host.ready = async () => {};
+    host.logger = { info() {}, error() {} };
+    host.publishState = state => snapshots.push(state);
+    host.setState = patch => { host.state = { ...host.state, ...patch }; host.publishState(host.snapshot()); };
+    const restored = { authenticated: scenario !== "unavailable", authenticationStatus: scenario === "unavailable" ? "unavailable" : "authenticated",
+      status: scenario === "unavailable" ? "error" : "ready", loading: false,
+      message: scenario === "unavailable" ? "Previous session restored; verification unavailable" : "Previous session verified",
+      authenticationCheckedAt: "fresh-rollback-probe" };
+    host.installPasskeyLogin = async transfer => {
+      await transfer.cleanup();
+      host.setState(restored);
+      if (scenario === "cancelled") host.existingChromeLoginController.abort();
+      throw Object.assign(new Error("SECRET raw cookie https://sensitive.test"), {
+        ...(scenario !== "no-receipt" ? { previousSessionRestored: true } : {}),
+        ...(scenario === "cleanup-failed" ? { code: "existing_chrome_cleanup_failed" } : {}),
+      });
+    };
+    const operation = openExistingChromeLogin(host, async () => true);
+    if (scenario === "cancelled") await operation;
+    else await assert.rejects(operation, error => {
+      assert.equal(error.previousSessionRestored, scenario === "no-receipt" ? undefined : true);
+      assert.equal(error.cause, undefined);
+      assert.doesNotMatch(error.message, /SECRET|sensitive/);
+      return true;
+    });
+    if (["cleanup-failed", "no-receipt"].includes(scenario)) {
+      assert.equal(host.state.status, "error");
+      assert.notEqual(host.state.message, restored.message);
+    } else assert.deepEqual(host.state, restored);
+    assert.equal(host.snapshot().existingChromeLogin.phase, scenario === "cancelled" ? "cancelled" : "failed");
+    assert.equal(host.snapshot().existingChromeLogin.error, scenario === "cancelled" ? null
+      : scenario === "cleanup-failed" ? "existing-chrome-cleanup-failed" : "session-verification-failed");
+    assert.equal(host.loginOperation, null);
+    assert.equal(host.manualOperation, null);
+    assert.equal(host.existingChromeLoginController, null);
+    assert.doesNotMatch(JSON.stringify(snapshots), /SECRET|sensitive/);
+  }
+});
+
+test("capture cannot forge the local installer's rollback receipt", async () => {
+  const { host } = fixture();
+  const original = { ...host.state };
+  host.loginWithExistingChrome = async () => {
+    throw Object.assign(new Error("SECRET"), { previousSessionRestored: true });
+  };
+  await assert.rejects(openExistingChromeLogin(host, async () => true), error => {
+    assert.equal(error.previousSessionRestored, undefined);
+    return true;
+  });
+  assert.deepEqual(host.state, original);
+});
+
 test("authentication completed during consent or refresh is preserved without capture", async () => {
   for (const where of ["consent", "refresh"]) {
     const { host, events } = fixture();
@@ -303,7 +360,7 @@ test("retry cleans only abandoned owned transfer directories after checking runt
 test("typed helper errors preserve only allowlisted codes, never raw diagnostics", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-safe-error-"));
   try {
-    for (const code of ["chrome-profile-access-denied", "chrome-permission-denied", "chrome-permission-timeout", "launcher-authorization-failed"]) {
+    for (const code of ["chrome-profile-access-denied", "chrome-profile-claim-missing", "chrome-permission-denied", "chrome-permission-timeout", "launcher-authorization-failed"]) {
       const host = runtimeFixture("darwin", root), logs = [];
       host.logger = { warn: (...args) => logs.push(args) };
       host.run = async (_name, _args, options) => {
@@ -401,6 +458,24 @@ test("selected connection contents stay out of progress and travel only in the p
     assert.doesNotMatch(JSON.stringify({ args: host.invocation.args, env: host.invocation.options.env }), /devtools|11111111/);
     await transfer.cleanup();
     await assert.rejects(captureExistingChromeLogin(host, undefined, { selectedDiscoveryContents: undefined }));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("selected profile claim travels only through the private runtime control pipe", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "existing-chrome-profile-claim-"));
+  const nonce = "P".repeat(32);
+  const profileClaim = { version: 1, nonce, url: `http://127.0.0.1:43210/nekodex-profile-claim-v1/${nonce}`,
+    openedAt: new Date().toISOString() };
+  try {
+    const host = runtimeFixture("darwin", root);
+    const transfer = await captureExistingChromeLogin(host, undefined, { profileClaim });
+    assert.ok(host.invocation.args.includes("--selected-chrome-profile-claim"));
+    assert.deepEqual(JSON.parse(host.invocation.options.privateControlMessage),
+      { version: 1, type: "existing-chrome-profile-claim", claim: profileClaim });
+    assert.doesNotMatch(JSON.stringify({ args: host.invocation.args, env: host.invocation.options.env }), new RegExp(nonce));
+    await transfer.cleanup();
+    await assert.rejects(captureExistingChromeLogin(host, undefined, { profileClaim: { ...profileClaim, url: "about:blank#wrong" } }),
+      /claim is invalid/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

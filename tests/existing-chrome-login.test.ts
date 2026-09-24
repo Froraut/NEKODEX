@@ -206,6 +206,86 @@ test("only owned blank target and explicit ChatGPT cookie URLs are accessed", as
   } finally { await f.close(); }
 });
 
+test("a selected profile claim resolves the supported CDP context before cookie capture", async () => {
+  const nonce = "A".repeat(32);
+  const claim = { version: 1 as const, nonce, url: `http://127.0.0.1:43210/nekodex-profile-claim-v1/${nonce}`,
+    openedAt: new Date().toISOString() };
+  const f = await fixture({ onRequest(call, reply) {
+    if (call.method === "Target.getTargets") {
+      reply({ targetInfos: [
+        { targetId: "UNRELATED", type: "page", url: "https://private.example/", browserContextId: "OTHER" },
+        { targetId: "CLAIM-TARGET", type: "page", url: claim.url, browserContextId: "CHOSEN-CONTEXT" },
+      ] });
+      return true;
+    }
+  } });
+  try {
+    await captureExistingChromeLogin({ consent: true, profileClaim: Promise.resolve(claim) }, f.dependencies);
+    expect(f.calls.map(call => call.method)).toEqual(["Browser.getVersion", "Target.getTargets", "Target.createTarget",
+      "Target.attachToTarget", "Network.getCookies", "Target.closeTarget", "Target.closeTarget"]);
+    expect(f.calls[1]!.params).toEqual({ filter: [{ type: "page" }] });
+    expect(f.calls[2]!.params).toEqual({ url: "about:blank", background: true, hidden: true,
+      browserContextId: "CHOSEN-CONTEXT" });
+    expect(f.calls.slice(-2).map(call => call.params.targetId)).toEqual(["OWN-TARGET", "CLAIM-TARGET"]);
+    expect(JSON.stringify(f.calls)).not.toContain("private.example");
+  } finally { await f.close(); }
+});
+
+test("a profile claim missing from the approved Chrome context fails before session access", async () => {
+  const nonce = "B".repeat(32);
+  const claim = { version: 1 as const, nonce, url: `http://127.0.0.1:43210/nekodex-profile-claim-v1/${nonce}`,
+    openedAt: new Date().toISOString() };
+  const f = await fixture({ onRequest(call, reply) {
+    if (call.method === "Target.getTargets") {
+      reply({ targetInfos: [{ targetId: "OTHER", type: "page", url: "about:blank", browserContextId: "DEFAULT" }] });
+      return true;
+    }
+  } });
+  try {
+    await expect(captureExistingChromeLogin({ consent: true, profileClaim: Promise.resolve(claim) }, f.dependencies))
+      .rejects.toMatchObject({ code: "chrome-profile-claim-missing" });
+    expect(f.calls.map(call => call.method)).toEqual(["Browser.getVersion", ...Array(5).fill("Target.getTargets")]);
+  } finally { await f.close(); }
+});
+
+test("selected profile claim waits for its committed URL without choosing another target", async () => {
+  const nonce = "S".repeat(32);
+  const claim = { version: 1 as const, nonce, url: `http://127.0.0.1:43210/nekodex-profile-claim-v1/${nonce}`,
+    openedAt: new Date().toISOString() };
+  let lookups = 0;
+  const f = await fixture({ onRequest(call, reply) {
+    if (call.method === "Target.getTargets") {
+      reply({ targetInfos: [{ targetId: "CLAIM-TARGET", type: "page", browserContextId: "SELECTED",
+        url: ++lookups < 3 ? "about:blank" : claim.url }] });
+      return true;
+    }
+  } });
+  try {
+    await captureExistingChromeLogin({ consent: true, profileClaim: Promise.resolve(claim) }, f.dependencies);
+    expect(lookups).toBe(3);
+    expect(f.calls.find(call => call.method === "Target.createTarget")?.params.browserContextId).toBe("SELECTED");
+    expect(f.calls.filter(call => call.method === "Target.closeTarget").map(call => call.params.targetId))
+      .toEqual(["OWN-TARGET", "CLAIM-TARGET"]);
+  } finally { await f.close(); }
+});
+
+test("profile claim rejects old launch URLs, foreign hosts and mismatched nonces before connecting", async () => {
+  const nonce = "V".repeat(32);
+  const f = await fixture();
+  try {
+    for (const url of [`about:blank#nekodex-profile-claim-v1=${nonce}`,
+      `http://localhost:43210/nekodex-profile-claim-v1/${nonce}`,
+      `http://127.0.0.1:65536/nekodex-profile-claim-v1/${nonce}`,
+      `http://127.0.0.1:43210/nekodex-profile-claim-v1/${"W".repeat(32)}`,
+      `http://127.0.0.1:43210/nekodex-profile-claim-v1/${nonce}?extra=1`]) {
+      await expect(captureExistingChromeLogin({ consent: true,
+        profileClaim: Promise.resolve({ version: 1, nonce, url, openedAt: new Date().toISOString() }) }, f.dependencies))
+        .rejects.toMatchObject({ code: "invalid-response" });
+    }
+    expect(f.upgrades.length).toBe(0);
+  } finally { await f.close(); }
+});
+
 test("Chrome native denial is recoverable and makes no CDP requests", async () => {
   const f = await fixture({ deny: true });
   try {

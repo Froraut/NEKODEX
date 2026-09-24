@@ -219,6 +219,52 @@ test("recovery registrations use isolated per-update names and preserve normal a
   }
 });
 
+test("conflicting recovery file is preserved and does not become transaction-owned", () => {
+  const f = fixture("linux");
+  try {
+    const options = { home: path.join(f.root, "home"), env: {} };
+    const registration = recoveryRegistration(f.transaction, options);
+    fs.mkdirSync(path.dirname(registration.path), { recursive: true });
+    fs.writeFileSync(registration.path, "external recovery entry\n");
+    assert.throws(() => registerRecovery(f.transaction, options), error => error?.code === "EEXIST");
+    assert.equal(fs.readFileSync(registration.path, "utf8"), "external recovery entry\n");
+    assert.equal(f.transaction.recovery, undefined);
+    assert.equal(fs.existsSync(path.join(f.transaction.root, "registration.json")), false);
+    unregisterRecovery(f.transaction, options);
+    assert.equal(fs.readFileSync(registration.path, "utf8"), "external recovery entry\n");
+  } finally { f.close(); }
+});
+
+test("recovery registration conflict leaves preparation retryable without touching the installed app", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "update-registration-conflict-"));
+  const target = path.join(root, "Application");
+  const transactionRoot = `${target}.update-recovery`;
+  const tempRoot = path.join(root, "temporary-download");
+  const home = path.join(root, "home");
+  fs.mkdirSync(target);
+  fs.mkdirSync(tempRoot);
+  fs.writeFileSync(path.join(target, "installed"), "original installation");
+  const original = snapshot(target);
+  const job = { platform: "darwin", arch: "x64", version: "2.0.0", target, productName: "Codex Web GPT",
+    tempRoot, logPath: path.join(root, "logs", "update-worker.log"), runtimeExecutable: __filename,
+    transactionRoot, stagedApplication: path.join(tempRoot, "staged") };
+  const registration = recoveryRegistration({ root: transactionRoot, runtime: path.join(transactionRoot, "bun"), job }, { home, env: {} });
+  fs.mkdirSync(path.dirname(registration.path), { recursive: true });
+  fs.writeFileSync(registration.path, "external recovery entry\n");
+  try {
+    assert.throws(() => prepareTransaction(job, {
+      validate() {},
+      copyTree(_source, destination) { fs.mkdirSync(destination); fs.writeFileSync(path.join(destination, "candidate"), "new"); },
+      registerRecovery(transaction) { return registerRecovery(transaction, { home, env: {} }); },
+      unregisterRecovery(transaction) { return unregisterRecovery(transaction, { home, env: {} }); },
+    }), error => error?.code === "EEXIST");
+    assert.deepEqual(snapshot(target), original);
+    assert.equal(fs.readFileSync(registration.path, "utf8"), "external recovery entry\n");
+    assert.equal(fs.existsSync(transactionRoot), false);
+    assert.equal(fs.existsSync(tempRoot), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("staging validation or copy failure leaves the existing installation exact and never registers recovery", () => {
   for (const failure of ["validation", "copy"]) {
     const f = fixture("win32");

@@ -1,9 +1,11 @@
+import { NativeRouteCache } from "./native-route-cache";
 import {
   LauncherBrowserHostUnavailableError,
   readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
 
 const EXPLICIT_PROXY_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
+const BOOTSTRAP_URL = "https://chatgpt.com/backend-api/codex/responses";
 const NATIVE_FALLBACK_PROXY_KEY = "CODEX_CHATGPT_WEB_NATIVE_FALLBACK_PROXY";
 function proxyError(message: string): Error {
   return Object.assign(new Error(message), { code: "NativeProxyConfigurationError" });
@@ -28,18 +30,20 @@ function fallbackProxyOrigin(value: string): string {
   return origin;
 }
 
-let backgroundProxy: string | undefined;
+const routes = new NativeRouteCache();
 let backgroundProxyError: Error | undefined;
 const configuredBackgroundProxy = process.env[NATIVE_FALLBACK_PROXY_KEY];
+let launcherRoutesRequired = configuredBackgroundProxy !== undefined
+  || !!process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
 if (configuredBackgroundProxy !== undefined) {
   try {
-    backgroundProxy = fallbackProxyOrigin(configuredBackgroundProxy);
+    routes.seed(BOOTSTRAP_URL, fallbackProxyOrigin(configuredBackgroundProxy));
   } catch (error) {
     backgroundProxyError = error instanceof Error ? error : proxyError("Native Codex background proxy configuration is invalid");
   }
 }
 
-/** True when the detached daemon has a launcher-independent native transport route. */
+/** Detach readiness requires intentional global transport independent of launcher route leases. */
 export function nativeNetworkBackgroundReady(): boolean {
   const explicit = process.env.CODEX_CHATGPT_WEB_NATIVE_PROXY?.trim();
   if (explicit) {
@@ -53,12 +57,14 @@ export function nativeNetworkBackgroundReady(): boolean {
   // These overrides are interpreted by Bun with its existing HTTP(S)/ALL_PROXY and NO_PROXY
   // semantics. Their presence already makes native transport independent of the launcher.
   if (EXPLICIT_PROXY_KEYS.some(key => process.env[key]?.trim())) return true;
-  return backgroundProxy !== undefined;
+  // Exact-URL bootstrap/cache evidence expires and cannot authorize durable GUI detachment.
+  return false;
 }
 
-function requireBackgroundProxy(cause: unknown): string {
-  if (backgroundProxy !== undefined) return backgroundProxy;
-  const error = backgroundProxyError
+function requireBackgroundProxy(url: string, cause: unknown): string {
+  const cached = routes.cached(url);
+  if (cached !== undefined) return cached;
+  const error = (url === BOOTSTRAP_URL ? backgroundProxyError : undefined)
     ?? proxyError("Native Codex background proxy route is unavailable");
   if (!("cause" in error)) Object.defineProperty(error, "cause", { value: cause, configurable: true });
   throw error;
@@ -75,12 +81,37 @@ function hasErrorCode(error: unknown, code: string, seen = new Set<unknown>()): 
   return false;
 }
 
+function transientProxyError(error: unknown): boolean {
+  return hasErrorCode(error, "ECONNREFUSED") || hasErrorCode(error, "ECONNRESET")
+    || (error instanceof DOMException && error.name === "TimeoutError");
+}
+
 function fetchWithProxy(request: Request, proxy: string): Promise<Response> {
   return fetch(request, { proxy });
 }
 
-/** Per-request OS proxy refresh applies only to native first-party traffic, never account sessions. */
+/** Cancel only this caller's wait; the cache owns the shared refresh and its deadline. */
+function waitForRoute(resolveRoute: () => Promise<string>, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    resolveRoute().then(proxy => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(proxy);
+    }, error => {
+      signal.removeEventListener("abort", onAbort);
+      reject(error);
+    });
+  });
+}
+
+/** Validated routes live in the daemon; GUI refresh runs off the request critical path. */
 export async function fetchNativeCodex(request: Request): Promise<Response> {
+  request.signal.throwIfAborted();
   const url = new URL(request.url);
   if (url.origin !== "https://chatgpt.com" || !url.pathname.startsWith("/backend-api/codex/")
     || url.username || url.password) throw proxyError("Native proxy resolution requires the first-party Codex endpoint");
@@ -90,44 +121,49 @@ export async function fetchNativeCodex(request: Request): Promise<Response> {
   if (EXPLICIT_PROXY_KEYS.some(key => process.env[key]?.trim())) return fetch(request);
   const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
   if (!descriptorPath) {
-    if (backgroundProxy !== undefined || backgroundProxyError !== undefined) {
-      return fetchWithProxy(request, requireBackgroundProxy(
+    if (launcherRoutesRequired) {
+      return fetchWithProxy(request, requireBackgroundProxy(request.url,
         proxyError("Launcher native proxy descriptor path is unavailable"),
       ));
     }
     return fetch(request);
   }
+  launcherRoutesRequired = true;
   let descriptor;
   try {
     descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   } catch (error) {
     if (error instanceof LauncherBrowserHostUnavailableError) {
-      return fetchWithProxy(request, requireBackgroundProxy(error));
+      return fetchWithProxy(request, requireBackgroundProxy(request.url, error));
     }
     throw error;
   }
-  let response: Response;
-  const controlTimeout = AbortSignal.timeout(10_000);
-  try {
-    response = await fetch(`${descriptor.control.endpoint}/v1/network/resolve-proxy`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${descriptor.control.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ url: request.url }),
-      signal: AbortSignal.any([request.signal, controlTimeout]),
-      redirect: "error",
-      // Never let ambient proxy resolution carry the loopback control token off-machine.
-      proxy: "",
-    });
-  } catch (error) {
-    if (!request.signal.aborted && !controlTimeout.aborted && hasErrorCode(error, "ECONNREFUSED")) {
-      return fetchWithProxy(request, requireBackgroundProxy(error));
+  const proxy = await waitForRoute(() => routes.resolve(request.url, async () => {
+    try {
+      const controlTimeout = AbortSignal.timeout(2_000);
+      const response = await fetch(`${descriptor.control.endpoint}/v1/network/resolve-proxy`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${descriptor.control.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ url: request.url }),
+        signal: controlTimeout,
+        redirect: "error",
+        proxy: "",
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw proxyError(`Launcher native proxy resolution failed (HTTP ${response.status})`);
+      }
+      const result = await response.json() as { proxy?: unknown };
+      const resolved = nativeProxyOrigin(result.proxy);
+      if (request.url === BOOTSTRAP_URL) backgroundProxyError = undefined;
+      return resolved;
+    } catch (error) {
+      if (!transientProxyError(error) && request.url === BOOTSTRAP_URL) {
+        backgroundProxyError = proxyError("Native background route requires a successful proxy check");
+      }
+      throw error;
     }
-    throw error;
-  }
-  if (!response.ok) throw proxyError(`Launcher native proxy resolution failed (HTTP ${response.status})`);
-  const result = await response.json() as { proxy?: unknown };
-  const proxy = nativeProxyOrigin(result.proxy);
-  backgroundProxy = proxy;
-  backgroundProxyError = undefined;
+  }, transientProxyError), request.signal);
+  request.signal.throwIfAborted();
   return fetchWithProxy(request, proxy);
 }

@@ -127,7 +127,7 @@ test("review: closing a helper before ready settles the pending run", async () =
   }), { mode: 0o600 });
   const client = new LauncherBrowserHelperClient({ appName: "Codex Native4", browserHost: "launcher",
     browserHostDescriptorPath: descriptor, browserHelperScriptPath: helper, storageStatePath: join(home, "unused.json"),
-    chromeExecutablePath: "/unused", turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false });
+    chromeExecutablePath: "/unused", turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false, useSavedChats: false });
   const result = client.run({ traceId: "review_helper_123", modelId: "gpt-5.6-sol",
     capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
     prepare: async () => ({ text: "unused", images: [], release() {} }), onTextDelta() {},

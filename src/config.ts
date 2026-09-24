@@ -1,7 +1,11 @@
+export { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_DEV_CONNECTOR_NAME, DEV_CHATGPT_ASYNC_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME, LEGACY_CHATGPT_CONNECTOR_NAMES, isLegacyChatGptConnectorName, currentChatGptConnectorName, legacyChatGptConnectorMigrationMessage, resolveInteractionConnectorIdentities, type InteractionConnectorIdentities } from "./config-policy";
+import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_DEV_CONNECTOR_NAME, DEV_CHATGPT_ASYNC_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME, isLegacyChatGptConnectorName, canonicalizeChatGptConnectorName, currentChatGptConnectorName, legacyChatGptConnectorMigrationMessage, validateRuntimeConnectorFeatures } from "./config-policy";
+export { atomicWriteFile } from "./file-transactions";
+import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
+import { basename, delimiter, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { tmpdir } from "node:os";
 import {
   CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
@@ -20,76 +24,6 @@ export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
-
-/**
- * ChatGPT caches the complete public MCP schema by connector identity. Native command approval
- * request fields change both contracts, so neither may reuse a cached connector identity.
- */
-export const CHATGPT_CONNECTOR_NAME = "Codex Native4";
-export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
-export const CHATGPT_ASYNC_CONNECTOR_NAME = "Codex Native6";
-export const PREVIOUS_ASYNC_CONNECTOR_NAME = "Codex Native5";
-export const PREVIOUS_ASYNC_DEV_CONNECTOR_NAME = `${PREVIOUS_ASYNC_CONNECTOR_NAME} DEV`;
-export const DEV_CHATGPT_ASYNC_CONNECTOR_NAME = `${CHATGPT_ASYNC_CONNECTOR_NAME} DEV`;
-export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk4";
-export const LEGACY_CHATGPT_CONNECTOR_NAMES = [
-  "Codex Native", "Codex Native DEV", "Codex Native2", "Codex Native2 DEV", "Codex Zero Risk",
-  "Codex Native3", "Codex Native3 DEV", "Codex Zero Risk2", "Codex Zero Risk3",
-] as const;
-
-export function isLegacyChatGptConnectorName(value: string): boolean {
-  return typeof value === "string"
-    && (LEGACY_CHATGPT_CONNECTOR_NAMES as readonly string[]).includes(value.trim());
-}
-
-function canonicalizeChatGptConnectorName(value: string): string {
-  return value.trim();
-}
-
-export function currentChatGptConnectorName(legacyName: string): string {
-  const canonicalName = canonicalizeChatGptConnectorName(legacyName);
-  if (canonicalName === "Codex Zero Risk" || canonicalName === "Codex Zero Risk2" || canonicalName === "Codex Zero Risk3") return ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  return canonicalName.endsWith(" DEV") ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
-}
-
-export function legacyChatGptConnectorMigrationMessage(legacyName: string): string {
-  const currentName = currentChatGptConnectorName(legacyName);
-  return `Legacy ChatGPT connector ${JSON.stringify(legacyName)} was found, but this release requires`
-    + ` a newly created connector named ${JSON.stringify(currentName)}. Reconnect the harness in setup, then create`
-    + ` ${JSON.stringify(currentName)} against that mode's tunnel with Authentication set to None;`
-    + ` do not rename or refresh ${JSON.stringify(legacyName)}. Verify the new codex_exec argument schema;`
-    + ` command approval remains controlled by the outer Codex runtime.`;
-}
-
-export interface InteractionConnectorIdentities {
-  appName: string;
-  automaticAppName: string;
-  manualAppName: typeof ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-}
-
-export function resolveInteractionConnectorIdentities(
-  interactionMode: BrowserInteractionMode,
-  profile: "production" | "development" = "production",
-  experimentalAsyncToolOperations = true,
-  retainedAutomaticName?: string,
-): InteractionConnectorIdentities {
-  const allowedRetained = profile === "development"
-    ? [DEV_CHATGPT_CONNECTOR_NAME, PREVIOUS_ASYNC_DEV_CONNECTOR_NAME, DEV_CHATGPT_ASYNC_CONNECTOR_NAME]
-    : [CHATGPT_CONNECTOR_NAME, PREVIOUS_ASYNC_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME];
-  // Manual transport is synchronous but retains the separate Automatic connector identity.
-  const preserveInactive = interactionMode === "manual" && retainedAutomaticName !== undefined
-    && allowedRetained.includes(retainedAutomaticName);
-  const preserveNative5 = experimentalAsyncToolOperations && retainedAutomaticName === (profile === "development"
-    ? PREVIOUS_ASYNC_DEV_CONNECTOR_NAME : PREVIOUS_ASYNC_CONNECTOR_NAME);
-  const automaticAppName = preserveInactive || preserveNative5 ? retainedAutomaticName! : experimentalAsyncToolOperations
-    ? profile === "development" ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME : CHATGPT_ASYNC_CONNECTOR_NAME
-    : profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
-  return {
-    appName: interactionMode === "manual" ? ZERO_RISK_CHATGPT_CONNECTOR_NAME : automaticAppName,
-    automaticAppName,
-    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-  };
-}
 
 export interface TunnelConfig {
   binaryPath: string;
@@ -130,6 +64,8 @@ export interface AppConfig {
   experimentalSkillAttachments: boolean;
   allowWebSubagents: boolean;
   experimentalFreshConversationPerTurn: boolean;
+  /** Use saved ChatGPT history for Web conversations instead of Temporary Chat, independent of fresh-per-turn. */
+  useSavedChats: boolean;
   /** Owned async connector schema. New Automatic Full setups use Native6; saved Native5 remains supported. */
   experimentalAsyncToolOperations: boolean;
   /** Explicitly install the additional Pro-sized model row while Manual mode is active. */
@@ -187,49 +123,6 @@ export function resolveBrokerEndpoint(value: string): string {
   return isWindowsPipeEndpoint(expanded) ? expanded : resolve(expanded);
 }
 
-const atomicWaitCell = new Int32Array(new SharedArrayBuffer(4));
-const WINDOWS_RENAME_RETRY_DELAYS_MS = [25, 50, 100, 150, 250, 350, 500] as const;
-
-function renameAtomicFile(source: string, destination: string): void {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      renameSync(source, destination);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      const transientWindowsError = process.platform === "win32"
-        && (code === "EBUSY" || code === "EPERM" || code === "EACCES");
-      const delay = WINDOWS_RENAME_RETRY_DELAYS_MS[attempt];
-      if (!transientWindowsError || delay === undefined) throw error;
-      Atomics.wait(atomicWaitCell, 0, 0, delay);
-    }
-  }
-}
-
-export function atomicWriteFile(
-  path: string,
-  data: string | Uint8Array,
-  { mode = 0o600, protectDirectory = true }: { mode?: number; protectDirectory?: boolean } = {},
-): void {
-  const directory = dirname(path);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  if (protectDirectory) {
-    try { chmodSync(directory, 0o700); } catch { /* Windows ACLs are managed by the installer. */ }
-  }
-  const temp = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
-  const fd = openSync(temp, "wx", mode);
-  try {
-    writeFileSync(fd, data);
-    closeSync(fd);
-    renameAtomicFile(temp, path);
-  } catch (error) {
-    try { closeSync(fd); } catch {}
-    rmSync(temp, { force: true });
-    throw error;
-  }
-  try { chmodSync(path, mode); } catch { /* Windows ACLs are managed by the installer. */ }
-}
-
 export function stripUtf8Bom(text: string): string {
   return text.startsWith("\uFEFF") ? text.slice(1) : text;
 }
@@ -264,6 +157,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     experimentalSkillAttachments: false,
     allowWebSubagents: false,
     experimentalFreshConversationPerTurn: false,
+    useSavedChats: false,
     experimentalAsyncToolOperations: mode === "full",
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
@@ -388,16 +282,37 @@ export function defaultChromeExecutable(
   return "/usr/bin/google-chrome";
 }
 
-export function loadConfig(): AppConfig {
-  const path = getConfigPath();
-  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
-  return parseConfig(JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))), path);
+export interface ConfigRead {
+  config: AppConfig | undefined;
+  snapshot: FileSnapshot;
+  persistedIdentity: string | undefined;
 }
 
+/** Parse and migrate exactly the bytes whose identity guards the eventual write. */
+export function readConfigForSetup(): ConfigRead {
+  const snapshot = snapshotFile(getConfigPath());
+  if (!snapshot.exists) return { config: undefined, snapshot, persistedIdentity: undefined };
+  const raw: unknown = JSON.parse(stripUtf8Bom(snapshot.data!.toString("utf8")));
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`Invalid configuration object in ${snapshot.path}`);
+  const persistedIdentity = "appName" in raw && typeof raw.appName === "string" ? raw.appName : undefined;
+  return { config: parseConfigForSetup(raw as Record<string, unknown>, snapshot.path), snapshot, persistedIdentity };
+}
+
+export function loadConfigWithSnapshot(): { config: AppConfig; snapshot: FileSnapshot } {
+  const snapshot = snapshotFile(getConfigPath());
+  if (!snapshot.exists) throw new Error(`Configuration is missing: ${snapshot.path}. Run codex-chatgpt-web setup first.`);
+  return { config: parseConfig(JSON.parse(stripUtf8Bom(snapshot.data!.toString("utf8"))), snapshot.path), snapshot };
+}
+
+export function loadConfig(): AppConfig { return loadConfigWithSnapshot().config; }
+
 export function loadConfigForSetup(): AppConfig {
-  const path = getConfigPath();
-  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
-  const raw = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
+  const read = readConfigForSetup();
+  if (!read.config) throw new Error(`Configuration is missing: ${read.snapshot.path}. Run codex-chatgpt-web setup first.`);
+  return read.config;
+}
+
+function parseConfigForSetup(raw: Record<string, unknown>, path: string): AppConfig {
   if (raw.version === 1 && raw.mode === "pro-only") {
     raw.version = 2;
     raw.mode = "browser-only";
@@ -613,6 +528,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.experimentalFreshConversationPerTurn !== undefined && typeof parsed.experimentalFreshConversationPerTurn !== "boolean") {
     throw new Error(`Invalid experimentalFreshConversationPerTurn in ${path}`);
   }
+  if (parsed.useSavedChats !== undefined && typeof parsed.useSavedChats !== "boolean") {
+    throw new Error(`Invalid useSavedChats in ${path}`);
+  }
   if (parsed.experimentalAsyncToolOperations !== undefined
     && typeof parsed.experimentalAsyncToolOperations !== "boolean") {
     throw new Error(`Invalid experimentalAsyncToolOperations in ${path}`);
@@ -622,25 +540,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (experimentalAsyncToolOperations && (parsed.mode !== "full" || browserInteractionMode !== "automatic")) {
     throw new Error(`experimentalAsyncToolOperations requires automatic Full mode in ${path}`);
   }
-  const expectedAsyncConnectorName = parsed.purpose === "dev-harness"
-    ? DEV_CHATGPT_ASYNC_CONNECTOR_NAME
-    : CHATGPT_ASYNC_CONNECTOR_NAME;
-  const expectedSynchronousConnectorName = parsed.purpose === "dev-harness"
-    ? DEV_CHATGPT_CONNECTOR_NAME
-    : CHATGPT_CONNECTOR_NAME;
-  const previousAsyncConnectorName = parsed.purpose === "dev-harness"
-    ? PREVIOUS_ASYNC_DEV_CONNECTOR_NAME : PREVIOUS_ASYNC_CONNECTOR_NAME;
-  if (experimentalAsyncToolOperations && ![expectedAsyncConnectorName, previousAsyncConnectorName].includes(automaticAppName)) {
-    throw new Error(
-      `experimentalAsyncToolOperations requires automaticAppName ${JSON.stringify(expectedAsyncConnectorName)} in ${path}; rerun setup explicitly`,
-    );
-  }
-  if (!experimentalAsyncToolOperations && automaticAppName !== expectedSynchronousConnectorName
-    && !(browserInteractionMode === "manual" && [expectedAsyncConnectorName, previousAsyncConnectorName].includes(automaticAppName))) {
-    throw new Error(
-      `Synchronous tool operations require automaticAppName ${JSON.stringify(expectedSynchronousConnectorName)} in ${path}; rerun setup explicitly`,
-    );
-  }
+  validateRuntimeConnectorFeatures(parsed, browserInteractionMode, automaticAppName, experimentalAsyncToolOperations, path);
   if (parsed.allowWebSubagents !== undefined && typeof parsed.allowWebSubagents !== "boolean") {
     throw new Error(`Invalid allowWebSubagents in ${path}`);
   }
@@ -680,15 +580,17 @@ function parseConfig(value: unknown, path: string): AppConfig {
     experimentalSkillAttachments,
     allowWebSubagents,
     experimentalFreshConversationPerTurn,
+    useSavedChats: parsed.useSavedChats === true,
     experimentalAsyncToolOperations,
     zeroRiskProEnabled,
   } as AppConfig;
 }
 
-export function saveConfig(config: AppConfig): void {
+export function saveConfig(config: AppConfig, expectedBefore?: FileSnapshot): FileSnapshot {
   const path = getConfigPath();
-  const original = existsSync(path) ? readFileSync(path, "utf8") : "";
-  atomicWriteFile(path, preserveUtf8Bom(`${JSON.stringify(config, null, 2)}\n`, original));
+  const before = expectedBefore ?? snapshotFile(path);
+  const original = before.data?.toString("utf8") ?? "";
+  return writeFileSnapshot(before, preserveUtf8Bom(`${JSON.stringify(config, null, 2)}\n`, original), { expectedSnapshot: before });
 }
 
 export function providerConfig(config: AppConfig): CodexProviderConfig {
@@ -743,6 +645,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       allowWebSubagents: config.allowWebSubagents,
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       experimentalFreshConversationPerTurn: manual ? false : config.experimentalFreshConversationPerTurn,
+      useSavedChats: config.useSavedChats,
       experimentalAsyncToolOperations: manual ? false : config.experimentalAsyncToolOperations,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,

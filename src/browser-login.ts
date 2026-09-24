@@ -1,11 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { chromium, type BrowserContext, type BrowserContextOptions } from "playwright-core";
 import type { AppConfig } from "./config";
 import { atomicWriteFile } from "./config";
-import { readBoundedUtf8File } from "./read-bounded-file";
 import {
   assertAuthenticatedChatGptPage,
   assertTemporaryChatPage,
@@ -16,6 +14,11 @@ import {
 import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
 import { revealOwnedLoginBrowser } from "./passkey-login-control";
 
+import {
+  loginVerificationMarkerPath, publishBrowserLoginVerification, verifyBrowserLoginSnapshot,
+  type BrowserLoginStorageState,
+} from "./browser-login-state";
+
 export interface BrowserLoginResult {
   storageStatePath: string;
   accountSurfaceUrl: string;
@@ -24,7 +27,11 @@ export interface BrowserLoginResult {
   proAvailable: boolean;
 }
 
-export type BrowserLoginStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
+export {
+  loginVerificationMarkerPath, writeBrowserLoginVerificationMarker, browserLoginStateExists,
+  browserLoginStateNeedsReverification, storedBrowserLoginCapabilities,
+  type BrowserLoginStorageState,
+} from "./browser-login-state";
 
 export interface SystemBrowserLoginCaptureMarker {
   version: 1;
@@ -46,46 +53,10 @@ export interface SystemBrowserLoginOptions {
   onBrowserReady?: (reveal: () => Promise<void>, deadlineAt: string) => void;
 }
 
-interface LoginVerificationMarker {
-  version: 2;
-  authenticated: true;
-  verifiedAt: string;
-  storageStateBytes: number;
-  storageStateSha256: string;
-  solAvailable?: boolean;
-  extraHighAvailable?: boolean;
-  proAvailable?: boolean;
-}
-
 const SYSTEM_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const SYSTEM_LOGIN_STOP_TIMEOUT_MS = 5_000;
 const LOGIN_STORAGE_ROOT_DOMAINS = ["chatgpt.com", "openai.com"] as const;
 const CHATGPT_ORIGIN = new URL(CHATGPT_TEMPORARY_CHAT_URL).origin;
-const MAX_LOGIN_STORAGE_STATE_BYTES = 16 * 1024 * 1024;
-const MAX_LOGIN_MARKER_BYTES = 64 * 1024;
-
-function readLoginStorageStateText(storageStatePath: string): string {
-  const text = readBoundedUtf8File(storageStatePath, MAX_LOGIN_STORAGE_STATE_BYTES);
-  const parsed = JSON.parse(text) as { cookies?: unknown; origins?: unknown };
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.cookies) || !Array.isArray(parsed.origins)) {
-    throw new Error("ChatGPT login state is not a valid browser storage-state document");
-  }
-  return text;
-}
-
-function storageStateEvidence(text: string): Pick<LoginVerificationMarker, "storageStateBytes" | "storageStateSha256"> {
-  return {
-    storageStateBytes: Buffer.byteLength(text, "utf8"),
-    storageStateSha256: createHash("sha256").update(text, "utf8").digest("hex"),
-  };
-}
-
-function readLoginVerificationMarker(storageStatePath: string): Partial<LoginVerificationMarker> {
-  return JSON.parse(readBoundedUtf8File(
-    loginVerificationMarkerPath(storageStatePath),
-    MAX_LOGIN_MARKER_BYTES,
-  )) as Partial<LoginVerificationMarker>;
-}
 
 function browserProcessExited(browser: ChildProcess): boolean {
   return browser.exitCode !== null || browser.signalCode !== null;
@@ -169,25 +140,6 @@ export function sanitizeBrowserLoginStorageState(
   };
 }
 
-export function loginVerificationMarkerPath(storageStatePath: string): string {
-  return `${storageStatePath}.verified.json`;
-}
-
-export function writeBrowserLoginVerificationMarker(
-  storageStatePath: string,
-  capabilities: ChatGptWebAccountCapabilities,
-): void {
-  const stateText = readLoginStorageStateText(storageStatePath);
-  const marker: LoginVerificationMarker = {
-    version: 2,
-    authenticated: true,
-    verifiedAt: new Date().toISOString(),
-    ...storageStateEvidence(stateText),
-    ...capabilities,
-  };
-  atomicWriteFile(loginVerificationMarkerPath(storageStatePath), `${JSON.stringify(marker)}\n`);
-}
-
 async function inspectStoredState(
   config: AppConfig,
   storageState: NonNullable<BrowserContextOptions["storageState"]>,
@@ -217,39 +169,13 @@ async function inspectStoredState(
 }
 
 export async function inspectBrowserLoginCapabilities(config: AppConfig): Promise<ChatGptWebAccountCapabilities> {
-  if (!browserLoginStateExists(config) && !browserLoginStateNeedsReverification(config)) {
-    throw new Error("ChatGPT login state is missing or cannot be safely reverified");
-  }
-  const inspected = await inspectStoredState(config, config.storageStatePath);
-  writeBrowserLoginVerificationMarker(config.storageStatePath, inspected);
+  const inspected = await verifyBrowserLoginSnapshot(config.storageStatePath,
+    state => inspectStoredState(config, state));
   return {
     solAvailable: inspected.solAvailable,
     extraHighAvailable: inspected.extraHighAvailable === true,
     proAvailable: inspected.proAvailable,
   };
-}
-
-export function storedBrowserLoginCapabilities(
-  config: AppConfig,
-): Partial<ChatGptWebAccountCapabilities> {
-  if (!browserLoginStateExists(config)) return {};
-  try {
-    const marker = readLoginVerificationMarker(config.storageStatePath);
-    for (const field of ["solAvailable", "extraHighAvailable", "proAvailable"] as const) {
-      if (marker[field] !== undefined && typeof marker[field] !== "boolean") return {};
-    }
-    if ((marker.extraHighAvailable === true || marker.proAvailable === true) && marker.solAvailable === false) return {};
-    if (marker.proAvailable === true && marker.extraHighAvailable === false) return {};
-    return {
-      ...(typeof marker.solAvailable === "boolean" ? { solAvailable: marker.solAvailable } : {}),
-      ...(typeof marker.extraHighAvailable === "boolean"
-        ? { extraHighAvailable: marker.extraHighAvailable }
-        : marker.proAvailable === true ? { extraHighAvailable: true } : {}),
-      ...(typeof marker.proAvailable === "boolean" ? { proAvailable: marker.proAvailable } : {}),
-    };
-  } catch {
-    return {};
-  }
 }
 
 export async function captureSystemBrowserLogin(
@@ -521,8 +447,9 @@ export async function loginToChatGpt(
     // A failed repeat write must never leave the previous verification marker paired
     // with replacement state. Keep the marker absent until both writes succeed.
     rmSync(loginVerificationMarkerPath(config.storageStatePath), { force: true });
-    atomicWriteFile(config.storageStatePath, `${JSON.stringify(state)}\n`);
-    writeBrowserLoginVerificationMarker(config.storageStatePath, inspected);
+    const verifiedStateText = `${JSON.stringify(state)}\n`;
+    atomicWriteFile(config.storageStatePath, verifiedStateText);
+    publishBrowserLoginVerification(config.storageStatePath, inspected, verifiedStateText);
     result = {
       storageStatePath: config.storageStatePath,
       accountSurfaceUrl: page.url(),
@@ -563,45 +490,6 @@ export async function loginToChatGpt(
   if (cleanupError) throw cleanupError;
   if (!result) throw new Error("ChatGPT login completed without a verified result");
   return result;
-}
-
-export function browserLoginStateExists(config: AppConfig): boolean {
-  if (!existsSync(config.storageStatePath)) return false;
-  const markerPath = loginVerificationMarkerPath(config.storageStatePath);
-  if (!existsSync(markerPath)) return false;
-  try {
-    const stateText = readLoginStorageStateText(config.storageStatePath);
-    const marker = readLoginVerificationMarker(config.storageStatePath);
-    const evidence = storageStateEvidence(stateText);
-    return marker.version === 2
-      && marker.authenticated === true
-      && typeof marker.verifiedAt === "string"
-      && Number.isFinite(Date.parse(marker.verifiedAt))
-      && marker.storageStateBytes === evidence.storageStateBytes
-      && marker.storageStateSha256 === evidence.storageStateSha256;
-  } catch {
-    return false;
-  }
-}
-
-/** Version-1 authenticated markers may be upgraded only by a fresh live account inspection. */
-export function browserLoginStateNeedsReverification(config: AppConfig): boolean {
-  if (!existsSync(config.storageStatePath) || !existsSync(loginVerificationMarkerPath(config.storageStatePath))) {
-    return false;
-  }
-  try {
-    readLoginStorageStateText(config.storageStatePath);
-    const marker = JSON.parse(readBoundedUtf8File(
-      loginVerificationMarkerPath(config.storageStatePath),
-      MAX_LOGIN_MARKER_BYTES,
-    )) as { version?: unknown; authenticated?: unknown; verifiedAt?: unknown };
-    return marker.version === 1
-      && marker.authenticated === true
-      && typeof marker.verifiedAt === "string"
-      && Number.isFinite(Date.parse(marker.verifiedAt));
-  } catch {
-    return false;
-  }
 }
 
 export async function checkBrowserEngine(config: AppConfig): Promise<void> {

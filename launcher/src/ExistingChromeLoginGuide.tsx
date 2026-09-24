@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { Copy } from "./i18n";
-import type { ExistingChromeLoginProgress } from "./types";
+import type { ExistingChromeLoginProgress, Language } from "./types";
+import { profileLoginFailureText } from './profile-login-copy';
 
-export function existingChromeFailureText(code: string | null, copy: Copy): string {
+export function existingChromeFailureText(code: string | null, copy: Copy, language: Language = 'en'): string {
+  const profile = profileLoginFailureText(code, language);
+  if (profile) return profile;
   switch (code) {
     case "chrome-profile-access-denied": return copy.existingChromeAccessDenied;
     case "chrome-file-selection-invalid": return copy.existingChromeWrongFile;
@@ -25,7 +28,8 @@ export function existingChromeFailureText(code: string | null, copy: Copy): stri
   }
 }
 
-export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, transitionBusy = false }: {
+export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, transitionBusy = false, language = 'en' }: {
+  language?: Language;
   progress: ExistingChromeLoginProgress;
   copy: Copy;
   onRetry: () => Promise<void>;
@@ -79,7 +83,7 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
     {settings ? <p><label>{copy.existingChromeAddress}: <code>chrome://inspect/#remote-debugging</code></label></p> : null}
     {progress.active && settings ? <p>{copy.existingChromeRemaining.replace("{time}", remaining)}</p> : null}
     {progress.active && progress.phase === "preparing" ? <p>{copy.existingChromeHandoffRemaining.replace("{time}", remaining)}</p> : null}
-    {progress.error ? <p role="alert">{existingChromeFailureText(progress.error, copy)}</p> : null}
+    {progress.error ? <p role="alert">{existingChromeFailureText(progress.error, copy, language)}</p> : null}
     <div className="browser-empty-actions">
       {progress.canAllowFileAccess ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.allowExistingChromeFileAccess())}>{copy.existingChromeAllowFile}</button> : null}

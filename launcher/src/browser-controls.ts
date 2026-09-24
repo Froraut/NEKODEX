@@ -18,7 +18,8 @@ export function browserControls(
   // Keep this in the shared lock so toolbar navigation and its defensive handler agree.
   const mcpVerificationRunning = operation?.status === "running" && operation.name === "mcp-verification";
   const existingChromeAvailable = interactionMode === "automatic"
-    && ["darwin", "win32", "linux"].includes(platform) && browser?.authenticated !== true;
+    && ["darwin", "win32", "linux"].includes(platform) && browser?.authenticated !== true
+    && (!browser?.accountId || browser.accountId === "default");
   const existingChromeWaiting = existingChromeAvailable && (browser?.loginKind === "existing-chrome"
     || browser?.existingChromeLogin?.active === true
     || (operation?.name === "existing-chrome-login" && operation.status === "running"));

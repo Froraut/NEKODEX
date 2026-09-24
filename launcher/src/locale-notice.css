@@ -1,0 +1,2 @@
+.locale-notice { display: flex; align-items: center; gap: 12px; padding: 8px 12px; font-size: 13px; }
+.locale-notice.is-floating { position: fixed; bottom: 20px; right: 20px; z-index: 1000; max-width: calc(100vw - 40px); border: 1px solid var(--color-border, #484757); border-radius: 10px; background: var(--color-background-elevated); box-shadow: 0 4px 18px #0004; }

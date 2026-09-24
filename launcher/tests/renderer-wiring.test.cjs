@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const appSource = fs.readFileSync(path.join(launcherRoot, "src", "App.tsx"), "utf8");
+const browserSurfaceSource = fs.readFileSync(path.join(launcherRoot, "src", "BrowserSurface.tsx"), "utf8");
 const stylesSource = fs.readFileSync(path.join(launcherRoot, "src", "styles.css"), "utf8");
 const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.cjs"), "utf8");
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
@@ -15,14 +16,14 @@ test("embedded ChatGPT is measured only after its animated surface mounts", () =
   assert.match(appSource, /const \[browserSlot, setBrowserSlot\] = useState<HTMLDivElement \| null>\(null\)/);
   assert.match(appSource, /setBrowserSurfaceActive\(browserSurfaceActive\)\.then\(\(\) => \{/);
   assert.match(appSource, /observer\.observe\(browserSlot\)/);
-  assert.match(appSource, /ref=\{browserSlotRef\}/);
+  assert.match(browserSurfaceSource, /ref=\{browserSlotRef\}/);
 });
 
 test("native clicks reach browser tabs instead of the window drag region", () => {
   assert.match(appSource, /draggable=\{surface !== "browser"\}/);
   assert.match(appSource, /className=\{`app-titlebar\$\{draggable \? " draggable" : ""\}`\}/);
   assert.match(stylesSource, /\.browser-tab\s*\{[^}]*-webkit-app-region:\s*no-drag;/s);
-  assert.match(appSource, /className="browser-tab-drag draggable"/);
+  assert.match(browserSurfaceSource, /className="browser-tab-drag draggable"/);
 });
 
 test("renderer zoom scales the shell without moving or zooming the native ChatGPT surface", () => {
@@ -32,7 +33,7 @@ test("renderer zoom scales the shell without moving or zooming the native ChatGP
   );
   assert.match(browserHostSource, /this\.bindShellZoomShortcuts\(this\.window\.webContents\)/);
   assert.match(browserHostSource, /contents\.setZoomLevel\(next\)/);
-  assert.match(appSource, /api!\.zoomBrowser\(action\)/);
+  assert.match(browserSurfaceSource, /api!\.zoomBrowser\(action\)/);
 });
 
 test("closing the launcher follows the persisted background-runtime preference", () => {
@@ -119,16 +120,16 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
 test("macOS passkey sign-in is additive and displays a separate Chrome continuation guide", () => {
   assert.match(appSource, /onSecondaryAction=\{openLogin\}/);
   assert.match(appSource, /<BrowserSurface[\s\S]*?operation=\{operation\}[\s\S]*?platform=\{snapshot\.platform\}/);
-  assert.match(appSource, /const \{[^}]*\bpasskeyCanImport\b[^}]*\} = browserControls\(/);
-  assert.match(appSource, /\{passkeyAvailable \? \([\s\S]*?className="toolbar-text-button"[\s\S]*?passkeyLabel/);
-  assert.match(appSource, /className="browser-empty-actions"[\s\S]*?passkeyLabel/);
-  assert.match(appSource, /passkeyWaiting \? continuePasskeyLogin : openPasskeyLogin/);
-  assert.match(appSource, /disabled=\{passkeyActionDisabled\}/);
-  assert.match(appSource, /<PasskeyLoginGuide progress=\{browser\.passkeyLogin\}/);
-  assert.match(appSource, /if \(navigationLocked\) return;/);
-  const shell = appSource.slice(appSource.indexOf("function LauncherShell("), appSource.indexOf("function BrowserSurface("));
+  assert.match(browserSurfaceSource, /const \{[^}]*\bpasskeyCanImport\b[^}]*\} = browserControls\(/);
+  assert.match(browserSurfaceSource, /\{passkeyAvailable \? \([\s\S]*?className="toolbar-text-button"[\s\S]*?passkeyLabel/);
+  assert.match(browserSurfaceSource, /className="browser-empty-actions"[\s\S]*?passkeyLabel/);
+  assert.match(browserSurfaceSource, /passkeyWaiting \? continuePasskeyLogin : openPasskeyLogin/);
+  assert.match(browserSurfaceSource, /disabled=\{passkeyActionDisabled\}/);
+  assert.match(browserSurfaceSource, /<PasskeyLoginGuide progress=\{browser\.passkeyLogin\}/);
+  assert.match(browserSurfaceSource, /if \(navigationLocked\) return;/);
+  const shell = appSource.slice(appSource.indexOf("function LauncherShell("), appSource.indexOf("function TitleBar("));
   assert.doesNotMatch(shell, /setPasskeyContinuationRequested/);
-  assert.match(appSource, /passkeyLabel = passkeyStarting/);
+  assert.match(browserSurfaceSource, /passkeyLabel = passkeyStarting/);
   assert.match(preloadSource, /openPasskeyLogin:[\s\S]*?launcher:browser-passkey-login/);
   assert.match(preloadSource, /continuePasskeyLogin:[\s\S]*?launcher:browser-passkey-login-continue/);
   assert.match(electronMain, /launcher:browser-passkey-login[\s\S]*?browserHost\.openPasskeyLogin\(\)/);
@@ -137,7 +138,7 @@ test("macOS passkey sign-in is additive and displays a separate Chrome continuat
 });
 
 test("onboarding can finish without visiting external social pages", () => {
-  const onboarding = appSource.slice(appSource.indexOf("function Onboarding("), appSource.indexOf("function LauncherShell("));
+  const onboarding = fs.readFileSync(path.join(launcherRoot, "src", "Onboarding.tsx"), "utf8");
   assert.doesNotMatch(onboarding, /disabled=\{[^}]*githubOpened|disabled=\{[^}]*xOpened/);
   assert.doesNotMatch(electronMain, /if \(!current\.githubOpened \|\| !current\.xOpened\)/);
 });

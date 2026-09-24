@@ -15,8 +15,9 @@ const inputFileBlockSchema = z.object({
   type: z.literal("input_file"),
   file_id: z.string().optional(),
   filename: z.string().optional(),
-  // Retain this field so the request-level check can reject unsupported inline content.
-  file_data: z.unknown().optional(),
+  file_data: z.string().optional(),
+}).refine(v => Boolean(v.file_id) !== Boolean(v.file_data), {
+  message: "input_file requires exactly one of file_id or file_data",
 });
 const outputTextSchema = z.object({ type: z.literal("output_text"), text: z.string() });
 const outputRefusalSchema = z.object({ type: z.literal("refusal"), refusal: z.string() });
@@ -149,7 +150,11 @@ export const toolSchema = z.object({
   strict: z.boolean().optional(),
 });
 
-const builtinToolSchema = z.object({ type: z.string() }).loose();
+// Extension tools remain open-ended, but known function tools must satisfy toolSchema.
+const builtinToolSchema = z.object({ type: z.string() }).loose().refine(
+  tool => tool.type !== "function",
+  { message: "function tool must satisfy its schema" },
+);
 
 const hostedToolType = z.enum([
   "web_search_preview", "file_search", "computer_use_preview",
@@ -205,14 +210,6 @@ export const responsesRequestSchema = z.object({
   if (!Array.isArray(request.input)) return;
   for (const [itemIndex, item] of request.input.entries()) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    if ((item as { type?: unknown }).type === "input_file"
-      && Object.prototype.hasOwnProperty.call(item, "file_data")) {
-      ctx.addIssue({
-        code: "custom",
-        message: "input_file.file_data is unsupported; inline file content was not sent",
-        path: ["input", itemIndex, "file_data"],
-      });
-    }
     const output = (item as { output?: unknown }).output;
     if (((item as { type?: unknown }).type === "function_call_output"
       || (item as { type?: unknown }).type === "custom_tool_call_output") && Array.isArray(output)) {
@@ -233,20 +230,14 @@ export const responsesRequestSchema = z.object({
     for (const [blockIndex, block] of blocks.entries()) {
       if (!block || typeof block !== "object" || Array.isArray(block)) continue;
       if ((item as { role?: unknown }).role === "system"
-        && (block as { type?: unknown }).type === "input_image") {
+        && ((block as { type?: unknown }).type === "input_image"
+          || (block as { type?: unknown }).type === "input_file")) {
         ctx.addIssue({
           code: "custom",
-          message: "input_image in a system message is unsupported; system image content was not sent",
+          message: "file or image content in a system message is unsupported; content was not sent",
           path: ["input", itemIndex, "content", blockIndex],
         });
       }
-      if ((block as { type?: unknown }).type !== "input_file"
-        || !Object.prototype.hasOwnProperty.call(block, "file_data")) continue;
-      ctx.addIssue({
-        code: "custom",
-        message: "input_file.file_data is unsupported; inline file content was not sent",
-        path: ["input", itemIndex, "content", blockIndex, "file_data"],
-      });
     }
   }
 });

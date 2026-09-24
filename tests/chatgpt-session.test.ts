@@ -6,8 +6,23 @@ import {
   CHATGPT_EFFORT_MENU_SELECTOR,
   CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
   activateChatGptEffortMenu,
+  assertNewChatPage,
   detectChatGptAccountCapabilities,
+  readChatGptEffortAvailability,
 } from "../src/chatgpt-session";
+
+test("saved and temporary turns require their requested new-chat surface", async () => {
+  await assertNewChatPage({ url: () => "https://chatgpt.com/" } as never, true);
+  await assertNewChatPage({ url: () => "https://chatgpt.com/?temporary-chat=true" } as never);
+  await expect(assertNewChatPage({ url: () => "https://chatgpt.com/?temporary-chat=true" } as never, true)).rejects.toThrow();
+});
+
+test("locked picker ticks cannot authorize an effort inside the ARIA range", async () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const container = createDocument('<div><span data-locked="false" data-selected="true"></span><span data-locked="true" data-selected="false"></span></div>').querySelector("div")!;
+  const locator = { evaluate: async (fn: (node: Element) => unknown) => fn(container) };
+  expect(await readChatGptEffortAvailability(locator as never, { min: 0, max: 1, value: 0 })).toEqual([true, false]);
+});
 
 test("composer and effort selectors exclude unrelated editable fields and menu buttons", () => {
   const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
@@ -153,6 +168,17 @@ test("effort activation fails closed when neither event exposes a structural sur
     .rejects.toThrow("did not expose its owned menu or structural slider");
 });
 
+test("capability discovery excludes locked upsell ticks even when their ARIA positions exist", async () => {
+  const plus = reasoningPicker({ max: "3", locks: ["false", "false", "false", "true"] });
+  await expect(detectChatGptAccountCapabilities(plus.page as never)).resolves.toEqual({
+    solAvailable: true, extraHighAvailable: false, proAvailable: false,
+  });
+  const noPro = reasoningPicker({ locks: ["false", "false", "false", "false", "true"] });
+  await expect(detectChatGptAccountCapabilities(noPro.page as never)).resolves.toEqual({
+    solAvailable: true, extraHighAvailable: true, proAvailable: false,
+  });
+});
+
 test("a complete authenticated composer with no effort selector is Luna-only", async () => {
   const effortButton = {
     last() { return this; },
@@ -211,7 +237,7 @@ test("a transient effort control does not turn a Luna-only account into Sol", as
   expect(visibilityReads).toBe(2);
 });
 
-function reasoningPicker(options: { max?: string; delay?: number; missing?: boolean; closed?: boolean } = {}) {
+function reasoningPicker(options: { max?: string; delay?: number; missing?: boolean; closed?: boolean; locks?: string[] } = {}) {
   let opened = !options.closed;
   let value = 0;
   const keys: string[] = [];
@@ -232,6 +258,7 @@ function reasoningPicker(options: { max?: string; delay?: number; missing?: bool
   };
   const container = {
     filter() { return this; }, last() { return this; },
+    evaluate: async () => options.locks ?? [],
     locator: () => slider,
     isVisible: async () => opened,
     waitFor: async ({ state }: { state: string }) => {
@@ -256,9 +283,9 @@ function reasoningPicker(options: { max?: string; delay?: number; missing?: bool
       if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return container;
       return hidden;
     },
-    keyboard: { press: async () => {} },
+    keyboard: { press: async (key: string) => { keys.push(key); if (key === "Escape") opened = false; } },
   };
-  return { page, composer, keys, value: () => value };
+  return { page, composer, keys, value: () => value, isOpen: () => opened };
 }
 
 test.each([0, 50])("capabilities wait for the visible container and read its hidden semantic input (delay=%s)", async delay => {
@@ -313,10 +340,11 @@ test("Pro selection changes the hidden slider through its visible owner, never t
 
 
 test("capability probe opens a closed picker with the shared activation path", async () => {
-  const fixture = reasoningPicker({ closed: true });
+  const fixture = reasoningPicker({ closed: true, locks: ["false", "false", "false", "false", "false"] });
   await expect(detectChatGptAccountCapabilities(fixture.page as never, { selectorTimeoutMs: 500 }))
     .resolves.toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: true });
-  expect(fixture.keys).toEqual(["click"]);
+  expect(fixture.isOpen()).toBe(false);
+  expect(fixture.value()).toBe(0);
 });
 
 

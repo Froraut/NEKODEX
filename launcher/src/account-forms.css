@@ -4,9 +4,30 @@
 .account-form-panel > summary::-webkit-details-marker { display: none; }
 .account-form-panel fieldset { border: 0; padding: 0; margin: 0; display: flex; gap: 12px; flex-wrap: wrap; align-items: end; min-width: 0; }
 .account-form-panel fieldset > label { display: grid; gap: 6px; flex: 1 1 190px; min-width: 0; }
-.account-form-panel input[type="url"] { width: 100%; min-width: 0; }
+.account-form-panel input[type="url"],
+.account-form-panel input[type="number"] {
+  width: 100%; min-width: 0; min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border-heavy);
+  border-radius: var(--radius-sm);
+  background: var(--color-background-control);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.account-form-panel input::placeholder { color: var(--color-text-disabled); }
 .account-form-panel .field-hint, .account-form-panel .field-error { margin: 8px 0 0; }
 .account-form-panel input[aria-invalid="true"] { border-color: var(--color-danger, #ed899a); }
 .account-form-panel fieldset:disabled { opacity: .65; }
 .account-form-panel fieldset:disabled + p { opacity: 1; }
+.account-new-session-window { flex: 1 1 100%; display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--color-border); }
+.account-new-session-window > h3, .account-new-session-window > p { margin: 0; }
+.account-new-session-window > h3 { font-size: 1rem; }
+.account-new-session-window-fields { display: flex; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.account-new-session-window-fields > label { display: grid; gap: 6px; flex: 1 1 190px; min-width: 0; }
 @media (prefers-reduced-motion: reduce) { .account-form-panel > summary::before { transition: none; } }
+
+.account-readiness-models { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 12px 0; }
+.account-readiness-models dt { font-weight: 600; }
+.account-readiness-models dd { margin: 4px 0 0; color: var(--text-secondary); }
+.account-readiness p { font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }

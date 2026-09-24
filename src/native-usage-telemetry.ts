@@ -1,42 +1,24 @@
+import { dirname, join } from "node:path";
+import { NativeUsageOutbox } from "./native-usage-outbox";
 import { randomUUID } from "node:crypto";
 import { readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
 
-export type NativeUsageOutcome = "completed" | "incomplete" | "failed" | "aborted";
-export type NativeUsageFailureCategory = "http-auth" | "http-rate-limit" | "http-client"
-  | "http-server" | "transport" | "stream" | "protocol" | "aborted";
+import type { NativeUsageTelemetryEvent } from "./usage/native-contract";
+export type { NativeUsageOutcome, NativeUsageFailureCategory, NativeReportedUsage, NativeUsageTelemetryEvent } from "./usage/native-contract";
 
-export interface NativeReportedUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cachedInputTokens?: number;
-  reasoningOutputTokens?: number;
-}
-
-export interface NativeUsageTelemetryEvent {
-  schemaVersion: 1;
-  eventId: string;
-  source: "native";
-  endpoint: "responses" | "responses/compact";
-  requestedModelId: string | null;
-  reportedModelId: string | null;
-  startedAt: string;
-  durationMs: number;
-  outcome: NativeUsageOutcome;
-  /** Upstream HTTP status, or 0 when transport/abort ended before any response. */
-  httpStatus: number;
-  failureCategory: NativeUsageFailureCategory | null;
-  usageStatus: "reported" | "unreported";
-  usage: NativeReportedUsage | null;
-}
-
-const MAX_NATIVE_USAGE_QUEUE = 16;
 const DELIVERY_TIMEOUT_MS = 1_000;
-const RETRY_DELAYS_MS = [250, 1_000, 4_000] as const;
-interface NativeUsageQueueEntry { event: NativeUsageTelemetryEvent; attempt: number; }
-const queue: NativeUsageQueueEntry[] = [];
+let outbox: NativeUsageOutbox | undefined;
 let delivering = false;
-let scheduledRetries = 0;
+let retryTimer: ReturnType<typeof setInterval> | undefined;
+
+export function startNativeUsageDelivery(): void {
+  if (retryTimer || !descriptorPath()) return;
+  try { outbox = new NativeUsageOutbox(join(dirname(descriptorPath()!), "native-usage-outbox")); }
+  catch { console.warn("[codex-chatgpt-web] native_usage_outbox_unavailable"); return; }
+  retryTimer = setInterval(() => { void drain(); }, 10_000);
+  retryTimer.unref();
+  void drain();
+}
 
 function descriptorPath(): string | undefined {
   const path = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
@@ -58,57 +40,24 @@ async function deliver(event: NativeUsageTelemetryEvent): Promise<void> {
     redirect: "error",
     proxy: "",
   });
-  if (!response.ok) throw new Error(`Native usage receiver returned HTTP ${response.status}`);
-  void response.body?.cancel().catch(() => {});
-}
-
-function reportDrop(reason: "capacity" | "delivery"): void {
-  console.warn(`[codex-chatgpt-web] native_usage_telemetry_dropped reason=${reason}`);
-}
-
-function enqueueEntry(entry: NativeUsageQueueEntry): void {
-  if (queue.length + scheduledRetries >= MAX_NATIVE_USAGE_QUEUE) {
-    if (queue.length > 0) queue.shift();
-    else {
-      reportDrop("capacity");
-      return;
-    }
-    reportDrop("capacity");
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`Native usage receiver returned HTTP ${response.status}`);
   }
-  queue.push(entry);
-  queueMicrotask(() => { void drain(); });
-}
-
-function retry(entry: NativeUsageQueueEntry): boolean {
-  const delay = RETRY_DELAYS_MS[entry.attempt];
-  if (delay === undefined || queue.length + scheduledRetries >= MAX_NATIVE_USAGE_QUEUE) return false;
-  scheduledRetries += 1;
-  const timer = setTimeout(() => {
-    scheduledRetries -= 1;
-    enqueueEntry({ event: entry.event, attempt: entry.attempt + 1 });
-  }, delay);
-  (timer as unknown as { unref?: () => void }).unref?.();
-  return true;
+  const receipt = await response.json() as { recorded?: boolean; duplicate?: boolean };
+  if (receipt.recorded !== true && receipt.duplicate !== true) throw new Error("Native usage was not persisted");
 }
 
 async function drain(): Promise<void> {
-  if (delivering) return;
+  if (delivering || !outbox) return;
   delivering = true;
   try {
-    while (queue.length > 0) {
-      const entry = queue.shift()!;
-      try {
-        await deliver(entry.event);
-      } catch {
-        // Statistics remain a bounded best-effort side channel. Retries retain the event id so
-        // an ambiguous receiver acknowledgement remains safe under UsageStore deduplication.
-        if (!retry(entry)) reportDrop("delivery");
-      }
+    for (const event of outbox.pending()) {
+      try { await deliver(event); outbox.acknowledge(event.eventId); }
+      catch { break; } // Keep the exact event id until the receiver confirms durable acceptance.
     }
-  } finally {
-    delivering = false;
-    if (queue.length > 0) queueMicrotask(() => { void drain(); });
-  }
+  } catch { console.warn("[codex-chatgpt-web] native_usage_outbox_unavailable"); }
+  finally { delivering = false; }
 }
 
 export function enqueueNativeUsageTelemetry(
@@ -120,5 +69,10 @@ export function enqueueNativeUsageTelemetry(
     source: "native",
     ...event,
   };
-  enqueueEntry({ event: complete, attempt: 0 });
+  startNativeUsageDelivery();
+  try {
+    if (!outbox) throw new Error("No durable receiver");
+    outbox.put(complete);
+    void drain();
+  } catch { console.warn("[codex-chatgpt-web] native_usage_telemetry_dropped reason=storage"); }
 }

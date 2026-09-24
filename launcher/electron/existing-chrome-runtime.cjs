@@ -5,6 +5,19 @@ const { parseExistingChromeError, existingChromeError } = require("./existing-ch
 const { validateConnectionContents } = require("./existing-chrome-file-access.cjs");
 const IMPORT_TIMEOUT_MS = 180_000;
 
+function validateProfileClaim(value) {
+  const claimUrl = value && typeof value === "object" && typeof value.url === "string"
+    ? /^http:\/\/127\.0\.0\.1:([1-9][0-9]{3,4})\/nekodex-profile-claim-v1\/([A-Za-z0-9_-]{32})$/.exec(value.url) : null;
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 1
+    || typeof value.nonce !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(value.nonce)
+    || !claimUrl || Number(claimUrl[1]) < 1024 || Number(claimUrl[1]) > 65535 || claimUrl[2] !== value.nonce
+    || typeof value.openedAt !== "string" || !Number.isFinite(Date.parse(value.openedAt))
+    || Object.keys(value).some(key => !["version", "nonce", "url", "openedAt"].includes(key))) {
+    throw new Error("Selected Chrome profile claim is invalid");
+  }
+  return value;
+}
+
 function cleanupExistingChromeTransfers(host) {
   const parent = path.join(host.app.getPath("userData"), "existing-chrome-login");
   try {
@@ -31,6 +44,7 @@ async function captureExistingChromeLogin(host, onProgress, options = {}) {
     if (host.platform !== "darwin") throw existingChromeError("chrome-file-selection-invalid");
     selectedDiscoveryContents = validateConnectionContents(options.selectedDiscoveryContents);
   }
+  const profileClaim = Object.hasOwn(options, "profileClaim") ? validateProfileClaim(options.profileClaim) : undefined;
   cleanupExistingChromeTransfers(host);
   const parent = path.join(host.app.getPath("userData"), "existing-chrome-login");
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
@@ -49,10 +63,15 @@ async function captureExistingChromeLogin(host, onProgress, options = {}) {
   host.existingChromeProgress = onProgress || (() => {});
   let reportedErrorCode = null;
   try {
+    const privateMessages = [
+      ...(selectedDiscoveryContents === undefined ? [] : [{ version: 1, type: "existing-chrome-discovery", contents: selectedDiscoveryContents }]),
+      ...(profileClaim === undefined ? [] : [{ version: 1, type: "existing-chrome-profile-claim", claim: profileClaim }]),
+    ];
     await host.run("existing-chrome-login", ["login", "--existing-chrome", "--launcher-control", "--consent-user-profile", "--storage-state", storageStatePath,
-      ...(selectedDiscoveryContents === undefined ? [] : ["--selected-chrome-discovery"])], {
+      ...(selectedDiscoveryContents === undefined ? [] : ["--selected-chrome-discovery"]),
+      ...(profileClaim === undefined ? [] : ["--selected-chrome-profile-claim"])], {
       embedded: true, controlStdin: true, privateOutput: true, env: host.launcherControlEnvironment(),
-      ...(selectedDiscoveryContents === undefined ? {} : { privateControlMessage: `${JSON.stringify({ version: 1, type: "existing-chrome-discovery", contents: selectedDiscoveryContents })}\n` }),
+      ...(privateMessages.length === 0 ? {} : { privateControlMessage: `${privateMessages.map(message => JSON.stringify(message)).join("\n")}\n` }),
       message: "Waiting for Chrome permission to import the existing ChatGPT sign-in",
       successMessage: "Existing Chrome session captured for private Launcher verification",
       timeoutMs: IMPORT_TIMEOUT_MS + 10_000,
@@ -108,4 +127,4 @@ async function cancelExistingChromeLogin(host) {
   });
 }
 
-module.exports = { captureExistingChromeLogin, cancelExistingChromeLogin, cleanupExistingChromeTransfers };
+module.exports = { captureExistingChromeLogin, cancelExistingChromeLogin, cleanupExistingChromeTransfers, validateProfileClaim };

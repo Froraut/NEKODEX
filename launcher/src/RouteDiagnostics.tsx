@@ -112,7 +112,7 @@ export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: L
     && typeof receipt.at === "string" && receipt.at.length <= 64
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(receipt.at)
     && Number.isFinite(Date.parse(receipt.at));
-  const validFailure = validReceipt && receipt.status >= 400;
+  const validFailure = validReceipt && receipt.status >= 300;
   const failureStage = ["config", "request", "transport", "upstream", "catalog"].includes(receipt?.failure?.stage ?? "")
     ? receipt!.failure!.stage : copy.unknown;
   const failureCode = typeof receipt?.failure?.code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(receipt.failure.code)

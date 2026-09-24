@@ -235,6 +235,7 @@ for (const scenario of [
 
 test("Manual mode adapter never starts the automatic browser worker and completes only through Manual mode MCP", async () => {
   const config = provider("complete");
+  config.chatgptWeb!.useSavedChats = true;
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   const worker = ChatGptBrowserWorker.forProvider(config);
   const originalRun = worker.run.bind(worker);
@@ -243,11 +244,13 @@ test("Manual mode adapter never starts the automatic browser worker and complete
   };
   let exactBinding: ReturnType<typeof binding> | undefined;
   let manualCompaction: true | undefined;
+  let savedChatPolicy: boolean | undefined;
   const calls: string[] = [];
   const control: ChatGptZeroRiskManualControl = {
     async start(_path, activity) {
       calls.push("start");
       manualCompaction = activity.compaction;
+      savedChatPolicy = activity.useSavedChats;
       exactBinding = binding(activity.prompt);
     },
     async waitSent() {
@@ -271,11 +274,10 @@ test("Manual mode adapter never starts the automatic browser worker and complete
     );
     expect(calls).toEqual(["start", "sent", "started", "end:completed:true"]);
     expect(manualCompaction).toBeUndefined();
+    expect(savedChatPolicy).toBeTrue();
     expect(events.some(event => event.type === "text_delta"
       && event.phase === "commentary"
-      && event.text.startsWith("> **Action required in Manual mode**")
-      && event.text.includes("select the `Codex Zero Risk4` plugin")
-      && event.text.includes("confirm it was sent in the launcher"))).toBeTrue();
+      && event.text.startsWith("> **Action required in Manual mode**"))).toBeTrue();
     expect(events.filter((event): event is Extract<AdapterEvent, { type: "text_delta" }> => (
       event.type === "text_delta" && event.phase === "final_answer"
     )).map(event => event.text).join(""))

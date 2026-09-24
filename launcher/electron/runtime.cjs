@@ -1,3 +1,4 @@
+const { collectCapturedRuntimeOutput: collect } = require("./runtime-output.cjs");
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -18,8 +19,6 @@ const { parsePasskeyProgress } = require("./passkey-login-progress.cjs");
 const { RuntimeGenerationStore } = require("./runtime-generation.cjs");
 const existingChromeRuntime = require("./existing-chrome-runtime.cjs");
 
-const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
-const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
 const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
 const MCP_SETUP_TIMEOUT_MS = 10 * 60_000;
 const UNINSTALL_TIMEOUT_MS = 2 * 60_000;
@@ -27,32 +26,6 @@ const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
 const PASSKEY_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const MAX_PASSKEY_STATE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_PASSKEY_MARKER_FILE_BYTES = 64 * 1024;
-function collect(stream, chunks, onLine, onError, retainOutput = true) {
-  let buffered = "";
-  let bytes = 0;
-  stream.on("data", (chunk) => {
-    bytes += chunk.length;
-    if (retainOutput && bytes <= MAX_CAPTURE_BYTES) chunks.push(chunk);
-    buffered += chunk.toString("utf8");
-    for (;;) {
-      const newline = buffered.indexOf("\n");
-      if (newline < 0) break;
-      const line = buffered.slice(0, newline).trimEnd();
-      buffered = buffered.slice(newline + 1);
-      if (line) onLine(line);
-    }
-    if (buffered.length > MAX_RUNTIME_LOG_LINE_CHARS) {
-      onLine(`${buffered.slice(0, MAX_RUNTIME_LOG_LINE_CHARS)}…[truncated]`);
-      buffered = "";
-    }
-  });
-  stream.on("end", () => {
-    const line = buffered.trim();
-    if (line) onLine(line);
-  });
-  stream.on("error", (error) => onError?.(error));
-}
-
 function resolveUserPath(value) {
   if (value === "~") return os.homedir();
   if (value.startsWith("~/") || value.startsWith("~\\")) {
@@ -1067,13 +1040,21 @@ class RuntimeHost {
       : automaticConnectorName({ development: this.launcherProfile === "development" });
   }
 
-  cancelActiveTurns() {
+  async cancelActiveTurns() {
     this.assertProductionProfile("Launcher-owned turn cancellation");
-    return this.run("cancel-active-turns", ["service", "cancel-turns"], {
+    const result = await this.run("cancel-active-turns", ["service", "cancel-turns"], {
       message: "Cancelling active Codex turns",
-      successMessage: "Active Codex turns cancelled",
+      successMessage: "Cancellation request acknowledged",
       timeoutMs: 15_000,
     });
+    const receipt = JSON.parse(result.stdout);
+    for (const key of ['cancelledHttpTurns', 'cancelledBrowserTurns']) {
+      if (!Number.isInteger(receipt[key]) || receipt[key] < 0) throw new Error('Invalid cancellation acknowledgement');
+    }
+    return { cancelled: false, cancelledHttpTurns: receipt.cancelledHttpTurns,
+      cancelledBrowserTurns: receipt.cancelledBrowserTurns,
+      cancelledCompactionRuns: Number.isInteger(receipt.cancelledCompactionRuns) && receipt.cancelledCompactionRuns >= 0
+        ? receipt.cancelledCompactionRuns : null };
   }
 
   async uninstallIntegration() {
@@ -1444,6 +1425,35 @@ class RuntimeHost {
       ? await this.runDevSetup("fresh-conversation", args, options)
       : await this.runSetup("fresh-conversation", args, options);
     return { ...result, enabled: enabled === true };
+  }
+
+  async setUseSavedChats(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Saved chat preference must be a boolean");
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing saved chats");
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled ? "--saved-chats" : "--temporary-chats",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: enabled ? "Enabling saved ChatGPT conversations" : "Restoring Temporary Chat",
+      successMessage: enabled ? "Saved ChatGPT conversations enabled" : "Temporary Chat restored",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("use-saved-chats", args, options)
+      : await this.runSetup("use-saved-chats", args, options);
+    if ((this.runtimeConfigSnapshot().config?.useSavedChats === true) !== enabled) {
+      throw new Error("Runtime configuration did not persist the requested saved chat preference");
+    }
+    return { ...result, enabled };
   }
 
   async setZeroRiskPro(enabled) {
@@ -1905,7 +1915,7 @@ class RuntimeHost {
         ...(rolledBack ? ["incomplete first-time setup was rolled back"] : []),
         ...failures,
       ].join("; ");
-      const failure = new Error(message);
+      const failure = new Error(message, { cause: error });
       failure.lifecycle = {
         candidate: "failed",
         previousRuntime: recoveryError ? "failed" : previousRuntime.configured ? "ready" : "unconfigured",

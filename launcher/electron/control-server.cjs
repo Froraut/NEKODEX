@@ -2,6 +2,8 @@ const { createServer } = require("node:http");
 const { createHash, randomBytes, timingSafeEqual } = require("node:crypto");
 const { validateNativeUsageSample } = require("./usage-store.cjs");
 
+const { isTaskModel } = require("./browser-task-ledger.cjs");
+
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
 const MANUAL_SENT_OBSERVER_TIMEOUT_MS = 35_000;
@@ -131,10 +133,18 @@ class BrowserControlServer {
     const isNativeProxy = request.url === "/v1/network/resolve-proxy";
     const isNativeUsage = request.url === "/v1/usage/native";
     const isTurn = request.url === "/v1/turn/start"
+      || request.url === "/v1/turn/start-cancel"
+      || request.url === "/v1/turn/start-ack"
+      || request.url === "/v1/turn/progress"
       || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/end";
     const isTurnRelease = request.url === "/v1/turn/release";
+    const artifactAction = new Map([
+      ["/v1/turn/artifact-register", "register"],
+      ["/v1/turn/artifact-wait", "wait"],
+      ["/v1/turn/artifact-cancel", "cancel"],
+    ]).get(request.url);
     const isSessionInspect = request.url === "/v1/session/inspect";
     const manualAction = new Map([
       ["/v1/manual/start", "start"],
@@ -144,7 +154,7 @@ class BrowserControlServer {
       ["/v1/manual/end", "end"],
       ["/v1/manual/cancel", "cancel"],
     ]).get(request.url);
-    if (request.method !== "POST" || (!isNativeProxy && !isNativeUsage && !isTurn && !isTurnRelease && !isSessionInspect && !manualAction)) {
+    if (request.method !== "POST" || (!isNativeProxy && !isNativeUsage && !isTurn && !isTurnRelease && !isSessionInspect && !manualAction && !artifactAction)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -169,7 +179,7 @@ class BrowserControlServer {
       if (isNativeUsage) {
         validateNativeUsageSample(body);
         const result = host.recordNativeUsage(body);
-        writeJson(response, 200, { ok: true, recorded: result.recorded === true, duplicate: result.duplicate === true });
+        writeJson(response, result.unavailable ? 503 : 200, { ok: !result.unavailable, recorded: result.recorded === true, duplicate: result.duplicate === true });
         return;
       }
       if (isSessionInspect) {
@@ -198,6 +208,9 @@ class BrowserControlServer {
       }
       if (!Number.isInteger(body.helperPid) || body.helperPid < 1) {
         throw new Error("browser helper pid is invalid");
+      }
+      if (body.taskProgressVersion !== undefined && (body.taskProgressVersion !== 1 || request.url !== '/v1/turn/start')) {
+        throw new Error('Invalid task progress version');
       }
       if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
         throw new Error("conversationKey is invalid");
@@ -231,10 +244,48 @@ class BrowserControlServer {
         throw new Error("refreshViewport is only valid for a turn heartbeat");
       }
       if (body.surfaceId !== undefined
-        && (request.url !== "/v1/turn/heartbeat"
+        && (!["/v1/turn/heartbeat", "/v1/turn/progress", "/v1/turn/start-ack",
+          "/v1/turn/artifact-register", "/v1/turn/artifact-wait", "/v1/turn/artifact-cancel"].includes(request.url)
           || typeof body.surfaceId !== "string"
           || !/^[A-Za-z0-9_-]{32}$/.test(body.surfaceId))) {
-        throw new Error("surfaceId is only valid for a turn heartbeat and must identify an owned surface");
+        throw new Error("surfaceId must identify a supported exact turn operation and owned surface");
+      }
+      if (artifactAction) {
+        if (typeof body.surfaceId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(body.surfaceId)) {
+          throw new Error("Artifact surface identity is invalid");
+        }
+        if (artifactAction === "register") {
+          if (typeof body.assistantTurnId !== "string" || body.assistantTurnId.length < 1 || body.assistantTurnId.length > 256
+            || typeof body.expectedFilename !== "string" || body.expectedFilename.length < 1 || body.expectedFilename.length > 160
+            || !Number.isFinite(body.maxBytes) || body.maxBytes <= 0 || body.maxBytes > 50_000_000
+            || !Number.isFinite(body.deadlineMs) || body.deadlineMs <= 0 || body.deadlineMs > 60_000) {
+            throw new Error("Artifact registration payload is invalid");
+          }
+          const lease = await this.reconcileAutomaticMutation("artifact-register", body, () => (
+            host.registerArtifactDownload(
+              body.traceId, body.helperPid, body.surfaceId, body.assistantTurnId,
+              body.expectedFilename, body.maxBytes, body.deadlineMs,
+            )
+          ));
+          writeJson(response, 200, { ok: true, ...lease });
+          return;
+        }
+        if (typeof body.leaseId !== "string" || !/^artifact_[a-f0-9]{32}$/.test(body.leaseId)) {
+          throw new Error("Artifact lease identity is invalid");
+        }
+        if (artifactAction === "wait") {
+          const receipt = await host.waitArtifactDownload(body.traceId, body.helperPid, body.surfaceId, body.leaseId);
+          writeJson(response, 200, { ok: true, ...receipt });
+          return;
+        }
+        if (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > 500)) {
+          throw new Error("Artifact cancellation reason is invalid");
+        }
+        const result = host.cancelArtifactDownload(
+          body.traceId, body.helperPid, body.surfaceId, body.leaseId, body.reason,
+        );
+        writeJson(response, 200, { ok: true, ...result });
+        return;
       }
       if (manualAction) {
         if (manualAction === "start") {
@@ -251,6 +302,9 @@ class BrowserControlServer {
           if (body.compaction !== undefined && body.compaction !== true) {
             throw new Error("manual compaction flag is invalid");
           }
+          if (body.useSavedChats !== undefined && typeof body.useSavedChats !== "boolean") {
+            throw new Error("manual saved-chat policy is invalid");
+          }
           const lease = host.beginManualTurn(
             body.traceId,
             body.helperPid,
@@ -258,6 +312,7 @@ class BrowserControlServer {
             body.conversationKey,
             body.resumePrompt,
             body.compaction === true,
+            body.useSavedChats === true,
           );
           this.logger.info("browser.manual_control_started", {
             traceId: body.traceId,
@@ -342,6 +397,7 @@ class BrowserControlServer {
         throw new Error("automatic turn mutationId is invalid");
       }
       if (body.accountRoutingKey !== undefined && !/^[a-f0-9]{64}$/.test(body.accountRoutingKey)) throw new Error("Invalid account routing key");
+      if (body.requestedModel !== undefined && !isTaskModel(body.requestedModel)) throw new Error("Invalid requested model");
       if (body.requestedEffort !== undefined && !["luna", "low", "medium", "high", "xhigh", "max"].includes(body.requestedEffort)) throw new Error("Invalid requested effort");
       if (request.url === "/v1/turn/usage") {
         if (body.outcome !== undefined && body.outcome !== "completed") throw new Error("Invalid usage outcome");
@@ -365,21 +421,62 @@ class BrowserControlServer {
         if (host.browserInteractionMode() === "manual") {
           throw new Error("Automatic browser interaction is disabled");
         }
-        const result = await this.reconcileAutomaticMutation("start", body, async () => {
-          const lease = await host.beginTurn(
-            body.traceId,
-            preferences.showBrowserDuringTurns === true,
-            body.helperPid,
-            body.conversationKey,
-            body.connectorIdentity,
-            body.requireRetainedConversation === true,
-            { effort: body.requestedEffort, routingKey: body.accountRoutingKey },
-          );
-          this.logger.info("browser.turn_started", { traceId: body.traceId });
-          return { ok: true, ...lease };
-        });
-        writeJson(response, 200, result);
+        if (body.taskProgressVersion === 1) {
+          const result = host.queueTurn(body, preferences.showBrowserDuringTurns === true);
+          writeJson(response, result.queued ? 202 : 200, { ok: true, ...result }); return;
+        }
+        const acquisition = new AbortController();
+        const startBody = body.mutationId ? body : { ...body, mutationId: randomBytes(12).toString("base64url") };
+        const onClose = () => {
+          if (!response.writableFinished) acquisition.abort(new Error("Browser turn acquisition caller disconnected"));
+        };
+        response.once("close", onClose);
+        let result;
+        try {
+          if (response.destroyed) onClose();
+          result = await this.reconcileAutomaticMutation("start", startBody, async () => {
+            const lease = await host.beginTurn(
+              body.traceId,
+              preferences.showBrowserDuringTurns === true,
+              body.helperPid,
+              body.conversationKey,
+              body.connectorIdentity,
+              body.requireRetainedConversation === true,
+              { requestedModel: body.requestedModel, effort: body.requestedEffort, routingKey: body.accountRoutingKey, taskProgressVersion: body.taskProgressVersion },
+              null,
+              acquisition.signal,
+            );
+            if (acquisition.signal.aborted) {
+              host.releaseUnclaimedTurn(body.traceId, body.helperPid, lease.surfaceId, acquisition.signal);
+              acquisition.signal.throwIfAborted();
+            }
+            this.logger.info("browser.turn_started", { traceId: body.traceId });
+            return { ok: true, ...lease };
+          });
+          if (acquisition.signal.aborted) {
+            host.releaseUnclaimedTurn(body.traceId, body.helperPid, result.surfaceId, acquisition.signal);
+            const key = `start:${body.traceId}:${body.helperPid}:${startBody.mutationId}`;
+            this.automaticMutationReceipts.delete(key);
+            acquisition.signal.throwIfAborted();
+          }
+          writeJson(response, 200, result);
+          host.confirmTurnAcquisition?.(body.traceId, body.helperPid, result.surfaceId, acquisition.signal);
+        } finally {
+          response.off("close", onClose);
+        }
         return;
+      } else if (request.url === '/v1/turn/start-cancel') {
+        const result = await host.cancelQueuedOwner(body.traceId, body.helperPid);
+        writeJson(response, result.cancelling ? 202 : 200, { ok: true, ...result }); return;
+      } else if (request.url === '/v1/turn/start-ack') {
+        const result = host.acknowledgeQueuedOwner(body.traceId, body.helperPid, body.surfaceId);
+        writeJson(response, 200, { ok: true, ...result }); return;
+      } else if (request.url === '/v1/turn/progress') {
+        const result = await this.reconcileAutomaticMutation('progress', body, () => {
+          host.taskProgress(body.traceId, body.helperPid, body.surfaceId, body.taskPhase, body.sequence);
+          return { ok: true };
+        });
+        writeJson(response, 200, result); return;
       } else if (request.url === "/v1/turn/heartbeat") {
         const result = await this.reconcileAutomaticMutation("heartbeat", body, () => {
           host.heartbeatTurn(body.traceId, body.helperPid, body.refreshViewport === true, body.surfaceId);
@@ -428,7 +525,8 @@ class BrowserControlServer {
         error: message,
         ...(error?.code === "account_cooldown" ? { code: "account_cooldown", retryAt: error.retryAt } : {}),
         ...(cancelled ? { code: "turn_cancelled" } : {}),
-        ...(retainedUnavailable ? { code: "retained_conversation_unavailable" } : {}),
+        ...(retainedUnavailable ? { code: "retained_conversation_unavailable",
+          ...(error.workStarted === false ? { workStarted: false } : {}) } : {}),
         ...(manualInspectionDisabled ? { code: "manual_browser_inspection_disabled" } : {}),
         ...(manualOwnerLost ? { code: "manual_turn_owner_lost" } : {}),
         ...(manualTimedOut ? { code: "manual_turn_timed_out" } : {}),

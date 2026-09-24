@@ -1282,7 +1282,13 @@ test("lifecycle drain and cancellation include browser turns owned by the extern
 
 test("a drained runtime rejects new model-catalog work before shutdown", async () => {
   const config = { ...defaultConfig("browser-only"), port: 0 };
-  const server = startServer(config);
+  let upstreamCalls = 0;
+  const server = startServer(config, {
+    fetchUpstream: async () => {
+      upstreamCalls += 1;
+      return Response.json({ models: [] });
+    },
+  });
   const endpoint = `http://127.0.0.1:${server.port}`;
   const authorization = { authorization: `Bearer ${config.controlToken}` };
   try {
@@ -1291,14 +1297,30 @@ test("a drained runtime rejects new model-catalog work before shutdown", async (
       headers: authorization,
     });
     expect(drain.status).toBe(200);
+    expect(await drain.json()).toMatchObject({
+      draining: true,
+      native_accepting_turns: false,
+      web_accepting_turns: false,
+    });
 
-    const models = await fetch(`${endpoint}/v1/models`);
+    const models = await fetch(`${endpoint}/v1/models`, {
+      headers: { authorization: "Bearer test-codex-session" },
+    });
     expect(models.status).toBe(503);
     expect(await models.json()).toMatchObject({
       error: {
         type: "server_error",
-        message: "codex-chatgpt-web is draining for a requested service operation",
+        code: "server_is_overloaded",
       },
+    });
+
+    expect(upstreamCalls).toBe(0);
+    expect(await (await fetch(`${endpoint}/healthz`)).json()).toMatchObject({
+      draining: true,
+      native_accepting_turns: false,
+      web_accepting_turns: false,
+      model_catalog_requests: 0,
+      active_http_turns: 0,
     });
 
     const resume = await fetch(`${endpoint}/admin/resume`, {
@@ -1306,6 +1328,11 @@ test("a drained runtime rejects new model-catalog work before shutdown", async (
       headers: authorization,
     });
     expect(resume.status).toBe(200);
+    expect(await resume.json()).toMatchObject({
+      draining: false,
+      native_accepting_turns: true,
+      web_accepting_turns: true,
+    });
   } finally {
     await server.stop(true);
   }

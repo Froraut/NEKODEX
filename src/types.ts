@@ -3,23 +3,27 @@ import type { ChatGptWebProModelVersion } from "./chatgpt-web-models";
 import type { ChatGptWebCompactionModel } from "./chatgpt-web-compaction-policy";
 
 export interface CodexParsedRequest {
+  /** Validated catalog slug retained before backend routing. */
+  requestedModel?: string;
   modelId: string;
   previousResponseId?: string;
   context: CodexContext;
   stream: boolean;
   options: CodexRequestOptions;
   _rawBody?: unknown;
+  /** Set by validated Web route selection; never accepted from caller model metadata. */
+  _chatgptModelFamily?: "5.6" | "6";
   /** In-process only, set by the authenticated Hermes endpoint; never parsed from HTTP JSON. */
   _hermesContext?: { threadId: string; turnId: string; root: string };
   /** Number of leading raw input items restored from local previous_response_id state. */
   _replayPrefixLen?: number;
   /**
-   * True when the input carried `{type:"compaction_trigger"}` — Codex remote compaction v2 asking
-   * this turn to produce a `{type:"compaction"}` output item. Routed adapters can't natively;
-   * the server runs the model as a summarizer and the bridge emits a synthetic compaction item
-   * (see src/responses/compaction.ts).
+   * Dedicated compaction selected by a remote-v2 trigger or native responses/memento
+   * metadata. Both run without local tools; their response formats remain distinct.
    */
   _compactionRequest?: boolean;
+  /** Native memento compaction expects assistant text; remote v2 expects a compaction item. */
+  _compactionResponseFormat?: "message";
   /**
    * True when Codex MultiAgent V2 delegated an agent_message as provider-private encrypted_content.
    * ChatGPT Web has no OpenAI backend key for that blob; the Responses HTTP boundary rejects it
@@ -98,8 +102,21 @@ export interface CodexImageContent {
   detail?: string;
 }
 
-/** A user/developer message content part: text or an image (vision). */
-export type CodexContentPart = CodexTextContent | CodexImageContent;
+export interface CodexFileContent {
+  type: "file";
+  /** A plain filename only; paths from the request are rejected. */
+  name: string;
+  mimeType: string;
+  /** Canonical base64 bytes, bounded and verified before this object is created. */
+  base64: string;
+  size: number;
+  sha256: string;
+  source: "inline" | "authorized_file_id";
+  fileId?: string;
+}
+
+/** A user/developer message content part delivered to the provider. */
+export type CodexContentPart = CodexTextContent | CodexImageContent | CodexFileContent;
 
 export interface CodexThinkingContent {
   type: "thinking";
@@ -319,6 +336,8 @@ export interface CodexProviderConfig {
     experimentalSkillAttachments?: boolean;
     allowWebSubagents?: boolean;
     experimentalFreshConversationPerTurn?: boolean;
+    /** Explicit opt-in to normal ChatGPT history; Temporary Chat remains the default. */
+    useSavedChats?: boolean;
     /** Owned async schema: Native6 for new Full setups, Native5 retained on ordinary updates. */
     experimentalAsyncToolOperations?: boolean;
   };

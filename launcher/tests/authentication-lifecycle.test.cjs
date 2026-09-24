@@ -40,6 +40,9 @@ function loginFixture() {
     embeddedLoginController: null,
     passkeyLoginOperation: null,
     manualOperation: null,
+    authGeneration: 0,
+    authProbeRevision: 0,
+    authProbeTail: Promise.resolve(),
     authView: null,
     turnTabs: new Map(),
     getBrowserInteractionMode: () => "automatic",
@@ -125,7 +128,8 @@ test("passkey switch waits for a pending authentication probe to finish before i
 test("failed passkey launch releases ownership and allows a new attempt", async () => {
   const { fixture } = loginFixture();
   fixture.loginWithPasskey = async () => { throw new Error("Chrome unavailable"); };
-  await assert.rejects(fixture.openPasskeyLogin(), /Chrome unavailable/);
+  await assert.rejects(fixture.openPasskeyLogin(), /passkey-capture-failed/);
+  assert.equal(fixture.passkeyProgress.error, 'passkey-capture-failed');
   assert.equal(fixture.loginOperation, null);
   assert.equal(fixture.passkeyLoginOperation, null);
   assert.equal(fixture.manualOperation, null);
@@ -183,8 +187,9 @@ test("passkey cancelled cleanup failures remain failures with recovery evidence"
   const pending = fixture.openPasskeyLogin();
   await transferWaiting.promise;
   const cancelled = fixture.cancelPasskeyLogin(async () => { transfer.resolve("verified-transfer"); });
-  await assert.rejects(cancelled, /removing temporary/);
-  await assert.rejects(pending, /removing temporary/);
+  await assert.rejects(cancelled, /passkey-cleanup-failed/);
+  await assert.rejects(pending, /passkey-cleanup-failed/);
+  assert.equal(fixture.passkeyProgress.error, 'passkey-cleanup-failed');
   assert.equal(fixture.passkeyProgress.phase, "failed");
 });
 
@@ -211,6 +216,7 @@ test("a page-load probe from before passkey login cannot overwrite the imported 
   const oldResult = deferred();
   fixture.view.webContents.executeJavaScript = () => oldResult.promise;
   const oldProbe = BrowserHost.prototype.probeAuthentication.call(fixture);
+  await Promise.resolve(); // Let the serialized probe capture its pre-passkey generation.
   const passkey = fixture.openPasskeyLogin();
   await transferWaiting.promise;
   transfer.resolve("verified-transfer");

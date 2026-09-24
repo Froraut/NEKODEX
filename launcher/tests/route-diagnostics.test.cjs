@@ -16,6 +16,24 @@ test("installed route alone never claims the catalog was requested", () => {
   assert.equal(observed.catalog.successfulRequests, 3);
 });
 
+test("a redirect supersedes an older catalog success and a later success recovers", () => {
+  const redirected = withCatalogObservation(report, { ...health, last_model_catalog_result: {
+    request: 4, at: "2026-09-11T12:01:00Z", status: 302,
+  } }, config, 10);
+  assert.equal(redirected.catalog.status, "unavailable");
+  assert.deepEqual(redirected.catalog.lastResult.failure, { stage: "catalog" });
+  assert.equal(redirected.catalog.successfulRequests, 3);
+
+  const recovered = withCatalogObservation(report, { ...health,
+    successful_model_catalog_requests: 4,
+    last_successful_model_catalog_request_at: "2026-09-11T12:02:00Z",
+    last_model_catalog_result: { request: 5, at: "2026-09-11T12:02:00Z", status: 200 },
+  }, config, 10);
+  assert.equal(recovered.catalog.status, "observed");
+  assert.equal(recovered.catalog.successfulRequests, 4);
+  assert.equal(recovered.catalog.lastResult.failure, undefined);
+});
+
 test("IPC returns only the explicit diagnostic schema and canonical timestamp", () => {
   const result = withCatalogObservation({ ...report, secret: "credential", config: { token: "credential" } }, health, config, 10);
   assert.equal(JSON.stringify(result).includes("credential"), false);
@@ -41,7 +59,7 @@ test("old or foreign health payloads do not satisfy catalog observation", () => 
 test("matching health cannot claim catalog observation without a valid owned daemon pid", () => {
   for (const expectedPid of [undefined, null, 0, -1, 10.5, "10", Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
     const result = withCatalogObservation(report, health, config, expectedPid);
-    assert.deepEqual(result.catalog, { status: "unavailable", successfulRequests: null, lastSuccessfulAt: null });
+    assert.deepEqual(result.catalog, { status: "unavailable", successfulRequests: null, lastSuccessfulAt: null, lastResult: null });
     assert.equal(result.installed, true);
     assert.equal(result.active, true);
   }

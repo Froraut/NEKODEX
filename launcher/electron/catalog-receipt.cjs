@@ -11,7 +11,7 @@ function catalogReceipt(value) {
   const code = typeof value.failure?.code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value.failure.code)
     ? value.failure.code : undefined;
   return { request: value.request, at: new Date(value.at).toISOString(), status: value.status,
-    ...(value.status >= 400 ? { failure: { stage, ...(code ? { code } : {}) } } : {}) };
+    ...(value.status >= 300 ? { failure: { stage, ...(code ? { code } : {}) } } : {}) };
 }
 
 module.exports = { catalogReceipt };

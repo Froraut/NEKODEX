@@ -2902,10 +2902,14 @@ describe("ChatGPT outer-native harness v4", () => {
         },
       }]);
       const shellGatewayCalls: GatewayProgramCall[] = [];
-      await executeGatewayProgram(pwdRequest!.input!, ["shell_command"], shellGatewayCalls);
+      await expect(executeGatewayProgram(pwdRequest!.input!, ["shell_command"], shellGatewayCalls))
+        .rejects.toThrow("Native shell_command does not support codex_exec tty, max_output_tokens");
+      expect(shellGatewayCalls).toEqual([]);
+      const plainCommandRequest = execRequests.find(request => request.input?.includes('git status --short'));
+      await executeGatewayProgram(plainCommandRequest!.input!, ["shell_command"], shellGatewayCalls);
       expect(shellGatewayCalls).toEqual([{
         name: "shell_command",
-        input: { command: "pwd", workdir: tempRoot, timeout_ms: 2_000 },
+        input: { command: "git status --short", workdir: tempRoot },
       }]);
       for (const ambiguousInventory of [[], ["exec_command", "shell_command"]]) {
         const rejectedCalls: GatewayProgramCall[] = [];
@@ -2958,7 +2962,7 @@ describe("ChatGPT outer-native harness v4", () => {
           wire_name: "exec",
           name: "exec",
           kind: "freeform",
-          description: expect.stringContaining("enforced for wait_agent calls made inside exec"),
+          description: expect.stringContaining("Use the supplied tools wrapper for wait_agent polling"),
         }],
         total: 1,
         next_offset: null,

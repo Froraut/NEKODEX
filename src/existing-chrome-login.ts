@@ -27,10 +27,11 @@ const MAX_TOTAL_BYTES = 2 * 1024 * 1024;
 const MAX_COOKIES = 1000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const CLEANUP_TIMEOUT_MS = 2_000;
+const PROFILE_CLAIM_LOOKUPS = 5;
 
 export type ExistingChromeLoginErrorCode = "consent-required" | "unsupported-platform" | "chrome-unavailable" | "chrome-profile-access-denied"
   | "invalid-endpoint" | "chrome-permission-denied" | "chrome-permission-timeout" | "chrome-too-old"
-  | "chrome-disconnected" | "invalid-response" | "session-missing" | "cancelled" | "capture-write-failed";
+  | "chrome-disconnected" | "chrome-profile-claim-missing" | "invalid-response" | "session-missing" | "cancelled" | "capture-write-failed";
 const MESSAGES: Record<ExistingChromeLoginErrorCode, string> = {
   "consent-required": "Confirm access to your current Chrome profile before importing its ChatGPT sign-in.",
   "unsupported-platform": "Existing Chrome sign-in import is unavailable on this operating system.",
@@ -41,6 +42,7 @@ const MESSAGES: Record<ExistingChromeLoginErrorCode, string> = {
   "chrome-permission-timeout": "Chrome did not finish approving the connection in time. Check its Allow prompt and retry.",
   "chrome-too-old": "Importing an existing Chrome sign-in requires Google Chrome 144 or later with native connection approval enabled.",
   "chrome-disconnected": "The connection to Chrome ended. Keep Chrome open and retry the import.",
+  "chrome-profile-claim-missing": "Chrome did not expose the selected profile verification page. Keep the selected profile window open and retry.",
   "invalid-response": "Chrome returned an unsupported or oversized session response. No sign-in was imported.",
   "session-missing": "The current Chrome profile has no usable ChatGPT sign-in. Open ChatGPT in that profile and retry.",
   "cancelled": "Chrome sign-in import was cancelled.",
@@ -68,6 +70,16 @@ export interface ExistingChromeLoginOptions {
   /** One-use discovery contents from the launcher's private pipe after native file selection.
    * Never provide a path or endpoint through argv, environment, renderer state or logs. */
   discoveryData?: Promise<string>;
+  /** One-use proof opened by the launcher in the profile selected by the user. The importer
+   * resolves its CDP browser context from the exact owned target; profile directories are never
+   * treated as browserContextId values. */
+  profileClaim?: Promise<ExistingChromeProfileClaim>;
+}
+export interface ExistingChromeProfileClaim {
+  version: 1;
+  nonce: string;
+  url: string;
+  openedAt: string;
 }
 export interface ExistingChromeLoginCapture {
   storageState: BrowserLoginStorageState;
@@ -186,6 +198,33 @@ async function selectedDiscoveryEndpoint(data: Promise<string> | undefined, time
   finally { if (timer) clearTimeout(timer); }
 }
 
+function validateProfileClaim(value: unknown): ExistingChromeProfileClaim {
+  const claimUrl = object(value) && typeof value.url === "string"
+    ? /^http:\/\/127\.0\.0\.1:([1-9][0-9]{3,4})\/nekodex-profile-claim-v1\/([A-Za-z0-9_-]{32})$/.exec(value.url) : null;
+  if (!object(value) || value.version !== 1 || typeof value.nonce !== "string"
+    || !/^[A-Za-z0-9_-]{32}$/.test(value.nonce)
+    || !claimUrl || Number(claimUrl[1]) < 1024 || Number(claimUrl[1]) > 65535 || claimUrl[2] !== value.nonce
+    || typeof value.openedAt !== "string" || !Number.isFinite(Date.parse(value.openedAt))
+    || Date.parse(value.openedAt) < Date.now() - DEFAULT_TIMEOUT_MS - 60_000
+    || Date.parse(value.openedAt) > Date.now() + 60_000
+    || Object.keys(value).some(key => !["version", "nonce", "url", "openedAt"].includes(key))) {
+    throw failure("invalid-response");
+  }
+  return value as unknown as ExistingChromeProfileClaim;
+}
+
+async function selectedProfileClaim(data: Promise<ExistingChromeProfileClaim> | undefined,
+  timeoutMs: number, signal?: AbortSignal): Promise<ExistingChromeProfileClaim | null> {
+  if (!data) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const received = Promise.resolve(data).then(validateProfileClaim, () => { throw failure("invalid-response"); });
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(failure("chrome-permission-timeout")), timeoutMs);
+  });
+  try { return await abortable(Promise.race([received, timeout]), signal); }
+  finally { if (timer) clearTimeout(timer); }
+}
+
 class RestrictedChromeConnection {
   private id = 0;
   private pending = new Map<number, Pending>();
@@ -222,7 +261,7 @@ class RestrictedChromeConnection {
   }
   request(method: string, params: JsonObject, timeoutMs: number, sessionId?: string, onResult?: Pending["onResult"]): Promise<JsonObject> {
     if (this.stopped || this.socket.readyState !== 1) return Promise.reject(failure("chrome-disconnected"));
-    if (++this.id > 8) return Promise.reject(failure("invalid-response"));
+    if (++this.id > 8 + PROFILE_CLAIM_LOOKUPS - 1) return Promise.reject(failure("invalid-response"));
     const id = this.id;
     return new Promise((resolve, reject) => {
       // Retain a timed-out createTarget result hook until disconnect so late tab creation can be cleaned up.
@@ -293,9 +332,11 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
   const endpoint = Object.hasOwn(options, "discoveryData")
     ? await selectedDiscoveryEndpoint(options.discoveryData, check(), options.signal)
     : discoverEndpoint((dependencies.portFile ?? existingChromePortFile)());
+  const profileClaim = await selectedProfileClaim(options.profileClaim, check(), options.signal);
   progress("waiting-for-chrome");
   const connection = await connect(endpoint, check(), options.signal);
   let targetId: string | undefined;
+  let claimTargetId: string | undefined;
   let closing = false;
   let lateClose: Promise<unknown> | undefined;
   let creationPending: Promise<unknown> | undefined;
@@ -312,6 +353,16 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
       } catch { cleanupFailed = true; }
     }
   };
+  const closeClaimTarget = async () => {
+    const owned = claimTargetId;
+    claimTargetId = undefined;
+    if (owned) {
+      try {
+        const result = await connection.request("Target.closeTarget", { targetId: owned }, CLEANUP_TIMEOUT_MS);
+        if (result.success !== true) cleanupFailed = true;
+      } catch { cleanupFailed = true; }
+    }
+  };
   const request = (method: string, params: JsonObject, sessionId?: string) => abortable(
     connection.request(method, params, Math.min(10_000, check()), sessionId), options.signal,
   );
@@ -320,9 +371,40 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
     const match = typeof version.product === "string" ? /^Chrome\/([1-9][0-9]{1,3})\.[0-9.]+$/.exec(version.product) : null;
     if (!match || Number(match[1]) < 144) throw failure("chrome-too-old");
     progress("reading-session");
+    let browserContextId: string | undefined;
+    if (profileClaim) {
+      // The URL contains a random one-use claim and was opened by the launcher after the user
+      // confirmed this exact profile. We receive target metadata only to find that owned page;
+      // peer URLs and titles are never retained, exposed, logged or otherwise inspected.
+      let claimed: JsonObject | undefined;
+      for (let attempt = 0; attempt < PROFILE_CLAIM_LOOKUPS; attempt++) {
+        const targets = await request("Target.getTargets", { filter: [{ type: "page" }] });
+        if (!Array.isArray(targets.targetInfos) || targets.targetInfos.length > 10_000) throw failure("invalid-response");
+        const matches = targets.targetInfos.filter(info => object(info) && info.type === "page" && info.url === profileClaim.url);
+        if (matches.length > 1) throw failure("invalid-response");
+        if (matches.length === 1) { claimed = matches[0]; break; }
+        // Chrome's HTTP receipt can precede the target's committed URL. Briefly allow
+        // that exact owned target to settle; never substitute another profile or page.
+        if (attempt + 1 < PROFILE_CLAIM_LOOKUPS) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await abortable(new Promise<void>(resolve => { timer = setTimeout(resolve, Math.min(100, check())); }), options.signal);
+          } finally { if (timer) clearTimeout(timer); }
+        }
+      }
+      if (!claimed) throw failure("chrome-profile-claim-missing");
+      if (typeof claimed.targetId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(claimed.targetId)) throw failure("invalid-response");
+      if (claimed.browserContextId !== undefined
+        && (typeof claimed.browserContextId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(claimed.browserContextId))) {
+        throw failure("invalid-response");
+      }
+      claimTargetId = claimed.targetId;
+      browserContextId = claimed.browserContextId as string | undefined;
+    }
     // Chrome 144 supports hidden targets tied to this connection. Disconnect destroys an
-    // unresolved/late target too; never fall back to a visible user tab or inspect existing tabs.
-    const creation = connection.request("Target.createTarget", { url: "about:blank", background: true, hidden: true }, Math.min(10_000, check()), undefined, result => {
+    // unresolved/late target too; never attach to or read content from a visible user tab.
+    const creation = connection.request("Target.createTarget", { url: "about:blank", background: true, hidden: true,
+      ...(browserContextId ? { browserContextId } : {}) }, Math.min(10_000, check()), undefined, result => {
       creationObserved();
       if (typeof result.targetId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(result.targetId)) throw failure("invalid-response");
       targetId = result.targetId;
@@ -356,6 +438,7 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
     }
     await closeOwnedTarget();
     if (lateClose) await lateClose;
+    await closeClaimTarget();
     connection.disconnect();
     if (cleanupFailed && !options.signal?.aborted) throw failure("chrome-disconnected");
   }

@@ -17,6 +17,7 @@ const en = {
   automatic: "NEKODEX checks GitHub when it starts. Updates are installed only when you choose to update.",
   preserved: "Your accounts and settings stay in place. The package is verified before installation.",
   restart: "NEKODEX will close to install the update, then reopen. If final activation is still needed, it will show Restart NEKODEX; use it when your work is finished. No DMG installation is needed.",
+  downloadRemaining: "About {duration} remaining in download",
   progress: "Download progress", source: "Source: Froraut/NEKODEX on GitHub",
 };
 type UpdateCopy = { [K in keyof typeof en]: string };
@@ -38,6 +39,7 @@ const copies: Record<Language, UpdateCopy> = {
     automatic: "NEKODEX проверяет GitHub при запуске. Обновление устанавливается только по вашему выбору.",
     preserved: "Аккаунты и настройки сохраняются. Пакет проверяется перед установкой.",
     restart: "NEKODEX закроется для установки обновления, а затем откроется снова. Если для окончательной активации потребуется ещё один перезапуск, появится кнопка «Перезапустить NEKODEX» — нажмите её после завершения работы. Устанавливать DMG вручную не нужно.",
+    downloadRemaining: "До конца загрузки примерно {duration}",
     progress: "Ход загрузки", source: "Источник: Froraut/NEKODEX на GitHub",
   },
   en,
@@ -56,6 +58,7 @@ const copies: Record<Language, UpdateCopy> = {
     wait: "请先完成正在运行的任务和设置操作。", cooldown: "一分钟后可再次检查。",
     automatic: "NEKODEX 启动时会检查 GitHub，仅在你选择更新后安装。",
     preserved: "账户和设置将保留。安装前会验证更新包。", restart: "NEKODEX 会关闭以安装更新，然后重新打开。如果最终激活仍需重启，应用会显示“重新启动 NEKODEX”；请在完成工作后使用它。无需手动安装 DMG。",
+    downloadRemaining: "下载预计还需 {duration}",
     progress: "下载进度", source: "来源：GitHub 上的 Froraut/NEKODEX",
   },
   "zh-TW": {
@@ -73,6 +76,7 @@ const copies: Record<Language, UpdateCopy> = {
     wait: "請先完成執行中的任務和設定操作。", cooldown: "一分鐘後可再次檢查。",
     automatic: "NEKODEX 啟動時會檢查 GitHub，僅在您選擇更新後安裝。",
     preserved: "帳號和設定會保留。安裝前會驗證更新套件。", restart: "NEKODEX 會關閉以安裝更新，然後重新開啟。如果最終啟用仍需重新啟動，應用程式會顯示「重新啟動 NEKODEX」；請在完成工作後使用。無需手動安裝 DMG。",
+    downloadRemaining: "下載預計還需 {duration}",
     progress: "下載進度", source: "來源：GitHub 上的 Froraut/NEKODEX",
   },
   ja: {
@@ -92,6 +96,7 @@ const copies: Record<Language, UpdateCopy> = {
     automatic: "NEKODEX は起動時に GitHub を確認します。更新を選択した場合のみインストールします。",
     preserved: "アカウントと設定は保持されます。インストール前にパッケージを検証します。",
     restart: "NEKODEX はアップデートのインストール時に終了し、その後もう一度開きます。最終的な有効化にもう一度再起動が必要な場合は「NEKODEX を再起動」が表示されるので、作業が終わってから実行してください。DMG の手動インストールは不要です。",
+    downloadRemaining: "ダウンロード完了まで約 {duration}",
     progress: "ダウンロードの進行状況", source: "配信元：GitHub の Froraut/NEKODEX",
   },
   ko: {
@@ -110,6 +115,7 @@ const copies: Record<Language, UpdateCopy> = {
     wait: "실행 중인 작업과 설정을 완료한 후 업데이트하세요.", cooldown: "1분 후 다시 확인할 수 있습니다.",
     automatic: "NEKODEX는 시작할 때 GitHub를 확인합니다. 업데이트를 선택한 경우에만 설치됩니다.",
     preserved: "계정과 설정이 유지됩니다. 설치 전에 패키지를 검증합니다.", restart: "NEKODEX가 업데이트 설치를 위해 닫힌 뒤 다시 열립니다. 최종 활성화에 다시 시작이 더 필요하면 ‘NEKODEX 다시 시작’이 표시되므로 작업을 마친 뒤 사용하세요. DMG를 직접 설치할 필요는 없습니다.",
+    downloadRemaining: "다운로드 완료까지 약 {duration} 남음",
     progress: "다운로드 진행률", source: "출처: GitHub의 Froraut/NEKODEX",
   },
 };

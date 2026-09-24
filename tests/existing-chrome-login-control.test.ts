@@ -31,12 +31,16 @@ test("closing a completed importer removes listeners without aborting successful
 
 test("CLI cannot opt into ordinary Chrome access without the owned launcher consent route", async () => {
   const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
-  for (const args of [["login", "--existing-chrome"], ["login", "--consent-user-profile"]]) {
+  for (const [args, expected] of [
+    [["login", "--existing-chrome"], "Existing Chrome import requires explicit consent in the launcher"],
+    [["login", "--consent-user-profile"], "Existing Chrome import requires explicit consent in the launcher"],
+    [["login", "--selected-chrome-profile-claim"], "Selected Chrome profile claim requires the owned launcher consent route"],
+  ] as const) {
     const child = Bun.spawn([process.execPath, cli, ...args], { stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect(code).not.toBe(0);
     expect(stdout).not.toContain("@codex-chrome-import:");
-    expect(stderr).toContain("Existing Chrome import requires explicit consent in the launcher");
+    expect(stderr).toContain(expected);
   }
 });
 
@@ -83,5 +87,27 @@ test("discovery frames are unavailable without selected mode and cannot carry ex
   const control = createExistingChromeLoginControl(input as unknown as NodeJS.ReadStream, { selectedDiscovery: true });
   input.emit("end");
   await expect(control.discoveryData!).rejects.toThrow();
+  control.close();
+});
+
+test("selected profile claim is a separate bounded one-use control value", async () => {
+  const input = new PassThrough();
+  const control = createExistingChromeLoginControl(input as unknown as NodeJS.ReadStream, { selectedProfileClaim: true });
+  const nonce = "C".repeat(32);
+  const claim = { version: 1 as const, nonce, url: `http://127.0.0.1:43210/nekodex-profile-claim-v1/${nonce}`,
+    openedAt: new Date().toISOString() };
+  input.write(JSON.stringify({ version: 1, type: "existing-chrome-profile-claim", claim }) + "\n");
+  expect(await control.profileClaim).toEqual(claim);
+  expect(control.signal.aborted).toBe(false);
+  input.write(JSON.stringify({ version: 1, type: "existing-chrome-profile-claim", claim }) + "\n");
+  expect(control.signal.aborted).toBe(true);
+  control.close();
+});
+
+test("profile claims are rejected unless the launcher selected that private control mode", async () => {
+  const input = new PassThrough();
+  const control = createExistingChromeLoginControl(input as unknown as NodeJS.ReadStream);
+  input.write(JSON.stringify({ version: 1, type: "existing-chrome-profile-claim", claim: {} }) + "\n");
+  expect(control.signal.aborted).toBe(true);
   control.close();
 });

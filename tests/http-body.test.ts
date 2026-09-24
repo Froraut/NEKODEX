@@ -25,6 +25,33 @@ test("rejects unsupported request content encodings", async () => {
   await expect(readJsonRequestBody(request)).rejects.toThrow("Unsupported Content-Encoding: br");
 });
 
+test("rejects an oversized declared body immediately even when source cancellation does not settle", async () => {
+  let cancelled = false;
+  const request = new Request("http://127.0.0.1/v1/responses", {
+    method: "POST",
+    headers: { "content-length": "9" },
+    body: new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+        return new Promise<void>(() => {});
+      },
+    }),
+  });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await expect(Promise.race([
+      readJsonRequestBody(request, 8, 8),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("declared-size rejection waited for cancellation")), 100);
+      }),
+    ])).rejects.toThrow("Encoded request body exceeds 8 bytes");
+    expect(cancelled).toBe(true);
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
 test("stops an unknown-length request at the encoded limit and cancels its source", async () => {
   const chunk = new Uint8Array(1024 * 1024);
   let pulls = 0;

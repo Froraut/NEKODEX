@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
+import { ChatGptMarkdownBuffer, ChatGptMarkdownConsistencyError, chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
 
 test("turns observed inline file path formats into Markdown links", () => {
   const cases = [
@@ -31,8 +31,23 @@ test("turns observed inline file path formats into Markdown links", () => {
 
   for (const { path, target } of cases) {
     expect(chatGptHtmlToMarkdown(`<p>Created <code>${path}</code>.</p>`))
-      .toBe(`Created [${path}](<${target}>).`);
+      .toBe(`Created [${path.replaceAll("\\", "\\\\")}](<${target}>).`);
   }
+});
+
+test("inline file link labels escape Markdown punctuation without changing the path target", () => {
+  expect(chatGptHtmlToMarkdown("<p><code>src/a_b.md</code></p>"))
+    .toBe("[src/a\\_b.md](<src/a_b.md>)");
+});
+
+test("a late link destination cannot silently rewrite a committed answer", () => {
+  const buffer = new ChatGptMarkdownBuffer(undefined, 0);
+  const pending = { key: "source", html: "<p><a>Source</a></p>", text: "Source", linkTargets: [], streamable: false };
+  expect(buffer.observe([pending], 0)).toBe("");
+  const linked = { ...pending, html: '<p><a href="https://example.com/a">Source</a></p>', linkTargets: ["https://example.com/a"], streamable: true };
+  expect(buffer.observe([linked], 1)).toBe("[Source](https://example.com/a)");
+  buffer.observe([{ ...linked, html: '<p><a href="https://example.com/b">Source</a></p>', linkTargets: ["https://example.com/b"] }], 2);
+  expect(() => buffer.finish()).toThrow(ChatGptMarkdownConsistencyError);
 });
 
 test("preserves inline code that is not an unambiguous file path", () => {

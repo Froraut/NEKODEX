@@ -4,9 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
-  SESSION_REFRESH_REMINDER_INTERVAL_MS,
   createStateStore,
-  nextSessionRefreshReminderAt,
   validateSidebarState,
 } = require("../electron/state.cjs");
 
@@ -32,7 +30,6 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       sidebarOpen: true,
       sidebarWidth: 252,
       mcpGuideStep: 0,
-      sessionRefreshReminderAt: null,
     });
     store.update({
       language: "zh-CN",
@@ -59,7 +56,6 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       sidebarOpen: true,
       sidebarWidth: 252,
       mcpGuideStep: 0,
-      sessionRefreshReminderAt: null,
     });
     if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o077, 0);
     assert.equal(fs.readdirSync(root).some(name => name.includes(".tmp-")), false);
@@ -146,7 +142,6 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       sidebarOpen: true,
       sidebarWidth: 252,
       mcpGuideStep: 0,
-      sessionRefreshReminderAt: null,
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -184,9 +179,23 @@ test("browser interaction defaults to Automatic and preserves a completed onboar
   }
 });
 
-test("session refresh reminders are deferred by exactly 48 hours", () => {
-  const now = Date.UTC(2026, 7, 5, 12, 0, 0);
-  assert.equal(SESSION_REFRESH_REMINDER_INTERVAL_MS, 48 * 60 * 60 * 1000);
-  assert.equal(nextSessionRefreshReminderAt(now), "2026-08-07T12:00:00.000Z");
-  assert.throws(() => nextSessionRefreshReminderAt(Number.NaN), /must be finite/);
+test("legacy session reminders are discarded without changing account setup", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nekodex-legacy-reminder-"));
+  const file = path.join(root, "state.json");
+  try {
+    fs.writeFileSync(file, JSON.stringify({
+      version: 1,
+      onboardingComplete: true,
+      coreSetupComplete: true,
+      browserSmokePassed: true,
+      sessionRefreshReminderAt: "2020-01-01T00:00:00.000Z",
+    }));
+    const state = createStateStore(file).read();
+    assert.equal(Object.hasOwn(state, "sessionRefreshReminderAt"), false);
+    assert.equal(state.onboardingComplete, true);
+    assert.equal(state.coreSetupComplete, true);
+    assert.equal(state.browserSmokePassed, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

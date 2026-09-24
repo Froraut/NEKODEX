@@ -1,0 +1,182 @@
+{
+  "date": "2026-09-22",
+  "baseline": "18b4278277d7e6c7d6b59ab591a007633584408b",
+  "branch": "codex/app-improvements-20260922",
+  "requestedModel": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "wave4": [
+    {
+      "lane": "tasks-queue-ui",
+      "agent_id": "01a0c88a-9194-7ee0-807e-e965b56207e2",
+      "nickname": "Faraday"
+    },
+    {
+      "lane": "account-forms",
+      "agent_id": "01a0c88a-9206-7840-88dc-f5b12b936298",
+      "nickname": "Bernoulli"
+    },
+    {
+      "lane": "shell-settings",
+      "agent_id": "01a0c88a-926e-7852-b8b0-ae65d4647b0e",
+      "nickname": "Archimedes"
+    },
+    {
+      "lane": "workspaces",
+      "agent_id": "01a0c88a-92d1-7f90-a7b5-c3dccdd0c9b3",
+      "nickname": "Arendt"
+    },
+    {
+      "lane": "usage",
+      "agent_id": "01a0c88a-9335-7533-af4e-17ea1dadd962",
+      "nickname": "Plato"
+    },
+    {
+      "lane": "updates-interface",
+      "agent_id": "01a0c88a-939e-78c0-9de3-a779e134473f",
+      "nickname": "Hypatia"
+    },
+    {
+      "lane": "chrome-auth",
+      "agent_id": "01a0c88a-9401-7843-af12-b277e6ccaf78",
+      "nickname": "Hume"
+    },
+    {
+      "lane": "account-lifecycle",
+      "agent_id": "01a0c88a-9468-7b10-9862-75490797927f",
+      "nickname": "Mill"
+    },
+    {
+      "lane": "admission",
+      "agent_id": "01a0c88a-94cb-7223-b95f-4804d05b7125",
+      "nickname": "Fermat"
+    },
+    {
+      "lane": "files",
+      "agent_id": "01a0c88a-9533-7150-8c1d-0efe2be6d28a",
+      "nickname": "Carver"
+    },
+    {
+      "lane": "native",
+      "agent_id": "01a0c88a-9594-7d20-a8a3-500afa405b01",
+      "nickname": "Hubble"
+    },
+    {
+      "lane": "responses",
+      "agent_id": "01a0c88a-95f8-7f73-8d32-ac1614877a1e",
+      "nickname": "Hooke"
+    },
+    {
+      "lane": "web-worker",
+      "agent_id": "01a0c88a-965e-70c3-a855-c0dc99c28b8f",
+      "nickname": "Volta"
+    },
+    {
+      "lane": "compaction",
+      "agent_id": "01a0c88a-96c5-7e62-b39c-ce3b83d439ec",
+      "nickname": "Locke"
+    },
+    {
+      "lane": "setup-integration",
+      "agent_id": "01a0c88a-9729-7213-97e5-c7f50513a1e6",
+      "nickname": "Confucius"
+    },
+    {
+      "lane": "runtime-updater",
+      "agent_id": "01a0c88a-978a-7e83-a017-30df9208aeaa",
+      "nickname": "Halley"
+    }
+  ],
+  "wave5": [
+    {
+      "lane": "tasks-queue-ui",
+      "agent_id": "01a0c891-1859-78d2-89c6-2152bcc53b61",
+      "nickname": "Sagan"
+    },
+    {
+      "lane": "account-forms",
+      "agent_id": "01a0c891-18bf-74b1-bf14-7ac67b4b465e",
+      "nickname": "Ohm"
+    },
+    {
+      "lane": "shell-settings",
+      "agent_id": "01a0c891-1921-7b71-96ca-093800d87a90",
+      "nickname": "Maxwell"
+    },
+    {
+      "lane": "workspaces",
+      "agent_id": "01a0c891-1980-7b93-ba94-ff56acd6c156",
+      "nickname": "Wegener"
+    },
+    {
+      "lane": "usage",
+      "agent_id": "01a0c891-19e4-7d92-84af-a41ff326e7d0",
+      "nickname": "Herschel"
+    },
+    {
+      "lane": "updates-interface",
+      "agent_id": "01a0c891-1a44-7500-af45-6c49d248af86",
+      "nickname": "Harvey"
+    },
+    {
+      "lane": "chrome-auth",
+      "agent_id": "01a0c891-1aa3-7ac3-8d17-1a0c48c89714",
+      "nickname": "Dirac"
+    },
+    {
+      "lane": "account-lifecycle",
+      "agent_id": "01a0c891-1b03-7a11-abd8-26fe32d27ae7",
+      "nickname": "Bohr"
+    },
+    {
+      "lane": "admission",
+      "agent_id": "01a0c891-1b6b-7a01-bf0b-351f9226e3cf",
+      "nickname": "Heisenberg"
+    },
+    {
+      "lane": "files",
+      "agent_id": "01a0c891-1bce-7242-83ef-6a4a2caaf934",
+      "nickname": "Kant"
+    },
+    {
+      "lane": "native",
+      "agent_id": "01a0c891-1c2e-71c2-bbd5-65f46d26d50f",
+      "nickname": "Erdos"
+    },
+    {
+      "lane": "responses",
+      "agent_id": "01a0c891-1c8d-7010-bf52-b77dad556ff7",
+      "nickname": "Linnaeus"
+    },
+    {
+      "lane": "web-worker",
+      "agent_id": "01a0c891-1ceb-7bd3-a829-42b9e4f8e8a6",
+      "nickname": "Dewey"
+    },
+    {
+      "lane": "compaction",
+      "agent_id": "01a0c891-1d4f-7e60-a0ab-6ba3578f34d7",
+      "nickname": "Curie"
+    },
+    {
+      "lane": "setup-integration",
+      "agent_id": "01a0c891-1db2-7c62-a798-a02634c9d106",
+      "nickname": "Mendel"
+    },
+    {
+      "lane": "runtime-updater",
+      "agent_id": "01a0c891-1e16-7613-bd6f-8c89af37799f",
+      "nickname": "Socrates"
+    }
+  ],
+  "reviewComplete": true,
+  "implementationComplete": true,
+  "completionTaskId": "01a0c8fb-c7db-7852-a979-c9c764250b89",
+  "resumedOriginalLanes": [
+    "account-lifecycle",
+    "admission",
+    "setup-integration",
+    "native",
+    "files"
+  ],
+  "publicationScope": "source/development; no installed-app replacement or release"
+}

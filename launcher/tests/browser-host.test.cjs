@@ -14,6 +14,8 @@ const {
 } = require("../electron/browser-state.cjs");
 const {
   allowedAuthUrl,
+  allowedWorkspaceUrl,
+  guardBrowserNavigation,
   BrowserHost,
   IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
@@ -24,6 +26,31 @@ const {
   navigationErrorForLog,
   navigationOriginForLog,
 } = require("../electron/browser-host.cjs");
+
+test('workspace navigation permits ChatGPT documents while auth popup creation stays narrow', () => {
+  for (const url of ['https://chatgpt.com/', 'https://chatgpt.com/c/example', 'https://chatgpt.com/?temporary-chat=true']) {
+    assert.equal(allowedWorkspaceUrl(url), true);
+    assert.equal(allowedAuthUrl(url), false);
+  }
+  assert.equal(allowedWorkspaceUrl('https://accounts.google.com/signin'), true);
+  for (const url of ['https://chatgpt.com.evil.test/', 'http://chatgpt.com/', 'https://user:pass@chatgpt.com/', 'https://accounts.google.com:9000/', 'javascript:alert(1)']) {
+    assert.equal(allowedWorkspaceUrl(url), false);
+  }
+});
+
+test('embedded navigation blocks foreign main-frame commits before external broker handling', () => {
+  const contents = new EventEmitter(), external = [];
+  guardBrowserNavigation(contents, url => external.push(url));
+  let prevented = 0;
+  const event = { preventDefault() { prevented++; } };
+  contents.emit('will-navigate', event, 'https://chatgpt.com/c/example');
+  contents.emit('will-redirect', event, 'https://chatgpt.com/', false, true);
+  assert.equal(prevented, 0);
+  contents.emit('will-navigate', event, 'https://example.test/');
+  contents.emit('will-redirect', event, 'https://example.test/redirect', false, true);
+  assert.equal(prevented, 2);
+  assert.deepEqual(external, ['https://example.test/', 'https://example.test/redirect']);
+});
 
 test("manual prompt handoff keeps ordinary turns at thirty seconds and compaction at two minutes", () => {
   assert.equal(MANUAL_SUBMIT_TIMEOUT_MS, 30_000);
@@ -186,6 +213,20 @@ test("manual edit retry survives Electron superseding the ChatGPT navigation", a
   assert.equal(observed.fixture.turnTabs.has(observed.tab.id), true);
   assert.deepEqual(observed.terminal, []);
   assert.equal(observed.logs.some(([, event]) => event === "browser.manual_tab_navigation_superseded"), true);
+});
+
+test("Manual saved-chat policy navigates the new blank saved conversation", async () => {
+  const observed = manualTabNavigationFixture(new Error("unused"));
+  observed.tab.url = "https://chatgpt.com/";
+  let currentUrl = "about:blank";
+  observed.tab.view.webContents.getURL = () => currentUrl;
+  observed.tab.view.webContents.loadURL = async url => {
+    observed.calls.push(["load", url]);
+    currentUrl = url;
+  };
+  await observed.fixture.initializeManualTurnTab(observed.tab);
+  assert.deepEqual(observed.calls, [["load", IDLE_BROWSER_URL], ["load", "https://chatgpt.com/"]]);
+  assert.equal(observed.fixture.turnTabs.has(observed.tab.id), true);
 });
 
 test("manual ChatGPT navigation still fails closed on a real load failure", async () => {
@@ -841,6 +882,29 @@ test("authentication windows stay inside the launcher-owned browser partition", 
   assert.doesNotMatch(source, /loginWithSystemBrowser|captureSystemBrowserLogin|system_login_started/);
 });
 
+test("ordinary concurrent authentication checks share one browser probe", async () => {
+  let release;
+  let runs = 0;
+  const fixture = {
+    authProbeTail: Promise.resolve(),
+    defaultAuthProbe: null,
+    runAuthenticationProbe: async () => {
+      runs++;
+      await new Promise(resolve => { release = resolve; });
+      return { authenticated: true };
+    },
+  };
+  const first = BrowserHost.prototype.probeAuthentication.call(fixture);
+  const second = BrowserHost.prototype.probeAuthentication.call(fixture);
+  assert.equal(first, second);
+  await Promise.resolve();
+  assert.equal(runs, 1);
+  release();
+  await Promise.all([first, second]);
+  await BrowserHost.prototype.probeAuthentication.call({ ...fixture, runAuthenticationProbe: async () => { runs++; } });
+  assert.equal(runs, 2);
+});
+
 test("concurrent embedded login requests share one authentication operation", async () => {
   let resolveLogin;
   let waits = 0;
@@ -912,6 +976,57 @@ test("explicit login waits for an in-flight saved-session refresh before taking 
   finishRefresh();
   await login;
   assert.deepEqual(calls, ["ChatGPT login", "probe", "inspect"]);
+});
+
+function passkeyHandoffFixture(timeoutMs = 20) {
+  const embeddedController = new AbortController();
+  const embeddedLogin = new Promise(() => {});
+  let captures = 0;
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    state: { authenticated: false },
+    authHandoffTimeoutMs: timeoutMs,
+    authGeneration: 0,
+    authNavigationError: null,
+    embeddedLoginController: embeddedController,
+    loginOperation: embeddedLogin,
+    passkeyLoginOperation: null,
+    passkeyLoginController: null,
+    sessionRefreshOperation: null,
+    manualOperation: null,
+    interactionModeOverride: null,
+    getBrowserInteractionMode: () => "automatic",
+    view: { webContents: { isDestroyed: () => false, stop() {} } },
+    authView: null,
+    loginWithPasskey: async () => { captures += 1; throw new Error("capture must not start"); },
+    closeAuthView() {},
+    publishState() {},
+    snapshot() { return { ...this.state, passkeyLogin: require("../electron/passkey-login-progress.cjs").publicPasskeyProgress(this.passkeyProgress) }; },
+    setState(patch) { this.state = { ...this.state, ...patch }; },
+    logger: { info() {}, warn() {} },
+  });
+  return { fixture, embeddedLogin, captures: () => captures };
+}
+
+test("passkey handoff times out without overlapping a stuck embedded login", async () => {
+  const { fixture, embeddedLogin, captures } = passkeyHandoffFixture(5);
+  await assert.rejects(BrowserHost.prototype.openPasskeyLogin.call(fixture), error => error.code === "existing_chrome_handoff_timeout");
+  assert.equal(captures(), 0);
+  assert.equal(fixture.loginOperation, embeddedLogin);
+  assert.equal(fixture.snapshot().passkeyLogin.error, "passkey-handoff-timeout");
+  assert.equal(fixture.state.message, "passkey-handoff-timeout");
+});
+
+test("cancelling a passkey handoff stops waiting without releasing its old auth owner", async () => {
+  const { fixture, embeddedLogin, captures } = passkeyHandoffFixture(1_000);
+  const operation = BrowserHost.prototype.openPasskeyLogin.call(fixture);
+  await Promise.resolve();
+  const result = await BrowserHost.prototype.cancelPasskeyLogin.call(fixture, async () => {
+    throw new Error("capture must not have started");
+  });
+  await operation;
+  assert.equal(result.passkeyLogin.phase, "cancelled");
+  assert.equal(captures(), 0);
+  assert.equal(fixture.loginOperation, embeddedLogin);
 });
 
 test("passkey login imports only validated state and re-proves the Launcher session", async () => {
@@ -1065,6 +1180,12 @@ test("logout clears only the owned ChatGPT session and returns to the sign-in su
   const authView = { webContents: { isDestroyed: () => false } };
   const fixture = {
     authView,
+    accountId: 'default',
+    authPrincipalFingerprint: 'a'.repeat(64),
+    authSessionFingerprint: 'b'.repeat(64),
+    authIdentityEpoch: 1,
+    onAuthIdentityChanged() {},
+    retireAuthenticatedIdentity: BrowserHost.prototype.retireAuthenticatedIdentity,
     state: { authenticated: true, status: "ready" },
     view: {
       webContents: {
@@ -1104,6 +1225,9 @@ test("logout clears only the owned ChatGPT session and returns to the sign-in su
   const result = await BrowserHost.prototype.logout.call(fixture);
 
   assert.equal(result.authenticated, false);
+  assert.equal(fixture.authPrincipalFingerprint, null);
+  assert.equal(fixture.authSessionFingerprint, null);
+  assert.equal(fixture.authIdentityEpoch, 2);
   assert.equal(result.status, "signed-out");
   assert.deepEqual(calls[0], ["manualOperation", "ChatGPT logout"]);
   assert.deepEqual(calls[1], ["closeAuthView", authView, true, false]);
@@ -2166,6 +2290,8 @@ test("a later provider round reuses only its exact connector-bound conversation"
         isDestroyed: () => false,
         setBackgroundThrottling: (enabled) => throttling.push(enabled),
         enableDeviceEmulation: options => { rendererViewport = options.viewSize; },
+        getURL: () => "https://chatgpt.com/c/retained",
+        isLoadingMainFrame: () => false,
       },
     },
   };
@@ -2487,6 +2613,8 @@ test("a completed keyed turn is retained for thirty minutes and preserves its ac
     view: { webContents: {
       isDestroyed: () => false,
       setBackgroundThrottling: (enabled) => throttling.push(enabled),
+      getURL: () => "https://chatgpt.com/c/retained",
+      isLoadingMainFrame: () => false,
     } },
   };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -2645,6 +2773,7 @@ function manualTurnFixture() {
     manualTerminalSignals: new Map(),
     manualCompletionSignals: new Map(),
     manualOperation: null,
+    getManualSubmitTimeoutSec: () => 30,
     selectedTabId: "home",
     clipboard: { writeText: value => clipboardWrites.push(value) },
     logger: { info() {}, warn() {}, error() {} },
@@ -2657,7 +2786,7 @@ function manualTurnFixture() {
     showWindow() {},
     show() {},
     writeDescriptor() {},
-    createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs) {
+    createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs, useSavedChats = false) {
       const tab = {
         id: `manual-${this.turnTabs.size + 1}`,
         traceId,
@@ -2669,6 +2798,7 @@ function manualTurnFixture() {
         label: `ChatGPT ${this.turnTabs.size + 1}`,
         manualState: "awaiting-user",
         manualSubmitTimeoutMs,
+        useSavedChats,
         manualDeadlineAt: Date.now() + manualSubmitTimeoutMs,
         manualDeadlineTimer: null,
         manualWaiters: new Set(),
@@ -2700,6 +2830,55 @@ test("manual start is idempotent and never exposes its private prompt in snapsho
   assert.deepEqual(clipboardWrites, ["private prompt"]);
   assert.equal(JSON.stringify(fixture.snapshot()).includes("private prompt"), false);
   for (const tab of fixture.turnTabs.values()) clearTimeout(tab.manualDeadlineTimer);
+});
+
+test("Manual retry cannot change saved-chat policy for an owned turn", () => {
+  const { fixture } = manualTurnFixture();
+  const lease = fixture.beginManualTurn("manual_saved_policy", process.pid, "private prompt", undefined, undefined, false, true);
+  assert.equal(fixture.turnTabs.get(lease.tabId).useSavedChats, true);
+  assert.throws(() => fixture.beginManualTurn("manual_saved_policy", process.pid, "private prompt", undefined, undefined, false, false), /saved-chat policy/);
+  for (const tab of fixture.turnTabs.values()) clearTimeout(tab.manualDeadlineTimer);
+});
+
+test("extracted Manual cancellation preserves a live tab on failure and removes it only after acknowledgement", async () => {
+  const { fixture } = manualTurnFixture();
+  let resolveCancel, rejectCancel, calls = 0;
+  fixture.cancelTurn = trace => {
+    assert.equal(trace, 'manual_cancel_owned'); calls++;
+    return new Promise((resolve, reject) => { resolveCancel = resolve; rejectCancel = reject; });
+  };
+  const { tabId } = fixture.beginManualTurn('manual_cancel_owned', process.pid, 'private prompt');
+  fixture.confirmManualSent(tabId);
+  const tab = fixture.turnTabs.get(tabId);
+  const terminal = fixture.waitManualTerminal(tab.traceId, tab.helperPid);
+  assert.equal(fixture.cancelManualTurn(tab.traceId, tab.helperPid).status, 'pending');
+  await Promise.resolve(); assert.equal(calls, 1);
+  rejectCancel(new Error('runtime unavailable'));
+  await assert.rejects(tab.manualCancellation.promise, /runtime unavailable/);
+  assert.equal(fixture.turnTabs.get(tabId), tab);
+  assert.equal(tab.manualState, 'sent');
+  assert.equal(tab.manualCancellation.status, 'failed');
+  assert.equal(fixture.cancelManualTurn(tab.traceId, tab.helperPid).status, 'pending');
+  await Promise.resolve(); assert.equal(calls, 2);
+  resolveCancel(); await tab.manualCancellation.promise;
+  assert.deepEqual(await terminal, { status: 'cancelled' });
+  assert.equal(fixture.turnTabs.has(tabId), false);
+});
+
+test("extracted Manual cancellation cannot retire a replacement tab after a delayed acknowledgement", async () => {
+  const { fixture } = manualTurnFixture();
+  let acknowledge;
+  fixture.cancelTurn = () => new Promise(resolve => { acknowledge = resolve; });
+  const { tabId } = fixture.beginManualTurn('manual_cancel_old', process.pid, 'old prompt');
+  fixture.confirmManualSent(tabId);
+  const old = fixture.turnTabs.get(tabId);
+  fixture.cancelManualTurn(old.traceId, old.helperPid); await Promise.resolve();
+  const replacement = { ...old, traceId: 'manual_replacement', manualCancellation: null };
+  fixture.turnTabs.set(tabId, replacement);
+  acknowledge(); await old.manualCancellation.promise;
+  assert.equal(fixture.turnTabs.get(tabId), replacement);
+  assert.equal(replacement.manualState, 'sent');
+  assert.equal(fixture.manualTerminalSignals.has('manual_replacement'), false);
 });
 
 test("manual confirmation deadlines end at Sent so slow model startup can still complete", async (t) => {

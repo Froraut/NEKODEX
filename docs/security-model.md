@@ -24,11 +24,13 @@ created. Repository contents, tool output, websites, and prompt text are untrust
    action; neither internal handle is exposed to the model. The lease is settled only after the MCP
    handler finishes, including inventory calls that need no outer Codex tool.
 5. MCP can request only a callable tool advertised by the active outer Codex turn. The unrestricted
-   raw orchestration `exec` gateway remains available in Full mode. Before caller-authored
-   JavaScript runs, the bridge wraps its tool registry with a transparent proxy that enforces the
-   exact 30-second `wait_agent` polling contract and prevents recursive raw `exec`. The generic
-   inventory/call pair also provides a structured exact-name path. Codex remains responsible for
-   its sandbox, approval, UI, command sessions, and tool result.
+   raw orchestration `exec` gateway is available in Full mode only when Web subagents are enabled.
+   Its tool proxy provides cooperative 30-second `wait_agent` polling and recursion guards; it is
+   not an isolation boundary for arbitrary JavaScript. With Web subagents disabled, inventory hides
+   raw `exec` and synchronous/asynchronous calls reject it before dispatch. Trusted structured
+   gateway programs still provide exact-name calls and ordinary commands, with disabled delegation
+   tools excluded. Codex remains responsible for its sandbox, approval, UI, command sessions, and
+   tool result.
 6. Before a Codex tool batch is dispatched, the browser records and acknowledges the current answer
    projection. Completion stays blocked while the tool is unresolved and then requires a new stable
    final-answer projection after that causal boundary. A two-phase broker fence then rereads the DOM

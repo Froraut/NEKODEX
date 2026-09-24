@@ -8,6 +8,7 @@ import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker
 import { ChatGptCompactionHandoffAccepted, chatGptRetainedConversationUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 import {
   MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+  createCompactionRunRegistry,
   cancelAllStructuredCompactions,
   cancelStructuredCompactionNativeTurn,
   cancelStructuredCompactionTrace,
@@ -426,25 +427,60 @@ test("retained compaction deadline bounds browser settlement after the control h
   expect(transactionAborted).toBeTrue();
 });
 
-test("a rejected exact compaction run is evicted while a successful run remains replayable", async () => {
-  const key = `exact-retry-${Date.now()}-${Math.random()}`;
+test("a rejected exact compaction replays its failure after cleanup and releases its physical owner", async () => {
+  const key = `exact-failure-${Date.now()}-${Math.random()}`;
   const owner = { ownerKey: `owner-${key}`, traceIds: [`trace-${key}`] };
+  const failure = new Error("ambiguous failure after Send");
+  let releasePhysical!: () => void;
+  const physical = new Promise<void>(resolve => { releasePhysical = resolve; });
   let starts = 0;
-  await expect(runStructuredCompactionOnce(key, owner, async () => {
+  const failed = runStructuredCompactionOnce(key, owner, async (_signal, retain) => {
     starts += 1;
-    throw new Error("first handoff failed");
-  })).rejects.toThrow("first handoff failed");
-  await Bun.sleep(0);
-  expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
-
-  const retry = runStructuredCompactionOnce(key, owner, async () => {
-    starts += 1;
-    return "recovered checkpoint";
+    retain(physical);
+    throw failure;
   });
-  expect(runStructuredCompactionOnce(key, owner, async () => "must not start")).toBe(retry);
-  await expect(retry).resolves.toBe("recovered checkpoint");
-  await expect(existingStructuredCompactionRun(key, owner)).resolves.toBe("recovered checkpoint");
-  expect(starts).toBe(2);
+  await expect(failed).rejects.toBe(failure);
+  let nextStarted = false;
+  const next = runStructuredCompactionOnce(`${key}-next`, owner, async () => {
+    nextStarted = true;
+    return "next checkpoint";
+  });
+  try {
+    await Bun.sleep(0);
+    expect(nextStarted).toBeFalse();
+  } finally {
+    releasePhysical();
+  }
+  await expect(next).resolves.toBe("next checkpoint");
+  expect(nextStarted).toBeTrue();
+  expect(existingStructuredCompactionRun(key, owner)).toBe(failed);
+  const replay = runStructuredCompactionOnce(key, owner, async () => {
+    starts += 1;
+    return "must not resend";
+  });
+  expect(replay).toBe(failed);
+  await expect(replay).rejects.toBe(failure);
+  await expect(existingStructuredCompactionRun(`${key}-next`, owner)).resolves.toBe("next checkpoint");
+  expect(starts).toBe(1);
+});
+
+test("a rejected exact compaction tombstone expires under the existing bounded retention policy", async () => {
+  const originalNow = Date.now;
+  let now = originalNow();
+  const key = `exact-failure-ttl-${now}-${Math.random()}`;
+  const owner = { ownerKey: `owner-${key}`, traceIds: [] };
+  Date.now = () => now;
+  try {
+    const failed = runStructuredCompactionOnce(key, owner, async () => { throw new Error("failed"); });
+    await expect(failed).rejects.toThrow("failed");
+    await Bun.sleep(0);
+    now += 29 * 60_000;
+    expect(existingStructuredCompactionRun(key, owner)).toBe(failed);
+    now += 2 * 60_000;
+    expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test("operator cancellation aborts the shared structured compaction owner", async () => {
@@ -466,7 +502,7 @@ test("operator cancellation aborts the shared structured compaction owner", asyn
   expect(await cancelStructuredCompactionTrace(traceId, new Error("operator cancelled"))).toBe(1);
   await expect(run).rejects.toThrow("operator cancelled");
   expect(aborted).toBeTrue();
-  expect(existingStructuredCompactionRun(key, owner)).toBeUndefined();
+  await expect(existingStructuredCompactionRun(key, owner)).rejects.toThrow("operator cancelled");
 });
 
 test("native interruption before registration prevents the detached compaction from starting", async () => {
@@ -530,7 +566,7 @@ test("native interruption before registration prevents the detached compaction f
   expect(unrelatedStarted).toBeTrue();
 });
 
-test("a completed exact compaction remains replayable after a later native interruption", async () => {
+test("a completed exact compaction rejects replay after a later native interruption", async () => {
   const key = `completed-before-interrupt-${Date.now()}-${Math.random()}`;
   const owner = {
     ownerKey: `owner-${key}`,
@@ -541,10 +577,12 @@ test("a completed exact compaction remains replayable after a later native inter
   const completed = runStructuredCompactionOnce(key, owner, async () => "canonical checkpoint");
   await expect(completed).resolves.toBe("canonical checkpoint");
 
+  expect(existingStructuredCompactionRun(key, owner)).toBe(completed);
+  const reason = new DOMException("Codex turn interrupted", "AbortError");
   const cancellation = cancelStructuredCompactionNativeTurn(
     owner.nativeThreadId,
     owner.nativeTurnId,
-    new DOMException("Codex turn interrupted", "AbortError"),
+    reason,
   );
   expect(cancellation.cancelled).toBe(0);
   await cancellation.settlement;
@@ -554,8 +592,8 @@ test("a completed exact compaction remains replayable after a later native inter
     restarted = true;
     return "must not replace canonical checkpoint";
   });
-  expect(replay).toBe(completed);
-  await expect(replay).resolves.toBe("canonical checkpoint");
+  await expect(replay).rejects.toBe(reason);
+  await expect(existingStructuredCompactionRun(key, owner)!).rejects.toBe(reason);
   expect(restarted).toBeFalse();
 });
 
@@ -608,25 +646,27 @@ test("structured compaction rejects incomplete native interruption identities", 
 
 test("active compaction settles canonical tool results before the separate retained handoff", async () => {
   const completed: Array<{ callId: string; result: BrokerToolResult }> = [];
+  let accounting = 0;
+  let revoked = 0;
   const compactionTokens: string[] = [];
   let finishBrowser!: (answer: string) => void;
   const browser = new Promise<string>(resolve => { finishBrowser = resolve; });
   const broker = {
-    requestCompaction: (token: string) => { compactionTokens.push(token); return 0; },
-    compactionDeliveryCount: () => 0,
+    requestCompaction: async (token: string) => { compactionTokens.push(token); return 0; },
+    compactionDeliveryCount: async () => 0,
     completeTool: async (_token: string, callId: string, result: BrokerToolResult) => {
       completed.push({ callId, result });
       if (callId === "call_two") {
         finishBrowser("Ordinary final after canonical results.");
       }
     },
-    revoke() {},
-  } as unknown as TurnBroker;
+    revoke() { revoked += 1; },
+  };
   const source = new ChatGptTurnSession({
     mode: "tools",
     token: Promise.resolve("turn_active"),
     externalProgress: {
-      recordToolResult() {},
+      recordToolResult() { accounting += 1; },
     } as never,
     browser,
     physicalSettlement: browser.then(() => undefined),
@@ -648,6 +688,9 @@ test("active compaction settles canonical tool results before the separate retai
     answer: "Ordinary final after canonical results.",
     compactionInstructionDelivered: false,
   });
+  expect(accounting).toBe(2);
+  expect(source.outstanding()).toHaveLength(0);
+  expect(revoked).toBe(1);
   expect(compactionTokens).toEqual(["turn_active"]);
   expect(completed.map(entry => entry.callId)).toEqual(["call_one", "call_two"]);
   expect(JSON.stringify(completed[0])).not.toContain(CODEX_ACTIVE_COMPACTION_REQUEST_MARKER);
@@ -752,16 +795,16 @@ test("active compaction aborts its source when the shared handoff deadline expir
   expect(cancellations).toBe(1);
 });
 
-test("Manual mode active compaction returns through its explicit completion control", async () => {
+test.each([0, 1])("Manual mode active compaction returns through its explicit completion control with queued deliveries %s", async (queued) => {
   const completed: BrokerToolResult[] = [];
   const broker = {
-    requestCompaction: () => 0,
-    compactionDeliveryCount: () => 0,
+    requestCompaction: async () => queued,
+    compactionDeliveryCount: async () => queued,
     completeTool: async (_token: string, _callId: string, result: BrokerToolResult) => {
       completed.push(result);
     },
     revoke() {},
-  } as unknown as TurnBroker;
+  };
   const source = new ChatGptTurnSession({
     mode: "tools",
     token: Promise.resolve("turn_active_zero_risk"),
@@ -786,7 +829,11 @@ test("Manual mode active compaction returns through its explicit completion cont
 
   await expect(settleActiveZeroRiskCompactionSource(parsed, source, broker))
     .resolves.toBe("Manual mode checkpoint");
-  expect(JSON.stringify(completed)).toContain("Return only the complete checkpoint summary to Codex with codex_turn_complete");
+  if (queued === 0) {
+    expect(JSON.stringify(completed)).toContain("Return only the complete checkpoint summary to Codex with codex_turn_complete");
+  } else {
+    expect(completed).toEqual([{ content: [{ type: "text", text: "one" }] }]);
+  }
   expect(JSON.stringify(completed)).not.toContain("CODEX_ACTIVE_COMPACTION_CHECKPOINT_");
 });
 
@@ -1389,10 +1436,13 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
   let releasePhysical!: () => void;
   const physicalSettlement = new Promise<void>(resolve => { releasePhysical = resolve; });
   let browserStarts = 0;
+  let sends = 0;
   let cancelled = false;
   let fallbackTrace = "";
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
+    turn.onSendActivated?.();
+    sends += 1;
     fallbackTrace = turn.traceId;
     started();
     turn.abortSignal!.addEventListener("abort", () => { cancelled = true; }, { once: true });
@@ -1428,8 +1478,10 @@ test("a timed-out fresh compaction retains its owner until helper cleanup comple
     expect(events.filter(event => event.type === "error")).toHaveLength(2);
     expect(events.some(event => event.type === "done")).toBeFalse();
     await observe();
-    expect(browserStarts).toBe(2);
-    expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+    expect(browserStarts).toBe(1);
+    expect(sends).toBe(1);
+    expect(events.filter(event => event.type === "error")).toHaveLength(3);
+    expect(events.some(event => event.type === "done")).toBeFalse();
   } finally {
     releasePhysical();
     await Promise.allSettled(runs);
@@ -1459,6 +1511,7 @@ test("structured compact rebuilds canonical context when its retained browser di
   const sourceRequest = request(false);
   const namespace = chatGptWebExecutionNamespace(provider);
   const sourceKey = `${namespace}:${chatGptTurnExecutionKey(sourceRequest)}`;
+  let retainedReleased = false;
   chatGptTurnSessions.getOrCreate(sourceKey, () => ({
     mode: "read-only",
     browser: Promise.resolve("source complete"),
@@ -1467,6 +1520,7 @@ test("structured compact rebuilds canonical context when its retained browser di
     text: new ChatGptTextFeed(),
     usageInput: sourceRequest,
     conversationKey: chatGptConversationKey(sourceRequest, namespace)!,
+    releaseRetainedConversation: async () => { retainedReleased = true; },
     cancel() {},
   }));
   await chatGptTurnSessions.find(sourceKey)!.browserOutcome;
@@ -1475,6 +1529,7 @@ test("structured compact rebuilds canonical context when its retained browser di
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
     if (turn.requireRetainedConversation) throw chatGptRetainedConversationUnavailableError();
+    expect(retainedReleased).toBeTrue();
     const prepared = await turn.prepare();
     expect(prepared.text).toContain("Original task");
     prepared.release();
@@ -1519,6 +1574,7 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
   const sourceRequest = request(false);
   const namespace = chatGptWebExecutionNamespace(provider);
   const sourceKey = `${namespace}:${chatGptTurnExecutionKey(sourceRequest)}`;
+  let retainedReleased = false;
   chatGptTurnSessions.getOrCreate(sourceKey, () => ({
     mode: "read-only",
     browser: Promise.resolve("source complete"),
@@ -1527,6 +1583,7 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
     text: new ChatGptTextFeed(),
     usageInput: sourceRequest,
     conversationKey: chatGptConversationKey(sourceRequest, namespace)!,
+    releaseRetainedConversation: async () => { retainedReleased = true; },
     cancel() {},
   }));
   await chatGptTurnSessions.find(sourceKey)!.browserOutcome;
@@ -1537,6 +1594,7 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
     if (turn.requireRetainedConversation) throw chatGptRetainedConversationUnavailableError();
+    expect(retainedReleased).toBeTrue();
     fallbackTrace = turn.traceId;
     return new Promise<string>(resolve => { releaseBrowser = () => resolve("browser cleanup completed"); });
   };
@@ -1552,9 +1610,9 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
     expect(browserStarts).toBe(2);
     expect(events.at(-1)).toMatchObject({
       type: "error",
-      code: "compaction_handoff_failed",
+      code: "compaction_handoff_timeout",
       retryable: false,
-      message: "ChatGPT did not complete the context handoff. Retry the task.",
+      status: 409,
     });
   } finally {
     releaseBrowser?.();
@@ -1565,3 +1623,53 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("compaction transaction cancellation takes precedence over an unconsumed handoff", async () => {
+  const store = new CompactionTransactionStore();
+  const transaction = store.begin("cancel-before-wait", 10_000);
+  try {
+    store.submit(transaction.token, transaction.handoffId, "already submitted checkpoint");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(store.wait(transaction.token, controller.signal)).rejects.toThrow("aborted");
+    await expect(store.wait(transaction.token)).rejects.toThrow("invalid, expired, or consumed");
+    expect(() => store.submit(transaction.token, transaction.handoffId, "replay"))
+      .toThrow("invalid, expired, or consumed");
+  } finally {
+    store.close();
+  }
+});
+
+
+test("isolated compaction registry keeps cancelled queued ownership beyond retention", async () => {
+  let now = 0;
+  const registry = createCompactionRunRegistry(() => now);
+  let release!: () => void;
+  const physical = new Promise<void>(resolve => { release = resolve; });
+  const owner = { ownerKey: "isolated-owner", traceIds: ["first"] };
+  const first = registry.runStructuredCompactionOnce("first", owner, async (_signal, retain) => {
+    retain(physical);
+    throw new Error("logical timeout");
+  });
+  await expect(first).rejects.toThrow("logical timeout");
+  let queuedStarted = false;
+  const queued = registry.runStructuredCompactionOnce("queued", { ...owner, traceIds: ["queued"] }, async () => {
+    queuedStarted = true;
+    return "unexpected";
+  });
+  void queued.catch(() => {});
+  let cancelledSettled = false;
+  const cancellation = registry.cancelStructuredCompactionTrace("queued", new Error("cancel queued"))
+    .then(count => { cancelledSettled = true; return count; });
+  await expect(queued).rejects.toThrow("cancel queued");
+  now = 31 * 60_000;
+  await expect(registry.existingStructuredCompactionRun("first", owner)!).rejects.toThrow("logical timeout");
+  expect(registry.activeStructuredCompactionCount()).toBe(2);
+  expect(cancelledSettled).toBe(false);
+  expect(queuedStarted).toBe(false);
+  release();
+  expect(await cancellation).toBe(1);
+  expect(registry.activeStructuredCompactionCount()).toBe(0);
+  expect(registry.existingStructuredCompactionRun("first", owner)).toBeUndefined();
+}, 5000);

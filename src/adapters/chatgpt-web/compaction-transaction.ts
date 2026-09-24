@@ -63,12 +63,12 @@ export class CompactionTransactionStore {
     const transaction = this.transactions.get(token);
     if (!transaction) return Promise.reject(new Error("compaction control token is invalid, expired, or consumed"));
     if (transaction.waiter) return Promise.reject(new Error("compaction transaction already has a waiter"));
-    if (transaction.summary !== undefined) return Promise.resolve(this.consume(transaction));
     if (signal?.aborted) {
       const error = new DOMException("compaction transaction aborted", "AbortError");
       this.finishError(transaction, error);
       return Promise.reject(error);
     }
+    if (transaction.summary !== undefined) return Promise.resolve(this.consume(transaction));
     return new Promise<string>((resolve, reject) => {
       const waiter: TransactionWaiter = { resolve, reject, ...(signal ? { signal } : {}) };
       if (signal) {

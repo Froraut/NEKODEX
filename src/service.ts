@@ -1,8 +1,9 @@
+import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./codex-integration-shared";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { AppConfig } from "./config";
-import { assertDurableRuntimeCommand, atomicWriteFile, getConfigDir } from "./config";
+import { assertDurableRuntimeCommand, getConfigDir } from "./config";
 import { isMissingLaunchdService, runCommand, runChecked } from "./process";
 
 const LABEL = "io.github.codex-chatgpt-web.daemon";
@@ -128,12 +129,13 @@ export function getServiceStatus(printTimeoutMs = LAUNCHCTL_STATUS_TIMEOUT_MS): 
 
 export function installService(
   config: AppConfig,
-  onDefinitionWritten?: (definition: { path: string; data: string }) => void,
+  onDefinitionWritten?: (definition: { path: string; data: string; receipt: FileSnapshot }) => void,
 ): ServiceStatus {
   assertMacOs();
   assertDurableRuntimeCommand(config.runtimeCommand);
   const path = plistPath();
   const current = getServiceStatus();
+  const before = snapshotFile(path);
   const next = plist(config);
   if (current.loaded && (!current.installed || readFileSync(path, "utf8") !== next)) {
     throw new Error("Refusing to replace a loaded service definition; stop it before installing the update");
@@ -141,8 +143,8 @@ export function installService(
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   mkdirSync(join(getConfigDir(), "logs"), { recursive: true, mode: 0o700 });
   if (!current.installed || readFileSync(path, "utf8") !== next) {
-    atomicWriteFile(path, next);
-    onDefinitionWritten?.({ path, data: next });
+    const receipt = writeFileSnapshot(before, next, { expectedSnapshot: before });
+    onDefinitionWritten?.({ path, data: next, receipt });
   }
   if (!current.loaded) runChecked("launchctl", ["bootstrap", launchDomain(), path], { timeout: LAUNCHCTL_MUTATION_TIMEOUT_MS });
   return getServiceStatus();
@@ -214,6 +216,7 @@ export async function interruptActiveTurn(
 export async function cancelActiveTurns(config: AppConfig): Promise<{
   cancelledHttpTurns: number;
   cancelledBrowserTurns: number;
+  cancelledCompactionRuns: number | null;
 }> {
   const result = await control(config, "cancel-turns");
   const cancelledHttpTurns = result.cancelled_http_turns;
@@ -227,6 +230,8 @@ export async function cancelActiveTurns(config: AppConfig): Promise<{
   return {
     cancelledHttpTurns: cancelledHttpTurns as number,
     cancelledBrowserTurns: cancelledBrowserTurns as number,
+    cancelledCompactionRuns: Number.isInteger(result.cancelled_compaction_runs)
+      && (result.cancelled_compaction_runs as number) >= 0 ? result.cancelled_compaction_runs as number : null,
   };
 }
 

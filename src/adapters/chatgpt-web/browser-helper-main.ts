@@ -1,3 +1,5 @@
+import { chatGptDocumentFilePayloads } from "./attachment-payloads";
+import type { HelperOutputMessage } from "./browser-helper-protocol";
 import { validateSkillFiles } from "./skill-attachments";
 import { createProcessLineReader } from "./process-line-reader";
 import { CHATGPT_HELPER_DIAGNOSTIC_BYTES } from "./resource-budgets";
@@ -31,11 +33,14 @@ interface RunMessage {
     browserDiagnosticsPath?: string;
     turnTimeoutMs: number;
     autoApproveToolCalls: boolean;
+    useSavedChats?: boolean;
   };
   turn: {
     traceId: string;
     modelId: string;
+    requestedModel?: string;
     reasoning?: string;
+    modelFamily?: "5.6" | "6";
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
     resumeAvailable?: boolean;
@@ -96,7 +101,7 @@ const diagnosticOutput = createProcessLineWriter(stderr, handleOutputFailure, {
   maxPendingBytes: 1024 * 1024,
 });
 
-const writeProtocol = (message: unknown): boolean => protocolOutput.write(JSON.stringify(message));
+const writeProtocol = (message: HelperOutputMessage): boolean => protocolOutput.write(JSON.stringify(message));
 
 const diagnostic = (...values: unknown[]): void => {
   diagnosticOutput.write(values.map(value => typeof value === "string" ? value : JSON.stringify(value)).join(" "));
@@ -226,6 +231,7 @@ async function run(message: RunMessage): Promise<void> {
       browserDiagnosticsPath: message.config.browserDiagnosticsPath,
       turnTimeoutMs: message.config.turnTimeoutMs,
       autoApproveToolCalls: message.config.autoApproveToolCalls,
+      useSavedChats: message.config.useSavedChats === true,
     },
   };
   const abortController = new AbortController();
@@ -248,7 +254,9 @@ async function run(message: RunMessage): Promise<void> {
   const turn: BrowserTurn = {
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
+    requestedModel: message.turn.requestedModel,
     reasoning: message.turn.reasoning,
+    ...(message.turn.modelFamily ? { modelFamily: message.turn.modelFamily } : {}),
     capabilities: message.turn.capabilities,
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
     prepare: prepareSelected,
@@ -443,7 +451,13 @@ const input = createProcessLineReader(stdin, line => {
       abortControllers.get(message.id)?.abort();
       return;
     }
-    try { validateSkillFiles(prepared.skillFiles); }
+    try {
+      validateSkillFiles(prepared.skillFiles);
+      if (prepared.files !== undefined && !Array.isArray(prepared.files)) {
+        throw new Error("Browser helper file attachment list is invalid");
+      }
+      chatGptDocumentFilePayloads(prepared.files ?? []);
+    }
     catch (error) {
       writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
       abortControllers.get(message.id)?.abort();
@@ -585,4 +599,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-reasons", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "compaction-execution"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-reasons", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "file-attachments", "compaction-execution"] });

@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import {
-  loadConfig,
+  loadConfigWithSnapshot,
   saveConfig,
   type AppConfig,
 } from "./config";
@@ -57,7 +57,7 @@ export async function runProModelVersionConfigCommand(args: string[]): Promise<v
     throw new Error("Pro model configuration must be changed through NEKODEX Settings");
   }
   const authorizedDescriptorPath = authorizeLauncherControl("Pro model configuration");
-  const config = loadConfig();
+  const { config, snapshot } = loadConfigWithSnapshot();
   if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath
     || resolve(config.browserHostDescriptorPath) !== resolve(authorizedDescriptorPath)) {
     throw new Error("Launcher authorization does not own this configuration");
@@ -66,6 +66,6 @@ export async function runProModelVersionConfigCommand(args: string[]): Promise<v
   // The authorized launcher IPC checks its own browser activity before invoking this command.
   if (config.purpose !== "dev-harness") await assertServiceIdle(config);
   updateProModelVersion(config, version);
-  saveConfig(config);
+  saveConfig(config, snapshot);
   process.stdout.write(`${JSON.stringify({ proModelVersion: version ?? null })}\n`);
 }

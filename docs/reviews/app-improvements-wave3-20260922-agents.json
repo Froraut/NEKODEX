@@ -1,0 +1,89 @@
+{
+  "date": "2026-09-22",
+  "baseline": "40cd571b616d9d984ce83179784d2d40b9c52385",
+  "branch": "codex/app-improvements-20260922",
+  "requestedModel": "gpt-6-astra",
+  "reasoningEffort": "medium",
+  "wave3": [
+    {
+      "lane": "tasks",
+      "agent_id": "01a0c878-ca6f-7d83-ad8e-9756dcfb8637",
+      "nickname": "Pauli"
+    },
+    {
+      "lane": "queue",
+      "agent_id": "01a0c878-cac5-7be3-9268-c58261b7f8e5",
+      "nickname": "Mencius"
+    },
+    {
+      "lane": "account-forms",
+      "agent_id": "01a0c878-cb24-7a13-b70e-6a56398ae9e6",
+      "nickname": "Lagrange"
+    },
+    {
+      "lane": "workspaces",
+      "agent_id": "01a0c878-cb84-7e82-a175-7a55210652ed",
+      "nickname": "Gauss"
+    },
+    {
+      "lane": "usage",
+      "agent_id": "01a0c878-cbec-71d0-ab66-4d047eb59935",
+      "nickname": "Banach"
+    },
+    {
+      "lane": "overview",
+      "agent_id": "01a0c878-cc4d-7ee2-9b69-f16d99679e70",
+      "nickname": "Meitner"
+    },
+    {
+      "lane": "updates-ui",
+      "agent_id": "01a0c878-ccac-76a2-aafc-56e9478351c8",
+      "nickname": "Peirce"
+    },
+    {
+      "lane": "shell",
+      "agent_id": "01a0c878-cd0f-7222-a1e7-b6b194154c9d",
+      "nickname": "Goodall"
+    },
+    {
+      "lane": "chrome-auth",
+      "agent_id": "01a0c878-cd68-7883-bc50-a9d272a64820",
+      "nickname": "Nash"
+    },
+    {
+      "lane": "account-backend",
+      "agent_id": "01a0c878-cdcb-7ed0-8c7f-6361f422399e",
+      "nickname": "Leibniz"
+    },
+    {
+      "lane": "artifact-files",
+      "agent_id": "01a0c878-ce2a-73d2-bc8d-6a68d04ab0ac",
+      "nickname": "Franklin"
+    },
+    {
+      "lane": "native",
+      "agent_id": "01a0c878-ce8d-7c40-8848-e7e251c9d0db",
+      "nickname": "Godel"
+    },
+    {
+      "lane": "request-attachments",
+      "agent_id": "01a0c878-cf07-7750-b6be-4053937e46f8",
+      "nickname": "Russell"
+    },
+    {
+      "lane": "compaction",
+      "agent_id": "01a0c878-cf77-74f3-8d82-6f1a4ab6d48a",
+      "nickname": "Ampere"
+    },
+    {
+      "lane": "integration-tunnel",
+      "agent_id": "01a0c878-cfed-79e1-9aa2-306c6c9c0634",
+      "nickname": "Euler"
+    },
+    {
+      "lane": "runtime-updater",
+      "agent_id": "01a0c878-d060-7351-b1a6-e12bcec64834",
+      "nickname": "James"
+    }
+  ]
+}

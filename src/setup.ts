@@ -1,20 +1,21 @@
-import { existsSync, readFileSync } from "node:fs";
+import { transitionSetupConfig, meaningfulRuntimeChange, type SetupOptions } from "./setup-policy";
+export type { SetupOptions } from "./setup-policy";
+import { fileSnapshotsMatch as sameSnapshot } from "./file-transactions";
+import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import type { AppConfig, BrowserInteractionMode, RuntimeMode, SubagentProtocol } from "./config";
+import type { AppConfig, BrowserInteractionMode, RuntimeMode } from "./config";
 import {
   currentRuntimeCommand,
   defaultBrokerEndpoint,
   defaultConfig,
   getConfigPath,
-  loadConfigForSetup,
-  preserveUtf8Bom,
-  resolveInteractionConnectorIdentities,
+  readConfigForSetup,
+  type ConfigRead,
   saveConfig,
   tunnelConfigForInteractionMode,
-  ZERO_RISK_CHATGPT_CONNECTOR_NAME,
 } from "./config";
 import {
   browserLoginStateExists,
@@ -50,30 +51,6 @@ import { getTunnelServiceStatus, installTunnelService, restartTunnelService, sto
 import { runChecked, runCommand } from "./process";
 import { VERSION } from "./version";
 
-export interface SetupOptions {
-  mode: RuntimeMode;
-  browserInteractionMode?: BrowserInteractionMode;
-  subagentProtocol?: SubagentProtocol;
-  port?: number;
-  chromeExecutablePath?: string;
-  browserHostDescriptorPath?: string;
-  refreshAccountCapabilities?: boolean;
-  forceLogin?: boolean;
-  autoApproveToolCalls?: boolean;
-  experimentalBiggerContext?: boolean;
-  experimentalSkillAttachments?: boolean;
-  allowWebSubagents?: boolean;
-  experimentalFreshConversationPerTurn?: boolean;
-  experimentalAsyncToolOperations?: boolean;
-  zeroRiskProEnabled?: boolean;
-  replaceCodexRoute?: boolean;
-  restartService?: boolean;
-  acknowledgedUnofficial?: boolean;
-  tunnelId?: string;
-  runtimeKeyFile?: string;
-  runtimeKeyValue?: string;
-}
-
 export interface SetupResult {
   mode: RuntimeMode;
   configPath: string;
@@ -92,6 +69,7 @@ interface PreparedSetup {
   existing: AppConfig | undefined;
   config: AppConfig;
   launcherOwned: boolean;
+  read: ConfigRead;
 }
 
 export interface DevProfileSetupResult {
@@ -136,86 +114,15 @@ export function existingFullSetupCredentials(
   };
 }
 
-function loadExistingConfig(): AppConfig | undefined {
-  if (!existsSync(getConfigPath())) return undefined;
-  return loadConfigForSetup();
+/** Identity comes from the same before-image as the migrated candidate. */
+function activeConnectorIdentityMigrationRequired(config: AppConfig, read: ConfigRead): boolean {
+  return read.persistedIdentity !== undefined && read.persistedIdentity !== config.appName;
 }
 
-/** Setup loads a migrated copy, so compare the persisted active name before deciding whether
- * the existing tunnel profile can be reused. Inactive mode identities do not touch this tunnel. */
-function activeConnectorIdentityMigrationRequired(config: AppConfig): boolean {
-  const path = getConfigPath();
-  if (!existsSync(path)) return false;
-  const raw = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, "")) as Record<string, unknown>;
-  return typeof raw.appName === "string" && raw.appName !== config.appName;
-}
-
-function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
-  return JSON.stringify({
-    mode: before.mode,
-    subagentProtocol: before.subagentProtocol,
-    releaseVersion: before.releaseVersion,
-    host: before.host,
-    port: before.port,
-    contextWindow: before.contextWindow,
-    appName: before.appName,
-    automaticAppName: before.automaticAppName,
-    manualAppName: before.manualAppName,
-    browserHost: before.browserHost,
-    browserInteractionMode: before.browserInteractionMode,
-    browserHostDescriptorPath: before.browserHostDescriptorPath,
-    chromeExecutablePath: before.chromeExecutablePath,
-    storageStatePath: before.storageStatePath,
-    brokerSocketPath: before.brokerSocketPath,
-    headed: before.headed,
-    solAvailable: before.solAvailable,
-    extraHighAvailable: before.extraHighAvailable,
-    proAvailable: before.proAvailable,
-    experimentalBiggerContext: before.experimentalBiggerContext,
-    allowWebSubagents: before.allowWebSubagents,
-    experimentalSkillAttachments: before.experimentalSkillAttachments,
-    experimentalFreshConversationPerTurn: before.experimentalFreshConversationPerTurn,
-    experimentalAsyncToolOperations: before.experimentalAsyncToolOperations,
-    zeroRiskProEnabled: before.zeroRiskProEnabled,
-    autoApproveToolCalls: before.autoApproveToolCalls,
-    controlToken: before.controlToken,
-    runtimeCommand: before.runtimeCommand,
-    tunnel: before.tunnel,
-    automaticTunnel: before.automaticTunnel,
-    manualTunnel: before.manualTunnel,
-  }) !== JSON.stringify({
-    mode: after.mode,
-    subagentProtocol: after.subagentProtocol,
-    releaseVersion: after.releaseVersion,
-    host: after.host,
-    port: after.port,
-    contextWindow: after.contextWindow,
-    appName: after.appName,
-    automaticAppName: after.automaticAppName,
-    manualAppName: after.manualAppName,
-    browserHost: after.browserHost,
-    browserInteractionMode: after.browserInteractionMode,
-    browserHostDescriptorPath: after.browserHostDescriptorPath,
-    chromeExecutablePath: after.chromeExecutablePath,
-    storageStatePath: after.storageStatePath,
-    brokerSocketPath: after.brokerSocketPath,
-    headed: after.headed,
-    solAvailable: after.solAvailable,
-    extraHighAvailable: after.extraHighAvailable,
-    proAvailable: after.proAvailable,
-    experimentalBiggerContext: after.experimentalBiggerContext,
-    allowWebSubagents: after.allowWebSubagents,
-    experimentalSkillAttachments: after.experimentalSkillAttachments,
-    experimentalFreshConversationPerTurn: after.experimentalFreshConversationPerTurn,
-    experimentalAsyncToolOperations: after.experimentalAsyncToolOperations,
-    zeroRiskProEnabled: after.zeroRiskProEnabled,
-    autoApproveToolCalls: after.autoApproveToolCalls,
-    controlToken: after.controlToken,
-    runtimeCommand: after.runtimeCommand,
-    tunnel: after.tunnel,
-    automaticTunnel: after.automaticTunnel,
-    manualTunnel: after.manualTunnel,
-  });
+function assertConfigReadCurrent(read: ConfigRead): void {
+  if (!sameSnapshot(snapshotFile(read.snapshot.path), read.snapshot)) {
+    throw new Error("Setup config changed during setup; preserving the concurrent edit");
+  }
 }
 
 export function tunnelWorkerRuntimeChanged(before: AppConfig | undefined, after: AppConfig): boolean {
@@ -277,107 +184,12 @@ async function waitForProxy(config: AppConfig, timeoutMs = 10_000): Promise<void
   throw new Error(`Responses proxy did not become ready: ${lastError}`);
 }
 
-function baseConfig(
-  existing: AppConfig | undefined,
-  options: SetupOptions,
-  profile: "production" | "development" = "production",
-): AppConfig {
-  const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
-  config.mode = options.mode;
-  if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
-  if (options.experimentalAsyncToolOperations !== undefined) {
-    config.experimentalAsyncToolOperations = options.experimentalAsyncToolOperations;
-  }
-  // Changing to a non-tool mode disables async transport; an explicit incompatible request still fails.
-  if (options.experimentalAsyncToolOperations === undefined
-    && (config.mode !== "full" || config.browserInteractionMode !== "automatic")) {
-    config.experimentalAsyncToolOperations = false;
-  }
-  if (options.experimentalAsyncToolOperations === undefined && existing?.browserInteractionMode === "manual"
-    && config.mode === "full" && config.browserInteractionMode === "automatic") {
-    config.experimentalAsyncToolOperations = /^(Codex Native5|Codex Native6)( DEV)?$/.test(existing.automaticAppName);
-  }
-  // A first Full setup defaults to Native6. Ordinary updates preserve an established schema.
-  if (options.experimentalAsyncToolOperations === undefined && config.mode === "full"
-    && config.browserInteractionMode === "automatic" && (!existing || existing.mode !== "full")) {
-    config.experimentalAsyncToolOperations = true;
-  }
-  if (config.experimentalAsyncToolOperations
-    && (config.mode !== "full" || config.browserInteractionMode !== "automatic")) {
-    throw new Error(
-      "Async tool operations require automatic Full mode; pass --synchronous-tool-operations before switching mode",
-    );
-  }
-  Object.assign(config, resolveInteractionConnectorIdentities(
-    config.browserInteractionMode,
-    profile,
-    config.experimentalAsyncToolOperations,
-    options.experimentalAsyncToolOperations === undefined ? existing?.automaticAppName ?? config.automaticAppName : undefined,
-  ));
-  if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
-  config.releaseVersion = VERSION;
-  config.runtimeCommand = currentRuntimeCommand();
-  if (options.port !== undefined) {
-    if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65_535) throw new Error("--port must be an integer from 1 to 65535");
-    config.port = options.port;
-  }
-  if (options.chromeExecutablePath) config.chromeExecutablePath = options.chromeExecutablePath;
-  if (options.browserHostDescriptorPath) {
-    config.browserHost = "launcher";
-    config.browserHostDescriptorPath = options.browserHostDescriptorPath;
-    config.brokerSocketPath = defaultBrokerEndpoint();
-  } else if (options.chromeExecutablePath) {
-    config.browserHost = "managed-chrome";
-    delete config.browserHostDescriptorPath;
-  }
-  if (options.autoApproveToolCalls !== undefined) config.autoApproveToolCalls = options.autoApproveToolCalls;
-  if (options.experimentalFreshConversationPerTurn !== undefined) {
-    config.experimentalFreshConversationPerTurn = options.experimentalFreshConversationPerTurn;
-  }
-  if (options.allowWebSubagents !== undefined) config.allowWebSubagents = options.allowWebSubagents;
-  if (options.experimentalSkillAttachments !== undefined) {
-    config.experimentalSkillAttachments = options.experimentalSkillAttachments;
-  }
-  if (options.experimentalBiggerContext !== undefined) {
-    config.experimentalBiggerContext = options.experimentalBiggerContext;
-  }
-  if (options.zeroRiskProEnabled !== undefined) {
-    if (config.browserInteractionMode !== "manual") {
-      throw new Error("Manual mode Pro can be configured only with --zero-risk-browser-interaction");
-    }
-    config.zeroRiskProEnabled = options.zeroRiskProEnabled;
-  }
-  if (config.browserInteractionMode === "manual") {
-    if (options.refreshAccountCapabilities) {
-      throw new Error("Manual mode cannot refresh account capabilities");
-    }
-    if (options.forceLogin) {
-      throw new Error("Manual mode uses the launcher's existing ChatGPT session; --login is unavailable");
-    }
-    if (options.experimentalSkillAttachments === true) {
-      throw new Error("Manual mode does not support Skills as files");
-    }
-    if (options.experimentalBiggerContext === true) {
-      throw new Error("Manual mode does not support Bigger Context");
-    }
-    if (config.mode !== "full") {
-      throw new Error(`Manual mode requires --full so ${ZERO_RISK_CHATGPT_CONNECTOR_NAME} can signal start, tools, and completion`);
-    }
-    if (config.browserHost !== "launcher") {
-      throw new Error("Manual mode requires the Launcher; pass --browser-host-descriptor from the running Launcher");
-    }
-    config.experimentalBiggerContext = false;
-    config.experimentalSkillAttachments = false;
-    config.experimentalFreshConversationPerTurn = false;
-    config.solAvailable = false;
-    config.extraHighAvailable = false;
-    config.proAvailable = false;
-  }
-  if (options.acknowledgedUnofficial) config.acknowledgedUnofficialAt = new Date().toISOString();
-  if (!config.acknowledgedUnofficialAt) {
-    throw new Error("Setup requires explicit acknowledgement that this is unofficial browser automation. Pass --acknowledge-unofficial.");
-  }
-  return config;
+function baseConfig(existing: AppConfig | undefined, options: SetupOptions, profile: "production" | "development" = "production"): AppConfig {
+  return transitionSetupConfig(existing, options, {
+    defaults: existing ?? defaultConfig(options.mode), profile, version: VERSION,
+    runtimeCommand: currentRuntimeCommand(), brokerEndpoint: defaultBrokerEndpoint(),
+    acknowledgementTime: new Date().toISOString(),
+  });
 }
 
 async function inspectLauncherCapabilities(
@@ -404,13 +216,28 @@ async function inspectLauncherCapabilities(
   };
 }
 
+/** A failed connect is not evidence of a stopped runtime. Probe with the candidate client;
+ * never send stop to an alias whose launch did not return an ownership checkpoint. */
+function failedConnectIsStopped(config: AppConfig): boolean {
+  if (!config.tunnel) return false;
+  try {
+    const result = runCommand(config.tunnel.binaryPath,
+      ["runtimes", "status", config.tunnel.alias, "--json"], { timeout: 10_000 });
+    if (result.status !== 0) return false;
+    const status = JSON.parse(result.stdout.trim() || result.stderr.trim());
+    return status.process_running === false
+      && (status.runtime_state === "stopped" || status.status === "stopped")
+      && status.error === undefined;
+  } catch { return false; }
+}
+
 async function configureTunnel(
   config: AppConfig,
   existing: AppConfig | undefined,
   options: SetupOptions,
   expectedTunnelClient?: TunnelClientInstallSnapshot,
   onInstalled?: (owned: TunnelClientInstallSnapshot) => void,
-  onKeyWritten?: (bytes: Uint8Array) => void,
+  onKeyWritten?: (receipt: FileSnapshot) => void,
   expectedRuntimeKey?: FileSnapshot,
 ): Promise<void> {
   if (config.mode === "browser-only") {
@@ -440,11 +267,10 @@ async function configureTunnel(
   if (otherTunnel?.tunnelId === tunnelId) {
     throw new Error("Automatic and Manual mode require different Tunnel IDs and separate ChatGPT connectors");
   }
-  let expectedKey: Uint8Array | null | undefined = expectedRuntimeKey?.exists
-    ? expectedRuntimeKey.data! : expectedRuntimeKey ? null : undefined;
-  const keyWritten = (bytes: Uint8Array): void => {
-    expectedKey = bytes;
-    onKeyWritten?.(bytes);
+  let expectedKey = expectedRuntimeKey;
+  const keyWritten = (_bytes: Uint8Array, receipt: FileSnapshot): void => {
+    expectedKey = receipt;
+    onKeyWritten?.(receipt);
   };
   let runtimeKeyFile = existingTunnel?.runtimeKeyFile;
   const managedKeyFile = managedRuntimeKeyPath(interactionMode);
@@ -526,7 +352,8 @@ async function bootstrapTunnelProfile(
 }
 
 function prepareSetup(options: SetupOptions): PreparedSetup {
-  const existing = loadExistingConfig();
+  const read = readConfigForSetup();
+  const existing = read.config;
   if (existing?.purpose === DEV_CONFIG_PURPOSE) {
     throw new Error("A DEV harness configuration cannot be installed into Codex");
   }
@@ -543,7 +370,7 @@ function prepareSetup(options: SetupOptions): PreparedSetup {
       + "Use the NEKODEX launcher on Windows or Linux.",
     );
   }
-  return { existing, config, launcherOwned };
+  return { existing, config, launcherOwned, read };
 }
 
 /** Re-bootstrap the exact definition restored by rollback; installers regenerate plist bytes. */
@@ -590,12 +417,12 @@ export function preflightSetup(options: SetupOptions): void {
 }
 
 export async function setup(options: SetupOptions): Promise<SetupResult> {
-  const { existing, config, launcherOwned } = prepareSetup(options);
+  const { existing, config, launcherOwned, read } = prepareSetup(options);
   preflightCodexIntegration(config, {
     replaceExistingRoute: options.replaceCodexRoute,
   });
   const connectorIdentityMigrating = config.mode === "full"
-    && activeConnectorIdentityMigrationRequired(config);
+    && activeConnectorIdentityMigrationRequired(config, read);
   const connectorVerificationReset = Boolean(existing
     && (existing.appName !== config.appName
       || existing.experimentalAsyncToolOperations !== config.experimentalAsyncToolOperations));
@@ -671,6 +498,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       proAvailable = inspected.proAvailable;
     }
   }
+  assertConfigReadCurrent(read);
   config.solAvailable = solAvailable === true;
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
@@ -684,6 +512,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     );
   }
   if (beforeService.loaded && preliminaryChange && existing) await assertServiceIdle(existing);
+  assertConfigReadCurrent(read);
   const runtimeKeyPath = managedRuntimeKeyPath(config.browserInteractionMode);
   const runtimeKeyBeforeRoute = snapshotFile(runtimeKeyPath);
   let runtimeKeyAfterRoute = runtimeKeyBeforeRoute;
@@ -692,7 +521,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   // The final Codex route write can still lose a race with edits made after preflight.
   // Keep the setup-owned files' original bytes so that a failed commit can compensate
   // without replacing a concurrent user edit.
-  const configBeforeRoute = snapshotFile(getConfigPath());
+  const configBeforeRoute = read.snapshot;
   const servicePath = beforeService.definitionPath;
   const serviceBeforeRoute = servicePath ? snapshotFile(servicePath) : undefined;
   const tunnelServiceBeforeRoute = getTunnelServiceStatus();
@@ -728,13 +557,13 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   const assertKnownTunnelState = (): void => {
     if (tunnelStatusUnknown) throw new Error("Tunnel service status is unknown after setup transition");
   };
-  const onServiceDefinitionWritten = ({ path, data }: { path: string; data: string }): void => {
+  const onServiceDefinitionWritten = ({ path, receipt }: { path: string; receipt: FileSnapshot }): void => {
     if (path !== servicePath) throw new Error("Service definition path changed during setup");
-    serviceAfterRoute = { path, exists: true, data: Buffer.from(data) };
+    serviceAfterRoute = receipt;
   };
-  const onTunnelDefinitionWritten = ({ path, data }: { path: string; data: string }): void => {
+  const onTunnelDefinitionWritten = ({ path, receipt }: { path: string; receipt: FileSnapshot }): void => {
     if (path !== tunnelServicePath) throw new Error("Tunnel service definition path changed during setup");
-    tunnelDefinitionAfterRoute = { path, exists: true, data: Buffer.from(data) };
+    tunnelDefinitionAfterRoute = receipt;
   };
   const checkpointServiceRemoval = (): void => {
     if (servicePath && !existsSync(servicePath)) {
@@ -757,9 +586,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   const tunnelServiceUnchanged = (): boolean => {
     if (!tunnelServicePath || !tunnelDefinitionBeforeRoute) return true;
     const current = snapshotFile(tunnelServicePath);
-    return current.exists === tunnelDefinitionBeforeRoute.exists
-      && (!current.exists || Boolean(current.data && tunnelDefinitionBeforeRoute.data
-        && current.data.equals(tunnelDefinitionBeforeRoute.data)))
+    return sameSnapshot(current, tunnelDefinitionBeforeRoute)
       && getTunnelServiceStatus().loaded === tunnelServiceBeforeRoute.loaded;
   };
   let changedWhileLoaded = false;
@@ -771,19 +598,15 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   let validationTunnelRunning = false;
   let previousTunnelStopped = false;
   let failedConnectMayHaveWrittenProfile = false;
-  let savedConfigBytes: Buffer | undefined;
+  let savedConfigReceipt: FileSnapshot | undefined;
   const configUnchanged = (): boolean => {
     const current = snapshotFile(getConfigPath());
-    return current.exists === configBeforeRoute.exists
-      && (!current.exists || Boolean(current.data && configBeforeRoute.data
-        && current.data.equals(configBeforeRoute.data)));
+    return sameSnapshot(current, configBeforeRoute);
   };
   const serviceUnchanged = (): boolean => {
     if (!servicePath || !serviceBeforeRoute) return true;
     const current = snapshotFile(servicePath);
-    return current.exists === serviceBeforeRoute.exists
-      && (!current.exists || Boolean(current.data && serviceBeforeRoute.data
-        && current.data.equals(serviceBeforeRoute.data)))
+    return sameSnapshot(current, serviceBeforeRoute)
       && getServiceStatus().loaded === beforeService.loaded;
   };
 
@@ -792,7 +615,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     await configureTunnel(config, existing, options,
       tunnelClientBeforeRoute,
       owned => { tunnelClientAfterRoute = owned; },
-      bytes => { runtimeKeyAfterRoute = { path: runtimeKeyPath, exists: true, data: Buffer.from(bytes) }; },
+      receipt => { runtimeKeyAfterRoute = receipt; },
       runtimeKeyBeforeRoute);
     changedWhileLoaded = Boolean(existing && beforeService.loaded
       && (meaningfulRuntimeChange(existing, config) || connectorIdentityMigrating));
@@ -812,11 +635,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     if (!launcherOwned) {
       if (!configUnchanged()) throw new Error("Setup config changed during setup; refusing to overwrite the concurrent edit");
       if (!serviceUnchanged()) throw new Error("Background service changed during setup; refusing to overwrite the concurrent edit");
-      savedConfigBytes = Buffer.from(preserveUtf8Bom(
-        `${JSON.stringify(config, null, 2)}\n`,
-        configBeforeRoute.data?.toString("utf8") ?? "",
-      ));
-      saveConfig(config);
+      savedConfigReceipt = saveConfig(config, configBeforeRoute);
       try { installService(config, onServiceDefinitionWritten); } finally {
         observeServiceState();
       }
@@ -833,7 +652,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       tunnelRuntimeTouched = true;
       if (previousTunnelService.installed || previousTunnelService.loaded) {
         if (!tunnelServiceUnchanged()) throw new Error("Tunnel service changed during setup; refusing to remove the concurrent edit");
-        try { await uninstallTunnelService(); } finally { checkpointTunnelRemoval(); }
+        try { await uninstallTunnelService(); checkpointTunnelRemoval(); } finally { observeTunnelState(); }
         assertKnownTunnelState();
       }
       stopTunnel(existing);
@@ -846,7 +665,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       if (launcherOwned) {
         if (tunnelService.installed || tunnelService.loaded) {
           if (!tunnelServiceUnchanged()) throw new Error("Tunnel service changed during setup; refusing to remove the concurrent edit");
-          try { await uninstallTunnelService(); } finally { checkpointTunnelRemoval(); }
+          try { await uninstallTunnelService(); checkpointTunnelRemoval(); } finally { observeTunnelState(); }
           assertKnownTunnelState();
         }
         if (needsProfile || refreshTunnelWorker || explicitTunnelChange) {
@@ -872,8 +691,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
             () => { failedConnectMayHaveWrittenProfile = true; });
           if (tunnelServicePath && tunnelDefinitionAfterRoute) {
             const current = snapshotFile(tunnelServicePath);
-            if (current.exists !== tunnelDefinitionAfterRoute.exists
-              || (current.exists && !current.data?.equals(tunnelDefinitionAfterRoute.data!))) {
+            if (!sameSnapshot(current, tunnelDefinitionAfterRoute)) {
               throw new Error("Tunnel service changed during setup; refusing to overwrite the concurrent edit");
             }
           }
@@ -894,16 +712,12 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     }
     if (launcherOwned && (beforeService.installed || beforeService.loaded)) {
       if (!serviceUnchanged()) throw new Error("Background service changed during setup; refusing to remove the concurrent edit");
-      try { await uninstallService(existing!); } finally { checkpointServiceRemoval(); }
+      try { await uninstallService(existing!); checkpointServiceRemoval(); } finally { observeServiceState(); }
       assertKnownServiceState();
     }
     if (launcherOwned) {
       if (!configUnchanged()) throw new Error("Setup config changed during setup; refusing to overwrite the concurrent edit");
-      savedConfigBytes = Buffer.from(preserveUtf8Bom(
-        `${JSON.stringify(config, null, 2)}\n`,
-        configBeforeRoute.data?.toString("utf8") ?? "",
-      ));
-      saveConfig(config);
+      savedConfigReceipt = saveConfig(config, configBeforeRoute);
     }
     // Keep the previous terminal runtime intact through the ownership handoff. A later launcher
     // setup removes it once the launcher-owned configuration is already the established baseline.
@@ -914,24 +728,23 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     });
   } catch (error) {
     const rollbackFailures: string[] = [...statusProbeFailures];
-    const sameSnapshot = (left: FileSnapshot, right: FileSnapshot): boolean =>
-      left.exists === right.exists
-      && (!left.exists || Boolean(left.data && right.data && left.data.equals(right.data)));
+    const failedConnectUnresolved = failedConnectMayHaveWrittenProfile && !failedConnectIsStopped(config);
+    if (failedConnectUnresolved) rollbackFailures.push("failed connect runtime ownership is unknown; preserving tunnel profile, client and key for manual recovery");
     let configRestored = true;
-    if (!savedConfigBytes) {
+    if (!savedConfigReceipt) {
       try { configRestored = configUnchanged(); }
       catch (caught) {
         configRestored = false;
         rollbackFailures.push(`config status during rollback: ${caught instanceof Error ? caught.message : String(caught)}`);
       }
     }
-    if (savedConfigBytes) {
+    if (savedConfigReceipt) {
       try {
         const current = snapshotFile(getConfigPath());
         if (sameSnapshot(current, configBeforeRoute)) {
-          // The save failed before replacing the original file; owned tunnel writes can roll back.
-        } else if (current.exists && current.data?.equals(savedConfigBytes)) {
-          restoreFileSnapshot(configBeforeRoute);
+          // The exact original file is still current; no compensation is needed.
+        } else if (sameSnapshot(current, savedConfigReceipt)) {
+          restoreFileSnapshot(configBeforeRoute, { expectedCurrent: savedConfigReceipt });
         } else {
           throw new Error("changed after setup wrote it; preserving the concurrent edit");
         }
@@ -951,8 +764,11 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
           || getServiceStatus().loaded !== serviceLoadedAfterRoute) {
           throw new Error("changed after setup wrote it; preserving the concurrent service edit");
         }
-        if (getServiceStatus().loaded) await uninstallService(config);
-        restoreFileSnapshot(serviceBeforeRoute);
+        if (getServiceStatus().loaded) {
+          await uninstallService(config);
+          serviceAfterRoute = { path: servicePath, exists: false };
+        }
+        restoreFileSnapshot(serviceBeforeRoute, { expectedCurrent: serviceAfterRoute });
         if (beforeService.loaded && existing) bootstrapRestoredDefinition(servicePath);
       } catch (caught) {
         rollbackFailures.push(`${servicePath}: ${caught instanceof Error ? caught.message : String(caught)}`);
@@ -965,6 +781,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     let runtimeKeyRestored = false;
     if (tunnelRuntimeTouched || existing?.mode === "full" || config.mode === "full") {
       try {
+        if (failedConnectUnresolved) throw new Error("failed connect is not confirmed stopped; preserving dependent files");
         if (tunnelStatusUnknown) throw new Error("loaded state unknown; leaving tunnel and dependent files for manual recovery");
         if (!configRestored) throw new Error("config rollback was not safe; leaving tunnel state for manual recovery");
         if (tunnelServicePath && tunnelDefinitionBeforeRoute && tunnelDefinitionAfterRoute
@@ -989,10 +806,10 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         tunnelClientRestored = true;
         if (tunnelProfilePath && tunnelProfileBeforeRoute && tunnelProfileAfterRoute
           && !sameSnapshot(tunnelProfileBeforeRoute, tunnelProfileAfterRoute)) {
-          restoreFileSnapshot(tunnelProfileBeforeRoute);
+          restoreFileSnapshot(tunnelProfileBeforeRoute, { expectedCurrent: tunnelProfileAfterRoute });
         }
         if (!sameSnapshot(runtimeKeyBeforeRoute, runtimeKeyAfterRoute)) {
-          restoreFileSnapshot(runtimeKeyBeforeRoute);
+          restoreFileSnapshot(runtimeKeyBeforeRoute, { expectedCurrent: runtimeKeyAfterRoute });
         }
         runtimeKeyRestored = true;
         const tunnelServiceChanged = Boolean(tunnelServicePath && tunnelDefinitionBeforeRoute
@@ -1000,8 +817,11 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
           && (!sameSnapshot(tunnelDefinitionBeforeRoute, tunnelDefinitionAfterRoute)
             || tunnelServiceBeforeRoute.loaded !== tunnelServiceLoadedAfterRoute));
         if (tunnelServiceChanged && tunnelDefinitionBeforeRoute) {
-          if (getTunnelServiceStatus().loaded) await uninstallTunnelService();
-          restoreFileSnapshot(tunnelDefinitionBeforeRoute);
+          if (getTunnelServiceStatus().loaded) {
+            await uninstallTunnelService();
+            tunnelDefinitionAfterRoute = { path: tunnelServicePath!, exists: false };
+          }
+          restoreFileSnapshot(tunnelDefinitionBeforeRoute, { expectedCurrent: tunnelDefinitionAfterRoute });
           if (tunnelServiceBeforeRoute.loaded && existing?.mode === "full") {
             bootstrapRestoredDefinition(tunnelServicePath!);
           }
@@ -1027,7 +847,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         rollbackFailures.push(`tunnel service status during rollback: ${caught instanceof Error ? caught.message : String(caught)}`);
       }
     }
-    if (configRestored && !validationTunnelRunning && !tunnelStatusUnknown
+    if (configRestored && !failedConnectUnresolved && !validationTunnelRunning && !tunnelStatusUnknown
       && (!tunnelRuntimeTouched || !tunnelLoadedForFallback)) {
       if (!tunnelClientRestored) {
         try {
@@ -1041,7 +861,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
           if (!sameSnapshot(snapshotFile(runtimeKeyPath), runtimeKeyAfterRoute)) {
             throw new Error("changed after setup; preserving the concurrent edit");
           }
-          restoreFileSnapshot(runtimeKeyBeforeRoute);
+          restoreFileSnapshot(runtimeKeyBeforeRoute, { expectedCurrent: runtimeKeyAfterRoute });
         } catch (caught) {
           rollbackFailures.push(`tunnel runtime key: ${caught instanceof Error ? caught.message : String(caught)}`);
         }
@@ -1080,7 +900,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
  * launcher supervises only the isolated MCP tunnel after this transaction commits.
  */
 export async function setupDevProfile(options: SetupOptions): Promise<DevProfileSetupResult> {
-  const existing = loadExistingConfig();
+  const read = readConfigForSetup();
+  const existing = read.config;
   if (existing && existing.purpose !== DEV_CONFIG_PURPOSE) {
     throw new Error("DEV profile home contains a non-DEV configuration; refusing to repurpose it");
   }
@@ -1107,6 +928,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
   }
 
+  assertConfigReadCurrent(read);
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
   // Direct DEV setup has no verified launcher owner/idle-drain handshake. Require an
   // explicitly stopped old alias before any key, client, profile, or config mutation.
@@ -1139,27 +961,24 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   let keyOwned = keyBefore;
   const clientBefore = snapshotTunnelClientInstallation();
   let clientOwned = clientBefore;
-  const configBefore = snapshotFile(getConfigPath());
-  let configPlanned: Buffer | undefined;
+  const configBefore = read.snapshot;
+  let configReceipt: FileSnapshot | undefined;
   let profileBefore: FileSnapshot | undefined;
   let profileOwned: FileSnapshot | undefined;
   let failedConnectMayHaveWrittenProfile = false;
   let validationTunnelRunning = false;
   let tunnelReady: boolean | null = null;
-  const sameSnapshot = (left: FileSnapshot, right: FileSnapshot): boolean =>
-    left.exists === right.exists
-    && (!left.exists || Boolean(left.data && right.data && left.data.equals(right.data)));
   try {
     await configureTunnel(config, existing, options, clientBefore,
       owned => { clientOwned = owned; },
-      bytes => { keyOwned = { path: keyPath, exists: true, data: Buffer.from(bytes) }; },
+      receipt => { keyOwned = receipt; },
       keyBefore);
     if (config.mode === "full") {
       const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
       profileBefore = snapshotFile(profilePath);
       profileOwned = profileBefore;
       if (!profileBefore.exists || tunnelWorkerRuntimeChanged(existing, config)
-        || activeConnectorIdentityMigrationRequired(config) || explicitTunnelChange) {
+        || activeConnectorIdentityMigrationRequired(config, read) || explicitTunnelChange) {
         await bootstrapTunnelProfile(config,
           () => { validationTunnelRunning = true; profileOwned = snapshotFile(profilePath); },
           () => { validationTunnelRunning = false; },
@@ -1170,27 +989,26 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     if (!sameSnapshot(snapshotFile(getConfigPath()), configBefore)) {
       throw new Error("DEV config changed during setup; preserving the concurrent edit");
     }
-    configPlanned = Buffer.from(preserveUtf8Bom(
-      `${JSON.stringify(config, null, 2)}\n`, configBefore.data?.toString("utf8") ?? ""));
-    saveConfig(config);
+    configReceipt = saveConfig(config, configBefore);
   } catch (error) {
     const rollbackFailures: string[] = [];
+    const failedConnectUnresolved = failedConnectMayHaveWrittenProfile && !failedConnectIsStopped(config);
     let configRestored = true;
     const attempt = (label: string, action: () => void): void => {
       try { action(); } catch (caught) {
         rollbackFailures.push(`${label}: ${caught instanceof Error ? caught.message : String(caught)}`);
       }
     };
-    if (configPlanned) attempt("DEV config", () => {
+    if (configReceipt) attempt("DEV config", () => {
       const current = snapshotFile(getConfigPath());
       if (sameSnapshot(current, configBefore)) return;
-      if (!current.exists || !current.data?.equals(configPlanned!)) {
+      if (!sameSnapshot(current, configReceipt!)) {
         throw new Error("changed after setup; preserving the concurrent edit");
       }
-      restoreFileSnapshot(configBefore);
+      restoreFileSnapshot(configBefore, { expectedCurrent: configReceipt });
     });
-    if (configPlanned && rollbackFailures.length > 0) configRestored = false;
-    if (!configPlanned && !sameSnapshot(snapshotFile(getConfigPath()), configBefore)) {
+    if (configReceipt && rollbackFailures.length > 0) configRestored = false;
+    if (!configReceipt && !sameSnapshot(snapshotFile(getConfigPath()), configBefore)) {
       configRestored = false;
       rollbackFailures.push("DEV config changed during setup; preserving the concurrent edit");
     }
@@ -1198,12 +1016,12 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
       stopTunnel(config);
       validationTunnelRunning = false;
     });
-    if (configRestored && !validationTunnelRunning && profileBefore && profileOwned && !sameSnapshot(profileBefore, profileOwned)) {
+    if (configRestored && !failedConnectUnresolved && !validationTunnelRunning && profileBefore && profileOwned && !sameSnapshot(profileBefore, profileOwned)) {
       attempt("DEV tunnel profile", () => {
         if (!sameSnapshot(snapshotFile(profileOwned!.path), profileOwned!)) {
           throw new Error("changed after setup; preserving the concurrent edit");
         }
-        restoreFileSnapshot(profileBefore!);
+        restoreFileSnapshot(profileBefore!, { expectedCurrent: profileOwned });
       });
     }
     if (failedConnectMayHaveWrittenProfile) {
@@ -1212,13 +1030,13 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     if (validationTunnelRunning) {
       rollbackFailures.push("DEV validation tunnel may still be running; preserving its profile for manual recovery");
     }
-    if (configRestored && !validationTunnelRunning) {
+    if (configRestored && !failedConnectUnresolved && !validationTunnelRunning) {
       attempt("DEV tunnel client", () => restoreTunnelClientInstallation(clientBefore, clientOwned));
       if (!sameSnapshot(keyBefore, keyOwned)) attempt("DEV runtime key", () => {
         if (!sameSnapshot(snapshotFile(keyPath), keyOwned)) {
           throw new Error("changed after setup; preserving the concurrent edit");
         }
-        restoreFileSnapshot(keyBefore);
+        restoreFileSnapshot(keyBefore, { expectedCurrent: keyOwned });
       });
     } else {
       rollbackFailures.push("DEV config or validation tunnel remains active; preserving tunnel client and runtime key for manual recovery");

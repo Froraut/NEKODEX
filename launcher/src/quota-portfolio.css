@@ -1,0 +1,35 @@
+.quota-portfolio-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+}
+
+.quota-portfolio-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.quota-portfolio-summary strong {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.account-codex-freshness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.55rem;
+  align-items: baseline;
+  font-size: var(--text-xs);
+}
+
+.account-codex-freshness.is-stale,
+.account-codex-freshness.is-retained {
+  color: var(--color-text-warning);
+}
+
+.account-codex-freshness small {
+  flex-basis: 100%;
+}

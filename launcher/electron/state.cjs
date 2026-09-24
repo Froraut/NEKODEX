@@ -3,7 +3,6 @@ const languages = require("./languages.json");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 420;
-const SESSION_REFRESH_REMINDER_INTERVAL_MS = 48 * 60 * 60 * 1000;
 const MCP_PROOF_INVALIDATION = Object.freeze({
   mcpSetupComplete: false,
   setupContract: null,
@@ -37,6 +36,7 @@ const DEFAULT_STATE = Object.freeze({
   experimentalSkillAttachments: false,
   allowWebSubagents: false,
   experimentalFreshConversationPerTurn: false,
+  useSavedChats: false,
   pendingBiggerContext: null,
   contextChangeApplying: false,
   contextChangeError: null,
@@ -46,13 +46,7 @@ const DEFAULT_STATE = Object.freeze({
   sidebarOpen: true,
   sidebarWidth: 252,
   mcpGuideStep: 0,
-  sessionRefreshReminderAt: null,
 });
-
-function nextSessionRefreshReminderAt(now = Date.now()) {
-  if (!Number.isFinite(now)) throw new Error("Session refresh reminder time must be finite");
-  return new Date(now + SESSION_REFRESH_REMINDER_INTERVAL_MS).toISOString();
-}
 
 function proofInvalidationPatch(kind) {
   return kind === "account" ? ACCOUNT_PROOF_INVALIDATION : MCP_PROOF_INVALIDATION;
@@ -86,6 +80,7 @@ function readState(filePath) {
       "experimentalSkillAttachments",
       "allowWebSubagents",
       "experimentalFreshConversationPerTurn",
+      "useSavedChats",
       "zeroRiskProEnabled",
       "browserSmokePassed",
       "sidebarOpen",
@@ -116,11 +111,7 @@ function readState(filePath) {
     if (!Number.isInteger(state.mcpGuideStep) || state.mcpGuideStep < 0 || state.mcpGuideStep > 2) {
       state.mcpGuideStep = DEFAULT_STATE.mcpGuideStep;
     }
-    if (state.sessionRefreshReminderAt !== null
-      && (typeof state.sessionRefreshReminderAt !== "string"
-        || !Number.isFinite(Date.parse(state.sessionRefreshReminderAt)))) {
-      state.sessionRefreshReminderAt = DEFAULT_STATE.sessionRefreshReminderAt;
-    }
+    delete state.sessionRefreshReminderAt;
     for (const key of [
       "coreSetupComplete",
       "codexCatalogVerified",
@@ -236,10 +227,8 @@ function createStateStore(filePath) {
 module.exports = {
   ACCOUNT_PROOF_INVALIDATION,
   MCP_PROOF_INVALIDATION,
-  SESSION_REFRESH_REMINDER_INTERVAL_MS,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   createStateStore,
-  nextSessionRefreshReminderAt,
   validateSidebarState,
 };

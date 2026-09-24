@@ -62,12 +62,22 @@ function registerRecovery(transaction, options = {}) {
   const journal = path.join(transaction.root, "registration.json");
   const fd = fs.openSync(journal, "wx", 0o600);
   try { fs.writeFileSync(fd, JSON.stringify(registration)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  if (registration.type === "registry") {
-    checked("reg.exe", ["ADD", registration.key, "/v", registration.name, "/t", "REG_SZ", "/d", registration.contents, "/f"], options.run);
-  } else {
-    fs.mkdirSync(path.dirname(registration.path), { recursive: true, mode: 0o700 });
-    const output = fs.openSync(registration.path, "wx", 0o600);
-    try { fs.writeFileSync(output, registration.contents); fs.fsyncSync(output); } finally { fs.closeSync(output); }
+  try {
+    if (registration.type === "registry") {
+      checked("reg.exe", ["ADD", registration.key, "/v", registration.name, "/t", "REG_SZ", "/d", registration.contents, "/f"], options.run);
+    } else {
+      fs.mkdirSync(path.dirname(registration.path), { recursive: true, mode: 0o700 });
+      const output = fs.openSync(registration.path, "wx", 0o600);
+      try { fs.writeFileSync(output, registration.contents); fs.fsyncSync(output); } finally { fs.closeSync(output); }
+    }
+  } catch (error) {
+    // EEXIST proves that this attempt did not create the file. Do not let later
+    // cleanup mistake a conflicting external entry for one owned by this update.
+    if (registration.type === "file" && error?.code === "EEXIST") {
+      delete transaction.recovery;
+      fs.rmSync(journal, { force: true });
+    }
+    throw error;
   }
   return registration;
 }

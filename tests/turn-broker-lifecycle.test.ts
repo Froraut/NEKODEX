@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
+import { MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_OUTSTANDING_TURNS } from "../src/adapters/chatgpt-web/concurrency";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
-import { createServer, type Socket } from "node:net";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { callTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
@@ -112,6 +113,7 @@ test("native interruption retires only the exact browser turn identity", async (
     new DOMException("Codex turn interrupted", "AbortError"),
   );
   expect(cancellation.cancelled).toBe(1);
+  expect(cancelled).toEqual(["target"]); // Abort reaches the runtime before hook acknowledgement.
   await cancellation.settlement;
   expect(cancelled).toEqual(["target"]);
   expect(sessions.find("target")).toBeUndefined();
@@ -141,7 +143,7 @@ test("session cache expiry never cancels a still-active long browser turn", asyn
   sessions.clear();
 });
 
-test("sixteen active turns coexist and a seventeenth fails closed", () => {
+test("active and waiting turns coexist up to the outstanding-owner limit and overflow fails closed", () => {
   const sessions = new ChatGptTurnSessions();
   let cancelled = 0;
   const runtime = () => ({
@@ -153,19 +155,24 @@ test("sixteen active turns coexist and a seventeenth fails closed", () => {
     cancel: () => { cancelled += 1; },
   });
 
-  const active = Array.from({ length: 16 }, (_unused, index) => (
+  const active = Array.from({ length: MAX_CHATGPT_BROWSER_TABS }, (_unused, index) => (
     sessions.getOrCreate(`turn-${index + 1}`, runtime)
   ));
-  expect(sessions.activeCount()).toBe(16);
+  expect(sessions.activeCount()).toBe(MAX_CHATGPT_BROWSER_TABS);
   expect(cancelled).toBe(0);
-  expect(() => sessions.getOrCreate("turn-17", runtime)).toThrow("at most 16 simultaneous browser turns");
+  // Session ownership includes tabless queued requests; Launcher separately limits live tabs.
+  for (let index = MAX_CHATGPT_BROWSER_TABS; index < MAX_CHATGPT_OUTSTANDING_TURNS; index++) {
+    sessions.getOrCreate(`turn-${index + 1}`, runtime);
+  }
+  expect(sessions.activeCount()).toBe(MAX_CHATGPT_OUTSTANDING_TURNS);
+  expect(() => sessions.getOrCreate("overflow", runtime)).toThrow("active and waiting task limit");
 
   expect(sessions.getOrCreate("turn-3", () => {
     throw new Error("an in-flight turn must be reused");
   })).toBe(active[2]);
   expect(cancelled).toBe(0);
   sessions.clear();
-  expect(cancelled).toBe(16);
+  expect(cancelled).toBe(MAX_CHATGPT_OUTSTANDING_TURNS);
 });
 
 test("settled replay sessions expire from their last use instead of their creation time", async () => {
@@ -209,12 +216,51 @@ test("turn broker creates its private runtime directory on a cold start", async 
     } else {
       expect(existsSync(socketPath)).toBe(true);
       expect(statSync(dirname(socketPath)).mode & 0o777).toBe(0o700);
+      expect(statSync(socketPath).mode & 0o777).toBe(0o600);
     }
+    await broker.close();
+    if (process.platform !== "win32") expect(existsSync(socketPath)).toBe(false);
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === "win32")("closing an old broker preserves a reachable replacement socket", async () => {
+  const root = mkdtempSync("/tmp/nx-broker-replace-");
+  const socketPath = join(root, "broker.sock");
+  const broker = TurnBroker.forSocket(socketPath);
+  let replacement: Server | undefined;
+  const readReplacement = () => new Promise<string>((resolveRead, rejectRead) => {
+    const socket = createConnection(socketPath);
+    let text = "";
+    socket.setTimeout(500, () => socket.destroy(new Error("replacement did not answer")));
+    socket.on("data", chunk => { text += chunk.toString(); });
+    socket.once("end", () => resolveRead(text));
+    socket.once("error", rejectRead);
+  });
+  try {
+    await broker.listen();
+    const old = lstatSync(socketPath);
+    unlinkSync(socketPath);
+    replacement = createServer(socket => socket.end("replacement-owner"));
+    const live = replacement;
+    await new Promise<void>((resolveListen, rejectListen) => {
+      live.once("error", rejectListen);
+      live.listen(socketPath, () => { live.off("error", rejectListen); resolveListen(); });
+    });
+    const newSocket = lstatSync(socketPath);
+    expect(newSocket.ino).not.toBe(old.ino);
+    expect(await readReplacement()).toBe("replacement-owner"); // The intended fault boundary is reached.
+    await broker.close();
+    expect(lstatSync(socketPath).ino).toBe(newSocket.ino);
+    expect(await readReplacement()).toBe("replacement-owner");
+  } finally {
+    await broker.close();
+    if (replacement) await new Promise<void>(resolveClose => replacement!.close(() => resolveClose()));
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 3_000);
 
 test("turn broker rejects a Unix socket path that leaves no room for sun_path's NUL terminator", async () => {
   if (process.platform === "win32") return;

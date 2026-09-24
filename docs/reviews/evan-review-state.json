@@ -1,0 +1,377 @@
+{
+  "schemaVersion": 1,
+  "upstream": "Evanlau1798/codex-chatgpt-web",
+  "fork": "Froraut/NEKODEX",
+  "updatedAt": "2026-09-21T09:50:16.924333+00:00",
+  "sourceRevision": "108cd5f1ce1df55776fbfe346a49800aff446691",
+  "localSourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+  "lastCompleteScan": {
+    "method": "gh with explicit Evanlau1798/codex-chatgpt-web repository and REST --paginate",
+    "openIssuesFetched": 9,
+    "repositoryIssueCommentsFetched": 44,
+    "commentsOnOpenIssuesReviewed": 17,
+    "openPullRequests": 0,
+    "branchesFetched": 10,
+    "scanComplete": true,
+    "openIssues": [
+      {
+        "number": 44,
+        "updatedAt": "2026-09-21T01:37:53Z",
+        "comments": 1
+      },
+      {
+        "number": 43,
+        "updatedAt": "2026-09-20T22:13:16Z",
+        "comments": 2
+      },
+      {
+        "number": 42,
+        "updatedAt": "2026-09-20T22:13:19Z",
+        "comments": 1
+      },
+      {
+        "number": 41,
+        "updatedAt": "2026-09-21T02:02:35Z",
+        "comments": 3
+      },
+      {
+        "number": 40,
+        "updatedAt": "2026-09-21T02:02:33Z",
+        "comments": 3
+      },
+      {
+        "number": 38,
+        "updatedAt": "2026-09-20T18:26:52Z",
+        "comments": 4
+      },
+      {
+        "number": 37,
+        "updatedAt": "2026-09-18T02:36:00Z",
+        "comments": 1
+      },
+      {
+        "number": 36,
+        "updatedAt": "2026-09-13T14:45:15Z",
+        "comments": 1
+      },
+      {
+        "number": 33,
+        "updatedAt": "2026-09-08T17:45:21Z",
+        "comments": 1
+      }
+    ]
+  },
+  "items": {
+    "issue:43": {
+      "kind": "issue",
+      "number": 43,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/43",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-20T22:13:16Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "Do not port the Evan chunked insertion series and do not normalize or accept the extra LF. Browser-worker owner may add one focused 89k block-boundary fixture against the existing atomic path; a production change requires a local reproduction.",
+      "applicability": "not_applicable_to_current_insertion_architecture",
+      "relevantCommits": [
+        "b2120ca99453bcf388293ecdbdbb814fd3550284",
+        "d7b0cea418f332f967795e003d39a159d7d95d64",
+        "10d218f04816d84cd26aad15f7f9fc399135c2b5",
+        "0da4f7f8930f8560a8025fa0f0aac60a08ce8066",
+        "a8e5b8e4cac36152af3a1ef292c646241f874eb9"
+      ],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    },
+    "issue:44": {
+      "kind": "issue",
+      "number": 44,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/44",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-21T01:37:53Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "No direct fork patch exists. Browser-worker owner should add one focused regression where first viewport readiness times out, the owned transport closes, second rebind acquires the same leased surface, and accepted turn plus pending tool ownership survive without resubmission. Change production code only if that case fails locally.",
+      "applicability": "shared_failure_class_but_local_rebind_is_already_harder",
+      "relevantCommits": [],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    },
+    "issue:42": {
+      "kind": "issue",
+      "number": 42,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/42",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-20T22:13:19Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "Do not increase the stage timeout. Browser-worker owner may add privacy-safe substage evidence for composer resolved, plain-text edit returned, and full readback matched. A behavioral fix needs a local trace that identifies which predicate failed.",
+      "applicability": "multipart_orchestration_shared_but_exact_attachment_path_is_fork_specific",
+      "relevantCommits": [
+        "b2120ca99453bcf388293ecdbdbb814fd3550284",
+        "d7b0cea418f332f967795e003d39a159d7d95d64",
+        "10d218f04816d84cd26aad15f7f9fc399135c2b5",
+        "0da4f7f8930f8560a8025fa0f0aac60a08ce8066"
+      ],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    },
+    "issue:41": {
+      "kind": "issue",
+      "number": 41,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/41",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-21T02:02:35Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "Do not implement in this lane. The issue proposes a public plugin ABI but contains no patch, compatibility contract, or concrete failing behavior. NEKODEX already exposes a local Responses-compatible HTTP boundary in src/server.ts; a plugin host would be a separate product design and security project.",
+      "applicability": "architecture_aspiration_not_a_bounded_fix",
+      "relevantCommits": [],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    },
+    "issue:40": {
+      "kind": "issue",
+      "number": 40,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/40",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-21T02:02:33Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "No Evan multi-account code exists to port. Current NEKODEX already implements the issue's safe profile isolation, per-profile network configuration, sticky routing, and no-failover boundary.",
+      "applicability": "requested_profile_feature_already_present_locally; Evan only implemented adjacent single-account safety",
+      "relevantCommits": [
+        "0d71a53d505f2465ccaa747a332b42c3963d814f",
+        "7f3530f5e460a21fe5e92d2a8d970ac8247b6c5a",
+        "f3d007bacd33d0ed13428047af71218fd332fa55",
+        "94dd187dd568e563120bb1b95e28f960af2c3d06"
+      ],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    },
+    "issue:38": {
+      "kind": "issue",
+      "number": 38,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/38",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-20T18:26:52Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "Do not port. The original accepted-response recovery shipped in Evan v5.0.8-Enhanced.1. Later comments describe 350k-token stranded history after No Context Window plus retained-session expiry; NEKODEX does not expose that unlimited advertised-context mode and already uses separate bounded compaction, Bigger Context, and retained-turn recovery contracts.",
+      "applicability": "original_recovery_fix_is_fork_specific_and_follow_up_depends_on_absent_no_context_window_mode",
+      "relevantCommits": [
+        "1ebf7f5d23bf785539337f4a0310b85dbeeb551e",
+        "43882d1939046857f3ca5f9aaf66bf7a519d96b4",
+        "b384c00cb00f46d2a63114a1e33b002db8dec663"
+      ],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    },
+    "issue:37": {
+      "kind": "issue",
+      "number": 37,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/37",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-18T02:36:00Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "No source fix. Evan documents Enhanced Web Session and No Context Window, features not exposed by current NEKODEX. Local current behavior is documented in docs/architecture.md, docs/dev-chat.md, and launcher context copy.",
+      "applicability": "fork_feature_documentation",
+      "relevantCommits": [
+        "cadb3cfc336a29ce4dbc8b686c3aaedb0d4be221",
+        "b384c00cb00f46d2a63114a1e33b002db8dec663"
+      ],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    },
+    "issue:36": {
+      "kind": "issue",
+      "number": 36,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/36",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-13T14:45:15Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "Already structurally prevented. NEKODEX has no all/Claude setup target, so Evan's default-to-Codex fix is unnecessary.",
+      "applicability": "not_applicable_product_scope",
+      "relevantCommits": [
+        "3ebc805c598f947f64c020e7d19e655bb64e5d2e",
+        "209f3616b06973fed7a183bf2573a40b8110a802"
+      ],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    },
+    "issue:33": {
+      "kind": "issue",
+      "number": 33,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/33",
+      "reviewedAt": "2026-09-21T09:23:06Z",
+      "sourceUpdatedAt": "2026-09-08T17:45:21Z",
+      "headSha": null,
+      "status": "reviewed",
+      "decision": "Do not port the chunked insertion series. It addressed a 22k-token Evan freeze but is also the architecture implicated by #42 and #43. NEKODEX uses atomic literal insertion and strict full readback, preserving the desirable outcome without the later fork regression surface.",
+      "applicability": "historical_fork_performance_fix_superseded_by_local_atomic_path",
+      "relevantCommits": [
+        "b2120ca99453bcf388293ecdbdbb814fd3550284",
+        "d7b0cea418f332f967795e003d39a159d7d95d64",
+        "10d218f04816d84cd26aad15f7f9fc399135c2b5",
+        "0da4f7f8930f8560a8025fa0f0aac60a08ce8066",
+        "61e702e7dd5a4868afcbd8d63a097c459010f9d1",
+        "ad94876d96ca4195321b98cdbb87c919250062f0",
+        "d066451d41df3e33bc28cfdcf0ef581032bffcbb"
+      ],
+      "evidence": [
+        "docs/reviews/upstream-20260921.md"
+      ],
+      "recheckRequired": false
+    }
+  },
+  "lastReviewed": {
+    "issue": 33,
+    "pull": null
+  },
+  "maxReviewedNumber": {
+    "issue": 44,
+    "pull": null
+  },
+  "codeDecisions": [
+    {
+      "id": "rolling-new-web-session-window",
+      "commits": [
+        "0d71a53d505f2465ccaa747a332b42c3963d814f",
+        "7f3530f5e460a21fe5e92d2a8d970ac8247b6c5a",
+        "f3d007bacd33d0ed13428047af71218fd332fa55",
+        "94dd187dd568e563120bb1b95e28f960af2c3d06"
+      ],
+      "applicability": "worthwhile_bounded_adaptation",
+      "forkBehavior": "Tracks unique automatic Web session identities in a sliding time window, blocks new sessions at the configured limit, preserves already active or already counted sessions, and distinguishes local duration pause from provider rate-limit drain and account-security hard stop.",
+      "localGap": "NEKODEX has strong per-account pacing, maximum concurrency, breaks, session duration and cooldowns, but does not count unique new Web conversations in a rolling window.",
+      "localFiles": [
+        {
+          "path": "launcher/electron/account-safety.cjs",
+          "line": 6,
+          "note": "Existing per-account policy and persisted safety state."
+        },
+        {
+          "path": "launcher/electron/account-safety.cjs",
+          "line": 67,
+          "note": "Current admission sees only active-count, not session identity/window usage."
+        },
+        {
+          "path": "launcher/electron/account-pool.cjs",
+          "line": 812,
+          "note": "Has trace/conversation ownership needed to supply a stable per-account session identity."
+        },
+        {
+          "path": "launcher/electron/account-pool.cjs",
+          "line": 825,
+          "note": "Current safety admission call site."
+        }
+      ],
+      "recommendedBoundedFix": "Adapt only the sliding unique-session window into the existing per-account AccountSafety. Count a stable new Web conversation identity, allow already-counted and active work to finish, block only creation of an uncounted session, never select another account because of the limit, and expose remaining/reset time in the existing pacing UI. Do not import Evan's TypeScript runtime or launcher settings wholesale.",
+      "localImplementation": "Implemented and focused-verified in codex/upstream-review-20260921; see batch report. Not released or installed."
+    },
+    {
+      "id": "native-codex-config-normalization",
+      "commits": [
+        "4afd449a2caddcb412496682b02bdd713432c228",
+        "108cd5f1ce1df55776fbfe346a49800aff446691"
+      ],
+      "applicability": "partially_applicable_legacy_toml_hardening",
+      "forkBehavior": "Accepts native Codex formatting that removes managed assignment comments, repositions the interrupt start marker, removes the end marker, and inserts unrelated tables, while still comparing owned hook/trust values semantically and refusing changed definitions.",
+      "localState": "NEKODEX already handles CRLF normalization, table reordering/interleaving, moved end comments, unrelated tables, explicit built-in openai provider restoration, and uses hooks.json for normal current installs. The legacy TOML locator still requires one end marker.",
+      "localFiles": [
+        {
+          "path": "src/codex-interrupt-hook.ts",
+          "line": 413,
+          "note": "Legacy TOML semantic locator."
+        },
+        {
+          "path": "src/codex-interrupt-hook.ts",
+          "line": 431,
+          "note": "Still rejects a missing end marker."
+        },
+        {
+          "path": "src/codex-integration.ts",
+          "line": 111,
+          "note": "Current normal path installs hooks.json plus TOML trust state."
+        },
+        {
+          "path": "tests/codex-interrupt-hook.test.ts",
+          "line": 367,
+          "note": "Existing moved-marker and foreign-table coverage."
+        }
+      ],
+      "recommendedBoundedFix": "If legacy TOML journals remain supported, add only missing-end-marker and native start-marker-layout cases to the existing strict semantic locator. Keep hooks.json as the current path, preserve fail-closed checks for modified commands/trust hashes/duplicate definitions, and avoid copying Evan's older route implementation wholesale.",
+      "localImplementation": "Implemented and focused-verified in codex/upstream-review-20260921; see batch report. Not released or installed."
+    },
+    {
+      "id": "privacy-safe-http-stream-failure-evidence",
+      "commits": [
+        "0edf8ff6539943bc31aa29c4628e429199188b02",
+        "5625e13a50c29e6b584a51ec34de60dec839cd13"
+      ],
+      "applicability": "already_present_locally_with_more_context",
+      "localFiles": [
+        {
+          "path": "src/server.ts",
+          "line": 76,
+          "note": "Content-free evidence includes HTTP turn, endpoint, reader, platform, chunks, bytes, safe error name/code."
+        },
+        {
+          "path": "src/server.ts",
+          "line": 269,
+          "note": "Direct and Windows stream paths emit evidence without replacing source errors."
+        }
+      ],
+      "decision": "No work. Evan's unmerged diagnostics branch is duplicated on Evan main and already implemented more completely in NEKODEX."
+    },
+    {
+      "id": "parent-visualization-root-trust",
+      "commits": [
+        "df0224756d639edfa2124ed96c1dad75e05e06df",
+        "57c1c11c13234de0a2534e56390919cac7752c6d"
+      ],
+      "applicability": "already_present_locally",
+      "localFiles": [
+        {
+          "path": "src/adapters/chatgpt-web/environment.ts",
+          "line": 468,
+          "note": "Metadata-bound root check permits only current or parent task visualization root."
+        },
+        {
+          "path": "src/adapters/chatgpt-web/environment.ts",
+          "line": 479,
+          "note": "Validates private Codex home, dated path shape, and exact thread IDs."
+        }
+      ],
+      "decision": "No work. The unmerged Evan branch is duplicated on Evan main and current NEKODEX has the same bounded trust rule."
+    },
+    {
+      "id": "enhanced-retained-session-no-context-stack",
+      "commits": [
+        "cadb3cfc336a29ce4dbc8b686c3aaedb0d4be221",
+        "fcefbf6bbf23a9e6d78367725e1719e2a4bccaa1",
+        "1ebf7f5d23bf785539337f4a0310b85dbeeb551e",
+        "43882d1939046857f3ca5f9aaf66bf7a519d96b4"
+      ],
+      "applicability": "alternative_architecture_not_safe_for_selective_port",
+      "decision": "Do not port as a series. It is coupled to Evan's retained-session registry, No Context Window, Native2 compatibility, prompt insertion and release gates. Open issue #38 shows a recoverability failure when retained state expires after history grows beyond a fresh bootstrap. Evaluate individual observed defects against NEKODEX contracts instead."
+    }
+  ]
+}

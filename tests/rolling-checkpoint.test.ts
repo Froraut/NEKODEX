@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { atomicWriteFile } from "../src/config";
 import { parseRequest } from "../src/responses/parser";
 import { extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
@@ -31,7 +32,7 @@ const checkpoint: ChatGptLunaCheckpoint = {
   pending: ["Inspect the remaining files."],
 };
 
-function message(role: "developer" | "user" | "assistant", text: string, turnId: string): Record<string, unknown> {
+function message(role: "system" | "developer" | "user" | "assistant", text: string, turnId: string): Record<string, unknown> {
   return {
     type: "message",
     role,
@@ -185,7 +186,7 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   expect(encoded).toContain("Compressed Luna task history");
   expect(encoded).toContain("Fresh operational contract");
   expect(encoded).toContain("Continue with the second step");
-  expect(encoded).not.toContain("Old operational contract");
+  expect(encoded).toContain("Old operational contract");
   expect(encoded).not.toContain("Original task");
   const capabilities = { localToolsEnabled: false, solAvailable: false, proAvailable: false };
   expect(estimateChatGptWebInputTokens(applied.parsed, capabilities))
@@ -236,6 +237,84 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   expect(stale.reason).toContain("source turn");
 });
 
+test.each([false, true])("Luna checkpoint skips unsummarized intervening turns with replay boundary %s", (replayed) => {
+  const threadId = `thread_luna_interrupted_${replayed}`;
+  const store = new ChatGptLunaCheckpointStore();
+  const answer = "Completed the first step.";
+  const source = request(threadId, "turn_a", [message("user", "Start the audit.", "turn_a")]);
+  store.commit(source, {
+    checkpoint: { version: 2, summary: "The first audit step is complete." },
+    answerHash: hashChatGptLunaAnswer(answer),
+  }, answer);
+  const prefix = [
+    message("developer", "Ask before external sends.", "turn_a"),
+    message("user", "Start the audit.", "turn_a"),
+    message("assistant", answer, "turn_a"),
+  ];
+  const current = message("user", "Continue with my last request.", "turn_c");
+  // Prove this exact stored parent is usable before introducing the interrupted turn.
+  expect(store.apply(request(threadId, "turn_c", [...prefix, current])).applied).toBeTrue();
+  const constraint = "Use staging only. Production must remain untouched.";
+  const interruption = "<turn_aborted>The user interrupted the previous turn.</turn_aborted>";
+  const next = request(threadId, "turn_c", [
+    ...prefix,
+    message("user", constraint, "turn_b"),
+    message("user", interruption, "turn_b"),
+    current,
+    message("assistant", "Inspecting the pending request.", "turn_c"),
+    message("user", "Keep those constraints.", "turn_c"),
+  ]);
+  if (replayed) next._replayPrefixLen = 7;
+  const result = store.apply(next);
+  const prompt = compileChatGptWebPrompt(result.parsed, {
+    localToolsEnabled: false, solAvailable: false, proAvailable: false,
+  });
+  expect(prompt.text).toContain(constraint);
+  expect(prompt.text).toContain(interruption);
+  expect(prompt.text).toContain("Continue with my last request.");
+  expect(prompt.text).toContain("Keep those constraints.");
+  expect(prompt.text).toContain("Ask before external sends.");
+  expect(result.applied).toBeFalse();
+  expect(result.parsed).toBe(next);
+  expect(extractChatGptTurnUserRevision(result.parsed)).toEqual(extractChatGptTurnUserRevision(next));
+});
+
+test.each([false, true])("Luna checkpoint preserves canonical prefix instructions with replay boundary %s", (replayed) => {
+  const threadId = `thread_luna_instructions_${replayed}`;
+  const store = new ChatGptLunaCheckpointStore();
+  const source = request(threadId, "turn_source", [message("user", "Start", "turn_source")]);
+  const answer = "First step completed.";
+  store.commit(source, { checkpoint, answerHash: hashChatGptLunaAnswer(answer) }, answer);
+  const standingSystem = { type: "message", role: "system", content: "Never disclose private customer data." };
+  const standingDeveloper = message("developer", "Ask before sending an external message.", "turn_source");
+  const currentDeveloper = message("developer", "Use concise answers.", "turn_next");
+  const next = request(threadId, "turn_next", [
+    standingSystem,
+    standingDeveloper,
+    message("user", "Start", "turn_source"),
+    message("assistant", answer, "turn_source"),
+    currentDeveloper,
+    message("user", "Continue safely", "turn_next"),
+  ]);
+  if (replayed) next._replayPrefixLen = 4;
+  const applied = store.apply(next);
+  expect(applied.applied).toBeTrue();
+  expect(applied.parsed.context.systemPrompt).toEqual(next.context.systemPrompt);
+  expect(applied.parsed.context.messages.filter(item => item.role === "developer").map(item => item.content))
+    .toEqual(next.context.messages.filter(item => item.role === "developer").map(item => item.content));
+  const raw = applied.parsed._rawBody as { input: Record<string, unknown>[] };
+  expect(raw.input.filter(item => item.role === "system" || item.role === "developer"))
+    .toEqual([standingSystem, standingDeveloper, currentDeveloper]);
+  expect(extractChatGptTurnUserRevision(applied.parsed)).toEqual(extractChatGptTurnUserRevision(next));
+  const prompt = compileChatGptWebPrompt(applied.parsed, {
+    localToolsEnabled: false, solAvailable: false, proAvailable: false,
+  });
+  expect(prompt.text).toContain(standingSystem.content);
+  expect(prompt.text).toContain("Ask before sending an external message.");
+  expect(prompt.text).toContain("Use concise answers.");
+  expect(prompt.text).toContain("Continue safely");
+});
+
 test("Luna checkpoint preserves the server-resolved backend model when the raw body carries a route slug", () => {
   const root = mkdtempSync(join(tmpdir(), "codex-luna-route-checkpoint-"));
   roots.push(root);
@@ -260,4 +339,71 @@ test("Luna checkpoint preserves the server-resolved backend model when the raw b
   expect(applied.applied).toBeTrue();
   expect(applied.parsed.modelId).toBe("gpt-5.6-luna");
   expect(applied.parsed.options.reasoning).toBe("low");
+});
+
+
+test("Luna checkpoint preserves current-turn input inside a replayed response prefix", () => {
+  const thread = "thread_luna_current_replay";
+  const store = new ChatGptLunaCheckpointStore();
+  const answer = "Previous turn completed.";
+  const source = request(thread, "prior", [message("user", "Old task", "prior")]);
+  store.commit(source, { checkpoint, answerHash: hashChatGptLunaAnswer(answer) }, answer);
+  const standing = message("developer", "Require approval before external sends.", "prior");
+  const currentUser = message("user", "Inspect only; do not send anything.", "current");
+  const next = request(thread, "current", [
+    standing,
+    message("user", "Old task", "prior"),
+    message("assistant", answer, "prior"),
+    currentUser,
+    message("assistant", "Inspection in progress.", "current"),
+    message("user", "Also inspect the pending queue.", "current"),
+  ]);
+  next._replayPrefixLen = 5;
+  const result = store.apply(next);
+  expect(result.applied).toBeTrue();
+  const input = (result.parsed._rawBody as { input: unknown[] }).input;
+  expect(input.slice(1)).toEqual([
+    standing, currentUser,
+    message("assistant", "Inspection in progress.", "current"),
+    message("user", "Also inspect the pending queue.", "current"),
+  ]);
+  expect(extractChatGptTurnUserRevision(result.parsed)).toEqual(extractChatGptTurnUserRevision(next));
+});
+
+
+test("Luna checkpoint failed persistence never publishes or resurrects the candidate", () => {
+  const root = mkdtempSync(join(tmpdir(), "luna-checkpoint-rollback-"));
+  roots.push(root);
+  const path = join(root, "checkpoints.json");
+  let failWrite = false;
+  let reachedCandidateWrite = false;
+  const store = new ChatGptLunaCheckpointStore(path, Date.now, (target, contents) => {
+    if (failWrite) {
+      const payload = JSON.parse(typeof contents === "string" ? contents : new TextDecoder().decode(contents));
+      reachedCandidateWrite = payload.checkpoints.some((entry: { sourceTurnId: string }) => entry.sourceTurnId === "failed");
+      throw new Error("injected pre-replacement write failure");
+    }
+    return atomicWriteFile(target, contents);
+  });
+  const commit = (turn: string, answer: string) => store.commit(
+    request("rollback-thread", turn, [message("user", "Work", turn)]),
+    { checkpoint, answerHash: hashChatGptLunaAnswer(answer) }, answer,
+  );
+  const apply = (turn: string, answer: string) => new ChatGptLunaCheckpointStore(path).apply(
+    request("rollback-thread", "next", [message("assistant", answer, turn), message("user", "Continue", "next")]),
+  ).applied;
+  commit("predecessor", "Durable answer");
+  expect(apply("predecessor", "Durable answer")).toBe(true);
+  const before = readFileSync(path, "utf8");
+  failWrite = true;
+  expect(() => commit("failed", "Failed answer")).toThrow("injected pre-replacement write failure");
+  expect(reachedCandidateWrite).toBe(true);
+  expect(readFileSync(path, "utf8")).toBe(before);
+  failWrite = false;
+  expect(apply("failed", "Failed answer")).toBe(false);
+  expect(apply("predecessor", "Durable answer")).toBe(true);
+  commit("later", "Later answer");
+  expect(apply("later", "Later answer")).toBe(true);
+  expect(apply("failed", "Failed answer")).toBe(false);
+  expect(readFileSync(path, "utf8")).not.toContain(hashChatGptLunaAnswer("Failed answer"));
 });

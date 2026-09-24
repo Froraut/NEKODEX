@@ -1,3 +1,4 @@
+const { publishBrowserSnapshot } = require("./browser-state-publication.cjs");
 const { isExistingChromeErrorCode, existingChromeError } = require("./existing-chrome-errors.cjs");
 const ACTIVE_PHASES = new Set(["consent", "preparing", "file-access", "discovering", "waiting-for-chrome", "reading-session", "verifying", "cancelling"]);
 const CAPTURE_PHASES = new Set(["discovering", "waiting-for-chrome", "reading-session"]);
@@ -57,7 +58,7 @@ function updateExistingChromeProgress(host, patch) {
   if (typeof patch.phase === "string") {
     host.logger?.info?.("browser.existing_chrome_progress", { phase: patch.phase });
   }
-  host.publishState?.(host.snapshot());
+  publishBrowserSnapshot(host);
 }
 
 function safeImportError(error, cleanupFailed = false, verifying = false) {
@@ -94,6 +95,7 @@ function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } =
   host.passkeyProgress = null;
   let previousState;
   let importStarted = false;
+  let restoredState;
   const operation = (async () => {
     if (await confirmImport() !== true) { controller.abort(); return host.snapshot(); }
     controller.signal.throwIfAborted();
@@ -145,18 +147,32 @@ function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } =
         if (controller.signal.aborted) { await transfer.cleanup(); controller.signal.throwIfAborted(); }
         updateExistingChromeProgress(host, { phase: "verifying" });
         importStarted = true;
-        const result = await host.installPasskeyLogin(transfer, controller.signal);
+        let result;
+        try {
+          result = await host.installPasskeyLogin(transfer, controller.signal);
+        } catch (error) {
+          // Only the local installer can attest to rollback. Capture its fresh
+          // presentation before withManualOperation overwrites it; identity stays live.
+          if (error?.previousSessionRestored === true) {
+            const { status, loading, message } = host.state;
+            restoredState = { status, loading, message };
+          }
+          throw error;
+        }
         updateExistingChromeProgress(host, { phase: "completed", error: null });
         return result;
       } catch (error) {
         // withManualOperation publishes the thrown message; sanitize before crossing that boundary.
-        throw safeImportError(error, cleanupFailed, importStarted && !controller.signal.aborted);
+        const failure = safeImportError(error, cleanupFailed, importStarted && !controller.signal.aborted);
+        if (restoredState) failure.previousSessionRestored = true;
+        throw failure;
       }
     });
   })();
   const tracked = operation.catch(error => {
     // Only fixed diagnostics reach state/UI; CDP errors may contain URLs or credential data.
     const failure = safeImportError(error);
+    if (restoredState && error?.previousSessionRestored === true) failure.previousSessionRestored = true;
     const cleanupFailed = failure.code === "existing_chrome_cleanup_failed";
     const cancelled = controller.signal.aborted && !cleanupFailed;
     const timeout = failure.code === "existing_chrome_timeout" || failure.code === "chrome-permission-timeout"
@@ -166,7 +182,8 @@ function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } =
       : failure.code === "existing_chrome_handoff_timeout" ? "existing-chrome-handoff-timeout"
       : isExistingChromeErrorCode(failure.code) ? failure.code : timeout ? "existing-chrome-timeout" : "existing-chrome-import-failed" });
     if (!importStarted && previousState) host.setState(previousState);
-    if (importStarted || cleanupFailed) host.setState({ status: "error", loading: false, message: failure.message });
+    if (restoredState && failure.previousSessionRestored && !cleanupFailed) host.setState(restoredState);
+    else if (importStarted || cleanupFailed) host.setState({ status: "error", loading: false, message: failure.message });
     if (cancelled) return host.snapshot();
     throw failure;
   }).finally(() => {
@@ -181,11 +198,11 @@ function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } =
       phase: host.existingChromeProgress?.phase ?? "not-needed",
       previousLoginPending: Boolean(host.loginOperation || host.sessionRefreshOperation),
     });
-    host.publishState?.(host.snapshot());
+    publishBrowserSnapshot(host);
   }).then(() => host.snapshot());
   host.loginOperation = tracked;
   host.existingChromeLoginOperation = tracked;
-  host.publishState?.(host.snapshot());
+  publishBrowserSnapshot(host);
   return tracked;
 }
 

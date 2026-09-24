@@ -394,7 +394,9 @@ export function defaultDevChatModel(config: AppConfig): DevChatModel {
 }
 
 function isLunaDevChatModel(model: DevChatModel): boolean {
-  return model === "chatgpt-web/luna" || model === "chatgpt-web/think";
+  return model === "chatgpt-web/luna"
+    || model === "chatgpt-web/think"
+    || model === "chatgpt-web/gpt-5.6-luna";
 }
 
 export function prepareWorkingTreeBrowserHelper(): string | undefined {
@@ -432,6 +434,7 @@ export function createLauncherDevAdapter(
       threadEnvironmentStatePath: join(runtimeStateRoot, "thread-environments.json"),
       lunaCheckpointStatePath: join(runtimeStateRoot, "luna-checkpoints.json"),
       turnTimeoutMs: 60 * 60_000,
+      useSavedChats: config.useSavedChats,
       ...(config.experimentalBiggerContext
         ? { experimentalBiggerContext: true }
         : {}),

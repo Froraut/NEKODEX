@@ -17,6 +17,27 @@
 
 export const BRIDGE_COMPACTION_PREFIX = "ocx1:";
 
+/** Native compact.rs consumes assistant text; compact_remote_v2 consumes a compaction item. */
+export function isNativeTextCompaction(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const client = (body as Record<string, unknown>).client_metadata;
+  if (!client || typeof client !== "object" || Array.isArray(client)) return false;
+  let metadata: unknown = (client as Record<string, unknown>)["x-codex-turn-metadata"];
+  if (typeof metadata === "string") {
+    try { metadata = JSON.parse(metadata); } catch { return false; }
+  }
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
+  const request = metadata as Record<string, unknown>;
+  if (request.request_kind !== "compaction") return false;
+  const protocol = request.compaction;
+  if (!protocol || typeof protocol !== "object" || Array.isArray(protocol)
+    || (protocol as Record<string, unknown>).implementation !== "responses"
+    || (protocol as Record<string, unknown>).strategy !== "memento") {
+    throw new Error("Unsupported native text compaction protocol; expected responses/memento");
+  }
+  return true;
+}
+
 /** Mirrors codex-rs core/templates/compact/prompt.md (the local-compaction instruction). */
 export const COMPACT_PROMPT = `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
 
