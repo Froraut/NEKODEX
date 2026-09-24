@@ -203,6 +203,8 @@ export async function responseDomSnapshot(
       tag: string;
       html: string;
       text: string;
+      pendingLinks: boolean;
+      linkTargets: string[];
       group?: string;
       sourceStart?: number;
       sourceEnd?: number;
@@ -245,6 +247,17 @@ export async function responseDomSnapshot(
         ? { sourceStart, sourceEnd }
         : undefined;
     };
+    const linkState = (element: HTMLElement): { pendingLinks: boolean; linkTargets: string[] } => {
+      const anchors = [element, ...element.querySelectorAll<HTMLElement>("a")]
+        .filter(candidate => candidate.tagName === "A" && Boolean(candidate.textContent?.trim()));
+      return {
+        pendingLinks: anchors.some(candidate => !candidate.getAttribute("href")?.trim()),
+        linkTargets: anchors.flatMap(candidate => {
+          const href = candidate.getAttribute("href");
+          return href?.trim() ? [href] : [];
+        }),
+      };
+    };
     const appendBlockSegment = (child: HTMLElement) => {
       const tag = child.tagName.toLowerCase();
       const childRange = sourceRange(child);
@@ -256,6 +269,7 @@ export async function responseDomSnapshot(
           tag,
           html: child.outerHTML,
           text: markdownText(child),
+          ...linkState(child),
           ...childRange,
         });
         return;
@@ -276,6 +290,7 @@ export async function responseDomSnapshot(
           tag: `${tag}:item`,
           html: shell.outerHTML,
           text: markdownText(item),
+          ...linkState(item),
           group,
           ...sourceRange(item),
         });
@@ -289,6 +304,7 @@ export async function responseDomSnapshot(
           tag: "root",
           html: markdownRoot.innerHTML,
           text: markdownText(markdownRoot),
+          ...linkState(markdownRoot),
           ...sourceRange(markdownRoot),
         });
         return;
@@ -313,6 +329,7 @@ export async function responseDomSnapshot(
             tag: "inline",
             html: shell.outerHTML,
             text,
+            ...linkState(shell),
             ...(ranges.length > 0 ? {
               sourceStart: Math.min(...ranges.map(range => range.sourceStart)),
               sourceEnd: Math.max(...ranges.map(range => range.sourceEnd)),
@@ -341,7 +358,8 @@ export async function responseDomSnapshot(
       ...(segment.group ? { group: segment.group } : {}),
       ...(segment.sourceStart !== undefined ? { sourceStart: segment.sourceStart } : {}),
       ...(segment.sourceEnd !== undefined ? { sourceEnd: segment.sourceEnd } : {}),
-      streamable: index < segments.length - 1,
+      streamable: index < segments.length - 1 && !segment.pendingLinks,
+      linkTargets: segment.linkTargets,
     }));
     const rendered = renderedRoots.at(-1);
     const completionAction = rendered

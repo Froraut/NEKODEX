@@ -71,6 +71,7 @@ class AccountBrowserPool {
     this.surfaceActive = true;
     this.destroyed = false;
     this.turnAdmission = { open: true, reason: null };
+    this.turnAdmissionBlockers = new Map();
     this.turnAdmissionRevision = 0;
     this.inspectionsPaused = false;
     this.addingAccount = false;
@@ -298,10 +299,19 @@ class AccountBrowserPool {
     return this.turnAdmission;
   }
   openTurnAdmission() {
+    const blocker = this.turnAdmissionBlockers.values().next();
+    if (!blocker.done) return this.closeTurnAdmission(blocker.value);
     this.inspectionsPaused = false;
     this.turnAdmission = { open: true, reason: null };
     this.turnAdmissionRevision++;
     return this.turnAdmission;
+  }
+  setTurnAdmissionBlocker(owner, reason) {
+    if (reason === null) this.turnAdmissionBlockers.delete(owner);
+    else {
+      this.turnAdmissionBlockers.set(owner, reason);
+      this.closeTurnAdmission(reason);
+    }
   }
   assertTurnAdmission() {
     if (!this.turnAdmission.open) throw new Error(`NEKODEX is preparing ${this.turnAdmission.reason}; retry after it finishes`);

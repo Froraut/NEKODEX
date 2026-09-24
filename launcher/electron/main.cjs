@@ -4,6 +4,7 @@ const { createChromeProfileChoice } = require("./chrome-profile-choice.cjs");
 const { createProfileFirstLogin } = require("./profile-first-login.cjs");
 const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
+const { syncConversationPreferences, changeConversationPreference } = require("./conversation-preferences.cjs");
 const { createCodexAccountTools } = require("./codex-account-tools.cjs");
 const { MANUAL_CONNECTOR_NAME, automaticConnectorName, isLegacyConnectorName } = require("./connector-identity.cjs");
 const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapacity } = require("./browser-capacity.cjs");
@@ -909,6 +910,21 @@ function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(
     ipcMain, logger, channel, lifecycleAdmission.guard(channel, handler), authorize,
   );
+  const syncConversationState = owner => {
+    if (owner) lifecycleAdmission.assertOwner(owner);
+    return syncConversationPreferences({
+      stateStore,
+      config: runtimeHost.runtimeConfigSnapshot().config,
+      browserHost,
+      busy: (!owner && lifecycleAdmission.busy()) || Boolean(runtimeHost.currentOperation()),
+      publish: state => send("launcher:state-changed", state),
+    });
+  };
+  const changeConversationState = (label, change) => {
+    if (shutdownInProgress || quitting || exitCommitted) throw new Error("NEKODEX is shutting down");
+    return changeConversationPreference({ lifecycleAdmission, browserHost, runtimeHost, label, change,
+      sync: syncConversationState, shouldReopen: () => !exitCommitted });
+  };
   handle("launcher:snapshot", async () => ({
     profile: LAUNCHER_PROFILE.kind,
     profilePaths: {
@@ -916,7 +932,11 @@ function registerIpc({ logger, stateStore }) {
       codexHome: LAUNCHER_PROFILE.codexHome,
       userData: launcherUserData,
     },
-    state: lifecycleAdmission.busy() ? stateStore.read() : ensureRuntimeProofCurrent(stateStore),
+    state: (() => {
+      if (lifecycleAdmission.busy()) return stateStore.read();
+      syncConversationState();
+      return ensureRuntimeProofCurrent(stateStore);
+    })(),
     proModelVersion: runtimeHost.proModelVersion(),
     compactionModel: runtimeHost.compactionModel(),
     browserCapacity: browserCapacitySnapshot(),
@@ -1338,13 +1358,11 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:fresh-conversation", async (_event, enabled) => {
     if (typeof enabled !== "boolean") throw new Error("Fresh conversation per turn must be a boolean");
-    if (browserHost.activeTraceId || browserHost.currentOperation()) {
-      throw new Error("Finish or cancel active ChatGPT turns before changing Fresh conversation per turn");
-    }
-    const result = await runtimeHost.setFreshConversation(enabled === true);
-    const state = stateStore.update({ experimentalFreshConversationPerTurn: result.enabled });
-    send("launcher:state-changed", state);
-    return state;
+    return changeConversationState("browser conversation retention change", () => runtimeHost.setFreshConversation(enabled));
+  });
+  handle("launcher:use-saved-chats", async (_event, enabled) => {
+    if (typeof enabled !== "boolean") throw new Error("Saved chat preference must be a boolean");
+    return changeConversationState("saved ChatGPT conversation change", () => runtimeHost.setUseSavedChats(enabled));
   });
   handle("launcher:cancel-context-change", async () => contextChangeQueue.cancel());
   handle("launcher:confirm-codex-models", async () => {

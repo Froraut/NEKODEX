@@ -104,7 +104,7 @@ class BrowserManualTurns {
     this.context.clipboard.writeText(prompt);
   }
 
-  beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false) {
+  beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false, useSavedChats = false) {
     if (this.context.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.context.manualOperation}`);
     }
@@ -118,6 +118,7 @@ class BrowserManualTurns {
       throw new Error(`Manual resume prompt must contain between 1 and ${MAX_MANUAL_PROMPT_CHARS} characters`);
     }
     if (typeof compaction !== "boolean") throw new Error("Manual compaction flag must be boolean");
+    if (typeof useSavedChats !== "boolean") throw new Error("Manual saved-chat policy must be boolean");
     const configuredSubmitSec = this.context.submitTimeoutSec();
     const submitMs = Number.isInteger(configuredSubmitSec) && configuredSubmitSec >= 30 && configuredSubmitSec <= 600
       ? configuredSubmitSec * 1000 : 120_000;
@@ -159,6 +160,9 @@ class BrowserManualTurns {
       if (sameTrace.manualSubmitTimeoutMs !== manualSubmitTimeoutMs) {
         throw new Error(`Manual mode turn ${traceId} was retried with a different compaction mode`);
       }
+      if ((sameTrace.useSavedChats === true) !== useSavedChats) {
+        throw new Error(`Manual mode turn ${traceId} was retried with a different saved-chat policy`);
+      }
       const retryPrompt = sameTrace.manualConversationReused ? resumePrompt : prompt;
       if (typeof retryPrompt !== "string"
         || sameTrace.promptDigest !== manualPromptDigest(retryPrompt)) {
@@ -186,6 +190,9 @@ class BrowserManualTurns {
     }
     let tab = retained[0];
     if (tab) {
+      if ((tab.useSavedChats === true) !== useSavedChats) {
+        throw new Error(`Manual mode conversation ${conversationKey} was started with a different saved-chat policy`);
+      }
       if (typeof resumePrompt !== "string" || !resumePrompt) {
         throw new Error("A retained Manual mode conversation requires an incremental resume prompt");
       }
@@ -210,6 +217,7 @@ class BrowserManualTurns {
         conversationKey,
         prompt,
         manualSubmitTimeoutMs,
+        useSavedChats,
       );
       try {
         this.writeManualPrompt(prompt);

@@ -64,6 +64,8 @@ export interface AppConfig {
   experimentalSkillAttachments: boolean;
   allowWebSubagents: boolean;
   experimentalFreshConversationPerTurn: boolean;
+  /** Use saved ChatGPT history for Web conversations instead of Temporary Chat, independent of fresh-per-turn. */
+  useSavedChats: boolean;
   /** Owned async connector schema. New Automatic Full setups use Native6; saved Native5 remains supported. */
   experimentalAsyncToolOperations: boolean;
   /** Explicitly install the additional Pro-sized model row while Manual mode is active. */
@@ -155,6 +157,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     experimentalSkillAttachments: false,
     allowWebSubagents: false,
     experimentalFreshConversationPerTurn: false,
+    useSavedChats: false,
     experimentalAsyncToolOperations: mode === "full",
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
@@ -525,6 +528,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.experimentalFreshConversationPerTurn !== undefined && typeof parsed.experimentalFreshConversationPerTurn !== "boolean") {
     throw new Error(`Invalid experimentalFreshConversationPerTurn in ${path}`);
   }
+  if (parsed.useSavedChats !== undefined && typeof parsed.useSavedChats !== "boolean") {
+    throw new Error(`Invalid useSavedChats in ${path}`);
+  }
   if (parsed.experimentalAsyncToolOperations !== undefined
     && typeof parsed.experimentalAsyncToolOperations !== "boolean") {
     throw new Error(`Invalid experimentalAsyncToolOperations in ${path}`);
@@ -574,6 +580,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     experimentalSkillAttachments,
     allowWebSubagents,
     experimentalFreshConversationPerTurn,
+    useSavedChats: parsed.useSavedChats === true,
     experimentalAsyncToolOperations,
     zeroRiskProEnabled,
   } as AppConfig;
@@ -638,6 +645,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       allowWebSubagents: config.allowWebSubagents,
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       experimentalFreshConversationPerTurn: manual ? false : config.experimentalFreshConversationPerTurn,
+      useSavedChats: config.useSavedChats,
       experimentalAsyncToolOperations: manual ? false : config.experimentalAsyncToolOperations,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,

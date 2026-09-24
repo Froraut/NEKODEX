@@ -81,6 +81,10 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     && typeof config.experimentalBiggerContext !== "boolean") {
     throw new Error("Runtime configuration has an invalid experimentalBiggerContext");
   }
+  if (config.useSavedChats !== undefined && typeof config.useSavedChats !== "boolean") {
+    throw new Error("Runtime configuration has an invalid useSavedChats");
+  }
+  if (config.useSavedChats === undefined) config.useSavedChats = false;
   if (config.compactionModel !== undefined
     && config.compactionModel !== "extra-high"
     && config.compactionModel !== "5.6-pro"

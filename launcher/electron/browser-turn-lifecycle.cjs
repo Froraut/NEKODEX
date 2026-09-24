@@ -53,7 +53,8 @@ class BrowserTurnLifecycle {
     publishBrowserSnapshot(this.presentation);
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel) {
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal) {
+    signal?.throwIfAborted();
     if (this.tabs.size >= this.context.maxTabs
       && !this.evictOldestReclaimableTurnTab()) {
       throw new Error(
@@ -78,6 +79,7 @@ class BrowserTurnLifecycle {
       authIdentityEpoch: this.context.authIdentityEpoch,
       authPrincipalFingerprint: this.context.authPrincipalFingerprint,
       helperPid,
+      acquisitionSignal: signal,
       view,
       status: "running",
       ordinal,
@@ -99,8 +101,23 @@ class BrowserTurnLifecycle {
     this.events.owned?.({ accountId: this.context.accountId, traceId, helperPid, tabId: id, surfaceId, taskRecordId });
     this.presentation.syncPowerSaveBlocker();
     this.views.attach(tab);
+    let rejectAborted;
+    const aborted = new Promise((_, reject) => { rejectAborted = reject; });
+    const onAbort = () => {
+      let cleanupError;
+      try {
+        if (this.tabs.get(tab.id) === tab) this.removeTurnTab(tab, true);
+      } catch (error) { cleanupError = error; }
+      const reason = signal.reason ?? new DOMException("Browser turn acquisition cancelled", "AbortError");
+      rejectAborted(cleanupError
+        ? new AggregateError([reason, cleanupError], "Browser acquisition cancellation could not release its tab")
+        : reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      await this.views.initialize(tab);
+      signal?.throwIfAborted();
+      await Promise.race([this.views.initialize(tab, signal), aborted]);
+      signal?.throwIfAborted();
       tab.initializingSurface = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -109,8 +126,15 @@ class BrowserTurnLifecycle {
         traceId: tab.traceId,
         message,
       });
-      this.removeTurnTab(tab, true);
+      if (this.tabs.get(tab.id) === tab) {
+        try { this.removeTurnTab(tab, true); }
+        catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], "Browser tab initialization could not release its owner");
+        }
+      }
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
     }
     return tab;
   }
@@ -375,7 +399,9 @@ class BrowserTurnLifecycle {
     requireRetainedConversation = false,
     taskProgressVersion,
     taskModel = null,
+    signal,
   ) {
+    signal?.throwIfAborted();
     if (this.context.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.context.manualOperation}`);
     }
@@ -417,6 +443,7 @@ class BrowserTurnLifecycle {
       // A departing CDP helper can clear Chromium's emulation while Electron
       // still caches its dimensions. Restore it for the new owner before use.
       existing.deviceEmulationDirty ||= reused || existing.helperPid !== helperPid;
+      if (reused) existing.acquisitionSignal = signal;
       existing.helperPid = helperPid;
       existing.traceId = traceId;
       this.events.owned?.({ accountId: this.context.accountId, traceId, helperPid, tabId: existing.id,
@@ -452,7 +479,8 @@ class BrowserTurnLifecycle {
       error.code = "retained_conversation_unavailable";
       throw error;
     }
-    const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel);
+    const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal);
+    signal?.throwIfAborted();
     if (reveal) this.presentation.selectedTabId = tab.id;
     if (reveal) this.presentation.show();
     else this.presentation.syncViewVisibility();
@@ -461,6 +489,22 @@ class BrowserTurnLifecycle {
     this.presentation.writeDescriptor();
     return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false, connectorBound: false,
       taskProgressVersion: 1, taskProgressSequence: 0 };
+  }
+
+  releaseUnclaimedTurn(traceId, helperPid, surfaceId, signal) {
+    const tab = [...this.tabs.values()].find(candidate => candidate.traceId === traceId
+      && candidate.helperPid === helperPid && candidate.surfaceId === surfaceId);
+    if (!tab || tab.status !== "running" || tab.acquisitionSignal !== signal) return false;
+    this.removeTurnTab(tab, true);
+    return true;
+  }
+
+  confirmTurnAcquisition(traceId, helperPid, surfaceId, signal) {
+    const tab = [...this.tabs.values()].find(candidate => candidate.traceId === traceId
+      && candidate.helperPid === helperPid && candidate.surfaceId === surfaceId);
+    if (tab?.acquisitionSignal !== signal) return false;
+    tab.acquisitionSignal = undefined;
+    return true;
   }
 
   async endTurn(

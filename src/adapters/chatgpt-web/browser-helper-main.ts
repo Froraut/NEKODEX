@@ -33,12 +33,14 @@ interface RunMessage {
     browserDiagnosticsPath?: string;
     turnTimeoutMs: number;
     autoApproveToolCalls: boolean;
+    useSavedChats?: boolean;
   };
   turn: {
     traceId: string;
     modelId: string;
     requestedModel?: string;
     reasoning?: string;
+    modelFamily?: "5.6" | "6";
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
     resumeAvailable?: boolean;
@@ -229,6 +231,7 @@ async function run(message: RunMessage): Promise<void> {
       browserDiagnosticsPath: message.config.browserDiagnosticsPath,
       turnTimeoutMs: message.config.turnTimeoutMs,
       autoApproveToolCalls: message.config.autoApproveToolCalls,
+      useSavedChats: message.config.useSavedChats === true,
     },
   };
   const abortController = new AbortController();
@@ -253,6 +256,7 @@ async function run(message: RunMessage): Promise<void> {
     modelId: message.turn.modelId,
     requestedModel: message.turn.requestedModel,
     reasoning: message.turn.reasoning,
+    ...(message.turn.modelFamily ? { modelFamily: message.turn.modelFamily } : {}),
     capabilities: message.turn.capabilities,
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
     prepare: prepareSelected,

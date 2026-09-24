@@ -15,9 +15,12 @@ Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) a
 | Add a turn runtime capability | `src/adapters/chatgpt-web/turn-runtime.ts` | Adapter orchestration stays in `index.ts`; session replay is in `turn-session.ts`; cross-session retirement stays in `turn-execution.ts`. |
 | Change response event delivery | `src/adapters/chatgpt-web/turn-round-delivery.ts` | Journal the whole event batch before observer delivery; reconnect must not submit another browser turn. |
 | Extend the broker protocol | `src/adapters/chatgpt-web/turn-broker-protocol.ts` and `turn-broker-client.ts` | Authorization and turn transitions stay in `turn-broker.ts`; asynchronous result retention is in `turn-broker-owned-operations.ts`. |
+| Change the Unix broker endpoint lifecycle | `src/adapters/chatgpt-web/turn-broker.ts` | Bind a private listener and publish its hard-linked public endpoint. Check inode ownership on cleanup; never move a replacement runtime's live socket to protect an old close. Verify reachability before and after that close. |
 | Add a Web tool | `src/adapters/chatgpt-web/mcp-tool-routing.ts` and `mcp-native-tools.ts` | MCP binding acquisition, cancellation and settlement stay in `mcp-server.ts`. A valid schema is not an authority grant. |
 | Support another environment envelope | `src/adapters/chatgpt-web/environment-envelope.ts` | Message provenance stays in `environment.ts`; ordered authority resolution is in `thread-environment-resolver.ts`. |
 | Change picker/model behavior | `src/adapters/chatgpt-web/browser-model-selection.ts` | Durable send activation and browser/page ownership stay in `browser-worker.ts`. Pre-send verification must not repair or clear a prepared draft. |
+| Add a named Web model or selectable effort | `src/chatgpt-web-models.ts`, `src/model-catalog.ts`, `src/server.ts` | Keep saved fixed-mode identities and native model order. A grouped row requires identical context/compaction budgets; explicit family proof belongs to browser selection, not an advertised name. |
+| Change saved versus Temporary Chat policy | `src/config.ts`, `src/setup-policy.ts`, `launcher/electron/conversation-preferences.cjs` | Carry the default-off preference through provider/helper config. Synchronize only committed settings; release ready documents through the account pool and preserve running work. Keep fresh-per-turn independent. |
 | Change response completion timing | `src/adapters/chatgpt-web/browser-response-policy.ts` | External progress suspends terminal grace windows; it does not grant an unlimited task deadline. |
 | Change ChatGPT DOM selectors or extraction | `browser-submission-dom.ts`, `browser-response-dom.ts`, `browser-dom-revision.ts` | Submission history and bound-response caches retain their caller-owned identity. Browser send/rebind/timeout decisions remain in `browser-worker.ts`. |
 | Change visible reasoning/commentary projection | `browser-visible-trace.ts` | Preserve append-only deltas and retained-byte bounds; DOM acquisition is separate. |
@@ -58,6 +61,7 @@ Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) a
 | Read task history by ID | `launcher/electron/browser-task-ledger.cjs` | Its index references the same records and updates after durable writes. Preserve failed-write, restart, dismissal and uncertain-submission semantics. |
 | Add a usage report section | `useUsageReport.ts`, `UsageCalendar.tsx`, `launcher/electron/usage-report.cjs` | Query identity, report projection and durable storage remain separate. Reuse the filtered receipt set and one sort per duration summary; preserve unknown coverage. Log changes must not trigger usage recomputation. |
 | Add synthetic DEV context | `src/dev-chat/context-fixtures.ts` | Named chat persistence remains in `session.ts`; generated content stays explicitly inert. |
+| Exercise saved/temporary chats in DEV | `src/dev-chat/cli.ts`, `driver.ts`, `session.ts` | DEV setup persists `--saved-chats` or `--temporary-chats` in its isolated config. Keep the default model unchanged; every advertised DEV model must resolve through the shared route owner. |
 
 ## Working across boundaries
 

@@ -93,6 +93,8 @@ Setup options:
   --inline-skills             Keep selected skills inline (default)
   --fresh-conversation         Start each automatic turn with complete context in a new chat
   --retained-conversation      Reuse the current conversation (default)
+  --saved-chats                Keep task conversations in ChatGPT history
+  --temporary-chats            Use Temporary Chat for task conversations (default)
   --allow-web-subagents        Allow delegation from ChatGPT Web tasks
   --no-web-subagents           Disable Web delegation; native models are unchanged
   --standard-context           Disable experimental multi-message context
@@ -284,6 +286,10 @@ async function setupCommand(args: string[]): Promise<void> {
   const retainedConversation = takeFlag(args, "--retained-conversation");
   if (freshConversation && retainedConversation) throw new Error("Choose fresh or retained conversations");
   if (freshConversation || retainedConversation) options.experimentalFreshConversationPerTurn = freshConversation;
+  const savedChats = takeFlag(args, "--saved-chats");
+  const temporaryChats = takeFlag(args, "--temporary-chats");
+  if (savedChats && temporaryChats) throw new Error("Choose --saved-chats or --temporary-chats");
+  if (savedChats || temporaryChats) options.useSavedChats = savedChats;
   const allowWebSubagents = takeFlag(args, "--allow-web-subagents");
   const noWebSubagents = takeFlag(args, "--no-web-subagents");
   if (allowWebSubagents && noWebSubagents) throw new Error("Choose one Web subagent setting");
@@ -429,6 +435,9 @@ async function routeCommand(args: string[]): Promise<void> {
         : undefined;
   if (!result) throw new Error(`Unknown route action: ${action}`);
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if ("changed" in result && result.changed) {
+    process.stderr.write("Fully quit Codex, including background processes, and reopen it to reload the route.\n");
+  }
 }
 
 async function subagentsCommand(args: string[]): Promise<void> {

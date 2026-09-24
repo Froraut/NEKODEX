@@ -422,6 +422,8 @@
   "manualSubmitTimeBody": "確認已傳送前貼上提示並上傳附件的時間。變更適用於新回合。",
   "freshConversation": "每回合建立新聊天（實驗性）",
   "freshConversationBody": "每回合在新聊天中傳送完整任務上下文。增加輸入量，避免重用舊聊天。保留本機工具連線。",
+  "savedChats": "在 ChatGPT 中儲存聊天",
+  "savedChatsBody": "啟用後，聊天會儲存在 ChatGPT 歷史紀錄中。ChatGPT 可能會套用已儲存的記憶與自訂指示。",
   "asyncToolOperations": "長時間執行工具（Native5）· 實驗性",
   "asyncToolOperationsBody": "適用於可能執行超過 90 秒的工具。使用前請建立並驗證獨立的 {connector} 連接器。新的 Full 設定預設啟用此模式；現有連接器識別保持不變。分派後取消只會停止觀察；外部動作可能繼續。",
   "asyncToolOperationsUnavailable": "僅在自動 Full 設定完成且啟動器閒置時可用。不影響模型和工作區路由。",

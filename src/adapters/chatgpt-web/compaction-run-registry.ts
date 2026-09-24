@@ -200,11 +200,15 @@ export function createCompactionRunRegistry(now: () => number = () => Date.now()
     return cancelStructuredCompactionRuns(run => run.traceIds.has(traceId), reason);
   }
 
+  function beginCancelStructuredCompactionTrace(traceId: string, reason: Error): { cancelled: number; settlement: Promise<void> } {
+    return beginCancellation(run => run.traceIds.has(traceId), reason);
+  }
+
   /** Cancel every active compaction owner and wait for its browser/helper cleanup. */
   function cancelAllStructuredCompactions(reason: Error): Promise<number> {
     return cancelStructuredCompactionRuns(() => true, reason);
   }
-  return { activeStructuredCompactionCount, existingStructuredCompactionRun, assertStructuredCompactionNotInterrupted, runStructuredCompactionOnce, cancelStructuredCompactionNativeTurn, cancelStructuredCompactionTrace, cancelAllStructuredCompactions };
+  return { activeStructuredCompactionCount, existingStructuredCompactionRun, assertStructuredCompactionNotInterrupted, runStructuredCompactionOnce, cancelStructuredCompactionNativeTurn, beginCancelStructuredCompactionTrace, cancelStructuredCompactionTrace, cancelAllStructuredCompactions };
 }
 
-export const { activeStructuredCompactionCount, existingStructuredCompactionRun, assertStructuredCompactionNotInterrupted, runStructuredCompactionOnce, cancelStructuredCompactionNativeTurn, cancelStructuredCompactionTrace, cancelAllStructuredCompactions } = createCompactionRunRegistry();
+export const { activeStructuredCompactionCount, existingStructuredCompactionRun, assertStructuredCompactionNotInterrupted, runStructuredCompactionOnce, cancelStructuredCompactionNativeTurn, beginCancelStructuredCompactionTrace, cancelStructuredCompactionTrace, cancelAllStructuredCompactions } = createCompactionRunRegistry();

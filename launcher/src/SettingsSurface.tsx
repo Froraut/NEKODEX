@@ -246,6 +246,11 @@ export function SettingsSurface({
             disabled={proModelBusy || !snapshot.state.coreSetupComplete}
             onChange={enabled => void savePreference(() => api!.setWebSubagents(enabled))} />
         </SettingRow>
+        <SettingRow body={copy.savedChatsBody} label={copy.savedChats}>
+          <Switch label={copy.savedChats} checked={snapshot.state.useSavedChats}
+            disabled={busy || !snapshot.state.coreSetupComplete}
+            onChange={enabled => void savePreference(() => api!.setUseSavedChats(enabled))} />
+        </SettingRow>
         <SettingRow body={copy.freshConversationBody} label={copy.freshConversation}>
           <Switch label={copy.freshConversation} checked={snapshot.state.experimentalFreshConversationPerTurn}
             disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}

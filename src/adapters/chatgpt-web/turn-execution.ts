@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CodexParsedRequest } from "../../types";
-import { chatGptBrowserTabClosedError, chatGptTurnSupersededError } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptTurnSupersededError } from "./adapter-error";
 import { canRetireDetachedToolDelivery } from "./browser-lifecycle-safety";
 import { MAX_CHATGPT_OUTSTANDING_TURNS } from "./concurrency";
 import {
@@ -44,6 +44,7 @@ function executionKey(parsed: CodexParsedRequest, payload: unknown): string {
   return createHash("sha256").update(JSON.stringify({
     modelId: parsed.modelId,
     reasoning: parsed.options.reasoning,
+    ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
     payload,
   })).digest("hex");
 }
@@ -217,6 +218,18 @@ export class ChatGptTurnSessions {
         for (const entry of this.entries.values()) retained += entry.retainedReplayBytes();
         assertByteLimit(retained, this.maxReplayBytes, "ChatGPT session replay registry");
       },
+    });
+    void session.browserOutcome.then(outcome => {
+      const error = outcome.type === "error" && outcome.error instanceof ChatGptWebAdapterError
+        ? outcome.error : undefined;
+      console.info(`[chatgpt-web] browser_settled ${JSON.stringify({
+        traceId: session.traceId,
+        outcome: outcome.type,
+        compaction: session.runtime.usageInput?._compactionRequest === true,
+        ...(!session.runtime.usageInput?._compactionRequest
+          ? { submission: session.runtime.submission?.phase ?? "unknown" } : {}),
+        ...(error ? { code: error.code, retryable: error.retryable } : {}),
+      })}`);
     });
     this.entries.set(key, session);
     const conversationKey = session.conversationKey();
@@ -594,11 +607,17 @@ export class ChatGptTurnSessions {
   }
 
   async cancelTrace(traceId: string, reason = chatGptBrowserTabClosedError()): Promise<number> {
+    const cancellation = this.beginCancelTrace(traceId, reason);
+    await cancellation.settlement;
+    return cancellation.cancelled;
+  }
+
+  /** Revoke execution now and track physical cleanup separately from the UI receipt. */
+  beginCancelTrace(traceId: string, reason: Error): { cancelled: number; settlement: Promise<void> } {
     const sessions = [...this.entries.values()]
       .filter(session => session.traceId === traceId && session.isActive());
     for (const session of sessions) session.cancel(reason);
-    await Promise.all(sessions.map(session => session.physicalSettlement));
-    return sessions.length;
+    return { cancelled: sessions.length, settlement: Promise.all(sessions.map(session => session.physicalSettlement)).then(() => undefined) };
   }
 
   /**

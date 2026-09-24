@@ -215,6 +215,20 @@ test("manual edit retry survives Electron superseding the ChatGPT navigation", a
   assert.equal(observed.logs.some(([, event]) => event === "browser.manual_tab_navigation_superseded"), true);
 });
 
+test("Manual saved-chat policy navigates the new blank saved conversation", async () => {
+  const observed = manualTabNavigationFixture(new Error("unused"));
+  observed.tab.url = "https://chatgpt.com/";
+  let currentUrl = "about:blank";
+  observed.tab.view.webContents.getURL = () => currentUrl;
+  observed.tab.view.webContents.loadURL = async url => {
+    observed.calls.push(["load", url]);
+    currentUrl = url;
+  };
+  await observed.fixture.initializeManualTurnTab(observed.tab);
+  assert.deepEqual(observed.calls, [["load", IDLE_BROWSER_URL], ["load", "https://chatgpt.com/"]]);
+  assert.equal(observed.fixture.turnTabs.has(observed.tab.id), true);
+});
+
 test("manual ChatGPT navigation still fails closed on a real load failure", async () => {
   const failure = new Error("ERR_FAILED (-2) loading 'https://chatgpt.com/?temporary-chat=true'");
   failure.code = "ERR_FAILED";
@@ -866,6 +880,29 @@ test("authentication windows stay inside the launcher-owned browser partition", 
   assert.match(source, /createWindow:\s*\(options\)\s*=>\s*this\.createAuthView\(options,\s*url,\s*\{ referrer, postBody \}\)/);
   assert.match(source, /webContents:\s*options\.webContents/);
   assert.doesNotMatch(source, /loginWithSystemBrowser|captureSystemBrowserLogin|system_login_started/);
+});
+
+test("ordinary concurrent authentication checks share one browser probe", async () => {
+  let release;
+  let runs = 0;
+  const fixture = {
+    authProbeTail: Promise.resolve(),
+    defaultAuthProbe: null,
+    runAuthenticationProbe: async () => {
+      runs++;
+      await new Promise(resolve => { release = resolve; });
+      return { authenticated: true };
+    },
+  };
+  const first = BrowserHost.prototype.probeAuthentication.call(fixture);
+  const second = BrowserHost.prototype.probeAuthentication.call(fixture);
+  assert.equal(first, second);
+  await Promise.resolve();
+  assert.equal(runs, 1);
+  release();
+  await Promise.all([first, second]);
+  await BrowserHost.prototype.probeAuthentication.call({ ...fixture, runAuthenticationProbe: async () => { runs++; } });
+  assert.equal(runs, 2);
 });
 
 test("concurrent embedded login requests share one authentication operation", async () => {
@@ -2749,7 +2786,7 @@ function manualTurnFixture() {
     showWindow() {},
     show() {},
     writeDescriptor() {},
-    createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs) {
+    createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs, useSavedChats = false) {
       const tab = {
         id: `manual-${this.turnTabs.size + 1}`,
         traceId,
@@ -2761,6 +2798,7 @@ function manualTurnFixture() {
         label: `ChatGPT ${this.turnTabs.size + 1}`,
         manualState: "awaiting-user",
         manualSubmitTimeoutMs,
+        useSavedChats,
         manualDeadlineAt: Date.now() + manualSubmitTimeoutMs,
         manualDeadlineTimer: null,
         manualWaiters: new Set(),
@@ -2791,6 +2829,14 @@ test("manual start is idempotent and never exposes its private prompt in snapsho
   assert.equal(second.reused, true);
   assert.deepEqual(clipboardWrites, ["private prompt"]);
   assert.equal(JSON.stringify(fixture.snapshot()).includes("private prompt"), false);
+  for (const tab of fixture.turnTabs.values()) clearTimeout(tab.manualDeadlineTimer);
+});
+
+test("Manual retry cannot change saved-chat policy for an owned turn", () => {
+  const { fixture } = manualTurnFixture();
+  const lease = fixture.beginManualTurn("manual_saved_policy", process.pid, "private prompt", undefined, undefined, false, true);
+  assert.equal(fixture.turnTabs.get(lease.tabId).useSavedChats, true);
+  assert.throws(() => fixture.beginManualTurn("manual_saved_policy", process.pid, "private prompt", undefined, undefined, false, false), /saved-chat policy/);
   for (const tab of fixture.turnTabs.values()) clearTimeout(tab.manualDeadlineTimer);
 });
 

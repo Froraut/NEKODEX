@@ -127,6 +127,8 @@
   "newSessionWindowNoSessions": "当前窗口内尚未计入新会话。",
   "freshConversation": "每回合新建聊天（实验性）",
   "freshConversationBody": "每回合在新聊天中发送完整任务上下文。增加输入量，避免复用旧聊天。保留本地工具连接。",
+  "savedChats": "在 ChatGPT 中保存聊天",
+  "savedChatsBody": "开启后，聊天会保存在 ChatGPT 历史记录中。ChatGPT 可能会应用已保存的记忆和自定义指令。",
   "asyncToolOperations": "长时间运行的工具（Native5）· 实验性",
   "asyncToolOperationsBody": "适用于可能运行超过 90 秒的工具。使用前请创建并验证独立的 {connector} 连接器。新的 Full 配置默认启用此模式；现有连接器标识保持不变。分派后取消只会停止观察；外部操作可能继续。",
   "asyncToolOperationsUnavailable": "仅在自动 Full 设置完成且启动器空闲时可用。不会影响模型和工作区路由。",

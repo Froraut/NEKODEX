@@ -24,6 +24,7 @@ export interface LauncherState {
   experimentalAsyncToolOperations: boolean;
   allowWebSubagents: boolean;
   experimentalFreshConversationPerTurn: boolean;
+  useSavedChats: boolean;
   pendingBiggerContext?: boolean | null;
   contextChangeApplying?: boolean;
   contextChangeError?: string | null;
@@ -542,6 +543,7 @@ export interface LauncherApi {
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setFreshConversation(enabled: boolean): Promise<LauncherState>;
+  setUseSavedChats(enabled: boolean): Promise<LauncherState>;
   setWebSubagents(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setAsyncToolOperations(enabled: boolean): Promise<LauncherState>;

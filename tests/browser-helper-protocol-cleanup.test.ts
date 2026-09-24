@@ -36,7 +36,7 @@ test('invalid helper event rejects the reached turn and retires its exact child'
   const client = new LauncherBrowserHelperClient({ appName: 'Protocol fixture', browserHost: 'launcher',
     browserHostDescriptorPath: descriptor, browserHelperScriptPath: helper,
     storageStatePath: join(root, 'unused-state.json'), chromeExecutablePath: '/unused-chrome',
-    turnTimeoutMs: 1000, headed: true, autoApproveToolCalls: false });
+    turnTimeoutMs: 1000, headed: true, autoApproveToolCalls: false, useSavedChats: false });
   try {
     await expect(client.run({ traceId: 'protocol-cleanup-turn', modelId: 'chatgpt-web/medium',
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },

@@ -86,6 +86,7 @@ for (const localToolsEnabled of [false, true]) test(`automatic lifecycle shares 
     conversationNamespace: () => "fixture", manualInteraction: false,
   };
   const parsed: CodexParsedRequest = { modelId: CHATGPT_WEB_MODEL_ID, stream: true,
+    _chatgptModelFamily: "6",
     context: { messages: [{ role: "user", content: "Hello", timestamp: 1 }] }, options: { reasoning: "high" },
     _rawBody: { client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "fixture", turn_id: "turn" }) } },
   };
@@ -95,6 +96,7 @@ for (const localToolsEnabled of [false, true]) test(`automatic lifecycle shares 
     hooks: { onCompactionProgress() { acknowledgements++; } },
   });
   if (!captured) throw new Error("worker boundary was not reached");
+  expect(captured.modelFamily).toBe("6");
   await captured.prepare();
   if (runtime.mode === "tools") expect(await runtime.token).toBe("fixture-token");
   expect(runtime.submission?.phase).toBe("prepared");

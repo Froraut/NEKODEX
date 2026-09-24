@@ -13,6 +13,7 @@ import {
   type BrokerToolResult,
 } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint, defaultConfig, providerConfig } from "../src/config";
+import { requireChatGptWebModelRoute } from "../src/chatgpt-web-models";
 import { defaultDevChatModel, DEV_CHAT_TOOLS, DevChatDriver } from "../src/dev-chat/driver";
 import {
   createDevCoherentContextPayload,
@@ -158,6 +159,8 @@ test("coherent DEV MCP payloads are bounded, deterministic, and distinct", () =>
 });
 
 test("new DEV chats default to the cheapest account-supported browser model", () => {
+  expect(defaultConfig("full").useSavedChats).toBe(false);
+  expect(defaultConfig("full").experimentalFreshConversationPerTurn).toBe(false);
   expect(defaultDevChatModel({ ...defaultConfig("full"), solAvailable: true })).toBe("chatgpt-web/light");
   expect(defaultDevChatModel({ ...defaultConfig("full"), solAvailable: false })).toBe("chatgpt-web/luna");
   expect(DEV_CHAT_MODELS).toContain("chatgpt-web/think");
@@ -165,6 +168,30 @@ test("new DEV chats default to the cheapest account-supported browser model", ()
     ...defaultConfig("full"),
     browserInteractionMode: "manual",
   })).toBe("chatgpt-web/zero-risk");
+});
+
+test("every advertised DEV model resolves through the supported account and mode routes", () => {
+  const automatic = {
+    ...defaultConfig("full"),
+    browserInteractionMode: "automatic" as const,
+    solAvailable: true,
+    extraHighAvailable: true,
+    proAvailable: false,
+  };
+  const automaticPro = { ...automatic, proAvailable: true };
+  const lunaOnly = { ...automatic, solAvailable: false, extraHighAvailable: false };
+  const manual = { ...automatic, browserInteractionMode: "manual" as const };
+
+  for (const model of DEV_CHAT_MODELS) {
+    const config = model === "chatgpt-web/zero-risk"
+      ? manual
+      : model === "chatgpt-web/luna" || model === "chatgpt-web/think" || model === "chatgpt-web/gpt-5.6-luna"
+        ? lunaOnly
+        : model === "chatgpt-web/pro" || model === "chatgpt-web/gpt-5.6-pro" || model === "chatgpt-web/gpt-6-pro"
+          ? automaticPro
+          : automatic;
+    expect(requireChatGptWebModelRoute(model, config).slug).toBe(model);
+  }
 });
 
 test("Manual mode DEV chats open only the generic route", () => {
@@ -259,6 +286,7 @@ test("Bigger Context triples the DEV compaction window and fails closed for Luna
   }, store, factory, root, { biggerContext: true });
   expect(() => luna.open("luna-window", "chatgpt-web/luna")).toThrow("unavailable for Luna");
   expect(() => luna.open("think-window", "chatgpt-web/think")).toThrow("unavailable for Luna");
+  expect(() => luna.open("named-luna-window", "chatgpt-web/gpt-5.6-luna")).toThrow("unavailable for Luna");
   await Promise.all([normal.close(), bigger.close(), luna.close()]);
 });
 
@@ -270,18 +298,22 @@ test("browser-only DEV driver runs real turns without advertising simulated tool
     solAvailable: true,
     extraHighAvailable: true,
     proAvailable: false,
+    useSavedChats: true,
   };
-  const factory = (): ProviderAdapter => ({
-    name: "dev-browser-only-test",
-    async runTurn(parsed, _incoming, emit) {
-      expect(parsed.context.tools ?? []).toEqual([]);
-      emit({ type: "text_delta", text: "Browser-only DEV turn completed.", phase: "final_answer" });
-      emit({
-        type: "done", stopReason: "stop", endTurn: true,
-        usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105, estimated: true },
-      });
-    },
-  });
+  const factory = (provider: CodexProviderConfig): ProviderAdapter => {
+    expect(provider.chatgptWeb?.useSavedChats).toBe(true);
+    return {
+      name: "dev-browser-only-test",
+      async runTurn(parsed, _incoming, emit) {
+        expect(parsed.context.tools ?? []).toEqual([]);
+        emit({ type: "text_delta", text: "Browser-only DEV turn completed.", phase: "final_answer" });
+        emit({
+          type: "done", stopReason: "stop", endTurn: true,
+          usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105, estimated: true },
+        });
+      },
+    };
+  };
   const driver = new DevChatDriver(config, new DevChatStore(join(root, "chats")), factory, root);
   try {
     const state = driver.open("browser-only", "chatgpt-web/extra-high").state;

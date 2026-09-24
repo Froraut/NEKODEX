@@ -127,6 +127,8 @@
   "newSessionWindowNoSessions": "現在のウィンドウで数えられた新規セッションはありません。",
   "freshConversation": "ターンごとに新しいチャット（試験的）",
   "freshConversationBody": "毎ターン、新しいチャットに完全なタスク履歴を送ります。入力は増えますが、既存チャットを再利用しません。ローカルツール接続は維持します。",
+  "savedChats": "ChatGPT にチャットを保存",
+  "savedChatsBody": "有効にすると、チャットは ChatGPT の履歴に保存されます。ChatGPT が保存済みメモリやカスタム指示を適用する場合があります。",
   "asyncToolOperations": "長時間実行ツール（Native5）・試験的",
   "asyncToolOperationsBody": "90秒を超える可能性があるツール向けです。使用前に専用の {connector} コネクタを作成して検証してください。新しい Full 設定ではこのモードが既定で有効です。既存のコネクタ識別子は維持されます。実行開始後のキャンセルは監視のみを停止し、外部操作は続く場合があります。",
   "asyncToolOperationsUnavailable": "自動 Full セットアップ完了後、ランチャーが待機中の場合のみ利用できます。モデルとワークスペースのルートには影響しません。",

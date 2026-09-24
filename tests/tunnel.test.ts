@@ -6,6 +6,7 @@ import {
   tunnelClientInstallAction,
   tunnelCommandOutput,
   tunnelConnectLaunchError,
+  tunnelStopProcessExited,
 } from "../src/tunnel";
 
 test("pins the fixed tunnel-client and migrates only the previously shipped version", () => {
@@ -30,6 +31,17 @@ test("Windows tunnel install cleanup retries transient file locks with bounded b
   });
   expect(attempts).toBe(4);
   expect(waits).toEqual([10, 20, 30]);
+});
+
+test("stop timeout is accepted only when the exact reported process has exited", () => {
+  const receipt = JSON.stringify({ alias: "ours", stop_error: "process 4242 did not exit after SIGTERM" });
+  expect(tunnelStopProcessExited(receipt, "ours", pid => {
+    expect(pid).toBe(4242);
+    throw Object.assign(new Error("gone"), { code: "ESRCH" });
+  })).toBe(true);
+  expect(tunnelStopProcessExited(receipt, "other", () => { throw new Error("unexpected probe"); })).toBe(false);
+  expect(tunnelStopProcessExited(receipt, "ours", () => {})).toBe(false);
+  expect(tunnelStopProcessExited("stopped", "ours", () => { throw new Error("unexpected probe"); })).toBe(false);
 });
 
 describe("tunnel status boundary", () => {

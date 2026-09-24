@@ -966,7 +966,7 @@ describe("reversible native Codex route integration", () => {
     expect(() => readFileSync(cachePath, "utf8")).toThrow();
   });
 
-  test("requires explicit replacement and preserves every non-port route assignment", () => {
+  test("requires an openai provider even when replacing an existing route", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = `model = "gpt-5.6-sol"\nmodel_provider = "existing-provider"\nopenai_base_url = "http://127.0.0.1:9999/v1"\nmodel_catalog_json = "/tmp/native.json"\n\n[features]\ngoals = true\n`;
@@ -974,14 +974,10 @@ describe("reversible native Codex route integration", () => {
     const config = nativeConfig("full");
 
     expect(() => installCodexIntegration(config)).toThrow("--replace-codex-route");
-    installCodexIntegration(config, { replaceExistingRoute: true });
-    const installed = readFileSync(configPath, "utf8");
-    expect(installed).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
-    expect(installed).toContain('model_provider = "existing-provider"');
-    expect(installed).toContain('model_catalog_json = "/tmp/native.json"');
-
-    uninstallCodexIntegration();
+    expect(() => preflightCodexIntegration(config, { replaceExistingRoute: true })).toThrow("built-in openai provider");
+    expect(() => installCodexIntegration(config, { replaceExistingRoute: true })).toThrow("built-in openai provider");
     expect(readFileSync(configPath, "utf8")).toBe(original);
+    expect(existsSync(getCodexJournalPath())).toBe(false);
   });
 
   test("explicit setup restores a removed hook without discarding the current Codex config", () => {
@@ -1065,7 +1061,7 @@ describe("reversible native Codex route integration", () => {
     const configPath = join(codexHome, "config.toml");
     const original = [
       'model = "gpt-5.6-sol"',
-      'model_provider = "first-provider"',
+      'model_provider = "openai"',
       'model_catalog_json = "/tmp/first.json"',
       "",
       "[features]",
@@ -1077,7 +1073,7 @@ describe("reversible native Codex route integration", () => {
 
     installCodexIntegration(nativeConfig("full"));
     const userEdited = readFileSync(configPath, "utf8")
-      .replace('model_provider = "first-provider"', 'model_provider = "second-provider"')
+      .replace('model_provider = "openai"', 'model_provider = "second-provider"')
       .replace('model_catalog_json = "/tmp/first.json"', 'model_catalog_json = "/tmp/second.json"')
       .replace("multi_agent = true", "multi_agent = false");
     writeFileSync(configPath, userEdited);

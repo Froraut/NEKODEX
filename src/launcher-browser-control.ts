@@ -116,7 +116,8 @@ export type LauncherTurnActivity =
         | "model_unavailable" | "tool_timeout" | "browser_failure" | "other";
     };
 
-export const LAUNCHER_TURN_START_TIMEOUT_MS = 5_000;
+// The launcher can spend ten seconds bootstrapping its idle document before ownership marking.
+export const LAUNCHER_TURN_START_TIMEOUT_MS = 30_000;
 export const LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS = 10_000;
 export const LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS = 5_000;
 export const LAUNCHER_TURN_END_TIMEOUT_MS = 15_000;
@@ -128,6 +129,8 @@ export interface LauncherManualTurnOwner {
 
 export interface LauncherManualTurnStart extends LauncherManualTurnOwner {
   prompt: string;
+  /** Per-turn history policy; omitted by older clients means Temporary Chat. */
+  useSavedChats?: boolean;
   /** Used only when the exact retained ChatGPT conversation already owns the accumulated history. */
   resumePrompt?: string;
   conversationKey?: string;
@@ -482,6 +485,10 @@ export async function notifyLauncherTurn(
       return {};
     } catch (error) {
       if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException('Queued turn aborted', 'AbortError');
+      if (controller.signal.aborted) {
+        ambiguousError = new Error(`Launcher browser control ${activity.phase} timed out after ${timeoutMs}ms`);
+        continue;
+      }
       if (error instanceof LauncherBrowserTurnCancelledError
         || error instanceof LauncherAccountCooldownError
         || error instanceof LauncherRetainedConversationUnavailableError

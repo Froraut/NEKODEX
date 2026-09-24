@@ -25,7 +25,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
-import { isAcceptedCompactionContinuation } from "./compaction-continuation";
+import { isAcceptedCompactionContinuation, recoverCompactionInstruction } from "./compaction-continuation";
 import { clearRetryableTurnHandoff, isAcceptedRetryContinuation } from "./retry-continuation";
 import {
   clientTurnMetadataFromBody,
@@ -108,14 +108,22 @@ function rawMessageText(value: Record<string, unknown>): string {
     .join("\n");
 }
 
+/** Only a user context fragment can claim environment authority; prose mentions cannot. */
+function hasEnvironmentContextFragment(item: Record<string, unknown> | undefined): item is Record<string, unknown> {
+  if (item?.type !== "message" || item.role !== "user") return false;
+  const kinds = record(item.internal_chat_message_metadata_passthrough)?.content_item_kinds;
+  if (Array.isArray(kinds) && kinds.includes("environments.environment_context")) return true;
+  const texts = typeof item.content === "string" ? [item.content]
+    : Array.isArray(item.content) ? item.content.map(part => record(part)?.text) : [];
+  return texts.some(text => typeof text === "string"
+    && /^<\/?environment_context\b/i.test(text.trimStart()));
+}
+
 /** True when the raw Responses input attempted to carry an environment envelope, valid or not. */
 export function hasRawChatGptEnvironmentContext(parsed: CodexParsedRequest): boolean {
   const body = record(parsed._rawBody);
   const input = Array.isArray(body?.input) ? body.input : [];
-  return input.some(value => {
-    const item = record(value);
-    return item?.type === "message" && /<\/?environment_context\b/i.test(rawMessageText(item));
-  });
+  return input.some(value => hasEnvironmentContextFragment(record(value)));
 }
 
 /** Historical XML is not a current environment update, including in old untagged rollouts. */
@@ -132,7 +140,7 @@ export function hasCurrentChatGptEnvironmentContext(parsed: CodexParsedRequest):
       || item.type === "function_call" || item.type === "reasoning" || item.type === "compaction") {
       laterAssistantOutput = true;
     }
-    if (item.type !== "message" || !/<\/?environment_context\b/i.test(rawMessageText(item))) continue;
+    if (!hasEnvironmentContextFragment(item)) continue;
     const owner = itemTurnId(item);
     if (owner === turnId || (owner === undefined && !laterAssistantOutput)) return true;
   }
@@ -154,7 +162,7 @@ export function unattributedChatGptEnvironmentMessages(
   const messages: ChatGptUnattributedEnvironmentMessage[] = [];
   for (const value of input) {
     const item = record(value);
-    if (item?.type !== "message" || !/<\/?environment_context\b/i.test(rawMessageText(item))) continue;
+    if (!hasEnvironmentContextFragment(item)) continue;
     // Explicit current provenance must keep the normal current-update rejection. A native item
     // without provenance is historical only if the canonical rollout proves that exact message.
     const owner = itemTurnId(item);
@@ -168,8 +176,19 @@ export function unattributedChatGptEnvironmentMessages(
 
 export function contextualUserMessage(value: Record<string, unknown>): boolean {
   const text = rawMessageText(value).trim();
-  return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text)
-    || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/.test(text)
+  if (hasEnvironmentContextFragment(value)) {
+    const parts = typeof value.content === "string" ? [value.content]
+      : Array.isArray(value.content) ? value.content.map(part => record(part)?.text) : [];
+    // A native preamble can group environment, plugin and AGENTS fragments. Every part must be
+    // contextual; a real task in the same user item remains an instruction.
+    return parts.length > 0 && parts.every(part => typeof part === "string" && (
+      /^<environment_context>[\s\S]*<\/environment_context>$/.test(part.trim())
+      || /^<recommended_plugins>[\s\S]*<\/recommended_plugins>$/.test(part.trim())
+      || /^# AGENTS\.md instructions\s*<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>$/.test(part.trim())
+      || /^<app-context>[\s\S]*<\/app-context>$/.test(part.trim())
+    ));
+  }
+  return /^<subagent_notification>[\s\S]*<\/subagent_notification>$/.test(text)
     || isReadableCompactionSummaryText(text)
     || text === OPAQUE_COMPACTION_NOTE;
 }
@@ -255,10 +274,14 @@ function latestChatGptTurnUserRevision(parsed: CodexParsedRequest, expectedTurnI
   const input = Array.isArray(body?.input) ? body.input : [];
   const metadata = clientTurnMetadata(parsed);
   for (let index = input.length - 1; index >= 0; index -= 1) {
-    const revision = userRevision(input[index], expectedTurnId, metadata);
+    const item = record(input[index]);
+    const revision = userRevision(item, expectedTurnId, metadata);
     if (revision) return revision;
+    // An unproven later user instruction cannot be replaced by an older proven instruction or
+    // a completed checkpoint. Pure context fragments and summaries remain transparent.
+    if (item?.type === "message" && item.role === "user" && !contextualUserMessage(item)) return undefined;
   }
-  return undefined;
+  return recoverCompactionInstruction(parsed, extractChatGptTurnIdentity(parsed))?.source;
 }
 
 function userRevision(value: unknown, expectedTurnId?: string, metadata?: Record<string, unknown>): ChatGptTurnUserRevision | undefined {
@@ -279,10 +302,22 @@ export function chatGptTurnUserRevisionHistory(parsed: CodexParsedRequest): Chat
   const body = record(parsed._rawBody);
   const turnId = extractChatGptTurnIdentity(parsed).turnId;
   const metadata = clientTurnMetadata(parsed);
-  return (Array.isArray(body?.input) ? body.input : []).flatMap(value => {
-    const revision = userRevision(value, turnId, metadata);
-    return revision ? [revision] : [];
-  });
+  const revisions: ChatGptTurnUserRevision[] = [];
+  let laterUnprovenInstruction = false;
+  for (const value of Array.isArray(body?.input) ? body.input : []) {
+    const item = record(value);
+    const revision = userRevision(item, turnId, metadata);
+    if (revision) {
+      revisions.push(revision);
+      laterUnprovenInstruction = false;
+    } else if (item?.type === "message" && item.role === "user" && !contextualUserMessage(item)) {
+      laterUnprovenInstruction = true;
+    }
+  }
+  if (laterUnprovenInstruction) return [];
+  if (revisions.length > 0) return revisions;
+  const recovered = recoverCompactionInstruction(parsed, extractChatGptTurnIdentity(parsed));
+  return recovered ? [recovered.source] : [];
 }
 
 /** The human instruction summarized by a remote compaction request belongs to an earlier turn. */
@@ -344,7 +379,7 @@ export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedReques
   // explicitly attributed history is not a current claim; untagged XML remains unproven.
   const claims = input.flatMap((value, index) => {
     const item = record(value);
-    if (item?.type !== "message" || !/<\/?environment_context\b/i.test(rawMessageText(item))) return [];
+    if (!hasEnvironmentContextFragment(item)) return [];
     const owner = itemTurnId(item);
     return owner === undefined || owner === turnId ? [{ item, index }] : [];
   });
@@ -608,9 +643,20 @@ function canonicalMetadataEnvironmentBeforeUser(
   const userTurnId = itemTurnId(user);
   if (userTurnId !== undefined && userTurnId !== metadataTurnId) return undefined;
 
-  let candidateIndex = userIndex - 1;
+  return canonicalMetadataEnvironmentBefore(input, userIndex, metadata, requireMetadataBoundRoots);
+}
+
+/** A completed checkpoint may stand between a current envelope and its original instruction. */
+function canonicalMetadataEnvironmentBefore(
+  input: unknown[], anchorIndex: number, metadata: Record<string, unknown>, requireMetadataBoundRoots = false,
+): string | undefined {
+  const metadataTurnId = typeof metadata.turn_id === "string" ? metadata.turn_id.trim() : "";
+  if (!metadataTurnId) return undefined;
+
+  let candidateIndex = anchorIndex - 1;
   let candidate = record(input[candidateIndex]);
-  while (candidate?.type === "message" && candidate.role === "developer") {
+  while (candidate?.type === "message" && (candidate.role === "developer"
+    || (candidate.role === "user" && isReadableCompactionSummaryText(rawMessageText(candidate).trim())))) {
     const developerTurnId = itemTurnId(candidate);
     const serverOwnedId = typeof candidate.id === "string" && candidate.id.length > 0;
     if (developerTurnId === undefined ? !serverOwnedId : developerTurnId !== metadataTurnId) return undefined;
@@ -660,7 +706,17 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
       break;
     }
   }
+  const checkpoint = activeUserIndex < 0
+    ? recoverCompactionInstruction(parsed, extractChatGptTurnIdentity(parsed)) : undefined;
+  const anchorIndex = checkpoint?.summaryIndex ?? activeUserIndex;
   const turnId = metadata?.turn_id;
+  // A later current-turn fragment supersedes the start envelope and must be checked against the
+  // current native rollout before older cached authority can be used.
+  if (input.slice(anchorIndex + 1).some(value => {
+    const item = record(value);
+    return hasEnvironmentContextFragment(item)
+      && (itemTurnId(item) === undefined || itemTurnId(item) === turnId);
+  })) return undefined;
   const currentByTurn = environmentBeforeUser(
     input,
     activeUserIndex,
@@ -669,7 +725,9 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   );
   if (currentByTurn) return currentByTurn;
 
-  const current = canonicalMetadataEnvironmentBeforeUser(input, activeUserIndex, metadata);
+  const current = checkpoint && metadata
+    ? canonicalMetadataEnvironmentBefore(input, checkpoint.summaryIndex, metadata)
+    : canonicalMetadataEnvironmentBeforeUser(input, activeUserIndex, metadata);
   if (current) return current;
 
   // A skill invocation appends another server-owned user item after the real instruction. Recover

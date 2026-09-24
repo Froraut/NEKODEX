@@ -8,6 +8,18 @@ const { getAppImageTools } = require("app-builder-lib/out/toolsets/linux.js");
 const REQUIRED_LIBNOTIFY_SYMBOL = "notify_notification_get_activation_app_launch_context";
 
 function requireLibnotifySymbol(libraryPath) {
+  const header = Buffer.alloc(20);
+  const fd = fs.openSync(libraryPath, "r");
+  try {
+    if (fs.readSync(fd, header, 0, header.length, 0) !== header.length
+      || header.toString("hex", 0, 6) !== "7f454c460201"
+      || header.readUInt16LE(16) !== 3
+      || header.readUInt16LE(18) !== 62) {
+      throw new Error(`${libraryPath} must be a Linux x64 ELF shared library`);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
   const result = spawnSync("nm", ["-D", "--defined-only", libraryPath], {
     encoding: "utf8",
     timeout: 30_000,

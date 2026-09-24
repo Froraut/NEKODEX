@@ -49,6 +49,10 @@ test('source Electron uses the refactored renderer and real isolated preload', {
     assert.equal(snapshot.profilePaths.codexHome, path.join(profile, 'codex-home'));
     assert.equal(snapshot.state.browserInteractionMode, 'manual');
     assert.equal(snapshot.state.coreSetupComplete, false);
+    assert.equal(snapshot.state.useSavedChats, false);
+    await assert.rejects(page.evaluate(() => window.codexWebLauncher.setUseSavedChats(true)),
+      /Initialize the runtime before changing saved chats/);
+    assert.equal((await page.evaluate(() => window.codexWebLauncher.snapshot())).state.useSavedChats, false);
     const accountSnapshot = await page.evaluate(() => window.codexWebLauncher.accounts());
     assert.equal(accountSnapshot.observation.sourceId, snapshot.browser.observation.sourceId);
     assert.ok(accountSnapshot.observation.revision >= snapshot.browser.observation.revision);

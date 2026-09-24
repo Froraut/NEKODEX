@@ -83,6 +83,7 @@ test("fork updates reject upstream assets, credentials and altered download URLs
 test("fork prerelease updates are discoverable without opting stable users into another release channel", () => {
   const releases = [
     { tag_name: "v9.0.0", draft: true },
+    { tag_name: "v8.0.0", prerelease: true },
     { tag_name: "v6.0.0-beta.1", prerelease: true },
     { tag_name: "v5.2.0-froraut.2", prerelease: true },
     { tag_name: "v5.2.0-froraut.1", prerelease: true },

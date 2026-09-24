@@ -250,6 +250,14 @@ export function installRoute(
   previous: CodexIntegrationJournal["previous"];
   previousRealtimeWebrtcCallBaseUrl: PreviousAssignment;
 } {
+  const provider = (Bun.TOML.parse(splitLines(text).join("\n")) as { model_provider?: unknown }).model_provider;
+  if (provider !== undefined && provider !== "openai") {
+    throw new Error(
+      "Codex model_provider selects a custom provider; the bridge requires the built-in openai provider. "
+      + "Select model_provider = \"openai\" or remove that selection before setup or reconnect. "
+      + "--replace-codex-route only replaces the route URL; it does not change your provider configuration.",
+    );
+  }
   const document = parseDocument(text);
   const previous = assignments(document.lines);
   if (previous.openai_base_url.present && !replaceExistingRoute) {

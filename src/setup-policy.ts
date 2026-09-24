@@ -15,6 +15,7 @@ export interface SetupOptions {
   experimentalSkillAttachments?: boolean;
   allowWebSubagents?: boolean;
   experimentalFreshConversationPerTurn?: boolean;
+  useSavedChats?: boolean;
   experimentalAsyncToolOperations?: boolean;
   zeroRiskProEnabled?: boolean;
   replaceCodexRoute?: boolean;
@@ -88,6 +89,7 @@ export function transitionSetupConfig(existing: AppConfig | undefined, options: 
   if (options.experimentalFreshConversationPerTurn !== undefined) {
     config.experimentalFreshConversationPerTurn = options.experimentalFreshConversationPerTurn;
   }
+  config.useSavedChats = options.useSavedChats ?? existing?.useSavedChats ?? false;
   if (options.allowWebSubagents !== undefined) config.allowWebSubagents = options.allowWebSubagents;
   if (options.experimentalSkillAttachments !== undefined) {
     config.experimentalSkillAttachments = options.experimentalSkillAttachments;
@@ -160,6 +162,7 @@ export function setupRuntimeProjection(config: AppConfig) {
     allowWebSubagents: config.allowWebSubagents,
     experimentalSkillAttachments: config.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn,
+    useSavedChats: config.useSavedChats,
     experimentalAsyncToolOperations: config.experimentalAsyncToolOperations,
     zeroRiskProEnabled: config.zeroRiskProEnabled,
     autoApproveToolCalls: config.autoApproveToolCalls,

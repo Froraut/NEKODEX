@@ -302,6 +302,9 @@ class BrowserControlServer {
           if (body.compaction !== undefined && body.compaction !== true) {
             throw new Error("manual compaction flag is invalid");
           }
+          if (body.useSavedChats !== undefined && typeof body.useSavedChats !== "boolean") {
+            throw new Error("manual saved-chat policy is invalid");
+          }
           const lease = host.beginManualTurn(
             body.traceId,
             body.helperPid,
@@ -309,6 +312,7 @@ class BrowserControlServer {
             body.conversationKey,
             body.resumePrompt,
             body.compaction === true,
+            body.useSavedChats === true,
           );
           this.logger.info("browser.manual_control_started", {
             traceId: body.traceId,
@@ -421,20 +425,45 @@ class BrowserControlServer {
           const result = host.queueTurn(body, preferences.showBrowserDuringTurns === true);
           writeJson(response, result.queued ? 202 : 200, { ok: true, ...result }); return;
         }
-        const result = await this.reconcileAutomaticMutation("start", body, async () => {
-          const lease = await host.beginTurn(
-            body.traceId,
-            preferences.showBrowserDuringTurns === true,
-            body.helperPid,
-            body.conversationKey,
-            body.connectorIdentity,
-            body.requireRetainedConversation === true,
-            { requestedModel: body.requestedModel, effort: body.requestedEffort, routingKey: body.accountRoutingKey, taskProgressVersion: body.taskProgressVersion },
-          );
-          this.logger.info("browser.turn_started", { traceId: body.traceId });
-          return { ok: true, ...lease };
-        });
-        writeJson(response, 200, result);
+        const acquisition = new AbortController();
+        const startBody = body.mutationId ? body : { ...body, mutationId: randomBytes(12).toString("base64url") };
+        const onClose = () => {
+          if (!response.writableFinished) acquisition.abort(new Error("Browser turn acquisition caller disconnected"));
+        };
+        response.once("close", onClose);
+        let result;
+        try {
+          if (response.destroyed) onClose();
+          result = await this.reconcileAutomaticMutation("start", startBody, async () => {
+            const lease = await host.beginTurn(
+              body.traceId,
+              preferences.showBrowserDuringTurns === true,
+              body.helperPid,
+              body.conversationKey,
+              body.connectorIdentity,
+              body.requireRetainedConversation === true,
+              { requestedModel: body.requestedModel, effort: body.requestedEffort, routingKey: body.accountRoutingKey, taskProgressVersion: body.taskProgressVersion },
+              null,
+              acquisition.signal,
+            );
+            if (acquisition.signal.aborted) {
+              host.releaseUnclaimedTurn(body.traceId, body.helperPid, lease.surfaceId, acquisition.signal);
+              acquisition.signal.throwIfAborted();
+            }
+            this.logger.info("browser.turn_started", { traceId: body.traceId });
+            return { ok: true, ...lease };
+          });
+          if (acquisition.signal.aborted) {
+            host.releaseUnclaimedTurn(body.traceId, body.helperPid, result.surfaceId, acquisition.signal);
+            const key = `start:${body.traceId}:${body.helperPid}:${startBody.mutationId}`;
+            this.automaticMutationReceipts.delete(key);
+            acquisition.signal.throwIfAborted();
+          }
+          writeJson(response, 200, result);
+          host.confirmTurnAcquisition?.(body.traceId, body.helperPid, result.surfaceId, acquisition.signal);
+        } finally {
+          response.off("close", onClose);
+        }
         return;
       } else if (request.url === '/v1/turn/start-cancel') {
         const result = await host.cancelQueuedOwner(body.traceId, body.helperPid);

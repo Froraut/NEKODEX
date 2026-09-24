@@ -33,6 +33,9 @@ function selectRelease(releases, currentVersion, { platform, arch } = {}) {
       if (release?.draft) return false;
       const version = parseVersion(String(release?.tag_name || "").replace(/^v/, ""));
       if (!version) return false;
+      // A GitHub prerelease with a stable-looking tag must not promote stable users.
+      // Named fork prereleases still follow the explicit installed channel below.
+      if (release.prerelease === true && !version.prerelease) return false;
       if (platform && Array.isArray(release.assets)) {
         const assetName = releaseAssetName(releaseVersion(release.tag_name), platform, arch);
         // A platform-scoped release can intentionally omit other platforms. Once

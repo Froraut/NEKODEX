@@ -307,6 +307,7 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
       modelId: parsed.modelId,
       requestedModel: parsed.requestedModel,
       reasoning: parsed.options.reasoning,
+      ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
       capabilities: turnCapabilities,
       abortSignal: browserAbort.signal,
       ...(parsed._compactionRequest ? { compaction: true } : {}),
@@ -394,6 +395,7 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
             });
           }
           await zeroRiskManualControl.start(retainedLauncherDescriptor, {
+            useSavedChats: provider.chatgptWeb?.useSavedChats === true,
             ...owner,
             prompt: compiled.text,
             ...(resumeCompiled ? { resumePrompt: resumeCompiled.text } : {}),

@@ -145,3 +145,38 @@ test('automatic allocation and progress retain failed submitted documents for in
     assert.equal(lifecycle.evictOldestReclaimableTurnTab(), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('aborted tab initialization releases only its own pending browser owner', async () => {
+  const { lifecycle, tabs, context, effects } = fixture();
+  tabs.clear();
+  context.maxTabs = 2;
+  context.ledger.start = () => 'new-record';
+  lifecycle.artifacts.release = () => effects.push('downloads');
+  lifecycle.logger.error = () => {};
+  lifecycle.views = {
+    idleUrl: 'test:idle',
+    create: () => ({ webContents: { isDestroyed: () => false } }),
+    attach() {}, initialize: () => new Promise(() => {}),
+    dispose: () => effects.push('disposed'),
+  };
+  const abort = new AbortController();
+  const pending = lifecycle.createTurnTab('new-trace', 17, undefined, undefined, 1, null, abort.signal);
+  await Promise.resolve();
+  assert.equal(tabs.size, 1);
+  abort.abort(new DOMException('caller left', 'AbortError'));
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(tabs.size, 0);
+  assert.deepEqual(effects.slice(0, 4), ['ledger', 'downloads', 'manual', 'disposed']);
+});
+
+test('a disconnected acquisition cannot release a replacement browser owner', () => {
+  const { lifecycle, tab, tabs, effects } = fixture();
+  const originalSignal = new AbortController().signal;
+  tab.acquisitionSignal = originalSignal;
+  assert.equal(lifecycle.releaseUnclaimedTurn(tab.traceId, tab.helperPid, tab.surfaceId,
+    new AbortController().signal), false);
+  assert.equal(tabs.get(tab.id), tab);
+  assert.equal(lifecycle.releaseUnclaimedTurn(tab.traceId, tab.helperPid, tab.surfaceId, originalSignal), true);
+  assert.equal(tabs.size, 0);
+  assert.equal(effects[0], 'ledger');
+});

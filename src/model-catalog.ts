@@ -2,6 +2,7 @@ import type { AppConfig } from "./config";
 import type { CodexModelContextOverride } from "./codex-integration";
 import {
   availableChatGptWebModelRoutes,
+  chatGptWebRouteEfforts,
   CHATGPT_WEB_MODEL_PREFIX,
   resolveChatGptWebContextLimits,
   type ChatGptWebModelRoute,
@@ -115,6 +116,17 @@ export function buildChatGptWebModel(
     throw new Error("ChatGPT Web model template must be a native Codex model");
   }
   const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
+  const efforts = chatGptWebRouteEfforts(route, config);
+  // Codex stores one window per model row. Effort choices may share a row only when
+  // they also share its context/compaction budget, including optional Bigger Context.
+  for (const effort of efforts) {
+    const adapterEffort = route.supportedCodexEfforts ? effort : route.adapterEffort;
+    if (adapterEffort === "ultra") throw new Error("Ultra is not a browser effort");
+    const candidate = resolveChatGptWebContextLimits(route.backendModel, adapterEffort, config);
+    if (JSON.stringify(candidate) !== JSON.stringify(limits)) {
+      throw new Error(`Cannot group different context budgets under ${route.slug}`);
+    }
+  }
   const multiAgentVersion = routedSubagentVersion(template, config);
   const priority = catalogPriority ?? modelPriority(template);
   const model: JsonObject = {
@@ -137,7 +149,10 @@ export function buildChatGptWebModel(
     tool_mode: null,
     upgrade: null,
     default_reasoning_level: route.codexEffort,
-    supported_reasoning_levels: [reasoningLevel(template, route.codexEffort, route.displayName)],
+    supported_reasoning_levels: efforts.map(effort => reasoningLevel(template, effort,
+      efforts.length === 1 ? route.displayName
+        : route.backendModel === "gpt-5.6-luna" ? effort === "low" ? "Ordinary Luna" : "Think"
+          : `${route.displayName} — ${effort === "xhigh" ? "Extra High" : effort}`)),
     context_window: limits.contextWindow,
     max_context_window: limits.contextWindow,
     effective_context_window_percent: limits.effectiveContextWindowPercent,

@@ -507,6 +507,7 @@ test("an accepted Full-mode send survives one stalled DOM probe and a later MCP 
     filter() { return this; },
     last() { return this; },
     getByText() { return this; },
+    count: async () => 0,
     isVisible: async () => false,
   };
   const assistantLocator = { id: "assistant-turn" };

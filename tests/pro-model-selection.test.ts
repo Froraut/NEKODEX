@@ -42,7 +42,7 @@ function picker(options: {
   };
   const container = {
     filter() { return this; }, last() { return this; }, locator: () => slider,
-    isVisible: async () => !submenu, waitFor: async () => {},
+    isVisible: async () => !submenu, waitFor: async () => {}, evaluate: async () => [],
   };
   const control = {
     filter() { return this; }, first() { return this; }, count: async () => 1, innerText: async () => "Selected effort",
@@ -90,7 +90,7 @@ function picker(options: {
     evaluate: async (fn: unknown, ids: string[]) => {
       expect(ids).toEqual(["picker-value", "picker-instructions"]);
       const descriptions = options.descriptionTexts ?? [
-        `${actualVersion ?? version} ${["Instant", "Medium", "High", "Extra High", "Pro"][value]}，第 ${value + 1} 项，共 5 项。`,
+        `${actualVersion ?? (version === "6" && value < 4 ? "5.6" : version)} ${["Instant", "Medium", "High", "Extra High", "Pro"][value]}，第 ${value + 1} 项，共 5 项。`,
         observedPicker.descriptions["picker-instructions"],
       ];
       const previousDocument = Reflect.get(globalThis, "document");
@@ -135,9 +135,9 @@ function picker(options: {
       page, "gpt-5.6-sol", effort,
       { localToolsEnabled: false, solAvailable: true, proAvailable: true, proModelVersion: requested },
       undefined, stageVersion),
-    send: (requested: string) => worker.sendAttachedPrompt(page, {}, async () => { actions.push("READY"); }, undefined, undefined,
+    send: (requested: string, effort: "low" | "max" = "max") => worker.sendAttachedPrompt(page, {}, async () => { actions.push("READY"); }, undefined, undefined,
       { onSendActivated: async () => { actions.push("ACTIVATED"); } }, undefined, undefined, undefined,
-      { modelVersion: requested, effort: "max", uiEffortIndex: 4 }),
+      { modelVersion: requested, effort, uiEffortIndex: effort === "max" ? 4 : 0 }),
   };
 }
 
@@ -157,6 +157,15 @@ test("an explicit GPT-6 Astra option is accepted without weakening version proof
       ...observedPicker.options.filter(option => option.version !== "6"),
     ],
   });
+  await fixture.select("6");
+  expect(fixture.state()).toEqual({ version: "6", value: 4 });
+});
+
+test.each(["Le plus récent", "최신"])("observed Latest label %s still needs version and effort proof", async name => {
+  const fixture = picker({ modelOptions: [
+    { role: "menuitemradio", name, version: "6" },
+    ...observedPicker.options.filter(option => option.version !== "6"),
+  ] });
   await fixture.select("6");
   expect(fixture.state()).toEqual({ version: "6", value: 4 });
 });
@@ -262,6 +271,14 @@ test("preparatory low-effort stages of pinned Pro stay on that version", async (
   const fixture = picker();
   await fixture.select("5.6", "low", "5.6");
   expect(fixture.state()).toEqual({ version: "5.6", value: 0 });
+});
+
+test("explicit Latest lower effort proves its checked family and 5.6 state before Send", async () => {
+  const fixture = picker();
+  await fixture.select("6", "low", "6");
+  expect(fixture.state()).toEqual({ version: "6", value: 0 });
+  await fixture.send("6", "low");
+  expect(fixture.actions).toContain("SEND");
 });
 
 test("an ordinary non-Pro route and a legacy unpinned route do not select a version", async () => {

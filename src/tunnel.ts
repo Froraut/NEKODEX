@@ -597,8 +597,33 @@ export function stopTunnel(config: AppConfig, signal?: AbortSignal): void {
     && !/not found|not running|unknown alias|\balias\b[^\r\n]{0,160}\bis not known\b/i.test(
       `${result.stdout}\n${result.stderr}`,
     )) {
+    // tunnel-client 0.0.12 can clear its saved PID after a SIGTERM timeout.
+    // A subsequent "stopped" inventory is not proof of exit; check the PID in its stop receipt.
+    if (tunnelStopProcessExited(result.stdout, settings.alias)) {
+      console.warn("[codex-chatgpt-web] tunnel stop timed out; OS confirmed process exit");
+      return;
+    }
     throw new Error(`Failed to stop tunnel runtime: ${result.stderr.trim() || result.stdout.trim()}`);
   }
+}
+
+export function tunnelStopProcessExited(
+  output: string,
+  alias: string,
+  probe: (pid: number) => void = pid => process.kill(pid, 0),
+): boolean {
+  let pid: number;
+  try {
+    const receipt = JSON.parse(output) as { alias?: unknown; stop_error?: unknown };
+    if (receipt.alias !== alias || typeof receipt.stop_error !== "string") return false;
+    const match = /^process ([1-9]\d*) did not exit after SIGTERM$/.exec(receipt.stop_error);
+    if (!match) return false;
+    pid = Number(match[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 1) return false;
+  } catch { return false; }
+  try { probe(pid); }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+  return false;
 }
 
 export function tunnelStatus(

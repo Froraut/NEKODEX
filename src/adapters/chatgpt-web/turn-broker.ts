@@ -7,10 +7,10 @@ import { decodeBrokerRequest, opaqueId, assertSurfaceNonce, MAX_BROKER_LINE_CHAR
 export type { BrokerToolRequest, BrokerToolResult, BrokerOwnedOperationSnapshot, BrokerOwnedOperationStartResult,
   BrokerOwnedOperationStatus, BrokerCompletionFenceStart, TurnBrokerOwner } from "./turn-broker-protocol";
 export { callTurnBroker, RemoteTurnBroker, TurnBrokerTimeoutError } from "./turn-broker-client";
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isWindowsPipeEndpoint } from "../../config";
 import {
   CompactionTransactionStore,
@@ -182,6 +182,7 @@ export class TurnBroker implements TurnBrokerOwner {
   private startPromise?: Promise<void>;
   private startAttempt?: symbol;
   private socketIdentity?: { dev: number; ino: number };
+  private privateSocketPath?: string;
 
   private constructor(readonly socketPath: string) {}
 
@@ -543,6 +544,14 @@ export class TurnBroker implements TurnBrokerOwner {
   revoke(token: string, reason = new Error("Codex turn binding was revoked")): void {
     const channel = this.channels.get(token);
     if (!channel) return;
+    console.info(`[chatgpt-web] broker_retired ${JSON.stringify({
+      traceId: channel.traceId,
+      pendingTools: channel.invocations.size,
+      queuedTools: channel.queuedCallIds.length,
+      deliveredTools: channel.deliveredCallIds.size,
+      activeMcpRequests: channel.activities.size,
+      completionCommitted: channel.completionCommitted,
+    })}`);
     this.channels.delete(token);
     this.pending.delete(token);
     if (channel.bindingId) {
@@ -673,7 +682,18 @@ export class TurnBroker implements TurnBrokerOwner {
       }));
     }
     const socketIdentity = this.socketIdentity;
+    const privateSocketPath = this.privateSocketPath;
     this.socketIdentity = undefined;
+    this.privateSocketPath = undefined;
+    // Bun's Server.close() unlinks the pathname passed to listen(). Bind that listener to a
+    // private sibling and publish a hard link at the public endpoint, so closing an old server
+    // cannot unlink a replacement that already owns the public path.
+    if (privateSocketPath && socketIdentity && existsSync(privateSocketPath)) {
+      const current = lstatSync(privateSocketPath);
+      if (current.isSocket() && current.dev === socketIdentity.dev && current.ino === socketIdentity.ino) {
+        unlinkSync(privateSocketPath);
+      }
+    }
     if (!isWindowsPipeEndpoint(this.socketPath) && socketIdentity && existsSync(this.socketPath)) {
       const current = lstatSync(this.socketPath);
       if (current.isSocket()
@@ -691,6 +711,7 @@ export class TurnBroker implements TurnBrokerOwner {
     let startupServer: Server | undefined;
     let startupOwnsSocket = false;
     let startupSocketIdentity: { dev: number; ino: number } | undefined;
+    let startupPrivateSocketPath: string | undefined;
     const startup = new Promise<void>((resolveStart, rejectStart) => {
       const windowsPipe = isWindowsPipeEndpoint(this.socketPath);
       if (!windowsPipe) {
@@ -708,6 +729,14 @@ export class TurnBroker implements TurnBrokerOwner {
         mkdirSync(dirname(this.socketPath), { recursive: true, mode: 0o700 });
       }
       const listen = () => {
+        // A custom endpoint can use a short basename at the sun_path limit. Check the private
+        // sibling independently instead of letting Bun report an opaque bind failure.
+        startupPrivateSocketPath = windowsPipe ? undefined
+          : join(dirname(this.socketPath), `b-${randomBytes(6).toString("hex")}`);
+        if (startupPrivateSocketPath && Buffer.byteLength(startupPrivateSocketPath) > MAX_UNIX_SOCKET_PATH_BYTES) {
+          rejectStart(new Error(`ChatGPT web broker private socket path exceeds the ${MAX_UNIX_SOCKET_PATH_BYTES}-byte limit: ${startupPrivateSocketPath}`));
+          return;
+        }
         const server = createServer(socket => this.handleSocket(socket));
         startupServer = server;
         this.server = server;
@@ -717,15 +746,22 @@ export class TurnBroker implements TurnBrokerOwner {
             `[chatgpt-web] turn broker server error at ${this.socketPath}: ${errorOf(error).message}`,
           );
         });
-        server.listen(this.socketPath, () => {
+        // The private name is shorter than turn-broker.sock, so a valid public endpoint remains
+        // valid under the Unix sun_path limit. linkSync publishes the exact socket inode without
+        // moving another runtime's live pathname, and fails if a replacement won the path.
+        server.listen(startupPrivateSocketPath ?? this.socketPath, () => {
           try {
             server.off("error", rejectStart);
-            startupOwnsSocket = !windowsPipe;
             if (!windowsPipe) {
-              const socketStat = lstatSync(this.socketPath);
+              chmodSync(startupPrivateSocketPath!, 0o600);
+              linkSync(startupPrivateSocketPath!, this.socketPath);
+              startupOwnsSocket = true;
+              const socketStat = lstatSync(startupPrivateSocketPath!);
               startupSocketIdentity = { dev: socketStat.dev, ino: socketStat.ino };
-              if (this.startAttempt === attempt) this.socketIdentity = startupSocketIdentity;
-              chmodSync(this.socketPath, 0o600);
+              if (this.startAttempt === attempt) {
+                this.socketIdentity = startupSocketIdentity;
+                this.privateSocketPath = startupPrivateSocketPath;
+              }
             }
             resolveStart();
           } catch (error) {
@@ -782,7 +818,14 @@ export class TurnBroker implements TurnBrokerOwner {
             return;
           }
           try {
-            if (existsSync(this.socketPath)) unlinkSync(this.socketPath);
+            if (existsSync(this.socketPath)) {
+              const current = lstatSync(this.socketPath);
+              if (!current.isSocket() || current.dev !== socketStat.dev || current.ino !== socketStat.ino) {
+                rejectStart(new Error(`ChatGPT web broker socket changed while checking stale owner: ${this.socketPath}`));
+                return;
+              }
+              unlinkSync(this.socketPath);
+            }
             listen();
           } catch (cleanupError) {
             rejectStart(errorOf(cleanupError));
@@ -813,12 +856,19 @@ export class TurnBroker implements TurnBrokerOwner {
             unlinkSync(this.socketPath);
           }
         }
+        if (startupPrivateSocketPath && startupSocketIdentity && existsSync(startupPrivateSocketPath)) {
+          const socketStat = lstatSync(startupPrivateSocketPath);
+          if (socketStat.isSocket()
+            && socketStat.dev === startupSocketIdentity.dev
+            && socketStat.ino === startupSocketIdentity.ino) unlinkSync(startupPrivateSocketPath);
+        }
       } catch (cleanupError) {
         console.error(`[chatgpt-web] failed to remove broker socket after startup failure at ${this.socketPath}: ${errorOf(cleanupError).message}`);
       }
       if (this.startAttempt === attempt) {
         this.startAttempt = undefined;
         this.socketIdentity = undefined;
+        this.privateSocketPath = undefined;
         if (brokers.get(this.socketPath) === this) brokers.delete(this.socketPath);
         this.startPromise = undefined;
       }

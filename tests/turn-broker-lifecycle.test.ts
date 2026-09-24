@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_OUTSTANDING_TURNS } from "../src/adapters/chatgpt-web/concurrency";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
-import { createServer, type Socket } from "node:net";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { callTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
@@ -216,12 +216,51 @@ test("turn broker creates its private runtime directory on a cold start", async 
     } else {
       expect(existsSync(socketPath)).toBe(true);
       expect(statSync(dirname(socketPath)).mode & 0o777).toBe(0o700);
+      expect(statSync(socketPath).mode & 0o777).toBe(0o600);
     }
+    await broker.close();
+    if (process.platform !== "win32") expect(existsSync(socketPath)).toBe(false);
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === "win32")("closing an old broker preserves a reachable replacement socket", async () => {
+  const root = mkdtempSync("/tmp/nx-broker-replace-");
+  const socketPath = join(root, "broker.sock");
+  const broker = TurnBroker.forSocket(socketPath);
+  let replacement: Server | undefined;
+  const readReplacement = () => new Promise<string>((resolveRead, rejectRead) => {
+    const socket = createConnection(socketPath);
+    let text = "";
+    socket.setTimeout(500, () => socket.destroy(new Error("replacement did not answer")));
+    socket.on("data", chunk => { text += chunk.toString(); });
+    socket.once("end", () => resolveRead(text));
+    socket.once("error", rejectRead);
+  });
+  try {
+    await broker.listen();
+    const old = lstatSync(socketPath);
+    unlinkSync(socketPath);
+    replacement = createServer(socket => socket.end("replacement-owner"));
+    const live = replacement;
+    await new Promise<void>((resolveListen, rejectListen) => {
+      live.once("error", rejectListen);
+      live.listen(socketPath, () => { live.off("error", rejectListen); resolveListen(); });
+    });
+    const newSocket = lstatSync(socketPath);
+    expect(newSocket.ino).not.toBe(old.ino);
+    expect(await readReplacement()).toBe("replacement-owner"); // The intended fault boundary is reached.
+    await broker.close();
+    expect(lstatSync(socketPath).ino).toBe(newSocket.ino);
+    expect(await readReplacement()).toBe("replacement-owner");
+  } finally {
+    await broker.close();
+    if (replacement) await new Promise<void>(resolveClose => replacement!.close(() => resolveClose()));
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 3_000);
 
 test("turn broker rejects a Unix socket path that leaves no room for sun_path's NUL terminator", async () => {
   if (process.platform === "win32") return;

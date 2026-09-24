@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { defaultConfig, getConfigPath, loadConfig, readConfigForSetup } from "../src/config";
+import { defaultConfig, getConfigPath, loadConfig, providerConfig, readConfigForSetup } from "../src/config";
 import { transitionSetupConfig, meaningfulRuntimeChange, type SetupTransitionContext } from "../src/setup-policy";
 
 function context(): SetupTransitionContext {
@@ -54,4 +54,19 @@ test("restart projection excludes dynamic model preferences but includes routed 
   const original = context().defaults;
   expect(meaningfulRuntimeChange(original, { ...original, proModelVersion: "6", compactionModel: "extra-high" })).toBe(false);
   expect(meaningfulRuntimeChange(original, { ...original, allowWebSubagents: !original.allowWebSubagents })).toBe(true);
+  expect(meaningfulRuntimeChange(original, { ...original, useSavedChats: true })).toBe(true);
+});
+
+test("saved chats opt in explicitly and omission preserves an existing choice", () => {
+  const env = context();
+  const initial = transitionSetupConfig(undefined, { mode: "browser-only", acknowledgedUnofficial: true }, env);
+  expect(initial.useSavedChats).toBe(false);
+  expect(initial.experimentalFreshConversationPerTurn).toBe(env.defaults.experimentalFreshConversationPerTurn);
+  const saved = transitionSetupConfig(initial, { mode: "browser-only", useSavedChats: true }, env);
+  expect(saved.useSavedChats).toBe(true);
+  expect(providerConfig(saved).chatgptWeb?.useSavedChats).toBe(true);
+  expect(transitionSetupConfig(saved, { mode: "browser-only" }, env).useSavedChats).toBe(true);
+  const temporary = transitionSetupConfig(saved, { mode: "browser-only", useSavedChats: false }, env);
+  expect(temporary.useSavedChats).toBe(false);
+  expect(providerConfig(temporary).chatgptWeb?.useSavedChats).toBe(false);
 });

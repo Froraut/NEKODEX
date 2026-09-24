@@ -50,7 +50,7 @@ separate facts.
 | Browser automation | [worker](src/adapters/chatgpt-web/browser-worker.ts), [model selection](src/adapters/chatgpt-web/browser-model-selection.ts), [submission DOM](src/adapters/chatgpt-web/browser-submission-dom.ts), [response DOM](src/adapters/chatgpt-web/browser-response-dom.ts) | Worker owns acquisition/send/rebind/settlement. DOM readers return observations; cached evidence remains tied to the document/turn. |
 | Progress and diagnostics | [response policy](src/adapters/chatgpt-web/browser-response-policy.ts), [visible trace](src/adapters/chatgpt-web/browser-visible-trace.ts), [diagnostics](src/adapters/chatgpt-web/browser-diagnostics.ts) | Live external work suspends terminal grace windows, not the task deadline. Diagnostics retain bounded structural evidence; screenshots are opt-in. |
 | Compaction | [transaction](src/adapters/chatgpt-web/compaction-transaction.ts), [run registry](src/adapters/chatgpt-web/compaction-run-registry.ts), [active source](src/adapters/chatgpt-web/active-compaction-source.ts), [rolling checkpoint](src/adapters/chatgpt-web/rolling-checkpoint.ts) | Logical cancellation and physical settlement differ. Publish a checkpoint in memory only after its durable write succeeds. |
-| Configuration/setup | [config](src/config.ts), [setup](src/setup.ts), [setup policy](src/setup-policy.ts), [file transactions](src/file-transactions.ts), [Codex integration](src/codex-integration.ts) | Bind candidate writes to the original snapshot. A committed-write receipt differs from a before-image; rollback cannot overwrite a newer owner's edit. |
+| Configuration/setup | [config](src/config.ts), [setup](src/setup.ts), [setup policy](src/setup-policy.ts), [file transactions](src/file-transactions.ts), [Codex integration](src/codex-integration.ts) | Bind candidate writes to the original snapshot. `useSavedChats` defaults off, validates as a boolean, and remains independent of fresh-per-turn behavior. A committed-write receipt differs from a before-image; rollback cannot overwrite a newer owner's edit. |
 | Tunnel | [installation/control](src/tunnel.ts), [status interpretation](src/tunnel-status.ts), [service](src/tunnel-service.ts) | Inventory/diagnostics parsing has no process authority. Installation, credentials and readiness remain separate steps. |
 | Electron composition | [main](launcher/electron/main.cjs), [preload](launcher/electron/preload.cjs), [IPC registrars](launcher/electron/ipc), [control server](launcher/electron/control-server.cjs) | Main owns guarded IPC and composition. Renderer inputs and helper calls cross validation/admission boundaries. |
 | Browser ownership | [host](launcher/electron/browser-host.cjs), [turn lifecycle](launcher/electron/browser-turn-lifecycle.cjs), [Manual turns](launcher/electron/browser-manual-turns.cjs), [artifact transfers](launcher/electron/browser-artifact-transfers.cjs), [workspaces](launcher/electron/browser-workspace-windows.cjs) | One shared tab map. Ledger settlement precedes removal receipts. Manual policy uses explicit ports; artifact delivery rechecks exact ownership after awaiting download. |
@@ -58,10 +58,10 @@ separate facts.
 | Runtime supervision | [runtime host](launcher/electron/runtime.cjs), [supervisor](launcher/electron/runtime-supervisor.cjs), [generation store](launcher/electron/runtime-generation.cjs), [tunnel policy](launcher/electron/runtime-tunnel-policy.cjs), [output decoder](launcher/electron/runtime-output.cjs) | RuntimeHost owns setup transitions; supervisor owns daemon/tunnel processes and readiness. Decode split UTF-8 once and bound every log line independently of raw capture. |
 | Updates | [controller](launcher/electron/update.cjs), [release policy](launcher/electron/update-release-policy.cjs), [staging](launcher/electron/update-staging.cjs), [validation](launcher/electron/update-validation.cjs), [worker](launcher/electron/update-worker.cjs) | Packaged repository/channel selects candidates; signature validation, preparation, handoff and detached installation are separate owners. |
 | Usage | [Native contract](src/usage/native-contract.ts), [outbox](src/native-usage-outbox.ts), [durable store](launcher/electron/usage-store.cjs), [report projection](launcher/electron/usage-report.cjs) | Receipt validation and persistence remain independent of UI aggregation. Preserve unknown fields and source/account scope. |
-| UI | [App](launcher/src/App.tsx), [deferred surfaces](launcher/src/deferred-surface.tsx), [presentation log store](launcher/src/launcher-log-store.ts), [Onboarding](launcher/src/Onboarding.tsx), [Accounts](launcher/src/AccountSettings.tsx), [Browser](launcher/src/BrowserSurface.tsx), [Activity](launcher/src/ActivitySurface.tsx), [Task Center](launcher/src/TaskCenter.tsx), [Settings](launcher/src/SettingsSurface.tsx) | App owns shell/navigation/shared snapshots. Optional screens load on navigation; logs update subscribed views instead of App. Feature surfaces and hooks own local drafts/actions; late results stay with their original account/query/flow. |
+| UI | [App](launcher/src/App.tsx), [deferred surfaces](launcher/src/deferred-surface.tsx), [presentation log store](launcher/src/launcher-log-store.ts), [Onboarding](launcher/src/Onboarding.tsx), [Accounts](launcher/src/AccountSettings.tsx), [Browser](launcher/src/BrowserSurface.tsx), [Activity](launcher/src/ActivitySurface.tsx), [Task Center](launcher/src/TaskCenter.tsx), [Settings](launcher/src/SettingsSurface.tsx) | App owns shell/navigation/shared snapshots. Optional screens load on navigation; logs update subscribed views instead of App. Settings exposes saved-chat preference through guarded preload IPC; saved/temporary behavior remains a runtime/browser contract. Feature surfaces and hooks own local drafts/actions; late results stay with their original account/query/flow. |
 | Presentation observations | [publication scheduler](launcher/electron/browser-state-publication.cjs), [account reader](launcher/src/account-snapshot-controller.ts), [observation comparison](launcher/src/snapshot-observation.ts) | Pool invalidation stays synchronous; presentation snapshots coalesce per event-loop turn. Source/revision stamps order observations, not authorization. |
 | Localization | [locale catalog](launcher/src/locale-catalog.ts), [subscription hook](launcher/src/useLocaleCopy.ts), [language selection](launcher/src/language-selection.ts), [message facade](launcher/src/i18n.ts) | English is immediately available. Other dictionaries load independently and share pending requests. Prepare before saving; a superseded preparation cannot overwrite the latest choice. |
-| DEV harness | [CLI](src/dev-chat/cli.ts), [driver](src/dev-chat/driver.ts), [session store](src/dev-chat/session.ts), [context fixtures](src/dev-chat/context-fixtures.ts), [transport](src/dev-chat/transport.ts) | Isolated DEV state and inert generated content are distinct. The harness attaches to the launcher's existing DEV tunnel rather than taking over supervision. |
+| DEV harness | [CLI](src/dev-chat/cli.ts), [driver](src/dev-chat/driver.ts), [session store](src/dev-chat/session.ts), [context fixtures](src/dev-chat/context-fixtures.ts), [transport](src/dev-chat/transport.ts) | Isolated DEV state and inert generated content are distinct. DEV setup persists saved/temporary chat policy in the isolated config; model selection uses the same real route identities as production. The harness attaches to the launcher's existing DEV tunnel rather than taking over supervision. |
 | Build and distribution | [runtime bundler](scripts/build-runtime-bundle.ts), [owned build output](scripts/build-output.cjs), [launcher scripts](launcher/scripts), [CI](.github/workflows/ci.yml), [release workflow](.github/workflows/release.yml) | Generated output must be owned before replacement. Development checks precede separately authorized packaging/publication. |
 
 ## Important end-to-end flows
@@ -90,6 +90,46 @@ separate facts.
    detached installer → observe its terminal result before selecting the new UI.
 
 ## State and persistence
+
+Web model identities are resolved in `chatgpt-web-models.ts` before browser
+dispatch. The original fixed-mode rows retain their saved-task semantics and
+picker order. Explicit family routes add native effort choices only when their
+context and compaction budgets are equal; Instant and Pro retain separate rows.
+The validated family travels with the turn and conversation identity, and the
+browser proves both the selected family and effort before sending. Native model
+rows and account entitlements are not inferred from these browser routes.
+
+The optional `useSavedChats` setting selects ordinary ChatGPT history and remains
+false by default. It is independent of rebuilding every turn in a fresh browser
+conversation; saved chats can apply the user's ChatGPT memory and custom
+instructions. Config/setup and the helper protocol carry the preference to the
+worker. `launcher/electron/conversation-preferences.cjs` projects committed config
+into launcher state and retires ready documents whose retention policy changed
+through the existing account-pool owner. The transition excludes reserved/running
+turns and holds one lifecycle lease. If runtime policy commits but UI
+synchronization fails, an account-pool blocker owned by conversation-policy recovery
+keeps new turns paused across unrelated admission reopen calls, with an explicit
+retry message. A successful retry clears only that blocker.
+Disabling saved chats never deletes history already stored in ChatGPT.
+
+Compaction distinguishes native `responses/memento` assistant-text responses from
+remote-v2 compaction items. Both use the existing ownership and no-tools boundary.
+Recovery of a missing original instruction requires this daemon's verified
+completed checkpoint, matching summary and turn scope; a prose mention of an
+environment envelope cannot supply workspace authority. Mixed context/task messages
+retain their instruction, and recovery never skips a later unproven instruction.
+Retained source payloads are capped at 1 MiB each and 8 MiB total; shedding a
+payload disables summary-only recovery while preserving bounded hash proof for
+an explicit matching instruction. No wall-time expiry invalidates a long task.
+Explicit tab closure can
+acknowledge revoked authority before physical helper settlement, while lease
+cleanup and runtime idleness still wait for physical settlement.
+
+On Unix, the broker listens on a private sibling socket and publishes a hard link
+at its configured endpoint. Bun closes only the private listener path. Public
+endpoint cleanup checks device/inode ownership, so retiring an old broker cannot
+unlink or temporarily hide a replacement listener. Windows keeps its named-pipe
+path. Both private and public Unix names remain subject to `sun_path` limits.
 
 Resolve paths through [core configuration](src/config.ts) and the
 [launcher profile](launcher/electron/profile.cjs). Do not embed an individual

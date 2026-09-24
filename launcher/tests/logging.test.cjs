@@ -197,6 +197,37 @@ test("launcher activity restores valid records from the previous process", () =>
   }
 });
 
+test("launcher activity restores rotated records in order and keeps the latest 300", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-logging-rotated-"));
+  const filePath = path.join(root, "launcher.jsonl");
+  const record = (index) => JSON.stringify({
+    at: "2026-09-23T00:00:00.000Z", level: "info", event: `entry-${index}`, detail: {},
+  });
+  try {
+    fs.writeFileSync(`${filePath}.1`, `${Array.from({ length: 290 }, (_, index) => record(index)).join("\n")}\nnot-json\n`);
+    fs.writeFileSync(filePath, `${Array.from({ length: 20 }, (_, index) => record(index + 290)).join("\n")}\n`);
+    const records = createLogger({ filePath }).recent(300);
+    assert.equal(records.length, 300);
+    assert.equal(records[0].event, "entry-10");
+    assert.equal(records.at(-1).event, "entry-309");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("launcher activity reads a bounded tail of an oversized legacy log", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-logging-tail-"));
+  const filePath = path.join(root, "launcher.jsonl");
+  try {
+    fs.writeFileSync(`${filePath}.1`, `${"x".repeat(4 * 1024 * 1024)}\n${JSON.stringify({
+      at: "2026-09-23T00:00:00.000Z", level: "info", event: "retained-tail", detail: {},
+    })}\n`);
+    assert.deepEqual(createLogger({ filePath }).recent().map(({ event }) => event), ["retained-tail"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("exported launcher logs remove local usernames, private ChatGPT titles, and URL paths", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-export-"));
   const filePath = path.join(root, "launcher.jsonl");
@@ -288,6 +319,40 @@ test("safe export independently redacts credential fields in legacy and rotated 
     assert.doesNotMatch(exported, /opaque-|private-/);
     assert.equal(fs.readFileSync(filePath, "utf8"), source);
     assert.equal(fs.readFileSync(`${filePath}.1`, "utf8"), source);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("diagnostics export cannot overwrite either source log through hard or symbolic links", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-export-alias-"));
+  const filePath = path.join(root, "launcher.jsonl");
+  const rotatedPath = `${filePath}.1`;
+  const original = `${JSON.stringify({
+    at: "2026-09-24T00:00:00.000Z", level: "info", event: "launcher.started",
+    detail: { url: "https://chatgpt.com/c/private-conversation" },
+  })}\nnot-json\n`;
+  try {
+    fs.writeFileSync(filePath, original);
+    fs.writeFileSync(rotatedPath, original);
+    for (const [name, source] of [["current", filePath], ["rotated", rotatedPath]]) {
+      const destinationPath = path.join(root, `${name}-hardlink.jsonl`);
+      fs.linkSync(source, destinationPath);
+      assert.throws(
+        () => exportSanitizedLogs({ filePath, destinationPath }),
+        /Refusing to overwrite a launcher source log/,
+      );
+      assert.equal(fs.readFileSync(source, "utf8"), original);
+      if (process.platform !== "win32") {
+        const symbolicPath = path.join(root, `${name}-symlink.jsonl`);
+        fs.symlinkSync(source, symbolicPath);
+        assert.throws(
+          () => exportSanitizedLogs({ filePath, destinationPath: symbolicPath }),
+          /Refusing to overwrite a launcher source log/,
+        );
+        assert.equal(fs.readFileSync(source, "utf8"), original);
+      }
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

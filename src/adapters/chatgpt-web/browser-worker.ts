@@ -65,11 +65,11 @@ import {
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import {
   assertAuthenticatedChatGptPage,
-  assertTemporaryChatPage,
+  assertNewChatPage,
+  chatGptNewChatUrl,
   CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
-  CHATGPT_TEMPORARY_CHAT_URL,
   CHATGPT_USER_TURN_SELECTOR,
   detectChatGptAccountCapabilities,
 } from "../../chatgpt-session";
@@ -510,6 +510,7 @@ export interface BrowserTurn {
   traceId: string;
   modelId: string;
   reasoning?: string;
+  modelFamily?: "5.6" | "6";
   capabilities: ChatGptWebCapabilities;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
@@ -597,6 +598,7 @@ export interface ResolvedBrowserConfig {
   turnTimeoutMs?: number;
   headed: boolean;
   autoApproveToolCalls: boolean;
+  useSavedChats?: boolean;
 }
 
 export type ChatGptSubmissionEvidence = "user_turn" | "assistant_turn" | "generation_running" | "mcp_tool_call";
@@ -709,6 +711,7 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
     headed: configured.headed !== false,
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
+    useSavedChats: configured.useSavedChats === true,
   };
 }
 
@@ -1117,38 +1120,40 @@ export class ChatGptBrowserWorker {
     );
   }
 
-  /** Put every browser operation on one fully hydrated Temporary Chat document. */
+  /** Put each operation on a new owned chat document. Maintenance remains temporary. */
   private async prepareTemporaryChatSurface(
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     abortSignal?: AbortSignal,
+    useSavedChats = false,
   ): Promise<Locator> {
     if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     // Launcher verification refreshes its owned page before attaching Playwright so a newly added
     // connector is present in the catalog. Navigating again here destroys that freshly hydrated
     // document and made the first verification race a second SPA bootstrap. A leased turn starts on
     // about:blank and therefore still performs exactly one navigation through this same method.
-    if (page.url() !== CHATGPT_TEMPORARY_CHAT_URL) {
-      await withBrowserTurnAbort(page.goto(CHATGPT_TEMPORARY_CHAT_URL, {
+    const chatUrl = chatGptNewChatUrl(useSavedChats);
+    if (page.url() !== chatUrl) {
+      await withBrowserTurnAbort(page.goto(chatUrl, {
         waitUntil: "domcontentloaded",
         timeout: 60_000,
       }), abortSignal);
-      await captureDiagnostic?.("temporary-chat-navigation-complete");
+      await captureDiagnostic?.(useSavedChats ? "saved-chat-navigation-complete" : "temporary-chat-navigation-complete");
     }
     let composer: Locator;
     try {
       composer = await this.activeComposer(page, 30_000, abortSignal);
     } catch (error) {
       if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      throw new Error("ChatGPT web login is expired or the Temporary Chat surface is unavailable");
+      throw new Error("ChatGPT web login is expired or the new chat surface is unavailable");
     }
-    if (await dismissChatGptTemporaryChatOnboarding(page)) {
+    if (!useSavedChats && await dismissChatGptTemporaryChatOnboarding(page)) {
       await captureDiagnostic?.("temporary-chat-onboarding-dismissed");
     }
     await captureDiagnostic?.("composer-ready");
     await throwIfChatGptSessionFailureAlert(page);
     await assertAuthenticatedChatGptPage(page);
-    await assertTemporaryChatPage(page);
+    await assertNewChatPage(page, useSavedChats);
     await captureDiagnostic?.("session-verified");
     return composer;
   }
@@ -1538,8 +1543,8 @@ export class ChatGptBrowserWorker {
 
   private selectedConnectorControl(composer: Locator): Locator {
     return composer
-      .locator('[data-id^="plugin:"][data-keyword]')
-      .filter({ hasText: this.config.appName, visible: true });
+      .locator(`[data-id^="plugin:"][data-keyword=${JSON.stringify(this.config.appName)}]`)
+      .filter({ visible: true });
   }
 
   private async connectorIsSelected(composer: Locator, abortSignal?: AbortSignal): Promise<boolean> {
@@ -1658,7 +1663,7 @@ export class ChatGptBrowserWorker {
         throw new Error("ChatGPT connector mention popup was already visible before its trigger");
       }
     };
-    await ensureChatGptPersonalizedConnectorAccess(
+    if (new URL(page.url()).searchParams.get("temporary-chat") === "true") await ensureChatGptPersonalizedConnectorAccess(
       page,
       capture,
       async (personalizationSignal) => {
@@ -2574,12 +2579,17 @@ export class ChatGptBrowserWorker {
       }
       if (turn.compaction !== true || turn.capabilities.localToolsEnabled
         || turn.modelId !== CHATGPT_WEB_MODEL_ID || !turn.capabilities.proAvailable
-        || turn.reasoning !== execution.effort) {
+        || turn.reasoning !== execution.effort
+        || (turn.modelFamily && turn.modelFamily !== execution.modelVersion)) {
         throw new Error("Explicit compaction execution requires a read-only summary with matching effort and an available model");
       }
     }
+    if (turn.modelFamily && turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID && turn.modelFamily !== "5.6") {
+      throw new Error("ChatGPT Luna does not support the requested model family");
+    }
     const requestedMode = resolveChatGptWebModelMode(
-      turn.modelId, turn.reasoning, browserCapabilities, turn.compactionExecution?.modelVersion,
+      turn.modelId, turn.reasoning, browserCapabilities,
+      turn.compactionExecution?.modelVersion ?? (turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? undefined : turn.modelFamily),
     );
     const prepare = reuseConversation ? turn.prepareResume : turn.prepare;
     if (!prepare) throw new Error("The retained ChatGPT conversation has no continuation prompt");
@@ -2841,6 +2851,7 @@ export class ChatGptBrowserWorker {
             page,
             checkpoint => diagnostics.capture(page, checkpoint),
             browserStageAbortSignal(stageSignal, turn.abortSignal),
+            this.config.useSavedChats,
           ),
         );
       }
@@ -2988,7 +2999,9 @@ export class ChatGptBrowserWorker {
           );
           await turn.onMultipartStageAcknowledged?.(index + 1);
         }
-        if (mode.effort !== requestedMode.effort) {
+        // Saved chats move from / to /c/<id> after the first staged Send. Re-prove
+        // the picker on that conversation even if final effort equals staging effort.
+        if (mode.effort !== requestedMode.effort || this.config.useSavedChats) {
           mode = await this.runStage(
             turn.traceId,
             "final_part_effort_selection",
@@ -3058,6 +3071,7 @@ export class ChatGptBrowserWorker {
                 page,
                 checkpoint => diagnostics.capture(page, checkpoint),
                 refreshSignal,
+                this.config.useSavedChats,
               );
               mode = await this.selectModelAndEffort(
                 page,

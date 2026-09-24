@@ -252,6 +252,14 @@ export function createChatGptWebAdapter(
       : {}),
   };
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
+  const freshConversationPerTurn = provider.chatgptWeb?.experimentalFreshConversationPerTurn === true;
+  if (provider.chatgptWeb?.experimentalFreshConversationPerTurn !== undefined
+    && typeof provider.chatgptWeb.experimentalFreshConversationPerTurn !== "boolean") {
+    throw new Error("ChatGPT fresh conversation preference must be a boolean");
+  }
+  if (freshConversationPerTurn && manualInteraction) {
+    throw new Error("Fresh browser conversations per turn is available only in automatic mode");
+  }
   const executionNamespace = chatGptWebExecutionNamespace(provider);
   const retainedLauncherDescriptor = provider.chatgptWeb?.browserHost === "launcher"
     && provider.chatgptWeb.browserHostDescriptorPath
@@ -347,6 +355,9 @@ export function createChatGptWebAdapter(
         // Only the summary's execution copy changes. All source, ownership, retry and retirement
         // keys below intentionally continue to use the original parsed Pro request.
         const compactionPlan = resolveChatGptWebCompactionPlan(parsed, compactionModel, turnCapabilities);
+        // A configured compaction model is an explicit browser-family override. The copied
+        // request must not also carry the source route's family into the worker's conflict check.
+        if (compactionPlan.compactionExecution) delete compactionPlan.execution._chatgptModelFamily;
         if (parsed._compactionRequest) {
           const structuredCompactionRequired = parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
             && configuredCapabilities.localToolsEnabled;
@@ -462,6 +473,17 @@ export function createChatGptWebAdapter(
                   let source: ChatGptTurnSession | undefined;
                   let preserveFinalResponse = false;
                   try {
+                    if (freshConversationPerTurn) {
+                      // Fresh mode sends the full native history. Release unfinished browser/tool
+                      // ownership before starting it, but keep a committed final replayable.
+                      const previous = chatGptTurnSessions.find(compactedSourceExecutionKey);
+                      const settlement = previous?.settledOutcome()?.type === "final"
+                        ? previous.physicalSettlement
+                        : chatGptTurnSessions.retireAndWait(compactedSourceExecutionKey).then(() => {});
+                      retainOwnershipUntil(settlement);
+                      await withAbort(settlement, operationSignal);
+                      return await runFreshCompactionFallback("configured_fresh_conversation");
+                    }
                     // The previous compaction may already have detached the retained head while
                     // its browser/helper is still unwinding. Do not inspect that old epoch or
                     // decide to open a fresh fallback until physical release has completed.

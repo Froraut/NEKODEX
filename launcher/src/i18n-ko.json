@@ -422,6 +422,8 @@
   "manualSubmitTimeBody": "전송 확인 전에 프롬프트를 붙여넣고 파일을 준비하는 시간입니다. 새 턴에 적용됩니다.",
   "freshConversation": "턴마다 새 채팅 (실험적)",
   "freshConversationBody": "매 턴 전체 작업 문맥을 새 채팅에 전송합니다. 입력량이 늘어나며 기존 채팅을 재사용하지 않습니다. 로컬 도구 연결은 유지됩니다.",
+  "savedChats": "ChatGPT에 채팅 저장",
+  "savedChatsBody": "켜면 채팅이 ChatGPT 기록에 저장됩니다. ChatGPT가 저장된 메모리와 맞춤 지침을 적용할 수 있습니다.",
   "asyncToolOperations": "장시간 실행 도구 (Native5) · 실험적",
   "asyncToolOperationsBody": "90초 넘게 실행될 수 있는 도구용입니다. 사용 전에 별도의 {connector} 커넥터를 만들고 검증하세요. 새 Full 설정에서는 이 모드가 기본으로 활성화되며 기존 커넥터 식별자는 유지됩니다. 실행 후 취소하면 관찰만 중지되며 외부 작업은 계속될 수 있습니다.",
   "asyncToolOperationsUnavailable": "자동 Full 설정을 마치고 런처가 유휴 상태일 때만 사용할 수 있습니다. 모델 및 작업 공간 경로에는 영향을 주지 않습니다.",

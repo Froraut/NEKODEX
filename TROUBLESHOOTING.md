@@ -39,7 +39,7 @@ If the models still do not appear:
 
 - check **Settings → Check Codex routing** and **Run doctor**;
 - make sure another Codex wrapper is not replacing the route;
-- use **Repair Codex setup** once only if the saved integration needs repair; and
+- use **Connections → Install into Codex → Reinstall** once only if the saved integration needs repair; and
 - export a safe log after the failed catalog check.
 
 A green step 3 followed by a browser-turn error means installation succeeded. Repeating step 3 will
@@ -56,6 +56,9 @@ Choose one route owner:
 
 - To use Codex Web GPT, disable the other wrapper's provider/proxy mode, run **Repair Codex setup**,
   fully restart Codex, and start Codex directly rather than through the wrapper command.
+- If `model_provider` selects a custom provider, select the built-in `openai` provider or remove
+  that setting before setup or reconnect. `--replace-codex-route` changes the route URL only; it
+  does not change the provider. Keep the previous provider settings for a deliberate switch back.
 - A tool may remain enabled only as an MCP integration if it does not replace `openai_base_url`.
 - To switch away cleanly, use **Settings → Remove Codex integration** first. This restores the exact
   route that existed before Codex Web GPT was installed.
@@ -63,6 +66,30 @@ Choose one route owner:
 Do not hand-edit the launcher's route journal. It exists so setup and removal can fail closed instead
 of silently destroying another provider's configuration. First-class external-router composition is
 tracked in [#205](https://github.com/miuuyy/codex-chatgpt-web/issues/205), but is not supported today.
+
+## Native Codex models stop working after NEKODEX is quit
+
+An installed `openai_base_url` sends Responses through the local bridge, including requests for
+native models. Quitting NEKODEX stops that bridge while leaving the Codex route installed.
+
+- To continue using the integration, reopen NEKODEX, wait for its runtime to be ready, then fully
+  quit and reopen Codex so it reloads the route.
+- To stop using it, use **Settings → Remove Codex integration** and wait for restoration of the
+  previous route. Fully restart Codex before quitting or uninstalling NEKODEX.
+- For a temporary CLI route change, finish active tasks, run `codex-chatgpt-web route disconnect`,
+  and fully restart Codex. Reconnecting likewise requires a full restart. A successful change
+  keeps JSON on stdout and prints the reminder on stderr.
+
+If restoration fails, keep the config and route journal for recovery. The previous route may belong
+to another provider; do not replace it with a guessed URL. An already running Codex process can
+retain its old route until restarted.
+
+## Windows Full harness tunnel does not start when psmux supplies `tmux`
+
+If tunnel diagnostics show `tmux list-panes failed` and `psmux: no server running`, the bundled
+tunnel client may have selected psmux supervision because `tmux` is on the launcher's `PATH`.
+Launch NEKODEX from an environment without that psmux directory on `PATH`, then retry MCP setup.
+Keep the existing tunnel and runtime key; this failure does not establish that either is invalid.
 
 ## Encrypted history cannot be verified after switching models
 
@@ -322,9 +349,14 @@ does not provide credentials or additional allowance for native Image Gen.
 
 ## Update, repair, and remove
 
-To update, quit **Codex Web GPT** and run the same installer command from the README. The installer
+To update through the standalone installer, quit **NEKODEX** and run the same installer command from the README. The installer
 replaces the application and runtime while preserving the launcher configuration and private
 ChatGPT profile.
+
+On Linux, an older direct AppImage installation can report that automatic update requires the
+stable `install-launcher.sh` wrapper. Install once with NEKODEX's authenticated Linux installer
+to create that wrapper and desktop entry; subsequent launches through it retain the update path.
+Keep the current app and profile until the installer reports completion.
 
 Use **Repair Codex setup** only when diagnostics identify an integration problem. After repair,
 check the catalog and model picker; reopen Codex if it still uses the old settings. Avoid deleting

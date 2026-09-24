@@ -4,7 +4,7 @@ import type { ChatGptWebProModelVersion } from "../../chatgpt-web-models";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { stabilizeEffortSlider } from "./effort-stabilization";
 import { chatGptProUsageLimitTooltip } from "./pro-retry-hint";
-import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, parseChatGptEffortSliderState, chatGptModelStateMatches } from "../../chatgpt-session";
+import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, parseChatGptEffortSliderState, readChatGptEffortAvailability, chatGptModelStateMatches } from "../../chatgpt-session";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
 
 interface ModelSelectionDependencies {
@@ -69,7 +69,16 @@ function chatGptPinnedModelError(version: ChatGptWebProModelVersion, cause?: unk
 function chatGptProModelOptionName(version: ChatGptWebProModelVersion): RegExp {
   if (version === "5.6") return /^GPT[-\s]?5\.6\s+Sol(?:\s+Pro)?$/i;
   if (version === "5.5") return /^GPT[-\s]?5\.5(?:\s+Pro)?$/i;
-  return /^(?:Latest|最新|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i;
+  return /^(?:Latest|Le plus récent|最新|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i;
+}
+
+async function assertSelectedModelRadio(menu: Locator, version: ChatGptWebProModelVersion): Promise<void> {
+  const option = menu.getByRole("menuitemradio", {
+    name: chatGptProModelOptionName(version), exact: true, includeHidden: true,
+  });
+  if (await option.count() !== 1 || await option.getAttribute("aria-checked") !== "true") {
+    throw chatGptPinnedModelError(version);
+  }
 }
 
 
@@ -96,7 +105,10 @@ async function assertChatGptSelectedModelVersion(
     // "Latest" is not a version. Its slider must still prove 6; a future 7 fails closed.
     // Version and Pro must come from the same described state node: unrelated instructions
     // mentioning Pro are not proof that the selected effort is actually Pro.
-    if (chatGptModelStateMatches(descriptions, version, requirePro, expectedEffort)) return;
+    // Latest uses 5.6 for its lower efforts and 6 for Pro. The checked radio
+    // is verified separately, so 5.6 in this description alone is not family proof.
+    const describedVersion = version === "6" && expectedEffort !== "max" ? "5.6" : version;
+    if (chatGptModelStateMatches(descriptions, describedVersion, requirePro, expectedEffort)) return;
     if (Date.now() >= deadline) break;
     await new Promise(resolveSettle => setTimeout(resolveSettle, 50));
   }
@@ -354,6 +366,14 @@ export class ChatGptModelSelectionController {
         proRetryHint,
       );
     }
+    const availability = await readChatGptEffortAvailability(sliderContainer, sliderState)
+      .catch(error => { throw chatGptModelControlUnavailableAdapterError(String(error)); });
+    if (availability && !availability[uiEffortIndex]) {
+      throw new ChatGptWebAdapterError(
+        `ChatGPT locks ${mode.displayLabel} behind an upgrade. The message was not sent. Choose an available effort and run Repair to refresh the account capabilities.`,
+        { status: 400, errorType: "invalid_request_error", code: "chatgpt_effort_locked", retryable: false },
+      );
+    }
     const sliderControl = effortSlider.locator("xpath=ancestor::*[@role='menuitem'][1]");
     // Establish that any blocking dialog observed after the keypress was caused by this selection,
     // rather than misclassifying an unrelated dialog that was already present on the page.
@@ -389,7 +409,10 @@ export class ChatGptModelSelectionController {
         error instanceof Error ? error.message : "ChatGPT effort selection failed",
       );
     }
-    if (modelVersion) await assertChatGptSelectedModelVersion(page, effortSlider, modelVersion, mode.effort === "max", mode.effort, 1_000);
+    if (modelVersion) {
+      await assertSelectedModelRadio(activation.menu, modelVersion);
+      await assertChatGptSelectedModelVersion(page, effortSlider, modelVersion, mode.effort === "max", mode.effort, 1_000);
+    }
     await captureDiagnostic?.("effort-selected");
     await page.keyboard.press("Escape");
     await this.dependencies.settleChatGptUi();
@@ -405,6 +428,10 @@ export class ChatGptModelSelectionController {
       if (!confirmed || confirmed.min !== sliderState.min || confirmed.max !== sliderState.max || confirmed.value !== targetValue) {
         throw chatGptModelControlUnavailableAdapterError("ChatGPT did not persist the requested effort after closing its menu");
       }
+      if (modelVersion) {
+        await assertSelectedModelRadio(confirmation.menu, modelVersion);
+        await assertChatGptSelectedModelVersion(page, confirmation.slider, modelVersion, mode.effort === "max", mode.effort, 1_000);
+      }
     } finally { await page.keyboard.press("Escape"); }
     await this.dependencies.settleChatGptUi();
     await this.assertEffortSurface(page, mode.effort);
@@ -419,8 +446,9 @@ export class ChatGptModelSelectionController {
       const control = composer.locator("xpath=ancestor::form[1]").locator(CHATGPT_EFFORT_CONTROL_SELECTOR).last();
       let verificationError: ChatGptWebAdapterError | undefined;
       try {
-        const { slider } = await activateChatGptEffortMenu(page, control);
+        const { menu, slider } = await activateChatGptEffortMenu(page, control);
         if (expectedMode.modelVersion) {
+          await assertSelectedModelRadio(menu, expectedMode.modelVersion);
           await assertChatGptSelectedModelVersion(page, slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort);
           this.validatedPinnedVersions.set(page, expectedMode.modelVersion);
         } else {

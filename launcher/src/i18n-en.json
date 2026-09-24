@@ -127,6 +127,8 @@
   "newSessionWindowNoSessions": "No new sessions counted in the current window.",
   "freshConversation": "Fresh chat for every turn (experimental)",
   "freshConversationBody": "Send the complete task context in a new chat each turn. Uses more input and avoids retained-chat reuse. Local tools remain attached.",
+  "savedChats": "Save chats in ChatGPT",
+  "savedChatsBody": "When enabled, chats are stored in ChatGPT history. ChatGPT may apply your saved memory and custom instructions.",
   "asyncToolOperations": "Long-running tools (Native5) · Experimental",
   "asyncToolOperationsBody": "For tools that may run longer than 90 seconds. Create and verify the separate {connector} connector before use. New Full setups enable this mode by default; existing connector identities are preserved. Cancelling after dispatch stops observation only; an external action may continue.",
   "asyncToolOperationsUnavailable": "Available only after Automatic Full setup and while launcher work is idle. Model and workspace routes are unaffected.",

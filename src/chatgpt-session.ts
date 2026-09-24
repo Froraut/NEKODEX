@@ -3,6 +3,11 @@ import { stabilizeEffortSlider } from "./adapters/chatgpt-web/effort-stabilizati
 import type { ChatGptWebAccountCapabilities, ChatGptWebProModelVersion } from "./chatgpt-web-models";
 
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+export const CHATGPT_SAVED_CHAT_URL = "https://chatgpt.com/";
+
+export function chatGptNewChatUrl(useSavedChats = false): string {
+  return useSavedChats ? CHATGPT_SAVED_CHAT_URL : CHATGPT_TEMPORARY_CHAT_URL;
+}
 export const CHATGPT_COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
@@ -449,6 +454,24 @@ export function parseChatGptEffortSliderState(
   return { min, max, value };
 }
 
+export async function readChatGptEffortAvailability(
+  sliderContainer: Locator,
+  state: ChatGptEffortSliderState,
+): Promise<boolean[] | undefined> {
+  // Newer pickers retain locked upsell ticks inside the ARIA range. Older pickers
+  // omit the tick attributes, so their existing modal-gate check remains in force.
+  const locks = await sliderContainer.evaluate(container => Array.from(
+    container.querySelectorAll("[data-locked][data-selected]"),
+    tick => tick.getAttribute("data-locked"),
+  ));
+  if (locks.length === 0) return undefined;
+  if (locks.length !== state.max - state.min + 1
+    || locks.some(lock => lock !== "true" && lock !== "false")) {
+    throw new Error("ChatGPT effort availability could not be verified from its slider ticks");
+  }
+  return locks.map(lock => lock === "false");
+}
+
 /** Verify version and effort in one owned accessibility description, without reading a page. */
 export function chatGptModelStateMatches(
   descriptions: readonly string[],
@@ -489,10 +512,15 @@ export async function assertAuthenticatedChatGptPage(page: Page): Promise<void> 
 }
 
 export async function assertTemporaryChatPage(page: Page): Promise<void> {
+  await assertNewChatPage(page);
+}
+
+export async function assertNewChatPage(page: Page, useSavedChats = false): Promise<void> {
   const url = new URL(page.url());
-  const expected = new URL(CHATGPT_TEMPORARY_CHAT_URL);
-  if (url.origin !== expected.origin || url.pathname !== expected.pathname || url.searchParams.get("temporary-chat") !== "true") {
-    throw new Error(`ChatGPT left the isolated Temporary Chat surface (${page.url()})`);
+  const expected = new URL(chatGptNewChatUrl(useSavedChats));
+  if (url.origin !== expected.origin || url.pathname !== expected.pathname
+    || (url.searchParams.get("temporary-chat") === "true") === useSavedChats) {
+    throw new Error(`ChatGPT left the requested new ${useSavedChats ? "saved" : "Temporary"} Chat surface (${page.url()})`);
   }
 }
 
@@ -577,7 +605,13 @@ export async function detectChatGptAccountCapabilities(
     if (![3, 4, 5].includes(positions)) {
       throw new Error("ChatGPT effort slider exposed an unsupported reasoning range; run Repair after updating the launcher");
     }
-    if (positions === 3) {
+    const available = await readChatGptEffortAvailability(sliderContainer, state);
+    if (available) {
+      // Upsell positions remain inside the ARIA range. Their lock state is stronger
+      // evidence than counting positions or probing a different effort.
+      capabilities = { solAvailable: true, extraHighAvailable: available[3] === true,
+        proAvailable: available[4] === true };
+    } else if (positions === 3) {
       capabilities = { solAvailable: true, extraHighAvailable: false, proAvailable: false };
     } else {
       probeRestoredState = true;

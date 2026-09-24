@@ -28,7 +28,7 @@ test("a progress consumer byte overflow aborts the helper turn and cannot become
   const client = new LauncherBrowserHelperClient({
     appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/state.json", chromeExecutablePath: "/durable/chrome", turnTimeoutMs: 60_000,
-    headed: true, autoApproveToolCalls: false,
+    headed: true, autoApproveToolCalls: false, useSavedChats: false,
   });
   const internal = client as unknown as {
     child: unknown;
@@ -129,6 +129,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   };
   const reasoning: Array<{ text: string; continuation: boolean }> = [];
   const deltas: string[] = [];
@@ -194,6 +195,7 @@ test("file attachments fail closed when the running helper does not advertise su
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     child?: unknown;
@@ -286,7 +288,7 @@ test("accepted compaction retires through the helper as completed without hiding
     appName: "Codex Native4", browserHost: "launcher", browserHostDescriptorPath: descriptorPath,
     browserHelperScriptPath: helper, browserDiagnosticsPath: join(root, "diagnostics"),
     storageStatePath: join(root, "unused-state.json"), chromeExecutablePath: join(root, "unused-chrome"),
-    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
+    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false, useSavedChats: false,
   });
   const logs: string[] = [];
   const logger = spyOn(console, "info").mockImplementation((...args) => { logs.push(args.join(" ")); });
@@ -339,6 +341,7 @@ test("launcher helper protocol preserves multipart context and the compaction fl
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     pending: Map<string, { resolve(value: string): void }>;
@@ -415,6 +418,7 @@ test("an abort dispatched during run submission cannot overtake the run frame", 
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     ensureChild(): Promise<void>;
@@ -461,6 +465,7 @@ test("structured helper errors preserve the ChatGPT adapter failure contract", a
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     child?: unknown;

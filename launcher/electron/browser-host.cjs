@@ -43,6 +43,7 @@ const {
 } = require("./browser-state.cjs");
 
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+const SAVED_CHAT_URL = "https://chatgpt.com/";
 const CHATGPT_ORIGIN = "https://chatgpt.com";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ENEKODEX%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
@@ -370,8 +371,9 @@ function turnLifecycleFor(host) {
       idleUrl: IDLE_BROWSER_URL,
       create: () => host.createAutomaticTurnView(),
       attach: tab => host.attachAutomaticTurnView(tab),
-      initialize: async tab => {
+      initialize: async (tab, signal) => {
         await loadCommittedBrowserSurface(tab.view.webContents, IDLE_BROWSER_URL);
+        signal?.throwIfAborted();
         await host.markTurnTabSurface(tab);
       },
       isTrusted: tab => host.hasTrustedTurnDocument(tab),
@@ -581,6 +583,7 @@ class BrowserHost {
     this.authGeneration = 0;
     this.authProbeRevision = 0;
     this.authProbeTail = Promise.resolve();
+    this.defaultAuthProbe = null;
     this.authenticationRetryOperation = null;
     this.authPrincipalFingerprint = null;
     this.authSessionFingerprint = null;
@@ -923,11 +926,11 @@ class BrowserHost {
     }
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel) {
-    return turnLifecycleFor(this).createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel);
+  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal) {
+    return turnLifecycleFor(this).createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal);
   }
 
-  createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs) {
+  createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs, useSavedChats = false) {
     if (this.turnTabs.size >= this.maxTabs
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
       throw new Error(
@@ -962,7 +965,8 @@ class BrowserHost {
       ordinal,
       label: `ChatGPT ${ordinal}`,
       pageTitle: "ChatGPT",
-      url: TEMPORARY_CHAT_URL,
+      url: useSavedChats ? SAVED_CHAT_URL : TEMPORARY_CHAT_URL,
+      useSavedChats,
       loading: true,
       message: "Paste the copied prompt, add any images yourself because Manual mode cannot transfer them, choose a model and effort, then press Sent",
       interactionMode: "manual",
@@ -994,6 +998,7 @@ class BrowserHost {
 
   async initializeManualTurnTab(tab) {
     const contents = tab.view.webContents;
+    const chatUrl = tab.url || TEMPORARY_CHAT_URL;
     try {
       await loadCommittedBrowserSurface(contents, IDLE_BROWSER_URL);
     } catch (error) {
@@ -1009,7 +1014,7 @@ class BrowserHost {
     }
     if (this.turnTabs.get(tab.id) !== tab || contents.isDestroyed()) return;
     try {
-      await contents.loadURL(TEMPORARY_CHAT_URL);
+      await contents.loadURL(chatUrl);
     } catch (error) {
       if (this.turnTabs.get(tab.id) !== tab || contents.isDestroyed()) return;
       if (isAbortedNavigationError(error)) {
@@ -2228,8 +2233,8 @@ class BrowserHost {
     return manualTurnsFor(this).writeManualPrompt(prompt);
   }
 
-  beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false) {
-    return manualTurnsFor(this).beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction);
+  beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false, useSavedChats = false) {
+    return manualTurnsFor(this).beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction, useSavedChats);
   }
 
   async waitManualSent(traceId, helperPid, observerTimeoutMs = 35_000) {
@@ -2289,8 +2294,17 @@ class BrowserHost {
     requireRetainedConversation = false,
     taskProgressVersion,
     taskModel = null,
+    signal,
   ) {
-    return turnLifecycleFor(this).beginTurn(traceId, reveal, helperPid, conversationKey, connectorIdentity, requireRetainedConversation, taskProgressVersion, taskModel);
+    return turnLifecycleFor(this).beginTurn(traceId, reveal, helperPid, conversationKey, connectorIdentity, requireRetainedConversation, taskProgressVersion, taskModel, signal);
+  }
+
+  releaseUnclaimedTurn(traceId, helperPid, surfaceId, signal) {
+    return turnLifecycleFor(this).releaseUnclaimedTurn(traceId, helperPid, surfaceId, signal);
+  }
+
+  confirmTurnAcquisition(traceId, helperPid, surfaceId, signal) {
+    return turnLifecycleFor(this).confirmTurnAcquisition(traceId, helperPid, surfaceId, signal);
   }
 
   async endTurn(
@@ -2978,12 +2992,24 @@ class BrowserHost {
   }
 
   probeAuthentication(options = {}) {
-    const operation = this.authProbeTail.then(
+    // Load events and login polling often request the same observation together. Share
+    // only the ordinary probe: setup, observation-only and caller-cancelled probes keep
+    // their own authority and cancellation semantics.
+    const ordinary = !options.forSetup && !options.observationOnly && !options.signal;
+    if (ordinary && this.defaultAuthProbe) return this.defaultAuthProbe;
+    const operation = (this.authProbeTail ?? Promise.resolve()).then(
       () => this.runAuthenticationProbe(options),
       () => this.runAuthenticationProbe(options),
     );
-    this.authProbeTail = operation.then(() => undefined, () => undefined);
-    return operation;
+    let tracked = operation;
+    if (ordinary) {
+      tracked = operation.finally(() => {
+        if (this.defaultAuthProbe === tracked) this.defaultAuthProbe = null;
+      });
+      this.defaultAuthProbe = tracked;
+    }
+    this.authProbeTail = tracked.then(() => undefined, () => undefined);
+    return tracked;
   }
 
   async runAuthenticationProbe({ forSetup = false, observationOnly = false, signal } = {}) {

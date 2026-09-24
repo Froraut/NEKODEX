@@ -5,15 +5,64 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 }
 
+function Get-ResponseHeaderValue {
+  param($Headers, [string]$Name)
+  if ($null -eq $Headers) { return $null }
+  try {
+    $Values = $Headers.GetValues($Name)
+    if ($Values) { return (@($Values) -join ", ") }
+  } catch {}
+  try {
+    $Value = $Headers[$Name]
+    if ($Value) { return (@($Value) -join ", ") }
+  } catch {}
+  return $null
+}
+
+function Get-ReleaseLookupRateLimitError {
+  param($Failure)
+  $Response = $Failure.Exception.Response
+  if ($null -eq $Response) { return $null }
+  try { $Status = [int]$Response.StatusCode } catch { return $null }
+  if ($Status -ne 403 -and $Status -ne 429) { return $null }
+  $Remaining = Get-ResponseHeaderValue $Response.Headers "X-RateLimit-Remaining"
+  $RetryAfter = Get-ResponseHeaderValue $Response.Headers "Retry-After"
+  $Detail = [string]$Failure.ErrorDetails.Message
+  if ($Status -ne 429 -and $Remaining -ne "0" -and -not $RetryAfter -and $Detail -notmatch '(?i)rate.limit') { return $null }
+
+  $RetryAt = $null
+  $DelaySeconds = [long]0
+  $ResetSeconds = [long]0
+  $RetryDate = [DateTimeOffset]::MinValue
+  if ($RetryAfter -and [long]::TryParse($RetryAfter, [ref]$DelaySeconds) -and $DelaySeconds -ge 0) {
+    try { $RetryAt = [DateTimeOffset]::UtcNow.AddSeconds($DelaySeconds) } catch {}
+  } elseif ($RetryAfter -and [DateTimeOffset]::TryParse($RetryAfter, [ref]$RetryDate)) {
+    $RetryAt = $RetryDate.ToUniversalTime()
+  }
+  if (-not $RetryAt) {
+    $Reset = Get-ResponseHeaderValue $Response.Headers "X-RateLimit-Reset"
+    if ([long]::TryParse($Reset, [ref]$ResetSeconds) -and $ResetSeconds -gt 0) {
+      try { $RetryAt = [DateTimeOffset]::FromUnixTimeSeconds($ResetSeconds) } catch {}
+    }
+  }
+  $When = if ($RetryAt) { " Retry after $($RetryAt.ToString('yyyy-MM-dd HH:mm:ss')) UTC." } else { " Retry after GitHub resets the limit." }
+  return "GitHub API rate limit blocked release lookup (HTTP $Status).$When To skip API lookup, set CODEX_WEB_GPT_VERSION to a known published NEKODEX version and rerun this installer; checksum and Authenticode publisher verification still apply."
+}
+
 function Invoke-WithRetry {
   param(
     [Parameter(Mandatory = $true)][scriptblock]$Operation,
-    [Parameter(Mandatory = $true)][string]$Label
+    [Parameter(Mandatory = $true)][string]$Label,
+    [switch]$ReleaseLookup
   )
   for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
     try {
       return & $Operation
     } catch {
+      if ($ReleaseLookup) {
+        $RateLimitError = Get-ReleaseLookupRateLimitError $_
+        if ($RateLimitError) { throw $RateLimitError }
+      }
       if ($Attempt -eq 3) {
         throw "$Label failed after $Attempt attempts: $($_.Exception.Message)"
       }
@@ -51,7 +100,7 @@ foreach ($Thumbprint in $TrustedPublisherThumbprints) {
 
 $Version = $env:CODEX_WEB_GPT_VERSION
 if (-not $Version) {
-  $Published = @(Invoke-WithRetry -Label "Resolving published releases" -Operation {
+  $Published = @(Invoke-WithRetry -Label "Resolving published releases" -ReleaseLookup -Operation {
     Invoke-RestMethod "https://api.github.com/repos/$Repository/releases?per_page=10" -TimeoutSec 60
   })
   foreach ($Release in $Published) {
