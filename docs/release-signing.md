@@ -5,7 +5,7 @@ This fork replaces the upstream installation by the owner's explicit choice. It 
 profile locations. It does not create a second profile or copy/delete browser credentials.
 `launcher/package.json` identifies FroRaut as the maintainer, records upstream attribution,
 and declares `installationMode: replace-upstream`. Asset/update ownership stays pinned to
-`Froraut/codex-chatgpt-web`. Changing the bundle identity later requires a separate migration.
+`Froraut/NEKODEX`. Changing the bundle identity later requires a separate migration.
 
 ## Three independent proofs
 
@@ -186,8 +186,8 @@ After a real release, independently verify an asset's provenance with:
 
 ```bash
 gh attestation verify /absolute/path/to/downloaded-asset \
-  --repo Froraut/codex-chatgpt-web \
-  --signer-workflow Froraut/codex-chatgpt-web/.github/workflows/release.yml
+  --repo Froraut/NEKODEX \
+  --signer-workflow Froraut/NEKODEX/.github/workflows/release.yml
 ```
 
 The terminal-only `scripts/install.sh` installer supports macOS arm64 and x86_64 runtime archives.
