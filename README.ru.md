@@ -21,17 +21,17 @@ NEKODEX объединяет отдельные профили ChatGPT, встр
 
 ## Скачать
 
-**NEKODEX 5.9.0-nekodex.5 — предварительный выпуск для macOS 13 и новее и Linux x64.**
+**NEKODEX 6.0.0-nekodex.1 — предварительный выпуск для macOS 13 и новее и Linux x64.**
 
 | Компьютер | Установщик |
 | --- | --- |
-| Apple Silicon — M1 и новее | [DMG для ARM64](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.5/NEKODEX-5.9.0-nekodex.5-mac-arm64.dmg) |
-| Intel | [DMG для Intel](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.5/NEKODEX-5.9.0-nekodex.5-mac-x64.dmg) |
+| Apple Silicon — M1 и новее | [DMG для ARM64](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.1/NEKODEX-6.0.0-nekodex.1-mac-arm64.dmg) |
+| Intel | [DMG для Intel](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.1/NEKODEX-6.0.0-nekodex.1-mac-x64.dmg) |
 
-[Страница выпуска](https://github.com/Froraut/NEKODEX/releases/tag/v5.9.0-nekodex.5) ·
-[Контрольные суммы](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.5/checksums.txt)
+[Страница выпуска](https://github.com/Froraut/NEKODEX/releases/tag/v6.0.0-nekodex.1) ·
+[Контрольные суммы](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.1/checksums.txt)
 
-Для Linux x64 доступен [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v5.9.0-nekodex.5/codex-web-gpt-5.9.0-nekodex.5-linux-x64.AppImage).
+Для Linux x64 доступен [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.1/codex-web-gpt-6.0.0-nekodex.1-linux-x64.AppImage).
 
 Windows x64 собирается отдельно как **unsigned preview**: установщик и ZIP находятся в
 [артефактах сборки](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml).
