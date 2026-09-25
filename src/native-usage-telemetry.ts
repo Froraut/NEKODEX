@@ -7,15 +7,18 @@ import type { NativeUsageTelemetryEvent } from "./usage/native-contract";
 export type { NativeUsageOutcome, NativeUsageFailureCategory, NativeReportedUsage, NativeUsageTelemetryEvent } from "./usage/native-contract";
 
 const DELIVERY_TIMEOUT_MS = 1_000;
+const RETRY_INTERVAL_MS = 10_000;
 let outbox: NativeUsageOutbox | undefined;
 let delivering = false;
+/** After a failed delivery, only the retry timer drains until this time. */
+let requestDrainPausedUntil = 0;
 let retryTimer: ReturnType<typeof setInterval> | undefined;
 
 export function startNativeUsageDelivery(): void {
   if (retryTimer || !descriptorPath()) return;
   try { outbox = new NativeUsageOutbox(join(dirname(descriptorPath()!), "native-usage-outbox")); }
   catch { console.warn("[codex-chatgpt-web] native_usage_outbox_unavailable"); return; }
-  retryTimer = setInterval(() => { void drain(); }, 10_000);
+  retryTimer = setInterval(() => { void drain(true); }, RETRY_INTERVAL_MS);
   retryTimer.unref();
   void drain();
 }
@@ -48,14 +51,21 @@ async function deliver(event: NativeUsageTelemetryEvent): Promise<void> {
   if (receipt.recorded !== true && receipt.duplicate !== true) throw new Error("Native usage was not persisted");
 }
 
-async function drain(): Promise<void> {
+async function drain(scheduled = false): Promise<void> {
   if (delivering || !outbox) return;
+  // While the receiver is down, each native request would otherwise rescan the whole outbox and
+  // wait on another failing delivery. Receipts stay durable; the retry timer delivers them.
+  if (!scheduled && Date.now() < requestDrainPausedUntil) return;
   delivering = true;
   try {
     for (const event of outbox.pending()) {
       try { await deliver(event); outbox.acknowledge(event.eventId); }
-      catch { break; } // Keep the exact event id until the receiver confirms durable acceptance.
+      catch { // Keep the exact event id until the receiver confirms durable acceptance.
+        requestDrainPausedUntil = Date.now() + RETRY_INTERVAL_MS;
+        return;
+      }
     }
+    requestDrainPausedUntil = 0;
   } catch { console.warn("[codex-chatgpt-web] native_usage_outbox_unavailable"); }
   finally { delivering = false; }
 }
