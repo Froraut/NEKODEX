@@ -87,8 +87,12 @@ export function usageReportCsv(report: UsageSnapshot): string {
 export function formatUsageRate(rate: number, language: string): string {
   const format = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 1 });
   if (!Number.isFinite(rate)) return format.format(0);
-  const shown = rate > 0 && rate < 0.001 ? 0.001 : rate < 1 && rate > 0.999 ? 0.999 : rate;
-  return format.format(Math.min(1, Math.max(0, shown)));
+  const bounded = Math.min(1, Math.max(0, rate));
+  if (bounded === 0 || bounded === 1) return format.format(bounded);
+  const rendered = format.format(bounded);
+  if (rendered === format.format(0)) return `<${format.format(0.001)}`;
+  if (rendered === format.format(1)) return `>${format.format(0.999)}`;
+  return rendered;
 }
 
 /** Formats milliseconds as seconds or minutes, choosing the unit after rounding so 59.96 s reads as 1 min. */
