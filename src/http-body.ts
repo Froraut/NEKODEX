@@ -2,9 +2,30 @@ import { zstdDecompress } from "node:zlib";
 
 const MAX_ENCODED_REQUEST_BYTES = 64 * 1024 * 1024;
 const MAX_DECODED_REQUEST_BYTES = 128 * 1024 * 1024;
+const INVALID_ZSTD_DATA_CODES = new Set([
+  "Z_DATA_ERROR",
+  "ZSTD_error_prefix_unknown",
+  "ZSTD_error_corruption_detected",
+  "ZSTD_error_checksum_wrong",
+  "ZSTD_error_srcSize_wrong",
+  "ZSTD_error_literals_headerWrong",
+  "ZSTD_error_frameParameter_unsupported",
+  "ZSTD_error_version_unsupported",
+  "ZSTD_error_dictionary_wrong",
+  "ZSTD_error_dictionary_corrupted",
+  "ZSTD_error_dstSize_tooSmall",
+]);
+
+/** Only validation failures created at the body boundary may become client HTTP statuses. */
+export class NativeRequestBodyError extends Error {
+  constructor(message: string, readonly status: 400 | 413 | 415) {
+    super(message);
+    this.name = "NativeRequestBodyError";
+  }
+}
 
 function assertWithinLimit(bytes: number, limit: number, label: string): void {
-  if (bytes > limit) throw new Error(`${label} exceeds ${limit} bytes`);
+  if (bytes > limit) throw new NativeRequestBodyError(`${label} exceeds ${limit} bytes`, 413);
 }
 
 /** Collect opaque request bytes with a streaming size limit and abort-aware cleanup. */
@@ -14,7 +35,7 @@ export async function readRequestBodyBytes(
 ): Promise<Uint8Array<ArrayBuffer>> {
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    const error = new Error(`Encoded request body exceeds ${maxBytes} bytes`);
+    const error = new NativeRequestBodyError(`Encoded request body exceeds ${maxBytes} bytes`, 413);
     // Reject immediately even when this is one branch of a tee: cancellation can wait for the
     // other branch, but the oversized request must not keep this branch's source live.
     void request.body?.cancel(error).catch(() => {});
@@ -60,7 +81,7 @@ export async function readJsonRequestBody(
 ): Promise<unknown> {
   const contentEncoding = (request.headers.get("content-encoding") ?? "identity").trim().toLowerCase();
   if (contentEncoding !== "" && contentEncoding !== "identity" && contentEncoding !== "zstd") {
-    throw new Error(`Unsupported Content-Encoding: ${contentEncoding}`);
+    throw new NativeRequestBodyError(`Unsupported Content-Encoding: ${contentEncoding}`, 415);
   }
   const encoded = await readRequestBodyBytes(request, maxEncodedBytes);
   let decoded: Uint8Array;
@@ -72,9 +93,12 @@ export async function readJsonRequestBody(
     decoded = await new Promise<Buffer>((resolve, reject) => {
       zstdDecompress(encoded, { maxOutputLength: maxDecodedBytes }, (error, output) => {
         if (error) {
-          reject((error as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE"
-            ? new Error(`Decoded request body exceeds ${maxDecodedBytes} bytes`)
-            : error);
+          const code = (error as NodeJS.ErrnoException).code;
+          reject(code === "ERR_BUFFER_TOO_LARGE"
+            ? new NativeRequestBodyError(`Decoded request body exceeds ${maxDecodedBytes} bytes`, 413)
+            : code && INVALID_ZSTD_DATA_CODES.has(code)
+              ? new NativeRequestBodyError(error.message, 400)
+              : error);
         } else {
           resolve(output);
         }
@@ -84,8 +108,19 @@ export async function readJsonRequestBody(
 
   assertWithinLimit(decoded.byteLength, maxDecodedBytes, "Decoded request body");
   request.signal.throwIfAborted();
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(decoded);
-  return JSON.parse(text) as unknown;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(decoded);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    throw new NativeRequestBodyError(error.message, 400);
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new NativeRequestBodyError(error.message, 400);
+  }
 }
 
 /** Replace a decoded wire representation while preserving request authority and cancellation. */

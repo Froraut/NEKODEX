@@ -1,6 +1,7 @@
 import { createResponseContinuationScopeFromBody } from "./responses/continuation-owner";
 import { previousResponseReplayPrefixLength, resolvePreviousResponseInput } from "./responses/state";
-import { readJsonRequestBody, readRequestBodyBytes } from "./http-body";
+import { NativeRequestBodyError, readJsonRequestBody, readRequestBodyBytes } from "./http-body";
+export { NativeRequestBodyError } from "./http-body";
 import {
   BRIDGE_COMPACTION_PREFIX,
   SUMMARY_PREFIX,
@@ -100,7 +101,7 @@ export function scrubBridgeArtifactsForNative(value: unknown): { value: unknown;
     delete clean.id;
     if (isBridgeCompactionItem(clean)) {
       const summary = decodeCompactionSummary(clean.encrypted_content);
-      if (summary === null) throw new Error("Invalid ChatGPT Web compaction checkpoint");
+      if (summary === null) throw new NativeRequestBodyError("Invalid ChatGPT Web compaction checkpoint", 400);
       return [{
         type: "message",
         role: "user",

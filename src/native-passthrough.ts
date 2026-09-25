@@ -1,6 +1,6 @@
 import { fetchNativeCodex } from "./native-network";
 import { enqueueNativeUsageTelemetry } from "./native-usage-telemetry";
-import { codexClientVersionFromUserAgent, prepareNativeRequestBody, type NativeCodexEndpoint } from "./native-request-preparation";
+import { codexClientVersionFromUserAgent, NativeRequestBodyError, prepareNativeRequestBody, type NativeCodexEndpoint } from "./native-request-preparation";
 import { failureCategoryForHttp, observeNativeResponseBody, withUncleanCloseTolerance } from "./native-response-body";
 import type { NativeUsageFailureCategory, NativeUsageOutcome, NativeUsageTelemetryEvent } from "./usage/native-contract";
 export type { NativeImageEndpoint } from "./native-request-preparation";
@@ -47,14 +47,6 @@ function localRequestFailure(status: number, type: string, message: string): Res
   });
 }
 
-/** Maps a local body-preparation failure to a terminal client status; no upstream call was made. */
-function preparationFailure(error: unknown): Response {
-  const message = error instanceof Error ? error.message : String(error);
-  if (/ exceeds \d+ bytes$/.test(message)) return localRequestFailure(413, "invalid_request_error", message);
-  if (message.startsWith("Unsupported Content-Encoding")) return localRequestFailure(415, "invalid_request_error", message);
-  return localRequestFailure(400, "invalid_request_error", message);
-}
-
 export async function forwardNativeCodexRequest(
   request: Request,
   endpoint: NativeCodexEndpoint,
@@ -81,9 +73,12 @@ export async function forwardNativeCodexRequest(
   try {
     preparation = await prepareNativeRequestBody(request, endpoint, decodedBody);
   } catch (error) {
-    // Cancellation keeps its existing propagation; malformed local input is not an upstream failure.
+    // Cancellation and unexpected stream/internal failures retain their existing propagation.
     if (request.signal.aborted) throw error;
-    return preparationFailure(error);
+    if (error instanceof NativeRequestBodyError) {
+      return localRequestFailure(error.status, "invalid_request_error", error.message);
+    }
+    throw error;
   }
   if (preparation.kind === "rejected") return preparation.response;
   const { body, model, compactionRequest } = preparation;

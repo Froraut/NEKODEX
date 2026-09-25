@@ -74,6 +74,9 @@ separate facts.
    forward bytes → inspect terminal usage without changing delivery → enqueue a
    validated receipt for the launcher. Client cancellation stops that caller's
    wait without cancelling unrelated shared resolution.
+   Body validation owns typed client failures (400 malformed data, 413 size limit,
+   415 encoding); forwarding maps only those failures to client responses.
+   Unexpected input-stream/internal failures and cancellation retain their error path.
 3. **Manual request:** reserve an owned tab → copy prompt → wait for user Sent
    confirmation → execute through the harness → settle. The human submission
    deadline ends at Sent. Runtime cancellation must be acknowledged before the
