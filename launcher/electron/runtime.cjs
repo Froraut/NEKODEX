@@ -5,6 +5,7 @@ const os = require("node:os");
 const { randomBytes } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { resolveUserPath } = require("./profile.cjs");
 const {
   automaticConnectorName,
   CURRENT_CONNECTOR_NAME,
@@ -26,12 +27,13 @@ const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
 const PASSKEY_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const MAX_PASSKEY_STATE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_PASSKEY_MARKER_FILE_BYTES = 64 * 1024;
-function resolveUserPath(value) {
-  if (value === "~") return os.homedir();
-  if (value.startsWith("~/") || value.startsWith("~\\")) {
-    return path.resolve(os.homedir(), value.slice(2));
+function assertTunnelCredentials(reuseSavedCredentials, tunnelId, runtimeKey) {
+  if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
+    throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
   }
-  return path.resolve(value);
+  if (!reuseSavedCredentials && (typeof runtimeKey !== "string" || runtimeKey.trim().length < 20)) {
+    throw new Error("A Tunnels Read + Use runtime key is required");
+  }
 }
 
 function usableExecutable(candidate, platform = process.platform) {
@@ -244,6 +246,16 @@ class RuntimeHost {
         });
       }
     }
+  }
+
+  // Callers remove the file after setup; cleanupEphemeralSecrets removes leftovers at startup.
+  writeEphemeralRuntimeKey(runtimeKey) {
+    const secretsDir = path.join(this.app.getPath("userData"), "secrets");
+    fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(secretsDir, 0o700); } catch {}
+    const keyPath = path.join(secretsDir, `runtime-key-${randomBytes(16).toString("hex")}.tmp`);
+    fs.writeFileSync(keyPath, runtimeKey.trim(), { flag: "wx", mode: 0o600 });
+    return keyPath;
   }
 
   cleanupPasskeyTransfers() {
@@ -1681,12 +1693,7 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const targetMode = interactionMode ?? this.browserInteractionMode();
     const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured(targetMode);
-    if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
-      throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
-    }
-    if (!reuseSavedCredentials && (typeof runtimeKey !== "string" || runtimeKey.trim().length < 20)) {
-      throw new Error("A Tunnels Read + Use runtime key is required");
-    }
+    assertTunnelCredentials(reuseSavedCredentials, tunnelId, runtimeKey);
     const args = [
       "setup",
       "--full",
@@ -1707,11 +1714,7 @@ class RuntimeHost {
         afterRuntimeReady,
       });
     }
-    const secretsDir = path.join(this.app.getPath("userData"), "secrets");
-    fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(secretsDir, 0o700); } catch {}
-    const keyPath = path.join(secretsDir, `runtime-key-${randomBytes(16).toString("hex")}.tmp`);
-    fs.writeFileSync(keyPath, runtimeKey.trim(), { flag: "wx", mode: 0o600 });
+    const keyPath = this.writeEphemeralRuntimeKey(runtimeKey);
     args.push(
       "--tunnel-id",
       tunnelId,
@@ -1735,12 +1738,7 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const targetMode = interactionMode ?? this.browserInteractionMode();
     const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured(targetMode);
-    if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
-      throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
-    }
-    if (!reuseSavedCredentials && (typeof runtimeKey !== "string" || runtimeKey.trim().length < 20)) {
-      throw new Error("A Tunnels Read + Use runtime key is required");
-    }
+    assertTunnelCredentials(reuseSavedCredentials, tunnelId, runtimeKey);
     const args = [
       "dev",
       "setup",
@@ -1761,11 +1759,7 @@ class RuntimeHost {
         afterRuntimeReady,
       });
     }
-    const secretsDir = path.join(this.app.getPath("userData"), "secrets");
-    fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(secretsDir, 0o700); } catch {}
-    const keyPath = path.join(secretsDir, `runtime-key-${randomBytes(16).toString("hex")}.tmp`);
-    fs.writeFileSync(keyPath, runtimeKey.trim(), { flag: "wx", mode: 0o600 });
+    const keyPath = this.writeEphemeralRuntimeKey(runtimeKey);
     args.push("--tunnel-id", tunnelId, "--runtime-key-file", keyPath);
     return this.runDevSetup("dev-mcp-setup", args, {
       message: "Configuring the isolated DEV Full harness",

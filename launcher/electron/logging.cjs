@@ -100,6 +100,27 @@ function writeExportAtomically(destination, content) {
   }
 }
 
+// Any parse, validation or sanitizer failure drops the line (null).
+function parseLogRecord(line, sanitizeDetail) {
+  try {
+    const record = JSON.parse(line);
+    if (!record
+      || typeof record.at !== "string"
+      || !["debug", "info", "warning", "error"].includes(record.level)
+      || typeof record.event !== "string") return null;
+    return {
+      at: record.at,
+      level: record.level,
+      event: record.event,
+      detail: record.detail && typeof record.detail === "object"
+        ? sanitizeDetail(record.detail)
+        : {},
+    };
+  } catch {
+    return null;
+  }
+}
+
 function exportSanitizedLogs({ filePath, destinationPath }) {
   const sourcePaths = [`${filePath}.1`, filePath];
   const destination = path.resolve(destinationPath);
@@ -116,21 +137,8 @@ function exportSanitizedLogs({ filePath, destinationPath }) {
       throw error;
     }
     for (const line of lines) {
-      try {
-        const record = JSON.parse(line);
-        if (!record
-          || typeof record.at !== "string"
-          || !["debug", "info", "warning", "error"].includes(record.level)
-          || typeof record.event !== "string") continue;
-        records.push({
-          at: record.at,
-          level: record.level,
-          event: record.event,
-          detail: record.detail && typeof record.detail === "object"
-            ? sanitizeForExport(record.detail)
-            : {},
-        });
-      } catch {}
+      const record = parseLogRecord(line, sanitizeForExport);
+      if (record) records.push(record);
     }
   }
   // Replace the selected directory entry atomically. A link swapped in after
@@ -168,21 +176,8 @@ function readRecent(filePath) {
       continue;
     }
     for (const line of lines.slice(-MAX_MEMORY_RECORDS)) {
-      try {
-        const record = JSON.parse(line);
-        if (!record
-          || typeof record.at !== "string"
-          || !["debug", "info", "warning", "error"].includes(record.level)
-          || typeof record.event !== "string") continue;
-        records.push({
-          at: record.at,
-          level: record.level,
-          event: record.event,
-          detail: record.detail && typeof record.detail === "object"
-            ? sanitize(record.detail)
-            : {},
-        });
-      } catch {}
+      const record = parseLogRecord(line, sanitize);
+      if (record) records.push(record);
     }
   }
   return records.slice(-MAX_MEMORY_RECORDS);

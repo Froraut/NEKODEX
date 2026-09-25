@@ -30,6 +30,7 @@ const {
 const { nativeFallbackProxyEnvironment, resolveNativeRequestProxy, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
 const LANGUAGES = require("./languages.json");
 const { applicationMenu } = require("./application-menu.cjs");
+const { nativeCopyFor, rendererRecoveryCopyFor, updateCheckLabelFor } = require("./native-copy.cjs");
 const { installHermesProvider } = require("./hermes-integration.cjs");
 const { navigationErrorForLog } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
@@ -401,87 +402,12 @@ function trayImage() {
   return image;
 }
 
-const NATIVE_COPY = Object.freeze({
-  ru: Object.freeze({
-    openLauncher: "Открыть NEKODEX", quit: "Закрыть интерфейс — native продолжит работу", stopAndQuit: "Остановить соединения и выйти", exportDiagnostics: "Экспортировать диагностику без личных данных",
-    cancel: "Отмена", remove: "Удалить", removeTitle: "Удалить NEKODEX",
-    removeMessage: "Удалить модели ChatGPT Web из Codex и восстановить прежний маршрут моделей?",
-    removeDetail: "Профиль входа ChatGPT в NEKODEX сохранится. Codex потребуется один раз перезапустить.",
-    catalogFailure: "Codex подключился к NEKODEX, но загрузка списка моделей завершилась ошибкой (HTTP {status}; {reason}). Проверьте маршрутизацию и события. Если ошибка повторяется, экспортируйте диагностику без личных данных.",
-  }),
-  en: Object.freeze({
-    openLauncher: "Open NEKODEX",
-    quit: "Quit interface — keep native running",
-    stopAndQuit: "Stop connections and quit",
-    exportDiagnostics: "Export privacy-safe diagnostics",
-    cancel: "Cancel",
-    remove: "Remove",
-    removeTitle: "Remove NEKODEX",
-    removeMessage: "Remove the ChatGPT Web models from Codex and restore the previous model route?",
-    removeDetail: "The launcher's ChatGPT login profile will be preserved. Codex must be restarted once.",
-    catalogFailure: "Codex reached NEKODEX, but loading the model catalog failed (HTTP {status}; {reason}). Check the routing details and Activity; export privacy-safe diagnostics if it persists.",
-  }),
-  "zh-CN": Object.freeze({
-    openLauncher: "打开 NEKODEX",
-    quit: "退出界面并保持原生模型运行",
-    stopAndQuit: "停止连接并退出",
-    exportDiagnostics: "导出隐私安全诊断",
-    cancel: "取消",
-    remove: "移除",
-    removeTitle: "移除 NEKODEX",
-    removeMessage: "从 Codex 中移除 ChatGPT Web 模型并恢复此前的模型路由？",
-    removeDetail: "启动器中的 ChatGPT 登录 profile 会保留。Codex 需要重启一次。",
-    catalogFailure: "Codex 已连接到 NEKODEX，但模型列表加载失败（HTTP {status}；{reason}）。请检查路由信息和“活动”；若问题持续，请导出隐私安全诊断。",
-  }),
-  "zh-TW": Object.freeze({
-    openLauncher: "開啟 NEKODEX",
-    quit: "關閉介面並保持原生模型執行",
-    stopAndQuit: "停止連線並結束",
-    exportDiagnostics: "匯出隱私安全診斷",
-    cancel: "取消",
-    remove: "移除",
-    removeTitle: "移除 NEKODEX",
-    removeMessage: "從 Codex 中移除 ChatGPT Web 模型並還原先前的模型路由？",
-    removeDetail: "啟動器中的 ChatGPT 登入設定檔會保留。Codex 需要重新啟動一次。",
-    catalogFailure: "Codex 已連線到 NEKODEX，但模型清單載入失敗（HTTP {status}；{reason}）。請檢查路由資訊與「活動」；若問題持續，請匯出隱私安全診斷。",
-  }),
-  ja: Object.freeze({
-    openLauncher: "NEKODEX を開く",
-    quit: "画面を終了してネイティブを維持",
-    stopAndQuit: "接続を停止して終了",
-    exportDiagnostics: "プライバシー保護済みの診断情報をエクスポート",
-    cancel: "キャンセル",
-    remove: "削除",
-    removeTitle: "NEKODEX を削除",
-    removeMessage: "Codex から ChatGPT Web モデルを削除し、以前のモデルルートを復元しますか？",
-    removeDetail: "ランチャーの ChatGPT ログインプロファイルは保持されます。Codex を一度再起動する必要があります。",
-    catalogFailure: "Codex は NEKODEX に接続しましたが、モデル一覧を読み込めませんでした（HTTP {status}、{reason}）。ルーティング情報とアクティビティを確認し、問題が続く場合はプライバシー保護済みの診断情報をエクスポートしてください。",
-  }),
-  ko: Object.freeze({
-    openLauncher: "NEKODEX 열기",
-    quit: "화면 종료 및 네이티브 유지",
-    stopAndQuit: "연결 중지 후 종료",
-    exportDiagnostics: "개인정보가 보호된 진단 정보 내보내기",
-    cancel: "취소",
-    remove: "제거",
-    removeTitle: "NEKODEX 제거",
-    removeMessage: "Codex에서 ChatGPT Web 모델을 제거하고 이전 모델 경로를 복원할까요?",
-    removeDetail: "런처의 ChatGPT 로그인 프로필은 유지됩니다. Codex를 한 번 다시 시작해야 합니다.",
-    catalogFailure: "Codex가 NEKODEX에 연결했지만 모델 목록을 불러오지 못했습니다(HTTP {status}; {reason}). 경로 정보와 활동을 확인하고 문제가 계속되면 개인정보가 보호된 진단 정보를 내보내세요.",
-  }),
-});
-
-function nativeCopyFor(language) {
-  return NATIVE_COPY[language] || NATIVE_COPY.en;
-}
-
 function updateApplicationMenu(language) {
   if (process.platform !== "darwin") return;
-  const labels = { ru: "Проверить обновления…", en: "Check for updates…", "zh-CN": "检查更新…", "zh-TW": "檢查更新…", ja: "アップデートを確認…", ko: "업데이트 확인…" };
   Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenu({
     language,
     name: LAUNCHER_PROFILE.displayName,
-    checkLabel: labels[language] || labels.en,
+    checkLabel: updateCheckLabelFor(language),
     quitLabel: nativeCopyFor(language).quit,
     stopLabel: nativeCopyFor(language).stopAndQuit,
     onStop: () => { void requestQuit({ stopRuntime: true }); },
@@ -720,30 +646,8 @@ function reloadOwnedRenderer(window) {
   });
 }
 
-const RENDERER_RECOVERY_COPY = Object.freeze({
-  en: Object.freeze({
-    title: "NEKODEX interface needs recovery",
-    message: "The launcher interface stopped unexpectedly.",
-    active: "An operation is still running. Keep NEKODEX open, let it finish, then open NEKODEX again to choose Restart. The local runtime stays available.",
-    idle: "The local runtime will be restarted only if you explicitly choose Restart NEKODEX.",
-    keep: "Keep running",
-    restart: "Restart NEKODEX",
-    retryFailed: "NEKODEX could not restart",
-  }),
-  ru: Object.freeze({
-    title: "Интерфейс NEKODEX нужно восстановить",
-    message: "Интерфейс приложения неожиданно остановился.",
-    active: "Операция ещё выполняется. Оставьте NEKODEX запущенным, дождитесь её завершения и снова откройте NEKODEX, чтобы выбрать перезапуск. Локальная среда остаётся доступной.",
-    idle: "Локальная среда будет перезапущена, только если вы явно выберете «Перезапустить NEKODEX».",
-    keep: "Оставить запущенным",
-    restart: "Перезапустить NEKODEX",
-    retryFailed: "Не удалось перезапустить NEKODEX",
-  }),
-});
-
 function rendererRecoveryCopy() {
-  const language = launcherStateStore?.read().language;
-  return RENDERER_RECOVERY_COPY[language] || RENDERER_RECOVERY_COPY.en;
+  return rendererRecoveryCopyFor(launcherStateStore?.read().language);
 }
 
 function rendererRestartBlocked() {
@@ -925,6 +829,19 @@ function registerIpc({ logger, stateStore }) {
     return changeConversationPreference({ lifecycleAdmission, browserHost, runtimeHost, label, change,
       sync: syncConversationState, shouldReopen: () => !exitCommitted });
   };
+  const assertBrowserIdleFor = subject => {
+    const browserOperation = browserHost.currentOperation();
+    if (browserHost.activeTraceId || browserOperation) {
+      throw new Error(
+        browserHost.activeTraceId
+          ? `Finish or cancel active ChatGPT turns before changing ${subject}`
+          : `Finish ${browserOperation} before changing ${subject}`,
+      );
+    }
+  };
+  const mcpSetupProofPatch = () => ({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
+    setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
+    setupRuntimeIdentity: currentRuntimeIdentity(), setupConnectorName: runtimeHost.mcpConnectorName() });
   handle("launcher:snapshot", async () => ({
     profile: LAUNCHER_PROFILE.kind,
     profilePaths: {
@@ -1068,9 +985,7 @@ function registerIpc({ logger, stateStore }) {
       if (!accountProofContextIsCurrent(proofContext, stateStore, { requireCoreSetup: true })) {
         throw new Error("MCP verification became stale before it could be published");
       }
-      const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
-        setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
-        setupRuntimeIdentity: currentRuntimeIdentity(), setupConnectorName: runtimeHost.mcpConnectorName() });
+      const state = stateStore.update(mcpSetupProofPatch());
       send("launcher:state-changed", state);
       const successMessage = "Local Manual mode runtime is healthy; connector selection remains a manual turn step";
       publishOperation({ name: operationName, status: "completed", message: successMessage });
@@ -1092,9 +1007,7 @@ function registerIpc({ logger, stateStore }) {
       if (!accountProofContextIsCurrent(proofContext, stateStore, { requireCoreSetup: true })) {
         throw new Error("MCP verification became stale before it could be published");
       }
-      const state = stateStore.update({ mcpSetupComplete: true, setupContract: SETUP_CONTRACT, setupVerifiedAt: new Date().toISOString(),
-        setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
-        setupRuntimeIdentity: currentRuntimeIdentity(), setupConnectorName: runtimeHost.mcpConnectorName() });
+      const state = stateStore.update(mcpSetupProofPatch());
       send("launcher:state-changed", state);
       const successMessage = IS_DEV_PROFILE
         ? "DEV harness and connector verified"
@@ -1204,8 +1117,8 @@ function registerIpc({ logger, stateStore }) {
     const result = IS_DEV_PROFILE ? await runtimeHost.setupDevCore() : await runtimeHost.setupCore();
     stateStore.update({
       coreSetupComplete: true,
-      codexCatalogVerified: IS_DEV_PROFILE ? true : false,
-      codexRestartRequired: IS_DEV_PROFILE ? false : true,
+      codexCatalogVerified: IS_DEV_PROFILE,
+      codexRestartRequired: !IS_DEV_PROFILE,
       experimentalAsyncToolOperations: runtimeHost.runtimeConfigSnapshot().config?.experimentalAsyncToolOperations === true,
       zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
       ...(result.mode === "full" ? {
@@ -1262,7 +1175,7 @@ function registerIpc({ logger, stateStore }) {
       mcpRuntimeInstalled: true,
       mcpSetupComplete: false,
       mcpGuideStep: 2,
-      codexRestartRequired: IS_DEV_PROFILE ? false : true,
+      codexRestartRequired: !IS_DEV_PROFILE,
     });
     send("launcher:state-changed", state);
     // Advance the pool observation after the saved mode changes; do not send an unstamped refresh.
@@ -1298,11 +1211,10 @@ function registerIpc({ logger, stateStore }) {
     invalidateAccountProof(stateStore);
     const state = stateStore.update({
       experimentalBiggerContext: result.enabled,
-      codexCatalogVerified: IS_DEV_PROFILE ? true : false,
-      codexRestartRequired: IS_DEV_PROFILE ? false : true,
+      codexCatalogVerified: true,
+      codexRestartRequired: false,
     });
     send("launcher:state-changed", state);
-    if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return state;
   });
   handle("launcher:async-tool-operations", async (_event, enabled) => {
@@ -1378,14 +1290,7 @@ function registerIpc({ logger, stateStore }) {
     return state;
   });
   handle("launcher:zero-risk-pro", async (_event, enabled) => {
-    const browserOperation = browserHost.currentOperation();
-    if (browserHost.activeTraceId || browserOperation) {
-      throw new Error(
-        browserHost.activeTraceId
-          ? "Finish or cancel active ChatGPT turns before changing Manual model profiles"
-          : `Finish ${browserOperation} before changing Manual model profiles`,
-      );
-    }
+    assertBrowserIdleFor("Manual model profiles");
     const result = await runtimeHost.setZeroRiskPro(enabled === true);
     invalidateAccountProof(stateStore);
     const state = stateStore.update({
@@ -1403,14 +1308,7 @@ function registerIpc({ logger, stateStore }) {
     if (current.browserInteractionMode === mode) {
       return { state: current, credentialsRequired: false, targetMode: mode };
     }
-    const browserOperation = browserHost.currentOperation();
-    if (browserHost.activeTraceId || browserOperation) {
-      throw new Error(
-        browserHost.activeTraceId
-          ? "Finish or cancel active ChatGPT turns before changing browser interaction mode"
-          : `Finish ${browserOperation} before changing browser interaction mode`,
-      );
-    }
+    assertBrowserIdleFor("browser interaction mode");
     if (!runtimeHost.mcpCredentialsConfigured(mode)) {
       return { state: current, credentialsRequired: true, targetMode: mode };
     }
@@ -1469,14 +1367,7 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:pro-model-version", async (_event, rawVersion) => {
     const version = validateProModelVersion(rawVersion);
-    const browserOperation = browserHost.currentOperation();
-    if (browserHost.activeTraceId || browserOperation) {
-      throw new Error(
-        browserHost.activeTraceId
-          ? "Finish or cancel active ChatGPT turns before changing the Pro model version"
-          : `Finish ${browserOperation} before changing the Pro model version`,
-      );
-    }
+    assertBrowserIdleFor("the Pro model version");
     return runtimeHost.setProModelVersion(version);
   });
   handle("launcher:set-preference", (_event, key, value) => {
@@ -1973,6 +1864,20 @@ async function start() {
       lifecycleAdmission.release(startupOwner);
     }
   };
+  // Shared by both failed-start paths. Returns whether the previous verified
+  // runtime remains usable; if not, setup proof is retired before route recovery.
+  const markRuntimeStartFailed = () => {
+    stopCatalogVerificationMonitor();
+    const capabilities = runtimeSupervisor.capabilitySnapshot();
+    const priorRuntimeUsable = capabilities.nativeAvailability === "ready";
+    if (!priorRuntimeUsable) {
+      retireAccountProof();
+      const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
+        mcpSetupComplete: false });
+      send("launcher:state-changed", state);
+    }
+    return priorRuntimeUsable;
+  };
   startupPhase = "renderer";
   await loadRenderer(mainWindow);
   rendererStartupComplete = true;
@@ -2219,15 +2124,7 @@ async function start() {
       }
       return;
     }
-    stopCatalogVerificationMonitor();
-    const capabilities = runtimeSupervisor.capabilitySnapshot();
-    const priorRuntimeUsable = capabilities.nativeAvailability === "ready";
-    if (!priorRuntimeUsable) {
-      retireAccountProof();
-      const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
-        mcpSetupComplete: false });
-      send("launcher:state-changed", state);
-    }
+    const priorRuntimeUsable = markRuntimeStartFailed();
     const routeRecovery = priorRuntimeUsable
       ? { restored: false, skipped: true }
       : await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
@@ -2256,15 +2153,7 @@ async function start() {
   }).catch(async (error) => {
     if (shutdownInProgress || quitting || exitCommitted) return;
     const primary = error instanceof Error ? error.message : String(error);
-    stopCatalogVerificationMonitor();
-    const capabilities = runtimeSupervisor.capabilitySnapshot();
-    const priorRuntimeUsable = capabilities.nativeAvailability === "ready";
-    if (!priorRuntimeUsable) {
-      retireAccountProof();
-      const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false,
-        mcpSetupComplete: false });
-      send("launcher:state-changed", state);
-    }
+    const priorRuntimeUsable = markRuntimeStartFailed();
     const routeRecovery = priorRuntimeUsable
       ? { restored: false, skipped: true }
       : await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });

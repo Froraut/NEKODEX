@@ -2,18 +2,11 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { DETACH_OWNED_CHILD } = require("./process-tree.cjs");
 const { processIdentity } = require("./update-recovery.cjs");
+const { abortReason, throwIfAborted } = require("./update-abort.cjs");
 
 const EXTRACTION_STDERR_LIMIT = 1024 * 1024;
 const EXTRACTION_FORCE_KILL_MS = 3_000;
 const EXTRACTION_EXIT_PROOF_MS = 15_000;
-
-function abortReason(signal, fallback = "Update preparation was cancelled") {
-  return signal?.reason instanceof Error ? signal.reason : new Error(fallback);
-}
-
-function throwIfAborted(signal) {
-  if (signal?.aborted) throw abortReason(signal);
-}
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
