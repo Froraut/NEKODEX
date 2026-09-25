@@ -1,18 +1,9 @@
 import { parseRequest } from "../../responses/parser";
 import type { CodexParsedRequest } from "../../types";
+import { jsonRecord as record } from "../../lib/json-record";
 import { extractChatGptTurnUserRevision } from "./environment";
+import { itemTurnId } from "./raw-input-item";
 import type { ChatGptLunaCheckpoint } from "./rolling-checkpoint-format";
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
-function itemTurnId(value: unknown): string | undefined {
-  const turnId = record(record(value)?.internal_chat_message_metadata_passthrough)?.turn_id;
-  return typeof turnId === "string" ? turnId : undefined;
-}
 
 function currentTurnBoundary(parsed: CodexParsedRequest, input: unknown[], turnId: string): number | undefined {
   const replayPrefix = Math.min(parsed._replayPrefixLen ?? 0, input.length);

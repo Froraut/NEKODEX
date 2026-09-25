@@ -27,7 +27,7 @@ function emitToolBatch(requests: BrokerToolRequest[], usage: CodexUsage, emit: (
   emit({ type: "done", stopReason: "tool_use", endTurn: false, usage });
 }
 
-function emitTextDeltas(deltas: string[], emit: (event: AdapterEvent) => void): void {
+export function emitTextDeltas(deltas: string[], emit: (event: AdapterEvent) => void): void {
   for (const text of deltas) emit({ type: "text_delta", text, phase: "final_answer" });
 }
 

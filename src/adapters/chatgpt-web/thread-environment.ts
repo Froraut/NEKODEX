@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 import { atomicWriteFile } from "../../config";
 import { getCodexHome } from "../../codex-integration-shared";
 import type { CodexParsedRequest } from "../../types";
+import { jsonRecord as record } from "../../lib/json-record";
 import type { ChatGptSandboxPolicy, ChatGptTurnEnvironment } from "./environment";
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { resolveThreadEnvironment, pathIdentity, contains } from "./thread-environment-resolver";
@@ -30,12 +31,6 @@ interface ThreadEnvironmentBackend {
 }
 
 const threadEnvironmentBackends = new Map<string, ThreadEnvironmentBackend>();
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
 
 function absolutePaths(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.length === 0 || value.some(path => typeof path !== "string" || !isAbsolute(path))) {

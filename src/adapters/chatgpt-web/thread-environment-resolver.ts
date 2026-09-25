@@ -1,6 +1,6 @@
-import { isAbsolute, relative, resolve } from "node:path";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import type { CodexParsedRequest } from "../../types";
+import { jsonRecord as record } from "../../lib/json-record";
 import {
   extractChatGptTurnEnvironment,
   extractChatGptCompactionSourceRevision,
@@ -17,7 +17,12 @@ import {
   MissingTrustedCodexEnvironmentError,
   type ChatGptTurnEnvironment,
 } from "./environment";
+import { pathIdentity, matchesPath as contains } from "./environment-envelope";
+import { itemTurnId, rawMessageText as messageText } from "./raw-input-item";
 import type { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
+
+// Path comparison is envelope syntax; thread-environment.ts reads it through this resolver.
+export { pathIdentity, contains };
 
 export interface ThreadEnvironmentResolution {
   environment: ChatGptTurnEnvironment;
@@ -27,26 +32,6 @@ export interface ThreadEnvironmentResolution {
 export interface ThreadEnvironmentResolverDependencies {
   readCache(threadId: string): Omit<ChatGptTurnEnvironment, "tools" | "producer"> | undefined;
   resolveRollout(options: Omit<Parameters<typeof resolveCurrentCodexRolloutEnvironment>[0], "codexHome" | "sqliteHome">): ChatGptTurnEnvironment | undefined;
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
-function itemTurnId(value: unknown): string | undefined {
-  const turnId = record(record(value)?.internal_chat_message_metadata_passthrough)?.turn_id;
-  return typeof turnId === "string" ? turnId : undefined;
-}
-
-function messageText(item: Record<string, unknown>): string {
-  if (typeof item.content === "string") return item.content;
-  if (!Array.isArray(item.content)) return "";
-  return item.content
-    .map(part => record(part)?.text)
-    .filter((text): text is string => typeof text === "string")
-    .join("\n");
 }
 
 function messageHoldsEnvironmentEnvelope(item: Record<string, unknown>): boolean {
@@ -134,16 +119,6 @@ function environmentRequestAcrossCompactionSummary(parsed: CodexParsedRequest): 
     });
   }
   return { ...parsed, _rawBody: { ...body, input: normalized } };
-}
-
-export function pathIdentity(value: string): string {
-  const normalized = resolve(value);
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-export function contains(root: string, path: string): boolean {
-  const rel = relative(pathIdentity(root), pathIdentity(path));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironment): boolean {

@@ -31,10 +31,6 @@ export interface ChatGptWebRoundEvidence {
   toolRequests?: BrokerToolRequest[];
 }
 
-function conservativeTextTokens(text: string, modelId: string): number {
-  return estimateTokens(text, modelId);
-}
-
 export function estimateChatGptWebInputTokens(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
@@ -90,7 +86,7 @@ export function resolveBiggerContextMultipartParts(
   );
   const inline = compile();
   const inputTokens = estimateCompiledChatGptWebInputTokens(inline, parsed.modelId);
-  const initialParts = biggerContextPartCount(inputTokens, autoCompactTokenLimit, false);
+  const initialParts = biggerContextPartCount(inputTokens, autoCompactTokenLimit);
   if (initialParts === CHATGPT_BIGGER_CONTEXT_PARTS) return initialParts;
 
   const fits = (compiled: CompiledChatGptWebPrompt): boolean => {
@@ -120,12 +116,10 @@ export function resolveBiggerContextMultipartParts(
   }
 }
 
-export function biggerContextPartCount(
+function biggerContextPartCount(
   inputTokens: number,
   onePartLimit: number,
-  compaction: boolean,
 ): ChatGptWebMultipartPartCount | undefined {
-  if (compaction) return CHATGPT_BIGGER_CONTEXT_PARTS;
   if (inputTokens < onePartLimit) return undefined;
   if (inputTokens < onePartLimit * 2) return 2;
   return CHATGPT_BIGGER_CONTEXT_PARTS;
@@ -164,7 +158,7 @@ export function estimateChatGptWebUsage(
       )
       : undefined,
   });
-  const outputTokens = conservativeTextTokens(roundEvidenceText(evidence), parsed.modelId);
+  const outputTokens = estimateTokens(roundEvidenceText(evidence), parsed.modelId);
   return {
     inputTokens,
     outputTokens,
