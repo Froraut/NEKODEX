@@ -1,5 +1,4 @@
 import { safeTunnelDetail, tunnelCommandOutput, tunnelConnectLaunchError, parseTunnelStatus, type TunnelRuntimeStatus } from "./tunnel-status";
-export { tunnelCommandOutput, tunnelConnectLaunchError, parseTunnelStatus, type TunnelRuntimeStatus } from "./tunnel-status";
 import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./codex-integration-shared";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -222,10 +221,7 @@ function manifestPath(): string {
   return join(getConfigDir(), "bin", "tunnel-client-manifest.json");
 }
 
-export function acquireTunnelInstallLock(
-  lockPath: string,
-  io: Pick<typeof import("node:fs"), "writeFileSync" | "fsyncSync" | "closeSync"> = { writeFileSync, fsyncSync, closeSync },
-): () => Error | undefined {
+export function acquireTunnelInstallLock(lockPath: string): () => Error | undefined {
   const token = randomUUID();
   let fd: number | undefined;
   let owned: { dev: number; ino: number } | undefined;
@@ -236,9 +232,9 @@ export function acquireTunnelInstallLock(
   try {
     fd = openSync(lockPath, "wx", 0o600);
     owned = fstatSync(fd);
-    io.writeFileSync(fd, `${token}\n`);
-    io.fsyncSync(fd);
-    io.closeSync(fd);
+    writeFileSync(fd, `${token}\n`);
+    fsyncSync(fd);
+    closeSync(fd);
     fd = undefined;
   } catch (error) {
     const cleanupErrors: unknown[] = [];
@@ -252,7 +248,7 @@ export function acquireTunnelInstallLock(
       } catch (cleanup) { cleanupErrors.push(cleanup); }
     }
     if (fd !== undefined) {
-      try { io.closeSync(fd); } catch (cleanup) { cleanupErrors.push(cleanup); }
+      try { closeSync(fd); } catch (cleanup) { cleanupErrors.push(cleanup); }
     }
     if (cleanupErrors.length) {
       throw new AggregateError([error, ...cleanupErrors],
@@ -279,28 +275,16 @@ export function acquireTunnelInstallLock(
   };
 }
 
-export async function removeTunnelInstallFile(
-  path: string,
-  options: {
-    platform?: NodeJS.Platform;
-    remove?: (path: string) => void;
-    wait?: (delayMs: number) => Promise<void>;
-    retryDelaysMs?: readonly number[];
-  } = {},
-): Promise<void> {
-  const platform = options.platform ?? process.platform;
-  const remove = options.remove ?? (target => rmSync(target, { force: true }));
-  const wait = options.wait ?? (delayMs => new Promise(resolve => setTimeout(resolve, delayMs)));
-  const retryDelays = options.retryDelaysMs ?? WINDOWS_REMOVE_RETRY_DELAYS_MS;
+export async function removeTunnelInstallFile(path: string): Promise<void> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      remove(path);
+      rmSync(path, { force: true });
       return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      const retryable = platform === "win32" && (code === "EBUSY" || code === "EPERM");
-      if (!retryable || attempt >= retryDelays.length) throw error;
-      await wait(retryDelays[attempt]!);
+      const retryable = process.platform === "win32" && (code === "EBUSY" || code === "EPERM");
+      if (!retryable || attempt >= WINDOWS_REMOVE_RETRY_DELAYS_MS.length) throw error;
+      await new Promise(resolve => setTimeout(resolve, WINDOWS_REMOVE_RETRY_DELAYS_MS[attempt]!));
     }
   }
 }
@@ -518,7 +502,7 @@ function tunnelCommandQuoted(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-export function mcpCommand(config: AppConfig, platform = process.platform): string {
+export function mcpCommand(config: AppConfig): string {
   const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
   const asyncConnector = config.experimentalAsyncToolOperations === true
     && config.browserInteractionMode === "automatic"
@@ -538,7 +522,7 @@ export function mcpCommand(config: AppConfig, platform = process.platform): stri
     "--broker-socket",
     config.brokerSocketPath,
   ];
-  if (platform === "win32") {
+  if (process.platform === "win32") {
     return command.map(tunnelCommandQuoted).join(" ");
   }
   return command.map(shellQuote).join(" ");
@@ -607,11 +591,7 @@ export function stopTunnel(config: AppConfig, signal?: AbortSignal): void {
   }
 }
 
-export function tunnelStopProcessExited(
-  output: string,
-  alias: string,
-  probe: (pid: number) => void = pid => process.kill(pid, 0),
-): boolean {
+export function tunnelStopProcessExited(output: string, alias: string): boolean {
   let pid: number;
   try {
     const receipt = JSON.parse(output) as { alias?: unknown; stop_error?: unknown };
@@ -621,7 +601,7 @@ export function tunnelStopProcessExited(
     pid = Number(match[1]);
     if (!Number.isSafeInteger(pid) || pid <= 1) return false;
   } catch { return false; }
-  try { probe(pid); }
+  try { process.kill(pid, 0); }
   catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
   return false;
 }
@@ -649,31 +629,24 @@ export async function waitForTunnelReady(
   config: AppConfig,
   timeoutMs = TUNNEL_READY_TIMEOUT_MS,
   signal?: AbortSignal,
-  options: {
-    now?: () => number;
-    probe?: (config: AppConfig, signal: AbortSignal | undefined, timeoutMs: number) => TunnelRuntimeStatus;
-    wait?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
-  } = {},
 ): Promise<TunnelRuntimeStatus> {
   throwIfAborted(signal);
-  const now = options.now ?? Date.now;
-  const probe = options.probe ?? tunnelStatus;
-  const wait = options.wait ?? ((delayMs: number, waitSignal?: AbortSignal) => new Promise<void>((resolveWait, rejectWait) => {
-      const onAbort = () => {
-        clearTimeout(timer);
-        rejectWait(waitSignal?.reason instanceof Error
-          ? waitSignal.reason
-          : new DOMException("The operation was aborted", "AbortError"));
-      };
-      const timer = setTimeout(() => {
-        waitSignal?.removeEventListener("abort", onAbort);
-        resolveWait();
-      }, delayMs);
-      waitSignal?.addEventListener("abort", onAbort, { once: true });
-      if (waitSignal?.aborted) onAbort();
-    }));
-  const deadline = now() + Math.max(0, timeoutMs);
-  const initialRemaining = deadline - now();
+  const wait = (delayMs: number, waitSignal?: AbortSignal) => new Promise<void>((resolveWait, rejectWait) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      rejectWait(waitSignal?.reason instanceof Error
+        ? waitSignal.reason
+        : new DOMException("The operation was aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      waitSignal?.removeEventListener("abort", onAbort);
+      resolveWait();
+    }, delayMs);
+    waitSignal?.addEventListener("abort", onAbort, { once: true });
+    if (waitSignal?.aborted) onAbort();
+  });
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  const initialRemaining = deadline - Date.now();
   if (initialRemaining <= 0) {
     return {
       ok: false,
@@ -683,15 +656,15 @@ export async function waitForTunnelReady(
       detail: "Tunnel readiness deadline elapsed before status probe",
     };
   }
-  let status = probe(config, signal, Math.min(10_000, initialRemaining));
+  let status = tunnelStatus(config, signal, Math.min(10_000, initialRemaining));
   while (!status.ok) {
-    const remainingBeforeWait = deadline - now();
+    const remainingBeforeWait = deadline - Date.now();
     if (remainingBeforeWait <= 0) break;
     await wait(Math.min(TUNNEL_STATUS_POLL_INTERVAL_MS, remainingBeforeWait), signal);
     throwIfAborted(signal);
-    const remainingBeforeProbe = deadline - now();
+    const remainingBeforeProbe = deadline - Date.now();
     if (remainingBeforeProbe <= 0) break;
-    status = probe(config, signal, Math.min(10_000, remainingBeforeProbe));
+    status = tunnelStatus(config, signal, Math.min(10_000, remainingBeforeProbe));
   }
   return status;
 }

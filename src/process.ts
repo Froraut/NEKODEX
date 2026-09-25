@@ -16,10 +16,8 @@ export function isMissingLaunchdService(result: CommandResult): boolean {
   return /^(?:Bad request\.\r?\n)?Could not find service "[^"\r\n]+" in domain for (?:system|user(?: gui:[ \t]*\d+)?)$/.test(detail);
 }
 
-export function processRunning(
-  pid: unknown,
-  probe: (pid: number, signal: 0) => void = process.kill,
-): boolean {
+export function processRunning(pid: unknown): boolean {
+  const probe = process.kill;
   if (!Number.isInteger(pid) || (pid as number) < 1) return false;
   try {
     probe(pid as number, 0);

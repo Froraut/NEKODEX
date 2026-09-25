@@ -2,8 +2,6 @@ import { createInterface } from "node:readline/promises";
 import { existsSync } from "node:fs";
 import { stdin, stdout } from "node:process";
 import {
-  DEV_CHATGPT_ASYNC_CONNECTOR_NAME,
-  DEV_CHATGPT_CONNECTOR_NAME,
   ZERO_RISK_CHATGPT_CONNECTOR_NAME,
   loadConfig,
 } from "../config";

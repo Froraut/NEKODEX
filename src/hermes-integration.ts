@@ -30,7 +30,7 @@ export function hermesModels(config: AppConfig) {
 /** Separate authenticated producer. Never accept Codex lifecycle/filesystem claims from Hermes. */
 export class HermesIntegration {
   private sessions = new Map<string, Session>();
-  constructor(private readonly home = getConfigDir()) {}
+  private readonly home = getConfigDir();
 
   authorized(req: Request): boolean {
     try {

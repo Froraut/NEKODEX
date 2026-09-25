@@ -1,10 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { AppConfig } from "./config";
 import {
-  CHATGPT_ASYNC_CONNECTOR_NAME,
-  CHATGPT_CONNECTOR_NAME,
-  DEV_CHATGPT_ASYNC_CONNECTOR_NAME,
-  DEV_CHATGPT_CONNECTOR_NAME,
   getConfigDir,
   getConfigPath,
   loadConfig,

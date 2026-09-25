@@ -1,5 +1,5 @@
 import { writeFilesWithCompensation, type FileSnapshot } from "./file-transactions";
-export { snapshotFile, assertFileSnapshotCurrent, writeFileSnapshot, restoreFileSnapshot, writeFilesWithCompensation, fileSnapshotsMatch, type FileSnapshot, type CommittedFileReceipt } from "./file-transactions";
+export { snapshotFile, assertFileSnapshotCurrent, writeFileSnapshot, restoreFileSnapshot, writeFilesWithCompensation, type FileSnapshot } from "./file-transactions";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";

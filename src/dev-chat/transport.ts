@@ -1,11 +1,7 @@
 import { TurnBroker } from "../adapters/chatgpt-web/turn-broker";
 import type { AppConfig } from "../config";
-import { tunnelStatus, type TunnelRuntimeStatus } from "../tunnel";
+import { tunnelStatus } from "../tunnel";
 import { DEV_CONFIG_PURPOSE } from "./constants";
-
-interface DevTransportDependencies {
-  status?: (config: AppConfig) => TunnelRuntimeStatus;
-}
 
 export interface DevChatTransport {
   config: AppConfig;
@@ -29,11 +25,9 @@ function assertDevTransportConfig(config: AppConfig): void {
 export async function startDevChatTransport(
   config: AppConfig,
   _devRoot: string,
-  dependencies: DevTransportDependencies = {},
 ): Promise<DevChatTransport> {
   assertDevTransportConfig(config);
-  const inspect = dependencies.status ?? tunnelStatus;
-  const runtime = inspect(config);
+  const runtime = tunnelStatus(config);
   if (!runtime.ok || !runtime.ready) {
     throw new Error(
       `The launcher-owned DEV MCP tunnel is not ready: ${runtime.detail}. Open the DEV launcher and complete MCP setup first`,

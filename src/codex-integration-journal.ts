@@ -324,12 +324,12 @@ function recoverPendingJsonHookWrite(
 }
 
 /** Inspect copies without invoking any journal, config or hooks recovery writes. */
-export function readJournalSnapshot(options: { primaryPath?: string; recoveryPath?: string } = {}): {
+export function readJournalSnapshot(): {
   journal?: AnyCodexIntegrationJournal;
   recoveryPending: boolean;
 } {
-  const primaryPath = options.primaryPath ?? getCodexJournalPath();
-  const recoveryPath = options.recoveryPath ?? getCodexJournalRecoveryPath();
+  const primaryPath = getCodexJournalPath();
+  const recoveryPath = getCodexJournalRecoveryPath();
   const primary = existsSync(primaryPath) ? parseJournal(primaryPath, readBoundedUtf8File(primaryPath)) : undefined;
   const recovery = existsSync(recoveryPath) ? parseJournal(recoveryPath, readBoundedUtf8File(recoveryPath)) : undefined;
   if (!primary && !recovery) return { recoveryPending: false };

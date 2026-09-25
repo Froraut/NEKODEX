@@ -418,13 +418,10 @@ export function prepareWorkingTreeBrowserHelper(): string | undefined {
 export function createLauncherDevAdapter(
   config: AppConfig,
   runtimeStateRoot: string,
-  options: {
-    broker?: TurnBrokerOwner;
-    browserHelperScriptPath?: string;
-  } = {},
+  options: { broker?: TurnBrokerOwner } = {},
 ): { broker: TurnBrokerOwner; adapterFactory: AdapterFactory } {
   const broker = options.broker ?? new RemoteTurnBroker(config.brokerSocketPath);
-  const browserHelperScriptPath = options.browserHelperScriptPath ?? prepareWorkingTreeBrowserHelper();
+  const browserHelperScriptPath = prepareWorkingTreeBrowserHelper();
   const adapterFactory: AdapterFactory = provider => createChatGptWebAdapter({
     ...provider,
     chatgptWeb: {

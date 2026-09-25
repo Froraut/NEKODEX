@@ -53,11 +53,9 @@ function cmdShellArgument(value: string): string {
   return `"${value}"`;
 }
 
-export function codexInterruptHookCommand(
-  config: Pick<AppConfig, "runtimeCommand">,
-  home = getConfigDir(),
-  platform: NodeJS.Platform = process.platform,
-): string {
+export function codexInterruptHookCommand(config: Pick<AppConfig, "runtimeCommand">): string {
+  const home = getConfigDir();
+  const platform = process.platform;
   const absoluteHome = platform === "win32" ? win32.resolve(home) : posix.resolve(home);
   const args = [...config.runtimeCommand, "--home", absoluteHome, "hook", "interrupt"];
   return args.map(platform === "win32" ? cmdShellArgument : posixShellArgument).join(" ");
