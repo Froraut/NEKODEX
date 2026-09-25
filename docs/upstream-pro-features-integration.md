@@ -41,6 +41,10 @@ installed Codex, or MCP acceptance.
 
 ## Reproduction
 
+The repository tests were removed at `f3cf75c`. The commands and results below document
+verification against an earlier source revision; they are historical evidence, not current
+runnable checks. Future verification follows the focused DEV/manual procedure.
+
 ```bash
 bun test tests/pro-model-selection.test.ts tests/pro-model-identity.test.ts tests/model-contract.test.ts tests/pro-retry-hint.test.ts tests/pro-retry-hint-worker.test.ts tests/runtime-layout.test.ts tests/cli.test.ts tests/server-lifecycle.test.ts
 bun run typecheck

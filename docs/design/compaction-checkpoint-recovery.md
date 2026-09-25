@@ -45,6 +45,10 @@ The implementation assumes trusted configuration-home ancestry and a filesystem 
 
 ## Verification
 
+The repository tests were removed at `f3cf75c`. The commands and results below document
+verification against an earlier source revision; they are historical evidence, not current
+runnable checks. Future verification follows the focused DEV/manual procedure.
+
 `tests/compaction-checkpoint.test.ts` contains local worker/broker fixtures and actual SQLite/filesystem checks for intent ordering, accepted summaries, ambiguous/interrupted outcomes, pre-cancellation, failure before worker invocation, acceptance-write failure without reconnect replay, binding/finalization fencing, retention, concurrent writers, metadata/summary validation, unsafe paths, and SIGKILL recovery. `tests/compaction-checkpoint-cli.test.ts` covers read-only empty-store inspection, identifier validation, rejection of replay commands, and explicit accepted-summary inspection. These are local tests, not live-provider or installed-application evidence.
 
 The bounded source review ran the following three existing cases: a real SQLite acceptance-update failure preserving one successful operation on reconnect; malformed persisted metadata and oversized-summary rejection; and unsafe directory/dangling database-symlink rejection. Result: **3 passed, 0 failed, 12 assertions**. Other listed tests were inspected as coverage, not claimed as executed by that review. Later retention and additional test changes require their owner's focused verification.
