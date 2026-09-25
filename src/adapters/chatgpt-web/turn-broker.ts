@@ -5,7 +5,7 @@ import { decodeBrokerRequest, opaqueId, assertSurfaceNonce, MAX_BROKER_LINE_CHAR
   type BrokerCompletionFenceStart, type TurnBrokerOwner,
 } from "./turn-broker-protocol";
 export type { BrokerToolRequest, BrokerToolResult, BrokerOwnedOperationSnapshot, BrokerOwnedOperationStartResult,
-  BrokerOwnedOperationStatus, BrokerCompletionFenceStart, TurnBrokerOwner } from "./turn-broker-protocol";
+  BrokerOwnedOperationStatus, TurnBrokerOwner } from "./turn-broker-protocol";
 export { callTurnBroker, RemoteTurnBroker, TurnBrokerTimeoutError } from "./turn-broker-client";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
@@ -277,10 +277,6 @@ export class TurnBroker implements TurnBrokerOwner {
 
   abortCompactionTransaction(token: string): void {
     this.compactionTransactions.abort(token);
-  }
-
-  revokeCompactionTransactions(traceId: string): void {
-    this.compactionTransactions.abortTrace(traceId);
   }
 
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void {

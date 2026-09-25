@@ -34,7 +34,6 @@ import { chatGptCompactionSourceExecutionKey, chatGptInstructionLineage, chatGpt
 import { createChatGptTurnRoundDelivery, emitBrowserCompletion } from "./turn-round-delivery";
 import { createChatGptTurnRuntimeFactory, launcherZeroRiskManualControl, type ChatGptZeroRiskManualControl } from "./turn-runtime";
 import { estimateChatGptWebUsage } from "./usage";
-export type { ChatGptZeroRiskManualControl } from "./turn-runtime";
 
 function brokerSocketPath(provider: CodexProviderConfig): string {
   const configured = provider.chatgptWeb?.brokerSocketPath?.trim();

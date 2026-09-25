@@ -96,14 +96,6 @@ export class CompactionTransactionStore {
     this.finishError(transaction, new Error("compaction transaction aborted"));
   }
 
-  abortTrace(traceId: string): void {
-    for (const transaction of [...this.transactions.values()]) {
-      if (transaction.traceId === traceId && transaction.summary === undefined) {
-        this.finishError(transaction, new Error("compaction transaction was revoked"));
-      }
-    }
-  }
-
   close(): void {
     for (const transaction of [...this.transactions.values()]) {
       this.finishError(transaction, new Error("compaction transaction broker closed"));
