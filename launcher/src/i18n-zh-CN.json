@@ -592,5 +592,7 @@
   "launcherRuntimeRestartAction": "重启 NEKODEX",
   "logOut": "退出登录",
   "logOutConfirmBody": "要在 NEKODEX 中退出 ChatGPT 吗？运行新的 Web 回合前需要重新登录，可能需要使用通行密钥。",
-  "logOutKeepSignedIn": "保持登录"
+  "logOutKeepSignedIn": "保持登录",
+  "restartingRuntime": "正在重启…",
+  "manualPromptCopied": "已复制提示词"
 }

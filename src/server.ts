@@ -905,7 +905,7 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/tunnel-status") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let body: unknown;
-        try { body = await readJsonRequestBody(req); } catch {
+        try { body = await readJsonRequestBody(req, 4096, 4096); } catch {
           return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness requires a boolean and a positive revision");
         }
         if (!body || typeof body !== "object" || Array.isArray(body)
@@ -983,14 +983,21 @@ export function startServer(
         const settlement = Promise.all([browserCancellation.settlement, compactionCancellation.settlement]);
         // Explicit tab close must acknowledge revoked authority before the Launcher destroys its
         // document. Lease failure still waits for physical settlement before reporting cleanup.
-        if (leaseFailure) await settlement;
-        else void settlement.catch(error => console.error(`[chatgpt-web] cancelled turn cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
+        let settlementError: string | undefined;
+        if (leaseFailure) {
+          // Authority is already revoked; a cleanup failure must not turn the cancellation into a 500.
+          try { await settlement; } catch (error) {
+            settlementError = error instanceof Error ? error.message : String(error);
+            console.error(`[chatgpt-web] cancelled turn cleanup failed: ${settlementError}`);
+          }
+        } else void settlement.catch(error => console.error(`[chatgpt-web] cancelled turn cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
         return Response.json({
           status: "ok",
           trace_id: traceId,
           cancelled_browser_turns: browserCancellation.cancelled,
           cancelled_broker_turns: cancelledBrokerTurns,
           cancelled_compaction_runs: compactionCancellation.cancelled,
+          ...(settlementError ? { settlement_error: "cleanup_failed" } : {}),
           ...activity(),
         });
       }

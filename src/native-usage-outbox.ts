@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, lstatSync, openSync, fsyncSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, lstatSync, openSync, fsyncSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { validNativeUsageEvent, type NativeUsageTelemetryEvent } from "./usage/native-contract";
 
@@ -44,13 +44,17 @@ export class NativeUsageOutbox {
     if (!validNativeUsageEvent(event)) throw new Error('Invalid native usage event');
     const raw = JSON.stringify(event);
     if (Buffer.byteLength(raw) > 4096) throw new Error('Native usage event too large');
-    const pending = this.pending();
-    if (pending.some(e => e.eventId === event.eventId)) return;
-    if (pending.length >= MAX_EVENTS) {
-      this.acknowledge(pending[0]!.eventId);
-      console.warn('[codex-chatgpt-web] native_usage_telemetry_dropped reason=capacity');
-    }
     const target = join(this.directory, `${event.eventId}.json`);
+    if (existsSync(target)) return;
+    // Counting names is cheap; only parse every receipt when the outbox is actually full.
+    const stored = readdirSync(this.directory).filter(name => name.endsWith('.json')).length;
+    if (stored >= MAX_EVENTS) {
+      const pending = this.pending();
+      if (pending.length >= MAX_EVENTS) {
+        this.acknowledge(pending[0]!.eventId);
+        console.warn('[codex-chatgpt-web] native_usage_telemetry_dropped reason=capacity');
+      }
+    }
     const temporary = `${target}.${process.pid}.tmp`;
     try {
       writeFileSync(temporary, raw, { mode: 0o600, flag: 'wx' });

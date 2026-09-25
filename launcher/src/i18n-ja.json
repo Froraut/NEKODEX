@@ -592,5 +592,7 @@
   "launcherRuntimeRestartAction": "NEKODEX を再起動",
   "logOut": "ログアウト",
   "logOutConfirmBody": "NEKODEX で ChatGPT からログアウトしますか？新しい Web ターンを実行する前に、パスキーなどで再度サインインする必要があります。",
-  "logOutKeepSignedIn": "サインインしたままにする"
+  "logOutKeepSignedIn": "サインインしたままにする",
+  "restartingRuntime": "再起動しています…",
+  "manualPromptCopied": "プロンプトをコピーしました"
 }

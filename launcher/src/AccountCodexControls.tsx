@@ -204,7 +204,7 @@ function QuotaBucketView({ bucket, copy, fallbackName, language }: {
   const name = bucket.name || bucket.normalModelSlug || fallbackName;
   return <article className="account-codex-bucket">
     <h4>{name}</h4>
-    <p role="status">{accountAvailabilityCopy(language)[quotaAvailability(bucket)]}</p>
+    <p>{accountAvailabilityCopy(language)[quotaAvailability(bucket)]}</p>
     <div className="account-codex-windows">
       <QuotaWindowView label={copy.quotaPrimary} value={bucket.primary} copy={copy} language={language} />
       <QuotaWindowView label={copy.quotaSecondary} value={bucket.secondary} copy={copy} language={language} />

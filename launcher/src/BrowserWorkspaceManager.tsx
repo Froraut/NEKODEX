@@ -112,7 +112,7 @@ export function BrowserWorkspaceManager({
       {account.items.map(item => <li className={item.active ? "is-active" : undefined} key={item.id}>
         <button type="button" className="browser-workspace-open" disabled={busy || item.state !== "open"}
           onClick={() => void run(`focus-${item.id}`, () => onFocus(account.accountId, item.id))}>
-          <span className="browser-workspace-item-title">{item.title || locationLabel(item)}</span>
+          <span className="browser-workspace-item-title" title={item.title || locationLabel(item)}>{item.title || locationLabel(item)}</span>
           <span>{item.state === "open" ? copy.current : item.needsOriginalAccount
             ? copy.needsOriginalAccount : item.temporary ? copy.temporary : copy.saved}</span>
         </button>

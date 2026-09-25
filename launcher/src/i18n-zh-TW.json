@@ -592,5 +592,7 @@
   "launcherRuntimeRestartBody": "更新後的應用程式正在使用先前可正常運作的執行階段。任務完成後，請重新啟動 NEKODEX 以啟用新的執行階段。",
   "launcherRuntimeRestartAction": "重新啟動 NEKODEX",
   "logOutConfirmBody": "要在 NEKODEX 中登出 ChatGPT 嗎？執行新的 Web 回合前需要重新登入，可能需要使用通行金鑰。",
-  "logOutKeepSignedIn": "保持登入"
+  "logOutKeepSignedIn": "保持登入",
+  "restartingRuntime": "正在重新啟動…",
+  "manualPromptCopied": "已複製提示詞"
 }

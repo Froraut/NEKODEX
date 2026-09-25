@@ -749,6 +749,11 @@ function LauncherShell({
     setSidebarOpen(next);
   };
 
+  // The account-tools focus target is a one-shot handoff; leaving Accounts must not replay it.
+  useEffect(() => {
+    if (surface !== "accounts") setAccountToolsTargetId(null);
+  }, [surface]);
+
   const navigateSurface = (next: Surface) => {
     if (next !== "browser") browserSurfaceIntent.current += 1;
     setSurface(next);
@@ -919,7 +924,7 @@ function LauncherShell({
                   restartInFlight.current = false;
                   setRestartPending(false);
                 });
-              }}>{restartPending ? <><i className="tab-spinner" aria-hidden="true" />{updateCopy.installing}</> : copy.launcherRuntimeRestartAction}</button>
+              }}>{restartPending ? <><i className="tab-spinner" aria-hidden="true" />{copy.restartingRuntime}</> : copy.launcherRuntimeRestartAction}</button>
           </div> : null}
           <div
             className="surface-transition"
@@ -1220,9 +1225,10 @@ function BiggerContextRecommendation({
 
 function LaunchLoading() {
   return (
-    <main className="launch-loading">
+    <main className="launch-loading" role="status" aria-busy="true">
       <BrandMark />
       <span />
+      <span className="visually-hidden">Loading…</span>
     </main>
   );
 }

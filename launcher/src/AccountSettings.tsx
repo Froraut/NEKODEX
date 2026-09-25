@@ -139,6 +139,16 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     return () => window.clearTimeout(timer);
   }, [quotaClock, quotas]);
 
+  // "Checked N minutes ago" labels are relative to render time; refresh them once a minute.
+  const hasQuotas = quotas.size > 0;
+  useEffect(() => {
+    if (!hasQuotas) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) wakeQuotaClock(value => value + 1);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [hasQuotas]);
+
   const refreshQuota = async (id: string) => {
     if (transitionBusy || loadFailed || loginLockedIdRef.current === id
       || quotaGlobalLock.current || quotaInFlight.current.has(id)) return;
@@ -466,7 +476,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         onOpenLogin={async () => { if (flowForAccount) await openCodexLogin(flowForAccount); }}
         onCopyCode={async () => flowForAccount ? await copyCodexLoginCode(flowForAccount) : false}
         onCancelLogin={async () => { if (flowForAccount) await cancelCodexLogin(flowForAccount); }} />
-      {account.safety ? <AccountSafetySettings id={account.id} safety={account.safety} copy={copy}
+      {account.safety ? <AccountSafetySettings id={account.id} language={language} safety={account.safety} copy={copy}
         resumeRequired={account.availability?.reason === "session-limit"}
         disabled={mutationsDisabled || active || loginBoundActive} blockedReason={blockedReason}
         save={policy => run(() => api.setAccountSafety(account.id, policy))}

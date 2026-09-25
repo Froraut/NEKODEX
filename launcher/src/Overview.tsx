@@ -1,6 +1,8 @@
 import type { LauncherLogStore } from './launcher-log-store';
 import { sessionIssueCopy } from "./session-issue-copy";
 import { CatTail } from "./CatTail";
+import { browserTabTitleFromTitle } from "./BrowserSurface";
+import { humanEvent } from "./log-format";
 import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
 import { useId, useSyncExternalStore, type CSSProperties } from "react";
 import { Icon, type IconName } from "./icons";
@@ -147,9 +149,10 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
           const status = runStatus(tab.status);
           const mode = tab.interactionMode === "manual" ? copy.manualShort
             : tab.interactionMode === "automatic" ? copy.automaticShort : copy.usageUnknown;
-          return <li key={tab.id}><button type="button" onClick={() => openTab(tab.id)} aria-label={`${tab.title}. ${status}. ${mode}. ${copy.overviewOpenRun}`}>
+          const title = browserTabTitleFromTitle(tab.title, copy);
+          return <li key={tab.id}><button type="button" onClick={() => openTab(tab.id)} aria-label={`${title}. ${status}. ${mode}. ${copy.overviewOpenRun}`}>
             <i className="state-dot is-busy" aria-hidden="true" />
-            <span><strong>{tab.title}</strong><small>{status} · {mode}</small></span>
+            <span><strong title={title}>{title}</strong><small>{status} · {mode}</small></span>
             <span className="overview-run-action" aria-hidden="true">{copy.overviewOpenRun}<Icon name="chevron" /></span>
           </button></li>;
         })}</ul> : null}
@@ -165,9 +168,9 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
               <span className="connection-action" aria-hidden="true">{connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.openRoutingChecks : copy.connectShort}<Icon name="chevron" /></span>
             </button>)}</div>
           </section>
-          <section className="overview-activity" aria-live="polite" aria-atomic="false">
+          <section className="overview-activity">
             <div className="overview-section-heading"><h2>{copy.recentActivity}</h2><button className="text-button" type="button" onClick={() => navigate("activity")}>{copy.viewAllShort}<Icon name="chevron" /></button></div>
-            {logs.length ? <ul>{logs.slice(-8).reverse().map(({ id, record: log }) => <li key={id}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{log.event.replaceAll(/[._-]+/g, " ")}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
+            {logs.length ? <ul>{logs.slice(-8).reverse().map(({ id, record: log }) => <li key={id}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{humanEvent(log.event)}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
               : <div className="overview-empty"><Icon name="logs" /><div><strong>{copy.activityEmpty}</strong><p>{copy.activityEmptyBody}</p></div></div>}
           </section>
         </div>
