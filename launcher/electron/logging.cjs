@@ -168,19 +168,22 @@ function sanitize(value, seen = new WeakSet()) {
 
 function readRecent(filePath) {
   const records = [];
-  for (const sourcePath of [`${filePath}.1`, filePath]) {
+  // Count valid events, not lines: a partial final write must not evict history.
+  for (const sourcePath of [filePath, `${filePath}.1`]) {
     let lines;
     try {
       lines = readLogLines(sourcePath);
     } catch {
       continue;
     }
-    for (const line of lines.slice(-MAX_MEMORY_RECORDS)) {
-      const record = parseLogRecord(line, sanitize);
-      if (record) records.push(record);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const record = parseLogRecord(lines[index], sanitize);
+      if (!record) continue;
+      records.push(record);
+      if (records.length === MAX_MEMORY_RECORDS) return records.reverse();
     }
   }
-  return records.slice(-MAX_MEMORY_RECORDS);
+  return records.reverse();
 }
 
 function createLogger({ filePath, publish }) {

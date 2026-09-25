@@ -127,10 +127,10 @@ export class ChatGptBrowserDiagnostics {
           const composers = [...document.querySelectorAll(composerSelector)].filter(rendered);
           const assistantTurns = [...document.querySelectorAll(assistantTurnSelector)].filter(rendered);
           const selectedConnectors = composers.flatMap(composer => (
-            [...composer.querySelectorAll('[data-id^="plugin:"][data-keyword]')]
+            [...composer.querySelectorAll('[data-id^="plugin:"][data-keyword], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]')]
           ))
             .filter(rendered);
-          const exactConnectorRows = [...document.querySelectorAll('.__menu-item[tabindex="0"]')]
+          const exactConnectorRows = [...document.querySelectorAll('.__menu-item[tabindex="0"], [data-mention-list-scroll-area] button[data-list-navigation-item="true"]')]
             .filter(element => rendered(element) && exactText(element, appName));
           const currentUrl = new URL(location.href);
           const integerAttribute = (element: Element, name: string): number | null => {
@@ -163,7 +163,7 @@ export class ChatGptBrowserDiagnostics {
               })),
               selectedConnectorCount: selectedConnectors.length,
               exactSelectedConnectorCount: selectedConnectors.filter(
-                element => element.getAttribute("data-keyword") === appName,
+                element => (element.getAttribute("data-keyword") ?? element.getAttribute("app-mention-display-name")) === appName,
               ).length,
             },
             focus: {
@@ -200,7 +200,7 @@ export class ChatGptBrowserDiagnostics {
               assistant: assistantTurns.map(element => ({
                 textChars: (element.textContent ?? "").length,
                 htmlChars: (element as HTMLElement).innerHTML.length,
-                markdownCount: element.querySelectorAll(".markdown").length,
+                markdownCount: element.querySelectorAll('.markdown, [data-markdown-text-style="assistant-message"]').length,
                 streamingStatusCount: element.querySelectorAll("[data-streaming-response-status]").length,
                 completionActionCount: element.querySelectorAll(completionActionSelector).length,
                 renderedCompletionActionCount: [...element.querySelectorAll(completionActionSelector)]

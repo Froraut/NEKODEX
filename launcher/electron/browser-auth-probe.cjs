@@ -4,12 +4,13 @@ const { TEMPORARY_CHAT_URL } = require("./browser-navigation-policy.cjs");
 
 const CHATGPT_AUTH_SESSION_TIMEOUT_MS = 5_000;
 const AUTH_PROBE_TIMEOUT_MS = CHATGPT_AUTH_SESSION_TIMEOUT_MS + 3_000;
+// Match the runtime's composer selector. Generic textboxes are not proof of a ready chat.
 const COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
   '[contenteditable="true"][data-lexical-editor="true"]',
-  '[contenteditable="true"][role="textbox"]',
-  "textarea",
+  'form:has([data-testid="send-button"]) .ProseMirror[contenteditable="true"]',
+  'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]',
 ].join(", ");
 
 function visibleElementScript(selector) {
@@ -85,7 +86,11 @@ function authenticationProbeScript() {
               const expiryKnown = !hasExpiry || Number.isFinite(expiry);
               const sessionExpired = hasExpiry && expiryKnown && expiry <= Date.now();
               if (!sessionHasNoError) {
-                verificationFailure = "session payload reported an error";
+                // NextAuth reports a refresh failure while ChatGPT itself redirects to sign-in.
+                // Retrying cannot repair it; name it so the launcher asks for a new sign-in.
+                verificationFailure = payload.error === "RefreshAccessTokenError"
+                  ? "session refresh was rejected"
+                  : "session payload reported an error";
               } else if (!expiryKnown) {
                 verificationFailure = "session expiry was invalid";
               } else if (!sessionHasUser || sessionExpired) {

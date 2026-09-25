@@ -8,24 +8,24 @@ const DEFAULT_WINDOW_STATE = Object.freeze({
 });
 const MIN_WINDOW_BOUNDS = Object.freeze({ width: 720, height: 600 });
 const MAX_WINDOW_DIMENSION = 16_384;
-const MIN_VISIBLE_TITLEBAR_WIDTH = 96;
-const MIN_VISIBLE_TITLEBAR_HEIGHT = 32;
-const TITLEBAR_HEIGHT = 46;
 
 function finiteNumber(value, fallback) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function overlapsDisplay(bounds, displays) {
-  return displays.some((display) => {
-    const area = display?.workArea;
-    if (!area) return false;
-    const visibleWidth = Math.min(bounds.x + bounds.width, area.x + area.width) - Math.max(bounds.x, area.x);
-    const visibleTitlebarHeight = Math.min(bounds.y + TITLEBAR_HEIGHT, area.y + area.height)
-      - Math.max(bounds.y, area.y);
-    return visibleWidth >= MIN_VISIBLE_TITLEBAR_WIDTH
-      && visibleTitlebarHeight >= MIN_VISIBLE_TITLEBAR_HEIGHT;
-  });
+function visibleWorkArea(bounds, displays) {
+  let selected;
+  let largestOverlap = 0;
+  for (const { workArea: area } of displays) {
+    if (!area) continue;
+    const width = Math.max(0, Math.min(bounds.x + bounds.width, area.x + area.width) - Math.max(bounds.x, area.x));
+    const height = Math.max(0, Math.min(bounds.y + bounds.height, area.y + area.height) - Math.max(bounds.y, area.y));
+    if (width * height > largestOverlap) {
+      selected = area;
+      largestOverlap = width * height;
+    }
+  }
+  return selected;
 }
 
 function normalizeWindowState(value, displays = []) {
@@ -47,9 +47,19 @@ function normalizeWindowState(value, displays = []) {
   };
   if (Number.isFinite(bounds.x) && Number.isFinite(bounds.y)) {
     const positioned = { ...state.bounds, x: bounds.x, y: bounds.y };
-    if (displays.length === 0 || overlapsDisplay(positioned, displays)) {
+    if (displays.length === 0) {
       state.bounds.x = bounds.x;
       state.bounds.y = bounds.y;
+    } else {
+      const area = visibleWorkArea(positioned, displays);
+      if (area) {
+        // Keep the window on the display it mostly occupied, with its top edge
+        // and controls reachable even when the saved desktop layout has changed.
+        state.bounds.width = Math.max(MIN_WINDOW_BOUNDS.width, Math.min(state.bounds.width, area.width));
+        state.bounds.height = Math.max(MIN_WINDOW_BOUNDS.height, Math.min(state.bounds.height, area.height));
+        state.bounds.x = Math.max(area.x, Math.min(bounds.x, area.x + area.width - state.bounds.width));
+        state.bounds.y = Math.max(area.y, Math.min(bounds.y, area.y + area.height - state.bounds.height));
+      }
     }
   }
   return state;

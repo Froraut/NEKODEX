@@ -24,6 +24,7 @@ const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
 const { captureOwnedSession, disposeOwnedSessionSnapshot, restoreOwnedSession } = require("./owned-session-rollback.cjs");
 const { initialPasskeyProgress, passkeyLoginFailure, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
+const { configureChatGptAnnouncementDismissal } = require("./browser-announcements.cjs");
 const {
   publicExistingChromeProgress,
   openExistingChromeLogin,
@@ -674,10 +675,12 @@ class BrowserHost {
       throw new Error(`ChatGPT browser is already busy with ${this.manualOperation}`);
     }
     this.assertTurnTabsCanResetForInteractionModeChange();
+    const previousMode = browserInteractionModeFor(this);
     this.interactionModeOverride = mode;
     this.manualOperation = INTERACTION_MODE_CHANGE_OPERATION;
     let committed = false;
     try {
+      if (mode === "manual" && previousMode === "automatic") await this.configureAnnouncementDismissal(false);
       let browserCommitted = false;
       // Setup inspects the launcher descriptor before afterRuntimeReady runs. Publish the target
       // mapping under the temporary mode before starting setup, without changing account/profile.
@@ -687,6 +690,7 @@ class BrowserHost {
         if (browserCommitted) throw new Error("Browser interaction mode change was committed more than once");
         // Runtime setup invokes this callback inside its rollback boundary. The browser mapping
         // was already published so its own capability inspection could use the target surface.
+        if (mode === "automatic") await this.configureAnnouncementDismissal(true);
         browserCommitted = true;
       };
       const result = await action(commitBrowserChange);
@@ -698,6 +702,10 @@ class BrowserHost {
     } finally {
       this.manualOperation = null;
       if (!committed) this.interactionModeOverride = null;
+      if (!committed && previousMode !== mode) {
+        // Best effort: a failed restore must not mask the original setup failure.
+        await this.configureAnnouncementDismissal(previousMode === "automatic").catch(() => {});
+      }
       // Failure restores the prior mode after runtime rollback. Success retains the new mode until
       // the launcher state is published, so no helper observes a transient old target mapping.
       this.writeDescriptor();
@@ -1083,7 +1091,20 @@ class BrowserHost {
         value: ${encoded}, configurable: true, enumerable: false, writable: false,
       });
       document.documentElement.dataset.codexWebGptSurface = ${encoded};
+      (${configureChatGptAnnouncementDismissal.toString()})(true);
     })()`, true);
+  }
+
+  async configureAnnouncementDismissal(enabled) {
+    if (enabled) requireAutomaticBrowserInspection(this, "ChatGPT announcement dismissal");
+    const views = [this.view, ...[...this.turnTabs.values()]
+      .filter(tab => tab.interactionMode === "automatic")
+      .map(tab => tab.view)];
+    await Promise.all(views.map(view => {
+      const contents = view?.webContents;
+      if (!contents || contents.isDestroyed()) return;
+      return contents.executeJavaScript(`(${configureChatGptAnnouncementDismissal.toString()})(${enabled})`, true);
+    }));
   }
 
   bindManualTurnContents(tab) {
@@ -1967,6 +1988,7 @@ class BrowserHost {
         writable: false,
       });
       document.documentElement.dataset.codexWebGptSurface = ${surfaceId};
+      (${configureChatGptAnnouncementDismissal.toString()})(true);
     })()`, true);
   }
 

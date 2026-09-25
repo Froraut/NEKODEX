@@ -73,22 +73,45 @@ export async function submissionDomState(
     // data-testid contains a display index: ChatGPT can renumber it while the same turn lives.
     // Virtualization removes a turn's section, but retains its outer identity container.
     const containers = [...document.querySelectorAll("[data-turn-id-container]")].filter(element =>
-      element.parentElement?.closest("[data-turn-id-container]")?.getAttribute("data-turn-id-container")
+      !element.closest("[data-turn-key]")
+      && element.parentElement?.closest("[data-turn-id-container]")?.getAttribute("data-turn-id-container")
         !== element.getAttribute("data-turn-id-container"));
     const turnIdentities = identities(containers, "data-turn-id-container");
-    const userIdentities = identities([...document.querySelectorAll(options.userTurnSelector)], "data-turn-id");
-    const responseIdentities = identities([...document.querySelectorAll(options.assistantTurnSelector)], "data-turn-id");
+    const legacyTurns = (selector: string) => [...document.querySelectorAll(selector)]
+      .filter(element => element.getAttribute("data-turn-key") == null);
+    const userIdentities = identities(legacyTurns(options.userTurnSelector), "data-turn-id");
+    const responseIdentities = identities(legacyTurns(options.assistantTurnSelector), "data-turn-id");
+    // The grouped renderer keeps assistant Markdown in the assistant's own content unit.
+    const assistantMarkdown = (element: Element): Element[] => element.getAttribute("data-turn-key") == null
+      ? [...(element.querySelectorAll?.(".markdown") ?? [])]
+      : [...element.querySelectorAll('[data-markdown-text-style="assistant-message"]')].filter(candidate => {
+        const unit = candidate.closest("[data-content-search-unit-key]");
+        return Boolean(unit) && [...unit!.children].some(child => child.getAttribute("data-conversation-role") === "assistant");
+      });
     // Retained staging acknowledgements can receive new DOM IDs when ChatGPT switches
     // to Pro. Only the exact transaction-bound, already-validated ACK is historical proof.
     const acknowledgementTurns = [...document.querySelectorAll(options.assistantTurnSelector)].flatMap(element => {
-      const text = [...(element.querySelectorAll?.(".markdown") ?? [])].map(node => node.textContent ?? "").join("\n").trim();
-      const identity = element.getAttribute("data-turn-id");
+      const text = assistantMarkdown(element).map(node => node.textContent ?? "").join("\n").trim();
+      const groupKey = element.getAttribute("data-turn-key");
+      const identity = groupKey == null ? element.getAttribute("data-turn-id") : `group:assistant:${groupKey}`;
       return identity && text.length <= 180 && text.startsWith("CODEX_MULTIPART_ACK ") ? [{ identity, text }] : [];
     });
     const knownTurns = new Set(turnIdentities);
     if ([...userIdentities, ...responseIdentities].some(identity => !knownTurns.has(identity))) {
       throw new Error("ChatGPT conversation turn has no matching identity container");
     }
+    // The new renderer groups both roles under the user's stable turn key.
+    const groups = [...document.querySelectorAll("[data-turn-key]")];
+    const groupKeys = identities(groups, "data-turn-key");
+    groups.forEach((group, index) => {
+      const user = `group:user:${groupKeys[index]}`;
+      const assistant = `group:assistant:${groupKeys[index]}`;
+      // Keep both logical roles in the baseline even when virtualization unmounts their
+      // contents. Remounting an old answer must never acknowledge a new submission.
+      turnIdentities.push(user, assistant);
+      if (group.querySelector("[data-user-message-bubble]")) userIdentities.push(user);
+      if (group.querySelector('[data-conversation-role="assistant"]')) responseIdentities.push(assistant);
+    });
     return {
       key: observerKey,
       snapshot: {
