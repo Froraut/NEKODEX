@@ -30,11 +30,6 @@ export class ChatGptCompletionTracker {
   private postToolAnswerBaselineText?: string;
   private missingPostToolAnswerSince?: number;
 
-  constructor(
-    private readonly stableMs = CHATGPT_COMPLETION_SETTLE_MS,
-    private readonly missingPostToolAnswerMs = CHATGPT_COMPLETION_ACTION_GRACE_MS,
-  ) {}
-
   needsToolBatchObservation(revision: number): boolean {
     if (!Number.isSafeInteger(revision) || revision < this.lastToolBatchRevision) {
       throw new Error("ChatGPT completion received an invalid tool-batch revision");
@@ -75,7 +70,7 @@ export class ChatGptCompletionTracker {
         return false;
       }
       this.missingPostToolAnswerSince ??= now;
-      if (now - this.missingPostToolAnswerSince >= this.missingPostToolAnswerMs) {
+      if (now - this.missingPostToolAnswerSince >= CHATGPT_COMPLETION_ACTION_GRACE_MS) {
         throw new Error("ChatGPT completed without producing a final answer after its last Codex tool call");
       }
       return false;
@@ -89,7 +84,7 @@ export class ChatGptCompletionTracker {
       this.candidate = { signature, since: now };
       return false;
     }
-    return now - this.candidate.since >= this.stableMs;
+    return now - this.candidate.since >= CHATGPT_COMPLETION_SETTLE_MS;
   }
 }
 
@@ -104,11 +99,6 @@ export class ChatGptTurnDomHealthTracker {
     private readonly emptyCompletionMs = CHATGPT_EMPTY_RESPONSE_GRACE_MS,
     private readonly missingCompletionActionMs = CHATGPT_COMPLETION_ACTION_GRACE_MS,
   ) {}
-
-  /** Clear only missing-response history; use suspendForLiveProgress for live work. */
-  clearMissingResponse(): void {
-    this.missingResponseSince = undefined;
-  }
 
   /** Suspend every terminal grace window while external work is proven live. */
   suspendForLiveProgress(): void {

@@ -145,18 +145,12 @@ function requestShutdown(): Promise<void> {
   for (const controller of abortControllers.values()) controller.abort();
   for (const selection of preparedSelections.values()) selection.cancel();
   preparedSelections.clear();
-  for (const waiter of sendActivationWaiters.values()) {
-    waiter.reject(new DOMException("Browser helper is shutting down", "AbortError"));
+  for (const waiters of [sendActivationWaiters, completionFenceBeginWaiters, completionFenceCommitWaiters]) {
+    for (const waiter of waiters.values()) {
+      waiter.reject(new DOMException("Browser helper is shutting down", "AbortError"));
+    }
+    waiters.clear();
   }
-  sendActivationWaiters.clear();
-  for (const waiter of completionFenceBeginWaiters.values()) {
-    waiter.reject(new DOMException("Browser helper is shutting down", "AbortError"));
-  }
-  completionFenceBeginWaiters.clear();
-  for (const waiter of completionFenceCommitWaiters.values()) {
-    waiter.reject(new DOMException("Browser helper is shutting down", "AbortError"));
-  }
-  completionFenceCommitWaiters.clear();
   input.close();
   void closeChatGptBrowserWorkers().then(
     () => {
@@ -170,6 +164,19 @@ function requestShutdown(): Promise<void> {
     },
   );
   return shutdownPromise;
+}
+
+/** Reject every pending daemon round-trip of one turn: get, delete, then reject, map by map. */
+function rejectTurnWaiters(id: string, outcome: "ended" | "aborted"): void {
+  const sendWaiter = sendActivationWaiters.get(id);
+  sendActivationWaiters.delete(id);
+  sendWaiter?.reject(new DOMException(`Browser helper turn ${outcome} before Send acknowledgement`, "AbortError"));
+  const beginWaiter = completionFenceBeginWaiters.get(id);
+  completionFenceBeginWaiters.delete(id);
+  beginWaiter?.reject(new DOMException(`Browser helper turn ${outcome} before completion-fence begin`, "AbortError"));
+  const commitWaiter = completionFenceCommitWaiters.get(id);
+  completionFenceCommitWaiters.delete(id);
+  commitWaiter?.reject(new DOMException(`Browser helper turn ${outcome} before completion-fence commit`, "AbortError"));
 }
 
 async function run(message: RunMessage): Promise<void> {
@@ -366,15 +373,7 @@ async function run(message: RunMessage): Promise<void> {
   } finally {
     preparedSelections.get(message.id)?.cancel();
     preparedSelections.delete(message.id);
-    const sendWaiter = sendActivationWaiters.get(message.id);
-    sendActivationWaiters.delete(message.id);
-    sendWaiter?.reject(new DOMException("Browser helper turn ended before Send acknowledgement", "AbortError"));
-    const beginWaiter = completionFenceBeginWaiters.get(message.id);
-    completionFenceBeginWaiters.delete(message.id);
-    beginWaiter?.reject(new DOMException("Browser helper turn ended before completion-fence begin", "AbortError"));
-    const commitWaiter = completionFenceCommitWaiters.get(message.id);
-    completionFenceCommitWaiters.delete(message.id);
-    commitWaiter?.reject(new DOMException("Browser helper turn ended before completion-fence commit", "AbortError"));
+    rejectTurnWaiters(message.id, "ended");
     abortControllers.delete(message.id);
     turnProgress.delete(message.id);
     // This event follows all per-turn cleanup; a client that could not deliver Abort may now
@@ -435,6 +434,13 @@ async function maintain(message: InspectMessage | SmokeMessage): Promise<void> {
     abortControllers.delete(message.id);
   }
 }
+
+/** Report an operation that failed before it could write its own terminal frame. */
+const reportProtocolFailure = (id: string) => (error: unknown) => writeProtocol({
+  type: "error",
+  id,
+  message: error instanceof Error ? error.message : String(error),
+});
 
 const input = createProcessLineReader(stdin, line => {
   if (shuttingDown) return;
@@ -549,36 +555,16 @@ const input = createProcessLineReader(stdin, line => {
       ? new ChatGptCompactionHandoffAccepted()
       : undefined);
     preparedSelections.get(message.id)?.cancel();
-    const waiter = sendActivationWaiters.get(message.id);
-    sendActivationWaiters.delete(message.id);
-    waiter?.reject(new DOMException("Browser helper turn aborted before Send acknowledgement", "AbortError"));
-    const beginWaiter = completionFenceBeginWaiters.get(message.id);
-    completionFenceBeginWaiters.delete(message.id);
-    beginWaiter?.reject(new DOMException("Browser helper turn aborted before completion-fence begin", "AbortError"));
-    const commitWaiter = completionFenceCommitWaiters.get(message.id);
-    completionFenceCommitWaiters.delete(message.id);
-    commitWaiter?.reject(new DOMException("Browser helper turn aborted before completion-fence commit", "AbortError"));
+    rejectTurnWaiters(message.id, "aborted");
   }
   else if (message.type === "shutdown") {
     void requestShutdown();
   } else if (message.type === "verify") {
-    void verify(message).catch(error => writeProtocol({
-      type: "error",
-      id: message.id,
-      message: error instanceof Error ? error.message : String(error),
-    }));
+    void verify(message).catch(reportProtocolFailure(message.id));
   } else if (message.type === "inspect" || message.type === "smoke") {
-    void maintain(message).catch(error => writeProtocol({
-      type: "error",
-      id: message.id,
-      message: error instanceof Error ? error.message : String(error),
-    }));
+    void maintain(message).catch(reportProtocolFailure(message.id));
   } else if (message.type === "run") {
-    void run(message).catch(error => writeProtocol({
-      type: "error",
-      id: message.id,
-      message: error instanceof Error ? error.message : String(error),
-    }));
+    void run(message).catch(reportProtocolFailure(message.id));
   } else {
     // Never treat an unrecognised frame as a run; unsupported protocol data fails explicitly.
     writeProtocol({

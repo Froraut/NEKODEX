@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { chromium, type BrowserContext, type BrowserContextOptions } from "playwright-core";
 import type { AppConfig } from "./config";
@@ -68,6 +68,28 @@ function removeTemporaryChromeTabSessions(profileDir: string): void {
   for (const name of ["Current Session", "Current Tabs", "Last Session", "Last Tabs"]) {
     rmSync(join(defaultProfile, name), { force: true });
   }
+}
+
+/** Create a private, disposable Chrome profile beside the storage state it will produce. */
+function createOwnedLoginProfile(storageStatePath: string): string {
+  const profileParent = dirname(storageStatePath);
+  mkdirSync(profileParent, { recursive: true, mode: 0o700 });
+  try { chmodSync(profileParent, 0o700); } catch {}
+  const profileDir = mkdtempSync(join(profileParent, "login-profile-"));
+  try { chmodSync(profileDir, 0o700); } catch {}
+  return profileDir;
+}
+
+/** revealOwnedLoginBrowser recognizes this process by its executable, --user-data-dir and --new-window. */
+function spawnDedicatedChromeLogin(executable: string, profileDir: string): ChildProcess {
+  return spawn(executable, [
+    `--user-data-dir=${profileDir}`,
+    "--new-window",
+    "--disable-background-mode",
+    "--no-first-run",
+    "--no-default-browser-check",
+    CHATGPT_TEMPORARY_CHAT_URL,
+  ], { env: process.env, stdio: "ignore" });
 }
 
 async function waitForBrowserExit(browser: ChildProcess, timeoutMs: number): Promise<boolean> {
@@ -204,11 +226,7 @@ export async function captureSystemBrowserLogin(
     return remaining;
   };
 
-  const profileParent = dirname(config.storageStatePath);
-  mkdirSync(profileParent, { recursive: true, mode: 0o700 });
-  try { chmodSync(profileParent, 0o700); } catch {}
-  const profileDir = mkdtempSync(join(profileParent, "login-profile-"));
-  try { chmodSync(profileDir, 0o700); } catch {}
+  const profileDir = createOwnedLoginProfile(config.storageStatePath);
   process.stdout.write(
     "Sign in with your passkey in the dedicated Chrome window. When Temporary Chat is ready, return to NEKODEX and choose Continue.\n",
   );
@@ -219,14 +237,7 @@ export async function captureSystemBrowserLogin(
   let offlineContextLaunchAttempted = false;
   let primaryError: unknown;
   try {
-    const browser = spawn(config.chromeExecutablePath, [
-      `--user-data-dir=${profileDir}`,
-      "--new-window",
-      "--disable-background-mode",
-      "--no-first-run",
-      "--no-default-browser-check",
-      CHATGPT_TEMPORARY_CHAT_URL,
-    ], { env: process.env, stdio: "ignore" });
+    const browser = spawnDedicatedChromeLogin(config.chromeExecutablePath, profileDir);
     loginBrowser = browser;
     let continuationRequested = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -371,15 +382,26 @@ export async function captureSystemBrowserLogin(
   return capture;
 }
 
+/**
+ * Publish a captured, not-yet-verified login. The old marker goes first, so a partial write can
+ * never pair new storage with a stale verification marker.
+ */
+export function publishSystemBrowserLoginCapture(
+  storageStatePath: string,
+  capture: { storageState: unknown; marker: unknown },
+): void {
+  const markerPath = loginVerificationMarkerPath(storageStatePath);
+  rmSync(markerPath, { force: true });
+  atomicWriteFile(storageStatePath, `${JSON.stringify(capture.storageState)}\n`);
+  atomicWriteFile(markerPath, `${JSON.stringify(capture.marker)}\n`);
+}
+
 export async function captureSystemBrowserLoginToFile(
   config: Pick<AppConfig, "chromeExecutablePath" | "storageStatePath">,
   options: SystemBrowserLoginOptions,
 ): Promise<void> {
   const capture = await captureSystemBrowserLogin(config, options);
-  const markerPath = loginVerificationMarkerPath(config.storageStatePath);
-  rmSync(markerPath, { force: true });
-  atomicWriteFile(config.storageStatePath, `${JSON.stringify(capture.storageState)}\n`);
-  atomicWriteFile(markerPath, `${JSON.stringify(capture.marker)}\n`);
+  publishSystemBrowserLoginCapture(config.storageStatePath, capture);
 }
 
 export async function loginToChatGpt(
@@ -389,11 +411,7 @@ export async function loginToChatGpt(
   if (!existsSync(config.chromeExecutablePath)) {
     throw new Error(`Google Chrome was not found at ${config.chromeExecutablePath}. Pass --chrome with its executable path.`);
   }
-  const profileParent = dirname(config.storageStatePath);
-  mkdirSync(profileParent, { recursive: true, mode: 0o700 });
-  try { chmodSync(profileParent, 0o700); } catch {}
-  const profileDir = mkdtempSync(join(profileParent, "login-profile-"));
-  try { chmodSync(profileDir, 0o700); } catch {}
+  const profileDir = createOwnedLoginProfile(config.storageStatePath);
   let loginBrowser: ChildProcess | undefined;
   let context: BrowserContext | undefined;
   let persistentContextLaunchAttempted = false;
@@ -403,14 +421,7 @@ export async function loginToChatGpt(
     process.stdout.write(
       "A normal Chrome window is open. Sign in to ChatGPT, confirm that the composer is visible, then quit this dedicated Chrome instance completely.\n",
     );
-    const browser = spawn(config.chromeExecutablePath, [
-      `--user-data-dir=${profileDir}`,
-      "--new-window",
-      "--disable-background-mode",
-      "--no-first-run",
-      "--no-default-browser-check",
-      CHATGPT_TEMPORARY_CHAT_URL,
-    ], { env: process.env, stdio: "ignore" });
+    const browser = spawnDedicatedChromeLogin(config.chromeExecutablePath, profileDir);
     loginBrowser = browser;
     const loginExit = await new Promise<number>((resolveExit, rejectExit) => {
       browser.once("error", rejectExit);

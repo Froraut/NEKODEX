@@ -1,5 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
-import { readLauncherBrowserHostDescriptor, type LauncherBrowserHostDescriptor, type LauncherBrowserHostProfile } from "./launcher-browser-descriptor";
+import { assertExpectedLauncherProfile, readLauncherBrowserHostDescriptor, type LauncherBrowserHostDescriptor, type LauncherBrowserHostProfile } from "./launcher-browser-descriptor";
 
 // Compatibility facade: retain one constructor identity and existing consumer imports.
 export * from "./launcher-browser-descriptor";
@@ -87,11 +87,7 @@ export async function inspectLauncherBrowserHostLiveness(
   } = {},
 ): Promise<LauncherBrowserHostDescriptor> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-  if (options.expectedProfile && descriptor.profile !== options.expectedProfile) {
-    throw new Error(
-      `Launcher browser belongs to ${descriptor.profile}, but ${options.expectedProfile} was required`,
-    );
-  }
+  assertExpectedLauncherProfile(descriptor, options.expectedProfile);
   await assertCdpReady(descriptor, options.timeoutMs ?? 5_000);
   return descriptor;
 }
@@ -104,14 +100,14 @@ export async function selectLauncherPage(
   abortSignal?: AbortSignal,
 ): Promise<{ context: BrowserContext; page: Page }> {
   if (abortSignal?.aborted) {
-    throw new DOMException("Launcher browser connection aborted", "AbortError");
+    throw launcherConnectionAborted();
   }
   const targetId = descriptor.surfaceTargets[surfaceId];
   if (!targetId) throw new Error("Launcher browser surface is no longer registered with its native target");
   const deadline = Date.now() + timeoutMs;
   do {
     if (abortSignal?.aborted) {
-      throw new DOMException("Launcher browser connection aborted", "AbortError");
+      throw launcherConnectionAborted();
     }
     const candidates = browser.contexts().flatMap(context => context.pages().map(page => ({ context, page })));
     // Target metadata belongs to the browser process. Evaluating every page here makes an
@@ -161,7 +157,7 @@ export async function connectLauncherBrowserHost(
   abortSignal?: AbortSignal,
 ): Promise<LauncherBrowserConnection> {
   if (abortSignal?.aborted) {
-    throw new DOMException("Launcher browser connection aborted", "AbortError");
+    throw launcherConnectionAborted();
   }
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const deadline = Date.now() + timeoutMs;
@@ -182,7 +178,7 @@ export async function connectLauncherBrowserHost(
   abortSignal?.addEventListener("abort", closeOnAbort, { once: true });
   try {
     if (abortSignal?.aborted) {
-      throw new DOMException("Launcher browser connection aborted", "AbortError");
+      throw launcherConnectionAborted();
     }
     const { context, page } = await selectLauncherPage(
       browser,

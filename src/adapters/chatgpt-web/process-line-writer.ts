@@ -1,9 +1,6 @@
 import type { Writable } from "node:stream";
+import { asError } from "../../lib/errors";
 import { CHATGPT_HELPER_FRAME_BYTES, CHATGPT_HELPER_PENDING_BYTES, assertByteLimit } from "./resource-budgets";
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
 
 export interface ProcessLineWriter {
   write(line: string): boolean;

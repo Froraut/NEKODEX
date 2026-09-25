@@ -1,8 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { expandUserPath } from "./config";
-import { readLauncherBrowserHostDescriptor, type LauncherBrowserHostDescriptor, type LauncherBrowserHostProfile } from "./launcher-browser-descriptor";
+import { assertExpectedLauncherProfile, readLauncherBrowserHostDescriptor, type LauncherBrowserHostDescriptor, type LauncherBrowserHostProfile } from "./launcher-browser-descriptor";
 import { LauncherAccountCooldownError, LauncherBrowserTurnCancelledError, LauncherRetainedConversationUnavailableError, LauncherManualTurnTimedOutError, LauncherManualTurnFailedError } from "./launcher-browser-errors";
+
+/** One authenticated JSON POST to the launcher control channel; each caller decodes its own response. */
+function postLauncherControl(
+  descriptor: LauncherBrowserHostDescriptor,
+  path: string,
+  body: string,
+  signal: AbortSignal,
+): Promise<Response> {
+  return fetch(`${descriptor.control.endpoint}${path}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${descriptor.control.token}`,
+      "content-type": "application/json",
+    },
+    body,
+    signal,
+  });
+}
 
 export async function inspectLauncherBrowserHost(
   descriptorPath: string,
@@ -13,11 +31,7 @@ export async function inspectLauncherBrowserHost(
   } = {},
 ): Promise<{ solAvailable?: boolean; extraHighAvailable?: boolean; proAvailable?: boolean; url: string }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-  if (options.expectedProfile && descriptor.profile !== options.expectedProfile) {
-    throw new Error(
-      `Launcher browser belongs to ${descriptor.profile}, but ${options.expectedProfile} was required`,
-    );
-  }
+  assertExpectedLauncherProfile(descriptor, options.expectedProfile);
   const timeoutMs = options.timeoutMs ?? (options.detectCapabilities
     ? LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS
     : LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS);
@@ -28,15 +42,12 @@ export async function inspectLauncherBrowserHost(
     controller.abort();
   }, timeoutMs);
   try {
-    const response = await fetch(`${descriptor.control.endpoint}/v1/session/inspect`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${descriptor.control.token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ detectCapabilities: options.detectCapabilities === true, accountId: descriptor.accountId }),
-      signal: controller.signal,
-    });
+    const response = await postLauncherControl(
+      descriptor,
+      "/v1/session/inspect",
+      JSON.stringify({ detectCapabilities: options.detectCapabilities === true, accountId: descriptor.accountId }),
+      controller.signal,
+    );
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
     if (body.authenticated !== true || body.temporary !== true || typeof body.url !== "string") {
@@ -170,15 +181,7 @@ async function launcherManualRequest(
   abortSignal?.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(abort, timeoutMs);
   try {
-    const response = await fetch(`${descriptor.control.endpoint}/v1/manual/${action}`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${descriptor.control.token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    const response = await postLauncherControl(descriptor, `/v1/manual/${action}`, JSON.stringify(body), controller.signal);
     const decoded = await response.json().catch(() => ({})) as Record<string, unknown>;
     return { response, body: decoded };
   } finally {
@@ -373,10 +376,8 @@ export async function notifyLauncherTurn(
     if (activity.phase !== 'start' || activity.taskProgressVersion !== 1) return;
     descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
     for (let attempt = 0; attempt < 8; attempt++) {
-      const response = await fetch(`${descriptor.control.endpoint}/v1/turn/start-cancel`, {
-        method: 'POST', headers: { authorization: `Bearer ${descriptor.control.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ traceId: activity.traceId, helperPid: activity.helperPid }), signal: AbortSignal.timeout(2500),
-      });
+      const response = await postLauncherControl(descriptor, '/v1/turn/start-cancel',
+        JSON.stringify({ traceId: activity.traceId, helperPid: activity.helperPid }), AbortSignal.timeout(2500));
       const receipt = await response.json() as { cancelling?: boolean; cancelled?: boolean; notSent?: boolean };
       if (response.status === 202 && receipt.cancelling) { await new Promise(resolve => setTimeout(resolve, 250)); continue; }
       if (!response.ok || receipt.cancelled !== true || receipt.notSent !== true) throw new Error('Queued task cancellation was not confirmed; inspect Task center before retrying');
@@ -391,15 +392,12 @@ export async function notifyLauncherTurn(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${descriptor.control.endpoint}/v1/turn/${activity.phase}`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${descriptor.control.token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(mutation),
-        signal: abortSignal ? AbortSignal.any([controller.signal, abortSignal]) : controller.signal,
-      });
+      const response = await postLauncherControl(
+        descriptor,
+        `/v1/turn/${activity.phase}`,
+        JSON.stringify(mutation),
+        abortSignal ? AbortSignal.any([controller.signal, abortSignal]) : controller.signal,
+      );
       const body = await response.json().catch(() => ({})) as Record<string, unknown>;
       abortSignal?.throwIfAborted();
       if (activity.phase === 'start' && response.status === 202) {
@@ -450,11 +448,9 @@ export async function notifyLauncherTurn(
           for (let ackAttempt = 0; ackAttempt < 2 && !acknowledged; ackAttempt++) {
             abortSignal?.throwIfAborted();
             try {
-              const acknowledgement = await fetch(`${descriptor.control.endpoint}/v1/turn/start-ack`, {
-                method: 'POST', headers: { authorization: `Bearer ${descriptor.control.token}`, 'content-type': 'application/json' },
-                body: JSON.stringify({ traceId: activity.traceId, helperPid: activity.helperPid, surfaceId: body.surfaceId }),
-                signal: abortSignal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), abortSignal]) : AbortSignal.timeout(timeoutMs),
-              });
+              const acknowledgement = await postLauncherControl(descriptor, '/v1/turn/start-ack',
+                JSON.stringify({ traceId: activity.traceId, helperPid: activity.helperPid, surfaceId: body.surfaceId }),
+                abortSignal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), abortSignal]) : AbortSignal.timeout(timeoutMs));
               const receipt = await acknowledgement.json() as { acknowledged?: boolean };
               acknowledged = acknowledgement.ok && receipt.acknowledged === true;
             } catch { if (abortSignal?.aborted) abortSignal.throwIfAborted(); }
@@ -546,15 +542,7 @@ async function launcherArtifactRequest(
   const timer = setTimeout(() => controller.abort(new Error(`Launcher artifact ${action} timed out`)), timeoutMs);
   const signal = abortSignal ? AbortSignal.any([controller.signal, abortSignal]) : controller.signal;
   try {
-    const response = await fetch(`${descriptor.control.endpoint}/v1/turn/artifact-${action}`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${descriptor.control.token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal,
-    });
+    const response = await postLauncherControl(descriptor, `/v1/turn/artifact-${action}`, JSON.stringify(body), signal);
     const decoded = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) {
       throw new Error(typeof decoded.error === "string" ? decoded.error : `Launcher artifact ${action} failed: HTTP ${response.status}`);
@@ -631,15 +619,7 @@ export async function releaseLauncherRetainedConversation(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${descriptor.control.endpoint}/v1/turn/release`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${descriptor.control.token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ conversationKey }),
-      signal: controller.signal,
-    });
+    const response = await postLauncherControl(descriptor, "/v1/turn/release", JSON.stringify({ conversationKey }), controller.signal);
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok || !Number.isSafeInteger(body.released) || Number(body.released) < 0) {
       const detail = typeof body.error === "string" ? `: ${body.error}` : "";
