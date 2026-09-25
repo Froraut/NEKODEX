@@ -74,6 +74,22 @@ function hasCompatibilityEvidence(value: Record<string, unknown>): boolean {
     && isPreviousAgentAssignment(value.previousAgentMaxDepth);
 }
 
+/** Journals 8-11 record the subagent protocol; Compatibility V1 also records its evidence and depth. */
+function hasValidSubagentInstall(value: Record<string, unknown>, installed: Record<string, unknown>): boolean {
+  return (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
+    && (installed.subagent_protocol !== "compatibility-v1"
+      || (hasCompatibilityEvidence(value)
+        && typeof installed.agent_max_depth === "number"
+        && Number.isSafeInteger(installed.agent_max_depth)
+        && installed.agent_max_depth >= 2));
+}
+
+/** Journals 9-11 route Responses to the bridge and keep Voice on ChatGPT. */
+function hasRealtimeRoute(installed: Record<string, unknown>): boolean {
+  return typeof installed.openai_base_url === "string"
+    && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL;
+}
+
 function isInstalledInterruptHook(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const hook = value as Record<string, unknown>;
@@ -105,14 +121,8 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
   if (value.version === 11
     && typeof value.active === "boolean"
     && installed
-    && typeof installed.openai_base_url === "string"
-    && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
-    && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
-    && (installed.subagent_protocol !== "compatibility-v1"
-      || (hasCompatibilityEvidence(value)
-        && typeof installed.agent_max_depth === "number"
-        && Number.isSafeInteger(installed.agent_max_depth)
-        && installed.agent_max_depth >= 2))
+    && hasRealtimeRoute(installed)
+    && hasValidSubagentInstall(value, installed)
     && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
     && isInstalledInterruptHookV11(value.interruptHook)
@@ -122,14 +132,8 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
   if (value.version === 10
     && typeof value.active === "boolean"
     && installed
-    && typeof installed.openai_base_url === "string"
-    && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
-    && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
-    && (installed.subagent_protocol !== "compatibility-v1"
-      || (hasCompatibilityEvidence(value)
-        && typeof installed.agent_max_depth === "number"
-        && Number.isSafeInteger(installed.agent_max_depth)
-        && installed.agent_max_depth >= 2))
+    && hasRealtimeRoute(installed)
+    && hasValidSubagentInstall(value, installed)
     && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
     && isInstalledInterruptHook(value.interruptHook)
@@ -139,14 +143,8 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
   if (value.version === 9
     && typeof value.active === "boolean"
     && installed
-    && typeof installed.openai_base_url === "string"
-    && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
-    && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
-    && (installed.subagent_protocol !== "compatibility-v1"
-      || (hasCompatibilityEvidence(value)
-        && typeof installed.agent_max_depth === "number"
-        && Number.isSafeInteger(installed.agent_max_depth)
-        && installed.agent_max_depth >= 2))
+    && hasRealtimeRoute(installed)
+    && hasValidSubagentInstall(value, installed)
     && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
     && typeof value.configPath === "string") {
@@ -155,12 +153,7 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
   if (value.version === 8
     && typeof value.active === "boolean"
     && installed
-    && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
-    && (installed.subagent_protocol !== "compatibility-v1"
-      || (hasCompatibilityEvidence(value)
-        && typeof installed.agent_max_depth === "number"
-        && Number.isSafeInteger(installed.agent_max_depth)
-        && installed.agent_max_depth >= 2))
+    && hasValidSubagentInstall(value, installed)
     && isPreviousAssignments(value.previous, MANAGED_ASSIGNMENT_KEYS)
     && typeof value.configPath === "string") {
     return value as unknown as LegacyCodexIntegrationJournalV8;

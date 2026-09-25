@@ -24,6 +24,13 @@ import {
   getCodexJournalRecoveryPath,
   getCodexModelsCachePath,
   assertFileSnapshotCurrent,
+  journalHasActiveFlag,
+  journalHasBaseUrlRouteV7Plus,
+  journalHasInterruptHook,
+  journalHasOwnedFeaturesV5V6,
+  journalHasRealtimeRoute,
+  journalIsManagedRouteV3Plus,
+  journalRecordsSubagentProtocol,
   restoreFileSnapshot,
   routeUrl,
   sha256,
@@ -207,7 +214,7 @@ function assertValidCodexToml(text: string): void {
 }
 
 function journalProtocol(journal: Exclude<AnyCodexIntegrationJournal, { version: 2 }>): AppConfig["subagentProtocol"] {
-  return journal.version === 8 || journal.version === 9 || journal.version === 10 || journal.version === 11
+  return journalRecordsSubagentProtocol(journal)
     ? journal.installed.subagent_protocol
     : "native";
 }
@@ -233,7 +240,7 @@ export function readCodexSubagentProtocol(
   fallback: AppConfig["subagentProtocol"] = "compatibility-v1",
 ): AppConfig["subagentProtocol"] {
   const journal = readJournal({ reconcileInactiveHook: false, repair: false });
-  return journal?.version === 8 || journal?.version === 9 || journal?.version === 10 || journal?.version === 11
+  return journalRecordsSubagentProtocol(journal)
     ? journal.installed.subagent_protocol
     : fallback;
 }
@@ -319,11 +326,11 @@ export function preflightCodexIntegration(
       installedUrl,
       config,
       true,
-      existing.version === 9 || existing.version === 10 || existing.version === 11 || options.replaceExistingRoute === true,
+      journalHasRealtimeRoute(existing) || options.replaceExistingRoute === true,
       hooksJson,
     );
     assertPreservedPreviousAssignments(proposed.previous, existing.previous);
-    if (existing.version === 9 || existing.version === 10 || existing.version === 11) {
+    if (journalHasRealtimeRoute(existing)) {
       assertPreservedPreviousRealtimeAssignment(
         proposed.previousRealtimeWebrtcCallBaseUrl,
         existing.previousRealtimeWebrtcCallBaseUrl,
@@ -411,12 +418,12 @@ function installCodexIntegrationState(
       installedUrl,
       config,
       true,
-      !preservePrevious || existing.version === 9 || existing.version === 10 || existing.version === 11 || options.replaceExistingRoute === true,
+      !preservePrevious || journalHasRealtimeRoute(existing) || options.replaceExistingRoute === true,
       hooksJson,
     );
     if (preservePrevious) {
       assertPreservedPreviousAssignments(patched.previous, existing.previous);
-      if (existing.version === 9 || existing.version === 10 || existing.version === 11) {
+      if (journalHasRealtimeRoute(existing)) {
         assertPreservedPreviousRealtimeAssignment(
           patched.previousRealtimeWebrtcCallBaseUrl,
           existing.previousRealtimeWebrtcCallBaseUrl,
@@ -436,7 +443,7 @@ function installCodexIntegrationState(
         } : {}),
       },
       previous: preservePrevious ? existing.previous : patched.previous,
-      previousRealtimeWebrtcCallBaseUrl: preservePrevious && (existing.version === 9 || existing.version === 10 || existing.version === 11)
+      previousRealtimeWebrtcCallBaseUrl: preservePrevious && journalHasRealtimeRoute(existing)
         ? existing.previousRealtimeWebrtcCallBaseUrl
         : patched.previousRealtimeWebrtcCallBaseUrl,
       interruptHook: patched.interruptHook,
@@ -515,7 +522,7 @@ export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
   assertJournalTargetsConfig(existing, getCodexConfigPath());
   if (!existsSync(existing.configPath)) throw new Error(`Codex config is missing: ${existing.configPath}`);
   const current = readFileSync(existing.configPath, "utf8");
-  if ((existing.version === 4 || existing.version === 5 || existing.version === 6 || existing.version === 7 || existing.version === 8 || existing.version === 9 || existing.version === 10 || existing.version === 11) && !existing.active) {
+  if (journalHasActiveFlag(existing) && !existing.active) {
     verifyRestoredRoute(current, existing);
     if (existing.version === 11 && existing.interruptHook.storage === "json") {
       if (!existsSync(existing.interruptHook.hooksPath)) {
@@ -541,8 +548,7 @@ export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
     | LegacyCodexIntegrationJournalV6
     | LegacyCodexIntegrationJournalV7
     | LegacyCodexIntegrationJournalV5
-    | LegacyCodexIntegrationJournalV4 = existing.version === 6 || existing.version === 5
-      || existing.version === 7 || existing.version === 8 || existing.version === 9 || existing.version === 10 || existing.version === 11
+    | LegacyCodexIntegrationJournalV4 = journalHasOwnedFeaturesV5V6(existing) || journalHasBaseUrlRouteV7Plus(existing)
       ? { ...existing, active: false }
       : { ...existing, version: 4, active: false };
   const restoredHooks = existing.version === 11 ? restoreManagedJsonHook(existing) : undefined;
@@ -565,7 +571,7 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
   assertInactiveJsonHookAbsent(existing);
   if (!existsSync(existing.configPath)) throw new Error(`Codex config is missing: ${existing.configPath}`);
   const current = readFileSync(existing.configPath, "utf8");
-  if ((existing.version === 10 || existing.version === 11) && existing.active) {
+  if (journalHasInterruptHook(existing) && existing.active) {
     verifyInstalledRoute(current, existing);
     if (existing.version === 11) {
       verifyManagedJsonHook(existing);
@@ -573,7 +579,7 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     return { changed: false, active: true };
   }
   let baseline: string;
-  if ((existing.version === 4 || existing.version === 5 || existing.version === 6 || existing.version === 7 || existing.version === 8 || existing.version === 9 || existing.version === 10 || existing.version === 11) && !existing.active) {
+  if (journalHasActiveFlag(existing) && !existing.active) {
     verifyRestoredRoute(current, existing);
     baseline = current;
   } else {
@@ -581,7 +587,7 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     baseline = restoreManagedRoute(current, existing);
   }
   const protocol = journalProtocol(existing);
-  const hookConfig = existing.version === 10 || existing.version === 11
+  const hookConfig = journalHasInterruptHook(existing)
     ? { interruptHookCommand: existing.interruptHook.command }
     : { runtimeCommand: loadConfig().runtimeCommand };
   const hooksJson = currentHooksJson();
@@ -590,11 +596,11 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     existing.installed.openai_base_url,
     { subagentProtocol: protocol, ...hookConfig },
     true,
-    existing.version === 9 || existing.version === 10 || existing.version === 11,
+    journalHasRealtimeRoute(existing),
     hooksJson,
   );
   assertPreservedPreviousAssignments(route.previous, existing.previous);
-  if (existing.version === 9 || existing.version === 10 || existing.version === 11) {
+  if (journalHasRealtimeRoute(existing)) {
     assertPreservedPreviousRealtimeAssignment(
       route.previousRealtimeWebrtcCallBaseUrl,
       existing.previousRealtimeWebrtcCallBaseUrl,
@@ -613,7 +619,7 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
       } : {}),
     },
     previous: existing.previous,
-    previousRealtimeWebrtcCallBaseUrl: existing.version === 9 || existing.version === 10 || existing.version === 11
+    previousRealtimeWebrtcCallBaseUrl: journalHasRealtimeRoute(existing)
       ? existing.previousRealtimeWebrtcCallBaseUrl
       : route.previousRealtimeWebrtcCallBaseUrl,
     interruptHook: route.interruptHook,
@@ -662,7 +668,7 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
         uninstalling: { restoredConfigSha256: sha256(restored) },
       });
     }
-  } else if ((journal.version === 4 || journal.version === 5 || journal.version === 6 || journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10 || journal.version === 11) && !journal.active) {
+  } else if (journalHasActiveFlag(journal) && !journal.active) {
     verifyRestoredRoute(current, journal);
     restored = current;
   } else {
@@ -761,11 +767,11 @@ export function inspectCodexIntegration(): {
       if (journal.version === 2 && journal.uninstalling) {
         errors.push("Legacy Codex integration uninstall is pending; retry uninstall");
       }
-      if ((journal.version === 4 || journal.version === 5 || journal.version === 6 || journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10 || journal.version === 11) && !journal.active) {
+      if (journalHasActiveFlag(journal) && !journal.active) {
         verifyRestoredRoute(text, journal);
         assertInactiveJsonHookAbsent(journal);
       }
-      else if (journal.version === 3 || journal.version === 4 || journal.version === 5 || journal.version === 6 || journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10 || journal.version === 11) {
+      else if (journalIsManagedRouteV3Plus(journal)) {
         verifyInstalledRoute(text, journal);
         if (journal.version === 11) {
           verifyManagedJsonHook(journal);
@@ -787,11 +793,11 @@ export function inspectCodexIntegration(): {
   return {
     installed: Boolean(journal),
     active: journal?.version === 2 && journal.uninstalling ? false
-      : journal?.version === 4 || journal?.version === 5 || journal?.version === 6 || journal?.version === 7 || journal?.version === 8 || journal?.version === 9 || journal?.version === 10 || journal?.version === 11
+      : journalHasActiveFlag(journal)
       ? journal.active
       : Boolean(journal),
     configPath: getCodexConfigPath(),
-    ...(journal?.version === 3 || journal?.version === 4 || journal?.version === 5 || journal?.version === 6 || journal?.version === 7 || journal?.version === 8 || journal?.version === 9 || journal?.version === 10 || journal?.version === 11
+    ...(journalIsManagedRouteV3Plus(journal)
       ? { routeUrl: journal.installed.openai_base_url }
       : {}),
     ...(journal ? { journal } : {}),

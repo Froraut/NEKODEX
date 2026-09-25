@@ -36,6 +36,8 @@ import {
 import { DEV_CONFIG_PURPOSE, DEV_LAUNCHER_PROFILE } from "./constants";
 import { runCompactionModelConfigCommand } from "../compaction-model-config";
 import { runProModelVersionConfigCommand } from "../pro-model-config";
+import { takeFlag, takeOption } from "../lib/cli-args";
+import { isJsonRecord } from "../lib/json-record";
 
 const DEV_HELP = `Codex Web GPT DEV chat
 
@@ -71,22 +73,6 @@ Experimental settings:
   Bigger Context       Enable in Settings; adapts context across 1, 2, or 3 messages
   Async tool operations Automatic Full mode; new setups use Codex Native6 DEV
 `;
-
-function takeFlag(args: string[], name: string): boolean {
-  const index = args.indexOf(name);
-  if (index < 0) return false;
-  args.splice(index, 1);
-  return true;
-}
-
-function takeOption(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  if (index < 0) return undefined;
-  const value = args[index + 1];
-  if (!value || value.startsWith("--")) throw new Error(`${name} requires a value`);
-  args.splice(index, 2);
-  return value;
-}
 
 function color(code: number, text: string): string {
   return stdout.isTTY ? `\u001b[${code}m${text}\u001b[0m` : text;
@@ -127,10 +113,6 @@ function declaredDevTools(): Map<string, DeclaredDevToolKind> {
   return declared;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function validateDeclaredDevTool(name: string, input: unknown, mode: "browser-only" | "full"): void {
   if (mode !== "full") throw new Error(`DEV browser-only response attempted outer tool ${JSON.stringify(name)}`);
   const kind = declaredDevTools().get(name);
@@ -139,7 +121,7 @@ function validateDeclaredDevTool(name: string, input: unknown, mode: "browser-on
     if (typeof input !== "string") throw new Error(`DEV custom tool ${JSON.stringify(name)} requires string input`);
     return;
   }
-  if (!isRecord(input)) throw new Error(`DEV function tool ${JSON.stringify(name)} requires a JSON object`);
+  if (!isJsonRecord(input)) throw new Error(`DEV function tool ${JSON.stringify(name)} requires a JSON object`);
   if (name !== "mcp__dev_simulator__large_context_payload") return;
   const keys = Object.keys(input);
   if (keys.length !== 2 || !keys.includes("segment") || !keys.includes("target_tokens")) {
@@ -158,7 +140,7 @@ function collectCallIds(value: unknown, ids: Set<string>): void {
     for (const item of value) collectCallIds(item, ids);
     return;
   }
-  if (!isRecord(value)) return;
+  if (!isJsonRecord(value)) return;
   if (typeof value.call_id === "string" && value.call_id.length > 0) ids.add(value.call_id);
   for (const child of Object.values(value)) collectCallIds(child, ids);
 }

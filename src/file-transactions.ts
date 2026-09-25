@@ -18,8 +18,11 @@ export type CommittedFileReceipt = FileSnapshot;
 const atomicWaitCell = new Int32Array(new SharedArrayBuffer(4));
 const WINDOWS_RENAME_RETRY_DELAYS_MS = [25, 50, 100, 150, 250, 350, 500] as const;
 
-function renameAtomicFile(source: string, destination: string): void {
+/** Rename, retrying transient Windows sharing violations. `beforeAttempt` runs before every
+ * attempt, outside the retry handling, so its failure is never retried. */
+function renameWithTransientWindowsRetry(source: string, destination: string, beforeAttempt?: () => void): void {
   for (let attempt = 0; ; attempt += 1) {
+    beforeAttempt?.();
     try {
       renameSync(source, destination);
       return;
@@ -56,7 +59,7 @@ export function atomicWriteFile(
     const stat = fstatSync(fd);
     open = false;
     closeSync(fd);
-    renameAtomicFile(temp, path);
+    renameWithTransientWindowsRetry(temp, path);
     syncDirectory(directory);
     return { path, exists: true, data: Buffer.from(data), mode: stat.mode & 0o777, identity: { dev: stat.dev, ino: stat.ino } };
   } catch (error) {
@@ -149,17 +152,8 @@ function commitFileSnapshot(snapshot: FileSnapshot, data: string | Uint8Array, e
     atomicWriteFile(staging, data, snapshot.symlink
       ? { mode: snapshot.symlink.mode, protectDirectory: false } : undefined);
     staged = snapshotFile(staging);
-    const delays = [25, 50, 100, 150, 250, 350, 500];
-    for (let attempt = 0; ; attempt++) {
-      // Backoff lets other writers run; every publication attempt needs a fresh guard.
-      if (expected) assertFileSnapshotCurrent(expected);
-      try { renameSync(staging, target); break; } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        const delay = delays[attempt];
-        if (process.platform !== "win32" || !["EBUSY", "EPERM", "EACCES"].includes(code ?? "") || delay === undefined) throw error;
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
-      }
-    }
+    // Backoff lets other writers run; every publication attempt needs a fresh guard.
+    renameWithTransientWindowsRetry(staging, target, expected ? () => assertFileSnapshotCurrent(expected) : undefined);
     return {
       path: snapshot.path, exists: true, data: staged.data!,
       ...(snapshot.symlink

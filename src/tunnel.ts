@@ -1,5 +1,5 @@
 import { safeTunnelDetail, tunnelCommandOutput, tunnelConnectLaunchError, parseTunnelStatus, type TunnelRuntimeStatus } from "./tunnel-status";
-import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./codex-integration-shared";
+import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";

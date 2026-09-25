@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isJsonRecord } from "./lib/json-record";
 
 type JsonObject = Record<string, unknown>;
 
@@ -10,15 +11,11 @@ export interface InstalledCodexInterruptHookJson {
   entryHash: string;
 }
 
-function isJsonObject(value: unknown): value is JsonObject {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function canonicalJson(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(canonicalJson);
   }
-  if (!isJsonObject(value)) {
+  if (!isJsonRecord(value)) {
     return value;
   }
   return Object.fromEntries(
@@ -39,13 +36,13 @@ function parseHooksJson(text: string): JsonObject {
   } catch {
     throw new Error("Codex hooks.json is malformed JSON");
   }
-  if (!isJsonObject(document)) {
+  if (!isJsonRecord(document)) {
     unsupportedShape("the root value must be an object");
   }
   if (document.hooks === undefined) {
     return document;
   }
-  if (!isJsonObject(document.hooks)) {
+  if (!isJsonRecord(document.hooks)) {
     unsupportedShape("hooks must be an object");
   }
   for (const [eventName, groups] of Object.entries(document.hooks)) {
@@ -53,14 +50,14 @@ function parseHooksJson(text: string): JsonObject {
       unsupportedShape(`hooks.${eventName} must be an array`);
     }
     for (const group of groups) {
-      if (!isJsonObject(group)) {
+      if (!isJsonRecord(group)) {
         unsupportedShape(`hooks.${eventName} groups must be objects`);
       }
       if (!Array.isArray(group.hooks)) {
         unsupportedShape(`hooks.${eventName} groups must contain a hooks array`);
       }
       for (const hook of group.hooks) {
-        if (!isJsonObject(hook) || typeof hook.type !== "string") {
+        if (!isJsonRecord(hook) || typeof hook.type !== "string") {
           unsupportedShape(`hooks.${eventName} hook entries must have a string type`);
         }
         if (hook.type === "command" && (typeof hook.command !== "string" || hook.command.length === 0)) {
