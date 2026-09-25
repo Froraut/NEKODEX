@@ -115,8 +115,16 @@ export async function responseDomSnapshot(
     // Final-answer Markdown follows the live status instead, so DOM order remains the semantic
     // boundary without relying on localized labels such as "Pro thinking".
     // DIL uses an assistant-owned PUIK root without the legacy markdown class (#538).
-    const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"]';
+    // The grouped renderer marks assistant Markdown explicitly and shares its turn with the
+    // user's bubble, so keep only roots owned by the assistant's content unit.
+    const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"], [data-markdown-text-style="assistant-message"]';
     const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]
+      .filter(candidate => {
+        if (!root.hasAttribute("data-turn-key") && !candidate.hasAttribute("data-markdown-text-style")) return true;
+        const unit = candidate.closest("[data-content-search-unit-key]");
+        return Boolean(unit) && Array.from(unit!.children)
+          .some(child => child.getAttribute("data-conversation-role") === "assistant");
+      })
       .filter(candidate => !candidate.parentElement?.closest(answerRootSelector))
       .filter(renderedInDom);
     const streamingStatusContainers = [...root.querySelectorAll<HTMLElement>("[data-streaming-response-status]")]

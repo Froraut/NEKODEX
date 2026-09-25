@@ -252,7 +252,7 @@ export class ChatGptModelSelectionController {
       if (!mode.thinkEnabled) await this.setThinkMode(composerForm, false, captureDiagnostic, abortSignal);
       return mode;
     }
-    const currentEffort = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).last();
+    const currentEffort = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
     const effortWaitAbort = new AbortController();
     const effortWaitSignal = browserStageAbortSignal(effortWaitAbort.signal, abortSignal);
     try {
@@ -286,10 +286,23 @@ export class ChatGptModelSelectionController {
         if (optionCount > 1) throw chatGptPinnedModelError(modelVersion);
         const familyPinned = optionCount === 1 && await option.getAttribute("aria-checked") === "true";
         if (!familyPinned) {
-          const modelTrigger = activation.menu.getByLabel(/^(?:Select model|Choose model|选择模型|モデルを選択)$/);
-          // Advanced rows can retain geometry while their owning submenu is collapsed/inert.
-          const collapsed = await modelTrigger.count() === 1 && await modelTrigger.getAttribute("aria-expanded") === "false";
-          if (collapsed || !await option.isVisible().catch(() => false)) await modelTrigger.click({ timeout: 5_000 });
+          // The power picker keeps its model rows in an explicit advanced view.
+          const powerView = activation.menu.locator("[data-model-picker-view]");
+          const powerViews = await powerView.count();
+          if (powerViews > 1) throw chatGptPinnedModelError(modelVersion);
+          if (powerViews === 1) {
+            const view = await powerView.getAttribute("data-model-picker-view");
+            if (view === "simple") {
+              const toggle = powerView.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]');
+              if (await toggle.count() !== 1) throw chatGptPinnedModelError(modelVersion);
+              await toggle.click({ timeout: 5_000 });
+            } else if (view !== "advanced") throw chatGptPinnedModelError(modelVersion);
+          } else {
+            const modelTrigger = activation.menu.getByLabel(/^(?:Select model|Choose model|选择模型|モデルを選択)$/);
+            // Advanced rows can retain geometry while their owning submenu is collapsed/inert.
+            const collapsed = await modelTrigger.count() === 1 && await modelTrigger.getAttribute("aria-expanded") === "false";
+            if (collapsed || !await option.isVisible().catch(() => false)) await modelTrigger.click({ timeout: 5_000 });
+          }
           await option.waitFor({ state: "visible", timeout: 5_000 });
           await option.click({ timeout: 5_000 });
           await page.keyboard.press("Escape");

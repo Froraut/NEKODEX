@@ -95,7 +95,7 @@ export interface BrowserState {
   title: string;
   authenticated: boolean;
   authenticationStatus?: AuthenticationStatus;
-  authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "unknown" | null;
+  authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "expired" | "unknown" | null;
   authenticationCheckedAt?: string | null;
   lastVerifiedAt?: string | null;
   accountLabel?: string | null;
@@ -385,7 +385,7 @@ export interface AccountPoolSnapshot {
     capabilities?: { solAvailable: boolean | null; extraHighAvailable: boolean | null; proAvailable: boolean | null } | null;
     availability?: { eligible: boolean; reason: string | null; retryAt: number | null };
     authenticationStatus?: AuthenticationStatus;
-  authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "unknown" | null; authenticationCheckedAt?: string | null; lastVerifiedAt?: string | null;
+  authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "expired" | "unknown" | null; authenticationCheckedAt?: string | null; lastVerifiedAt?: string | null;
     proxy: AccountProxy;
     safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
       newSessionWindow: AccountNewSessionWindowStatus | null };

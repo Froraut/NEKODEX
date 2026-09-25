@@ -84,7 +84,9 @@ import {
   assertNewChatPage,
   chatGptNewChatUrl,
   CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
+  chatGptAssistantTurnSelector,
   detectChatGptAccountCapabilities,
 } from "../../chatgpt-session";
 import {
@@ -215,7 +217,7 @@ async function connectAfterClosingBrowserConnection<T>(
 const CHATGPT_MIN_OPERATIONAL_VIEWPORT = Object.freeze({ width: 320, height: 240 });
 
 function chatGptTurnLocator(page: Page, identity: string): Locator {
-  return page.locator(`[data-turn-id=${JSON.stringify(identity)}]`);
+  return page.locator(chatGptAssistantTurnSelector(identity));
 }
 
 async function waitForOperationalChatGptViewport(page: Page, signal?: AbortSignal): Promise<void> {
@@ -1001,6 +1003,14 @@ export class ChatGptBrowserWorker {
         locator: chatGptTurnLocator(observationPage, identity),
         acceptedTurnIdentities: state.turnIdentities,
       };
+      // The power UI can expose Stop for a long reasoning phase before mounting any assistant
+      // node. Fresh generation evidence extends only DOM grace, never the caller's deadline.
+      if (state.visibleStopButtonCount > 0) {
+        responseDeadline = Math.min(
+          deadline ?? Number.POSITIVE_INFINITY,
+          Math.max(responseDeadline, Date.now() + graceMs),
+        );
+      }
       // A delayed renderer wake can cross the grace while the assistant appears. Only a fresh
       // observation can prove it is still missing; the explicit turn deadline remains above.
       if (Date.now() >= responseDeadline
@@ -1059,7 +1069,7 @@ export class ChatGptBrowserWorker {
     return composer.evaluate(element => {
       const clone = element.cloneNode(true) as HTMLElement;
       clone.querySelectorAll(
-        '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]',
+        '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]',
       )
         .forEach(part => part.remove());
       return [...clone.childNodes]
@@ -1095,7 +1105,10 @@ export class ChatGptBrowserWorker {
 
   private selectedConnectorControl(composer: Locator): Locator {
     return composer
-      .locator(`[data-id^="plugin:"][data-keyword=${JSON.stringify(this.config.appName)}]`)
+      .locator([
+        `[data-id^="plugin:"][data-keyword=${JSON.stringify(this.config.appName)}]`,
+        `[app-mention-path^="app://"][app-mention-display-name=${JSON.stringify(this.config.appName)}][contenteditable="false"]`,
+      ].join(", "))
       .filter({ visible: true });
   }
 
@@ -1103,7 +1116,7 @@ export class ChatGptBrowserWorker {
     const selected = this.selectedConnectorControl(composer);
     const keywords = await withBrowserTurnAbort(
       withChatGptBrowserObservationTimeout(selected.evaluateAll(elements => (
-        elements.map(element => element.getAttribute("data-keyword"))
+        elements.map(element => element.getAttribute("data-keyword") ?? element.getAttribute("app-mention-display-name"))
       ))),
       abortSignal,
     );
@@ -1183,8 +1196,12 @@ export class ChatGptBrowserWorker {
     // The same menu-item class also appears in sidebar history. The nearby Think
     // slash path observes ChatGPT's visible .popover; never use a page-wide row
     // as evidence of the mention popup.
-    const popup = page.locator('.popover').filter({ visible: true });
-    const menuRows = popup.locator('.__menu-item[tabindex="0"]').filter({ visible: true });
+    // The new renderer lists mentions in its own scroll area, possibly inside a popover.
+    const mentionList = page.locator("[data-mention-list-scroll-area]").filter({ visible: true });
+    const popup = page.locator(".popover").filter({ visible: true })
+      .filter({ hasNot: page.locator("[data-mention-list-scroll-area]") })
+      .or(mentionList);
+    const menuRows = popup.locator('.__menu-item[tabindex="0"], button[data-list-navigation-item="true"]').filter({ visible: true });
     const appResult = menuRows.filter({
       has: page.getByText(this.config.appName, { exact: true }),
     });
@@ -1368,10 +1385,11 @@ export class ChatGptBrowserWorker {
       // otherwise move the menu highlight until it does. Keep
       // focus on the composer, activate through the menu's real keyboard owner, then prove the exact
       // selected connector pill below.
-      const rowHighlighted = async () => await appResult.getAttribute("data-highlighted", {
-        signal: abortSignal,
-        timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS,
-      }) !== null;
+      const rowHighlighted = async () => {
+        const options = { signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS };
+        return await appResult.getAttribute("data-highlighted", options) !== null
+          || await appResult.getAttribute("aria-current", options) === "true";
+      };
       if (!await rowHighlighted()) {
         const visibleRowCount = await withBrowserTurnAbort(
           withChatGptBrowserObservationTimeout(menuRows.count()),
@@ -1547,7 +1565,7 @@ export class ChatGptBrowserWorker {
     const composer = await this.activeComposer(page);
     const sendButton = composer
       .locator("xpath=ancestor::form[1]")
-      .getByTestId("send-button");
+      .locator(CHATGPT_SEND_BUTTON_SELECTOR);
     await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.send });
     await settleChatGptUi();
     const sendEnableDeadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
@@ -1922,12 +1940,13 @@ export class ChatGptBrowserWorker {
     if (files.length === 0) return;
     const composer = await this.activeComposer(page, 30_000, abortSignal);
     const composerForm = composer.locator("xpath=ancestor::form[1]");
-    const input = page.locator('input[data-testid="upload-photos-input"]');
+    const input = page.locator('input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])');
     await withBrowserTurnAbort(input.waitFor({ state: "attached", timeout: 20_000 }), abortSignal);
     await withBrowserTurnAbort(input.setInputFiles(files), abortSignal);
     try {
       await withBrowserTurnAbort(Promise.all(files.map(file => (
         composerForm.getByRole("group", { name: file.name, exact: true })
+          .or(composerForm.locator(`.composer-attachment-surface[role="button"][aria-label=${JSON.stringify(file.name)}]`))
           .waitFor({ state: "visible", timeout: 60_000 })
       ))), abortSignal);
     } catch (error) {
@@ -1940,7 +1959,7 @@ export class ChatGptBrowserWorker {
         + (alerts.length > 0 ? `: ${alerts.join(" | ")}` : ""),
       );
     }
-    const send = composerForm.getByTestId("send-button");
+    const send = composerForm.locator(CHATGPT_SEND_BUTTON_SELECTOR);
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
