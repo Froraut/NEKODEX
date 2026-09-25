@@ -17,6 +17,7 @@ import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adap
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { BrowserTurn, ResolvedBrowserConfig } from "./browser-worker";
 import { parseHelperMessage, type HelperTurnOutputMessage } from "./browser-helper-protocol";
+import { asError } from "../../lib/errors";
 
 interface PendingTurn {
   turn: BrowserTurn;
@@ -155,7 +156,7 @@ export class LauncherBrowserHelperClient {
               this.reserveUnresolved(pending);
               this.finishWithError(
                 turn.traceId,
-                error instanceof Error ? error : new Error(String(error)),
+                asError(error),
               );
             });
           };
@@ -206,7 +207,7 @@ export class LauncherBrowserHelperClient {
           .then(() => {
             if (!progressForwarding.signal.aborted) this.forwardProgress(turn, progressForwarding.signal);
           })
-          .catch(error => this.finishWithError(turn.traceId, error instanceof Error ? error : new Error(String(error))));
+          .catch(error => this.finishWithError(turn.traceId, asError(error)));
       });
   }
 
@@ -361,7 +362,7 @@ export class LauncherBrowserHelperClient {
           }
           void progress.acknowledgeToolBatch(message.revision).catch(error => this.abortWithLocalFailure(
             message.id,
-            error instanceof Error ? error : new Error(String(error)),
+            asError(error),
             pending,
           ));
         }
@@ -391,7 +392,7 @@ export class LauncherBrowserHelperClient {
             });
           }).catch(error => this.abortWithLocalFailure(
             message.id,
-            error instanceof Error ? error : new Error(String(error)),
+            asError(error),
             pending,
           ));
         }
@@ -415,7 +416,7 @@ export class LauncherBrowserHelperClient {
             });
           }).catch(error => this.abortWithLocalFailure(
             message.id,
-            error instanceof Error ? error : new Error(String(error)),
+            asError(error),
             pending,
           ));
         }
@@ -432,7 +433,7 @@ export class LauncherBrowserHelperClient {
           }).catch(error => {
             if (pending.turn.abortSignal?.aborted) return;
             this.abortWithLocalFailure(
-              message.id, error instanceof Error ? error : new Error(String(error)), pending,
+              message.id, asError(error), pending,
             );
           });
         }
@@ -453,7 +454,7 @@ export class LauncherBrowserHelperClient {
           void Promise.resolve().then(() => pending.turn.onMultipartStageAcknowledged?.(message.stageIndex))
             .catch(error => this.abortWithLocalFailure(
               message.id,
-              error instanceof Error ? error : new Error(String(error)),
+              asError(error),
               pending,
             ));
         }
@@ -491,7 +492,7 @@ export class LauncherBrowserHelperClient {
             });
           }).catch(error => this.abortWithLocalFailure(
             message.id,
-            error instanceof Error ? error : new Error(String(error)),
+            asError(error),
             pending,
           ));
         }
@@ -508,7 +509,7 @@ export class LauncherBrowserHelperClient {
         else if (message.event === "commentary" && message.text) pending.turn.onCommentary?.(message.text, message.continuation === true);
         else if (message.event === "text" && message.text) pending.turn.onTextDelta(message.text);
       } catch (error) {
-        this.abortWithLocalFailure(message.id, error instanceof Error ? error : new Error(String(error)), pending);
+        this.abortWithLocalFailure(message.id, asError(error), pending);
       }
       return;
     }
@@ -541,7 +542,7 @@ export class LauncherBrowserHelperClient {
       this.finishWithError(
         id,
         new AggregateError(
-          [error, sendError instanceof Error ? sendError : new Error(String(sendError))],
+          [error, asError(sendError)],
           "Launcher browser helper could not abort after a local protocol failure",
         ),
       );
@@ -642,7 +643,7 @@ export class LauncherBrowserHelperClient {
         controlError => this.finishWithError(
           id,
           new AggregateError(
-            [pending.localFailure ?? error, controlError instanceof Error ? controlError : new Error(String(controlError))],
+            [pending.localFailure ?? error, asError(controlError)],
             `Launcher browser helper exited and failed to release turn ${id}`,
           ),
         ),
@@ -781,7 +782,7 @@ export class LauncherBrowserHelperClient {
           else resolveWrite();
         });
       } catch (error) {
-        const failure = error instanceof Error ? error : new Error(String(error));
+        const failure = asError(error);
         this.failChild(child, failure);
         rejectWrite(failure);
       }

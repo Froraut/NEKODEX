@@ -3,7 +3,7 @@ import type { ChatGptMarkdownSegment } from "./markdown";
 import { CHATGPT_COMPLETION_ACTION_SELECTOR } from "../../chatgpt-session";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import { chatGptBrowserTabClosedError } from "./adapter-error";
-import { CHATGPT_DOM_REVISION_ATTRIBUTES } from "./browser-dom-revision";
+import { CHATGPT_DOM_REVISION_ATTRIBUTES, recordDomRevisionObservation } from "./browser-dom-revision";
 import { isChatGptTraceControl, stripChatGptTraceControlSuffix, type ChatGptVisibleTraceBlock } from "./browser-visible-trace";
 
 export interface ChatGptResponseDomSnapshot {
@@ -21,6 +21,12 @@ export interface ChatGptResponseDomCache {
   snapshot?: ChatGptResponseDomSnapshot;
   fullScans?: number;
   cacheHits?: number;
+}
+
+/** Force the next read to rescan; the scan/hit counters keep accumulating for the turn log. */
+export function resetChatGptResponseDomCache(cache: ChatGptResponseDomCache): void {
+  cache.key = undefined;
+  cache.snapshot = undefined;
 }
 
 export const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
@@ -543,13 +549,7 @@ export async function responseDomSnapshot(
     throw new TypeError("ChatGPT response DOM observation returned no result");
   }
   const snapshot = observed.snapshot ?? cache?.snapshot ?? absentResponseDomSnapshot();
-  if (observed.snapshot && cache) {
-    cache.key = observed.key;
-    cache.snapshot = observed.snapshot;
-    cache.fullScans = (cache.fullScans ?? 0) + 1;
-  } else if (!observed.snapshot && cache?.snapshot) {
-    cache.cacheHits = (cache.cacheHits ?? 0) + 1;
-  }
+  recordDomRevisionObservation(cache, observed);
   snapshot.traceBlocks = snapshot.traceBlocks
     .map(stripChatGptTraceControlSuffix)
     .filter(block => block.text.length > 0 && !isChatGptTraceControl(block));

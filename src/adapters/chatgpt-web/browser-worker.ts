@@ -5,18 +5,42 @@ import { chatGptConnectorUnavailableError, ChatGptPersistentBrowserStateError, e
 import { ChatGptVisibleTraceTracker } from "./browser-visible-trace";
 import { ChatGptBrowserDiagnostics, stalledTurnDiagnostic, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { submissionDomState, type ChatGptSubmissionDomCache, type ChatGptSubmissionDomState } from "./browser-submission-dom";
-import { absentResponseDomSnapshot, responseDomSnapshot, type ChatGptResponseDomCache, type ChatGptResponseDomSnapshot } from "./browser-response-dom";
+import { absentResponseDomSnapshot, resetChatGptResponseDomCache, responseDomSnapshot, type ChatGptResponseDomCache, type ChatGptResponseDomSnapshot } from "./browser-response-dom";
 import { assertChatGptPromptAttachments, chatGptPromptFilePayloads } from "./attachment-payloads";
 import { ChatGptModelSelectionController } from "./browser-model-selection";
 import { CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_COMPLETION_ACTION_GRACE_MS, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, chatGptExternalProgressSuppressesDomHealth } from "./browser-response-policy";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
+import {
+  CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
+  ChatGptSubmissionRejectionObserver,
+  chatGptExpiredSessionAlert,
+  chatGptRateLimitDialog,
+  dismissChatGptTemporaryChatOnboarding,
+  resolveChatGptToolConfirmation,
+  throwIfChatGptEffortCapabilityDialog,
+  throwIfChatGptRateLimitDialog,
+  throwIfChatGptSessionFailureAlert,
+  throwIfChatGptSubmissionDialog,
+  throwIfChatGptTerminalErrorAlert,
+} from "./browser-page-guards";
 import { canRetryOwnedPageRebind } from "./browser-lifecycle-safety";
+import { runBrowserStage } from "./browser-stage-budget";
+import {
+  chatGptConnectorAttachmentMode,
+  chatGptNewTurnIdentity,
+  chatGptReboundTurnIdentity,
+  chatGptStagedBaselineIdentities,
+  chatGptSubmissionEvidence,
+  promptEquivalentPrefixLength,
+  promptTextEquivalent,
+  type ChatGptSubmissionEvidence,
+} from "./browser-submission-policy";
 import { parseChatGptWebCompactionExecution, type ChatGptWebCompactionExecution } from "../../chatgpt-web-compaction-policy";
 import { skillFileTokens } from "./skill-attachments";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request, type Response } from "playwright-core";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright-core";
 import {
   atomicWriteFile,
   CHATGPT_CONNECTOR_NAME,
@@ -30,6 +54,7 @@ import {
   LEGACY_CHATGPT_CONNECTOR_NAMES,
 } from "../../config";
 import { estimateTokens } from "../../lib/token-estimate";
+import { asError } from "../../lib/errors";
 import type { CodexProviderConfig } from "../../types";
 import {
   ChatGptMarkdownBuffer,
@@ -120,7 +145,6 @@ export async function closeChatGptBrowserWorkers(): Promise<void> {
   }
 }
 
-export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
 const CHATGPT_CONNECTOR_MENTION_QUERY = "@codex";
 const CHATGPT_SMOKE_TEXT = "Reply with exactly: CODEX WEB GPT READY";
@@ -152,238 +176,6 @@ class ChatGptPromptAttachmentIntegrityError extends ChatGptWebAdapterError {
   }
 }
 
-const chatGptRateLimitDialog = (page: Page): Locator => page.locator('[role="dialog"]')
-  .filter({ hasText: /Too many requests|太多要求|太多请求|リクエストが多すぎます|요청이 너무 많습니다|요청을 너무 빠르게 보내고 있습니다/i })
-  .filter({ hasText: /making requests too quickly|過於頻繁|过于频繁|リクエストの頻度が高すぎます|요청을 너무 빠르게 보내고 있습니다/i })
-  .last();
-
-export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
-  const dialog = chatGptRateLimitDialog(page);
-  if (!await dialog.isVisible().catch(() => false)) return;
-
-  const acknowledge = dialog.getByRole("button", { name: /^(Got it|知道了|了解|알겠습니다)$/ }).last();
-  if (await acknowledge.isVisible().catch(() => false)) {
-    try {
-      await acknowledge.press("Enter");
-    } catch (error) {
-      throw new ChatGptWebAdapterError(
-        `ChatGPT rate limit: too many requests, and the dialog could not be dismissed (${error instanceof Error ? error.message : String(error)}). Try again in a few minutes.`,
-        { status: 429, errorType: "rate_limit_error", code: "rate_limit_exceeded", retryable: false },
-      );
-    }
-  }
-  throw new ChatGptWebAdapterError(
-    "ChatGPT rate limit: too many requests. Try again in a few minutes.",
-    { status: 429, errorType: "rate_limit_error", code: "rate_limit_exceeded", retryable: false },
-  );
-}
-
-export async function throwIfChatGptSubmissionDialog(page: Page): Promise<void> {
-  const dialogs = page.locator('[role="dialog"], [role="alertdialog"]').filter({ visible: true });
-  if (await dialogs.count() === 0) return;
-  throw new ChatGptWebAdapterError(
-    "ChatGPT is showing a dialog that blocks submission. Review it in NEKODEX, then retry the task.",
-    { status: 409, errorType: "invalid_request_error", code: "chatgpt_submission_dialog", retryable: false },
-  );
-}
-
-export async function throwIfChatGptEffortCapabilityDialog(
-  page: Page,
-  mode: Pick<ChatGptWebModelMode, "displayLabel">,
-  abortSignal?: AbortSignal,
-): Promise<void> {
-  throwIfPromptAttachmentAborted(abortSignal);
-  const dialogs = page.locator('[role="dialog"], [role="alertdialog"]').filter({ visible: true });
-  const count = await dialogs.count();
-  throwIfPromptAttachmentAborted(abortSignal);
-  if (count === 0) return;
-  throw new ChatGptWebAdapterError(
-    `ChatGPT blocked the requested ${mode.displayLabel} effort with an account-capability dialog. `
-    + "The pending prompt was not sent. Run Repair to refresh account capabilities or choose an effort the account exposes. "
-    + "No lower-effort fallback was used.",
-    {
-      status: 403,
-      errorType: "permission_error",
-      code: "model_effort_unavailable",
-      retryable: false,
-      cause: new Error(`ChatGPT exposed ${count} blocking dialog(s) immediately after effort selection`),
-    },
-  );
-}
-
-const chatGptTemporaryChatOnboardingDialog = (page: Page): Locator => page
-  .locator('[role="dialog"]')
-  .filter({ hasText: "Not in history" })
-  .filter({ hasText: "No model training" })
-  .filter({ hasText: "Memory off" })
-  .last();
-
-export async function dismissChatGptTemporaryChatOnboarding(page: Page): Promise<boolean> {
-  const dialog = chatGptTemporaryChatOnboardingDialog(page);
-  if (!await dialog.isVisible().catch(() => false)) return false;
-  const continueButton = dialog.getByRole("button", { name: "Continue", exact: true }).last();
-  if (!await continueButton.isVisible().catch(() => false)) {
-    throw new Error("ChatGPT Temporary Chat onboarding is visible without its Continue action");
-  }
-  await continueButton.click({ force: true });
-  await dialog.waitFor({ state: "hidden", timeout: 10_000 });
-  return true;
-}
-
-type ChatGptTextScope = Pick<Locator, "getByText" | "getByTestId">;
-
-const chatGptSubscriptionFailureAlert = (page: Page): Locator => page
-  .locator('[role="alert"]')
-  .filter({ hasText: /Failed to load subscription/i })
-  .last();
-
-const chatGptExpiredSessionAlert = (page: Page): Locator => page
-  .locator('[role="alert"], [role="dialog"]')
-  .filter({ hasText: /Your session has expired|你的工作階段已過期|您的工作階段已過期|你的会话已过期|您的会话已过期/i })
-  .last();
-
-export async function throwIfChatGptSessionFailureAlert(page: Page): Promise<void> {
-  const safetyAlert = page.locator('[role="alert"], [role="dialog"], [role="alertdialog"]')
-    .filter({ hasText: /Suspicious activity detected/i })
-    .filter({ hasText: /someone else.*using your ChatGPT account/i }).last();
-  if (await safetyAlert.isVisible().catch(() => false)) {
-    throw new ChatGptWebAdapterError("ChatGPT reported suspicious account activity. Automation is paused; review the account before explicitly resuming in Accounts.", {
-      status: 403, errorType: "permission_error", code: "account_safety_stop", retryable: false,
-    });
-  }
-  if (await chatGptExpiredSessionAlert(page).isVisible().catch(() => false)) {
-    throw new ChatGptWebAdapterError(
-      "The ChatGPT session has expired. Sign in again in NEKODEX.",
-      { status: 401, errorType: "authentication_error", code: "chatgpt_session_expired", retryable: false },
-    );
-  }
-  if (!await chatGptSubscriptionFailureAlert(page).isVisible().catch(() => false)) return;
-  throw new ChatGptWebAdapterError(
-    "ChatGPT could not load the account subscription. Reload ChatGPT inside the launcher and retry; sign out only if the error persists.",
-    { status: 503, errorType: "server_error", code: "chatgpt_subscription_unavailable", retryable: true },
-  );
-}
-
-const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
-  .getByText(/Something went wrong[\s\S]*help\.openai\.com/i)
-  .last();
-
-const chatGptThinkingFailedAlert = (scope: ChatGptTextScope): Locator => scope
-  // Exact collapsed status only, with its optional textual disclosure chevron. Substrings in
-  // answers or quoted diagnostics are ordinary content.
-  .getByText(/^Thinking failed(?:\s*[>›])?\s*$/i)
-  .last();
-
-// The current UI renders message_length_exceeds_limit as an ordinary response error.
-// Observe only browser-issued submissions from this owned page after Send is activated;
-// an old response, another tab, or a background endpoint cannot classify this turn.
-export class ChatGptSubmissionRejectionObserver {
-  private page?: Page;
-  private readonly requests = new Set<Request>();
-  private checks: Array<Promise<ChatGptWebAdapterError | undefined>> = [];
-
-  private readonly onRequest = (request: Request): void => {
-    if (!this.page || request.method() !== "POST"
-      || request.url() !== "https://chatgpt.com/backend-api/f/conversation") return;
-    try { if (request.frame() !== this.page.mainFrame()) return; } catch { return; }
-    this.requests.add(request);
-  };
-
-  private readonly onResponse = (response: Response): void => {
-    if (!this.requests.delete(response.request()) || response.status() !== 413
-      || !response.headers()["content-type"]?.includes("application/json")) return;
-    this.checks.push(withChatGptBrowserObservationTimeout(response.json(), 3_000)
-      .then(body => body?.detail?.code === "message_length_exceeds_limit"
-        ? new ChatGptWebAdapterError(
-          "ChatGPT rejected this message because it exceeds the selected mode's input-size limit. Compact the task before retrying.",
-          { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
-        ) : undefined)
-      // Unreadable or unfamiliar responses do not establish a size rejection. The normal
-      // bound-response DOM error remains authoritative in that case.
-      .catch(() => undefined));
-  };
-
-  begin(page: Page): void {
-    this.dispose();
-    this.checks = [];
-    this.page = page;
-    page.on("request", this.onRequest);
-    page.on("response", this.onResponse);
-  }
-
-  async failure(): Promise<ChatGptWebAdapterError | undefined> {
-    return (await Promise.all(this.checks)).find(error => error !== undefined);
-  }
-
-  dispose(): void {
-    this.page?.off("request", this.onRequest);
-    this.page?.off("response", this.onResponse);
-    this.page = undefined;
-    this.requests.clear();
-  }
-}
-
-export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
-  if (await chatGptThinkingFailedAlert(scope).isVisible().catch(() => false)) {
-    throw new ChatGptWebAdapterError(
-      "ChatGPT ended the turn with 'Thinking failed'. Retry the turn.",
-      { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
-    );
-  }
-  if (await scope.getByTestId("regenerate-thread-error-button").last().isVisible().catch(() => false)) {
-    throw new ChatGptWebAdapterError(
-      "ChatGPT displayed an error for this response. Check the ChatGPT tab for the exact error, then retry the turn.",
-      { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
-    );
-  }
-  if (!await chatGptTerminalErrorAlert(scope).isVisible().catch(() => false)) return;
-  throw new ChatGptWebAdapterError(
-    "ChatGPT ended the turn with 'Something went wrong'. Retry the turn.",
-    { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
-  );
-}
-
-export async function resolveChatGptToolConfirmation(
-  page: Page,
-  appName: string,
-  autoApprove: boolean,
-  signal?: AbortSignal,
-  timeoutMs = CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
-  onVisible?: () => Promise<void>,
-): Promise<boolean> {
-  const dialog = page.locator('[role="dialog"], [data-testid="tool-approval-card"]')
-    .filter({ hasText: `Allow ChatGPT to use ${appName}?` })
-    .last();
-  if (!await dialog.isVisible().catch(() => false)) return false;
-  await onVisible?.();
-
-  if (autoApprove) {
-    // ChatGPT exposes either "Allow once" or the shorter "Allow" for the
-    // current one-shot approval. Keep the matcher anchored so persistent
-    // actions such as "Always allow" cannot match.
-    const allowCurrentAction = dialog
-      .getByRole("button", { name: /^Allow(?: once)?$/ })
-      .last();
-    await allowCurrentAction.waitFor({ state: "visible", timeout: 10_000 });
-    await allowCurrentAction.press("Enter");
-    return true;
-  }
-
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-    if (!await dialog.isVisible().catch(() => false)) return true;
-    await new Promise(resolveSleep => setTimeout(resolveSleep, Math.min(100, Math.max(1, deadline - Date.now()))));
-  }
-
-  if (!await dialog.isVisible().catch(() => false)) return true;
-  const deny = dialog.getByRole("button", { name: "Deny", exact: true }).last();
-  await deny.waitFor({ state: "visible", timeout: 5_000 });
-  await deny.press("Enter");
-  await dialog.waitFor({ state: "hidden", timeout: 10_000 });
-  return true;
-}
-
 const browserStageTimeouts = {
   browserPage: 60_000,
   temporaryChatPreparation: 150_000,
@@ -397,53 +189,6 @@ const browserStageTimeouts = {
   // Staging asks for one transaction-bound acknowledgement, not an open-ended model answer.
   multipartStageAcknowledgement: CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
 } as const;
-
-/**
- * Detects that this process was suspended (system sleep) by watching for gaps in a steady tick.
- * On Apple Silicon the monotonic clock keeps advancing through sleep, so elapsed time alone cannot
- * distinguish "the stage really took 15 minutes" from "the machine slept for 14 of them" — and a
- * stage budget charged for slept time cancels turns that never got their budget awake.
- */
-export class ChatGptSuspensionClock {
-  private readonly tickIntervalMs = 1_000;
-  private readonly gapThresholdMs = 5_000;
-  private suspendedTotalMs = 0;
-  private lastTickAt = Date.now();
-  private timer: ReturnType<typeof setInterval> | undefined;
-
-  start(): void {
-    if (this.timer) return;
-    this.lastTickAt = Date.now();
-    this.timer = setInterval(() => this.tick(Date.now()), this.tickIntervalMs);
-    this.timer.unref?.();
-  }
-
-  private tick(now: number): void {
-    const gap = now - this.lastTickAt;
-    this.lastTickAt = now;
-    if (gap >= this.gapThresholdMs) this.suspendedTotalMs += gap - this.tickIntervalMs;
-  }
-
-  suspendedMs(): number {
-    return this.suspendedTotalMs;
-  }
-}
-
-export const chatGptSuspensionClock = new ChatGptSuspensionClock();
-
-/**
- * How much of a stage budget remains once slept time is refunded. Zero means the stage really
- * consumed its budget while awake and the timeout stands.
- */
-export function remainingStageBudgetMs(
-  timeoutMs: number,
-  elapsedMs: number,
-  suspendedMs: number,
-): number {
-  const awakeMs = elapsedMs - suspendedMs;
-  if (awakeMs >= timeoutMs) return 0;
-  return Math.max(250, timeoutMs - awakeMs);
-}
 
 const MAX_CHATGPT_BROWSER_PAGE_REBINDS = 2;
 
@@ -468,6 +213,10 @@ async function connectAfterClosingBrowserConnection<T>(
 }
 
 const CHATGPT_MIN_OPERATIONAL_VIEWPORT = Object.freeze({ width: 320, height: 240 });
+
+function chatGptTurnLocator(page: Page, identity: string): Locator {
+  return page.locator(`[data-turn-id=${JSON.stringify(identity)}]`);
+}
 
 async function waitForOperationalChatGptViewport(page: Page, signal?: AbortSignal): Promise<void> {
   try {
@@ -571,74 +320,13 @@ export interface ResolvedBrowserConfig {
   browserHost: "managed-chrome" | "launcher";
   browserHostDescriptorPath?: string;
   browserHelperScriptPath?: string;
-  browserDiagnosticsPath?: string;
+  browserDiagnosticsPath: string;
   storageStatePath: string;
   chromeExecutablePath: string;
   turnTimeoutMs?: number;
   headed: boolean;
   autoApproveToolCalls: boolean;
   useSavedChats?: boolean;
-}
-
-export type ChatGptSubmissionEvidence = "user_turn" | "assistant_turn" | "generation_running" | "mcp_tool_call";
-
-export function chatGptSubmissionEvidence(state: {
-  initialTurnIdentities: readonly string[];
-  userIdentities: readonly string[];
-  responseIdentities: readonly string[];
-  generationRunning: boolean;
-}): ChatGptSubmissionEvidence | undefined {
-  if (chatGptNewTurnIdentity(state.initialTurnIdentities, state.userIdentities)) return "user_turn";
-  if (chatGptNewTurnIdentity(state.initialTurnIdentities, state.responseIdentities)) return "assistant_turn";
-  if (state.generationRunning) return "generation_running";
-  return undefined;
-}
-
-export type ChatGptConnectorAttachmentMode = "none" | "mention" | "retained";
-
-/** A launcher lease may reuse a connector only after proving that exact retained surface is bound. */
-export function chatGptConnectorAttachmentMode(
-  localTools: boolean,
-  reuseConversation: boolean,
-): ChatGptConnectorAttachmentMode {
-  if (!localTools) return "none";
-  return reuseConversation ? "retained" : "mention";
-}
-
-export function chatGptStagedBaselineIdentities(
-  initial: readonly string[],
-  acknowledgedStages: readonly string[] = [],
-  observed: readonly { identity: string; text: string }[] = [],
-): readonly string[] {
-  if (!acknowledgedStages.length) return initial;
-  const identities = new Set(initial);
-  for (const acknowledgement of acknowledgedStages) {
-    const matching = observed.filter(turn => turn.text === acknowledgement);
-    if (matching.length > 1) throw new Error("ChatGPT exposed duplicate acknowledged context stages");
-    if (matching[0]) identities.add(matching[0].identity);
-  }
-  return [...identities];
-}
-
-export function chatGptNewTurnIdentity(
-  initial: readonly string[],
-  current: readonly string[],
-): string | undefined {
-  const previous = new Set(initial);
-  const added = current.filter(identity => !previous.has(identity));
-  if (added.length > 1) {
-    throw new Error(`ChatGPT exposed ${added.length} new conversation turns for one submitted message`);
-  }
-  return added[0];
-}
-
-export function chatGptReboundTurnIdentity(
-  initial: readonly string[],
-  boundIdentity: string,
-  current: readonly string[],
-): string | undefined {
-  if (current.includes(boundIdentity)) return boundIdentity;
-  return chatGptNewTurnIdentity(initial, current);
 }
 
 /**
@@ -756,7 +444,7 @@ export class ChatGptBrowserWorker {
     captureDiagnostic?: (checkpoint: string) => Promise<void>, stageModelVersion?: ChatGptWebProModelVersion,
     abortSignal?: AbortSignal,
   ): Promise<ChatGptWebModelMode> {
-    return ChatGptBrowserWorker.prototype.modelSelectionController.call(this).select(page,
+    return this.modelSelectionController().select(page,
       resolveChatGptWebModelMode(modelId, reasoning, capabilities, stageModelVersion),
       captureDiagnostic, stageModelVersion, abortSignal);
   }
@@ -781,58 +469,6 @@ export class ChatGptBrowserWorker {
   private readonly activeRuns = new Map<string, Promise<string>>();
 
   private constructor(private readonly config: ResolvedBrowserConfig) {}
-
-  /**
-   * Lexical/contenteditable may preserve runs of ASCII spaces by exposing some of them as NBSP
-   * through DOM textContent. Treat that DOM-only representation as equivalent only when the
-   * expected U+0020 belongs to a multi-space run. Single spaces, tabs, newlines, intentional
-   * expected NBSP characters, and every other mutation remain exact and fail closed.
-   */
-  private promptCodeUnitEquivalent(
-    expected: string,
-    observed: string,
-    index: number,
-  ): boolean {
-    const expectedUnit = expected[index];
-    const observedUnit = observed[index];
-
-    if (expectedUnit === observedUnit) return true;
-    if (expectedUnit !== " " || observedUnit !== "\u00A0") return false;
-
-    return expected[index - 1] === " " || expected[index + 1] === " ";
-  }
-
-  private promptTextEquivalent(
-    expected: string,
-    observed: string,
-  ): boolean {
-    if (expected.length !== observed.length) return false;
-
-    for (let index = 0; index < expected.length; index += 1) {
-      if (!this.promptCodeUnitEquivalent(expected, observed, index)) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  private promptEquivalentPrefixLength(
-    expected: string,
-    observed: string,
-  ): number {
-    const length = Math.min(expected.length, observed.length);
-
-    let index = 0;
-    while (
-      index < length
-      && this.promptCodeUnitEquivalent(expected, observed, index)
-    ) {
-      index += 1;
-    }
-
-    return index;
-  }
 
   run(turn: BrowserTurn): Promise<string> {
     if (this.activeRuns.has(turn.traceId)) {
@@ -910,59 +546,20 @@ export class ChatGptBrowserWorker {
     if (browser) await browser.close();
   }
 
-  private async runStage<T>(
-    traceId: string,
-    stage: string,
-    timeoutMs: number,
-    action: (abortSignal: AbortSignal) => Promise<T>,
-    suspensionClock: Pick<ChatGptSuspensionClock, "suspendedMs"> = chatGptSuspensionClock,
-    awaitAbortedActionSettlement = false,
-  ): Promise<T> {
-    chatGptSuspensionClock.start();
-    const startedAt = performance.now();
-    const suspendedAtStart = suspensionClock.suspendedMs();
-    console.info(`[chatgpt-web] browser turn ${traceId} stage=${stage} started`);
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let stageTimedOut = false;
-    let actionPromise: Promise<T> | undefined;
-    try {
-      const timeout = new Promise<never>((_, rejectTimeout) => {
-        const fireOrRearm = () => {
-          // A stage that spans a system sleep has not consumed its budget: the browser was as
-          // frozen as this process, so slept time is refunded before the timer is re-armed.
-          const suspendedMs = suspensionClock.suspendedMs() - suspendedAtStart;
-          const remaining = remainingStageBudgetMs(timeoutMs, performance.now() - startedAt, suspendedMs);
-          if (remaining > 0) {
-            timer = setTimeout(fireOrRearm, remaining);
-            return;
-          }
-          stageTimedOut = true;
-          controller.abort();
-          rejectTimeout(new Error(`ChatGPT browser stage timed out: ${stage}`));
-        };
-        timer = setTimeout(fireOrRearm, timeoutMs);
-      });
-      actionPromise = action(controller.signal);
-      const value = await Promise.race([actionPromise, timeout]);
-      console.info(`[chatgpt-web] browser turn ${traceId} stage=${stage} completed durationMs=${Math.round(performance.now() - startedAt)}`);
-      return value;
-    } catch (error) {
-      let surfacedError = error;
-      if (stageTimedOut && awaitAbortedActionSettlement && actionPromise) {
-        try {
-          await actionPromise;
-        } catch (settlementError) {
-          if (settlementError instanceof ChatGptPersistentBrowserStateError) {
-            surfacedError = settlementError;
-          }
-        }
-      }
-      console.error(`[chatgpt-web] browser turn ${traceId} stage=${stage} failed durationMs=${Math.round(performance.now() - startedAt)}: ${surfacedError instanceof Error ? surfacedError.message : String(surfacedError)}`);
-      throw surfacedError;
-    } finally {
-      if (timer) clearTimeout(timer);
+  private assertManagedChromeLaunchable(): void {
+    if (!existsSync(this.config.storageStatePath) || !existsSync(loginVerificationMarkerPath(this.config.storageStatePath))) {
+      throw new Error(`ChatGPT web login state is missing: ${this.config.storageStatePath}`);
     }
+    if (!existsSync(this.config.chromeExecutablePath)) {
+      throw new Error(`Configured Chrome executable does not exist: ${this.config.chromeExecutablePath}`);
+    }
+  }
+
+  private launchManagedChrome(): Promise<Browser> {
+    return chromium.launch({
+      executablePath: this.config.chromeExecutablePath,
+      headless: !this.config.headed,
+    });
   }
 
   private async ensurePage(): Promise<Page> {
@@ -1002,16 +599,8 @@ export class ChatGptBrowserWorker {
       this.page = connection.page;
       return this.page;
     }
-    if (!existsSync(this.config.storageStatePath) || !existsSync(loginVerificationMarkerPath(this.config.storageStatePath))) {
-      throw new Error(`ChatGPT web login state is missing: ${this.config.storageStatePath}`);
-    }
-    if (!existsSync(this.config.chromeExecutablePath)) {
-      throw new Error(`Configured Chrome executable does not exist: ${this.config.chromeExecutablePath}`);
-    }
-    const browser = await chromium.launch({
-      executablePath: this.config.chromeExecutablePath,
-      headless: !this.config.headed,
-    });
+    this.assertManagedChromeLaunchable();
+    const browser = await this.launchManagedChrome();
     try {
       const context = await browser.newContext({ storageState: this.config.storageStatePath });
       const page = await context.newPage();
@@ -1028,16 +617,8 @@ export class ChatGptBrowserWorker {
   private async ensureManagedBrowser(): Promise<{ browser: Browser; context: BrowserContext }> {
     if (this.managedBrowserReady) return this.managedBrowserReady;
     const opening = (async () => {
-      if (!existsSync(this.config.storageStatePath) || !existsSync(loginVerificationMarkerPath(this.config.storageStatePath))) {
-        throw new Error(`ChatGPT web login state is missing: ${this.config.storageStatePath}`);
-      }
-      if (!existsSync(this.config.chromeExecutablePath)) {
-        throw new Error(`Configured Chrome executable does not exist: ${this.config.chromeExecutablePath}`);
-      }
-      const browser = await chromium.launch({
-        executablePath: this.config.chromeExecutablePath,
-        headless: !this.config.headed,
-      });
+      this.assertManagedChromeLaunchable();
+      const browser = await this.launchManagedChrome();
       try {
         const context = await browser.newContext({ storageState: this.config.storageStatePath });
         this.browser = browser;
@@ -1260,16 +841,12 @@ export class ChatGptBrowserWorker {
     }
   }
 
-  private submissionDomState(page: Page, cache?: ChatGptSubmissionDomCache, signal?: AbortSignal): Promise<ChatGptSubmissionDomState> {
-    return submissionDomState(page, cache, signal);
-  }
-
   private async currentSubmissionEvidence(
     page: Page,
     baseline: ChatGptSubmissionBaseline,
     signal?: AbortSignal,
   ): Promise<ChatGptSubmissionEvidence | undefined> {
-    const state = await this.submissionDomState(page, baseline.domCache, signal);
+    const state = await submissionDomState(page, baseline.domCache, signal);
     baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
     return chatGptSubmissionEvidence({
       initialTurnIdentities: baseline.initialTurnIdentities,
@@ -1285,20 +862,20 @@ export class ChatGptBrowserWorker {
     baseline: ChatGptSubmissionBaseline,
     signal?: AbortSignal,
   ): Promise<string> {
-    const state = await this.submissionDomState(page, baseline.domCache, signal);
+    const state = await submissionDomState(page, baseline.domCache, signal);
     baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
     const identity = chatGptNewTurnIdentity(
       baseline.initialTurnIdentities,
       state.responseIdentities,
     );
     if (!identity) return "";
-    const locator = page.locator(`[data-turn-id=${JSON.stringify(identity)}]`);
-    return (await this.responseDomSnapshot(locator, {}, signal)).visibleText;
+    const locator = chatGptTurnLocator(page, identity);
+    return (await responseDomSnapshot(locator, {}, signal)).visibleText;
   }
 
   private async captureSubmissionBaseline(page: Page, abortSignal?: AbortSignal): Promise<ChatGptSubmissionBaseline> {
     const domCache: ChatGptSubmissionDomCache = {};
-    const state = await this.submissionDomState(page, domCache, abortSignal);
+    const state = await submissionDomState(page, domCache, abortSignal);
     return {
       initialTurnIdentities: state.turnIdentities,
       initialGenerationRunning: state.visibleStopButtonCount > 0,
@@ -1354,7 +931,7 @@ export class ChatGptBrowserWorker {
       await throwIfChatGptRateLimitDialog(observationPage);
       let state: ChatGptSubmissionDomState;
       try {
-        state = await this.submissionDomState(
+        state = await submissionDomState(
           observationPage,
           observationBaseline.domCache,
           signal,
@@ -1378,7 +955,7 @@ export class ChatGptBrowserWorker {
           }
           const recovered = await recoverObservation(
             recoveryAttempts,
-            error instanceof Error ? error : new Error(String(error)),
+            asError(error),
             observationBaseline,
             signal,
           );
@@ -1410,8 +987,8 @@ export class ChatGptBrowserWorker {
         && externalProgress
         && completionTracker?.needsToolBatchObservation(progress.lastToolBatchRevision)) {
         const boundaryText = identity
-          ? (await this.responseDomSnapshot(
-            observationPage.locator(`[data-turn-id=${JSON.stringify(identity)}]`),
+          ? (await responseDomSnapshot(
+            chatGptTurnLocator(observationPage, identity),
             {},
             signal,
           )).visibleText
@@ -1421,7 +998,7 @@ export class ChatGptBrowserWorker {
       }
       if (identity) return {
         identity,
-        locator: observationPage.locator(`[data-turn-id=${JSON.stringify(identity)}]`),
+        locator: chatGptTurnLocator(observationPage, identity),
         acceptedTurnIdentities: state.turnIdentities,
       };
       // A delayed renderer wake can cross the grace while the assistant appears. Only a fresh
@@ -1453,7 +1030,7 @@ export class ChatGptBrowserWorker {
     if (boundCount > 1) {
       throw new Error(`ChatGPT exposed ${boundCount} DOM nodes for the bound assistant turn`);
     }
-    const state = await this.submissionDomState(page, baseline.domCache, signal);
+    const state = await submissionDomState(page, baseline.domCache, signal);
     baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
     const acceptedTurns = new Set(binding.acceptedTurnIdentities);
     const hasNewUserTurn = state.userIdentities.some(identity => !acceptedTurns.has(identity));
@@ -1472,7 +1049,7 @@ export class ChatGptBrowserWorker {
     }
     return {
       identity,
-      locator: page.locator(`[data-turn-id=${JSON.stringify(identity)}]`),
+      locator: chatGptTurnLocator(page, identity),
       acceptedTurnIdentities,
     };
   }
@@ -1503,14 +1080,14 @@ export class ChatGptBrowserWorker {
       throwIfPromptAttachmentAborted(abortSignal);
       observed = await this.attachedPromptText(page, abortSignal);
       throwIfPromptAttachmentAborted(abortSignal);
-      if (this.promptTextEquivalent(prompt, observed)) return;
+      if (promptTextEquivalent(prompt, observed)) return;
       await withBrowserTurnAbort(
         new Promise(resolveSleep => setTimeout(resolveSleep, 50)),
         abortSignal,
       );
     }
     throwIfPromptAttachmentAborted(abortSignal);
-    const commonPrefix = this.promptEquivalentPrefixLength(prompt, observed);
+    const commonPrefix = promptEquivalentPrefixLength(prompt, observed);
     throw new ChatGptPromptAttachmentIntegrityError(
       `ChatGPT composer did not preserve the complete prompt (expectedChars=${prompt.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix}, expectedUnit=${prompt.charCodeAt(commonPrefix)}, actualUnit=${observed.charCodeAt(commonPrefix)})`,
     );
@@ -1944,7 +1521,7 @@ export class ChatGptBrowserWorker {
         }
         const recovered = await recoverObservation(
           recoveryAttempts,
-          error instanceof Error ? error : new Error(String(error)),
+          asError(error),
           observationBaseline,
           abortSignal,
         );
@@ -1988,7 +1565,7 @@ export class ChatGptBrowserWorker {
     }
     await throwIfChatGptSubmissionDialog(page);
     await captureDiagnostic?.("send-ready");
-    if (expectedMode) await ChatGptBrowserWorker.prototype.modelSelectionController.call(this).verifyBeforeSend(page, composer, expectedMode, abortSignal);
+    if (expectedMode) await this.modelSelectionController().verifyBeforeSend(page, composer, expectedMode, abortSignal);
     throwIfPromptAttachmentAborted(abortSignal);
     await submissionLifecycle?.onSendActivated?.();
     // Persistence/IPC can yield long enough for the owning turn to be cancelled.
@@ -2000,7 +1577,7 @@ export class ChatGptBrowserWorker {
     await sendButton.press("Enter", {
       noWaitAfter: true,
       signal: abortSignal,
-      // runStage owns the operation budget. A second Locator timeout would silently collapse the
+      // runBrowserStage owns the operation budget. A second Locator timeout would silently collapse the
       // 180-second Bigger Context budget back to the ordinary 20 seconds after Enter has already
       // submitted the message; semantic submission evidence below remains the authority.
       timeout: 0,
@@ -2052,7 +1629,7 @@ export class ChatGptBrowserWorker {
       }
       await throwIfChatGptSessionFailureAlert(page);
       await throwIfChatGptTerminalErrorAlert(responseTurn.locator);
-      let snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache, abortSignal);
+      let snapshot = await responseDomSnapshot(responseTurn.locator, responseDomCache, abortSignal);
       if (!snapshot.responsePresent && await responseTurn.locator.count() !== 1) {
         const rebound = await this.reconcileAssistantTurnBinding(
           page,
@@ -2062,9 +1639,8 @@ export class ChatGptBrowserWorker {
         );
         if (rebound.identity !== responseTurn.identity) {
           responseTurn = rebound;
-          responseDomCache.key = undefined;
-          responseDomCache.snapshot = undefined;
-          snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache, abortSignal);
+          resetChatGptResponseDomCache(responseDomCache);
+          snapshot = await responseDomSnapshot(responseTurn.locator, responseDomCache, abortSignal);
         }
       }
       if (snapshot.stoppedThinkingVisible) throw chatGptStoppedThinkingError();
@@ -2263,13 +1839,11 @@ export class ChatGptBrowserWorker {
     }
   }
 
-  private async verifyConnectorExclusive(
-    traceId = `verify_${randomUUID().replaceAll("-", "")}`,
-  ): Promise<string> {
+  private async verifyConnectorExclusive(traceId: string): Promise<string> {
     const page = await this.ensurePage();
     const diagnostics = new ChatGptBrowserDiagnostics(
       traceId,
-      this.config.browserDiagnosticsPath ?? join(getConfigDir(), "diagnostics", "browser-turns"),
+      this.config.browserDiagnosticsPath,
       this.config.appName,
     );
     const captureDiagnostic = (checkpoint: string): Promise<void> => diagnostics.capture(page, checkpoint);
@@ -2374,14 +1948,6 @@ export class ChatGptBrowserWorker {
       await withBrowserTurnAbort(new Promise(resolveSleep => setTimeout(resolveSleep, 100)), abortSignal);
     }
     throw new Error("ChatGPT accepted the prompt attachments but did not make the message ready to send");
-  }
-
-  private responseDomSnapshot(responseTurn: Locator, cache?: ChatGptResponseDomCache, abortSignal?: AbortSignal): Promise<ChatGptResponseDomSnapshot> {
-    return responseDomSnapshot(responseTurn, cache, abortSignal);
-  }
-
-  private stalledTurnDiagnostic(page: Page, responseTurn: Locator): Promise<string> {
-    return stalledTurnDiagnostic(page, responseTurn);
   }
 
   private async runExclusive(turn: BrowserTurn): Promise<string> {
@@ -2571,7 +2137,7 @@ export class ChatGptBrowserWorker {
     const prepared = await prepare();
     const diagnostics = new ChatGptBrowserDiagnostics(
       turn.traceId,
-      this.config.browserDiagnosticsPath ?? join(getConfigDir(), "diagnostics", "browser-turns"),
+      this.config.browserDiagnosticsPath,
       this.config.appName,
     );
     let turnConnection: Browser | undefined;
@@ -2650,7 +2216,7 @@ export class ChatGptBrowserWorker {
       const deadline = this.config.turnTimeoutMs === undefined
         ? undefined
         : Date.now() + this.config.turnTimeoutMs;
-      let page = await this.runStage(turn.traceId, "browser_page", browserStageTimeouts.browserPage, async (abortSignal) => {
+      let page = await runBrowserStage(turn.traceId, "browser_page", browserStageTimeouts.browserPage, async (abortSignal) => {
         const acquisitionSignal = browserStageAbortSignal(abortSignal, turn.abortSignal);
         if (acquisitionSignal.aborted) {
           throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
@@ -2713,7 +2279,7 @@ export class ChatGptBrowserWorker {
               previousConnectionAlreadyDisconnected ? undefined : previousConnection,
               () => {
                 turnConnection = undefined;
-                return this.runStage(
+                return runBrowserStage(
                   turn.traceId,
                   `response_page_rebind_${attempt}`,
                   browserStageTimeouts.browserPage,
@@ -2816,7 +2382,7 @@ export class ChatGptBrowserWorker {
         );
       }
       if (!reuseConversation) {
-        await this.runStage(
+        await runBrowserStage(
           turn.traceId,
           "temporary_chat_preparation",
           browserStageTimeouts.temporaryChatPreparation,
@@ -2830,7 +2396,7 @@ export class ChatGptBrowserWorker {
       }
       // A retained lease proves the connector binding, not the current model selection.
       // Reconcile the live control before every submission, including retained continuations.
-      let mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, (abortSignal) => (
+      let mode = await runBrowserStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, (abortSignal) => (
         this.selectModelAndEffort(
           page,
           turn.modelId,
@@ -2849,7 +2415,7 @@ export class ChatGptBrowserWorker {
           // ChatGPT may rewrite or reset the effort control after accepting a staged message. Reopen
           // the semantic slider and prove the requested state before mutating the next composer.
           if (index > 0) {
-            await this.runStage(
+            await runBrowserStage(
               turn.traceId,
               `multipart_stage_${index + 1}_preflight`,
               browserStageTimeouts.promptAttachment,
@@ -2857,10 +2423,9 @@ export class ChatGptBrowserWorker {
                 page,
                 browserStageAbortSignal(stageSignal, turn.abortSignal),
               ),
-              chatGptSuspensionClock,
               true,
             );
-            mode = await this.runStage(
+            mode = await runBrowserStage(
               turn.traceId,
               `multipart_stage_${index + 1}_effort_selection`,
               browserStageTimeouts.effortSelection,
@@ -2878,7 +2443,7 @@ export class ChatGptBrowserWorker {
           }
           const stage = multipartStages[index]!;
           let stageBaseline = await this.captureSubmissionBaseline(page, turn.abortSignal);
-          await this.runStage(
+          await runBrowserStage(
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
             browserStageTimeouts.promptAttachment,
@@ -2888,11 +2453,10 @@ export class ChatGptBrowserWorker {
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
             ),
-            chatGptSuspensionClock,
             true,
           );
           await diagnostics.capture(page, `multipart-stage-${index + 1}-attachment-complete`);
-          const evidence = await this.runStage(
+          const evidence = await runBrowserStage(
             turn.traceId,
             `multipart_stage_${index + 1}_send`,
             browserStageTimeouts.multipartStageSend,
@@ -2925,7 +2489,7 @@ export class ChatGptBrowserWorker {
           console.info(
             `[chatgpt-web] browser turn ${turn.traceId} multipart part ${index + 1}/${prepared.multipart.parts.length} submission accepted evidence=${evidence}`,
           );
-          await this.runStage(
+          await runBrowserStage(
             turn.traceId,
             `multipart_stage_${index + 1}_acknowledgement`,
             browserStageTimeouts.multipartStageAcknowledgement,
@@ -2962,7 +2526,6 @@ export class ChatGptBrowserWorker {
                 turn.externalProgress,
               );
             },
-            chatGptSuspensionClock,
           );
           const stageRejection = await submissionRejection.failure();
           if (stageRejection) throw stageRejection;
@@ -2975,7 +2538,7 @@ export class ChatGptBrowserWorker {
         // Saved chats move from / to /c/<id> after the first staged Send. Re-prove
         // the picker on that conversation even if final effort equals staging effort.
         if (mode.effort !== requestedMode.effort || this.config.useSavedChats) {
-          mode = await this.runStage(
+          mode = await runBrowserStage(
             turn.traceId,
             "final_part_effort_selection",
             browserStageTimeouts.effortSelection,
@@ -3000,7 +2563,7 @@ export class ChatGptBrowserWorker {
       const connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
       for (;;) {
         try {
-          await this.runStage(
+          await runBrowserStage(
             turn.traceId,
             "prompt_attachment",
             browserStageTimeouts.promptAttachment,
@@ -3022,7 +2585,6 @@ export class ChatGptBrowserWorker {
                 mode.thinkEnabled,
               );
             },
-            chatGptSuspensionClock,
             true,
           );
           break;
@@ -3030,7 +2592,7 @@ export class ChatGptBrowserWorker {
           if (!(error instanceof ChatGptConnectorCatalogStaleError) || !catalogRefreshAvailable) throw error;
           catalogRefreshAvailable = false;
           await diagnostics.capture(page, "connector-catalog-stale");
-          await this.runStage(
+          await runBrowserStage(
             turn.traceId,
             "connector_catalog_refresh",
             browserStageTimeouts.temporaryChatPreparation,
@@ -3062,12 +2624,12 @@ export class ChatGptBrowserWorker {
         }
       }
       await diagnostics.capture(page, "prompt-attachment-complete");
-      await this.runStage(turn.traceId, "file_attachment", browserStageTimeouts.fileAttachment, stageSignal => (
+      await runBrowserStage(turn.traceId, "file_attachment", browserStageTimeouts.fileAttachment, stageSignal => (
         this.attachFiles(page, prepared, browserStageAbortSignal(stageSignal, turn.abortSignal))
       ));
       await diagnostics.capture(page, "file-attachment-complete");
       const completionTracker = new ChatGptCompletionTracker();
-      const finalSubmissionEvidence = await this.runStage(
+      const finalSubmissionEvidence = await runBrowserStage(
         turn.traceId,
         "send",
         // A multipart commit lands on a conversation already carrying every staged part, so it
@@ -3156,6 +2718,16 @@ export class ChatGptBrowserWorker {
       };
       const domHealthTracker = new ChatGptTurnDomHealthTracker();
       const responseDomCache: ChatGptResponseDomCache = {};
+      // After an exact-surface rebind, every page-bound locator and DOM cache belongs to the old
+      // connection. Returning the capture promise keeps the caller's await on that same promise.
+      const resetObservationAfterRebind = (
+        checkpoint: "response-page-rebound" | "response-transport-rebound",
+      ): Promise<void> => {
+        submissionBaseline = { ...submissionBaseline, domCache: {} };
+        responseTurn = { ...responseTurn, locator: chatGptTurnLocator(page, responseTurn.identity) };
+        resetChatGptResponseDomCache(responseDomCache);
+        return diagnostics.capture(page, checkpoint);
+      };
       let consecutiveObservationRebinds = 0;
       let consecutiveLiveProbeWaits = 0;
       const responseObservationStartedAt = Date.now();
@@ -3201,7 +2773,7 @@ export class ChatGptBrowserWorker {
 
         let snapshot: ChatGptResponseDomSnapshot;
         try {
-          snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache, turn.abortSignal);
+          snapshot = await responseDomSnapshot(responseTurn.locator, responseDomCache, turn.abortSignal);
         } catch (error) {
           if (!(error instanceof ChatGptBrowserObservationTimeoutError)) throw error;
           if (Date.now() - responseObservationStartedAt < CHATGPT_RESPONSE_DOM_GRACE_MS
@@ -3226,9 +2798,8 @@ export class ChatGptBrowserWorker {
             const reboundIdentityChanged = rebound.identity !== responseTurn.identity;
             responseTurn = rebound;
             if (reboundIdentityChanged) {
-              responseDomCache.key = undefined;
-              responseDomCache.snapshot = undefined;
-              snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache, turn.abortSignal);
+              resetChatGptResponseDomCache(responseDomCache);
+              snapshot = await responseDomSnapshot(responseTurn.locator, responseDomCache, turn.abortSignal);
             }
           } catch (error) {
             if (!(error instanceof ChatGptBrowserObservationTimeoutError) || !launcherSurfaceId) throw error;
@@ -3245,17 +2816,7 @@ export class ChatGptBrowserWorker {
               );
             }
             await rebindLauncherPage(consecutiveObservationRebinds, error, turn.abortSignal);
-            submissionBaseline = {
-              ...submissionBaseline,
-              domCache: {},
-            };
-            responseTurn = {
-              ...responseTurn,
-              locator: page.locator(`[data-turn-id=${JSON.stringify(responseTurn.identity)}]`),
-            };
-            responseDomCache.key = undefined;
-            responseDomCache.snapshot = undefined;
-            await diagnostics.capture(page, "response-page-rebound");
+            await resetObservationAfterRebind("response-page-rebound");
             continue;
           }
         }
@@ -3372,16 +2933,14 @@ export class ChatGptBrowserWorker {
                 // The fence revision is captured after this DOM projection. Force one fresh read
                 // before commit so an MCP activity that just settled cannot disappear between a
                 // stale cached completion and the broker's terminal decision.
-                responseDomCache.key = undefined;
-                responseDomCache.snapshot = undefined;
+                resetChatGptResponseDomCache(responseDomCache);
                 await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
                 continue;
               }
               if (!await turn.completionFence.commit(completionFenceRevision)) {
                 completionFenceRevision = undefined;
                 unacknowledgedAsyncResultSince = undefined;
-                responseDomCache.key = undefined;
-                responseDomCache.snapshot = undefined;
+                resetChatGptResponseDomCache(responseDomCache);
                 await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
                 continue;
               }
@@ -3462,7 +3021,7 @@ export class ChatGptBrowserWorker {
           if (!loggedCompletionWait && Date.now() - sentAt >= 60_000) {
             loggedCompletionWait = true;
             await diagnostics.capture(page, "response-stalled-60s");
-            const diagnostic = await this.stalledTurnDiagnostic(page, responseTurn.locator).catch(error => JSON.stringify({
+            const diagnostic = await stalledTurnDiagnostic(page, responseTurn.locator).catch(error => JSON.stringify({
               diagnosticError: error instanceof Error ? error.message : String(error),
             }));
             console.warn(
@@ -3491,20 +3050,10 @@ export class ChatGptBrowserWorker {
           }
           await rebindLauncherPage(
             consecutiveObservationRebinds,
-            error instanceof Error ? error : new Error(String(error)),
+            asError(error),
             turn.abortSignal,
           );
-          submissionBaseline = {
-            ...submissionBaseline,
-            domCache: {},
-          };
-          responseTurn = {
-            ...responseTurn,
-            locator: page.locator(`[data-turn-id=${JSON.stringify(responseTurn.identity)}]`),
-          };
-          responseDomCache.key = undefined;
-          responseDomCache.snapshot = undefined;
-          await diagnostics.capture(page, "response-transport-rebound");
+          await resetObservationAfterRebind("response-transport-rebound");
           continue;
         }
         // Only a defect in this worker is retried here. Every deliberate signal — adapter errors,
@@ -3525,8 +3074,7 @@ export class ChatGptBrowserWorker {
           + ` ${internalObservationFaults}/${MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS}: ${error.message}`,
         );
         await diagnostics.capture(page, "internal-observation-fault");
-        responseDomCache.key = undefined;
-        responseDomCache.snapshot = undefined;
+        resetChatGptResponseDomCache(responseDomCache);
         await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
        }
       }

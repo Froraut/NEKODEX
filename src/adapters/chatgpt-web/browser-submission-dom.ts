@@ -1,7 +1,7 @@
 import type { Page } from "playwright-core";
 import { CHATGPT_USER_TURN_SELECTOR, CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR } from "../../chatgpt-session";
 import { throwIfPromptAttachmentAborted, withBrowserTurnAbort, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
-import { CHATGPT_DOM_REVISION_ATTRIBUTES } from "./browser-dom-revision";
+import { CHATGPT_DOM_REVISION_ATTRIBUTES, recordDomRevisionObservation } from "./browser-dom-revision";
 
 export interface ChatGptSubmissionDomState {
   userTurnCount: number;
@@ -110,12 +110,6 @@ export async function submissionDomState(
   }), signal));
   const snapshot = observed.snapshot ?? cache?.snapshot;
   if (!snapshot) throw new Error("ChatGPT turn DOM revision cache has no baseline snapshot");
-  if (observed.snapshot && cache) {
-    cache.key = observed.key;
-    cache.snapshot = observed.snapshot;
-    cache.fullScans = (cache.fullScans ?? 0) + 1;
-  } else if (!observed.snapshot && cache?.snapshot) {
-    cache.cacheHits = (cache.cacheHits ?? 0) + 1;
-  }
+  recordDomRevisionObservation(cache, observed);
   return snapshot;
 }

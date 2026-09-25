@@ -23,3 +23,25 @@ export const CHATGPT_DOM_REVISION_ATTRIBUTES = [
   "start",
   "style",
 ] as const;
+
+/** Caller-owned revision cache shape shared by the submission and response DOM readers. */
+export interface ChatGptDomRevisionCache<T> {
+  key?: string;
+  snapshot?: T;
+  fullScans?: number;
+  cacheHits?: number;
+}
+
+/** A fresh snapshot replaces the cached evidence; an unchanged revision reuses it and counts a hit. */
+export function recordDomRevisionObservation<T>(
+  cache: ChatGptDomRevisionCache<T> | undefined,
+  observed: { key: string; snapshot?: T },
+): void {
+  if (observed.snapshot && cache) {
+    cache.key = observed.key;
+    cache.snapshot = observed.snapshot;
+    cache.fullScans = (cache.fullScans ?? 0) + 1;
+  } else if (!observed.snapshot && cache?.snapshot) {
+    cache.cacheHits = (cache.cacheHits ?? 0) + 1;
+  }
+}

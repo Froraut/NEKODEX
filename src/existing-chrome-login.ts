@@ -4,8 +4,11 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { EventEmitter } from "node:events";
 import type { AppConfig } from "./config";
-import { atomicWriteFile } from "./config";
-import { loginVerificationMarkerPath, sanitizeBrowserLoginStorageState, type BrowserLoginStorageState } from "./browser-login";
+import {
+  loginVerificationMarkerPath, publishSystemBrowserLoginCapture, sanitizeBrowserLoginStorageState,
+  type BrowserLoginStorageState,
+} from "./browser-login";
+import { isJsonRecord } from "./lib/json-record";
 
 // Chrome's approval-based endpoint deliberately does not expose /json/version. Connect directly
 // after explicit app consent; Chrome itself must grant its separate, native Allow prompt.
@@ -55,7 +58,6 @@ export class ExistingChromeLoginError extends Error {
   }
 }
 const failure = (code: ExistingChromeLoginErrorCode) => new ExistingChromeLoginError(code);
-const object = (value: unknown): value is JsonObject => value !== null && typeof value === "object" && !Array.isArray(value);
 
 export interface ExistingChromeLoginProgress {
   version: 1;
@@ -133,8 +135,8 @@ function discoverEndpoint(path: string): string {
     return parseExistingChromeEndpoint(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, count)));
   } catch (error) {
     if (error instanceof ExistingChromeLoginError) throw error;
-    if (object(error) && (error.code === "EACCES" || error.code === "EPERM")) throw failure("chrome-profile-access-denied");
-    if (object(error) && error.code === "ENOENT") throw failure("chrome-unavailable");
+    if (isJsonRecord(error) && (error.code === "EACCES" || error.code === "EPERM")) throw failure("chrome-profile-access-denied");
+    if (isJsonRecord(error) && error.code === "ENOENT") throw failure("chrome-unavailable");
     throw failure("invalid-endpoint");
   } finally { if (fd !== undefined) closeSync(fd); }
 }
@@ -144,7 +146,7 @@ export function sanitizeExistingChromeCookies(value: unknown): BrowserLoginStora
   if (!Array.isArray(value) || value.length > MAX_COOKIES) throw failure("invalid-response");
   const cookies: BrowserLoginStorageState["cookies"] = [];
   for (const cookie of value) {
-    if (!object(cookie)) throw failure("invalid-response");
+    if (!isJsonRecord(cookie)) throw failure("invalid-response");
     if (Object.hasOwn(cookie, "partitionKey") || cookie.partitionKeyOpaque === true) continue;
     if (typeof cookie.domain !== "string" || !/^\.?[a-z0-9.-]{1,253}$/i.test(cookie.domain)) continue;
     const domain = cookie.domain.replace(/^\./, "").toLowerCase();
@@ -197,9 +199,9 @@ async function selectedDiscoveryEndpoint(data: Promise<string> | undefined, time
 }
 
 function validateProfileClaim(value: unknown): ExistingChromeProfileClaim {
-  const claimUrl = object(value) && typeof value.url === "string"
+  const claimUrl = isJsonRecord(value) && typeof value.url === "string"
     ? /^http:\/\/127\.0\.0\.1:([1-9][0-9]{3,4})\/nekodex-profile-claim-v1\/([A-Za-z0-9_-]{32})$/.exec(value.url) : null;
-  if (!object(value) || value.version !== 1 || typeof value.nonce !== "string"
+  if (!isJsonRecord(value) || value.version !== 1 || typeof value.nonce !== "string"
     || !/^[A-Za-z0-9_-]{32}$/.test(value.nonce)
     || !claimUrl || Number(claimUrl[1]) < 1024 || Number(claimUrl[1]) > 65535 || claimUrl[2] !== value.nonce
     || typeof value.openedAt !== "string" || !Number.isFinite(Date.parse(value.openedAt))
@@ -236,14 +238,14 @@ class RestrictedChromeConnection {
       if (binary || ++this.frames > 64 || this.bytes > MAX_TOTAL_BYTES) return this.fail("invalid-response");
       let value: unknown;
       try { value = JSON.parse(raw.toString("utf8")); } catch { return this.fail("invalid-response"); }
-      if (!object(value)) return this.fail("invalid-response");
+      if (!isJsonRecord(value)) return this.fail("invalid-response");
       if (value.id === undefined) return; // Ignore events without reading or logging any payload.
       if (!Number.isSafeInteger(value.id)) return this.fail("invalid-response");
       const call = this.pending.get(value.id as number);
       if (!call) return;
       this.pending.delete(value.id as number);
       clearTimeout(call.timer);
-      if (value.error || !object(value.result)) return call.reject(failure("invalid-response"));
+      if (value.error || !isJsonRecord(value.result)) return call.reject(failure("invalid-response"));
       try { call.onResult?.(value.result); call.resolve(value.result); }
       catch { call.reject(failure("invalid-response")); }
     });
@@ -376,7 +378,7 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
       for (let attempt = 0; attempt < PROFILE_CLAIM_LOOKUPS; attempt++) {
         const targets = await request("Target.getTargets", { filter: [{ type: "page" }] });
         if (!Array.isArray(targets.targetInfos) || targets.targetInfos.length > 10_000) throw failure("invalid-response");
-        const matches = targets.targetInfos.filter(info => object(info) && info.type === "page" && info.url === profileClaim.url);
+        const matches = targets.targetInfos.filter(info => isJsonRecord(info) && info.type === "page" && info.url === profileClaim.url);
         if (matches.length > 1) throw failure("invalid-response");
         if (matches.length === 1) { claimed = matches[0]; break; }
         // Chrome's HTTP receipt can precede the target's committed URL. Briefly allow
@@ -447,9 +449,7 @@ export async function captureExistingChromeLoginToFile(config: Pick<AppConfig, "
   try {
     // A capture marker is deliberately not an authentication marker. The launcher's disposable
     // verifier must confirm this session before replacing its live authenticated state.
-    rmSync(markerPath, { force: true });
-    atomicWriteFile(config.storageStatePath, `${JSON.stringify(capture.storageState)}\n`);
-    atomicWriteFile(markerPath, `${JSON.stringify(capture.marker)}\n`);
+    publishSystemBrowserLoginCapture(config.storageStatePath, capture);
   } catch {
     try { rmSync(markerPath, { force: true }); } catch { /* Preserve the sanitized write error. */ }
     throw failure("capture-write-failed");

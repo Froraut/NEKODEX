@@ -279,3 +279,8 @@ export function httpStatusFromTerminalError(error: {
   if (message) return inferHttpStatusFromAdapterMessage(message);
   return 502;
 }
+
+/** The value itself when it is an Error; otherwise an Error carrying its string form. */
+export function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}

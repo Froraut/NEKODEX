@@ -127,6 +127,15 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   };
 }
 
+export function assertExpectedLauncherProfile(
+  descriptor: LauncherBrowserHostDescriptor,
+  expected?: LauncherBrowserHostProfile,
+): void {
+  if (expected && descriptor.profile !== expected) {
+    throw new Error(`Launcher browser belongs to ${descriptor.profile}, but ${expected} was required`);
+  }
+}
+
 export function readLauncherBrowserHostDescriptor(configuredPath: string): LauncherBrowserHostDescriptor {
   const path = resolve(expandUserPath(configuredPath));
   let stat: ReturnType<typeof statSync>;
