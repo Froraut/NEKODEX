@@ -1,24 +1,15 @@
 import { assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, resolveChatGptWebMultipartStagingMode } from "./browser-input-policy";
-export { assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, resolveChatGptWebMultipartStagingMode } from "./browser-input-policy";
 import { CHATGPT_DOM_REVISION_ATTRIBUTES } from "./browser-dom-revision";
-import { CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, ChatGptBrowserObservationTimeoutError, CHATGPT_UI_SETTLE_MS, CHATGPT_SEND_ENABLE_GRACE_MS, settleChatGptUi, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
-export { CHATGPT_UI_SETTLE_MS, CHATGPT_SEND_ENABLE_GRACE_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, ChatGptBrowserObservationTimeoutError, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
+import { CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, ChatGptBrowserObservationTimeoutError, CHATGPT_SEND_ENABLE_GRACE_MS, settleChatGptUi, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
 import { chatGptConnectorUnavailableError, ChatGptPersistentBrowserStateError, ensureChatGptPersonalizedConnectorAccess, clearChatGptPersonalizationComposer } from "./browser-personalization";
-export { ensureChatGptPersonalizedConnectorAccess, type ChatGptPersonalizationPreflight } from "./browser-personalization";
 import { ChatGptVisibleTraceTracker } from "./browser-visible-trace";
-export { ChatGptVisibleTraceTracker, isChatGptTraceControl, stripChatGptTraceControlSuffix, type ChatGptVisibleTraceBlock, type ChatGptVisibleTraceEvent } from "./browser-visible-trace";
 import { ChatGptBrowserDiagnostics, stalledTurnDiagnostic, redactChatGptUiDiagnostic } from "./browser-diagnostics";
-export { redactChatGptUiDiagnostic, sanitizeChatGptBrowserDiagnosticState, browserDiagnosticCheckpoint } from "./browser-diagnostics";
 import { submissionDomState, type ChatGptSubmissionDomCache, type ChatGptSubmissionDomState } from "./browser-submission-dom";
 import { absentResponseDomSnapshot, responseDomSnapshot, type ChatGptResponseDomCache, type ChatGptResponseDomSnapshot } from "./browser-response-dom";
 import { assertChatGptPromptAttachments, chatGptPromptFilePayloads } from "./attachment-payloads";
-export { chatGptImageFilePayloads, chatGptDocumentFilePayloads, chatGptPromptFilePayloads } from "./attachment-payloads";
 import { ChatGptModelSelectionController } from "./browser-model-selection";
-export { chatGptProUnavailableAdapterError, setChatGptThinkMode } from "./browser-model-selection";
 import { CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_COMPLETION_ACTION_GRACE_MS, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, chatGptExternalProgressSuppressesDomHealth } from "./browser-response-policy";
-export { CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_EMPTY_RESPONSE_GRACE_MS, CHATGPT_COMPLETION_ACTION_GRACE_MS, CHATGPT_COMPLETION_SETTLE_MS, chatGptTurnIsComplete, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, chatGptExternalProgressSuppressesDomHealth } from "./browser-response-policy";
-import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
-export { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY } from "./browser-operation-support";
+import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
 import { canRetryOwnedPageRebind } from "./browser-lifecycle-safety";
 import { parseChatGptWebCompactionExecution, type ChatGptWebCompactionExecution } from "../../chatgpt-web-compaction-policy";
 import { skillFileTokens } from "./skill-attachments";
@@ -67,10 +58,8 @@ import {
   assertAuthenticatedChatGptPage,
   assertNewChatPage,
   chatGptNewChatUrl,
-  CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
-  CHATGPT_USER_TURN_SELECTOR,
   detectChatGptAccountCapabilities,
 } from "../../chatgpt-session";
 import {
@@ -117,8 +106,6 @@ import type {
   ChatGptTurnProgressReader,
 } from "./turn-progress";
 
-export { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
-
 const workers = new Map<string, ChatGptBrowserWorker>();
 
 export async function closeChatGptBrowserWorkers(): Promise<void> {
@@ -134,7 +121,7 @@ export async function closeChatGptBrowserWorkers(): Promise<void> {
 }
 
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
-export const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
+const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
 const CHATGPT_CONNECTOR_MENTION_QUERY = "@codex";
 const CHATGPT_SMOKE_TEXT = "Reply with exactly: CODEX WEB GPT READY";
 const CHATGPT_SMOKE_EXPECTED = "CODEX WEB GPT READY";
@@ -152,7 +139,7 @@ interface ChatGptConnectorAttemptBudget {
   triggerAttempts: number;
 }
 
-export class ChatGptPromptAttachmentIntegrityError extends ChatGptWebAdapterError {
+class ChatGptPromptAttachmentIntegrityError extends ChatGptWebAdapterError {
   constructor(message: string, cause?: unknown) {
     super(message, {
       status: 502,
@@ -397,7 +384,7 @@ export async function resolveChatGptToolConfirmation(
   return true;
 }
 
-export const browserStageTimeouts = {
+const browserStageTimeouts = {
   browserPage: 60_000,
   temporaryChatPreparation: 150_000,
   effortSelection: 120_000,
@@ -418,16 +405,11 @@ export const browserStageTimeouts = {
  * stage budget charged for slept time cancels turns that never got their budget awake.
  */
 export class ChatGptSuspensionClock {
+  private readonly tickIntervalMs = 1_000;
+  private readonly gapThresholdMs = 5_000;
   private suspendedTotalMs = 0;
-  private lastTickAt: number;
+  private lastTickAt = Date.now();
   private timer: ReturnType<typeof setInterval> | undefined;
-
-  constructor(
-    private readonly tickIntervalMs = 1_000,
-    private readonly gapThresholdMs = 5_000,
-  ) {
-    this.lastTickAt = Date.now();
-  }
 
   start(): void {
     if (this.timer) return;
@@ -436,8 +418,7 @@ export class ChatGptSuspensionClock {
     this.timer.unref?.();
   }
 
-  /** Exposed for tests; production ticks come from the interval above. */
-  tick(now: number): void {
+  private tick(now: number): void {
     const gap = now - this.lastTickAt;
     this.lastTickAt = now;
     if (gap >= this.gapThresholdMs) this.suspendedTotalMs += gap - this.tickIntervalMs;
@@ -464,9 +445,9 @@ export function remainingStageBudgetMs(
   return Math.max(250, timeoutMs - awakeMs);
 }
 
-export const MAX_CHATGPT_BROWSER_PAGE_REBINDS = 2;
+const MAX_CHATGPT_BROWSER_PAGE_REBINDS = 2;
 
-export function isConfirmedLauncherCdpDisconnect(
+function isConfirmedLauncherCdpDisconnect(
   error: unknown,
   connection: Pick<Browser, "isConnected"> | undefined,
   signal?: AbortSignal,
@@ -478,7 +459,7 @@ export function isConfirmedLauncherCdpDisconnect(
   return error instanceof Error;
 }
 
-export async function connectAfterClosingBrowserConnection<T>(
+async function connectAfterClosingBrowserConnection<T>(
   previousConnection: Pick<Browser, "close"> | undefined,
   connect: () => Promise<T>,
 ): Promise<T> {
@@ -486,7 +467,7 @@ export async function connectAfterClosingBrowserConnection<T>(
   return connect();
 }
 
-export const CHATGPT_MIN_OPERATIONAL_VIEWPORT = Object.freeze({ width: 320, height: 240 });
+const CHATGPT_MIN_OPERATIONAL_VIEWPORT = Object.freeze({ width: 320, height: 240 });
 
 async function waitForOperationalChatGptViewport(page: Page, signal?: AbortSignal): Promise<void> {
   try {
@@ -559,8 +540,6 @@ export type ChatGptCompletionFenceStart =
   | { blockedReason: "active_work" | "unacknowledged_async_result"; blockedCount: number };
 
 interface ChatGptSubmissionBaseline {
-  userTurns: Locator;
-  responseTurns: Locator;
   initialTurnIdentities: readonly string[];
   initialGenerationRunning?: boolean;
   acknowledgedStages?: readonly string[];
@@ -669,9 +648,9 @@ export function chatGptReboundTurnIdentity(
  * re-observes within a consecutive budget; any successful observation resets that budget, and
  * exhausting it fails closed with the original fault as the cause.
  */
-export const MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS = 8;
+const MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS = 8;
 
-export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBrowserConfig {
+function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBrowserConfig {
   const configured = provider.chatgptWeb ?? {};
   const appName = configured.appName?.trim() || CHATGPT_CONNECTOR_NAME;
   const browserHost = configured.browserHost ?? "managed-chrome";
@@ -727,7 +706,7 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
  * exactly where the user put it; only a missing or foreign one is replaced, and always with a
  * position inside this composer, so an insert can never land in another element.
  */
-export function insertPlainTextIntoComposer(element: HTMLElement, value: string): boolean {
+function insertPlainTextIntoComposer(element: HTMLElement, value: string): boolean {
   // Re-check in the document that will receive the text: a retained lease can outlive navigation.
   if (window.location.origin !== "https://chatgpt.com" || element.ownerDocument !== document) {
     throw new Error("Cannot insert a ChatGPT prompt into a foreign document");
@@ -1318,13 +1297,9 @@ export class ChatGptBrowserWorker {
   }
 
   private async captureSubmissionBaseline(page: Page, abortSignal?: AbortSignal): Promise<ChatGptSubmissionBaseline> {
-    const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
-    const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
     const domCache: ChatGptSubmissionDomCache = {};
     const state = await this.submissionDomState(page, domCache, abortSignal);
     return {
-      userTurns,
-      responseTurns,
       initialTurnIdentities: state.turnIdentities,
       initialGenerationRunning: state.visibleStopButtonCount > 0,
       domCache,
@@ -2794,8 +2769,6 @@ export class ChatGptBrowserWorker {
         await rebindLauncherPage(attempt, cause, abortSignal);
         const reboundBaseline: ChatGptSubmissionBaseline = {
           ...baseline,
-          userTurns: page.locator(CHATGPT_USER_TURN_SELECTOR),
-          responseTurns: page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR),
           domCache: {},
         };
         await diagnostics.capture(page, checkpoint);
@@ -3274,8 +3247,6 @@ export class ChatGptBrowserWorker {
             await rebindLauncherPage(consecutiveObservationRebinds, error, turn.abortSignal);
             submissionBaseline = {
               ...submissionBaseline,
-              userTurns: page.locator(CHATGPT_USER_TURN_SELECTOR),
-              responseTurns: page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR),
               domCache: {},
             };
             responseTurn = {
@@ -3525,8 +3496,6 @@ export class ChatGptBrowserWorker {
           );
           submissionBaseline = {
             ...submissionBaseline,
-            userTurns: page.locator(CHATGPT_USER_TURN_SELECTOR),
-            responseTurns: page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR),
             domCache: {},
           };
           responseTurn = {

@@ -74,10 +74,8 @@ function traceIsActive(
 }
 
 /** Helpers are separate processes: an in-memory active set cannot protect another turn's files. */
-export function pruneBrowserDiagnostics(root: string, limit = completedTraceLimit()): void {
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
-    throw new RangeError("Browser diagnostic retention must be between 1 and 1000 completed traces");
-  }
+export function pruneBrowserDiagnostics(root: string): void {
+  const limit = completedTraceLimit();
   const starts = new Map<number, string | undefined>([[process.pid, SELF_PROCESS_START]]);
   const traces = readdirSync(root, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && /^[A-Za-z0-9_-]{6,160}$/.test(entry.name))

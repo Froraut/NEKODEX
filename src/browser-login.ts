@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { chromium, type BrowserContext, type BrowserContextOptions } from "playwright-core";
 import type { AppConfig } from "./config";

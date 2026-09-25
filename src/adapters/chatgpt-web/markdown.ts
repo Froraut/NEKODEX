@@ -247,6 +247,9 @@ export class ChatGptMarkdownConsistencyError extends Error {
   }
 }
 
+/** How long a streamable block must stay unchanged before it is committed to the stream. */
+const CHATGPT_MARKDOWN_STABILITY_MS = 750;
+
 /**
  * Converts structurally completed ChatGPT DOM blocks into an append-only Markdown stream.
  *
@@ -267,21 +270,11 @@ export class ChatGptMarkdownBuffer {
   private lastGroup: string | undefined;
   private consistencyError: ChatGptMarkdownConsistencyError | undefined;
 
-  constructor(
-    private readonly transform: (markdown: string) => string = markdown => markdown,
-    private readonly stabilityMs = 750,
-    private readonly maxBytes = CHATGPT_MARKDOWN_BUFFER_BYTES,
-  ) {
-    assertByteLimit(0, maxBytes, "ChatGPT Markdown progress buffer");
-    if (!Number.isFinite(stabilityMs) || stabilityMs < 0) {
-      throw new Error("ChatGPT Markdown stability window must be a non-negative finite number");
-    }
-  }
-
-  observe(segments: ChatGptMarkdownSegment[], now = Date.now()): string {
+  observe(segments: ChatGptMarkdownSegment[]): string {
+    const now = Date.now();
     // Candidates and the latest snapshot both retain DOM records before Markdown is emitted.
     const snapshotBytes = 2 * segments.reduce((bytes, segment) => bytes + retainedRecordBytes(segment), 0);
-    assertByteLimit(this.retainedBytes + snapshotBytes, this.maxBytes, "ChatGPT Markdown progress buffer");
+    assertByteLimit(this.retainedBytes + snapshotBytes, CHATGPT_MARKDOWN_BUFFER_BYTES, "ChatGPT Markdown progress buffer");
     const reconciled = this.reconcile(segments);
     if (reconciled instanceof ChatGptMarkdownConsistencyError) {
       this.consistencyError = reconciled;
@@ -326,7 +319,7 @@ export class ChatGptMarkdownBuffer {
       const candidateId = this.candidateId(segment);
       const candidate = this.candidates.get(candidateId);
       if (!candidate?.streamable || candidate.streamableAt === undefined) break;
-      if (now - Math.max(candidate.changedAt, candidate.streamableAt) < this.stabilityMs) break;
+      if (now - Math.max(candidate.changedAt, candidate.streamableAt) < CHATGPT_MARKDOWN_STABILITY_MS) break;
       delta += this.commit(candidate);
       this.committed.push(this.committedSegment(candidate));
       this.candidates.delete(candidateId);
@@ -348,10 +341,6 @@ export class ChatGptMarkdownBuffer {
     this.latest = [];
     this.snapshotBytes = 0;
     return { markdown: this.markdown, delta };
-  }
-
-  currentSnapshotIsConsistent(): boolean {
-    return this.consistencyError === undefined;
   }
 
   private reconcile(
@@ -483,10 +472,10 @@ export class ChatGptMarkdownBuffer {
   }
 
   private commit(segment: ChatGptMarkdownSegment): string {
-    const block = this.transform(chatGptHtmlToMarkdown(segment.html));
+    const block = chatGptHtmlToMarkdown(segment.html);
     const recordBytes = retainedRecordBytes(this.committedSegment(segment));
     if (!block) {
-      assertByteLimit(this.retainedBytes + this.snapshotBytes + recordBytes, this.maxBytes, "ChatGPT Markdown progress buffer");
+      assertByteLimit(this.retainedBytes + this.snapshotBytes + recordBytes, CHATGPT_MARKDOWN_BUFFER_BYTES, "ChatGPT Markdown progress buffer");
       this.retainedBytes += recordBytes;
       return "";
     }
@@ -495,7 +484,7 @@ export class ChatGptMarkdownBuffer {
       : "";
     const delta = `${separator}${block}`;
     const bytes = Buffer.byteLength(delta, "utf8") + recordBytes;
-    assertByteLimit(this.retainedBytes + this.snapshotBytes + bytes, this.maxBytes, "ChatGPT Markdown progress buffer");
+    assertByteLimit(this.retainedBytes + this.snapshotBytes + bytes, CHATGPT_MARKDOWN_BUFFER_BYTES, "ChatGPT Markdown progress buffer");
     this.retainedBytes += bytes;
     this.markdown += delta;
     this.lastGroup = segment.group;

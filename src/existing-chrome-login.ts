@@ -87,21 +87,19 @@ export interface ExistingChromeLoginCapture {
 }
 
 /** Stable Chrome only. This never reads Preferences, Local State, profile databases or tabs. */
-export function existingChromePortFile(options: {
-  platform?: string; home?: string; localAppData?: string; xdgConfigHome?: string;
-} = {}): string {
-  const platform = options.platform ?? process.platform;
-  const home = options.home ?? homedir();
+export function existingChromePortFile(): string {
+  const platform = process.platform;
+  const home = homedir();
   const safePath = (path: string) => path.length <= 4096 && !path.includes("\0") && isAbsolute(path);
   if (!safePath(home)) throw failure("invalid-endpoint");
   if (platform === "darwin") return join(home, "Library", "Application Support", "Google", "Chrome", "DevToolsActivePort");
   if (platform === "win32") {
-    const base = options.localAppData ?? process.env.LOCALAPPDATA ?? join(home, "AppData", "Local");
+    const base = process.env.LOCALAPPDATA ?? join(home, "AppData", "Local");
     if (!safePath(base)) throw failure("invalid-endpoint");
     return join(base, "Google", "Chrome", "User Data", "DevToolsActivePort");
   }
   if (platform === "linux") {
-    const base = options.xdgConfigHome ?? process.env.XDG_CONFIG_HOME ?? join(home, ".config");
+    const base = process.env.XDG_CONFIG_HOME ?? join(home, ".config");
     if (!safePath(base)) throw failure("invalid-endpoint");
     return join(base, "google-chrome", "DevToolsActivePort");
   }
@@ -308,10 +306,8 @@ async function connect(endpoint: string, timeoutMs: number, signal?: AbortSignal
   });
 }
 
-/** Tests may inject a discovery file. Production callers never accept arbitrary profiles/endpoints. */
-export async function captureExistingChromeLogin(options: ExistingChromeLoginOptions, dependencies: {
-  portFile?: () => string;
-} = {}): Promise<ExistingChromeLoginCapture> {
+/** Production callers never accept arbitrary profiles/endpoints. */
+export async function captureExistingChromeLogin(options: ExistingChromeLoginOptions): Promise<ExistingChromeLoginCapture> {
   if (options.consent !== true) throw failure("consent-required");
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw failure("invalid-response");
@@ -331,7 +327,7 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
   // including when the control payload is missing, malformed, cancelled or late.
   const endpoint = Object.hasOwn(options, "discoveryData")
     ? await selectedDiscoveryEndpoint(options.discoveryData, check(), options.signal)
-    : discoverEndpoint((dependencies.portFile ?? existingChromePortFile)());
+    : discoverEndpoint(existingChromePortFile());
   const profileClaim = await selectedProfileClaim(options.profileClaim, check(), options.signal);
   progress("waiting-for-chrome");
   const connection = await connect(endpoint, check(), options.signal);
@@ -444,9 +440,8 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
   }
 }
 
-export async function captureExistingChromeLoginToFile(config: Pick<AppConfig, "storageStatePath">, options: ExistingChromeLoginOptions,
-  dependencies: { portFile?: () => string } = {}): Promise<void> {
-  const capture = await captureExistingChromeLogin(options, dependencies);
+export async function captureExistingChromeLoginToFile(config: Pick<AppConfig, "storageStatePath">, options: ExistingChromeLoginOptions): Promise<void> {
+  const capture = await captureExistingChromeLogin(options);
   if (options.signal?.aborted) throw failure("cancelled");
   const markerPath = loginVerificationMarkerPath(config.storageStatePath);
   try {

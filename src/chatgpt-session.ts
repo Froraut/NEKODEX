@@ -27,7 +27,6 @@ export const CHATGPT_EFFORT_MENU_SELECTOR = [
 ].join(", ");
 export const CHATGPT_EFFORT_ITEM_SELECTOR = '[role="menuitemradio"]';
 export const CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR = '[data-model-reasoning-effort-slider]';
-export const CHATGPT_EFFORT_SLIDER_SELECTOR = '[data-model-reasoning-effort-slider] [role="slider"]';
 export const CHATGPT_EFFORT_SLIDER_MAX_OPTIONS = 5;
 const CHATGPT_MODAL_GATE_SELECTOR = '[role="dialog"], [role="alertdialog"]';
 const CHATGPT_EXTRA_HIGH_OFFSET = 3;

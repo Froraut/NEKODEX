@@ -6,7 +6,6 @@ export async function revealOwnedLoginBrowser(
   child: ChildProcess,
   executable: string,
   profileDir: string,
-  run = execFile,
 ): Promise<void> {
   if (process.platform !== "darwin"
     || !Number.isSafeInteger(child.pid) || child.pid! < 1
@@ -24,7 +23,7 @@ const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${chi
 if (!app || app.isTerminated || ObjC.unwrap(app.executableURL.path) !== ${JSON.stringify(executable)}) throw Error('Dedicated browser ownership changed');
 if (!app.activateWithOptions(3)) throw Error('Could not reveal the dedicated browser login window');`;
   await new Promise<void>((resolve, reject) => {
-    run("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { timeout: 5_000 }, error => {
+    execFile("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { timeout: 5_000 }, error => {
       if (error) reject(new Error("Could not reveal the dedicated browser login window. Use Mission Control or retry sign-in."));
       else resolve();
     });
