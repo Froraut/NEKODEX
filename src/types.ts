@@ -200,22 +200,10 @@ export interface CodexRequestOptions {
 
 export type CodexMessagePhase = "commentary" | "final_answer";
 
-/**
- * Provider-private state that must follow a locally expanded `previous_response_id` chain.
- * Kept out of public Responses output and persisted only in the bounded local continuation cache.
- */
-export interface CodexProviderContinuationState {
-  [provider: string]: Record<string, unknown> | undefined;
-}
-
 export type AdapterEvent =
   | { type: "heartbeat" }
   | { type: "text_delta"; text: string; phase?: CodexMessagePhase }
   | { type: "thinking_delta"; thinking: string }
-  // Opaque signed-reasoning metadata preserved when it appears in a Codex history.
-  | { type: "thinking_signature"; signature: string }
-  | { type: "redacted_thinking"; data: string }
-  | { type: "reasoning_raw_delta"; text: string }
   | { type: "tool_call_start"; id: string; name: string }
   | { type: "tool_call_delta"; arguments: string }
   | { type: "tool_call_end" }
@@ -226,16 +214,6 @@ export type AdapterEvent =
       usage?: CodexUsage;
       stopReason?: string;
       endTurn?: boolean;
-      providerState?: CodexProviderContinuationState;
-    }
-  | {
-      type: "incomplete";
-      reason: string;
-      message?: string;
-      usage?: CodexUsage;
-      retryable?: boolean;
-      endTurn?: boolean;
-      providerState?: CodexProviderContinuationState;
     }
   // `usage` carries best-effort partial consumption when a turn dies before a clean done
   // so failed requests can log best-effort token counts.
@@ -256,8 +234,7 @@ export type AdapterEvent =
  * - `inputTokens` is the TOTAL prompt size, INCLUDING cache reads and cache writes
  *   (OpenAI Responses convention).
  * - `cachedInputTokens` is cache READ tokens only (a subset of `inputTokens`).
- * - `cacheReadInputTokens`/`cacheCreationInputTokens` carry the read/write split when
- *   the provider reports both; reads mirror `cachedInputTokens`.
+ * - `cacheCreationInputTokens` carries cache WRITE tokens when the provider reports them.
  * - `totalTokens` = inputTokens + outputTokens. Never re-add cache detail on top.
  */
 export interface CodexUsage {
@@ -265,7 +242,6 @@ export interface CodexUsage {
   outputTokens: number;
   totalTokens?: number;
   cachedInputTokens?: number;
-  cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
   reasoningOutputTokens?: number;
   estimated?: boolean;
@@ -275,15 +251,6 @@ export interface CodexUsage {
 export interface CodexProviderConfig {
   adapter: "chatgpt-web";
   baseUrl: string;
-  defaultModel?: string;
-  models?: string[];
-  liveModels?: boolean;
-  contextWindow?: number;
-  modelContextWindows?: Record<string, number>;
-  modelInputModalities?: Record<string, string[]>;
-  modelReasoningEfforts?: Record<string, string[]>;
-  modelDefaultReasoningEfforts?: Record<string, string>;
-  noReasoningModels?: string[];
   chatgptWeb?: {
     /** ChatGPT custom connector attached to tool-capable temporary chats. */
     appName?: string;

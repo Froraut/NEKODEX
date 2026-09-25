@@ -1,15 +1,12 @@
-export { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_DEV_CONNECTOR_NAME, DEV_CHATGPT_ASYNC_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME, LEGACY_CHATGPT_CONNECTOR_NAMES, isLegacyChatGptConnectorName, currentChatGptConnectorName, legacyChatGptConnectorMigrationMessage, resolveInteractionConnectorIdentities, type InteractionConnectorIdentities } from "./config-policy";
-import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_DEV_CONNECTOR_NAME, DEV_CHATGPT_ASYNC_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME, isLegacyChatGptConnectorName, canonicalizeChatGptConnectorName, currentChatGptConnectorName, legacyChatGptConnectorMigrationMessage, validateRuntimeConnectorFeatures } from "./config-policy";
+export { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_CONNECTOR_NAME, PREVIOUS_ASYNC_DEV_CONNECTOR_NAME, DEV_CHATGPT_ASYNC_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME, LEGACY_CHATGPT_CONNECTOR_NAMES, isLegacyChatGptConnectorName, currentChatGptConnectorName, legacyChatGptConnectorMigrationMessage } from "./config-policy";
+import { CHATGPT_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME, isLegacyChatGptConnectorName, canonicalizeChatGptConnectorName, currentChatGptConnectorName, legacyChatGptConnectorMigrationMessage, validateRuntimeConnectorFeatures } from "./config-policy";
 export { atomicWriteFile } from "./file-transactions";
 import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, isAbsolute, join, resolve, sep, win32 } from "node:path";
-import { tmpdir } from "node:os";
 import {
-  CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
-  CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
   parseChatGptWebProModelVersion,
   type ChatGptWebProModelVersion,
 } from "./chatgpt-web-models";
@@ -112,8 +109,8 @@ export function isWindowsPipeEndpoint(value: string): boolean {
   return /^\\\\\.\\pipe\\[A-Za-z0-9._-]+$/.test(value);
 }
 
-export function defaultBrokerEndpoint(home = getConfigDir(), platform = process.platform): string {
-  if (platform !== "win32") return join(home, "runtime", "turn-broker.sock");
+export function defaultBrokerEndpoint(home = getConfigDir()): string {
+  if (process.platform !== "win32") return join(home, "runtime", "turn-broker.sock");
   const identity = createHash("sha256").update(resolve(home).toLowerCase()).digest("hex").slice(0, 20);
   return `\\\\.\\pipe\\codex-chatgpt-web-${identity}`;
 }
@@ -179,15 +176,9 @@ export function currentRuntimeCommand(): string[] {
   });
 }
 
-export function installedBunExecutable({
-  platform = process.platform,
-  pathValue = process.env.PATH || process.env.Path || "",
-  candidates = [],
-}: {
-  platform?: NodeJS.Platform;
-  pathValue?: string;
-  candidates?: Array<string | null | undefined>;
-} = {}): string {
+export function installedBunExecutable(): string {
+  const platform = process.platform;
+  const pathValue = process.env.PATH || process.env.Path || "";
   const executableName = platform === "win32" ? "bun.exe" : "bun";
   const pathDelimiter = platform === "win32" ? ";" : delimiter;
   const pathCandidates = pathValue
@@ -198,7 +189,6 @@ export function installedBunExecutable({
   const discovered = [
     process.env.CODEX_CHATGPT_WEB_BUN,
     process.env.CODEX_WEB_GPT_BUN,
-    ...candidates,
     ...pathCandidates,
     typeof Bun !== "undefined" ? Bun.which("bun") : undefined,
     process.execPath,
@@ -269,15 +259,12 @@ export function assertDurableRuntimeCommand(command: string[]): void {
   if (!existsSync(executable)) throw new Error(`Runtime executable does not exist: ${executable}`);
 }
 
-export function defaultChromeExecutable(
-  platform = process.platform,
-  programFiles = process.env.PROGRAMFILES,
-): string {
-  if (platform === "darwin") {
+export function defaultChromeExecutable(): string {
+  if (process.platform === "darwin") {
     return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   }
-  if (platform === "win32") {
-    return win32.join(programFiles || "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe");
+  if (process.platform === "win32") {
+    return win32.join(process.env.PROGRAMFILES || "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe");
   }
   return "/usr/bin/google-chrome";
 }
@@ -595,33 +582,9 @@ export function saveConfig(config: AppConfig, expectedBefore?: FileSnapshot): Fi
 
 export function providerConfig(config: AppConfig): CodexProviderConfig {
   const manual = config.browserInteractionMode === "manual";
-  const model = manual
-    ? CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL
-    : config.solAvailable ? "gpt-5.6-sol" : "gpt-5.6-luna";
-  const models = manual
-    ? [
-      CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
-      ...(config.zeroRiskProEnabled ? [CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL] : []),
-    ]
-    : [model];
-  const efforts = manual
-    ? ["low"]
-    : config.solAvailable
-    ? ["low", "medium", "high", ...((config.extraHighAvailable ?? config.proAvailable) ? ["xhigh"] : []), ...(config.proAvailable ? ["max"] : [])]
-    : ["low", "medium"];
   return {
     adapter: "chatgpt-web",
     baseUrl: "https://chatgpt.com",
-    models,
-    liveModels: false,
-    defaultModel: model,
-    contextWindow: config.contextWindow,
-    modelInputModalities: Object.fromEntries(models.map(model => [model, manual ? ["text"] : ["text", "image"]])),
-    modelReasoningEfforts: Object.fromEntries(models.map(modelId => [modelId, efforts])),
-    modelDefaultReasoningEfforts: Object.fromEntries(
-      models.map(modelId => [modelId, manual ? "low" : config.solAvailable ? "high" : "low"]),
-    ),
-    noReasoningModels: [],
     chatgptWeb: {
       appName: manual ? config.manualAppName : config.automaticAppName,
       browserInteractionMode: config.browserInteractionMode,

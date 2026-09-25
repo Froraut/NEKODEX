@@ -2,9 +2,7 @@ import { fetchNativeCodex } from "./native-network";
 import { enqueueNativeUsageTelemetry } from "./native-usage-telemetry";
 import { codexClientVersionFromUserAgent, prepareNativeRequestBody, type NativeCodexEndpoint } from "./native-request-preparation";
 import { failureCategoryForHttp, observeNativeResponseBody, withUncleanCloseTolerance } from "./native-response-body";
-export { codexClientVersionFromUserAgent, scrubBridgeArtifactsForNative } from "./native-request-preparation";
-export type { NativeImageEndpoint, NativeCodexEndpoint } from "./native-request-preparation";
-export { observeNativeResponseBody } from "./native-response-body";
+export type { NativeImageEndpoint } from "./native-request-preparation";
 
 const CODEX_BACKEND = "https://chatgpt.com/backend-api/codex";
 const HOP_BY_HOP_HEADERS = new Set([

@@ -68,7 +68,6 @@ import { VERSION } from "./version";
 import { HermesIntegration, type HermesContext } from "./hermes-integration";
 
 import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./http-turn-lifecycle";
-export { HttpTurnCounter, type NativeCodexTurnIdentity, type HttpStreamFailureEvidence } from "./http-turn-lifecycle";
 import { ServerAdmission } from "./server-admission";
 import { inferenceRoutePolicy, type InferenceRoutePolicy } from "./server-route-policy";
 

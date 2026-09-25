@@ -1,12 +1,10 @@
 import { boundedIdentity, normalizeContinuationScope, continuationScopeStatus } from "./continuation-scope";
-export { createResponseContinuationScope, type ResponseContinuationOwnerContext } from "./continuation-scope";
 import {
   MAX_STORED_RESPONSES, MAX_STORED_RESPONSE_BYTES, SNAPSHOT_TOTAL_MAX_BYTES,
   MAX_DELTA_DEPTH, MAX_NONRETAINED_RESPONSES, MAX_RESPONSE_ID_LENGTH,
   decodeResponseSnapshot, encodeResponseSnapshot, snapshotChainEligible, serializedResponseStateBytes,
   type ResponseContinuationScope, type StoredResponseState, type NonretainedState,
 } from "./state-snapshot";
-export { serializedResponseStateBytes, type ResponseContinuationScope } from "./state-snapshot";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { atomicWriteFile, getConfigDir } from "../config";

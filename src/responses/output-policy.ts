@@ -71,5 +71,3 @@ export function plaintextCollaborationFields(namespace: string | undefined, name
     ? { encrypted_function_args: [] }
     : {};
 }
-
-export type ResponsesTerminalStatus = "completed" | "failed" | "incomplete";

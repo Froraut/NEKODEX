@@ -111,15 +111,6 @@ export class HttpTurnCounter {
     return turns.length;
   }
 
-  async cancelTurn(
-    identity: NativeCodexTurnIdentity,
-    reason: unknown = new DOMException("Codex turn interrupted", "AbortError"),
-  ): Promise<number> {
-    const cancellation = this.beginCancelTurn(identity, reason);
-    await cancellation.settlement;
-    return cancellation.cancelled;
-  }
-
   beginCancelTurn(
     identity: NativeCodexTurnIdentity,
     reason: unknown = new DOMException("Codex turn interrupted", "AbortError"),

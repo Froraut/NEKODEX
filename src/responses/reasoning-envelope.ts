@@ -1,9 +1,9 @@
 /**
- * Opaque signed-reasoning metadata round-trip through Codex's `encrypted_content` slot.
+ * Opaque signed-reasoning metadata carried in Codex's `encrypted_content` slot.
  *
- * Some Responses histories contain signed or redacted reasoning metadata that must be replayed
- * verbatim. Codex round-trips `encrypted_content`, so the bridge preserves that metadata inside
- * the inherited `ocxr1:` + base64(JSON) envelope format.
+ * Some Responses histories contain signed or redacted reasoning metadata inside the inherited
+ * `ocxr1:` + base64(JSON) envelope format. The parser decodes it so that metadata is replayed
+ * verbatim; current output paths do not encode new envelopes.
  *
  * Native OpenAI-encrypted blobs (no ocxr1 prefix) are left untouched by the decoder, and the
  * passthrough scrub strips ocxr1 envelopes before native forwarding.
@@ -21,10 +21,6 @@ export interface ReasoningEnvelope {
    * so replay needs it even though the visible summary was suppressed.
    */
   txt?: string;
-}
-
-export function encodeReasoningEnvelope(envelope: ReasoningEnvelope): string {
-  return BRIDGE_REASONING_PREFIX + Buffer.from(JSON.stringify(envelope), "utf-8").toString("base64");
 }
 
 /** Decode an ocxr1 envelope; returns null for native (OpenAI-encrypted) blobs or garbage. */

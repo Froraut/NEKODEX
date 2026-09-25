@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { extname } from "node:path";
 
 export const CODEX_INPUT_FILE_MAX_BYTES = 20_000_000;
-export const CODEX_INPUT_FILES_MAX_BYTES = 50_000_000;
 export const CODEX_INPUT_FILES_MAX_COUNT = 10;
 
 export const SUPPORTED_CODEX_FILE_MIME_TYPES = new Set([
