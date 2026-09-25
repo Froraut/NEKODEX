@@ -48,13 +48,15 @@ export function usageReportCsv(report: UsageSnapshot): string {
     : report.selectedAccountId !== null ? "selected-account" : "all-accounts";
   const header = ["record_type", "source", "scope", "period_start", "period_end", "time_zone", "day", "account_id", "mode", "effort", "model_version", "model_version_source", "message_kind", "endpoint", "model_id", "model_id_source", "total_count", "completed_count", "failed_count", "cancelled_count", "incomplete_count", "unrecorded_count", "known_outcome_count", "known_outcome_completion_rate", "duration_samples", "median_accept_to_outcome_ms", "p95_accept_to_outcome_ms", "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "reported_token_samples", "unreported_token_samples", "failure_code", "failure_count", "selected_account_id", "generated_at", "cached_input_reported_samples", "reasoning_reported_samples"];
   const token = report.tokens;
+  // Web usage has no incomplete outcome; leave the column blank rather than reporting a measured zero.
+  const incomplete = (value: number | null | undefined) => report.source === "native" ? value ?? 0 : null;
   type CsvValue = string | number | null | undefined;
   const base = { source: report.source, scope, period_start: report.period.startDay, period_end: report.period.endDay,
     time_zone: report.timeZone, selected_account_id: report.source === "web" ? report.selectedAccountId : null,
     generated_at: report.generatedAt };
   const records: Array<Record<string, CsvValue>> = [{ ...base, record_type: "summary",
     total_count: report.metrics.total, completed_count: report.metrics.completed, failed_count: report.metrics.failed,
-    cancelled_count: report.metrics.cancelled, incomplete_count: report.metrics.incomplete ?? 0,
+    cancelled_count: report.metrics.cancelled, incomplete_count: incomplete(report.metrics.incomplete),
     unrecorded_count: report.source === "web" ? report.metrics.unrecorded : null,
     known_outcome_count: report.metrics.knownOutcomeTotal,
     known_outcome_completion_rate: report.metrics.knownOutcomeCompletionRate,
@@ -67,16 +69,31 @@ export function usageReportCsv(report: UsageSnapshot): string {
     reasoning_reported_samples: token?.reasoningReportedSamples }];
   for (const day of report.calendar) records.push({ ...base, record_type: "day", day: day.day, total_count: day.total,
     completed_count: day.completed, failed_count: day.failed, cancelled_count: day.cancelled,
-    incomplete_count: day.incomplete ?? 0, unrecorded_count: report.source === "web" ? day.unrecorded : null });
+    incomplete_count: incomplete(day.incomplete), unrecorded_count: report.source === "web" ? day.unrecorded : null });
   for (const row of report.rows) records.push({ ...base, record_type: "group", day: row.day, account_id: row.accountId,
     mode: row.mode, effort: row.effort, model_version: row.modelVersion, model_version_source: row.modelVersionSource,
     message_kind: row.messageKind, endpoint: row.endpoint, model_id: row.modelId, model_id_source: row.modelIdSource,
     total_count: row.accepted, completed_count: row.completed, failed_count: row.failed, cancelled_count: row.aborted,
-    incomplete_count: row.incomplete ?? 0,
+    incomplete_count: incomplete(row.incomplete),
     unrecorded_count: report.source === "web"
       ? Math.max(0, row.accepted - row.completed - row.failed - row.aborted - (row.incomplete ?? 0)) : null });
   for (const failure of report.failures) records.push({ ...base, record_type: "failure",
     failure_code: failure.code, failure_count: failure.count });
   return [header, ...records.map(record => header.map(column => record[column] ?? ""))]
     .map(row => row.map(csvCell).join(",")).join("\n") + "\n";
+}
+
+/** Formats a 0..1 ratio without rounding a partial result to exactly 0% or 100%. */
+export function formatUsageRate(rate: number, language: string): string {
+  const format = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 1 });
+  if (!Number.isFinite(rate)) return format.format(0);
+  const shown = rate > 0 && rate < 0.001 ? 0.001 : rate < 1 && rate > 0.999 ? 0.999 : rate;
+  return format.format(Math.min(1, Math.max(0, shown)));
+}
+
+/** Formats milliseconds as seconds or minutes, choosing the unit after rounding so 59.96 s reads as 1 min. */
+export function formatUsageDuration(value: number, language: string, secondsTemplate: string, minutesTemplate: string): string {
+  const seconds = Math.round(value / 100) / 10;
+  if (seconds < 60) return secondsTemplate.replace("{value}", seconds.toLocaleString(language, { maximumFractionDigits: 1 }));
+  return minutesTemplate.replace("{value}", (value / 60_000).toLocaleString(language, { maximumFractionDigits: 1 }));
 }

@@ -18,16 +18,19 @@ function load(file, overrides = {}) {
 }
 
 const diagnostics = load("usage-diagnostics.ts", { "./types": {} });
+const statistics = load("usage-statistics.ts", { "./types": {} });
 const openReact = { ...React, useState: () => [true, () => {}], useRef: () => ({ current: null }) };
 const { UsageInsights } = load("UsageInsights.tsx", {
   react: openReact,
   "./types": {},
   "./usage-diagnostics": diagnostics,
+  "./usage-statistics": statistics,
   "./usage-insights.css": {},
 });
 
 const { UsageInsights: CollapsedInsights } = load("UsageInsights.tsx", {
   "./usage-diagnostics": diagnostics,
+  "./usage-statistics": statistics,
   "./usage-insights.css": {},
 });
 
@@ -95,4 +98,41 @@ test("mixed outcomes explain completion without classifying cancellations as fai
   assert.match(html, />40%</);
   assert.match(html, /Completed: 2 · Failed: 1 · Cancelled: 2/);
   assert.equal((html.match(/Timeout: 1/g) ?? []).length >= 1, true);
+});
+
+test("unreported identity fields use a short placeholder and one explanatory note", () => {
+  const group = {
+    source: "web", accountId: "missing", mode: "manual", effort: "unknown",
+    modelVersion: "unknown", modelVersionSource: "unknown", messageKind: "task",
+    accepted: 20, completed: 20, failed: 0, cancelled: 0,
+    knownOutcomeTotal: 20, knownOutcomeCompletionRate: 1,
+    durations: { observedSamples: 20, eligibleSamples: 20, medianMs: 59_960, p95Ms: 59_960 },
+    failures: [], classifiedFailureSamples: 0,
+  };
+  const html = renderToStaticMarkup(React.createElement(UsageInsights, {
+    groups: [group], accounts: [], language: "en",
+    copy: { title: "Insights", body: "Observed", completionRate: "Completion", median: "Median", p95: "P95",
+      knownOutcomes: "{count} known", durationSamples: "{count} durations", coverage: "{count} coverage",
+      insufficientEvidence: "Insufficient", unknownIdentity: "Identity was not reported", noComparison: "No comparison",
+      notBestModel: "No best model" },
+    failureLabels: {}, detailsLabel: "Details", hideDetailsLabel: "Hide",
+    completedLabel: "Completed", failedLabel: "Failed", cancelledLabel: "Cancelled", incompleteLabel: "Incomplete",
+    labels: { unknown: "Unknown", group: "Mode / model", seconds: "{value} sec", minutes: "{value} min" },
+  }));
+  assert.match(html, /Unknown · manual · Unknown · Unknown · Unknown · task/);
+  assert.equal(html.split("Identity was not reported").length - 1, 2, "one note per rendered identity");
+  assert.match(html, /<th scope="col">Mode \/ model<\/th>/);
+  assert.match(html, /<caption/);
+  assert.match(html, /1 min/);
+  assert.doesNotMatch(html, /60 sec/);
+});
+
+test("usage rates and durations never round a partial result to a boundary", () => {
+  assert.equal(statistics.formatUsageRate(1999 / 2000, "en"), "99.9%");
+  assert.equal(statistics.formatUsageRate(1 / 2001, "en"), "0.1%");
+  assert.equal(statistics.formatUsageRate(1, "en"), "100%");
+  assert.equal(statistics.formatUsageRate(0, "en"), "0%");
+  assert.equal(statistics.formatUsageDuration(59_960, "en", "{value} s", "{value} min"), "1 min");
+  assert.equal(statistics.formatUsageDuration(59_940, "en", "{value} s", "{value} min"), "59.9 s");
+  assert.equal(statistics.formatUsageDuration(1_000, "en", "{value} s", "{value} min"), "1 s");
 });
