@@ -205,7 +205,9 @@ export interface OperationState {
 export type UpdateState =
   | { status: "disabled" | "idle" | "checking" | "up-to-date" }
   | { status: "available" | "downloading" | "verifying" | "installing" | "cancelling"; version: string;
-      downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null }
+      downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null;
+      /** Why the previous install attempt rolled back, reported once after relaunch. */
+      lastFailure?: string }
   | { status: "error"; message: string };
 
 export type CompactionModel = "extra-high" | "5.6-pro" | "5.5-pro";
