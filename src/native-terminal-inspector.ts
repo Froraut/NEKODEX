@@ -24,8 +24,8 @@ function nativeReportedUsage(value: unknown): NativeReportedUsage | null {
     inputTokens: value.input_tokens,
     outputTokens: value.output_tokens,
     totalTokens: value.total_tokens,
-    ...(inputDetails?.cached_tokens === undefined ? {} : { cachedInputTokens: inputDetails.cached_tokens }),
-    ...(outputDetails?.reasoning_tokens === undefined ? {} : { reasoningOutputTokens: outputDetails.reasoning_tokens }),
+    ...(inputDetails?.cached_tokens == null ? {} : { cachedInputTokens: inputDetails.cached_tokens }),
+    ...(outputDetails?.reasoning_tokens == null ? {} : { reasoningOutputTokens: outputDetails.reasoning_tokens }),
   };
   return validNativeReportedUsage(usage) ? usage : null;
 }

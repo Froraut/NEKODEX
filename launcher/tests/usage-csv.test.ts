@@ -52,6 +52,9 @@ describe("usage CSV consumer contract", () => {
     const native = parseCsv(usageReportCsv(report("native")));
     expect(native.every(row => row.selected_account_id === "" && row.scope === "native-recorded-only")).toBe(true);
     expect(native[0].unrecorded_count).toBe("");
+    expect(native.filter(row => row.record_type !== "failure").every(row => row.incomplete_count === "0")).toBe(true);
+    // Web usage has no incomplete outcome, so the column is blank rather than a measured zero.
+    expect(records.filter(row => row.record_type !== "failure").every(row => row.incomplete_count === "")).toBe(true);
     const all = report(); all.selectedAccountId = null;
     expect(parseCsv(usageReportCsv(all))[0].scope).toBe("all-accounts");
   });

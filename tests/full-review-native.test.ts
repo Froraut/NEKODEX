@@ -57,9 +57,9 @@ test("missing native authentication cancels an unread upload before failing clos
     }),
   });
 
-  await expect(forwardNativeCodexRequest(request, "alpha/search")).rejects.toThrow(
-    "requires the incoming Bearer authorization",
-  );
+  const response = await forwardNativeCodexRequest(request, "alpha/search");
+  expect(response.status).toBe(401);
+  expect((await response.json()).error.message).toContain("requires the incoming Bearer authorization");
   await Bun.sleep(0);
   expect(cancelled).toBe(true);
 });

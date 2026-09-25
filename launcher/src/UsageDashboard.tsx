@@ -10,7 +10,7 @@ import type {
   UsageSource,
   UsageSnapshot,
 } from "./types";
-import { aggregateUsageGroups, usageReportCsv, type UsageDisplayGroup } from "./usage-statistics";
+import { aggregateUsageGroups, formatUsageDuration, formatUsageRate, usageReportCsv, type UsageDisplayGroup } from "./usage-statistics";
 import { UsageInsights } from "./UsageInsights";
 import { workflowCopy } from "./workflow-copy";
 import "./usage-lifetime.css";
@@ -20,7 +20,10 @@ const ranges: UsageRangeDays[] = [1, 7, 30, 90];
 const number = (value: number, language: Language) => value.toLocaleString(language);
 
 const groupLabel = (row: UsageGroup, copy: Copy, source: UsageSource) => {
-  if (source === "native") return row.modelId?.trim() || copy.usageUnknown;
+  if (source === "native") {
+    const modelId = row.modelId?.trim();
+    return modelId && modelId !== "unknown" ? modelId : copy.usageUnknown;
+  }
   const effort = row.effort === "max" ? "Pro" : !row.effort || row.effort === "unknown" ? copy.usageUnknown : row.effort;
   return `${row.mode ?? copy.usageUnknown} · ${effort} · ${!row.modelVersion || row.modelVersion === "unknown" ? copy.usageUnknown : `GPT-${row.modelVersion}`}`;
 };
@@ -39,8 +42,7 @@ function UsageTable({ caption, groups, copy, language, showIncomplete, showUnrec
 
 function duration(value: number | null, copy: Copy, language: Language) {
   if (value === null || !Number.isFinite(value)) return copy.usageNotAvailable;
-  if (value < 60_000) return copy.usageSeconds.replace("{value}", (value / 1_000).toLocaleString(language, { maximumFractionDigits: 1 }));
-  return copy.usageMinutes.replace("{value}", (value / 60_000).toLocaleString(language, { maximumFractionDigits: 1 }));
+  return formatUsageDuration(value, language, copy.usageSeconds, copy.usageMinutes);
 }
 
 function exportReport(report: UsageSnapshot) {
@@ -100,7 +102,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
       <div><h2 id="usage-title">{copy.usageTitle}</h2><p>{sourceBody}</p></div>
       <button className="button-secondary" type="button" disabled={!visible || visible.metrics.total === 0} onClick={() => visible && exportReport({ ...visible, calendar })}>{copy.usageExportCsv}</button>
     </div>
-    <div className="usage-filters" aria-label={copy.usageFilters}>
+    <div className="usage-filters" role="group" aria-label={copy.usageFilters}>
       <label>{copy.usageSource}<select aria-label={copy.usageSource} className="settings-select" value={filters.source} onChange={event => {
         const nextSource = event.target.value as UsageSource;
         changeFilters({ ...filters, source: nextSource, accountId: null });
@@ -146,10 +148,11 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
       <UsageInsights groups={diagnosticGroups} accounts={visible.accounts} copy={workflowCopy(language).insights}
         language={language} failureLabels={failureLabels} detailsLabel={copy.usageDetailedBreakdown}
         hideDetailsLabel={copy.usageHideTable} completedLabel={copy.usageCompleted} failedLabel={copy.usageFailed}
-        cancelledLabel={copy.usageAborted} incompleteLabel={copy.usageIncomplete} />
+        cancelledLabel={copy.usageAborted} incompleteLabel={copy.usageIncomplete}
+        labels={{ unknown: copy.usageUnknown, group: copy.usageModel, seconds: copy.usageSeconds, minutes: copy.usageMinutes }} />
 
       <div className="usage-insights">
-        <section><span>{copy.usageKnownRate}</span><strong>{rate === null || rate === undefined ? copy.usageNotAvailable : new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 1 }).format(rate)}</strong>
+        <section><span>{copy.usageKnownRate}</span><strong>{rate === null || rate === undefined ? copy.usageNotAvailable : formatUsageRate(rate, language)}</strong>
           <p>{visible.metrics.knownOutcomeTotal ? knownRateBody.replace("{completed}", number(visible.metrics.completed, language)).replace("{known}", number(visible.metrics.knownOutcomeTotal, language)) : copy.usageNoKnownOutcomes}</p>
           {visible.metrics.unrecorded > 0 ? <small>{copy.usageUnrecordedExcluded.replace("{count}", number(visible.metrics.unrecorded, language))}</small> : null}
         </section>
