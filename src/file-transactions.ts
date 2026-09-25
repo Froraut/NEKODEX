@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, fchmodSync, fstatSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync, lstatSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
+import { chmodSync, fchmodSync, fstatSync, fsyncSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync, lstatSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface FileSnapshot {
@@ -46,17 +46,38 @@ export function atomicWriteFile(
   }
   const temp = `${path}.tmp-${process.pid}-${randomUUID()}`;
   const fd = openSync(temp, "wx", mode);
+  let open = true;
   try {
     writeFileSync(fd, data);
     try { fchmodSync(fd, mode); } catch { /* Windows ACLs are managed by the installer. */ }
+    // Flush contents before the rename publishes them, so a crash cannot leave an empty file
+    // under the final name on filesystems that reorder metadata and data writes.
+    fsyncSync(fd);
     const stat = fstatSync(fd);
+    open = false;
     closeSync(fd);
     renameAtomicFile(temp, path);
+    syncDirectory(directory);
     return { path, exists: true, data: Buffer.from(data), mode: stat.mode & 0o777, identity: { dev: stat.dev, ino: stat.ino } };
   } catch (error) {
-    try { closeSync(fd); } catch {}
+    // Never close twice: the descriptor number may already belong to another open file.
+    if (open) try { closeSync(fd); } catch {}
     rmSync(temp, { force: true });
     throw error;
+  }
+}
+
+/** Best-effort durability for the rename itself; directories cannot be opened this way on Windows. */
+function syncDirectory(directory: string): void {
+  if (process.platform === "win32") return;
+  let fd: number | undefined;
+  try {
+    fd = openSync(directory, "r");
+    fsyncSync(fd);
+  } catch {
+    // Some filesystems reject directory fsync; the file contents are already durable.
+  } finally {
+    if (fd !== undefined) try { closeSync(fd); } catch {}
   }
 }
 

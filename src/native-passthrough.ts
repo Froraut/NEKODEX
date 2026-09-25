@@ -41,6 +41,21 @@ function endToEndHeaders(source: Headers): Headers {
   return headers;
 }
 
+function localRequestFailure(status: number, type: string, message: string): Response {
+  return new Response(JSON.stringify({ error: { type, code: null, message } }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** Maps a local body-preparation failure to a terminal client status; no upstream call was made. */
+function preparationFailure(error: unknown): Response {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/ exceeds \d+ bytes$/.test(message)) return localRequestFailure(413, "invalid_request_error", message);
+  if (message.startsWith("Unsupported Content-Encoding")) return localRequestFailure(415, "invalid_request_error", message);
+  return localRequestFailure(400, "invalid_request_error", message);
+}
+
 export async function forwardNativeCodexRequest(
   request: Request,
   endpoint: NativeCodexEndpoint,
@@ -52,7 +67,7 @@ export async function forwardNativeCodexRequest(
   const authorization = request.headers.get("authorization") ?? "";
   if (!authorization.startsWith("Bearer ") || authorization.length <= "Bearer ".length) {
     void request.body?.cancel().catch(() => {});
-    throw new Error("Native Codex passthrough requires the incoming Bearer authorization");
+    return localRequestFailure(401, "authentication_error", "Native Codex passthrough requires the incoming Bearer authorization");
   }
 
   const incomingUrl = new URL(request.url);
@@ -63,7 +78,14 @@ export async function forwardNativeCodexRequest(
   const headers = endToEndHeaders(request.headers);
   if (endpoint === "models") headers.delete("if-none-match");
   const method = endpoint === "models" ? "GET" : "POST";
-  const preparation = await prepareNativeRequestBody(request, endpoint, decodedBody);
+  let preparation: Awaited<ReturnType<typeof prepareNativeRequestBody>>;
+  try {
+    preparation = await prepareNativeRequestBody(request, endpoint, decodedBody);
+  } catch (error) {
+    // Cancellation keeps its existing propagation; malformed local input is not an upstream failure.
+    if (request.signal.aborted) throw error;
+    return preparationFailure(error);
+  }
   if (preparation.kind === "rejected") return preparation.response;
   const { body, model, compactionRequest } = preparation;
   if (preparation.kind === "rewritten") headers.delete("content-encoding");

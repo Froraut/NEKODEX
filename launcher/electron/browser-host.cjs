@@ -727,7 +727,7 @@ class BrowserHost {
     }
     if (this.destroyed || this.view.webContents.isDestroyed()) throw new Error("Browser initialization was cancelled");
     this.writeDescriptor();
-    this.logger.info("browser.initialized", { url: this.view.webContents.getURL() });
+    this.logger.info("browser.initialized", { origin: navigationOriginForLog(this.view.webContents.getURL()) });
   }
 
   currentOperation() {
@@ -1615,16 +1615,16 @@ class BrowserHost {
     if (this.activeTraceId || this.manualOperation) {
       this.logger.warn("browser.cloudflare_challenge_not_reloaded", {
         reason: this.activeTraceId ? "turn-active" : "manual-operation-active",
-        url: details.url,
+        origin: navigationOriginForLog(details.url),
       });
       return true;
     }
     if (!this.cloudflareChallengeRecoveryArmed) {
-      this.logger.warn("browser.cloudflare_challenge_persisted", { url: details.url });
+      this.logger.warn("browser.cloudflare_challenge_persisted", { origin: navigationOriginForLog(details.url) });
       return true;
     }
     this.cloudflareChallengeRecoveryArmed = false;
-    this.logger.warn("browser.cloudflare_challenge_detected", { url: details.url });
+    this.logger.warn("browser.cloudflare_challenge_detected", { origin: navigationOriginForLog(details.url) });
     const recovery = this.reloadHomeAfterCloudflareChallenge();
     const tracked = recovery
       .catch((error) => {
@@ -3251,7 +3251,7 @@ class BrowserHost {
       this.setState({ ...availability, authenticated: true, authenticationStatus: "verified",
         authenticationCheckedAt: verifiedAt, lastVerifiedAt: verifiedAt,
         accountLabel: result.accountLabel ?? null, url: result.url });
-      if (!wasAuthenticated) this.logger.info("browser.authenticated", { url: result.url });
+      if (!wasAuthenticated) this.logger.info("browser.authenticated", { origin: navigationOriginForLog(result.url) });
     } else {
       const loaded = result.readyState === "complete";
       const rejected = result.sessionVerification === "rejected"

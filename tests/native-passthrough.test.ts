@@ -304,9 +304,27 @@ test("native passthrough fails closed without Codex bearer authentication", asyn
     body: "{}",
   });
 
-  await expect(forwardNativeCodexRequest(request, "responses")).rejects.toThrow(
-    "Native Codex passthrough requires the incoming Bearer authorization",
-  );
+  const response = await forwardNativeCodexRequest(request, "responses");
+  expect(response.status).toBe(401);
+  expect((await response.json()).error).toMatchObject({
+    type: "authentication_error",
+    message: "Native Codex passthrough requires the incoming Bearer authorization",
+  });
+});
+
+test("native passthrough reports malformed local bodies as client errors without an upstream call", async () => {
+  let upstreamCalls = 0;
+  const upstream = async () => { upstreamCalls += 1; return new Response("{}"); };
+  const headers = { authorization: "Bearer codex-oauth-token", "content-type": "application/json" };
+  const invalid = await forwardNativeCodexRequest(new Request("http://127.0.0.1:17841/v1/alpha/search", {
+    method: "POST", headers, body: "{bad",
+  }), "alpha/search", upstream);
+  expect(invalid.status).toBe(400);
+  const encoded = await forwardNativeCodexRequest(new Request("http://127.0.0.1:17841/v1/alpha/search", {
+    method: "POST", headers: { ...headers, "content-encoding": "gzip" }, body: "{}",
+  }), "alpha/search", upstream);
+  expect(encoded.status).toBe(415);
+  expect(upstreamCalls).toBe(0);
 });
 
 test("forwards native model discovery as GET and preserves the client version query", async () => {

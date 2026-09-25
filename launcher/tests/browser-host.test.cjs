@@ -275,7 +275,7 @@ test("primary browser initialization keeps its view offscreen but visible until 
     "owned",
     "sync",
     "descriptor",
-    ["browser.initialized", { url: IDLE_BROWSER_URL }],
+    ["browser.initialized", { origin: new URL(IDLE_BROWSER_URL).protocol.startsWith("http") ? new URL(IDLE_BROWSER_URL).origin : new URL(IDLE_BROWSER_URL).protocol }],
   ]);
 });
 

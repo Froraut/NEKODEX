@@ -150,7 +150,8 @@ export async function modelsRequest(
     return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
   }
   if (!upstream.ok) {
-    onFailure?.({ stage: "upstream" });
+    // A local rejection (for example a missing Bearer) never reached the provider.
+    onFailure?.({ stage: sent ? "upstream" : "request" });
     return upstream;
   }
   let catalog: Record<string, unknown>;
@@ -812,6 +813,12 @@ export function startServer(
     hostname: config.host,
     port: config.port,
     idleTimeout: 0,
+    // Unexpected exceptions must still produce a JSON error; Bun's default handler would return an
+    // HTML page (in development) that includes stack and filesystem details.
+    error(error) {
+      console.error("[server] unhandled request error", error instanceof Error ? error.message : String(error));
+      return formatErrorResponse(500, "server_error", "Internal bridge error");
+    },
     async fetch(req) {
       const url = new URL(req.url);
       const policy = inferenceRoutePolicy(req.method, url.pathname);
