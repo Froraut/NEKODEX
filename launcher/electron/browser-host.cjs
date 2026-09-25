@@ -926,10 +926,6 @@ class BrowserHost {
     }
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal) {
-    return turnLifecycleFor(this).createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal);
-  }
-
   createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs, useSavedChats = false) {
     if (this.turnTabs.size >= this.maxTabs
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
@@ -1033,10 +1029,6 @@ class BrowserHost {
       this.signalManualTerminal(tab, "failed");
       this.removeTurnTab(tab, true);
     }
-  }
-
-  evictOldestRetainedTurnTab() {
-    return turnLifecycleFor(this).evictOldestRetainedTurnTab();
   }
 
   evictOldestReclaimableTurnTab() {
@@ -1914,24 +1906,12 @@ class BrowserHost {
     return turnLifecycleFor(this).removeTurnTab(tab, abortRunning);
   }
 
-  artifactOwner(traceId, helperPid, surfaceId) {
-    return artifactTransfersFor(this).artifactOwner(traceId, helperPid, surfaceId);
-  }
-
   registerArtifactDownload(traceId, helperPid, surfaceId, assistantTurnId, expectedFilename, maxBytes, deadlineMs) {
     return artifactTransfersFor(this).registerArtifactDownload(traceId, helperPid, surfaceId, assistantTurnId, expectedFilename, maxBytes, deadlineMs);
   }
 
-  artifactLease(traceId, helperPid, surfaceId, leaseId) {
-    return artifactTransfersFor(this).artifactLease(traceId, helperPid, surfaceId, leaseId);
-  }
-
   async waitArtifactDownload(traceId, helperPid, surfaceId, leaseId) {
     return artifactTransfersFor(this).waitArtifactDownload(traceId, helperPid, surfaceId, leaseId);
-  }
-
-  cleanupArtifactPartial(lease) {
-    return artifactTransfersFor(this).cleanupArtifactPartial(lease);
   }
 
   cancelArtifactDownload(traceId, helperPid, surfaceId, leaseId, reason) {
@@ -1940,10 +1920,6 @@ class BrowserHost {
 
   releaseArtifactDownloads(traceId, helperPid, reason) {
     return artifactTransfersFor(this).releaseArtifactDownloads(traceId, helperPid, reason);
-  }
-
-  rememberUserCancelledTurn(traceId, helperPid) {
-    return turnLifecycleFor(this).rememberUserCancelledTurn(traceId, helperPid);
   }
 
   async closeTab(tabId, expectedTraceId) {
@@ -2213,24 +2189,8 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  rememberManualTerminal(traceId, helperPid, status) {
-    return manualTurnsFor(this).rememberManualTerminal(traceId, helperPid, status);
-  }
-
-  rememberManualCompletion(traceId, helperPid) {
-    return manualTurnsFor(this).rememberManualCompletion(traceId, helperPid);
-  }
-
   signalManualTerminal(tab, status) {
     return manualTurnsFor(this).signalManualTerminal(tab, status);
-  }
-
-  armManualTurnDeadline(tab) {
-    return manualTurnsFor(this).armManualTurnDeadline(tab);
-  }
-
-  writeManualPrompt(prompt) {
-    return manualTurnsFor(this).writeManualPrompt(prompt);
   }
 
   beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false, useSavedChats = false) {
@@ -2263,10 +2223,6 @@ class BrowserHost {
 
   cancelManualTurn(traceId, helperPid) {
     return manualTurnsFor(this).cancelManualTurn(traceId, helperPid);
-  }
-
-  startManualCancellation(tab, source) {
-    return manualTurnsFor(this).startManualCancellation(tab, source);
   }
 
   async cancelManualTab(tab, source) {
@@ -2700,17 +2656,6 @@ class BrowserHost {
     await browserSession.cookies.flushStore();
     this.retireAuthenticatedIdentity();
     for (const tab of tabs) this.removeTurnTab(tab, false);
-  }
-
-  async resetFailedPasskeyLogin() {
-    await this.clearOwnedSessionForPasskey();
-    const contents = this.view.webContents;
-    await contents.loadURL(TEMPORARY_CHAT_URL);
-    const browser = await this.probeAuthentication();
-    if (browser.authenticated) throw new Error("Partial passkey session remained authenticated after cleanup");
-    this.setState({ authenticated: false, authenticationStatus: "signed-out",
-      authenticationCheckedAt: new Date().toISOString(), loading: false,
-      status: "signed-out", message: "Sign in to ChatGPT" });
   }
 
   async verifyCapturedLoginTransfer(transfer, signal) {

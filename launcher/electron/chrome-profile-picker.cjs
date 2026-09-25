@@ -2,19 +2,6 @@ const path = require('node:path');
 
 const PICKER_CHANNEL = 'nekodex:chrome-profile-picker';
 
-function normalizedSearch(value) {
-  return typeof value === 'string'
-    ? value.normalize('NFKC').trim().toLocaleLowerCase().slice(0, 160)
-    : '';
-}
-
-function filterChromeProfiles(profiles, query) {
-  const search = normalizedSearch(query);
-  if (!search) return [...profiles];
-  return profiles.filter(profile => [profile.name, profile.googleEmail, profile.id]
-    .some(value => normalizedSearch(value).includes(search)));
-}
-
 function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId = null, language = 'en', signal }) {
   if (typeof BrowserWindow !== 'function') throw new Error('Chrome profile picker window is unavailable');
   if (!Array.isArray(profiles) || profiles.some(profile => !profile || typeof profile.id !== 'string')) {
@@ -74,4 +61,4 @@ function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId =
   });
 }
 
-module.exports = { filterChromeProfiles, normalizedSearch, showChromeProfilePicker };
+module.exports = { showChromeProfilePicker };

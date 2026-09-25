@@ -52,7 +52,6 @@ class BrowserWorkspaceWindows {
     register,
     unregister,
     external,
-    onAuthNavigation,
     beginSessionMutation,
     onMutationBlocked,
     onPersistenceError,
@@ -66,7 +65,7 @@ class BrowserWorkspaceWindows {
   }) {
     Object.assign(this, {
       BrowserWindow, session, accountId, label, allowedUrl, register, unregister, external,
-      onAuthNavigation, beginSessionMutation, onMutationBlocked, onPersistenceError, getVerifiedPrincipal, onChanged, platform, home,
+      beginSessionMutation, onMutationBlocked, onPersistenceError, getVerifiedPrincipal, onChanged, platform, home,
       restoreHome, displays,
     });
     this.windows = new Set();
@@ -201,12 +200,9 @@ class BrowserWorkspaceWindows {
     contents.on("will-redirect", (event, url, _inPlace, isMainFrame) => {
       if (isMainFrame) navigation(event, url);
     });
-    contents.on("did-navigate", (_event, url) => {
+    contents.on("did-navigate", () => {
       this.capture(win);
       this.changed();
-      // Legacy callers may still observe navigation. Coordinated callers verify only through
-      // the generation-bound lease; running the old callback here would reintroduce the early probe.
-      if (!this.beginSessionMutation) void this.onAuthNavigation?.(url);
     });
     contents.on("did-navigate-in-page", () => {
       this.capture(win);
