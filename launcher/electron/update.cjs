@@ -1,6 +1,6 @@
 const { REPOSITORY, validateRepository, releaseApiUrl, releaseFeedEntries, selectRelease, parseVersion, compareVersions, releaseVersion, releaseAssetName, expectedChecksum, validateReleaseAssetUrl } = require("./update-release-policy.cjs");
 const { sha256 } = require("./update-asset-hash.cjs");
-const { stageAuthenticatedUpdate } = require("./update-staging.cjs");
+const { pruneUpdateCache, stageAuthenticatedUpdate, updateCacheRoot } = require("./update-staging.cjs");
 const fs = require("node:fs");
 const https = require("node:https");
 const path = require("node:path");
@@ -36,6 +36,40 @@ const MAX_REDIRECTS = 5;
 const MAX_ASSET_BYTES = 1024 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 const RECHECK_COOLDOWN_MS = 60_000;
+// NEKODEX usually lives in the tray for days; a startup-only check never
+// surfaces a release published while it is running.
+const BACKGROUND_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
+const BACKGROUND_RETRY_MS = 30 * 60_000;
+const INSTALL_FAILURE_WINDOW_MS = 60 * 60_000;
+const WORKER_LOG_ENTRY = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z) /;
+
+// The detached worker relaunches the previous app after a rollback, and its log
+// is the only record of why. Report a recent failed attempt with the next offer so the user is
+// not silently returned to the old version with the same update still offered.
+function recentInstallFailure(logPath, now = Date.now()) {
+  let text;
+  try {
+    const stat = fs.statSync(logPath);
+    if (!stat.isFile() || now - stat.mtimeMs > INSTALL_FAILURE_WINDOW_MS) return null;
+    const fd = fs.openSync(logPath, "r");
+    try {
+      const length = Math.min(stat.size, 64 * 1024);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, stat.size - length);
+      text = buffer.toString("utf8");
+    } finally { fs.closeSync(fd); }
+  } catch { return null; }
+  const lines = text.split(/\r?\n/);
+  const start = lines.findLastIndex(line => WORKER_LOG_ENTRY.test(line));
+  if (start < 0) return null;
+  const [, at] = WORKER_LOG_ENTRY.exec(lines[start]);
+  if (!(now - Date.parse(at) <= INSTALL_FAILURE_WINDOW_MS)) return null;
+  const entry = lines[start].slice(at.length + 1);
+  const failure = /^(?:update failed|update rolled back|rollback pending|recovery remains rollback-pending-stop): (.+)$/.exec(entry);
+  if (failure) return failure[1].replace(/^(?:Aggregate)?Error: /, "").slice(0, 500);
+  if (entry.startsWith("Recovered interrupted update")) return "The update was interrupted, so the previous installation was restored.";
+  return null;
+}
 
 function preparationCancelledError() {
   return Object.assign(new Error("Update preparation was cancelled; the authenticated partial download was kept for retry"), {
@@ -332,6 +366,16 @@ function createUpdateController({
   let candidate = null;
   let checkPromise = null;
   let lastCheckFinishedAt = 0;
+  let backgroundTimer = null;
+  let installFailure;
+  const cacheRoot = updateCacheRoot(logsDirectory);
+  if (state.status !== "disabled") {
+    // Downloads for this version or older can never be installed again.
+    pruneUpdateCache(cacheRoot, (_name, version) => {
+      try { return version !== null && compareVersions(version, currentVersion) > 0; }
+      catch { return false; }
+    }, logger);
+  }
 
   const transition = (next) => {
     state = next;
@@ -407,7 +451,10 @@ function createUpdateController({
           metadataUrl: validateReleaseAssetUrl(metadata.browser_download_url, version, "release-metadata.json", repository),
         };
         logger?.info("launcher.update_available", { currentVersion, version, platform, arch });
-        return transition({ status: "available", version });
+        if (installFailure === undefined) installFailure = recentInstallFailure(path.join(logsDirectory, "update-worker.log"));
+        return transition(installFailure
+          ? { status: "available", version, lastFailure: installFailure }
+          : { status: "available", version });
       } catch (error) {
         candidate = null;
         const message = error instanceof Error ? error.message : String(error);
@@ -415,6 +462,7 @@ function createUpdateController({
         return transition({ status: "error", message });
       } finally {
         lastCheckFinishedAt = Date.now();
+        scheduleBackgroundCheck();
       }
     })();
     void checkPromise.then(
@@ -422,6 +470,18 @@ function createUpdateController({
       () => { checkPromise = null; },
     );
     return checkPromise;
+  }
+
+  function scheduleBackgroundCheck() {
+    clearTimeout(backgroundTimer);
+    if (state.status === "disabled") return;
+    backgroundTimer = setTimeout(() => {
+      // An offered or in-progress update needs no rediscovery; the next check
+      // after it settles re-arms this timer.
+      if (checkPromise || pending || !["idle", "up-to-date", "error"].includes(state.status)) scheduleBackgroundCheck();
+      else void startCheck();
+    }, state.status === "error" ? BACKGROUND_RETRY_MS : BACKGROUND_CHECK_INTERVAL_MS);
+    backgroundTimer.unref?.();
   }
 
   function checkOnce() {
@@ -448,6 +508,7 @@ function createUpdateController({
     if (state.status !== "available" || !candidate) throw new Error("No launcher update is available");
     if (platform === "linux") linuxUpdateInstallation();
     const available = candidate;
+    installFailure = null;
     let settlePreparation;
     const active = {
       controller: new AbortController(),
@@ -592,6 +653,7 @@ module.exports = {
   expectedChecksum,
   macApplicationPath,
   parseVersion,
+  recentInstallFailure,
   releaseAssetName,
   releaseApiUrl,
   releaseFeedEntries,

@@ -43,6 +43,8 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
         </ol> : null}
         {busy && phase < 1 && !cancellationPending ? <UpdateProgress key={candidate ?? "pending"} state={state} label={copy.progress} language={language} /> : null}
         {failure ? <p className="updates-error" role="alert">{failure}</p> : null}
+        {!failure && state.status === "available" && state.lastFailure
+          ? <p className="updates-error" role="alert">{copy.previousFailed.replace("{message}", state.lastFailure)}</p> : null}
         {state.status === "disabled" ? <p>{copy.disabledBody}</p> : <>
           <p>{cancellationPending ? copy.cancellingBody : busy ? copy.restart : copy.automatic}</p>
           {(blocked || transitionBusy) && state.status === "available" ? <p className="updates-wait">{copy.wait}</p> : null}

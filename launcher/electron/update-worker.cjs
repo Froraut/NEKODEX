@@ -413,7 +413,23 @@ function commit(transaction) {
   writeJournal({ ...transaction, phase: "committed" });
   transaction.phase = "committed";
   for (const op of transaction.operations) fs.rmSync(op.previous, { recursive: true, force: true });
-  // Linux retains the old version and old runner for a separate explicit cleanup.
+  if (transaction.job.platform === "linux") removePreviousLinuxVersion(transaction);
+}
+// The committed wrapper no longer references the previous AppImage. Remove only
+// the files this installer layout owns from a sibling version directory; anything
+// unexpected keeps the directory in place. Never fails the committed update.
+function removePreviousLinuxVersion(transaction) {
+  const job = transaction.job;
+  const previous = path.dirname(job.target);
+  if (!transaction.newDirectory || samePath(previous, transaction.newDirectory)
+    || !samePath(path.dirname(previous), path.dirname(transaction.newDirectory))
+    || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(path.basename(previous))) return;
+  try {
+    for (const name of [path.basename(job.target), "run-appimage"]) fs.rmSync(path.join(previous, name), { force: true });
+    fs.rmdirSync(previous);
+  } catch (error) {
+    appendLog(job, `previous Linux version was kept: ${error.message}`);
+  }
 }
 function cleanup(transaction, deps = {}) {
   validateTransaction(transaction);

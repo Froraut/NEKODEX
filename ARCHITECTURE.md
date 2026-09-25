@@ -91,6 +91,11 @@ separate facts.
 6. **Update:** select a compatible release from the packaged repository → verify
    metadata → acquire authenticated bytes → validate staging → hand off to one
    detached installer → observe its terminal result before selecting the new UI.
+   The controller re-checks in the background (six hours, or 30 minutes after a
+   failed check), owns the `update-downloads` cache and prunes packages it can no
+   longer install, and reports a rollback recorded in `update-worker.log` once
+   on the next offer. A committed Linux update removes the previous version
+   directory it replaced.
 
 ## State and persistence
 

@@ -3,6 +3,30 @@ const os = require("node:os");
 const path = require("node:path");
 const { throwIfAborted } = require("./update-abort.cjs");
 
+const CACHED_ASSET = /^[a-f0-9]{64}-codex-web-gpt-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+?)?)-(?:mac|win|linux)-/;
+
+function updateCacheRoot(logsDirectory) {
+  return path.join(logsDirectory, "..", "update-downloads");
+}
+
+// Each cached package is hundreds of megabytes. Remove entries (complete files,
+// partials and their identity records) the caller no longer needs; best effort.
+function pruneUpdateCache(cacheRoot, keep, logger) {
+  let entries;
+  try { entries = fs.readdirSync(cacheRoot, { withFileTypes: true }); }
+  catch (error) {
+    if (error?.code !== "ENOENT") logger?.warn("launcher.update_cache_prune_failed", { message: String(error) });
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+    const version = CACHED_ASSET.exec(entry.name)?.[1] ?? null;
+    if (keep(entry.name, version)) continue;
+    try { fs.rmSync(path.join(cacheRoot, entry.name), { force: true }); }
+    catch (error) { logger?.warn("launcher.update_cache_prune_failed", { message: String(error) }); }
+  }
+}
+
 // Owns temporary staging until successful return. The controller then owns
 // cleanup/handoff; the authenticated cache is never owned by this transaction.
 // Callbacks retain the controller's existing injected dependency API. No worker
@@ -36,9 +60,11 @@ async function stageAuthenticatedUpdate({ available, repository, platform, arch,
     const expected = expectedChecksum(checksums, available.assetName);
     if (expected !== authenticatedAsset.sha256) throw new Error("Checksums do not match independently authenticated release metadata");
     const assetPath = path.join(tempRoot, available.assetName);
-    const cacheRoot = path.join(logsDirectory, "..", "update-downloads");
+    const cacheRoot = updateCacheRoot(logsDirectory);
     fs.mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
     const cachedAsset = path.join(cacheRoot, `${expected}-${available.assetName}`);
+    // Only the selected package can be resumed; older downloads are dead weight.
+    pruneUpdateCache(cacheRoot, name => name.startsWith(path.basename(cachedAsset)), logger);
     if (fs.existsSync(cachedAsset) && (fs.lstatSync(cachedAsset).isSymbolicLink()
       || !fs.lstatSync(cachedAsset).isFile())) throw new Error("Unsafe cached update asset");
     if (fs.existsSync(cachedAsset)) {
@@ -119,4 +145,4 @@ async function stageAuthenticatedUpdate({ available, repository, platform, arch,
   }
 }
 
-module.exports = { stageAuthenticatedUpdate };
+module.exports = { pruneUpdateCache, stageAuthenticatedUpdate, updateCacheRoot };
