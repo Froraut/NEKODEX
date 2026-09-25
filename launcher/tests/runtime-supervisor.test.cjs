@@ -1570,6 +1570,52 @@ test("launcher preserves stale ownership evidence when an old active runtime can
   }
 });
 
+test("a setup-required start keeps the live ownership record of the committed release", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-needs-setup-owner-"));
+  const descriptorPath = path.join(root, "runtime", "launcher-browser.json");
+  const statePath = path.join(root, "runtime", "launcher-supervisor.json");
+  fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
+  fs.writeFileSync(descriptorPath, "{}\n");
+  fs.writeFileSync(path.join(root, "config.json"), `${JSON.stringify(launcherConfig(descriptorPath, {
+    releaseVersion: "0.1.16",
+    controlToken: "needs-setup-owner-control-token-0123456789abcdef",
+  }))}\n`);
+  // A detached daemon of the committed release outlived the launcher that recorded it.
+  const liveState = {
+    version: 1,
+    ownerPid: 999_999_999,
+    daemonPid: process.pid,
+    tunnelPid: null,
+    status: "ready",
+    daemonInstanceId: "00000000-0000-4000-8000-000000000001",
+    updatedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(statePath, `${JSON.stringify(liveState)}\n`);
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: root,
+    coreHome: root,
+    browserDescriptorPath: descriptorPath,
+  });
+
+  try {
+    const result = await supervisor.startIfConfigured();
+    assert.equal(result.status, "needs-setup");
+    // Setup and the committed-release bootstrap identify and drain that daemon through this record.
+    assert.deepEqual(JSON.parse(fs.readFileSync(statePath, "utf8")), liveState);
+
+    const deadState = { ...liveState, daemonPid: null, daemonInstanceId: undefined, status: "stopped" };
+    fs.writeFileSync(statePath, `${JSON.stringify(deadState)}\n`);
+    assert.equal((await supervisor.startIfConfigured()).status, "needs-setup");
+    const replaced = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    assert.equal(replaced.status, "needs-setup");
+    assert.equal(replaced.ownerPid, process.pid);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("launcher recovers a stale tunnel even when no stale Responses proxy is reachable", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-stale-tunnel-only-"));
   const descriptorPath = path.join(root, "runtime", "launcher-browser.json");

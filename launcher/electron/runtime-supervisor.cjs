@@ -78,6 +78,14 @@ function runtimeOwnershipPredatesCurrentBoot(state) {
   );
 }
 
+function runtimeOwnershipProcessesRunning(state) {
+  return Boolean(state && !runtimeOwnershipPredatesCurrentBoot(state) && (
+    processRunning(state.ownerPid)
+    || processRunning(state.daemonPid)
+    || processRunning(state.tunnelPid)
+  ));
+}
+
 function runtimeOwnershipMayBeLive(state) {
   if (!state || runtimeOwnershipPredatesCurrentBoot(state)) return false;
   if (processRunning(state.daemonPid) || processRunning(state.tunnelPid)) return true;
@@ -333,13 +341,7 @@ class RuntimeSupervisor {
   }
 
   writeExternalState(detail) {
-    const existing = this.readState();
-    const preservesLiveOwnership = existing && !runtimeOwnershipPredatesCurrentBoot(existing) && (
-      processRunning(existing.ownerPid)
-      || processRunning(existing.daemonPid)
-      || processRunning(existing.tunnelPid)
-    );
-    if (!preservesLiveOwnership) this.writeState("external", detail);
+    if (!runtimeOwnershipProcessesRunning(this.readState())) this.writeState("external", detail);
   }
 
   spawnChild(name, invocation, recoverySignal) {
@@ -1470,7 +1472,11 @@ class RuntimeSupervisor {
     if (!tunnelOnly && config.releaseVersion !== this.app.getVersion()) {
       const detail = `Config requires committed runtime ${config.releaseVersion}; launcher is ${this.app.getVersion()}`;
       if (!allowCommittedVersion) {
-        this.writeState("needs-setup", detail);
+        let existing = null;
+        try { existing = this.readState(); } catch { /* An unreadable record holds no ownership evidence. */ }
+        // A live owner record (such as a detached daemon of the committed release) is how setup and
+        // the committed-release bootstrap still authenticate, drain or stop that runtime.
+        if (!runtimeOwnershipProcessesRunning(existing)) this.writeState("needs-setup", detail);
         this.logger.warn("runtime.setup_required", { detail });
         this.updateCapabilities("needs-setup", detail, config);
         return { status: "needs-setup", detail };
