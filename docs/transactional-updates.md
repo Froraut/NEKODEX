@@ -57,20 +57,11 @@ resumes the same transaction. A nonterminal transaction blocks another update.
 
 ## Evidence and limits
 
-`launcher/tests/update-worker.test.cjs` exercises interruption before and after backup/replace,
-interruption during rollback, staging and launch failures, readiness failure, idempotent recovery,
-live-owner locking and exact prior content/mode/timestamp preservation for all three platform
-transaction shapes. Native POSIX subprocess tests kill a worker with SIGKILL at each replacement
-edge, verify guardian recovery and actual relaunch, prove that unauthorized supervisors cannot
-launch, and exercise successful/failed native readiness handoffs. The native subprocess cases
-are skipped on Windows; the cross-platform filesystem/state regressions still run there.
+The repository has no automated tests for the update worker or package validation. When the
+validator was introduced, the installed macOS arm64 application was inspected read-only with it
+successfully.
 
-`launcher/tests/update-validation.test.cjs` tests malformed or mismatched packages/native headers,
-ASAR bounds/path handling, runtime identity, and escaped symlinks. A real Electron subprocess
-also verifies compatibility with Electron's ASAR filesystem behavior. The existing installed
-macOS arm64 application was inspected read-only using the new validator successfully.
-
-These local checks do not constitute native Windows/macOS x64/Linux package installation,
+That inspection does not constitute native Windows/macOS x64/Linux package installation,
 reboot or login-service acceptance. Reboot recovery runs at the next graphical user login and
 depends on that operating system allowing the registered per-user entry. An administrator can
 disable such entries. Filesystem or hardware failure that loses already flushed data is outside

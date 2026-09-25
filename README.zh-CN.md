@@ -191,8 +191,6 @@ bun run app
 使用 **活动** 页面查看安全的本地诊断，并通过 **设置 → 运行诊断** 执行端到端健康检查。设置页还可
 取消保留的浏览器任务，或在卸载前移除 Codex 集成。仅在需要为每个浏览器检查点保存截图时设置
 `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1`。
-使用[账户与 UI 验收工具](docs/account-ui-acceptance.md)运行带版本的离线样例，或单独明确启用
-本地检查与账户检查。默认不会执行任何账户操作。
 浏览器诊断默认保留最近 50 个已完成任务的记录，并保护仍由活动进程持有的记录。
 将 `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTIC_TRACE_LIMIT` 设为 1 至 1000 可调整已完成记录的保留数量。
 进程崩溃后留下的记录会进入正常清理范围。
@@ -217,7 +215,7 @@ codex-chatgpt-web subagents native
   失败，而不是静默切换模型或传输方式。
 - 浏览器状态是敏感的登录凭据，loopback 监听器也可被同一本地用户运行的进程访问。切勿共享
   启动器 profile，并仅在可信工作站上使用。
-- 发布包目前支持 macOS 13+（arm64/x64）、Windows x64 和 Linux x64。运行时、测试和打包会在
+- 发布包目前支持 macOS 13+（arm64/x64）、Windows x64 和 Linux x64。运行时和打包会在
   CI 中对三种系统进行检查；依赖账户的浏览器与 MCP 流程使用单独的
   [发布验证](docs/release-validation.md)。
 - 构建目前尚未进行平台签名，因此 Gatekeeper 或 SmartScreen 可能会显示警告。安装程序会在安装前

@@ -19,7 +19,6 @@
     "package:win": "bun run build && bun run build:runtime && bun run scripts/package.cjs --win",
     "package:linux": "bun run build && bun run build:runtime && bun run scripts/package.cjs --linux",
     "smoke:package": "bun run scripts/smoke-package.cjs",
-    "test": "node --test tests/*.test.cjs",
     "start": "electron ."
   },
   "dependencies": {

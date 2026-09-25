@@ -49,27 +49,16 @@ generated IDs normalized):
 ```
 
 The version comes from the keyboard control's `aria-describedby` targets, **not** the hidden
-slider's `aria-valuetext` (which is absent). `tests/fixtures/pro-model-picker.json` preserves these
-observed attributes, option names, and descriptions without account data or generated IDs.
+slider's `aria-valuetext` (which is absent).
 
-`tests/pro-model-selection.test.ts` models that fixture at the browser locator boundary and
-exercises the actual selection and pre-send methods. It covers every pinned version,
-missing options, mismatched version labels, a future Latest version, multipart preparation, and a
-picker reset before submission. Run it with:
-
-```bash
-bun test tests/pro-model-selection.test.ts tests/model-contract.test.ts
-```
-
-The local tests use a DOM-derived locator test double, not a real ChatGPT connection. The PR author
-reports a separate live check on 2026-09-11 using the upstream working-tree DEV launcher on macOS
+The PR author reports a live check on 2026-09-11 using the upstream working-tree DEV launcher on macOS
 with the Chinese ChatGPT UI:
 
 - Selected **GPT-5.6 Sol Pro** through DEV Settings and verified `proModelVersion: "5.6"` persisted.
 - The actual browser worker selected 5.6, verified Pro, rechecked immediately before submission,
   and completed one browser-only response: `PRO56_OK` (Markdown transport escaped the underscore).
 - Initial preflight failures while correcting the description lookup stopped before sending.
-- No GPT-5.5 or GPT-6 prompt was submitted; those branches have local regression coverage only.
+- No GPT-5.5 or GPT-6 prompt was submitted; those branches have no live or automated check.
 
 Those author-reported results do not constitute live verification of this fork, other ChatGPT
 locales, or models. The fork preserves independent Extra High capability and its existing

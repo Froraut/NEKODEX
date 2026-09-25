@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { gzipSync } = require('node:zlib');
 const { chromium } = require('playwright-core');
-const { createFixtureServer } = require('../tests/fixtures/ui-preview.cjs');
+const { createFixtureServer } = require('./ui-preview.cjs');
 
 async function measure() {
   const language = process.argv.find(value => value.startsWith('--language='))?.slice('--language='.length) ?? 'en';

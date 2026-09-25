@@ -204,12 +204,10 @@ confirmation and keyboard focus behavior.
 - Core types: `bun run typecheck`. Renderer types: `bun run --cwd launcher typecheck`.
 - Renderer build: `bun run --cwd launcher build:renderer`. Browser helper:
   `bun run scripts/build-browser-helper.ts`.
-- Use named, relevant behavioral cases. Root `bun run verify` invokes broad
-  suites, audits and release-oriented build/smoke work; it is not a default check.
-- [Renderer fixtures](launcher/tests/fixtures/ui-preview.cjs) use synthetic IPC.
-  [Source Electron verification](launcher/tests/architecture-refactor-electron-preview.cjs)
-  uses a temporary DEV profile and real preload IPC. Neither proves live provider
-  behavior or an installed release.
+- The repository has no automated test suite. Root `bun run verify` runs audits,
+  typechecks and release-oriented build/smoke work; it is not a default check.
+- The [renderer preview](launcher/scripts/ui-preview.cjs) serves the built renderer
+  with synthetic IPC. It does not prove live provider behavior or an installed release.
 - Bind Electron automation to the exact source renderer URL and then confirm its
   DEV profile. `firstWindow()` can select an embedded blank guest instead.
 - Start the source DEV target through `bun run launcher:dev` with an explicit

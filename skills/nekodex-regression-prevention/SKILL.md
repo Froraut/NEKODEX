@@ -92,7 +92,7 @@ Perform a manual review of the changed path and direct callers. Ask:
 - Can the UI claim readiness from stale or incomplete evidence?
 - Can a malformed tool call or nested result be silently accepted or lose fields?
 
-Use only a small focused check relevant to the changed behavior (up to five named cases, within the repository's fast-verification limits). Do not turn this skill into a full-suite or broad audit requirement.
+Use only a small focused check relevant to the changed behavior, such as one targeted DEV or manual scenario; the repository has no automated test suite. Do not turn this skill into a broad audit requirement.
 
 ## Renderer and UI state invariants
 

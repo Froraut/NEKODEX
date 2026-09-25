@@ -295,15 +295,13 @@ See the complete [security model](security-model.md).
 ## Repository checks
 
 Pull requests and pushes to `main` keep the existing `verify` check names on macOS, Linux, and
-Windows, plus `actionlint`. The selector records whether Linux exercises named cases from the
-backend review regression file or one browser admission case. At most one Linux test command runs;
-the other matrix runners do not execute PR behavior tests. Documentation and CI metadata require
-manual diff review, with workflow linting in `actionlint`. Changes to the selector itself, unknown
-runtime paths, dependency updates, and complex scopes produce an explicit **manual review required**
-outcome in each `verify` summary. A green classifier-only check does not claim that a reviewer has
-completed that review or that changed behavior passed a test.
+Windows, plus `actionlint`. On those events only the Linux runner runs a check:
+`bun run architecture:check` for the module map and documented paths. The repository has no
+automated test suite, so no behavior tests run. Code, documentation and CI metadata changes require
+manual diff review, with workflow linting in `actionlint`. A green check does not claim that a
+reviewer has completed that review or that changed behavior works.
 
 The three-platform `verify`, packaging, AppImage ABI, and package smoke sequence is an optional
 manually dispatched CI run with explicit authorization for that broad run, after focused development
-verification. Manual-review scope on a PR does not require that broad run. The separate tag release
+verification. A pull request does not require that broad run. The separate tag release
 workflow packages reviewed source; it does not replace the development behavior check.

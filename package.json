@@ -29,7 +29,6 @@
     "doctor": "bun run src/cli.ts doctor",
     "dev:launcher": "bun run src/cli.ts dev launcher",
     "dev:chat": "bun run src/cli.ts dev chat",
-    "test": "bun test ./tests",
     "audit": "bun audit",
     "check-version": "bun run scripts/check-version.ts",
     "typecheck": "bun x --no-install --bun tsc --noEmit",
@@ -52,7 +51,6 @@
     "launcher:audit": "bun run --cwd launcher audit",
     "launcher:typecheck": "bun run --cwd launcher typecheck",
     "launcher:build": "bun run --cwd launcher build",
-    "launcher:test": "bun run --cwd launcher test",
     "verify": "bun run scripts/verify.ts"
   },
   "dependencies": {

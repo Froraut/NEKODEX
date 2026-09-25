@@ -214,13 +214,11 @@ signature cannot authenticate the first app installation retroactively.
 
 ## Validation boundaries
 
-Focused tests cover metadata tampering, asset replacement, wrong fork/version, unknown and
-expired keys, threshold/rotation behavior, duplicate/path-traversal assets, byte limits,
-local-versus-CI source labeling, missing signing inputs, and rejection of Apple Development,
-ad-hoc, wrong-team and untimestamped identities. Required platform/account acceptance remains
-listed in [release-validation.md](release-validation.md). Native signatures, notarization,
-Windows SmartScreen behavior and GitHub provenance are only confirmed after the corresponding
-service-backed workflow succeeds; their configuration is not evidence of that success.
+The repository has no automated tests for release signing or metadata verification. Required
+platform/account acceptance remains listed in [release-validation.md](release-validation.md).
+Native signatures, notarization, Windows SmartScreen behavior and GitHub provenance are only
+confirmed after the corresponding service-backed workflow succeeds; their configuration is not
+evidence of that success.
 
 Primary references: [GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations),
 [Electron signing](https://www.electronjs.org/docs/latest/tutorial/code-signing),

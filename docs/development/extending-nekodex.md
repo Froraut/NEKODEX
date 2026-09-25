@@ -77,16 +77,11 @@ For persistent changes, use the snapshot that produced the candidate. A later re
 
 Use the smallest behavioral scenario that distinguishes the new contract from the old behavior. Exercise deferred completion, cancellation or write failure when those boundaries are affected; prove the fixture reaches the intended boundary before injecting the fault. Reuse unchanged checks, avoid source-text/count assertions, and keep one integrated build/UI owner.
 
-The renderer preview in `launcher/tests/fixtures/ui-preview.cjs` supplies synthetic IPC without accounts or provider requests. `launcher/tests/architecture-refactor-ui-preview.cjs` covers the changed safety/workspace/usage flows; existing focused previews cover navigation and task/Settings behavior. These fixtures do not establish live account, updater, provider or installed-app behavior.
+The renderer preview in `launcher/scripts/ui-preview.cjs` serves the built renderer with synthetic IPC and no accounts or provider requests; its scenarios are listed at the top of the file. It does not establish live account, updater, provider or installed-app behavior.
 
-`launcher/tests/performance-ui-preview.cjs` exercises deferred screen loading,
-offscreen log retention, stable filtered rows and failed-load recovery, including
-paused animation frames. The bounded `launcher/scripts/measure-ui-work.cjs` and
+The bounded `launcher/scripts/measure-ui-work.cjs` and
 `measure-usage-projection.cjs <baseline-ref>` probes produce comparative evidence;
-they are not default startup tasks or broad regression suites.
-
-`launcher/tests/locale-loading-ui-preview.cjs` checks saved-locale startup,
-in-flight selection, dirty-input retention and failed-chunk recovery. Startup-only
+they are not default startup tasks or broad regression suites. Startup-only
 size sampling uses `measure-ui-work.cjs --startup-only --language=ru`; it counts
 all requested scripts, including the selected language chunk. Task probes are
 `measure-task-history.cjs` (compiled UI, synthetic rows) and
@@ -94,7 +89,6 @@ all requested scripts, including the selected language chunk. Task probes are
 
 `launcher/scripts/measure-browser-publication.cjs <baseline-ref>` compares actual
 host/pool methods on an inert four-account history fixture. Its JSON byte count is
-a serialization proxy, not Electron wire traffic. `account-observation-ui-preview.cjs`
-checks startup/live stale notifications, covered account reads and genuine updates.
+a serialization proxy, not Electron wire traffic.
 
 Source publication, development verification, packaging and installed runtime are separate outcomes. This refactor does not change the release version or authorize a release.

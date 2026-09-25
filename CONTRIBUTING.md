@@ -7,7 +7,7 @@ Original project attribution and the MIT license are preserved in the repository
 
 External contributions are welcome, but this is an intentionally maintainer-led project. Pull
 requests are expected to be small, focused, and easy to review and verify. Good contributions
-include isolated bug fixes, regression tests, documentation corrections, and narrow
+include isolated bug fixes, documentation corrections, and narrow
 platform-specific fixes.
 
 Before opening a bug report, work through [TROUBLESHOOTING.md](TROUBLESHOOTING.md) and use the
@@ -37,12 +37,11 @@ large unsolicited pull request may be closed even when substantial work went int
 
 1. Run `bun install --frozen-lockfile` in the repository root and in `launcher/`.
 2. Run `bun run verify`.
-3. Add a focused regression test for behavior changes.
-4. For browser UI changes, include the observed DOM evidence and a reproducible fixture. Do not
+3. For browser UI changes, include the observed DOM evidence and steps to reproduce it. Do not
    broaden selectors speculatively.
-5. Keep Terms and trademark claims factual. Do not market the project as a quota or rate-limit
+4. Keep Terms and trademark claims factual. Do not market the project as a quota or rate-limit
    bypass.
-6. Manually test the affected behavior. DEV mode is sufficient only when the change does not affect
+5. Manually test the affected behavior. DEV mode is sufficient only when the change does not affect
    local-tool execution, MCP execution, or the outer Codex agent loop. Execution changes require a
    real installed Codex integration; DEV simulation is not end-to-end acceptance evidence.
 

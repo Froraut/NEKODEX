@@ -1,6 +1,6 @@
 // Synthetic Task Center workload against the current built renderer.
 const { chromium } = require('playwright-core');
-const { createFixtureServer } = require('../tests/fixtures/ui-preview.cjs');
+const { createFixtureServer } = require('./ui-preview.cjs');
 (async () => {
   const server = createFixtureServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

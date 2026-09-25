@@ -23,10 +23,9 @@ Fixes #
 
 - [ ] I ran `bun install --frozen-lockfile` in the repository root and `launcher/`.
 - [ ] I ran `bun run verify` with the Bun version pinned by `package.json`.
-- [ ] I added or updated a focused regression test for behavior changes.
 - [ ] I manually tested the affected behavior.
 - [ ] If this changes local tools, MCP execution, or the outer Codex agent loop, I tested it through a real installed Codex integration; DEV mode alone is acceptable only when execution is not affected.
-- [ ] If this changes ChatGPT browser UI handling, I included observed DOM evidence and a reproducible fixture instead of broadening selectors speculatively.
+- [ ] If this changes ChatGPT browser UI handling, I included observed DOM evidence and steps to reproduce it instead of broadening selectors speculatively.
 - [ ] If this changes the launcher, I preserved macOS, Windows, and Linux packaging and named the platform packages actually built below.
 - [ ] I did not commit browser state, credentials, Tunnel IDs, raw logs, generated artifacts, or private paths.
 - [ ] I did not include an unrelated dependency update, release artifact, or version change.
