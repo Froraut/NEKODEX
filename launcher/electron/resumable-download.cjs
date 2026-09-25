@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const { sha256 } = require('./update-asset-hash.cjs');
 const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
+const { abortReason } = require('./update-abort.cjs');
 
 // The cache key comes from authenticated release metadata, never a redirected URL.
 async function downloadAuthenticatedAsset(url, destination, {
@@ -13,7 +14,7 @@ async function downloadAuthenticatedAsset(url, destination, {
     || !Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 1024 ** 3
     || expectedBytes > maxBytes || !Number.isSafeInteger(totalTimeoutMs) || totalTimeoutMs <= 0
     || !/^[a-f0-9]{64}$/.test(expectedSha256)) throw new Error('Invalid authenticated download identity');
-  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('Update download was cancelled');
+  if (signal?.aborted) throw abortReason(signal, 'Update download was cancelled');
   const partial = `${destination}.part`;
   const identityFile = `${destination}.identity.json`;
   const identity = JSON.stringify({ url, expectedBytes, expectedSha256 });
@@ -34,9 +35,7 @@ async function downloadAuthenticatedAsset(url, destination, {
   let speedBaseBytes = bytes;
   let speedStartedAt = Date.now();
   const controller = new AbortController();
-  const cancel = () => controller.abort(
-    signal.reason instanceof Error ? signal.reason : new Error('Update download was cancelled'),
-  );
+  const cancel = () => controller.abort(abortReason(signal, 'Update download was cancelled'));
   signal?.addEventListener('abort', cancel, { once: true });
   if (signal?.aborted) cancel();
   const total = setTimeout(() => controller.abort(new Error('Update download exceeded its overall time limit; partial retained')), totalTimeoutMs);

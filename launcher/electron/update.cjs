@@ -12,6 +12,7 @@ const { verifyReleaseMetadata } = require("./release-trust.cjs");
 const { downloadAuthenticatedAsset } = require("./resumable-download.cjs");
 const { processIdentity } = require("./update-recovery.cjs");
 const { runOwnedCommand } = require("./update-preparation.cjs");
+const { abortReason, throwIfAborted } = require("./update-abort.cjs");
 const BUILD = require("../package.json");
 const APPLICATION = applicationIdentity(BUILD);
 
@@ -40,14 +41,6 @@ function preparationCancelledError() {
   return Object.assign(new Error("Update preparation was cancelled; the authenticated partial download was kept for retry"), {
     code: "UPDATE_PREPARATION_CANCELLED",
   });
-}
-
-function abortReason(signal, fallback = "Update preparation was cancelled") {
-  return signal?.reason instanceof Error ? signal.reason : new Error(fallback);
-}
-
-function throwIfAborted(signal) {
-  if (signal?.aborted) throw abortReason(signal);
 }
 
 function request(url, redirects = 0, { signal, headers = {}, allowPartial = false } = {}) {

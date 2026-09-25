@@ -1,10 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-
-function throwIfAborted(signal) {
-  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("Update preparation was cancelled");
-}
+const { throwIfAborted } = require("./update-abort.cjs");
 
 // Owns temporary staging until successful return. The controller then owns
 // cleanup/handoff; the authenticated cache is never owned by this transaction.

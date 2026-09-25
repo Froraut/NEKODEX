@@ -1,5 +1,4 @@
 // Adapted from upstream PR #469. Only launcher-owned children receive these values.
-const NATIVE_URL = "https://chatgpt.com/backend-api/codex";
 const TUNNEL_URL = "https://api.openai.com/v1/tunnels";
 const EXPLICIT_PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"];
 
@@ -54,12 +53,6 @@ async function resolveNativeRequestProxy(session, value, timeoutMs = 5000) {
   return resolvePac(session, url.href, timeoutMs);
 }
 
-async function resolveNativeProxyEnvironment(session, environment = process.env, timeoutMs = 5000) {
-  if (["CODEX_CHATGPT_WEB_NATIVE_PROXY", ...EXPLICIT_PROXY_KEYS].some(key => environment[key]?.trim())) return {};
-  const origin = await resolvePac(session, NATIVE_URL, timeoutMs);
-  return origin ? { CODEX_CHATGPT_WEB_NATIVE_PROXY: origin } : {};
-}
-
 async function resolveTunnelProxyEnvironment(session, environment = process.env, timeoutMs = 5000) {
   const bypass = loopbackBypass(environment);
   if (EXPLICIT_PROXY_KEYS.some(key => environment[key]?.trim())) return bypass;
@@ -71,7 +64,6 @@ module.exports = {
   loopbackBypass,
   nativeFallbackProxyEnvironment,
   proxyOriginFromPac,
-  resolveNativeProxyEnvironment,
   resolveNativeRequestProxy,
   resolveTunnelProxyEnvironment,
 };

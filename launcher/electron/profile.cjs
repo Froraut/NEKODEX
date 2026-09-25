@@ -64,4 +64,5 @@ module.exports = {
   DEVELOPMENT_PROFILE,
   PRODUCTION_PROFILE,
   resolveLauncherProfile,
+  resolveUserPath,
 };

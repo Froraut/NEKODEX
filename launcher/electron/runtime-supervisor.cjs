@@ -1,4 +1,4 @@
-const { conciseTunnelLog, tunnelConnectCanContinue, tunnelControlDiagnostic, managedTunnelConnectArgs } = require("./runtime-tunnel-policy.cjs");
+const { tunnelConnectCanContinue, tunnelControlDiagnostic, managedTunnelConnectArgs } = require("./runtime-tunnel-policy.cjs");
 const { collectRuntimeLines: collectLines } = require("./runtime-output.cjs");
 const { absolutePath, validateConfig, normalizeSetupConfig } = require("./runtime-config-contract.cjs");
 const fs = require("node:fs");
