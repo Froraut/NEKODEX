@@ -68,6 +68,10 @@ function validateConfig(value) {
  * selected mode the scheduler MUST fail if that account is disabled, rather
  * than silently route to another account. Enabled is config, not auth status.
  * A missing file uses defaults in memory until the first successful mutation.
+ *
+ * Methods return detached snapshots and throw on invalid input or IO. add()
+ * selects the new enabled account; setEnabled() preserves selectedId and throws
+ * when it would disable the last enabled account.
  */
 function createAccountRegistry(coreHome) {
   if (typeof coreHome !== "string" || !coreHome.trim() || !path.isAbsolute(coreHome)) {

@@ -1,19 +1,12 @@
 const { AccountQuotaReader } = require('./account-quotas.cjs');
 const { createCodexLoginController, OFFICIAL_DEVICE_VERIFICATION_URL } = require('./codex-login.cjs');
-const { allowedAuthUrl } = require('./browser-host.cjs');
+const { allowedAuthUrl } = require('./browser-navigation-policy.cjs');
 const { validateAccountId } = require('./account-registry.cjs');
 const { awaitInspection } = require('./inspection-control.cjs');
 
 function sameIdentity(a, b) {
   return Boolean(a && b && a.accountId === b.accountId
     && a.identityEpoch === b.identityEpoch && a.principalFingerprint === b.principalFingerprint);
-}
-
-function safeAuthNavigation(value) {
-  try {
-    const url = new URL(value);
-    return !url.username && !url.password && (!url.port || url.port === '443') && allowedAuthUrl(value);
-  } catch { return false; }
 }
 
 /** Account-scoped quota reads and the official shared Codex device-login flow. */
@@ -282,10 +275,10 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
 
   function secureWindow(window, accountSession) {
     const webContents = window.webContents;
-    webContents.on('will-navigate', (event, url) => { if (!safeAuthNavigation(url)) event.preventDefault(); });
-    webContents.on('will-redirect', (event, url) => { if (!safeAuthNavigation(url)) event.preventDefault(); });
+    webContents.on('will-navigate', (event, url) => { if (!allowedAuthUrl(url)) event.preventDefault(); });
+    webContents.on('will-redirect', (event, url) => { if (!allowedAuthUrl(url)) event.preventDefault(); });
     webContents.setWindowOpenHandler(({ url }) => {
-      if (!safeAuthNavigation(url) || authChildren.size >= 3) return { action: 'deny' };
+      if (!allowedAuthUrl(url) || authChildren.size >= 3) return { action: 'deny' };
       return { action: 'allow', overrideBrowserWindowOptions: {
         width: 620, height: 760, autoHideMenuBar: true,
         webPreferences: { session: accountSession, sandbox: true, contextIsolation: true,
@@ -355,4 +348,4 @@ function createCodexAccountTools({ getPool, getInteractionMode = () => 'automati
     destroy });
 }
 
-module.exports = { createCodexAccountTools, sameIdentity, safeAuthNavigation };
+module.exports = { createCodexAccountTools, sameIdentity };

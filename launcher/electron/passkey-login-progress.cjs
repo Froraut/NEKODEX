@@ -12,6 +12,7 @@ const PUBLIC_ERROR_CODES = new Set([
   "passkey-verification-failed",
   "passkey-import-failed",
 ]);
+const CLEANUP_FAILURE = /(cleanup|clearing|removing|did not exit|termination|refused)/i;
 
 function initialPasskeyProgress(now = Date.now()) {
   return {
@@ -38,6 +39,24 @@ function publicPasskeyProgress(progress) {
   };
 }
 
+/** Classifies a failed sign-in; the raw error message never leaves this function. */
+function passkeyLoginFailure(error, { aborted, progressPhase }) {
+  const message = error instanceof Error ? error.message : String(error);
+  const cancelled = (aborted || error?.code === "profile-login-cancelled") && !CLEANUP_FAILURE.test(message);
+  const phase = cancelled ? "cancelled" : /timed out/i.test(message) ? "timed-out" : "failed";
+  const errorCode = phase === "cancelled" ? null
+    : ["chrome-account-mismatch", "chrome-account-unverified", "chrome-account-unidentified",
+      "chrome-profile-claim-missing"].includes(error?.code) ? error.code
+    : error?.code === "existing_chrome_handoff_timeout" ? "passkey-handoff-timeout"
+      : phase === "timed-out" ? "passkey-timeout"
+        : CLEANUP_FAILURE.test(message) ? "passkey-cleanup-failed"
+          : /invalid (storage-state|cookie|origin|ChatGPT local storage)|contains no ChatGPT\/OpenAI cookies|too (large|many)/i.test(message) ? "passkey-validation-failed"
+            : progressPhase === "verifying" ? "passkey-verification-failed"
+              : progressPhase === "starting" || progressPhase === "waiting" || progressPhase === "importing"
+                ? "passkey-capture-failed" : "passkey-import-failed";
+  return { phase, errorCode };
+}
+
 function parsePasskeyProgress(line) {
   if (!line.startsWith("@codex-passkey:")) return null;
   let message;
@@ -51,4 +70,4 @@ function parsePasskeyProgress(line) {
   return null;
 }
 
-module.exports = { initialPasskeyProgress, publicPasskeyProgress, parsePasskeyProgress };
+module.exports = { initialPasskeyProgress, passkeyLoginFailure, publicPasskeyProgress, parsePasskeyProgress };

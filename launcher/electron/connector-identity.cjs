@@ -1,10 +1,7 @@
 const CURRENT_CONNECTOR_NAME = "Codex Native4";
 const ASYNC_CONNECTOR_NAME = "Codex Native6";
-const PREVIOUS_ASYNC_CONNECTOR_NAME = "Codex Native5";
 const MANUAL_CONNECTOR_NAME = "Codex Zero Risk4";
-const DEV_CONNECTOR_NAME = `${CURRENT_CONNECTOR_NAME} DEV`;
 const ASYNC_DEV_CONNECTOR_NAME = `${ASYNC_CONNECTOR_NAME} DEV`;
-const PREVIOUS_ASYNC_DEV_CONNECTOR_NAME = `${PREVIOUS_ASYNC_CONNECTOR_NAME} DEV`;
 const LEGACY_CONNECTOR_NAMES = Object.freeze([
   "Codex Native", "Codex Native DEV", "Codex Native2", "Codex Native2 DEV", "Codex Zero Risk",
   "Codex Native3", "Codex Native3 DEV", "Codex Zero Risk2", "Codex Zero Risk3",
@@ -32,23 +29,6 @@ function isLegacyConnectorName(value) {
   return typeof value === "string" && LEGACY_CONNECTOR_NAMES.includes(value.trim());
 }
 
-function connectorNameForSetup(value, asyncToolOperations = false) {
-  const configured = validateConnectorName(value);
-  if (isLegacyConnectorName(configured)) return currentConnectorName(configured, { asyncToolOperations });
-  return configured;
-}
-
-function connectorNameForDevSetup(value, asyncToolOperations = false) {
-  if (value === undefined || value === null) return automaticConnectorName({ development: true, asyncToolOperations });
-  const configured = validateConnectorName(value);
-  if (configured === MANUAL_CONNECTOR_NAME || configured === "Codex Zero Risk" || configured === "Codex Zero Risk2" || configured === "Codex Zero Risk3") return MANUAL_CONNECTOR_NAME;
-  // Supported saved identities are exact, including their profile suffix.
-  if (isLegacyConnectorName(configured)) {
-    return automaticConnectorName({ development: true, asyncToolOperations });
-  }
-  return configured;
-}
-
 function requireCurrentRuntimeConnectorName(value) {
   const configured = validateConnectorName(value);
   if (isLegacyConnectorName(configured)) {
@@ -64,13 +44,8 @@ function requireCurrentRuntimeConnectorName(value) {
 module.exports = {
   ASYNC_CONNECTOR_NAME,
   ASYNC_DEV_CONNECTOR_NAME,
-  PREVIOUS_ASYNC_CONNECTOR_NAME,
-  PREVIOUS_ASYNC_DEV_CONNECTOR_NAME,
   automaticConnectorName,
-  connectorNameForSetup,
-  connectorNameForDevSetup,
   CURRENT_CONNECTOR_NAME,
-  DEV_CONNECTOR_NAME,
   isLegacyConnectorName,
   LEGACY_CONNECTOR_NAMES,
   MANUAL_CONNECTOR_NAME,

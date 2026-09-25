@@ -23,7 +23,7 @@ const { validateConnectorName } = require("./connector-identity.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
 const { captureOwnedSession, disposeOwnedSessionSnapshot, restoreOwnedSession } = require("./owned-session-rollback.cjs");
-const { initialPasskeyProgress, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
+const { initialPasskeyProgress, passkeyLoginFailure, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
 const {
   publicExistingChromeProgress,
   openExistingChromeLogin,
@@ -41,10 +41,23 @@ const {
   scaleBrowserBounds,
   shellZoomActionForInput,
 } = require("./browser-state.cjs");
+const {
+  CHATGPT_ORIGIN,
+  SAVED_CHAT_URL,
+  TEMPORARY_CHAT_URL,
+  allowedAuthUrl,
+  allowedWorkspaceUrl,
+  guardBrowserNavigation,
+  isAbortedNavigationError,
+  isChatGptBackendUrl,
+  isChatGptCloudflareChallengeResponse,
+  isTemporaryChatUrl,
+  isWorkspaceSessionMutationRequest,
+  navigationErrorForLog,
+  navigationOriginForLog,
+} = require("./browser-navigation-policy.cjs");
+const { AUTH_PROBE_TIMEOUT_MS, authenticationProbeScript, unavailableAuthenticationProbe } = require("./browser-auth-probe.cjs");
 
-const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
-const SAVED_CHAT_URL = "https://chatgpt.com/";
-const CHATGPT_ORIGIN = "https://chatgpt.com";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ENEKODEX%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
@@ -52,7 +65,6 @@ const { DEFAULT_BROWSER_CAPACITY, validateBrowserCapacity } = require("./browser
 const INTERACTION_MODE_CHANGE_OPERATION = "browser interaction mode change";
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 800, height: 600 });
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
-const CHATGPT_AUTH_SESSION_TIMEOUT_MS = 5_000;
 const AUTH_HANDOFF_TIMEOUT_MS = 15_000;
 const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore"];
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [
@@ -62,29 +74,11 @@ const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [
   "https://accounts.openai.com/*", "https://accounts.google.com/*",
   "https://login.microsoftonline.com/*", "https://appleid.apple.com/*", "https://idmsa.apple.com/*",
 ] };
-const WORKSPACE_SESSION_MUTATION_PATH = /^\/(?:api\/auth\/(?:callback|signin|signout)|backend-api\/(?:accounts\/logout|auth\/))/i;
 const ZOOM_FACTORS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const SHELL_ZOOM_LEVEL_STEP = 0.5;
 const SHELL_ZOOM_LEVEL_LIMIT = 5;
-const AUTH_PROVIDER_HOSTS = new Set([
-  "auth.openai.com",
-  "auth0.openai.com",
-  "login.openai.com",
-  "accounts.openai.com",
-  "accounts.google.com",
-  "login.microsoftonline.com",
-  "appleid.apple.com",
-  "idmsa.apple.com",
-]);
 const CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS = 500;
 const CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS = 1_000;
-const COMPOSER_SELECTOR = [
-  '[data-testid="prompt-textarea"]',
-  "#prompt-textarea",
-  '[contenteditable="true"][data-lexical-editor="true"]',
-  '[contenteditable="true"][role="textbox"]',
-  "textarea",
-].join(", ");
 const CHATGPT_VIEWPORT_CSS = `
   html,
   body {
@@ -125,6 +119,18 @@ function authViewOptions(options, partition) {
   };
 }
 
+function turnViewPreferences(partition) {
+  return {
+    partition,
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+    spellcheck: true,
+    backgroundThrottling: false,
+    webSecurity: true,
+  };
+}
+
 function javaScriptLiteral(value) {
   return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
@@ -135,19 +141,6 @@ function combinedError(primary, label, secondary) {
   return new Error(`${first}; ${label}: ${second}`);
 }
 
-function visibleElementScript(selector) {
-  return `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find((element) => {
-    const style = getComputedStyle(element);
-    const bounds = element.getBoundingClientRect();
-    return element.isConnected
-      && bounds.width > 0
-      && bounds.height > 0
-      && style.display !== "none"
-      && style.visibility !== "hidden"
-      && style.opacity !== "0";
-  })`;
-}
-
 function normalizeBounds(bounds) {
   const read = (value) => Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
   return {
@@ -156,40 +149,6 @@ function normalizeBounds(bounds) {
     width: Math.min(MAX_BROWSER_VIEW_DIMENSION, Math.max(1, read(bounds?.width))),
     height: Math.min(MAX_BROWSER_VIEW_DIMENSION, Math.max(1, read(bounds?.height))),
   };
-}
-
-function allowedAuthUrl(value) {
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return false;
-  if (parsed.hostname === "chatgpt.com") {
-    return parsed.pathname === "/auth"
-      || parsed.pathname.startsWith("/auth/")
-      || parsed.pathname === "/login";
-  }
-  return AUTH_PROVIDER_HOSTS.has(parsed.hostname);
-}
-
-function allowedWorkspaceUrl(value) {
-  try {
-    const url = new URL(value);
-    return (url.origin === CHATGPT_ORIGIN && !url.username && !url.password)
-      || allowedAuthUrl(value);
-  } catch { return false; }
-}
-
-function isWorkspaceSessionMutationRequest(details) {
-  if (!details || ["GET", "HEAD", "OPTIONS"].includes(String(details.method).toUpperCase())) return false;
-  try {
-    const url = new URL(details.url);
-    return url.origin === CHATGPT_ORIGIN
-      ? WORKSPACE_SESSION_MUTATION_PATH.test(url.pathname)
-      : AUTH_PROVIDER_HOSTS.has(url.hostname);
-  } catch { return false; }
 }
 
 async function readBoundedJson(response, maximum = 256 * 1024) {
@@ -210,86 +169,6 @@ async function readBoundedJson(response, maximum = 256 * 1024) {
   } finally { await reader.cancel().catch(() => {}); }
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
   catch { throw new Error("ChatGPT session response was not JSON"); }
-}
-
-function guardBrowserNavigation(contents, external) {
-  const guard = (event, url) => {
-    if (allowedWorkspaceUrl(url)) return;
-    event.preventDefault();
-    // The external broker independently requires a fresh user gesture.
-    void external(url);
-  };
-  contents.on('will-navigate', guard);
-  contents.on('will-redirect', (event, url, _inPlace, mainFrame) => { if (mainFrame) guard(event, url); });
-}
-
-function navigationOriginForLog(value) {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:"
-      ? parsed.origin
-      : parsed.protocol;
-  } catch {
-    return "invalid-url";
-  }
-}
-
-function navigationErrorForLog(error) {
-  if (!error || typeof error !== "object") return { errorType: typeof error };
-  const detail = {
-    errorType: typeof error.name === "string" && error.name ? error.name : "Error",
-  };
-  if (typeof error.code === "string" || typeof error.code === "number") {
-    detail.errorCode = error.code;
-  }
-  return detail;
-}
-
-function isAbortedNavigationError(error) {
-  if (error && typeof error === "object"
-    && (error.code === -3 || error.code === "ERR_ABORTED")) {
-    return true;
-  }
-  return error instanceof Error && /\bERR_ABORTED\b/.test(error.message);
-}
-
-function isTemporaryChatUrl(value) {
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return false;
-  }
-  return parsed.origin === CHATGPT_ORIGIN
-    && parsed.pathname === "/"
-    && parsed.searchParams.get("temporary-chat") === "true";
-}
-
-function isChatGptBackendUrl(value) {
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return false;
-  }
-  return parsed.origin === CHATGPT_ORIGIN && parsed.pathname.startsWith("/backend-api/");
-}
-
-function responseHeaderIncludes(responseHeaders, name, expectedValue) {
-  const expected = expectedValue.toLowerCase();
-  return Object.entries(responseHeaders || {}).some(([headerName, rawValues]) => {
-    if (headerName.toLowerCase() !== name.toLowerCase()) return false;
-    const values = Array.isArray(rawValues) ? rawValues : [rawValues];
-    return values.some(value => String(value)
-      .split(",")
-      .some(candidate => candidate.trim().toLowerCase() === expected));
-  });
-}
-
-function isChatGptCloudflareChallengeResponse(details) {
-  return details?.statusCode === 403
-    && isChatGptBackendUrl(details.url)
-    && responseHeaderIncludes(details.responseHeaders, "cf-mitigated", "challenge");
 }
 
 function browserInteractionModeFor(host) {
@@ -566,8 +445,6 @@ class BrowserHost {
     this.getManualSubmitTimeoutSec = getManualSubmitTimeoutSec;
     this.configureAccountSession = configureAccountSession;
     this.skipInitialNavigation = skipInitialNavigation === true;
-    this.runBrowserHelperOperation = runBrowserHelperOperation;
-    this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
     this.visible = false;
     this.surfaceActive = true;
@@ -593,8 +470,6 @@ class BrowserHost {
     this.sessionRefreshOperation = null;
     this.cloudflareChallengeRecovery = null;
     this.cloudflareChallengeRecoveryArmed = true;
-    this.cloudflareChallengeRecoveryDelayMs = CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS;
-    this.cloudflareChallengeRecoverySettleMs = CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS;
     this.viewportCssKey = null;
     this.primaryRendererReady = false;
     this.primaryDeviceEmulationViewport = null;
@@ -732,7 +607,7 @@ class BrowserHost {
 
   currentOperation() {
     return this.manualOperation || this.readOnlyInspection?.name || (this.loginOperation ? "ChatGPT login" : null)
-      || (hasUnsettledBrowserHelpers?.(this.descriptorPath) ? "browser helper cleanup" : null);
+      || (hasUnsettledBrowserHelpers(this.descriptorPath) ? "browser helper cleanup" : null);
   }
 
   withReadOnlyInspection(name, action, { preserveSelection = false } = {}) {
@@ -879,17 +754,7 @@ class BrowserHost {
   }
 
   createAutomaticTurnView() {
-    return new WebContentsView({
-      webPreferences: {
-        partition: this.partition,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: false,
-        webSecurity: true,
-      },
-    });
+    return new WebContentsView({ webPreferences: turnViewPreferences(this.partition) });
   }
 
   attachAutomaticTurnView(tab) {
@@ -926,13 +791,9 @@ class BrowserHost {
     }
   }
 
-  async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal) {
-    return turnLifecycleFor(this).createTurnTab(traceId, helperPid, conversationKey, connectorIdentity, taskProgressVersion, taskModel, signal);
-  }
-
   createManualTurnTab(traceId, helperPid, conversationKey, prompt, manualSubmitTimeoutMs, useSavedChats = false) {
     if (this.turnTabs.size >= this.maxTabs
-      && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
+      && !this.evictOldestReclaimableTurnTab()) {
       throw new Error(
         `ChatGPT Web already has ${this.maxTabs} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
       );
@@ -941,17 +802,7 @@ class BrowserHost {
     const ordinal = Array.from({ length: this.maxTabs }, (_unused, index) => index + 1)
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
-    const view = new WebContentsView({
-      webPreferences: {
-        partition: this.partition,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: true,
-        backgroundThrottling: false,
-        webSecurity: true,
-      },
-    });
+    const view = new WebContentsView({ webPreferences: turnViewPreferences(this.partition) });
     const tab = {
       id,
       surfaceId: null,
@@ -1033,10 +884,6 @@ class BrowserHost {
       this.signalManualTerminal(tab, "failed");
       this.removeTurnTab(tab, true);
     }
-  }
-
-  evictOldestRetainedTurnTab() {
-    return turnLifecycleFor(this).evictOldestRetainedTurnTab();
   }
 
   evictOldestReclaimableTurnTab() {
@@ -1646,7 +1493,7 @@ class BrowserHost {
       message: "Refreshing ChatGPT security check",
       loading: true,
     });
-    await sleep(this.cloudflareChallengeRecoveryDelayMs);
+    await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS);
     if (contents.isDestroyed()) throw new Error("ChatGPT browser closed during security-check recovery");
     const url = contents.getURL();
     if (!url.startsWith(CHATGPT_ORIGIN)) {
@@ -1656,7 +1503,7 @@ class BrowserHost {
     // Only responses from this new document may prove that the challenge cleared.
     this.cloudflareChallengeRecoveryArmed = false;
     await contents.loadURL(url);
-    await sleep(this.cloudflareChallengeRecoverySettleMs);
+    await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS);
     if (!this.cloudflareChallengeRecoveryArmed) {
       throw new Error("ChatGPT security check is still blocking backend requests. Reload ChatGPT and retry.");
     }
@@ -1914,24 +1761,12 @@ class BrowserHost {
     return turnLifecycleFor(this).removeTurnTab(tab, abortRunning);
   }
 
-  artifactOwner(traceId, helperPid, surfaceId) {
-    return artifactTransfersFor(this).artifactOwner(traceId, helperPid, surfaceId);
-  }
-
   registerArtifactDownload(traceId, helperPid, surfaceId, assistantTurnId, expectedFilename, maxBytes, deadlineMs) {
     return artifactTransfersFor(this).registerArtifactDownload(traceId, helperPid, surfaceId, assistantTurnId, expectedFilename, maxBytes, deadlineMs);
   }
 
-  artifactLease(traceId, helperPid, surfaceId, leaseId) {
-    return artifactTransfersFor(this).artifactLease(traceId, helperPid, surfaceId, leaseId);
-  }
-
   async waitArtifactDownload(traceId, helperPid, surfaceId, leaseId) {
     return artifactTransfersFor(this).waitArtifactDownload(traceId, helperPid, surfaceId, leaseId);
-  }
-
-  cleanupArtifactPartial(lease) {
-    return artifactTransfersFor(this).cleanupArtifactPartial(lease);
   }
 
   cancelArtifactDownload(traceId, helperPid, surfaceId, leaseId, reason) {
@@ -1940,10 +1775,6 @@ class BrowserHost {
 
   releaseArtifactDownloads(traceId, helperPid, reason) {
     return artifactTransfersFor(this).releaseArtifactDownloads(traceId, helperPid, reason);
-  }
-
-  rememberUserCancelledTurn(traceId, helperPid) {
-    return turnLifecycleFor(this).rememberUserCancelledTurn(traceId, helperPid);
   }
 
   async closeTab(tabId, expectedTraceId) {
@@ -2213,24 +2044,8 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  rememberManualTerminal(traceId, helperPid, status) {
-    return manualTurnsFor(this).rememberManualTerminal(traceId, helperPid, status);
-  }
-
-  rememberManualCompletion(traceId, helperPid) {
-    return manualTurnsFor(this).rememberManualCompletion(traceId, helperPid);
-  }
-
   signalManualTerminal(tab, status) {
     return manualTurnsFor(this).signalManualTerminal(tab, status);
-  }
-
-  armManualTurnDeadline(tab) {
-    return manualTurnsFor(this).armManualTurnDeadline(tab);
-  }
-
-  writeManualPrompt(prompt) {
-    return manualTurnsFor(this).writeManualPrompt(prompt);
   }
 
   beginManualTurn(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false, useSavedChats = false) {
@@ -2263,10 +2078,6 @@ class BrowserHost {
 
   cancelManualTurn(traceId, helperPid) {
     return manualTurnsFor(this).cancelManualTurn(traceId, helperPid);
-  }
-
-  startManualCancellation(tab, source) {
-    return manualTurnsFor(this).startManualCancellation(tab, source);
   }
 
   async cancelManualTab(tab, source) {
@@ -2574,9 +2385,7 @@ class BrowserHost {
     this.passkeyLoginController = controller;
     this.authGeneration = (this.authGeneration ?? 0) + 1;
     const operation = (async () => {
-      const handoffTimeoutMs = Number.isFinite(this.authHandoffTimeoutMs)
-        ? Math.max(1, this.authHandoffTimeoutMs) : AUTH_HANDOFF_TIMEOUT_MS;
-      const handoffDeadline = Date.now() + handoffTimeoutMs;
+      const handoffDeadline = Date.now() + AUTH_HANDOFF_TIMEOUT_MS;
       if (embeddedLogin) {
         embeddedController.abort();
         for (const view of [this.view, this.authView]) {
@@ -2619,20 +2428,12 @@ class BrowserHost {
       });
     })();
     const tracked = operation.catch(error => {
-      const message = error instanceof Error ? error.message : String(error);
       const previousSessionRestored = error?.previousSessionRestored === true;
-      const cancelled = (controller.signal.aborted || error?.code === "profile-login-cancelled") && !/(cleanup|clearing|removing|did not exit|termination|refused)/i.test(message);
-      const phase = cancelled ? "cancelled" : /timed out/i.test(message) ? "timed-out" : "failed";
-      const errorCode = phase === "cancelled" ? null
-        : ["chrome-account-mismatch", "chrome-account-unverified", "chrome-account-unidentified",
-          "chrome-profile-claim-missing"].includes(error?.code) ? error.code
-        : error?.code === "existing_chrome_handoff_timeout" ? "passkey-handoff-timeout"
-          : phase === "timed-out" ? "passkey-timeout"
-            : /(cleanup|clearing|removing|did not exit|termination|refused)/i.test(message) ? "passkey-cleanup-failed"
-              : /invalid (storage-state|cookie|origin|ChatGPT local storage)|contains no ChatGPT\/OpenAI cookies|too (large|many)/i.test(message) ? "passkey-validation-failed"
-                : this.passkeyProgress?.phase === "verifying" ? "passkey-verification-failed"
-                  : this.passkeyProgress?.phase === "starting" || this.passkeyProgress?.phase === "waiting" || this.passkeyProgress?.phase === "importing"
-                    ? "passkey-capture-failed" : "passkey-import-failed";
+      const { phase, errorCode } = passkeyLoginFailure(error, {
+        aborted: controller.signal.aborted,
+        progressPhase: this.passkeyProgress?.phase,
+      });
+      const cancelled = phase === "cancelled";
       this.updatePasskeyProgress({ phase, error: errorCode });
       const authenticationStatus = this.state.authenticationStatus === "signed-out"
         ? "signed-out" : cancelled ? "unknown" : "unavailable";
@@ -2700,17 +2501,6 @@ class BrowserHost {
     await browserSession.cookies.flushStore();
     this.retireAuthenticatedIdentity();
     for (const tab of tabs) this.removeTurnTab(tab, false);
-  }
-
-  async resetFailedPasskeyLogin() {
-    await this.clearOwnedSessionForPasskey();
-    const contents = this.view.webContents;
-    await contents.loadURL(TEMPORARY_CHAT_URL);
-    const browser = await this.probeAuthentication();
-    if (browser.authenticated) throw new Error("Partial passkey session remained authenticated after cleanup");
-    this.setState({ authenticated: false, authenticationStatus: "signed-out",
-      authenticationCheckedAt: new Date().toISOString(), loading: false,
-      status: "signed-out", message: "Sign in to ChatGPT" });
   }
 
   async verifyCapturedLoginTransfer(transfer, signal) {
@@ -3041,6 +2831,10 @@ class BrowserHost {
       }
       return isCurrent();
     };
+    const superseded = () => {
+      if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
+      return this.snapshot();
+    };
     let url = primaryContents.getURL();
     if (url === IDLE_BROWSER_URL) {
       if (forSetup) throw new Error("ChatGPT session verification is unavailable: Temporary Chat has not loaded");
@@ -3069,153 +2863,32 @@ class BrowserHost {
         authenticationStatus: "signed-out", authenticationCheckedAt: new Date().toISOString(), url });
       return this.snapshot();
     }
-    const probe = (contents) => awaitInspection(contents.executeJavaScript(`(async () => {
-      const expectedUrl = new URL(${JSON.stringify(TEMPORARY_CHAT_URL)});
-      const readSurface = () => {
-        const composer = ${visibleElementScript(COMPOSER_SELECTOR)};
-        const actualUrl = new URL(location.href);
-        return {
-          url: actualUrl.href,
-          composer: Boolean(composer),
-          temporary: actualUrl.origin === expectedUrl.origin
-            && actualUrl.pathname === expectedUrl.pathname
-            && actualUrl.searchParams.get("temporary-chat") === "true",
-          readyState: document.readyState,
-        };
-      };
-      const initialSurface = readSurface();
-      let sessionAuthenticated = false;
-      let sessionVerification = "unavailable";
-      let verificationFailure = "session response unavailable";
-      let accountLabel = null;
-      let principalFingerprint = null;
-      let sessionFingerprint = null;
-      if (new URL(initialSurface.url).origin === expectedUrl.origin) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), ${CHATGPT_AUTH_SESSION_TIMEOUT_MS});
-        try {
-          const response = await fetch("/api/auth/session", {
-            credentials: "include",
-            cache: "no-store",
-            headers: { accept: "application/json" },
-            signal: controller.signal,
-          });
-          const responseUrl = new URL(response.url);
-          const trustedEndpoint = responseUrl.origin === expectedUrl.origin
-            && responseUrl.pathname === "/api/auth/session";
-          if (!trustedEndpoint) {
-            verificationFailure = "session endpoint redirected";
-          } else if (!response.ok) {
-            // A service/protective response, including 401/403 HTML, is not an auth verdict.
-            verificationFailure = "session HTTP " + response.status;
-          } else if (!response.headers.get("content-type")?.includes("application/json")) {
-            verificationFailure = "session response was not JSON";
-          } else {
-            const payload = await response.json();
-            if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-              const user = payload.user && typeof payload.user === "object" && !Array.isArray(payload.user)
-                ? payload.user
-                : null;
-              const sessionHasUser = user !== null && Object.keys(user).length > 0;
-              const principal = typeof user?.id === "string" && user.id.trim()
-                ? "id:" + user.id.trim()
-                : typeof user?.email === "string" && user.email.trim()
-                  ? "email:" + user.email.trim().toLowerCase()
-                  : null;
-              const sessionHasNoError = payload.error === undefined || payload.error === null || payload.error === "";
-              const hasExpiry = payload.expires !== undefined && payload.expires !== null;
-              const expiry = hasExpiry && typeof payload.expires === "string" ? Date.parse(payload.expires) : NaN;
-              const expiryKnown = !hasExpiry || Number.isFinite(expiry);
-              const sessionExpired = hasExpiry && expiryKnown && expiry <= Date.now();
-              if (!sessionHasNoError) {
-                verificationFailure = "session payload reported an error";
-              } else if (!expiryKnown) {
-                verificationFailure = "session expiry was invalid";
-              } else if (!sessionHasUser || sessionExpired) {
-                sessionVerification = "rejected";
-              } else if (!principal) {
-                verificationFailure = "session principal identity was unavailable";
-              } else {
-                const digestValue = async value => [...new Uint8Array(
-                  await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
-                )]
-                  .map(value => value.toString(16).padStart(2, "0")).join("");
-                const stableSessionId = [payload.sessionId, payload.session_id, payload.sid]
-                  .find(value => typeof value === "string" && value.trim());
-                principalFingerprint = await digestValue(principal);
-                sessionFingerprint = stableSessionId
-                  ? await digestValue(principal + "|session:" + stableSessionId.trim())
-                  : principalFingerprint;
-                sessionAuthenticated = true;
-                sessionVerification = "authenticated";
-                const label = typeof user.email === "string" ? user.email : typeof user.name === "string" ? user.name : null;
-                accountLabel = label ? label.replace(/[\\u0000-\\u001f\\u007f]/g, "").slice(0, 160) : null;
-              }
-            } else {
-              verificationFailure = "session payload was invalid";
-            }
-          }
-        } catch (error) {
-          verificationFailure = error?.name === "AbortError" ? "session request timed out" : "session request failed";
-        }
-        finally { clearTimeout(timeout); }
-      }
-      return { ...readSurface(), sessionAuthenticated, sessionVerification, verificationFailure,
-        accountLabel, principalFingerprint, sessionFingerprint };
-    })()`, true), signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(CHATGPT_AUTH_SESSION_TIMEOUT_MS + 3_000)])
-      : AbortSignal.timeout(CHATGPT_AUTH_SESSION_TIMEOUT_MS + 3_000)).catch(() => ({
-      url: "",
-      composer: false,
-      temporary: false,
-      sessionAuthenticated: false,
-      sessionVerification: "unavailable",
-      verificationFailure: "browser inspection failed",
-      principalFingerprint: null,
-      sessionFingerprint: null,
-      readyState: "unknown",
-    }));
+    const probe = (contents) => awaitInspection(contents.executeJavaScript(authenticationProbeScript(), true), signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS)])
+      : AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS)).catch(() => unavailableAuthenticationProbe());
     let result = await probe(primaryContents);
-    if (!isCurrent()) {
-      if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
-      return this.snapshot();
-    }
+    if (!isCurrent()) return superseded();
     let authResult;
     if (!observationOnly && !(result.composer && result.temporary && result.sessionAuthenticated)
       && authView) {
       authResult = await probe(authView.webContents);
-      if (!isCurrent()) {
-        if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
-        return this.snapshot();
-      }
+      if (!isCurrent()) return superseded();
       if (authResult.sessionAuthenticated) {
         this.closeAuthView(authView, true, false);
         authView = this.authView;
-        if (!isCurrent() || !(await loadPrimary())) {
-          if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
-          return this.snapshot();
-        }
+        if (!isCurrent() || !(await loadPrimary())) return superseded();
         url = primaryContents.getURL();
         result = await probe(primaryContents);
-        if (!isCurrent()) {
-          if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
-          return this.snapshot();
-        }
+        if (!isCurrent()) return superseded();
       }
     }
     if (this.manualOperation === "ChatGPT login"
       && result.sessionAuthenticated
       && !result.temporary) {
-      if (!(await loadPrimary())) {
-        if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
-        return this.snapshot();
-      }
+      if (!(await loadPrimary())) return superseded();
       url = primaryContents.getURL();
       result = await probe(primaryContents);
-      if (!isCurrent()) {
-        if (forSetup) throw new Error("ChatGPT session verification is unavailable: browser session changed");
-        return this.snapshot();
-      }
+      if (!isCurrent()) return superseded();
     }
     if (result.composer && result.temporary && result.sessionAuthenticated) {
       if (authView) {
@@ -3313,7 +2986,7 @@ class BrowserHost {
     await this.waitForSurfaceReady();
     this.setState({ status: "testing", message: "Running browser smoke test" });
     this.logger.info("smoke.started");
-    const result = await this.runBrowserHelperOperation({
+    const result = await runBrowserHelperOperation({
       helper: this.helper,
       descriptorPath: this.descriptorPath,
       appName: connectorName,
@@ -3343,7 +3016,7 @@ class BrowserHost {
     this.setState({ status: "testing", message: "Checking ChatGPT connector" });
     await this.refreshChatGptHomeDocument(signal);
     try {
-      const result = await this.verifyConnectorWithBrowserHelper({
+      const result = await verifyConnectorWithBrowserHelper({
         helper: this.helper,
         descriptorPath: this.descriptorPath,
         appName: connectorName,
@@ -3380,7 +3053,7 @@ class BrowserHost {
     const startedIdle = initialUrl === IDLE_BROWSER_URL;
     if (detectCapabilities) await this.refreshChatGptHomeDocument(signal);
     signal?.throwIfAborted();
-    const result = await this.runBrowserHelperOperation({
+    const result = await runBrowserHelperOperation({
       helper: this.helper,
       descriptorPath: this.descriptorPath,
       appName: connectorName,
