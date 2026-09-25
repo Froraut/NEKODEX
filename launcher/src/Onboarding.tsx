@@ -135,7 +135,7 @@ export function Onboarding({
             </button>
           ) : null}
         </div>
-        <div className="welcome-progress" aria-label={`${stageIndex + 1} / 3`}>
+        <div className="welcome-progress" role="img" aria-label={`${stageIndex + 1} / 3`}>
           {[0, 1, 2].map(index => (
             <span
               className={index < stageIndex ? "is-complete" : index === stageIndex ? "is-active" : ""}

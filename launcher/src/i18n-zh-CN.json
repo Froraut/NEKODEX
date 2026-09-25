@@ -590,5 +590,7 @@
   "launcherRuntimeRestartTitle": "重启 NEKODEX 以完成更新",
   "launcherRuntimeRestartBody": "更新后的应用正在使用之前可正常工作的运行时。任务完成后，请重启 NEKODEX 以启用新的运行时。",
   "launcherRuntimeRestartAction": "重启 NEKODEX",
-  "logOut": "退出登录"
+  "logOut": "退出登录",
+  "logOutConfirmBody": "要在 NEKODEX 中退出 ChatGPT 吗？运行新的 Web 回合前需要重新登录，可能需要使用通行密钥。",
+  "logOutKeepSignedIn": "保持登录"
 }

@@ -590,5 +590,7 @@
   "launcherRuntimeRestartTitle": "Restart NEKODEX to finish updating",
   "launcherRuntimeRestartBody": "The updated app is using the previous working runtime. Restart NEKODEX when your tasks are finished to activate the new runtime.",
   "launcherRuntimeRestartAction": "Restart NEKODEX",
-  "logOut": "Log out"
+  "logOut": "Log out",
+  "logOutConfirmBody": "Log out of ChatGPT in NEKODEX? You will need to sign in again, possibly with a passkey, before new Web turns can run.",
+  "logOutKeepSignedIn": "Keep signed in"
 }

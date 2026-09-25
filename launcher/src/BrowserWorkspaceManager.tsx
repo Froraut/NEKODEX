@@ -2,6 +2,7 @@ import { useFeatureAction } from "./useFeatureAction";
 import { useEffect, useMemo, useState } from "react";
 import type { BrowserWorkspaceDirectorySnapshot, BrowserWorkspaceItem, Language } from "./types";
 import { browserWindowCopy } from "./browser-window-copy";
+import { stripIpcErrorPrefix } from "./ipc-error";
 import "./browser-workspace-manager.css";
 
 type Props = {
@@ -42,7 +43,7 @@ export function BrowserWorkspaceManager({
   const [accountId, setAccountId] = useState(initial);
   const [error, setError] = useState<{ accountId: string; message: string } | null>(null);
   const { pending, run: runAction } = useFeatureAction<{ accountId: string; action: string }>(disabled, (cause, identity) => {
-    setError({ accountId: identity.accountId, message: cause instanceof Error ? cause.message : String(cause) });
+    setError({ accountId: identity.accountId, message: stripIpcErrorPrefix(cause instanceof Error ? cause.message : String(cause)) });
   });
 
   useEffect(() => {

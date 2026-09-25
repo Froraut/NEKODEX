@@ -1,9 +1,10 @@
 export { copyFor, loadLanguage, localeCatalog, type Copy } from "./locale-catalog";
 import type { Copy } from "./locale-catalog";
 import type { Language } from "./types";
+import { stripIpcErrorPrefix } from "./ipc-error";
 
 export function localizeLauncherError(copy: Copy, message: string): string {
-  const detail = message.replace(/^Error invoking remote method 'launcher:[^']+':\s*(?:Error:\s*)?/, "");
+  const detail = stripIpcErrorPrefix(message);
   if (detail === "Browser navigation is locked during ChatGPT login") return copy.embeddedLoginBody;
   if (detail === "Browser navigation is locked during ChatGPT passkey login") return copy.passkeyContinueBody;
   if (/timed out.*passkey|passkey.*timed out/i.test(detail)) return copy.passkeyTimedOut;
