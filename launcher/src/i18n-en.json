@@ -592,5 +592,7 @@
   "launcherRuntimeRestartAction": "Restart NEKODEX",
   "logOut": "Log out",
   "logOutConfirmBody": "Log out of ChatGPT in NEKODEX? You will need to sign in again, possibly with a passkey, before new Web turns can run.",
-  "logOutKeepSignedIn": "Keep signed in"
+  "logOutKeepSignedIn": "Keep signed in",
+  "restartingRuntime": "Restarting…",
+  "manualPromptCopied": "Prompt copied"
 }

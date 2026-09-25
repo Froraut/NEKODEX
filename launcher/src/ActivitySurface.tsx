@@ -6,6 +6,7 @@ import { Icon } from "./icons";
 import { ContentSurface, StateDot, SecondaryButton, messageOf } from "./launcher-ui";
 import type { Copy } from "./i18n";
 import type { Language } from "./types";
+import { humanEvent } from "./log-format";
 const api = window.codexWebLauncher;
 const ActivityUsage = memo(UsageDashboard);
 
@@ -33,6 +34,7 @@ export function ActivitySurface({
         time: Number.isNaN(date.getTime()) ? record.at : time.format(date) };
     });
   }, [logs, language]);
+  const [exporting, setExporting] = useState(false);
   const search = query.trim().toLocaleLowerCase();
   const visibleLogs = formatted.filter(record => (level === "all" || record.level === level) && record.search.includes(search));
   return (
@@ -42,8 +44,12 @@ export function ActivitySurface({
         <span>{copy.recentActivity}</span>
         <SecondaryButton
           icon="external"
-          disabled={transitionBusy}
-          onClick={() => void api!.exportLogs().catch((cause) => setError(messageOf(cause)))}
+          disabled={transitionBusy || exporting}
+          onClick={() => {
+            if (exporting) return;
+            setExporting(true);
+            void api!.exportLogs().catch((cause) => setError(messageOf(cause))).finally(() => setExporting(false));
+          }}
         >
           {copy.exportSafeLog}
         </SecondaryButton>
@@ -66,7 +72,7 @@ export function ActivitySurface({
             <StateDot state={record.level === "error" ? "error" : record.level === "warning" ? "busy" : "ready"} />
             <div>
               <strong>{record.event}</strong>
-              <span>{record.detail}</span>
+              <span title={record.detail || undefined}>{record.detail}</span>
             </div>
             <time>{record.time}</time>
           </div>
@@ -76,9 +82,6 @@ export function ActivitySurface({
   );
 }
 
-function humanEvent(value: string): string {
-  return value.split(".").map((part) => part.replaceAll("_", " ")).join(" · ");
-}
 
 function logDetail(detail: Record<string, unknown>): string {
   const entries = Object.entries(detail).filter(([, value]) => value !== undefined && value !== null);

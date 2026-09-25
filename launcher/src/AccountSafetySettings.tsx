@@ -1,10 +1,15 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { AccountNewSessionWindowStatus, AccountSafetyPolicy } from "./types";
+import type { AccountNewSessionWindowStatus, AccountSafetyPolicy, Language } from "./types";
 import type { Copy } from "./i18n";
 import "./account-forms.css";
 
-export function AccountSafetySettings({ id, safety, resumeRequired = false, disabled, blockedReason, copy, save, resume }: {
+function formatSafetyTime(value: number | string, language: Language): string {
+  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+export function AccountSafetySettings({ id, language, safety, resumeRequired = false, disabled, blockedReason, copy, save, resume }: {
   id: string;
+  language: Language;
   safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
     newSessionWindow: AccountNewSessionWindowStatus | null };
   resumeRequired?: boolean; disabled: boolean; blockedReason?: string; copy: Copy;
@@ -89,7 +94,7 @@ export function AccountSafetySettings({ id, safety, resumeRequired = false, disa
     <summary>{copy.pacingTitle}</summary>
     <p>{copy.pacingBody}</p>
     {safety.stopped ? <p role="status">{copy.pacingStopped}</p> : null}
-    {safety.cooldownUntil > Date.now() ? <p role="status">{copy.pacingUntil}: {new Date(safety.cooldownUntil).toLocaleString()}</p> : null}
+    {safety.cooldownUntil > Date.now() ? <p role="status">{copy.pacingUntil}: {formatSafetyTime(safety.cooldownUntil, language)}</p> : null}
     <form onSubmit={event => { event.preventDefault(); void submit(); }}>
       <fieldset disabled={disabled || saving} aria-describedby={statusId}>
         <label className="account-policy-enabled"><span><input type="checkbox" checked={draft.enabled}
@@ -106,7 +111,7 @@ export function AccountSafetySettings({ id, safety, resumeRequired = false, disa
           <p>{copy.newSessionWindowBody}</p>
           <p className="field-hint" role="status">{windowStatusText}</p>
           {windowResetsAt !== null
-            ? <p className="field-hint">{copy.newSessionWindowNextSlot}: {new Date(windowResetsAt).toLocaleString()}</p>
+            ? <p className="field-hint">{copy.newSessionWindowNextSlot}: {formatSafetyTime(windowResetsAt, language)}</p>
             : windowStatus ? <p className="field-hint">{copy.newSessionWindowNoSessions}</p> : null}
           <label className="account-policy-enabled"><span><input type="checkbox" checked={windowEnabled}
             onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowEnabled: event.target.checked }); }} /> {copy.newSessionWindowEnabled}</span></label>

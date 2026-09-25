@@ -592,5 +592,7 @@
   "launcherRuntimeRestartAction": "Перезапустить NEKODEX",
   "logOut": "Выйти",
   "logOutConfirmBody": "Выйти из ChatGPT в NEKODEX? Перед новыми Web-задачами потребуется снова войти, возможно с ключом доступа.",
-  "logOutKeepSignedIn": "Остаться в аккаунте"
+  "logOutKeepSignedIn": "Остаться в аккаунте",
+  "restartingRuntime": "Перезапуск…",
+  "manualPromptCopied": "Запрос скопирован"
 }

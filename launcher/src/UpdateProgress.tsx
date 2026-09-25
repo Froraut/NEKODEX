@@ -60,10 +60,12 @@ export function UpdateProgress({ state, label, language = "en" }: { state: Updat
   const reading = useTransferReading({ bytes, speed }, downloading);
   // No reported total is not evidence that part of the file has arrived.
   const fraction = total ? Math.min(1, reading.bytes / total) : 0;
-  const mib = (value: number) => `${(value / 1024 / 1024).toFixed(1)} MiB`;
+  const decimal = new Intl.NumberFormat(language, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const percent = new Intl.NumberFormat(language, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const mib = (value: number) => `${decimal.format(value / 1024 / 1024)} MiB`;
   // Accessible values follow telemetry directly, not the visual animation frames.
   const valueText = downloading ? [
-    `${mib(bytes)}${total ? ` / ${mib(total)} (${(bytes / total * 100).toFixed(1)}%)` : ""}`,
+    `${mib(bytes)}${total ? ` / ${mib(total)} (${percent.format(bytes / total)})` : ""}`,
     hasSpeed ? `${mib(speed)}/s` : undefined, eta,
   ].filter(Boolean).join("; ") : undefined;
   return <div className="updates-download">
@@ -73,7 +75,7 @@ export function UpdateProgress({ state, label, language = "en" }: { state: Updat
       <span aria-hidden="true" className="updates-meter-fill" style={{ transform: `scaleX(${fraction})` }} />
     </div>
     {downloading ? <div className="updates-transfer"><span>{mib(reading.bytes)}{total ? ` / ${mib(total)}` : ""}</span>
-      {total ? <strong>{((fraction ?? 0) * 100).toFixed(1)}%</strong> : null}</div> : null}
+      {total ? <strong>{percent.format(fraction ?? 0)}</strong> : null}</div> : null}
     {eta ? <small className="updates-eta">{eta}</small> : null}
     {downloading ? <small className="updates-speed">{hasSpeed ? `${mib(reading.speed)}/s` : "—"}</small> : null}
   </div>;

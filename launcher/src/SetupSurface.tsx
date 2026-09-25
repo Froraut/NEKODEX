@@ -282,7 +282,7 @@ export function SetupSurface({
           <details>
             <summary>{copy.hermesDirectTitle}</summary>
             <p>{copy.hermesDirectBody}</p>
-            <button className="secondary-button" disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes("codex_responses")} type="button">{copy.hermesDirectAdd}</button>
+            <button className="button-secondary" disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes("codex_responses")} type="button">{copy.hermesDirectAdd}</button>
           </details>
         </div>
         </details>

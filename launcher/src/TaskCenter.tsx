@@ -79,7 +79,7 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
       <button className="text-button" type="button" disabled={!query && status === 'all' && !account}
         onClick={() => { setQuery(''); setStatus('all'); setAccount(''); clearConfirmations(); }}>{text.clearFilters}</button>
     </div>
-    <p className="task-history-count" role="status">{text.recordCount!.replace('{shown}', String(visible.length)).replace('{total}', String(tasks.length))}</p>
+    <p className="task-history-count">{text.recordCount!.replace('{shown}', String(visible.length)).replace('{total}', String(tasks.length))}</p>
     <div className="task-center-list">
       {!tasks.length ? (historyHealth.length ? null : <p>{text.empty}</p>) : !visible.length ? <p>{text.noMatches}</p> : visible.map(task => <article key={taskKey(task)}>
         <header><strong>{task.accountName}</strong><span>{text.phases[task.phase] ?? task.phase}</span></header>

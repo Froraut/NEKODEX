@@ -87,7 +87,7 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
               : row.reason === 'paused-global' ? pauseText.globalReason : row.reason === 'paused-account' ? pauseText.accountReason
                 : row.status === 'paused' || row.reason?.startsWith('paused') ? text[16] : text[14];
       return <article key={row.id}>
-        <header><strong>{row.position > 0 ? `${row.position}. ` : ''}{row.accountId ? labels.get(row.accountId) : text[12]}</strong><span role="status">{reason}</span></header>
+        <header><strong>{row.position > 0 ? `${row.position}. ` : ''}{row.accountId ? labels.get(row.accountId) : text[12]}</strong><span>{reason}</span></header>
         <p><code>{row.traceId}</code>{['waiting', 'paused', 'admitting', 'cancelling', 'cancelled', 'failed'].includes(row.status) ? ` · ${text[4]}` : ''}</p>
         {row.retryAt ? <p><time dateTime={new Date(row.retryAt).toISOString()}>{new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'medium' }).format(row.retryAt)}</time></p> : null}
         <div className="task-center-actions">

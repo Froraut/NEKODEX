@@ -2633,10 +2633,13 @@ code {
 }
 
 .error-toast p {
+  max-height: 160px;
   margin: 4px 0 0;
+  overflow-y: auto;
   color: var(--color-text-secondary);
   font-size: var(--text-xs);
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .error-toast button {
@@ -2831,6 +2834,21 @@ code {
 }
 
 @media (max-width: 760px) {
+  /* Keep the address readable: controls wrap and the address takes its own row. */
+  .browser-toolbar {
+    height: auto;
+    min-height: 42px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    padding: 6px 8px;
+    row-gap: 6px;
+  }
+
+  .browser-toolbar .browser-address {
+    order: 10;
+    flex: 1 1 100%;
+  }
+
   .bigger-context-recommendation-backdrop {
     padding: calc(var(--height-titlebar) + 12px) 12px 12px;
   }

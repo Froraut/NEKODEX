@@ -158,7 +158,8 @@ export function SettingsSurface({
           <select className="settings-select" aria-label={copy.manualSubmitTime} disabled={busy}
             value={snapshot.state.manualSubmitTimeoutSec ?? 120}
             onChange={event => void savePreference(() => api!.setPreference("manualSubmitTimeoutSec", Number(event.target.value)))}>
-            {[30, 60, 120, 180, 300, 600].map(seconds => <option key={seconds} value={seconds}>{seconds} s</option>)}
+            {[30, 60, 120, 180, 300, 600].map(seconds => <option key={seconds} value={seconds}>
+              {new Intl.NumberFormat(language, { style: "unit", unit: "second", unitDisplay: "short" }).format(seconds)}</option>)}
           </select>
         </SettingRow>
         <SettingRow body={copy.showDuringTurnsBody} label={copy.showDuringTurns}>
@@ -279,9 +280,9 @@ export function SettingsSurface({
         {typeof snapshot.state.pendingBiggerContext === "boolean" ? <div role="status">
           <p>{snapshot.state.contextChangeApplying ? copy.contextApplying : snapshot.state.contextChangeError ? copy.contextFailed : copy.contextWaiting}</p>
           {snapshot.state.contextChangeError ? <p>{snapshot.state.contextChangeError}</p> : null}
-          <button className="secondary-button" type="button" disabled={localBusy || snapshot.state.contextChangeApplying}
+          <button className="button-secondary" type="button" disabled={localBusy || snapshot.state.contextChangeApplying}
             onClick={() => void savePreference(() => api!.cancelContextChange())}>{copy.cancelContextChange}</button>
-          {snapshot.state.contextChangeError ? <button className="secondary-button" type="button" disabled={busy}
+          {snapshot.state.contextChangeError ? <button className="button-secondary" type="button" disabled={busy}
             onClick={() => void setBiggerContext(snapshot.state.pendingBiggerContext!)}>{copy.retryContextChange}</button> : null}
         </div> : null}
         </details>

@@ -1,3 +1,4 @@
+import { useFeatureAction } from "./useFeatureAction";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BrandMark } from "./BrandMark";
 import { BrowserWorkspaceManager } from "./BrowserWorkspaceManager";
@@ -47,6 +48,7 @@ export function BrowserSurface({
   const [passkeyStarting, setPasskeyStarting] = useState(false);
   const workflow = workflowCopy(language);
   const windowCopy = browserWindowCopy(language);
+  const windowAction = useFeatureAction<"window" | "tab">(false, cause => setError(messageOf(cause)));
   const [passkeyRequestPending, setPasskeyRequestPending] = useState(false);
   const [existingChromeStarting, setExistingChromeStarting] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<{ id: string; traceId: string | null } | null>(null);
@@ -176,12 +178,14 @@ export function BrowserSurface({
       setPasskeyRequestPending(false);
     }
   };
-  const copyManualPrompt = async (tabId: string) => {
-    if (transitionBusy) return;
+  const copyManualPrompt = async (tabId: string): Promise<boolean> => {
+    if (transitionBusy) return false;
     try {
       await api!.copyManualPrompt(tabId);
+      return true;
     } catch (cause) {
       setError(messageOf(cause));
+      return false;
     }
   };
   const confirmManualSent = async (tabId: string) => {
@@ -265,7 +269,8 @@ export function BrowserSurface({
         ))}
         <div className="browser-tab-drag draggable" />
       </div>
-      {cancelTab ? <div className="browser-cancel-confirm" role="alert">
+      {cancelTab ? <div className="browser-cancel-confirm" role="alert"
+        onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setCancelTarget(null); } }}>
         <div><strong>{copy.browserCancelTaskTitle}</strong>
           <p className="browser-cancel-target">{browserTabTitleFromTitle(cancelTab.title, copy)}</p>
           <p>{copy.browserCancelTaskBody}</p></div>
@@ -277,10 +282,10 @@ export function BrowserSurface({
         </div>
       </div> : null}
       <div className="browser-workspace-actions">
-        <button type="button" className="text-button" disabled={transitionBusy}
-          onClick={() => void api!.openBrowserWindow(false).catch(cause => setError(messageOf(cause)))}>{windowCopy.newWindow}</button>
-        {platform === "darwin" ? <button type="button" className="text-button" disabled={transitionBusy}
-          onClick={() => void api!.openBrowserWindow(true).catch(cause => setError(messageOf(cause)))}>{windowCopy.newTab}</button> : null}
+        <button type="button" className="text-button" disabled={transitionBusy || windowAction.pending !== null}
+          onClick={() => void windowAction.run("window", () => api!.openBrowserWindow(false))}>{windowCopy.newWindow}</button>
+        {platform === "darwin" ? <button type="button" className="text-button" disabled={transitionBusy || windowAction.pending !== null}
+          onClick={() => void windowAction.run("tab", () => api!.openBrowserWindow(true))}>{windowCopy.newTab}</button> : null}
         <span>{platform === "darwin" ? windowCopy.hint : windowCopy.tabsMacOnly}</span>
       </div>
       {browser?.workspaces ? <BrowserWorkspaceManager
@@ -386,8 +391,12 @@ export function BrowserSurface({
           copy={copy}
           confirmPending={confirmingTabs.has(selectedManualTab.id)}
           transitionBusy={transitionBusy}
-          onCancel={() => void closeTab(selectedManualTab.id, selectedManualTab.traceId)}
-          onCopy={() => void copyManualPrompt(selectedManualTab.id)}
+          onCancel={() => {
+            // Match the tab strip: stopping a running turn asks for confirmation first.
+            if (selectedManualTab.status === "running") setCancelTarget({ id: selectedManualTab.id, traceId: selectedManualTab.traceId });
+            else void closeTab(selectedManualTab.id, selectedManualTab.traceId);
+          }}
+          onCopy={() => copyManualPrompt(selectedManualTab.id)}
           onSent={() => void confirmManualSent(selectedManualTab.id)}
           tab={selectedManualTab}
         />
@@ -434,7 +443,7 @@ export function BrowserSurface({
   );
 }
 
-function browserTabTitleFromTitle(value: string | undefined, copy: Copy): string {
+export function browserTabTitleFromTitle(value: string | undefined, copy: Copy): string {
   const title = value?.trim();
   if (!title || title === "about:blank" || title.includes("codex-web-gpt-browser-host")) return copy.temporaryChat;
   return title.replace(/\s*[|–-]\s*ChatGPT\s*$/i, "") || copy.temporaryChat;

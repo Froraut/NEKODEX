@@ -16,11 +16,17 @@ export function ManualTurnGuide({
   confirmPending: boolean;
   transitionBusy: boolean;
   onCancel: () => void;
-  onCopy: () => void;
+  onCopy: () => Promise<boolean>;
   onSent: () => void;
   tab: BrowserState["tabs"][number];
 }) {
   const headingId = useId();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (tab.manualState !== "awaiting-user" || !tab.manualDeadlineAt) return;
@@ -62,7 +68,7 @@ export function ManualTurnGuide({
       <span className="visually-hidden" aria-live="polite">{waiting ? "" : status}</span>
       <div className="manual-turn-actions">
         <SecondaryButton disabled={transitionBusy} onClick={onCancel}>{copy.manualPromptCancel}</SecondaryButton>
-        <SecondaryButton disabled={transitionBusy || !tab.canCopyPrompt} onClick={onCopy}>{copy.manualPromptCopy}</SecondaryButton>
+        <SecondaryButton disabled={transitionBusy || !tab.canCopyPrompt} onClick={() => void onCopy().then(ok => { if (ok) setCopied(true); })}>{copied ? copy.manualPromptCopied : copy.manualPromptCopy}</SecondaryButton>
         <PrimaryButton disabled={transitionBusy || confirmPending || !tab.canConfirmSent} onClick={onSent}>{confirmPending ? copy.running : waiting ? copy.manualPromptConfirmSent : copy.manualPromptSent}</PrimaryButton>
       </div>
     </section>

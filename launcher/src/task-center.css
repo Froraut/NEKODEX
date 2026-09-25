@@ -2,20 +2,20 @@
 .task-center-list { padding: 0; }
 .task-center-list article { border-top: 1px solid var(--color-border); padding: 12px 0; }
 .task-center-list header { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; }
-.task-center-list p { margin: 6px 0; font-size: 13px; overflow-wrap: anywhere; }
+.task-center-list p { margin: 6px 0; font-size: var(--text-xs); overflow-wrap: anywhere; }
 .task-center-list code { font-size: 12px; }
 .task-center-actions { display: flex; flex-wrap: wrap; gap: 12px; }
-.task-cancel-confirm { padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; margin-top: 12px; }
+.task-cancel-confirm { padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); margin-top: 12px; }
 .task-queue { margin-bottom: 24px; }
 .task-queue h2 { font-size: 16px; margin-bottom: 12px; }
 .task-queue article { border-bottom: 1px solid var(--color-border); padding: 14px 0; }
 .task-queue header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
-.task-queue p { margin: 8px 0; font-size: 13px; overflow-wrap: anywhere; }
+.task-queue p { margin: 8px 0; font-size: var(--text-xs); overflow-wrap: anywhere; }
 .task-queue select { max-width: 100%; background: var(--color-background-elevated); color: inherit; border: 1px solid var(--color-border); border-radius: 6px; padding: 8px; }
 
 .task-history-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 12px; }
-.task-history-filters label { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 100%; font-size: 13px; }
+.task-history-filters label { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 100%; font-size: var(--text-xs); }
 .task-history-filters label:first-child { flex: 1 1 220px; }
 .task-history-filters input, .task-history-filters select { box-sizing: border-box; min-width: 0; width: 100%; background: var(--color-background-elevated); color: inherit; border: 1px solid var(--color-border); border-radius: 6px; padding: 8px; }
-.task-history-count, .task-history-warning { font-size: 13px; overflow-wrap: anywhere; }
-.task-history-warning { padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; }
+.task-history-count, .task-history-warning { font-size: var(--text-xs); overflow-wrap: anywhere; }
+.task-history-warning { padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
