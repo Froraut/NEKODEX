@@ -70,7 +70,7 @@ were untracked; tracked application source was clean at the recorded commit.
 This is a local app update with the existing `6.0.0-nekodex.1` version marker;
 no release tag, DMG or public release assets were created.
 
-Runtime activation is **not complete**. The production Restart action retained
+At the initial handoff, runtime activation was **not complete**. The production Restart action retained
 the old daemon while Native HTTP work was active. A supported non-cancelling
 Stop connections and quit attempt also refused after its idle-drain timeout,
 then resumed admission. Following explicit consent, the UI acknowledged
@@ -78,8 +78,34 @@ cancelling one HTTP stream; another restart still found active work. After the
 user reported that the connection worked again, the pending guarded cancellation
 observer was terminated before it performed another cancellation or launch.
 
-The final observation was daemon `5.9.0-nekodex.5`, PID `26835`, accepting requests
+That handoff observed daemon `5.9.0-nekodex.5`, PID `26835`, accepting requests
 and not draining. This distinguishes the working existing route from activation
 of the new backend. No update or cancellation worker remains scheduled. The
 previous application and private state snapshots are retained locally for rollback;
 no account credentials or profile data were copied into the application bundle.
+
+## Runtime activation completed
+
+The user subsequently requested completion of the runtime update, retaining the
+explicit authorization to cancel outstanding Native requests. The GUI's supported
+Stop connections and quit action acquired the drain first. A bounded observer
+verified the exact old daemon identity and zero Web/compaction owners, then used
+the authenticated cancellation endpoint inside that drain: one HTTP request was
+cancelled and zero remained. The old GUI and daemon exited before the observer
+launched the installed app. There was no force-kill or ownership-record deletion.
+
+Observed at 2026-09-25 06:15 Europe/Minsk: GUI PID `15422`; new runtime PID `15439`,
+version `6.0.0-nekodex.1`; committed configuration and runtime executable path also
+point to that version. Admission is open, draining is false, and broker/tunnel
+health is ready. The old daemon PID `26835` is gone. The UI no longer shows the
+restart-required banner and records `Runtime Release Upgraded`.
+
+A real Native request through port 17841 completed with the exact response
+`NEKODEX_RUNTIME_6_OK` using `gpt-6-astra`, advertised by the current authenticated
+catalog. An initial ephemeral CLI probe of `gpt-6-sol` was refused by that CLI
+account; this is separate from the completed GPT-6 Sol review-subagent evidence.
+The existing ChatGPT browser-session verification remains unavailable and was
+not repaired or represented as verified by this Native runtime check.
+
+The Codex route configuration is byte-identical to its pre-update snapshot.
+The activation observer exited successfully and no retry is scheduled.
