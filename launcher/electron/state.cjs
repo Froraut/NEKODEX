@@ -48,10 +48,6 @@ const DEFAULT_STATE = Object.freeze({
   mcpGuideStep: 0,
 });
 
-function proofInvalidationPatch(kind) {
-  return kind === "account" ? ACCOUNT_PROOF_INVALIDATION : MCP_PROOF_INVALIDATION;
-}
-
 function readState(filePath) {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -193,7 +189,7 @@ function createStateStore(filePath) {
       const next = {
         ...state,
         ...patch,
-        ...(modeChanged ? proofInvalidationPatch("account") : {}),
+        ...(modeChanged ? ACCOUNT_PROOF_INVALIDATION : {}),
         version: 1,
       };
       if (next.coreSetupComplete === false) {
@@ -213,13 +209,6 @@ function createStateStore(filePath) {
         next.contextChangeApplying = false;
       }
       return persist(next);
-    },
-    invalidateAccountProof() {
-      return persist({
-        ...state,
-        ...proofInvalidationPatch("account"),
-        version: 1,
-      });
     },
   };
 }

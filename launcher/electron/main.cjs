@@ -31,7 +31,7 @@ const { nativeFallbackProxyEnvironment, resolveNativeRequestProxy, resolveTunnel
 const LANGUAGES = require("./languages.json");
 const { applicationMenu } = require("./application-menu.cjs");
 const { installHermesProvider } = require("./hermes-integration.cjs");
-const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
+const { navigationErrorForLog } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const {

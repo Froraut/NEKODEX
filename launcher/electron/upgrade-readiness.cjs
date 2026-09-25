@@ -11,10 +11,6 @@ function setupIdentity(config, account) {
   return createHash('sha256').update(JSON.stringify({ account,
     config: Object.fromEntries(keys.map(key => [key, config[key] ?? null])) })).digest('hex');
 }
-function preserveSetup(previous, current, state, migration) {
-  return !migration && state.setupContract === SETUP_CONTRACT && previous !== null
-    && previous === current && state.coreSetupComplete === true;
-}
 function setupProofCurrent(state, identity, connectorName) {
   return state?.mcpSetupComplete === true
     && state.setupContract === SETUP_CONTRACT
@@ -24,4 +20,4 @@ function setupProofCurrent(state, identity, connectorName) {
     && typeof state.setupVerifiedAt === "string"
     && Number.isFinite(Date.parse(state.setupVerifiedAt));
 }
-module.exports = { SETUP_CONTRACT, setupIdentity, preserveSetup, setupProofCurrent };
+module.exports = { SETUP_CONTRACT, setupIdentity, setupProofCurrent };
