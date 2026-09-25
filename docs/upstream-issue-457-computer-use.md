@@ -28,8 +28,8 @@ account data or private tool arguments are included here.
 ## Why Codex removes the image
 
 The fork's [model catalog](../src/model-catalog.ts) declares
-`input_modalities: ["text"]` for both Manual routes; [provider configuration](../src/config.ts)
-has the same `modelInputModalities` boundary. Automatic routes advertise text and image input.
+`input_modalities: ["text"]` for both Manual routes and is the only modality boundary Codex
+reads. Automatic routes advertise text and image input.
 
 Official Codex commit **`c4017a87aacc7558002b7cb510025e967c1d765e`** calls
 `sanitize_mcp_tool_result_for_model` with the selected model's input modalities. When Image

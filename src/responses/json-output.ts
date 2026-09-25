@@ -1,7 +1,9 @@
-import type { AdapterEvent, CodexMessagePhase, CodexProviderContinuationState, CodexUsage } from "../types";
+import type { AdapterEvent, CodexMessagePhase, CodexUsage } from "../types";
 import { encodeCompactionSummary } from "./compaction";
-import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./reasoning-envelope";
-import { uuid, responsesUsage, adapterFailureFromEvent, plaintextCollaborationFields, type OutputItem } from "./output-policy";
+import {
+  uuid, responsesUsage, adapterFailureFromEvent, resolveOutputToolCall, outputToolCallItemId, completedToolCallItem,
+  type OutputItem,
+} from "./output-policy";
 
 export function buildResponseJSON(
   events: AdapterEvent[],
@@ -13,14 +15,12 @@ export function buildResponseJSON(
     toolSearchToolNames?: Set<string>;
     /** Remote compaction v2 turn — append one synthetic compaction output item (see bridgeToResponsesSSE). */
     compaction?: boolean;
-    onProviderState?: (state: CodexProviderContinuationState) => void;
   },
 ): Record<string, unknown> {
   const responseId = `resp_${uuid()}`;
   const output: OutputItem[] = [];
   let usage: CodexUsage | undefined;
   let errorEvent: Extract<AdapterEvent, { type: "error" }> | undefined;
-  let incompleteEvent: Extract<AdapterEvent, { type: "incomplete" }> | undefined;
   let endTurn: boolean | undefined;
   let stopReason: string | undefined;
   let receivedDone = false;
@@ -29,20 +29,9 @@ export function buildResponseJSON(
   let currentText = "";
   let currentTextPhase: CodexMessagePhase | undefined;
   let currentSummaryReasoning = "";
-  let currentRawReasoning = "";
-  // Opaque signed-reasoning round-trip (batch): see bridgeToResponsesSSE counterpart.
-  let batchSignature: string | undefined;
-  let batchRedacted: string[] = [];
   let currentToolCallId = "";
   let currentToolCallName = "";
   let currentToolCallArgs = "";
-  const freeformInput = (args: string): string => {
-    try { const o = JSON.parse(args); if (o && typeof o.input === "string") return o.input; } catch { /* raw */ }
-    return args;
-  };
-  const parseArgsObj = (args: string): Record<string, unknown> => {
-    try { const o = JSON.parse(args); return o && typeof o === "object" ? o : {}; } catch { return {}; }
-  };
 
   const flushText = () => {
     if (!currentText) return;
@@ -55,68 +44,22 @@ export function buildResponseJSON(
     currentTextPhase = undefined;
   };
   const flushSummaryReasoning = () => {
-    if (!currentSummaryReasoning && !batchSignature && batchRedacted.length === 0) return;
-    const envelope: ReasoningEnvelope = {};
-    if (batchSignature) envelope.sig = batchSignature;
-    if (batchRedacted.length > 0) envelope.red = batchRedacted;
-    const hidden = options?.hideThinkingSummary === true;
-    if (hidden && currentSummaryReasoning && (envelope.sig || envelope.red)) envelope.txt = currentSummaryReasoning;
-    const encrypted = envelope.sig || envelope.red || envelope.txt ? encodeReasoningEnvelope(envelope) : undefined;
-    batchSignature = undefined;
-    batchRedacted = [];
-    if (hidden && !encrypted) { currentSummaryReasoning = ""; return; }
+    if (!currentSummaryReasoning) return;
+    if (options?.hideThinkingSummary === true) { currentSummaryReasoning = ""; return; }
     output.push({
       type: "reasoning", id: `rs_${uuid()}`,
-      summary: !hidden && currentSummaryReasoning ? [{ type: "summary_text", text: currentSummaryReasoning }] : [],
-      ...(encrypted ? { encrypted_content: encrypted } : {}),
+      summary: [{ type: "summary_text", text: currentSummaryReasoning }],
     });
     currentSummaryReasoning = "";
   };
-  const flushRawReasoning = () => {
-    if (!currentRawReasoning) return;
-    if (options?.hideThinkingSummary === true) {
-      // Same contract as the streaming path: no visible reasoning, txt-only envelope round-trip.
-      output.push({
-        type: "reasoning", id: `rs_${uuid()}`, summary: [],
-        encrypted_content: encodeReasoningEnvelope({ txt: currentRawReasoning }),
-      });
-      currentRawReasoning = "";
-      return;
-    }
-    output.push({
-      type: "reasoning", id: `rs_${uuid()}`, summary: [],
-      content: [{ type: "reasoning_text", text: currentRawReasoning }],
-    });
-    currentRawReasoning = "";
-  };
   const flushToolCall = () => {
     if (!currentToolCallId) return;
-    const mapped = options?.toolNsMap?.get(currentToolCallName);
-    const realName = mapped?.name ?? currentToolCallName;
-    const ns = mapped?.namespace;
-    const toolSearch = options?.toolSearchToolNames?.has(realName) ?? false;
-    const freeform = !toolSearch && (options?.freeformToolNames?.has(realName) ?? false);
-    if (toolSearch) {
-      output.push({
-        type: "tool_search_call", id: `tsc_${uuid()}`,
-        call_id: currentToolCallId, execution: "client",
-        arguments: parseArgsObj(currentToolCallArgs), status: "completed",
-      });
-    } else if (freeform) {
-      output.push({
-        type: "custom_tool_call", id: `ctc_${uuid()}`,
-        call_id: currentToolCallId, name: realName,
-        input: freeformInput(currentToolCallArgs), status: "completed",
-      });
-    } else {
-      output.push({
-        type: "function_call", id: `fc_${uuid()}`,
-        call_id: currentToolCallId, name: realName,
-        arguments: currentToolCallArgs || "{}", status: "completed",
-        ...(ns ? { namespace: ns } : {}),
-        ...plaintextCollaborationFields(ns, realName),
-      });
-    }
+    const { name, namespace, kind } = resolveOutputToolCall(
+      currentToolCallName, options?.toolNsMap, options?.freeformToolNames, options?.toolSearchToolNames,
+    );
+    output.push(completedToolCallItem(
+      kind, outputToolCallItemId(kind), currentToolCallId, name, currentToolCallArgs, namespace,
+    ));
     currentToolCallId = "";
     currentToolCallName = "";
     currentToolCallArgs = "";
@@ -127,13 +70,11 @@ export function buildResponseJSON(
       case "assistant_boundary":
         flushText();
         flushSummaryReasoning();
-        flushRawReasoning();
         flushToolCall();
         break;
       case "text_delta":
         if (currentText && currentTextPhase !== e.phase) flushText();
         if (currentSummaryReasoning) flushSummaryReasoning();
-        if (currentRawReasoning) flushRawReasoning();
         if (currentToolCallId) flushToolCall();
         // Compaction turns keep the summary out of normal message output (replay dedup — see
         // bridgeToResponsesSSE); it ships only inside the synthetic compaction item below.
@@ -145,29 +86,12 @@ export function buildResponseJSON(
         break;
       case "thinking_delta":
         if (currentText) flushText();
-        if (currentRawReasoning) flushRawReasoning();
         if (currentToolCallId) flushToolCall();
         currentSummaryReasoning += e.thinking;
-        break;
-      case "thinking_signature":
-        // End of the current thinking block — flush it WITH the signature envelope so the
-        // block/signature pairing survives multi-block turns.
-        batchSignature = e.signature;
-        flushSummaryReasoning();
-        break;
-      case "redacted_thinking":
-        batchRedacted.push(e.data);
-        break;
-      case "reasoning_raw_delta":
-        if (currentText) flushText();
-        if (currentSummaryReasoning) flushSummaryReasoning();
-        if (currentToolCallId) flushToolCall();
-        currentRawReasoning += e.text;
         break;
       case "tool_call_start":
         if (currentText) flushText();
         if (currentSummaryReasoning) flushSummaryReasoning();
-        if (currentRawReasoning) flushRawReasoning();
         flushToolCall();
         currentToolCallId = e.id;
         currentToolCallName = e.name;
@@ -183,32 +107,25 @@ export function buildResponseJSON(
         errorEvent = e;
         usage = e.usage ?? usage;
         break;
-      case "incomplete":
-        incompleteEvent = e;
-        endTurn = e.endTurn;
-        if (e.providerState) options?.onProviderState?.(e.providerState);
-        break;
       case "done":
         receivedDone = true;
         usage = e.usage;
         endTurn = e.endTurn;
-        if (e.providerState) options?.onProviderState?.(e.providerState);
         if (e.stopReason === "max_tokens" || e.stopReason === "content_filter") stopReason = e.stopReason;
         break;
     }
   }
   flushText();
   flushSummaryReasoning();
-  flushRawReasoning();
   flushToolCall();
   const failure = errorEvent ? adapterFailureFromEvent(errorEvent) : undefined;
-  const implicitIncompleteReason = errorEvent || incompleteEvent ? undefined
+  const implicitIncompleteReason = errorEvent ? undefined
     : stopReason === "max_tokens" ? "max_output_tokens"
       : stopReason === "content_filter" ? "content_filter"
         : receivedDone ? undefined : "adapter_eof";
   const status = errorEvent
     ? "failed"
-    : incompleteEvent || implicitIncompleteReason
+    : implicitIncompleteReason
       ? "incomplete"
       : "completed";
   // Match the SSE contract: only an explicit, successful terminal can replace history.
@@ -223,15 +140,9 @@ export function buildResponseJSON(
     ...(endTurn !== undefined ? { end_turn: endTurn } : {}),
     ...(failure ? { error: failure.error, last_error: failure.error } : {}),
     ...(errorEvent?.retryable !== undefined ? { retryable: errorEvent.retryable } : {}),
-    ...(incompleteEvent ? {
-      incomplete_details: {
-        reason: incompleteEvent.reason,
-        ...(incompleteEvent.message ? { message: incompleteEvent.message } : {}),
-        ...(incompleteEvent.retryable !== undefined ? { retryable: incompleteEvent.retryable } : {}),
-      },
-    } : implicitIncompleteReason ? {
+    ...(implicitIncompleteReason ? {
       incomplete_details: { reason: implicitIncompleteReason },
     } : {}),
-    usage: responsesUsage(incompleteEvent?.usage ?? usage),
+    usage: responsesUsage(usage),
   };
 }

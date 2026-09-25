@@ -47,6 +47,7 @@ import {
 } from "./chatgpt-web-models";
 import type { ChatGptWebCompactionModel } from "./chatgpt-web-compaction-policy";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
+import type { NativeCodexEndpoint } from "./native-request-preparation";
 import {
   buildCompactV1Output,
   COMPACT_PROMPT,
@@ -68,7 +69,6 @@ import { VERSION } from "./version";
 import { HermesIntegration, type HermesContext } from "./hermes-integration";
 
 import { HttpTurnCounter, type NativeCodexTurnIdentity } from "./http-turn-lifecycle";
-export { HttpTurnCounter, type NativeCodexTurnIdentity, type HttpStreamFailureEvidence } from "./http-turn-lifecycle";
 import { ServerAdmission } from "./server-admission";
 import { inferenceRoutePolicy, type InferenceRoutePolicy } from "./server-route-policy";
 
@@ -126,9 +126,58 @@ interface ModelCatalogFailure {
   code?: string;
 }
 
-function modelCatalogFailure(stage: ModelCatalogFailure["stage"], error: unknown): ModelCatalogFailure {
+/** An error's `code` when it is a short identifier that is safe to report. */
+function safeErrorCode(error: unknown): string | undefined {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-  return { stage, ...(typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? { code } : {}) };
+  return typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? code : undefined;
+}
+
+function modelCatalogFailure(stage: ModelCatalogFailure["stage"], error: unknown): ModelCatalogFailure {
+  const code = safeErrorCode(error);
+  return { stage, ...(code !== undefined ? { code } : {}) };
+}
+
+function upstreamFailure(error: unknown): Response {
+  return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
+}
+
+async function forwardNativeOr502(
+  req: Request,
+  endpoint: NativeCodexEndpoint,
+  fetchUpstream?: NativeFetch,
+  decodedBody?: unknown,
+): Promise<Response> {
+  try {
+    return await forwardNativeCodexRequest(req, endpoint, fetchUpstream, decodedBody);
+  } catch (error) {
+    return upstreamFailure(error);
+  }
+}
+
+/** Bind native turn identity from the request body; a malformed identity releases the native replay body. */
+function bindBodyTurnIdentity(
+  raw: unknown,
+  nativeRequest: Request,
+  options: Pick<ResponseRequestOptions, "onTurnIdentity">,
+): Response | undefined {
+  try {
+    const identity = extractCodexTurnIdentityFromBody(raw);
+    if (identity.threadId && identity.turnId) {
+      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
+    }
+  } catch (error) {
+    void nativeRequest.body?.cancel().catch(() => {});
+    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+  }
+  return undefined;
+}
+
+function lunaCompactionDisabled(): Response {
+  return formatErrorResponse(
+    409,
+    "invalid_request_error",
+    "ChatGPT Web Luna uses a rolling checkpoint on every completed browser turn; separate Codex compaction is disabled for this route.",
+  );
 }
 
 export async function modelsRequest(
@@ -147,7 +196,7 @@ export async function modelsRequest(
     });
   } catch (error) {
     onFailure?.(modelCatalogFailure(sent ? "transport" : "request", error));
-    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
+    return upstreamFailure(error);
   }
   if (!upstream.ok) {
     // A local rejection (for example a missing Bearer) never reached the provider.
@@ -174,11 +223,7 @@ export async function nativeSearchRequest(
   req: Request,
   fetchUpstream?: NativeFetch,
 ): Promise<Response> {
-  try {
-    return await forwardNativeCodexRequest(req, "alpha/search", fetchUpstream);
-  } catch (error) {
-    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-  }
+  return forwardNativeOr502(req, "alpha/search", fetchUpstream);
 }
 
 async function nativeImagesRequest(
@@ -191,11 +236,7 @@ async function nativeImagesRequest(
     void req.body?.cancel().catch(() => {});
     return formatErrorResponse(401, "authentication_error", "Native image requests require incoming Codex Bearer authorization");
   }
-  try {
-    return await forwardNativeCodexRequest(req, endpoint, fetchUpstream);
-  } catch (error) {
-    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-  }
+  return forwardNativeOr502(req, endpoint, fetchUpstream);
 }
 
 function toolBridgeMaps(parsed: CodexParsedRequest): {
@@ -235,21 +276,10 @@ export async function responseRequest(
   const requestedModel = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { model?: unknown }).model
     : undefined;
-  try {
-    const identity = extractCodexTurnIdentityFromBody(raw);
-    if (identity.threadId && identity.turnId) {
-      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
-    }
-  } catch (error) {
-    void nativeRequest.body?.cancel().catch(() => {});
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
+  const identityRejection = bindBodyTurnIdentity(raw, nativeRequest, options);
+  if (identityRejection) return identityRejection;
   if (typeof requestedModel === "string" && !isChatGptWebModelSlug(requestedModel)) {
-    try {
-      return await forwardNativeCodexRequest(nativeRequest, "responses", options.fetchUpstream, raw);
-    } catch (error) {
-      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-    }
+    return forwardNativeOr502(nativeRequest, "responses", options.fetchUpstream, raw);
   }
   // The native byte-for-byte replay branch is unused for a Web request. Release its tee buffer
   // before the browser turn, which may stay active for minutes.
@@ -366,13 +396,7 @@ export async function responseRequest(
     });
     rememberCompactionContinuation(parsed, identity, [source, v1Source], summary);
   };
-  if (compaction && route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
-    return formatErrorResponse(
-      409,
-      "invalid_request_error",
-      "ChatGPT Web Luna uses a rolling checkpoint on every completed browser turn; separate Codex compaction is disabled for this route.",
-    );
-  }
+  if (compaction && route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) return lunaCompactionDisabled();
   if (compaction) {
     // History compaction is a dedicated summarization turn. It must never bind the active Codex
     // tool bridge or continue an in-flight MCP round; the returned summary becomes the next turn's
@@ -588,25 +612,14 @@ export async function compactRequest(
       },
     };
   }
-  try {
-    const identity = extractCodexTurnIdentityFromBody(raw);
-    if (identity.threadId && identity.turnId) {
-      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
-    }
-  } catch (error) {
-    void nativeRequest.body?.cancel().catch(() => {});
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
+  const identityRejection = bindBodyTurnIdentity(raw, nativeRequest, options);
+  if (identityRejection) return identityRejection;
   if (typeof raw.model !== "string" || !raw.model) {
     void nativeRequest.body?.cancel().catch(() => {});
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
   }
   if (!isChatGptWebModelSlug(raw.model)) {
-    try {
-      return await forwardNativeCodexRequest(nativeRequest, "responses/compact", options.fetchUpstream, raw);
-    } catch (error) {
-      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-    }
+    return forwardNativeOr502(nativeRequest, "responses/compact", options.fetchUpstream, raw);
   }
   void nativeRequest.body?.cancel().catch(() => {});
   const webRejection = options.webAdmission?.();
@@ -617,13 +630,7 @@ export async function compactRequest(
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
-  if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
-    return formatErrorResponse(
-      409,
-      "invalid_request_error",
-      "ChatGPT Web Luna uses a rolling checkpoint on every completed browser turn; separate Codex compaction is disabled for this route.",
-    );
-  }
+  if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) return lunaCompactionDisabled();
   const input = Array.isArray(raw.input) ? raw.input : [];
   const internal = createInternalJsonRequest(req, "http://127.0.0.1/v1/responses", {
     ...raw, stream: false, input: [...input, { type: "compaction_trigger" }],
@@ -756,10 +763,7 @@ export function startServer(
       turnBroker!.setExternalOwnersAccepted(acceptingTurns());
     }, error => {
       brokerState = "failed";
-      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-      brokerFailureCode = typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code)
-        ? code
-        : "broker_listen_failed";
+      brokerFailureCode = safeErrorCode(error) ?? "broker_listen_failed";
       turnBroker!.setExternalOwnersAccepted(false);
       console.error(
         `[chatgpt-web] turn broker endpoint is unavailable: ${error instanceof Error ? error.message : String(error)}`,
@@ -795,6 +799,10 @@ export function startServer(
     if (!(policy.admission === "web" ? acceptingTurns() : acceptingNative())) return admissionFailure();
     return httpTurns.track(run, req.signal, process.platform, policy.endpoint);
   };
+  const modelPreferenceReaders = (): Pick<ResponseRequestOptions, "readProModelVersion" | "readCompactionModel"> => ({
+    ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
+    ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
+  });
   const responseOptions = (
     bindIdentity: (identity: NativeCodexTurnIdentity) => void,
     bindWeb: () => void,
@@ -806,8 +814,7 @@ export function startServer(
       return undefined;
     },
     fetchUpstream: dependencies.fetchUpstream,
-    ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
-    ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
+    ...modelPreferenceReaders(),
   });
   const server = Bun.serve({
     hostname: config.host,
@@ -834,8 +841,7 @@ export function startServer(
             return hermes.respond(new Request(req, { signal }), config,
             (request, hermesContext, onCompletedResponse) => responseRequest(request, config, dependencies.adapterFactory, {
               hermesContext, onCompletedResponse, rememberState: false,
-              ...(dependencies.readProModelVersion ? { readProModelVersion: dependencies.readProModelVersion } : {}),
-              ...(dependencies.readCompactionModel ? { readCompactionModel: dependencies.readCompactionModel } : {}),
+              ...modelPreferenceReaders(),
             }));
           }, req.signal, process.platform, "responses");
         }

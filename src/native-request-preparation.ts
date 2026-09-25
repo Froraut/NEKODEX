@@ -8,6 +8,7 @@ import {
 } from "./responses/compaction";
 import { BRIDGE_REASONING_PREFIX } from "./responses/reasoning-envelope";
 import { safeNativeModelId } from "./usage/native-contract";
+import { isJsonRecord } from "./lib/json-record";
 
 const FIRST_PARTY_CODEX_ORIGINATORS = new Set([
   "codex_cli_rs",
@@ -61,12 +62,8 @@ export function codexClientVersionFromUserAgent(userAgent: string | null): strin
   return version ? `${version[1]}.${version[2]}.${version[3]}` : undefined;
 }
 
-function isObject(value: unknown): value is JsonObject {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function isBridgeReasoningItem(value: unknown): value is JsonObject {
-  if (!isObject(value) || value.type !== "reasoning") return false;
+  if (!isJsonRecord(value) || value.type !== "reasoning") return false;
   const encrypted = value.encrypted_content;
   if (typeof encrypted === "string" && encrypted.startsWith(BRIDGE_REASONING_PREFIX)) return true;
   return typeof value.id === "string"
@@ -76,7 +73,7 @@ function isBridgeReasoningItem(value: unknown): value is JsonObject {
 }
 
 function isBridgeCompactionItem(value: unknown): value is BridgeCompactionItem {
-  return isObject(value)
+  return isJsonRecord(value)
     && value.type === "compaction"
     && typeof value.encrypted_content === "string"
     && value.encrypted_content.startsWith(BRIDGE_COMPACTION_PREFIX);
@@ -91,14 +88,14 @@ function isBridgeCompactionItem(value: unknown): value is BridgeCompactionItem {
  * that the history crossed providers, send the complete item content without provider-local ids.
  */
 export function scrubBridgeArtifactsForNative(value: unknown): { value: unknown; changed: boolean } {
-  if (!isObject(value)
+  if (!isJsonRecord(value)
     || !Array.isArray(value.input)
     || !value.input.some(item => isBridgeReasoningItem(item) || isBridgeCompactionItem(item))) {
     return { value, changed: false };
   }
 
   const input = value.input.flatMap(item => {
-    if (!isObject(item)) return [item];
+    if (!isJsonRecord(item)) return [item];
     const clean = { ...item };
     delete clean.id;
     if (isBridgeCompactionItem(clean)) {
@@ -161,10 +158,10 @@ export async function prepareNativeRequestBody(
       // If an upload is cancelled before parsing, its unused tee branch must not retain it.
       void parseRequest?.body?.cancel().catch(() => {});
     }
-    if (isObject(parsedBody)) {
+    if (isJsonRecord(parsedBody)) {
       model = safeNativeModelId(parsedBody.model) ?? undefined;
       const tail = Array.isArray(parsedBody.input) ? parsedBody.input.at(-1) : undefined;
-      compactionRequest ||= endpoint === "responses" && isObject(tail) && tail.type === "compaction_trigger";
+      compactionRequest ||= endpoint === "responses" && isJsonRecord(tail) && tail.type === "compaction_trigger";
     }
     // The local cache contains Web-owned responses only. Native-owned IDs that are not
     // present retain their original upstream continuation and byte-for-byte request.
@@ -180,12 +177,12 @@ export async function prepareNativeRequestBody(
     }
     const expanded = continuation.body;
     const localContinuation = expanded !== parsedBody;
-    const replayBody = localContinuation && isObject(expanded) ? { ...expanded } : expanded;
-    if (localContinuation && isObject(replayBody)) {
+    const replayBody = localContinuation && isJsonRecord(expanded) ? { ...expanded } : expanded;
+    if (localContinuation && isJsonRecord(replayBody)) {
       delete replayBody.previous_response_id;
       const prefixLength = previousResponseReplayPrefixLength(expanded);
       if (Array.isArray(replayBody.input)) replayBody.input = replayBody.input.map((item, index) => {
-        if (index >= prefixLength || !isObject(item)) return item;
+        if (index >= prefixLength || !isJsonRecord(item)) return item;
         const clean = { ...item };
         delete clean.id; // Locally restored Web output ids cannot be resolved by the native backend.
         return clean;

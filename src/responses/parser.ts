@@ -21,10 +21,7 @@ import {
   resolveInlineCodexFile,
   type CodexFileIdResolver,
 } from "./file-content";
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
+import { isJsonRecord } from "../lib/json-record";
 
 type InputBlock =
   | { type: "input_text"; text: string }
@@ -84,7 +81,7 @@ function inputContentParts(
 
 function containsOpaqueEncryptedContent(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
-  return value.some(block => isObj(block)
+  return value.some(block => isJsonRecord(block)
     && block.type === "encrypted_content"
     && typeof block.encrypted_content === "string"
     && block.encrypted_content.length > 0);
@@ -105,14 +102,14 @@ function outputTextOf(blocks: unknown[] | string | undefined): CodexTextContent[
 }
 
 function parseTextControls(value: unknown): Pick<CodexRequestOptions, "verbosity" | "outputFormat"> {
-  if (!isObj(value)) return {};
+  if (!isJsonRecord(value)) return {};
   const out: Pick<CodexRequestOptions, "verbosity" | "outputFormat"> = {};
   if (value.verbosity === "low" || value.verbosity === "medium" || value.verbosity === "high") {
     out.verbosity = value.verbosity;
   }
   const format = value.format;
   if (
-    isObj(format)
+    isJsonRecord(format)
     && format.type === "json_schema"
     && typeof format.name === "string"
     && format.name.length > 0
@@ -147,7 +144,7 @@ function outputToToolResultContent(output: string | unknown[] | undefined): stri
   const parts: CodexContentPart[] = [];
   let hasImage = false;
   for (const raw of output) {
-    if (!isObj(raw)) continue;
+    if (!isJsonRecord(raw)) continue;
     if (raw.type === "output_text" || raw.type === "text" || raw.type === "input_text") {
       if (typeof raw.text === "string") parts.push({ type: "text", text: raw.text });
     } else if (raw.type === "refusal" && typeof raw.refusal === "string") {
@@ -390,7 +387,7 @@ export function parseRequest(body: unknown, parseOptions?: {
         if (rawArgs) {
           try {
             const parsed: unknown = JSON.parse(rawArgs);
-            if (isObj(parsed)) args = parsed;
+            if (isJsonRecord(parsed)) args = parsed;
           } catch {
             console.warn(`[parser] function_call ${call.call_id} has non-JSON arguments; defaulting to {}`);
           }
@@ -446,7 +443,7 @@ export function parseRequest(body: unknown, parseOptions?: {
         if (!callId) throw new Error("tool_search_call requires a nonempty call_id or id");
         assistantHolderWithReasoning().content.push({
           type: "toolCall", id: callId, name: "tool_search",
-          arguments: isObj(call.arguments) ? call.arguments : {},
+          arguments: isJsonRecord(call.arguments) ? call.arguments : {},
         });
         continue;
       }
@@ -474,29 +471,18 @@ export function parseRequest(body: unknown, parseOptions?: {
         continue;
       }
 
-      if (effectiveType === "function_call_output") {
+      if (effectiveType === "function_call_output" || effectiveType === "custom_tool_call_output") {
         pendingReasoning.length = 0;
         const output = item as { call_id: string; output?: string | unknown[] };
         const toolInfo = findToolById(messages, output.call_id);
         messages.push({
           role: "toolResult", toolCallId: output.call_id,
           toolName: toolInfo.name, toolNamespace: toolInfo.namespace,
-          content: outputToToolResultContent(output.output), isError: false, timestamp: now,
-        });
-        continue;
-      }
-
-      if (effectiveType === "custom_tool_call_output") {
-        pendingReasoning.length = 0;
-        const output = item as { call_id: string; output: string | unknown[] };
-        const toolInfo = findToolById(messages, output.call_id);
-        messages.push({
-          role: "toolResult", toolCallId: output.call_id,
-          toolName: toolInfo.name, toolNamespace: toolInfo.namespace,
-          // Same payload shape as function_call_output (codex-rs FunctionCallOutputPayload):
+          // Both outputs share one payload shape (codex-rs FunctionCallOutputPayload):
           // string or content items — normalize arrays instead of leaking raw wire blocks.
           content: outputToToolResultContent(output.output), isError: false, timestamp: now,
         });
+        continue;
       }
     }
   }

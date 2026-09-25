@@ -1,11 +1,9 @@
-import { authorizeLauncherControl } from "./pro-model-config";
-import { assertServiceIdle } from "./service";
-import { resolve } from "node:path";
+import { loadLauncherOwnedConfig } from "./pro-model-config";
 import {
   parseChatGptWebCompactionModel,
   type ChatGptWebCompactionModel,
 } from "./chatgpt-web-compaction-policy";
-import { loadConfigWithSnapshot, saveConfig } from "./config";
+import { saveConfig } from "./config";
 
 export async function runCompactionModelConfigCommand(args: string[]): Promise<void> {
   const [action, rawModel, ...rest] = args;
@@ -27,14 +25,7 @@ export async function runCompactionModelConfigCommand(args: string[]): Promise<v
     }
   }
 
-  const authorizedDescriptorPath = authorizeLauncherControl("compaction model configuration");
-  const { config, snapshot } = loadConfigWithSnapshot();
-  if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath
-    || resolve(config.browserHostDescriptorPath) !== resolve(authorizedDescriptorPath)) {
-    throw new Error("Launcher authorization does not own this configuration");
-  }
-
-  if (config.purpose !== "dev-harness") await assertServiceIdle(config);
+  const { config, snapshot } = await loadLauncherOwnedConfig("compaction model configuration");
 
   // The daemon samples this value when the next eligible compaction starts.
   if (model === undefined) delete config.compactionModel;

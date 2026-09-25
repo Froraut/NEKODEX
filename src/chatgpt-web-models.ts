@@ -144,11 +144,9 @@ export function resolveChatGptWebContextLimits(
   let limits: ChatGptWebContextLimits;
   // Extra High availability alone does not establish the larger Pro context envelope.
   if (capabilities.proAvailable) {
-    const contextWindow = effort === "low"
-      ? CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW
-      : effort === "max"
-        ? CHATGPT_WEB_PRO_MODEL_CONTEXT_WINDOW
-        : CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW;
+    const contextWindow = effort === "max"
+      ? CHATGPT_WEB_PRO_MODEL_CONTEXT_WINDOW
+      : CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW;
     limits = contextLimits(contextWindow, CHATGPT_WEB_PRO_AUTO_COMPACT_TOKEN_LIMIT);
   } else if (effort === "low") {
     limits = contextLimits(

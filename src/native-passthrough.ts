@@ -2,9 +2,8 @@ import { fetchNativeCodex } from "./native-network";
 import { enqueueNativeUsageTelemetry } from "./native-usage-telemetry";
 import { codexClientVersionFromUserAgent, prepareNativeRequestBody, type NativeCodexEndpoint } from "./native-request-preparation";
 import { failureCategoryForHttp, observeNativeResponseBody, withUncleanCloseTolerance } from "./native-response-body";
-export { codexClientVersionFromUserAgent, scrubBridgeArtifactsForNative } from "./native-request-preparation";
-export type { NativeImageEndpoint, NativeCodexEndpoint } from "./native-request-preparation";
-export { observeNativeResponseBody } from "./native-response-body";
+import type { NativeUsageFailureCategory, NativeUsageOutcome, NativeUsageTelemetryEvent } from "./usage/native-contract";
+export type { NativeImageEndpoint } from "./native-request-preparation";
 
 const CODEX_BACKEND = "https://chatgpt.com/backend-api/codex";
 const HOP_BY_HOP_HEADERS = new Set([
@@ -101,6 +100,24 @@ export async function forwardNativeCodexRequest(
   const telemetryEndpoint = endpoint === "responses" || endpoint === "responses/compact"
     ? (compactionRequest ? "responses/compact" : endpoint)
     : undefined;
+  // A receipt for a request whose response body was never observed, so no usage was reported.
+  const reportUnobserved = (
+    telemetry: NativeUsageTelemetryEvent["endpoint"],
+    outcome: NativeUsageOutcome,
+    httpStatus: number,
+    failureCategory: NativeUsageFailureCategory | null,
+  ): void => enqueueNativeUsageTelemetry({
+    endpoint: telemetry,
+    requestedModelId: model ?? null,
+    reportedModelId: null,
+    startedAt: telemetryStartedAt,
+    durationMs: Math.max(0, Math.round(Date.now() - telemetryStartedAtMs)),
+    outcome,
+    httpStatus,
+    failureCategory,
+    usageStatus: "unreported",
+    usage: null,
+  });
   let upstream: Response;
   try {
     upstream = await fetchUpstream(upstreamRequest);
@@ -108,18 +125,7 @@ export async function forwardNativeCodexRequest(
     if (telemetryEndpoint) {
       const aborted = request.signal.aborted
         || (error instanceof DOMException && error.name === "AbortError");
-      enqueueNativeUsageTelemetry({
-        endpoint: telemetryEndpoint,
-        requestedModelId: model ?? null,
-        reportedModelId: null,
-        startedAt: telemetryStartedAt,
-        durationMs: Math.max(0, Math.round(Date.now() - telemetryStartedAtMs)),
-        outcome: aborted ? "aborted" : "failed",
-        httpStatus: 0,
-        failureCategory: aborted ? "aborted" : "transport",
-        usageStatus: "unreported",
-        usage: null,
-      });
+      reportUnobserved(telemetryEndpoint, aborted ? "aborted" : "failed", 0, aborted ? "aborted" : "transport");
     }
     throw error;
   }
@@ -159,18 +165,7 @@ export async function forwardNativeCodexRequest(
       });
     } else {
       const failureCategory = failureCategoryForHttp(upstream.status);
-      enqueueNativeUsageTelemetry({
-        endpoint: telemetryEndpoint,
-        requestedModelId: model ?? null,
-        reportedModelId: null,
-        startedAt: telemetryStartedAt,
-        durationMs: Math.max(0, Math.round(Date.now() - telemetryStartedAtMs)),
-        outcome: failureCategory ? "failed" : "completed",
-        httpStatus: upstream.status,
-        failureCategory,
-        usageStatus: "unreported",
-        usage: null,
-      });
+      reportUnobserved(telemetryEndpoint, failureCategory ? "failed" : "completed", upstream.status, failureCategory);
     }
   }
   return new Response(

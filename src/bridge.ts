@@ -1,11 +1,11 @@
-import { uuid, responsesUsage, responseError, adapterFailureFromEvent, plaintextCollaborationFields, type OutputItem, type ResponsesTerminalStatus } from "./responses/output-policy";
+import {
+  uuid, responsesUsage, adapterFailureFromEvent, plaintextCollaborationFields, resolveOutputToolCall,
+  outputToolCallItemId, freeformToolInput, completedToolCallItem, type OutputItem, type OutputToolCallKind,
+} from "./responses/output-policy";
 export { buildResponseJSON } from "./responses/json-output";
-export { adapterFailureFromMessage } from "./lib/errors";
-export type { ResponsesTerminalStatus } from "./responses/output-policy";
-import type { AdapterEvent, CodexMessagePhase, CodexProviderContinuationState } from "./types";
-import { adapterFailureFromMessage, classifyError } from "./lib/errors";
+import type { AdapterEvent, CodexMessagePhase } from "./types";
+import { classifyError } from "./lib/errors";
 import { encodeCompactionSummary } from "./responses/compaction";
-import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
 
 function sseEvent(name: string, data: Record<string, unknown>): string {
@@ -21,7 +21,6 @@ export function bridgeToResponsesSSE(
   onCancel?: () => void,
   heartbeatMs = 2_000,
   options?: {
-    responseId?: string;
     stallTimeoutSec?: number;
     hideThinkingSummary?: boolean;
     /**
@@ -34,22 +33,9 @@ export function bridgeToResponsesSSE(
     onProcessedTerminalEvent?: (event: AdapterEvent) => void;
     /** Called only when the HTTP client cancels the stream before terminal delivery. */
     onClientCancel?: () => void;
-    /** One-shot: first non-empty text/thinking/raw-reasoning delta observed (WP4 TTFT). */
-    onFirstOutput?: () => void;
-    onTerminal?: (status: ResponsesTerminalStatus) => void;
-    onCompletedResponse?: (response: Record<string, unknown>, providerState?: CodexProviderContinuationState) => void;
-    /** Test seam for the platform-specific Bun stream transport. */
-    streamPlatform?: NodeJS.Platform;
-    /** Test seam for the monotonic upstream-silence clock. */
-    now?: () => number;
+    onCompletedResponse?: (response: Record<string, unknown>) => void;
   },
 ): ReadableStream<Uint8Array> {
-  // Freeform/custom tools (apply_patch) carry their body in `input`; the model is given a
-  // function with `{input:string}`, so unwrap it here when relaying back as a custom_tool_call.
-  const freeformInput = (args: string): string => {
-    try { const o = JSON.parse(args); if (o && typeof o.input === "string") return o.input; } catch { /* raw */ }
-    return args;
-  };
   // Best-effort unwrap of a PARTIAL freeform arg buffer for live input streaming
   // (`response.custom_tool_call_input.delta` — codex-rs uses it for UI preview only;
   // the completed custom_tool_call item stays authoritative). Compact `{"input":"...`
@@ -78,24 +64,14 @@ export function bridgeToResponsesSSE(
     }
     return out;
   };
-  // tool_search_call carries arguments as a JSON object ({query, limit}); parse the model's arg string.
-  const parseArgsObj = (args: string): Record<string, unknown> => {
-    try { const o = JSON.parse(args); return o && typeof o === "object" ? o : {}; } catch { return {}; }
-  };
   const encoder = new TextEncoder();
-  const responseId = options?.responseId ?? `resp_${uuid()}`;
+  const responseId = `resp_${uuid()}`;
   let seq = 0;
   // Set once the client is gone (cancel) or an enqueue throws on a torn-down controller, so we
   // never enqueue again and never throw a second time inside start() — the RC2 double-throw that
   // otherwise surfaced as proxy-side stream noise on every client disconnect.
   let closed = false;
   let clientCancelled = false;
-  let terminalReported = false;
-  const reportTerminal = (status: ResponsesTerminalStatus) => {
-    if (terminalReported || clientCancelled || closed) return;
-    terminalReported = true;
-    options?.onTerminal?.(status);
-  };
   // RC3 keep-alive: Codex's idle timer is timeout(idle_timeout, stream.next()) over an
   // eventsource_stream; ANY received event re-arms it, while an unknown type is ignored
   // (responses.rs `_ => Ok(None)`). We emit a real, parser-ignored `response.heartbeat` only during
@@ -138,8 +114,7 @@ export function bridgeToResponsesSSE(
 
       const heartbeatFrame = encoder.encode('event: response.heartbeat\ndata: {"type":"response.heartbeat"}\n\n');
       let stallWarned = false;
-      const now = options?.now ?? (() => performance.now());
-      let lastAdapterEventAt = now();
+      let lastAdapterEventAt = performance.now();
       let lastAdapterEventType = "<none>";
       let adapterEventCount = 0;
       const streamStartedAt = lastAdapterEventAt;
@@ -148,58 +123,10 @@ export function bridgeToResponsesSSE(
 
       let currentMsg: { itemId: string; outputIndex: number; text: string; phase?: CodexMessagePhase } | null = null;
       let currentReasoning: { itemId: string; outputIndex: number; text: string } | null = null;
-      let currentRawReasoning: { itemId: string; outputIndex: number; text: string } | null = null;
-      // Opaque signed-reasoning round-trip state: the signature signs the CURRENT thinking
-      // block; redacted blocks are opaque payloads replayed verbatim. Attached to the reasoning
-      // item as an ocxr1 encrypted_content envelope on close. hiddenThinkingText collects the
-      // suppressed text under hideThinkingSummary so the signed text still round-trips.
-      let pendingSignature: string | undefined;
-      let pendingRedacted: string[] = [];
-      let hiddenThinkingText = "";
-      const takeReasoningEnvelope = (hiddenText?: string): string | undefined => {
-        if (!pendingSignature && pendingRedacted.length === 0) return undefined;
-        const envelope: ReasoningEnvelope = {};
-        if (pendingSignature) envelope.sig = pendingSignature;
-        if (pendingRedacted.length > 0) envelope.red = pendingRedacted;
-        if (hiddenText) envelope.txt = hiddenText;
-        pendingSignature = undefined;
-        pendingRedacted = [];
-        return encodeReasoningEnvelope(envelope);
-      };
-      // hideThinkingSummary path: no visible reasoning item exists, but a signed thinking block
-      // must still round-trip — emit an envelope-only reasoning item (empty summary, no text leak).
-      const flushHiddenReasoningEnvelope = () => {
-        const encrypted = takeReasoningEnvelope(hiddenThinkingText || undefined);
-        hiddenThinkingText = "";
-        if (!encrypted) return;
-        const itemId = `rs_${uuid()}`;
-        const item = { type: "reasoning", id: itemId, summary: [] as never[], encrypted_content: encrypted };
-        emit("response.output_item.added", { output_index: outputIndex, item });
-        emit("response.output_item.done", { output_index: outputIndex, item });
-        finishedItems.push(item as OutputItem);
-        outputIndex++;
-      };
-      // hideThinkingSummary for raw reasoning: no
-      // visible reasoning item is emitted — the app renders nothing, so tool cells keep grouping
-      // like native models — but the text still round-trips in a txt-only ocxr1 envelope so
-      // preserveReasoningContentModels replay (GLM interleaved thinking) keeps working. Direct
-      // encodeReasoningEnvelope: takeReasoningEnvelope's sig/red guard would drop txt-only.
-      let hiddenRawReasoningText = "";
-      const flushHiddenRawReasoning = () => {
-        if (!hiddenRawReasoningText) return;
-        const encrypted = encodeReasoningEnvelope({ txt: hiddenRawReasoningText });
-        hiddenRawReasoningText = "";
-        const itemId = `rs_${uuid()}`;
-        const item = { type: "reasoning", id: itemId, summary: [] as never[], encrypted_content: encrypted };
-        emit("response.output_item.added", { output_index: outputIndex, item });
-        emit("response.output_item.done", { output_index: outputIndex, item });
-        finishedItems.push(item as OutputItem);
-        outputIndex++;
-      };
       // Full assistant text of a compaction turn (across message boundaries) — becomes the
       // synthetic compaction item's payload on done.
       let compactionText = "";
-      let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; namespace?: string; freeform?: boolean; toolSearch?: boolean; inputEmitted?: string } | null = null;
+      let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; namespace?: string; kind: OutputToolCallKind; inputEmitted?: string } | null = null;
       const closeCurrentMessage = () => {
         if (!currentMsg) return;
         // Finalize the text part (Responses protocol). Without these .done events Codex never
@@ -231,11 +158,9 @@ export function bridgeToResponsesSSE(
           item_id: currentReasoning.itemId, output_index: currentReasoning.outputIndex, summary_index: 0,
           part: { type: "summary_text", text: currentReasoning.text },
         });
-        const encrypted = takeReasoningEnvelope();
         const item = {
           type: "reasoning", id: currentReasoning.itemId,
           summary: [{ type: "summary_text", text: currentReasoning.text }],
-          ...(encrypted ? { encrypted_content: encrypted } : {}),
         };
         emit("response.output_item.done", { output_index: currentReasoning.outputIndex, item });
         finishedItems.push(item as OutputItem);
@@ -243,59 +168,36 @@ export function bridgeToResponsesSSE(
         currentReasoning = null;
       };
 
-      const closeCurrentRawReasoning = () => {
-        if (!currentRawReasoning) return;
-        const item = {
-          type: "reasoning", id: currentRawReasoning.itemId, summary: [],
-          content: [{ type: "reasoning_text", text: currentRawReasoning.text }],
-        };
-        emit("response.output_item.done", { output_index: currentRawReasoning.outputIndex, item });
-        finishedItems.push(item as OutputItem);
-        outputIndex++;
-        currentRawReasoning = null;
-      };
-
       const closeCurrentToolCall = () => {
         if (!currentToolCall) return;
-        // Empty input (no-arg tools like computer_use get_app_state / list_apps) must serialize as
-        // "{}", never "" — Codex echoes the call back as a function_call next turn, and JSON.parse("")
-        // would 400 the whole session ("invalid JSON arguments"), poisoning all later turns.
-        const argsStr = currentToolCall.args || "{}";
         // Finalize streamed function-call arguments so Codex commits the call (incl. MCP / computer_use).
-        if (!currentToolCall.freeform && !currentToolCall.toolSearch) {
+        // Empty arguments serialize as "{}", as in the completed item.
+        if (currentToolCall.kind === "function") {
           emit("response.function_call_arguments.done", {
-            item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex, arguments: argsStr,
+            item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex, arguments: currentToolCall.args || "{}",
           });
         }
-        if (currentToolCall.freeform) {
+        if (currentToolCall.kind === "freeform") {
           emit("response.custom_tool_call_input.done", {
             item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex,
-            input: freeformInput(currentToolCall.args),
+            input: freeformToolInput(currentToolCall.args),
           });
         }
-        const item = currentToolCall.toolSearch
-          ? {
-              type: "tool_search_call", id: currentToolCall.itemId,
-              call_id: currentToolCall.callId, execution: "client",
-              arguments: parseArgsObj(currentToolCall.args), status: "completed",
-            }
-          : currentToolCall.freeform
-          ? {
-              type: "custom_tool_call", id: currentToolCall.itemId,
-              call_id: currentToolCall.callId, name: currentToolCall.name,
-              input: freeformInput(currentToolCall.args), status: "completed",
-            }
-          : {
-              type: "function_call", id: currentToolCall.itemId,
-              call_id: currentToolCall.callId, name: currentToolCall.name,
-              arguments: argsStr, status: "completed",
-              ...(currentToolCall.namespace ? { namespace: currentToolCall.namespace } : {}),
-              ...plaintextCollaborationFields(currentToolCall.namespace, currentToolCall.name),
-            };
+        const item = completedToolCallItem(
+          currentToolCall.kind, currentToolCall.itemId, currentToolCall.callId,
+          currentToolCall.name, currentToolCall.args, currentToolCall.namespace,
+        );
         emit("response.output_item.done", { output_index: currentToolCall.outputIndex, item });
-        finishedItems.push(item as OutputItem);
+        finishedItems.push(item);
         outputIndex++;
         currentToolCall = null;
+      };
+
+      // Boundaries and terminal events close whichever output item is still open.
+      const closeOpenItems = () => {
+        closeCurrentMessage();
+        closeCurrentReasoning();
+        closeCurrentToolCall();
       };
 
       // RC1: guarantee the Responses stream always ends with exactly one terminal event. Set true
@@ -303,20 +205,6 @@ export function bridgeToResponsesSSE(
       // we synthesize response.completed below, so Codex never hits the parser's
       // "stream closed before response.completed" (responses.rs) -> ApiError::Stream.
       let terminated = false;
-      let firstOutputReported = false;
-      const reportFirstOutput = (event: AdapterEvent): void => {
-        if (firstOutputReported) return;
-        const nonEmpty = event.type === "text_delta"
-          ? event.text.length > 0
-          : event.type === "thinking_delta"
-            ? event.thinking.length > 0
-            : event.type === "reasoning_raw_delta"
-              ? event.text.length > 0
-              : false;
-        if (!nonEmpty) return;
-        firstOutputReported = true;
-        try { options?.onFirstOutput?.(); } catch { /* metrics must not break the stream */ }
-      };
       const it = events[Symbol.asyncIterator]();
       let iteratorStarted = false;
       let iteratorReturned = false;
@@ -360,11 +248,10 @@ export function bridgeToResponsesSSE(
           if (next.done) { upstreamDone = true; break; }
           const event = next.value;
           let terminalEvent = false;
-          lastAdapterEventAt = now();
+          lastAdapterEventAt = performance.now();
           lastAdapterEventType = event.type;
           adapterEventCount += 1;
           stallWarned = false;
-          reportFirstOutput(event);
           // Compaction turns emit ONLY the synthetic compaction item + response.completed. The
           // summary text is accumulated silently: emitting it as a normal assistant message would
           // duplicate the summary if this response is ever replayed via previous_response_id
@@ -372,24 +259,17 @@ export function bridgeToResponsesSSE(
           // its compaction UI renders nothing mid-turn, so nothing is lost visually.
           if (options?.compaction) {
             if (event.type === "text_delta") { compactionText += event.text; continue; }
-            if (event.type !== "done" && event.type !== "incomplete" && event.type !== "error") continue;
+            if (event.type !== "done" && event.type !== "error") continue;
           }
           switch (event.type) {
             case "assistant_boundary": {
               // A guarded continuation starts a fresh assistant output item while keeping the
               // intermediate, suspicious text in the same Responses turn.
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentRawReasoning) closeCurrentRawReasoning();
-              flushHiddenRawReasoning();
-              if (currentToolCall) closeCurrentToolCall();
-              flushHiddenReasoningEnvelope();
+              closeOpenItems();
               break;
             }
             case "text_delta": {
               if (currentReasoning) closeCurrentReasoning();
-              if (currentRawReasoning) closeCurrentRawReasoning();
-              flushHiddenRawReasoning();
               if (currentToolCall) closeCurrentToolCall();
               if (currentMsg && currentMsg.phase !== event.phase) closeCurrentMessage();
               if (!currentMsg) {
@@ -414,10 +294,8 @@ export function bridgeToResponsesSSE(
               break;
             }
             case "thinking_delta": {
-              if (options?.hideThinkingSummary) { hiddenThinkingText += event.thinking; break; }
+              if (options?.hideThinkingSummary) break;
               if (currentMsg) closeCurrentMessage();
-              if (currentRawReasoning) closeCurrentRawReasoning();
-              flushHiddenRawReasoning();
               if (currentToolCall) closeCurrentToolCall();
               if (!currentReasoning) {
                 const itemId = `rs_${uuid()}`;
@@ -436,51 +314,15 @@ export function bridgeToResponsesSSE(
               });
               break;
             }
-            case "thinking_signature": {
-              pendingSignature = event.signature;
-              // Signature arrives at the end of the thinking block. With a visible reasoning item
-              // open, closeCurrentReasoning attaches the envelope; hidden/suppressed blocks flush
-              // an envelope-only reasoning item now.
-              if (!currentReasoning) flushHiddenReasoningEnvelope();
-              break;
-            }
-            case "redacted_thinking": {
-              pendingRedacted.push(event.data);
-              break;
-            }
-            case "reasoning_raw_delta": {
-              if (options?.hideThinkingSummary) { hiddenRawReasoningText += event.text; break; }
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentToolCall) closeCurrentToolCall();
-              if (!currentRawReasoning) {
-                const itemId = `rs_${uuid()}`;
-                const item = { type: "reasoning", id: itemId, summary: [] as never[], content: [] as { type: string; text: string }[] };
-                emit("response.output_item.added", { output_index: outputIndex, item });
-                currentRawReasoning = { itemId, outputIndex, text: "" };
-              }
-              currentRawReasoning.text += event.text;
-              emit("response.reasoning_text.delta", {
-                item_id: currentRawReasoning.itemId, output_index: currentRawReasoning.outputIndex,
-                content_index: 0, delta: event.text,
-              });
-              break;
-            }
             case "tool_call_start": {
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentRawReasoning) closeCurrentRawReasoning();
-              flushHiddenRawReasoning();
-              if (currentToolCall) closeCurrentToolCall();
-              const mapped = toolNsMap?.get(event.name);
-              const realName = mapped?.name ?? event.name;
-              const ns = mapped?.namespace;
-              const toolSearch = toolSearchToolNames?.has(realName) ?? false;
-              const freeform = !toolSearch && (freeformToolNames?.has(realName) ?? false);
-              const itemId = `${toolSearch ? "tsc" : freeform ? "ctc" : "fc"}_${uuid()}`;
-              const item = toolSearch
+              closeOpenItems();
+              const { name: realName, namespace: ns, kind } = resolveOutputToolCall(
+                event.name, toolNsMap, freeformToolNames, toolSearchToolNames,
+              );
+              const itemId = outputToolCallItemId(kind);
+              const item = kind === "tool_search"
                 ? { type: "tool_search_call", id: itemId, call_id: event.id, execution: "client", arguments: {}, status: "in_progress" }
-                : freeform
+                : kind === "freeform"
                 ? { type: "custom_tool_call", id: itemId, call_id: event.id, name: realName, input: "", status: "in_progress" }
                 : {
                     type: "function_call", id: itemId, call_id: event.id, name: realName,
@@ -488,19 +330,19 @@ export function bridgeToResponsesSSE(
                     ...plaintextCollaborationFields(ns, realName),
                   };
               emit("response.output_item.added", { output_index: outputIndex, item });
-              currentToolCall = { itemId, outputIndex, callId: event.id, name: realName, args: "", namespace: ns, freeform, toolSearch };
+              currentToolCall = { itemId, outputIndex, callId: event.id, name: realName, args: "", namespace: ns, kind };
               break;
             }
             case "tool_call_delta": {
               if (currentToolCall) {
                 currentToolCall.args += event.arguments;
-                if (!currentToolCall.freeform && !currentToolCall.toolSearch) {
+                if (currentToolCall.kind === "function") {
                   emit("response.function_call_arguments.delta", {
                     item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex,
                     delta: event.arguments,
                   });
                 }
-                if (currentToolCall.freeform) {
+                if (currentToolCall.kind === "freeform") {
                   // Hold while the buffer is still an ambiguous prefix of the JSON wrapper,
                   // then stream only the unwrapped input suffix (never rewind on mode flips).
                   if (!FREEFORM_WRAP_PREFIX.startsWith(currentToolCall.args)) {
@@ -523,14 +365,7 @@ export function bridgeToResponsesSSE(
               break;
             }
             case "done": {
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentRawReasoning) closeCurrentRawReasoning();
-              flushHiddenRawReasoning();
-              if (currentToolCall) closeCurrentToolCall();
-              // Redacted-only turns (or hidden thinking without a trailing signature event) still
-              // need their envelope-only reasoning item so the blocks replay next turn.
-              flushHiddenReasoningEnvelope();
+              closeOpenItems();
               if (options?.compaction && event.stopReason !== "max_tokens" && event.stopReason !== "content_filter") {
                 // Exactly one checkpoint after authoritative completion. A truncated or filtered
                 // summary must never be advertised as replacement history.
@@ -554,48 +389,20 @@ export function bridgeToResponsesSSE(
                 };
                 // Cache max-output partials so previous_response_id replay can continue them;
                 // rememberResponseState rejects content-filtered incomplete responses.
-                options?.onCompletedResponse?.(response, event.providerState);
+                options?.onCompletedResponse?.(response);
                 emit("response.incomplete", { response });
-                reportTerminal("incomplete");
               } else {
                 const response = { ...responseSnapshot("completed", finishedItems, event.endTurn), usage: responsesUsage(event.usage) };
-                options?.onCompletedResponse?.(response, event.providerState);
+                options?.onCompletedResponse?.(response);
                 emit("response.completed", {
                   response,
                 });
-                reportTerminal("completed");
               }
               terminalEvent = true;
               break;
             }
-            case "incomplete": {
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentRawReasoning) closeCurrentRawReasoning();
-              flushHiddenRawReasoning();
-              if (currentToolCall) closeCurrentToolCall();
-              flushHiddenReasoningEnvelope();
-              emit("response.incomplete", {
-                response: {
-                  ...responseSnapshot("incomplete", finishedItems, event.endTurn),
-                  usage: responsesUsage(event.usage),
-                  incomplete_details: {
-                    reason: event.reason,
-                    ...(event.message ? { message: event.message } : {}),
-                    ...(event.retryable !== undefined ? { retryable: event.retryable } : {}),
-                  },
-                },
-              });
-              reportTerminal("incomplete");
-              terminalEvent = true;
-              break;
-            }
             case "error": {
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentRawReasoning) closeCurrentRawReasoning();
-              flushHiddenRawReasoning();
-              if (currentToolCall) closeCurrentToolCall();
+              closeOpenItems();
               const failure = adapterFailureFromEvent(event);
               const failureDelivered = emit("response.failed", {
                 response: {
@@ -609,7 +416,6 @@ export function bridgeToResponsesSSE(
                 },
               });
               if (failureDelivered) options?.onProcessedTerminalEvent?.(event);
-              reportTerminal("failed");
               terminalEvent = true;
               break;
             }
@@ -623,15 +429,13 @@ export function bridgeToResponsesSSE(
         }
       } catch (err) {
         if (!terminated) {
-          flushHiddenRawReasoning();
           emit("response.failed", {
             response: {
               ...responseSnapshot("failed", finishedItems),
-              error: responseError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
-              last_error: responseError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
+              error: classifyError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
+              last_error: classifyError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
             },
           });
-          reportTerminal("failed");
           onCancel?.();
           terminated = true;
           returnIterator();
@@ -648,11 +452,7 @@ export function bridgeToResponsesSSE(
       if (!terminated) {
         // The adapter generator ended without an explicit done/error event. Mark as incomplete
         // rather than completed so Codex can distinguish a clean finish from a truncated stream.
-        if (currentMsg) closeCurrentMessage();
-        if (currentReasoning) closeCurrentReasoning();
-        if (currentRawReasoning) closeCurrentRawReasoning();
-        flushHiddenRawReasoning();
-        if (currentToolCall) closeCurrentToolCall();
+        closeOpenItems();
         emit("response.incomplete", {
           response: {
             ...responseSnapshot("incomplete", finishedItems),
@@ -660,7 +460,6 @@ export function bridgeToResponsesSSE(
             incomplete_details: { reason: "adapter_eof" },
           },
         });
-        reportTerminal("incomplete");
         terminated = true;
       }
 
@@ -680,7 +479,7 @@ export function bridgeToResponsesSSE(
         gated = true;
         beat = setInterval(() => {
           if (closed || gated) return;
-          const checkedAt = now();
+          const checkedAt = performance.now();
           const silenceMs = checkedAt - lastAdapterEventAt;
           if (silenceMs >= stallTimeoutMs / 2 && !stallWarned) {
             // Halfway to cancelling the turn. A healthy adapter heartbeats far more often than
@@ -701,18 +500,13 @@ export function bridgeToResponsesSSE(
               + ` sinceStreamStartMs=${checkedAt - streamStartedAt}`
               + ` iteratorStarted=${iteratorStarted} upstreamDone=${upstreamDone} emittedFrames=${emittedFrames}`,
             );
-            if (currentMsg) closeCurrentMessage();
-            if (currentReasoning) closeCurrentReasoning();
-            if (currentRawReasoning) closeCurrentRawReasoning();
-            flushHiddenRawReasoning();
-            if (currentToolCall) closeCurrentToolCall();
+            closeOpenItems();
             emit("response.incomplete", {
               response: {
                 ...responseSnapshot("incomplete", finishedItems),
                 incomplete_details: { reason: "upstream_stall_timeout" },
               },
             });
-            reportTerminal("incomplete");
             onCancel?.();
             terminated = true;
             returnIterator();
@@ -757,7 +551,7 @@ export function bridgeToResponsesSSE(
     returnIterator();
   };
 
-  if ((options?.streamPlatform ?? process.platform) === "win32") {
+  if (process.platform === "win32") {
     // Returning a Promise from a ReadableStream pull() served by Bun on Windows hits Bun#32111's
     // native teardown crash. Keep only Windows push-driven and retain HWM backpressure by polling
     // desiredSize; Darwin/Linux use the native pull contract below.

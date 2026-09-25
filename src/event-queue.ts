@@ -54,12 +54,6 @@ export class AsyncEventQueue<T> implements AsyncIterable<T> {
     this.close();
   }
 
-  async collect(): Promise<T[]> {
-    const values: T[] = [];
-    for await (const value of this) values.push(value);
-    return values;
-  }
-
   [Symbol.asyncIterator](): AsyncIterator<T> {
     return {
       next: () => {

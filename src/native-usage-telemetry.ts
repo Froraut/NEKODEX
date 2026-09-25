@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
 
 import type { NativeUsageTelemetryEvent } from "./usage/native-contract";
-export type { NativeUsageOutcome, NativeUsageFailureCategory, NativeReportedUsage, NativeUsageTelemetryEvent } from "./usage/native-contract";
 
 const DELIVERY_TIMEOUT_MS = 1_000;
 const RETRY_INTERVAL_MS = 10_000;
