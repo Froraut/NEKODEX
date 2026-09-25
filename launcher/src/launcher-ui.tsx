@@ -2,6 +2,7 @@ import languages from "../electron/languages.json";
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { localizeRuntimeMessage, type Copy } from "./i18n";
+import { stripIpcErrorPrefix } from "./ipc-error";
 import { Icon, type IconName } from "./icons";
 import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits, resolveChatGptWebTransportLimits } from "../../src/chatgpt-web-models";
 import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, ProModelVersion } from "./types";
@@ -329,7 +330,7 @@ export function McpMark() {
 }
 
 export function messageOf(value: unknown): string {
-  return value instanceof Error ? value.message : String(value);
+  return stripIpcErrorPrefix(value instanceof Error ? value.message : String(value));
 }
 
 export function TutorialVideo({ copy, label, src }: { copy: Copy; label: string; src: string }) {

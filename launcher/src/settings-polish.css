@@ -101,3 +101,7 @@
     -webkit-line-clamp: unset;
   }
 }
+
+/* Inline logout confirmation keeps the destructive action one deliberate step away. */
+.setting-row > .logout-confirmation { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; max-width: 46ch; }
+.logout-confirmation p { flex: 1 1 100%; margin: 0; color: var(--color-text-secondary); font-size: var(--text-sm); text-align: right; }

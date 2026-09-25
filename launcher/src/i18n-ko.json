@@ -590,5 +590,7 @@
   "accountSafetyRestore": "저장된 정책 복원",
   "launcherRuntimeRestartTitle": "업데이트를 완료하려면 NEKODEX 다시 시작",
   "launcherRuntimeRestartBody": "업데이트된 앱이 이전에 정상 작동하던 런타임을 사용하고 있습니다. 작업이 끝나면 NEKODEX를 다시 시작해 새 런타임을 활성화하세요.",
-  "launcherRuntimeRestartAction": "NEKODEX 다시 시작"
+  "launcherRuntimeRestartAction": "NEKODEX 다시 시작",
+  "logOutConfirmBody": "NEKODEX에서 ChatGPT 로그아웃할까요? 새 Web 턴을 실행하려면 패스키 등으로 다시 로그인해야 합니다.",
+  "logOutKeepSignedIn": "로그인 유지"
 }

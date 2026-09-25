@@ -65,6 +65,7 @@ export function SettingsSurface({
   const [turnsCancelled, setTurnsCancelled] = useState<string | null>(null);
   const taskCopy = taskControlCopy[language] ?? taskControlCopy.en;
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [routeDiagnosticsGeneration, setRouteDiagnosticsGeneration] = useState(0);
   const codexStatus = codexSettingsStatus(snapshot.state, devProfile, Boolean(catalogFailure));
   const proModelBusy = busy
@@ -173,10 +174,27 @@ export function SettingsSurface({
         {browser?.authenticated && snapshot.state.browserInteractionMode === "automatic" ? (
           <div className="setting-row">
             <strong>ChatGPT</strong>
-            <button className="button-secondary" type="button" disabled={busy}
-              onClick={() => void savePreference(async () => (await api!.logoutChatGpt()).state)}>
-              {copy.logOut}
-            </button>
+            {confirmingLogout ? (
+              <div className="logout-confirmation" role="group" aria-label={copy.logOut}>
+                <p role="alert">{copy.logOutConfirmBody}</p>
+                <button className="button-secondary" type="button" autoFocus disabled={busy}
+                  onClick={() => setConfirmingLogout(false)}>
+                  {copy.logOutKeepSignedIn}
+                </button>
+                <button className="button-secondary" type="button" disabled={busy}
+                  onClick={() => {
+                    setConfirmingLogout(false);
+                    void savePreference(async () => (await api!.logoutChatGpt()).state);
+                  }}>
+                  {copy.logOut}
+                </button>
+              </div>
+            ) : (
+              <button className="button-secondary" type="button" disabled={busy}
+                onClick={() => setConfirmingLogout(true)}>
+                {copy.logOut}
+              </button>
+            )}
           </div>
         ) : null}
         <SettingRow label={copy.toolsConnectionTab} body={copy.mcpBody}>

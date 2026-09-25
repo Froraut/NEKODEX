@@ -42,6 +42,11 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
   const [copied, setCopied] = useState(false);
   useEffect(() => setCopied(false), [progress.startedAt]);
   useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  useEffect(() => {
     setNow(Date.now());
     if (!progress.active) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -80,7 +85,7 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
           : progress.phase === "file-access" ? copy.existingChromeFileBody
           : progress.phase === "preparing" || progress.error === "existing-chrome-handoff-timeout" ? copy.existingChromePreparingBody : copy.existingChromeDuringImport}</p> : null}
     </div>
-    {settings ? <p><label>{copy.existingChromeAddress}: <code>chrome://inspect/#remote-debugging</code></label></p> : null}
+    {settings ? <p><span>{copy.existingChromeAddress}: <code>chrome://inspect/#remote-debugging</code></span></p> : null}
     {progress.active && settings ? <p>{copy.existingChromeRemaining.replace("{time}", remaining)}</p> : null}
     {progress.active && progress.phase === "preparing" ? <p>{copy.existingChromeHandoffRemaining.replace("{time}", remaining)}</p> : null}
     {progress.error ? <p role="alert">{existingChromeFailureText(progress.error, copy, language)}</p> : null}

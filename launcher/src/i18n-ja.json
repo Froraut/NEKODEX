@@ -590,5 +590,7 @@
   "launcherRuntimeRestartTitle": "NEKODEX を再起動してアップデートを完了",
   "launcherRuntimeRestartBody": "更新後のアプリは、以前の正常なランタイムを使用しています。タスクが完了したら NEKODEX を再起動して、新しいランタイムを有効にしてください。",
   "launcherRuntimeRestartAction": "NEKODEX を再起動",
-  "logOut": "ログアウト"
+  "logOut": "ログアウト",
+  "logOutConfirmBody": "NEKODEX で ChatGPT からログアウトしますか？新しい Web ターンを実行する前に、パスキーなどで再度サインインする必要があります。",
+  "logOutKeepSignedIn": "サインインしたままにする"
 }

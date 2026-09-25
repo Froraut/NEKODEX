@@ -486,7 +486,7 @@
 
 /* Update progress: compositor-friendly fill and stable-width transfer figures. */
 .updates-meter { height: 8px; position: relative; overflow: hidden; border-radius: 999px; background: var(--color-border-light); }
-.updates-meter-fill { display: block; width: 100%; height: 100%; background: var(--color-accent, #bfb0ff); border-radius: inherit; transform-origin: left center; }
+.updates-meter-fill { display: block; width: 100%; height: 100%; background: var(--brand-accent); border-radius: inherit; transform-origin: left center; }
 .updates-transfer, .updates-speed { font-variant-numeric: tabular-nums; }
 .updates-transfer strong { min-width: 6ch; text-align: right; }
 .updates-speed { display: block; min-height: 1.5em; }
