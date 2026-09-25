@@ -8,6 +8,7 @@ const MAX_BODY_BYTES = 16 * 1024;
 const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
 const MANUAL_SENT_OBSERVER_TIMEOUT_MS = 35_000;
 const MAX_AUTOMATIC_MUTATION_RECEIPTS = 4096;
+const SETTLED_MUTATION_RECEIPT_TTL_MS = 5 * 60 * 1000;
 
 function secureTokenMatches(expected, authorization) {
   const prefix = "Bearer ";
@@ -106,14 +107,21 @@ class BrowserControlServer {
       }
       return existing.promise;
     }
-    while (this.automaticMutationReceipts.size >= MAX_AUTOMATIC_MUTATION_RECEIPTS) {
-      const oldest = [...this.automaticMutationReceipts].find(([, receipt]) => receipt.settled === true);
-      if (!oldest) throw new Error("Automatic browser mutation receipt capacity is full");
-      this.automaticMutationReceipts.delete(oldest[0]);
+    const now = Date.now();
+    for (const [receiptKey, receipt] of this.automaticMutationReceipts) {
+      if (this.automaticMutationReceipts.size < MAX_AUTOMATIC_MUTATION_RECEIPTS
+        && !(receipt.settled === true && now - receipt.settledAt > SETTLED_MUTATION_RECEIPT_TTL_MS)) break;
+      if (receipt.settled === true) this.automaticMutationReceipts.delete(receiptKey);
     }
-    const receipt = { fingerprint, settled: false, promise: null };
+    if (this.automaticMutationReceipts.size >= MAX_AUTOMATIC_MUTATION_RECEIPTS) {
+      const error = new Error("Automatic browser mutation receipt capacity is full");
+      error.code = "control_unavailable";
+      throw error;
+    }
+    const receipt = { fingerprint, settled: false, settledAt: 0, promise: null };
     receipt.promise = Promise.resolve().then(mutation).then(result => {
       receipt.settled = true;
+      receipt.settledAt = Date.now();
       return result;
     }, error => {
       if (this.automaticMutationReceipts.get(key) === receipt) {
@@ -175,7 +183,11 @@ class BrowserControlServer {
       }
       const preferences = this.getPreferences();
       const host = this.getBrowserHost();
-      if (!host) throw new Error("browser host is not ready");
+      if (!host) {
+        const error = new Error("browser host is not ready");
+        error.code = "control_unavailable";
+        throw error;
+      }
       if (isNativeUsage) {
         validateNativeUsageSample(body);
         const result = host.recordNativeUsage(body);
@@ -516,11 +528,12 @@ class BrowserControlServer {
       const manualInspectionDisabled = error?.code === "manual_browser_inspection_disabled";
       const manualOwnerLost = error?.code === "manual_turn_owner_lost";
       const manualTimedOut = error?.code === "manual_turn_timed_out";
+      const unavailable = error?.code === "control_unavailable";
       writeJson(
         response,
         cancelled || retainedUnavailable || manualInspectionDisabled || manualOwnerLost
           ? 409
-          : manualTimedOut ? 408 : 400,
+          : manualTimedOut ? 408 : unavailable ? 503 : 400,
         {
         error: message,
         ...(error?.code === "account_cooldown" ? { code: "account_cooldown", retryAt: error.retryAt } : {}),

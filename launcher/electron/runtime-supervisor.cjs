@@ -874,6 +874,8 @@ class RuntimeSupervisor {
         method: "GET",
         signal: controller.signal,
       });
+      // Only the status matters; release the body so repeated probes do not hold connections.
+      await response.body?.cancel().catch(() => {});
       return {
         observed: true,
         ok: response.ok,

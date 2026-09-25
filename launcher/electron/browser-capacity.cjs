@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 
 const DEFAULT_BROWSER_CAPACITY = 16;
 // Configurable ceiling, not a verified simultaneous-session capacity.
@@ -27,12 +27,8 @@ function readBrowserCapacity(coreHome) {
 function saveBrowserCapacity(coreHome, value) {
   const capacity = validateBrowserCapacity(value);
   fs.mkdirSync(coreHome, { recursive: true, mode: 0o700 });
-  const filename = path.join(coreHome, "browser-capacity.json");
-  const temporary = `${filename}.${randomUUID()}.tmp`;
-  try {
-    fs.writeFileSync(temporary, JSON.stringify({ maxParallelTurns: capacity }, null, 2) + "\n", { mode: 0o600, flag: "wx" });
-    fs.renameSync(temporary, filename);
-  } finally { fs.rmSync(temporary, { force: true }); }
+  writePrivateFileAtomic(path.join(coreHome, "browser-capacity.json"),
+    JSON.stringify({ maxParallelTurns: capacity }, null, 2) + "\n", { durable: true });
   return capacity;
 }
 

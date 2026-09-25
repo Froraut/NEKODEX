@@ -18,6 +18,8 @@ import {
 } from "./compaction-transaction";
 import type { ChatGptTurnEnvironment } from "./environment";
 
+const BROKER_REQUEST_LINE_TIMEOUT_MS = 30_000;
+
 interface PendingTurn extends ChatGptTurnEnvironment {
   expiresAt?: number;
 }
@@ -884,17 +886,24 @@ export class TurnBroker implements TurnBrokerOwner {
     socket.setEncoding("utf8");
     socket.on("error", () => {});
     socket.once("close", () => disconnected.abort());
-    socket.on("data", chunk => {
+    // A client that connects but never finishes its request line cannot hold the socket forever.
+    // Once a request is dispatched the socket stays open for the turn's lifetime.
+    socket.setTimeout(BROKER_REQUEST_LINE_TIMEOUT_MS, () => { if (!handled) socket.destroy(); });
+    socket.on("data", (chunk: string) => {
       if (handled) return;
+      const scannedBefore = buffered.length;
       buffered += chunk;
-      if (buffered.length > MAX_BROKER_LINE_CHARS && !buffered.slice(0, MAX_BROKER_LINE_CHARS + 1).includes("\n")) {
+      const chunkNewline = chunk.indexOf("\n");
+      const newline = chunkNewline < 0 ? -1 : scannedBefore + chunkNewline;
+      if (newline < 0 && buffered.length > MAX_BROKER_LINE_CHARS) {
         handled = true;
+        socket.setTimeout(0);
         this.writeSocketResponse(socket, { id: "unknown", error: "turn broker request exceeds size limit" });
         return;
       }
-      const newline = buffered.indexOf("\n");
       if (newline < 0) return;
       handled = true;
+      socket.setTimeout(0);
       const line = buffered.slice(0, newline);
       let request: BrokerRequest | undefined;
       let responseId = "unknown";
