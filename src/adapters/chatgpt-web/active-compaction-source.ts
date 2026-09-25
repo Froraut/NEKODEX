@@ -1,50 +1,9 @@
-import { parseDataUrl } from "../image";
-import type { CodexContentPart, CodexParsedRequest, CodexToolResultMessage } from "../../types";
+import type { CodexParsedRequest } from "../../types";
+import { brokerToolResult, currentToolResults } from "./broker-tool-result";
 import type { BrokerToolResult, TurnBrokerOwner } from "./turn-broker";
 import type { ChatGptTurnSession } from "./turn-execution";
 import { activeCompactionToolResultInstruction, zeroRiskActiveCompactionToolResultInstruction } from "./native-compaction-control";
 import { abortReason, withCompactionAbort } from "./compaction-lifecycle";
-
-function brokerContent(content: string | CodexContentPart[]): unknown[] {
-  if (typeof content === "string") return [{ type: "text", text: content }];
-  return content.map(part => {
-    if (part.type === "text") return { type: "text", text: part.text };
-    if (part.type === "file") return {
-      type: "resource",
-      resource: {
-        uri: `nekodex-file:sha256:${part.sha256}`,
-        name: part.name,
-        mimeType: part.mimeType,
-        blob: part.base64,
-      },
-    };
-    const parsed = parseDataUrl(part.imageUrl);
-    if (parsed) return { type: "image", data: parsed.base64, mimeType: parsed.mediaType };
-    return { type: "resource_link", uri: part.imageUrl, name: "Codex tool image", mimeType: "image/*" };
-  });
-}
-
-function structuredContent(text: string): unknown | undefined {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function toolResult(message: CodexToolResultMessage): BrokerToolResult {
-  const content = brokerContent(message.content);
-  const text = typeof message.content === "string"
-    ? message.content
-    : message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
-  const structured = structuredContent(text);
-  return {
-    content,
-    ...(structured !== undefined ? { structuredContent: structured } : {}),
-    ...(message.isError ? { isError: true } : {}),
-  };
-}
 
 function interruptedByActiveCompaction(): BrokerToolResult {
   return {
@@ -74,21 +33,6 @@ function interruptedByZeroRiskCompaction(): BrokerToolResult {
     }],
     isError: true,
   };
-}
-
-function currentToolResults(
-  parsed: CodexParsedRequest,
-  session: ChatGptTurnSession,
-): Map<string, CodexToolResultMessage> {
-  const results = new Map<string, CodexToolResultMessage>();
-  for (const message of parsed.context.messages) {
-    if (message.role !== "toolResult" || !session.hasOutstanding(message.toolCallId)) continue;
-    if (results.has(message.toolCallId)) {
-      throw new Error(`Codex returned duplicate results for tool call ${message.toolCallId}`);
-    }
-    results.set(message.toolCallId, message);
-  }
-  return results;
 }
 
 type ActiveSourceBroker = Pick<TurnBrokerOwner, "requestCompaction" | "compactionDeliveryCount" | "completeTool" | "revoke">;
@@ -135,7 +79,7 @@ async function settleActiveSource<T>(
         await broker.completeTool(
           token,
           request.callId,
-          policy.result(toolResult(result), interruptedQueued, index === outstanding.length - 1),
+          policy.result(brokerToolResult(result), interruptedQueued, index === outstanding.length - 1),
         );
         source.runtime.externalProgress.recordToolResult();
         source.markResultDelivered(request.callId);

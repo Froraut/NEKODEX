@@ -183,10 +183,6 @@ export class ChatGptTurnSession {
     return [...this.round(key).reasoning];
   }
 
-  appendRoundEvent(key: string, event: AdapterEvent): void {
-    this.appendRoundEvents(key, [event]);
-  }
-
   appendRoundEvents(key: string, events: readonly AdapterEvent[]): void {
     if (events.length === 0) return;
     const round = this.round(key);

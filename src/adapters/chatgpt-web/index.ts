@@ -6,10 +6,10 @@ import {
 } from "../../chatgpt-web-compaction-policy";
 import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
 import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
-import { namespacedToolName, type AdapterEvent, type CodexContentPart, type CodexParsedRequest, type CodexProviderConfig, type CodexToolResultMessage } from "../../types";
+import { namespacedToolName, type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
-import { parseDataUrl } from "../image";
 import { chatGptSubmittedProviderFailure, ChatGptWebAdapterError } from "./adapter-error";
+import { brokerToolResult, currentToolResults } from "./broker-tool-result";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import {
   assertStructuredCompactionNotInterrupted,
@@ -29,12 +29,11 @@ import { chatGptReadOnlyContextWarning } from "./prompt";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { ChatGptLunaCheckpointStore } from "./rolling-checkpoint";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
-import { TurnBroker, type BrokerToolRequest, type BrokerToolResult, type TurnBrokerOwner } from "./turn-broker";
+import { TurnBroker, type BrokerToolRequest, type TurnBrokerOwner } from "./turn-broker";
 import { chatGptCompactionSourceExecutionKey, chatGptInstructionLineage, chatGptThreadOwnershipKey, chatGptTurnExecutionKey, chatGptTurnRetryKey, chatGptTurnRoundKey, chatGptTurnSessions, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnSession } from "./turn-execution";
-import { createChatGptTurnRoundDelivery, emitBrowserCompletion } from "./turn-round-delivery";
+import { createChatGptTurnRoundDelivery, emitBrowserCompletion, emitTextDeltas } from "./turn-round-delivery";
 import { createChatGptTurnRuntimeFactory, launcherZeroRiskManualControl, type ChatGptZeroRiskManualControl } from "./turn-runtime";
 import { estimateChatGptWebUsage } from "./usage";
-export type { ChatGptZeroRiskManualControl } from "./turn-runtime";
 
 function brokerSocketPath(provider: CodexProviderConfig): string {
   const configured = provider.chatgptWeb?.brokerSocketPath?.trim();
@@ -96,47 +95,6 @@ export function chatGptWebTraceId(provider: CodexProviderConfig, parsed: CodexPa
     .slice(0, 12);
 }
 
-function structuredContent(text: string): unknown | undefined {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function brokerContent(content: string | CodexContentPart[]): unknown[] {
-  if (typeof content === "string") return [{ type: "text", text: content }];
-  return content.map(part => {
-    if (part.type === "text") return { type: "text", text: part.text };
-    if (part.type === "file") return {
-      type: "resource",
-      resource: {
-        uri: `nekodex-file:sha256:${part.sha256}`,
-        name: part.name,
-        mimeType: part.mimeType,
-        blob: part.base64,
-      },
-    };
-    const parsed = parseDataUrl(part.imageUrl);
-    if (parsed) return { type: "image", data: parsed.base64, mimeType: parsed.mediaType };
-    return { type: "resource_link", uri: part.imageUrl, name: "Codex tool image", mimeType: "image/*" };
-  });
-}
-
-function brokerResult(message: CodexToolResultMessage): BrokerToolResult {
-  const content = brokerContent(message.content);
-  const text = typeof message.content === "string"
-    ? message.content
-    : message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
-  const structured = structuredContent(text);
-  return {
-    content,
-    ...(structured !== undefined ? { structuredContent: structured } : {}),
-    ...(message.isError ? { isError: true } : {}),
-  };
-}
-
 function emitTraceEvents(trace: ChatGptTraceEvent[], emit: (event: AdapterEvent) => void): void {
   for (const event of trace) {
     if (!event.continuation) emit({ type: "assistant_boundary" });
@@ -146,10 +104,6 @@ function emitTraceEvents(trace: ChatGptTraceEvent[], emit: (event: AdapterEvent)
       emit({ type: "thinking_delta", thinking: event.text });
     }
   }
-}
-
-function emitTextDeltas(deltas: string[], emit: (event: AdapterEvent) => void): void {
-  for (const text of deltas) emit({ type: "text_delta", text, phase: "final_answer" });
 }
 
 function emitReadOnlyContextWarning(
@@ -190,16 +144,6 @@ function submittedTurnFailure(session: ChatGptTurnSession, error: unknown): Erro
       cause: normalized,
     },
   );
-}
-
-function currentToolResults(parsed: CodexParsedRequest, session: ChatGptTurnSession): CodexToolResultMessage[] {
-  const byId = new Map<string, CodexToolResultMessage>();
-  for (const message of parsed.context.messages) {
-    if (message.role !== "toolResult" || !session.hasOutstanding(message.toolCallId)) continue;
-    if (byId.has(message.toolCallId)) throw new Error(`Codex returned duplicate results for tool call ${message.toolCallId}`);
-    byId.set(message.toolCallId, message);
-  }
-  return [...byId.values()];
 }
 
 function validateBatchTools(parsed: CodexParsedRequest, requests: BrokerToolRequest[]): void {
@@ -524,27 +468,16 @@ export function createChatGptWebAdapter(
                         preserveFinalResponse = true;
                       }
                       rawSummary = await runFreshCompactionFallback("zero_risk_source_already_completed");
-                    } else if (source.isActive() && source.runtime.mode === "tools") {
-                      const settlement = await settleActiveCompactionSource(
-                        parsed,
-                        source,
-                        structuredBroker!,
-                        operationSignal,
-                      );
-                      preserveFinalResponse = !settlement.compactionInstructionDelivered;
-                      rawSummary = await requestRetainedCompactionHandoff(
-                        worker,
-                        compactionPlan.execution,
-                        source,
-                        structuredBroker!,
-                        configuredCapabilities,
-                        handoffTraceId,
-                        operationSignal,
-                        handoffTimeoutMs,
-                        compactionPlan.compactionExecution,
-                      );
                     } else {
-                      if (source.isActive()) {
+                      if (source.isActive() && source.runtime.mode === "tools") {
+                        const settlement = await settleActiveCompactionSource(
+                          parsed,
+                          source,
+                          structuredBroker!,
+                          operationSignal,
+                        );
+                        preserveFinalResponse = !settlement.compactionInstructionDelivered;
+                      } else if (source.isActive()) {
                         const outcome = await withAbort(source.browserOutcome, operationSignal);
                         if (outcome.type === "error") throw outcome.error;
                         await withAbort(source.physicalSettlement, operationSignal);
@@ -736,7 +669,7 @@ export function createChatGptWebAdapter(
 
               const outstanding = session.outstanding();
               if (outstanding.length > 0) {
-                const results = currentToolResults(parsed, session);
+                const results = [...currentToolResults(parsed, session).values()];
                 if (results.length === 0) {
                   const reasoning = session.reasoningForOutstandingReplay();
                   if (replay.length === 0) emitRoundEvents(session.eventsForOutstandingReplay());
@@ -747,7 +680,7 @@ export function createChatGptWebAdapter(
                   throw new Error(`Codex returned ${results.length} of ${outstanding.length} results for a parallel ChatGPT tool batch`);
                 }
                 for (const message of results) {
-                  await broker.completeTool(turnToken, message.toolCallId, brokerResult(message));
+                  await broker.completeTool(turnToken, message.toolCallId, brokerToolResult(message));
                   session.runtime.externalProgress.recordToolResult();
                   session.markResultDelivered(message.toolCallId);
                 }

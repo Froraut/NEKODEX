@@ -23,14 +23,7 @@ import {
   type ClaimedTurn,
   type McpRequestExtra,
 } from "./mcp-native-tools";
-export {
-  CHATGPT_WEB_AGENT_WAIT_POLL_MS,
-  exactCodexAppTool,
-  transportBoundRawExecProgram,
-  execCommandGatewayProgram,
-  type ChatGptMcpContract,
-} from "./mcp-tool-routing";
-export { CHATGPT_WEB_WRITE_STDIN_MAX_FORWARD_YIELD_MS } from "./mcp-native-tools";
+export type { ChatGptMcpContract };
 import { createHash, randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -56,7 +49,7 @@ const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 // The OpenAI tunnel currently owns a two-minute command-response deadline. The local MCP server
 // must settle first so an abandoned native tool call is returned as an MCP error instead of
 // letting the tunnel tear down and poison its long-lived stdio transport.
-export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
 const ZERO_RISK_MCP_INSTRUCTIONS = [
   "For each pasted Codex Web GPT request, begin with codex_turn_start using the request_id in its request block.",
   "Use that request_id with the Codex tools needed for the task.",
@@ -98,7 +91,7 @@ function result(value: Record<string, unknown>, isError = false) {
   };
 }
 
-export function chatGptMcpInvocationTimeout(
+function chatGptMcpInvocationTimeout(
   environment: ChatGptTurnEnvironment & { expiresAt?: number },
   now = Date.now(),
 ): number {

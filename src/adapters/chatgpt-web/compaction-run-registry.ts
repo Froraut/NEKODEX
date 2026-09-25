@@ -195,11 +195,6 @@ export function createCompactionRunRegistry(now: () => number = () => Date.now()
     );
   }
 
-  /** Cancel a user-requested compaction without treating an HTTP observer disconnect as terminal. */
-  function cancelStructuredCompactionTrace(traceId: string, reason: Error): Promise<number> {
-    return cancelStructuredCompactionRuns(run => run.traceIds.has(traceId), reason);
-  }
-
   function beginCancelStructuredCompactionTrace(traceId: string, reason: Error): { cancelled: number; settlement: Promise<void> } {
     return beginCancellation(run => run.traceIds.has(traceId), reason);
   }
@@ -208,7 +203,7 @@ export function createCompactionRunRegistry(now: () => number = () => Date.now()
   function cancelAllStructuredCompactions(reason: Error): Promise<number> {
     return cancelStructuredCompactionRuns(() => true, reason);
   }
-  return { activeStructuredCompactionCount, existingStructuredCompactionRun, assertStructuredCompactionNotInterrupted, runStructuredCompactionOnce, cancelStructuredCompactionNativeTurn, beginCancelStructuredCompactionTrace, cancelStructuredCompactionTrace, cancelAllStructuredCompactions };
+  return { activeStructuredCompactionCount, existingStructuredCompactionRun, assertStructuredCompactionNotInterrupted, runStructuredCompactionOnce, cancelStructuredCompactionNativeTurn, beginCancelStructuredCompactionTrace, cancelAllStructuredCompactions };
 }
 
-export const { activeStructuredCompactionCount, existingStructuredCompactionRun, assertStructuredCompactionNotInterrupted, runStructuredCompactionOnce, cancelStructuredCompactionNativeTurn, beginCancelStructuredCompactionTrace, cancelStructuredCompactionTrace, cancelAllStructuredCompactions } = createCompactionRunRegistry();
+export const { activeStructuredCompactionCount, existingStructuredCompactionRun, assertStructuredCompactionNotInterrupted, runStructuredCompactionOnce, cancelStructuredCompactionNativeTurn, beginCancelStructuredCompactionTrace, cancelAllStructuredCompactions } = createCompactionRunRegistry();

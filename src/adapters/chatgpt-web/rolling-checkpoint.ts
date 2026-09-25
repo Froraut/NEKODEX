@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { atomicWriteFile } from "../../config";
 import type { CodexParsedRequest } from "../../types";
+import { jsonRecord as record } from "../../lib/json-record";
 import { extractChatGptTurnIdentity } from "./environment";
 import { canonicalChatGptStatePath, withChatGptStateFileLock } from "./state-file-lock";
 import { hashChatGptLunaAnswer, parseChatGptLunaCheckpoint, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint-format";
@@ -27,12 +28,6 @@ interface LunaCheckpointBackend {
 }
 
 const lunaCheckpointBackends = new Map<string, LunaCheckpointBackend>();
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
 
 function checkpointKey(threadId: string, answerHash: string): string {
   return `${threadId}\u0000${answerHash}`;

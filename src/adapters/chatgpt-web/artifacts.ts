@@ -10,16 +10,9 @@ import {
   digestFile, promoteOwnedArtifact, verifiedManifest,
   type ChatGptArtifact, type ChatGptArtifactManifest,
 } from "./artifact-storage";
-export { CHATGPT_ARTIFACT_MAX_BYTES, CHATGPT_ARTIFACT_MAX_COUNT, CHATGPT_ARTIFACT_MANIFEST_MAX_BYTES } from "./artifact-storage";
-export type { ChatGptArtifact } from "./artifact-storage";
-export { validateChatGptZipContainer } from "./artifact-format";
 export const CHATGPT_ARTIFACT_TRANSACTION_TIMEOUT_MS = 60_000;
 
 export interface ChatGptArtifactAcquisitionOptions {
-  /** Test seam may lower, never raise, the production transaction deadline. */
-  transactionTimeoutMs?: number;
-  /** Test seam may lower, never raise, the post-download acceptance limit. */
-  maxAcceptedBytes?: number;
   networkGuard?: ChatGptArtifactNetworkGuard;
   /** Trusted launcher-derived CORE_HOME/artifacts/<traceId>; required with networkGuard. */
   taskDirectory?: string;
@@ -279,14 +272,13 @@ async function promoteGuardedDownload(
   expectedName: string,
   expectedTraceId: string,
   expectedAssistantTurnId: string,
-  expectedAuthority: ChatGptArtifact["source"]["downloadAuthority"] | undefined,
   transaction: DownloadTransaction,
   maxAcceptedBytes: number,
 ): Promise<Omit<ChatGptArtifact, "source">> {
   const partial = resolve(receipt.partialPath);
   try {
     if (receipt.traceId !== expectedTraceId || receipt.assistantTurnId !== expectedAssistantTurnId
-      || receipt.filename !== expectedName || (expectedAuthority !== undefined && receipt.downloadAuthority !== expectedAuthority)
+      || receipt.filename !== expectedName
       || !["chatgpt.com", "oaiusercontent.com", "chatgpt-blob", "chatgpt-sandbox"].includes(receipt.downloadAuthority)
       || !Number.isInteger(receipt.receivedBytes) || receipt.receivedBytes <= 0
       || receipt.receivedBytes > maxAcceptedBytes || dirname(partial) !== resolve(directory)) {
@@ -332,127 +324,114 @@ export async function acquireChatGptResponseArtifacts(
   if (controls.length === 0) return [];
 
   const artifacts: ChatGptArtifact[] = [];
-  const timeoutMs = Math.min(
-    CHATGPT_ARTIFACT_TRANSACTION_TIMEOUT_MS,
-    Number.isFinite(options.transactionTimeoutMs) && options.transactionTimeoutMs! > 0
-      ? options.transactionTimeoutMs! : CHATGPT_ARTIFACT_TRANSACTION_TIMEOUT_MS,
-  );
-  const maxAcceptedBytes = Math.min(
-    CHATGPT_ARTIFACT_MAX_BYTES,
-    Number.isFinite(options.maxAcceptedBytes) && options.maxAcceptedBytes! > 0
-      ? options.maxAcceptedBytes! : CHATGPT_ARTIFACT_MAX_BYTES,
-  );
-  try {
-    for (const artifactControl of controls) {
-      if (abortSignal?.aborted) throw new DOMException("ChatGPT artifact acquisition aborted", "AbortError");
-      const transaction = downloadTransaction(abortSignal, timeoutMs);
-      let networkLeaseId: string | undefined;
-      try {
-        const control = artifactControl.control;
-        const expectedName = artifactControl.name;
-        trustedChatGptPage(page);
-        await transaction.race(artifactControl.card.hover({
-          timeout: Math.min(5_000, timeoutMs),
-          signal: transaction.signal,
-        })).catch(error => { throw artifactStageError("card-hover", error); });
-        if (options.networkGuard) {
-          const lease = await transaction.race(options.networkGuard.register({
-            assistantTurnId,
-            expectedFilename: expectedName,
-            maxBytes: maxAcceptedBytes,
-            deadlineMs: timeoutMs,
-          })).catch(error => { throw artifactStageError("register", error); });
-          if (!/^artifact_[a-f0-9]{32}$/.test(lease.leaseId)) {
-            throw new Error("Launcher returned an invalid artifact download lease");
-          }
-          networkLeaseId = lease.leaseId;
-        }
-        let downloadAuthority: ChatGptArtifact["source"]["downloadAuthority"];
-        let saved: Omit<ChatGptArtifact, "source">;
-        if (options.networkGuard && networkLeaseId) {
-          const clickAttempt = control.click({
-            timeout: Math.min(10_000, timeoutMs),
-            signal: transaction.signal,
-            noWaitAfter: true,
-          }).then(() => undefined, error => {
-            const classified = artifactStageError("click", error);
-            // Native DownloadItem completion is authoritative. A Playwright click may report a
-            // post-dispatch wait fault even when Electron owns a live transfer, so retain this
-            // safe stage code for diagnostics but let the bounded host receipt decide success.
-            console.warn(`[chatgpt-web] ${classified.message}`);
-          });
-          void clickAttempt;
-          const receipt = await transaction.race(options.networkGuard.wait(networkLeaseId).catch(error => {
-            throw artifactStageError("host-wait", error);
-          }));
-          downloadAuthority = receipt.downloadAuthority;
-          saved = await promoteGuardedDownload(
-              receipt,
-              directory,
-              expectedName,
-              traceId,
-              assistantTurnId,
-              undefined,
-              transaction,
-              maxAcceptedBytes,
-            ).catch(error => { throw artifactStageError("promotion", error); });
-        } else {
-          const download = await transaction.race(Promise.all([
-            page.waitForEvent("download", { timeout: Math.min(15_000, timeoutMs) })
-              .then(observed => { transaction.bind(observed); return observed; }),
-            control.click({ timeout: Math.min(10_000, timeoutMs), signal: transaction.signal }),
-          ]).then(([observed]) => observed)).catch(error => {
-            if (transaction.signal.aborted && transaction.signal.reason instanceof Error) throw transaction.signal.reason;
-            throw new Error(`ChatGPT generated-file card ${JSON.stringify(expectedName)} did not produce a download`, { cause: error });
-          });
-          downloadAuthority = trustedDownloadAuthority(download.url());
-          saved = await saveBoundedDownload(download, directory, expectedName, transaction, maxAcceptedBytes);
-        }
-        const artifact: ChatGptArtifact = {
-          ...saved,
-          source: { provider: "chatgpt.com", traceId, assistantTurnId, downloadAuthority },
-        };
-        if (!artifacts.some(existing => existing.path === artifact.path && existing.sha256 === artifact.sha256)) {
-          artifacts.push(artifact);
-        }
-      } catch (error) {
-        if (networkLeaseId && options.networkGuard) {
-          await options.networkGuard.cancel(
-            networkLeaseId,
-            error instanceof Error ? error : new Error(String(error)),
-          ).catch(() => {});
-        }
-        await transaction.cancel(error instanceof Error ? error : new Error(String(error)));
-        throw error;
-      } finally {
-        transaction.dispose();
-      }
-    }
-    const manifest: ChatGptArtifactManifest = { version: 1, artifacts };
-    const partialManifest = join(directory, `.manifest-${randomUUID()}.partial`);
-    const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-    if (manifestBytes.length > CHATGPT_ARTIFACT_MANIFEST_MAX_BYTES) {
-      throw new Error("ChatGPT artifact manifest exceeds the 1 MB limit");
-    }
-    const manifestPath = join(directory, "manifest.json");
+  const timeoutMs = CHATGPT_ARTIFACT_TRANSACTION_TIMEOUT_MS;
+  const maxAcceptedBytes = CHATGPT_ARTIFACT_MAX_BYTES;
+  for (const artifactControl of controls) {
+    if (abortSignal?.aborted) throw new DOMException("ChatGPT artifact acquisition aborted", "AbortError");
+    const transaction = downloadTransaction(abortSignal, timeoutMs);
+    let networkLeaseId: string | undefined;
     try {
-      const manifestHandle = await open(partialManifest, "wx", 0o600);
-      try {
-        await writeAllArtifactBytes(manifestHandle, manifestBytes);
-        await manifestHandle.sync();
-      } finally {
-        await manifestHandle.close();
+      const control = artifactControl.control;
+      const expectedName = artifactControl.name;
+      trustedChatGptPage(page);
+      await transaction.race(artifactControl.card.hover({
+        timeout: Math.min(5_000, timeoutMs),
+        signal: transaction.signal,
+      })).catch(error => { throw artifactStageError("card-hover", error); });
+      if (options.networkGuard) {
+        const lease = await transaction.race(options.networkGuard.register({
+          assistantTurnId,
+          expectedFilename: expectedName,
+          maxBytes: maxAcceptedBytes,
+          deadlineMs: timeoutMs,
+        })).catch(error => { throw artifactStageError("register", error); });
+        if (!/^artifact_[a-f0-9]{32}$/.test(lease.leaseId)) {
+          throw new Error("Launcher returned an invalid artifact download lease");
+        }
+        networkLeaseId = lease.leaseId;
       }
-      await rm(manifestPath, { force: true });
-      await rename(partialManifest, manifestPath);
+      let downloadAuthority: ChatGptArtifact["source"]["downloadAuthority"];
+      let saved: Omit<ChatGptArtifact, "source">;
+      if (options.networkGuard && networkLeaseId) {
+        const clickAttempt = control.click({
+          timeout: Math.min(10_000, timeoutMs),
+          signal: transaction.signal,
+          noWaitAfter: true,
+        }).then(() => undefined, error => {
+          const classified = artifactStageError("click", error);
+          // Native DownloadItem completion is authoritative. A Playwright click may report a
+          // post-dispatch wait fault even when Electron owns a live transfer, so retain this
+          // safe stage code for diagnostics but let the bounded host receipt decide success.
+          console.warn(`[chatgpt-web] ${classified.message}`);
+        });
+        void clickAttempt;
+        const receipt = await transaction.race(options.networkGuard.wait(networkLeaseId).catch(error => {
+          throw artifactStageError("host-wait", error);
+        }));
+        downloadAuthority = receipt.downloadAuthority;
+        saved = await promoteGuardedDownload(
+            receipt,
+            directory,
+            expectedName,
+            traceId,
+            assistantTurnId,
+            transaction,
+            maxAcceptedBytes,
+          ).catch(error => { throw artifactStageError("promotion", error); });
+      } else {
+        const download = await transaction.race(Promise.all([
+          page.waitForEvent("download", { timeout: Math.min(15_000, timeoutMs) })
+            .then(observed => { transaction.bind(observed); return observed; }),
+          control.click({ timeout: Math.min(10_000, timeoutMs), signal: transaction.signal }),
+        ]).then(([observed]) => observed)).catch(error => {
+          if (transaction.signal.aborted && transaction.signal.reason instanceof Error) throw transaction.signal.reason;
+          throw new Error(`ChatGPT generated-file card ${JSON.stringify(expectedName)} did not produce a download`, { cause: error });
+        });
+        downloadAuthority = trustedDownloadAuthority(download.url());
+        saved = await saveBoundedDownload(download, directory, expectedName, transaction, maxAcceptedBytes);
+      }
+      const artifact: ChatGptArtifact = {
+        ...saved,
+        source: { provider: "chatgpt.com", traceId, assistantTurnId, downloadAuthority },
+      };
+      if (!artifacts.some(existing => existing.path === artifact.path && existing.sha256 === artifact.sha256)) {
+        artifacts.push(artifact);
+      }
     } catch (error) {
-      await rm(partialManifest, { force: true }).catch(() => {});
+      if (networkLeaseId && options.networkGuard) {
+        await options.networkGuard.cancel(
+          networkLeaseId,
+          error instanceof Error ? error : new Error(String(error)),
+        ).catch(() => {});
+      }
+      await transaction.cancel(error instanceof Error ? error : new Error(String(error)));
       throw error;
+    } finally {
+      transaction.dispose();
     }
-    return artifacts;
+  }
+  const manifest: ChatGptArtifactManifest = { version: 1, artifacts };
+  const partialManifest = join(directory, `.manifest-${randomUUID()}.partial`);
+  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  if (manifestBytes.length > CHATGPT_ARTIFACT_MANIFEST_MAX_BYTES) {
+    throw new Error("ChatGPT artifact manifest exceeds the 1 MB limit");
+  }
+  const manifestPath = join(directory, "manifest.json");
+  try {
+    const manifestHandle = await open(partialManifest, "wx", 0o600);
+    try {
+      await writeAllArtifactBytes(manifestHandle, manifestBytes);
+      await manifestHandle.sync();
+    } finally {
+      await manifestHandle.close();
+    }
+    await rm(manifestPath, { force: true });
+    await rename(partialManifest, manifestPath);
   } catch (error) {
+    await rm(partialManifest, { force: true }).catch(() => {});
     throw error;
   }
+  return artifacts;
 }
 
 export function chatGptArtifactMarkdown(artifacts: readonly ChatGptArtifact[]): string {

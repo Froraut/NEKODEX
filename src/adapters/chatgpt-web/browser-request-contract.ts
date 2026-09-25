@@ -1,3 +1,5 @@
+import { jsonRecord as record } from "../../lib/json-record";
+
 /** Narrow request identity needed before Responses parsing or continuation expansion. */
 export interface ChatGptTurnIdentity {
   threadId?: string;
@@ -6,12 +8,6 @@ export interface ChatGptTurnIdentity {
   agentName?: string;
   subagentKind?: string;
   promptCacheKey?: string;
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
 }
 
 export function clientTurnMetadataFromBody(value: unknown): Record<string, unknown> | undefined {

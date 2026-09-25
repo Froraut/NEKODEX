@@ -15,6 +15,7 @@ import { isDeepStrictEqual } from "node:util";
 import { expandUserPath } from "../../config";
 import { findTopLevelAssignment } from "../../codex-integration-document";
 import type { CodexTool } from "../../types";
+import { jsonRecord as record } from "../../lib/json-record";
 import type {
   ChatGptRootThreadMetadata,
   ChatGptThreadSpawnLineage,
@@ -69,12 +70,6 @@ type IndexedRollout =
   | { kind: "unavailable" }
   | { kind: "absent" }
   | { kind: "found"; path: string };
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
 
 function pathIdentity(value: string): string {
   const normalized = resolve(value);

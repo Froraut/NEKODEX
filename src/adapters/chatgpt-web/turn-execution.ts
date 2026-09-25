@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CodexParsedRequest } from "../../types";
-import { ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptTurnSupersededError } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptTurnSupersededError } from "./adapter-error";
 import { canRetireDetachedToolDelivery } from "./browser-lifecycle-safety";
 import { MAX_CHATGPT_OUTSTANDING_TURNS } from "./concurrency";
 import {
@@ -12,7 +12,7 @@ import {
 import { CHATGPT_REGISTRY_REPLAY_BYTES, assertByteLimit } from "./resource-budgets";
 import type { ChatGptTurnRuntime } from "./turn-feeds";
 import { ChatGptTurnSession } from "./turn-session";
-export { ChatGptTextFeed, ChatGptTraceFeed, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-feeds";
+export { ChatGptTextFeed, ChatGptTraceFeed, type ChatGptBrowserOutcome, type ChatGptTraceEvent } from "./turn-feeds";
 export { ChatGptTurnSession } from "./turn-session";
 
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -489,10 +489,6 @@ export class ChatGptTurnSessions {
     return releaseObligation.matches.length;
   }
 
-  async waitForRetirement(key: string): Promise<void> {
-    await this.retirements.get(key);
-  }
-
   async retireAndWait(key: string, signal?: AbortSignal): Promise<boolean> {
     const pending = this.retirements.get(key);
     if (pending) {
@@ -604,12 +600,6 @@ export class ChatGptTurnSessions {
       this.observeRetirement(this.closeConversationAndWait(conversationKey).then(() => undefined));
     }
     return cancelled;
-  }
-
-  async cancelTrace(traceId: string, reason = chatGptBrowserTabClosedError()): Promise<number> {
-    const cancellation = this.beginCancelTrace(traceId, reason);
-    await cancellation.settlement;
-    return cancellation.cancelled;
   }
 
   /** Revoke execution now and track physical cleanup separately from the UI receipt. */

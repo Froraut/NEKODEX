@@ -25,6 +25,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
+import { jsonRecord as record } from "../../lib/json-record";
 import { isAcceptedCompactionContinuation, recoverCompactionInstruction } from "./compaction-continuation";
 import { clearRetryableTurnHandoff, isAcceptedRetryContinuation } from "./retry-continuation";
 import {
@@ -32,6 +33,7 @@ import {
   extractCodexTurnIdentityFromBody,
   type ChatGptTurnIdentity,
 } from "./browser-request-contract";
+import { itemTurnId, rawMessageText } from "./raw-input-item";
 
 export { extractCodexTurnIdentityFromBody } from "./browser-request-contract";
 export type { ChatGptTurnIdentity } from "./browser-request-contract";
@@ -84,28 +86,8 @@ function contentText(content: string | CodexContentPart[]): string {
   return content.filter(part => part.type === "text").map(part => part.text).join("\n");
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
 function clientTurnMetadata(parsed: CodexParsedRequest): Record<string, unknown> | undefined {
   return clientTurnMetadataFromBody(parsed._rawBody);
-}
-
-function itemTurnId(value: unknown): string | undefined {
-  const turnId = record(record(value)?.internal_chat_message_metadata_passthrough)?.turn_id;
-  return typeof turnId === "string" ? turnId : undefined;
-}
-
-function rawMessageText(value: Record<string, unknown>): string {
-  if (typeof value.content === "string") return value.content;
-  if (!Array.isArray(value.content)) return "";
-  return value.content
-    .map(part => record(part)?.text)
-    .filter((text): text is string => typeof text === "string")
-    .join("\n");
 }
 
 /** Only a user context fragment can claim environment authority; prose mentions cannot. */
