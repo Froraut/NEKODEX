@@ -90,7 +90,7 @@ const ru: DiagnosticsCopy = {
   recoveryPending: "Восстановление интеграции ещё не завершено. Эта проверка не исправляла файлы установки. Перед повторным подключением проверьте состояние восстановления.",
 };
 
-export function routeDiagnosticsCopy(language: Language): DiagnosticsCopy {
+function routeDiagnosticsCopy(language: Language): DiagnosticsCopy {
   if (language === "ru") return ru;
   if (language === "zh-CN") return zh;
   if (language === "zh-TW") return extraLocales["zh-TW"];
@@ -99,7 +99,7 @@ export function routeDiagnosticsCopy(language: Language): DiagnosticsCopy {
   return en;
 }
 
-export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language) {
+function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language) {
   const copy = routeDiagnosticsCopy(language);
   const name = (value: string | null) => value && value.trim() === value && /^[\p{L}\p{M}\p{N}_. -]{1,128}$/u.test(value) ? value : copy.unknown;
   const path = (value: string) => value.length <= 4096 && !/[\u0000-\u001f\u007f]|:\/\//.test(value) ? value : copy.unknown;
@@ -155,7 +155,7 @@ export function routeDiagnosticsView(report: RouteDiagnosticsReport, language: L
       : catalogStatus === "observed" ? copy.observedBody : catalogStatus === "waiting" ? copy.waitingBody : copy.unavailableBody };
 }
 
-export function RouteDiagnosticsResult({ report, language, onActionError, onExport, onViewActivity }: {
+function RouteDiagnosticsResult({ report, language, onActionError, onExport, onViewActivity }: {
   report: RouteDiagnosticsReport;
   language: Language;
   onActionError?: (error: unknown) => void;

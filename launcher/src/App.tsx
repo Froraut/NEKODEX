@@ -7,7 +7,7 @@ import { Onboarding } from "./Onboarding";
 import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
-import { IconButton, StateDot, ContentSurface, PrimaryButton, McpMark, messageOf, useModalFocus, Switch } from './launcher-ui';
+import { StateDot, ContentSurface, messageOf } from './launcher-ui';
 import { runtimeCapabilities, currentToolProof } from './launcher-readiness';
 
 import { taskCenterTitle } from './task-center-copy';
@@ -19,13 +19,13 @@ import { Overview } from "./Overview";
 import { AccountToolsHandoff } from "./AccountToolsOnboarding";
 
 import { updateCopyFor } from "./update-copy";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { copyFor, localizeLauncherError, type Copy } from "./i18n";
-import { Icon, type IconName } from "./icons";
 
 import { deriveWorkspaceReadiness } from "./workspace-readiness";
 import { workflowCopy } from "./workflow-copy";
+import { ActionDot, BiggerContextRecommendation, COMPACT_SIDEBAR_QUERY, ErrorToast, FatalMessage, LaunchLoading, SidebarGroup, SidebarItem, TitleBar, useCompactSidebarDrawer } from "./AppShell";
+import { useUpdateControls } from "./useUpdateControls";
 
 import "./connections.css";
 import "./connection-recovery.css";
@@ -37,15 +37,14 @@ const SettingsSurface = deferredSurface(async () => ({ default: (await import('.
 const TaskCenter = deferredSurface(async () => ({ default: (await import('./TaskCenter')).TaskCenter }));
 const Updates = deferredSurface(async () => ({ default: (await import('./Updates')).Updates }));
 const api = window.codexWebLauncher;
-const COMPACT_SIDEBAR_QUERY = "(max-width: 860px)";
 
 function smokePassedForState(state: LauncherState, version: string): boolean {
   return state.browserSmokePassed === true && state.browserSmokeVersion === version;
 }
 
-type ProjectedLauncherApi = NonNullable<typeof api> & {
-  onLifecycle?: (listener: (projection: LifecycleProjection) => void) => () => void;
-};
+function withLauncherState(current: LauncherSnapshot | null, state: LauncherState): LauncherSnapshot | null {
+  return current ? { ...current, state, smokePassed: smokePassedForState(state, current.version) } : current;
+}
 
 export function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
@@ -74,16 +73,20 @@ export function App() {
   const hasPresentedLocale = useRef(false);
   const currentLanguage = useRef(documentLanguage);
   currentLanguage.current = documentLanguage;
+  // Clears only the catalog alert this code raised; a later unrelated error stays visible.
+  const releaseCatalogAlert = () => {
+    const staleCatalogAlert = catalogAlert.current;
+    catalogAlert.current = null;
+    setCatalogFailure(null);
+    setError(current => current === staleCatalogAlert ? null : current);
+  };
   const acceptLifecycle = useCallback((next: LifecycleProjection | null | undefined) => {
     if (!next || (acceptedLifecycle.current?.revision ?? -1) >= next.revision) return false;
     // Advance the receipt synchronously. React may defer setSnapshot, while a
     // competing event or snapshot must already observe this same revision.
     acceptedLifecycle.current = next;
     if (currentInteractionMode.current === "manual" || next.catalog?.status === "ready") {
-      const staleCatalogAlert = catalogAlert.current;
-      catalogAlert.current = null;
-      setCatalogFailure(null);
-      setError(current => current === staleCatalogAlert ? null : current);
+      releaseCatalogAlert();
     } else if (next.catalog?.status === "failed") {
       setCatalogFailure(copyFor(currentLanguage.current).catalogFailureKeptInstall);
     }
@@ -190,20 +193,11 @@ export function App() {
       stateRevision.current += 1;
       currentInteractionMode.current = state.browserInteractionMode;
       if (state.browserInteractionMode === "manual"
-        || (state.codexCatalogVerified === true && !(api as ProjectedLauncherApi).onLifecycle)) {
-        const staleCatalogAlert = catalogAlert.current;
-        catalogAlert.current = null;
-        setCatalogFailure(null);
-        setError(current => current === staleCatalogAlert ? null : current);
+        || (state.codexCatalogVerified === true && !api.onLifecycle)) {
+        releaseCatalogAlert();
       }
       if (!initialized) pendingState = state;
-      setSnapshot((current) => current
-        ? {
-            ...current,
-            state,
-            smokePassed: smokePassedForState(state, current.version),
-          }
-        : current);
+      setSnapshot(current => withLauncherState(current, state));
     });
     const unsubscribeBrowser = api.onBrowserState(next => {
       if (!initialized) pendingBrowser = newerBrowserState(pendingBrowser, next);
@@ -233,10 +227,7 @@ export function App() {
           setCatalogFailure(next.message);
           setError(next.message);
         } else if (next.status === "completed") {
-          const staleCatalogAlert = catalogAlert.current;
-          catalogAlert.current = null;
-          setCatalogFailure(null);
-          setError(current => current === staleCatalogAlert ? null : current);
+          releaseCatalogAlert();
         }
       } else if (next.status === "failed" && next.name !== "mcp-verification") {
         setError(next.message);
@@ -263,7 +254,7 @@ export function App() {
       if (!initialized) pendingUpdate = update;
       setSnapshot((current) => current ? { ...current, update } : current);
     });
-    const unsubscribeLifecycle = (api as ProjectedLauncherApi).onLifecycle?.((next) => {
+    const unsubscribeLifecycle = api.onLifecycle?.((next) => {
       if (!initialized) {
         if (!pendingLifecycle || pendingLifecycle.revision < next.revision) pendingLifecycle = next;
       }
@@ -341,18 +332,9 @@ export function App() {
     stateRevision.current += 1;
     currentInteractionMode.current = state.browserInteractionMode;
     if (state.codexCatalogVerified === true || state.browserInteractionMode === "manual") {
-      const staleCatalogAlert = catalogAlert.current;
-      catalogAlert.current = null;
-      setCatalogFailure(null);
-      setError(current => current === staleCatalogAlert ? null : current);
+      releaseCatalogAlert();
     }
-    setSnapshot((current) => current
-      ? {
-          ...current,
-          state,
-          smokePassed: smokePassedForState(state, current.version),
-        }
-      : current);
+    setSnapshot(current => withLauncherState(current, state));
   }, []);
 
   const updateSnapshot = useCallback(async () => {
@@ -484,12 +466,13 @@ function LauncherShell({
   });
   const devProfile = snapshot.profile === "development";
   const toolProof = currentToolProof(snapshot, operation);
+  const browserAuthenticationStatus = browser?.authenticationStatus
+    ?? (browser?.authenticated ? "verified"
+      : browser?.status === "signed-out" ? "signed-out" : "unknown");
   const readiness = deriveWorkspaceReadiness({
     manual: manualInteraction,
     development: devProfile,
-    authenticationStatus: manualInteraction ? "verified"
-      : browser?.authenticationStatus ?? (browser?.authenticated ? "verified"
-        : browser?.status === "signed-out" ? "signed-out" : "unknown"),
+    authenticationStatus: manualInteraction ? "verified" : browserAuthenticationStatus,
     smokePassed: snapshot.smokePassed,
     installed: snapshot.state.coreSetupComplete === true,
     catalogUnavailable: Boolean(catalogFailure),
@@ -523,9 +506,6 @@ function LauncherShell({
   const browserSurfaceActive = surface === "browser"
     && !(compactSidebar && sidebarOpen)
     && !biggerContextRecommendationOpen;
-  const browserAuthenticationStatus = browser?.authenticationStatus
-    ?? (browser?.authenticated ? "verified"
-      : browser?.status === "signed-out" ? "signed-out" : "unknown");
   const needsBrowser = snapshot.state.browserInteractionMode === "automatic"
     && browserAuthenticationStatus === "signed-out";
   const needsSetup = !needsBrowser && !interactionSetupComplete;
@@ -534,97 +514,14 @@ function LauncherShell({
     && !toolProof;
   const transitionBusy = Boolean(snapshot.lifecycle?.transition);
   const updateCopy = updateCopyFor(language);
-  const [updateError, setUpdateError] = useState<string | null>(null);
-  const [updateCheckCooldown, setUpdateCheckCooldown] = useState(false);
-  const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
-  const [updateInstallPending, setUpdateInstallPending] = useState(false);
-  const [updateCancelPending, setUpdateCancelPending] = useState(false);
-  const updateCancelInFlight = useRef(false);
+  const {
+    updateError, setUpdateError, updateCheckCooldown, updateCheckBusy, updateInstallPending, updateCancelPending,
+    recheckUpdate, installUpdate, cancelUpdate,
+  } = useUpdateControls(api!, transitionBusy, updateCopy);
   const [restartPending, setRestartPending] = useState(false);
   const restartInFlight = useRef(false);
-  const updateInstallPendingRef = useRef(false);
-  const updateCheckTimer = useRef<number | undefined>(undefined);
-  const updateCheckMounted = useRef(false);
-  const updateCheckPendingRef = useRef(false);
-  useEffect(() => {
-    updateCheckMounted.current = true;
-    return () => {
-      updateCheckMounted.current = false;
-      window.clearTimeout(updateCheckTimer.current);
-    };
-  }, []);
 
-  useEffect(() => {
-    if (!compactSidebar || !sidebarOpen || !sidebar.current) return;
-    const drawer = sidebar.current;
-    const workspace = drawer.parentElement?.querySelector<HTMLElement>(":scope > .workspace") ?? null;
-    const workspaceWasInert = workspace?.inert ?? false;
-    if (workspace) workspace.inert = true;
-    const focusable = () => [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')];
-    const focusDrawer = () => {
-      const active = drawer.querySelector<HTMLElement>('.sidebar-item[aria-current="page"]');
-      (active ?? focusable()[0] ?? drawer).focus();
-    };
-    const frame = requestAnimationFrame(focusDrawer);
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setSidebarOpen(false);
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const controls = focusable();
-      if (!controls.length) {
-        event.preventDefault();
-        drawer.focus();
-        return;
-      }
-      const first = controls[0]!;
-      const last = controls.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    const focusin = (event: FocusEvent) => {
-      if (event.target instanceof Node && drawer.contains(event.target)) return;
-      event.stopPropagation();
-      focusDrawer();
-    };
-    document.addEventListener("keydown", keydown, true);
-    document.addEventListener("focusin", focusin, true);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", keydown, true);
-      document.removeEventListener("focusin", focusin, true);
-      if (workspace) workspace.inert = workspaceWasInert;
-      if (window.matchMedia(COMPACT_SIDEBAR_QUERY).matches) {
-        requestAnimationFrame(() => sidebarToggle.current?.focus());
-      }
-    };
-  }, [compactSidebar, sidebarOpen]);
-  const recheckUpdate = async () => {
-    if (transitionBusy || updateCheckCooldown || updateCheckBusy || updateCheckPendingRef.current) return;
-    updateCheckPendingRef.current = true;
-    setUpdateCheckBusy(true);
-    setUpdateError(null);
-    try {
-      const next = await api!.recheckUpdate();
-      if (!updateCheckMounted.current) return;
-      if (next.status === "error") setUpdateError(next.message);
-      setUpdateCheckCooldown(true);
-      window.clearTimeout(updateCheckTimer.current);
-      updateCheckTimer.current = window.setTimeout(() => setUpdateCheckCooldown(false), 60_000);
-    } catch (error) {
-      if (updateCheckMounted.current) setUpdateError(messageOf(error));
-    } finally {
-      updateCheckPendingRef.current = false;
-      if (updateCheckMounted.current) setUpdateCheckBusy(false);
-    }
-  };
+  useCompactSidebarDrawer(compactSidebar, sidebarOpen, sidebar, sidebarToggle, setSidebarOpen);
   const updateBusy = updateInstallPending || updateCancelPending || ["downloading", "verifying", "installing", "cancelling"].includes(snapshot.update.status);
   useEffect(() => {
     if (["downloading", "verifying", "installing"].includes(snapshot.update.status)) setUpdateError(null);
@@ -760,38 +657,6 @@ function LauncherShell({
     if (compactSidebar) setSidebarOpen(false);
   };
 
-  const installUpdate = async () => {
-    if (updateInstallPendingRef.current) return;
-    updateInstallPendingRef.current = true;
-    setUpdateInstallPending(true);
-    setUpdateError(null);
-    try {
-      await api!.installUpdate();
-    } catch (cause) {
-      setUpdateError(messageOf(cause));
-    } finally {
-      updateInstallPendingRef.current = false;
-      setUpdateInstallPending(false);
-    }
-  };
-
-  const cancelUpdate = async () => {
-    if (updateCancelInFlight.current) return;
-    updateCancelInFlight.current = true;
-    setUpdateCancelPending(true);
-    setUpdateError(null);
-    try {
-      const result = await api!.cancelUpdatePreparation();
-      if (result.status === "too-late") setUpdateError(updateCopy.cancelTooLate);
-      else if (result.status === "failed") setUpdateError(result.message || updateCopy.failed);
-    } catch (cause) {
-      setUpdateError(messageOf(cause));
-    } finally {
-      updateCancelInFlight.current = false;
-      setUpdateCancelPending(false);
-    }
-  };
-
   const setRecommendedBiggerContext = async (enabled: boolean) => {
     if (biggerContextRecommendationBusy) return;
     setBiggerContextRecommendationBusy(true);
@@ -814,7 +679,6 @@ function LauncherShell({
         language={language}
         surface={surface}
         devProfile={devProfile}
-        draggable
         sidebarOpen={sidebarOpen}
         sidebarToggle={sidebarToggle}
         toggleSidebar={toggleSidebar}
@@ -1070,180 +934,6 @@ function LauncherShell({
           />
         ) : null}
 
-    </main>
-  );
-}
-
-function TitleBar({
-  copy,
-  language,
-  surface,
-  devProfile,
-  draggable,
-  sidebarOpen,
-  sidebarToggle,
-  toggleSidebar,
-}: {
-  copy: Copy;
-  language: Language;
-  surface: Surface;
-  devProfile: boolean;
-  draggable: boolean;
-  sidebarOpen: boolean;
-  sidebarToggle: RefObject<HTMLButtonElement | null>;
-  toggleSidebar: () => void;
-}) {
-  return (
-    <header className={`app-titlebar${draggable ? " draggable" : ""}`}>
-      <div className="titlebar-left no-drag">
-        <IconButton
-          buttonRef={sidebarToggle}
-          icon="sidebar"
-          label={sidebarOpen ? copy.hideSidebar : copy.showSidebar}
-          controls="app-sidebar"
-          expanded={sidebarOpen}
-          onClick={toggleSidebar}
-        />
-        {devProfile ? <span className="titlebar-dev-profile">{copy.devBadge}</span> : null}
-      </div>
-      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language), setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface]}</strong></div>
-    </header>
-  );
-}
-
-function SidebarGroup({ children, label }: { children: ReactNode; label: string }) {
-  return (
-    <section className="sidebar-group">
-      <h2>{label}</h2>
-      <div>{children}</div>
-    </section>
-  );
-}
-
-function SidebarItem({
-  active,
-  badge,
-  disabled = false,
-  icon,
-  label,
-  onClick,
-  tone,
-}: {
-  active: boolean;
-  badge?: ReactNode;
-  disabled?: boolean;
-  icon: IconName;
-  label: string;
-  onClick: () => void;
-  tone?: "update";
-}) {
-  return (
-    <button
-      aria-current={active ? "page" : undefined}
-      className={`sidebar-item${active ? " is-active" : ""}${tone === "update" ? " is-update" : ""}`}
-      disabled={disabled}
-      onClick={onClick}
-      type="button"
-    >
-      {icon === "mcp" ? <McpMark /> : <Icon name={icon} />}
-      <span>{label}</span>
-      {badge ? <i className="sidebar-item-badge">{badge}</i> : null}
-    </button>
-  );
-}
-
-function ActionDot({ pulse = false, tone }: { pulse?: boolean; tone: "required" | "optional" | "success" | "error" }) {
-  return <i aria-hidden="true" className={`action-dot is-${tone}${pulse ? " is-pulse" : ""}`} />;
-}
-
-function ErrorToast({ copy, message, onDismiss }: { copy: Copy; message: string; onDismiss: () => void }) {
-  return (
-    <div
-      className="error-toast"
-      role="alert"
-    >
-      <StateDot state="error" />
-      <span>
-        <strong>{copy.error}</strong>
-        <p>{message}</p>
-      </span>
-      <button onClick={onDismiss} type="button">{copy.dismiss}</button>
-    </div>
-  );
-}
-
-function BiggerContextRecommendation({
-  busy,
-  checked,
-  copy,
-  onChange,
-  onClose,
-}: {
-  busy: boolean;
-  checked: boolean;
-  copy: Copy;
-  onChange: (checked: boolean) => void;
-  onClose: () => void;
-}) {
-  const dialog = useRef<HTMLDivElement>(null);
-  useModalFocus(true, dialog, onClose, { closeAllowed: !busy });
-  return createPortal(
-    <div
-      aria-busy={busy}
-      aria-describedby="bigger-context-recommendation-body"
-      aria-labelledby="bigger-context-recommendation-title"
-      aria-modal="true"
-      className="bigger-context-recommendation-backdrop"
-      ref={dialog}
-      role="dialog"
-      tabIndex={-1}
-    >
-      <section
-        className="bigger-context-recommendation"
-      >
-        <header className="bigger-context-recommendation-header">
-          <small>{copy.biggerContext}</small>
-          <h2 id="bigger-context-recommendation-title">{copy.biggerContextRecommendationTitle}</h2>
-        </header>
-        <p className="bigger-context-recommendation-body" id="bigger-context-recommendation-body">{copy.biggerContextRecommendationBody}</p>
-        <div className="bigger-context-recommendation-toggle">
-          <div>
-            <strong>{copy.biggerContext}</strong>
-            <p>{copy.biggerContextRecommendationToggleBody}</p>
-          </div>
-          <Switch label={copy.biggerContext} checked={checked} disabled={busy} onChange={onChange} />
-        </div>
-        {checked ? <p className="bigger-context-recommendation-restart">{copy.contextClientRefreshBody}</p> : null}
-        <footer>
-          <button className="button-secondary" data-modal-autofocus disabled={busy} onClick={onClose} type="button">{copy.close}</button>
-        </footer>
-      </section>
-    </div>,
-    document.body,
-  );
-}
-
-function LaunchLoading() {
-  return (
-    <main className="launch-loading" role="status" aria-busy="true">
-      <BrandMark />
-      <span />
-      <span className="visually-hidden">Loading…</span>
-    </main>
-  );
-}
-
-function FatalMessage({ message, onRetry, retryLabel }: {
-  message: string;
-  onRetry?: () => void;
-  retryLabel?: string;
-}) {
-  return (
-    <main className="fatal-message">
-      <BrandMark />
-      <h1>NEKODEX</h1>
-      <p role="alert">{message}</p>
-      {onRetry ? <PrimaryButton onClick={onRetry}>{retryLabel}</PrimaryButton> : null}
     </main>
   );
 }

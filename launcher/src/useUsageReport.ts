@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UsageQuery, UsageSnapshot } from "./types";
 import { normalizedUsageSnapshot } from "./usage-statistics";
-export const usageQueryKey = ({ days, source, accountId = null }: UsageQuery) => `${source}:${days}:${source === "web" ? accountId ?? "all" : "native"}`;
-const filterKey = usageQueryKey;
+const usageQueryKey = ({ days, source, accountId = null }: UsageQuery) => `${source}:${days}:${source === "web" ? accountId ?? "all" : "native"}`;
 export type UsageLoader = (query: UsageQuery) => Promise<UsageSnapshot>;
 export function useUsageReport(load: UsageLoader, unavailable: string) {
   const [filters, setFilters] = useState<UsageQuery>({ days: 7, source: "web", accountId: null });
-  const activeKey = filterKey(filters);
+  const activeKey = usageQueryKey(filters);
   const cache = useRef(new Map<string, UsageSnapshot>());
   const [result, setResult] = useState<{ key: string; report: UsageSnapshot } | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
@@ -17,8 +16,8 @@ export function useUsageReport(load: UsageLoader, unavailable: string) {
   const visible = useMemo(() => normalizedUsageSnapshot(rawVisible), [rawVisible]);
   const visibleError = error?.key === activeKey ? error.message : null;
   const changeFilters = (next: UsageQuery) => {
-    setError(current => current?.key === filterKey(next) ? current : null);
-    setRefreshing(filterKey(next));
+    setError(current => current?.key === usageQueryKey(next) ? current : null);
+    setRefreshing(usageQueryKey(next));
     setFilters(next);
   };
   const rememberReport = (key: string, report: UsageSnapshot) => {
@@ -34,7 +33,7 @@ export function useUsageReport(load: UsageLoader, unavailable: string) {
   useEffect(() => {
     let disposed = false;
     let pending = false;
-    const key = filterKey(filters);
+    const key = usageQueryKey(filters);
     const refresh = async () => {
       if (document.hidden || pending) return;
       pending = true;

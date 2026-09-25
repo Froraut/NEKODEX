@@ -9,7 +9,7 @@ export function runtimeCapabilities(snapshot: LauncherSnapshot): RuntimeCapabili
   return snapshot.runtimeCapabilities ?? snapshot.lifecycle ?? null;
 }
 
-export function localToolsRuntimeReady(snapshot: LauncherSnapshot): boolean {
+function localToolsRuntimeReady(snapshot: LauncherSnapshot): boolean {
   return runtimeCapabilities(snapshot)?.tunnelStatus === "ready";
 }
 

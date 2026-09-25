@@ -1,5 +1,4 @@
 import { taskCenterCopy } from "./task-center-copy";
-export { taskCenterTitle } from "./task-center-copy";
 import { filterTasks, taskKey, eligibleTaskConfirmation, requiresDismissConfirmation, type HistoryStatus, type TaskConfirmationTarget } from "./task-center-model";
 import { TaskActionConfirmation } from "./TaskActionConfirmation";
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';

@@ -3,7 +3,7 @@ import type { Copy } from "./i18n";
 import type { ExistingChromeLoginProgress, Language } from "./types";
 import { profileLoginFailureText } from './profile-login-copy';
 
-export function existingChromeFailureText(code: string | null, copy: Copy, language: Language = 'en'): string {
+function existingChromeFailureText(code: string | null, copy: Copy, language: Language = 'en'): string {
   const profile = profileLoginFailureText(code, language);
   if (profile) return profile;
   switch (code) {
