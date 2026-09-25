@@ -1,6 +1,9 @@
 import type { AdapterEvent, CodexMessagePhase, CodexUsage } from "../types";
 import { encodeCompactionSummary } from "./compaction";
-import { uuid, responsesUsage, adapterFailureFromEvent, plaintextCollaborationFields, type OutputItem } from "./output-policy";
+import {
+  uuid, responsesUsage, adapterFailureFromEvent, resolveOutputToolCall, outputToolCallItemId, completedToolCallItem,
+  type OutputItem,
+} from "./output-policy";
 
 export function buildResponseJSON(
   events: AdapterEvent[],
@@ -29,13 +32,6 @@ export function buildResponseJSON(
   let currentToolCallId = "";
   let currentToolCallName = "";
   let currentToolCallArgs = "";
-  const freeformInput = (args: string): string => {
-    try { const o = JSON.parse(args); if (o && typeof o.input === "string") return o.input; } catch { /* raw */ }
-    return args;
-  };
-  const parseArgsObj = (args: string): Record<string, unknown> => {
-    try { const o = JSON.parse(args); return o && typeof o === "object" ? o : {}; } catch { return {}; }
-  };
 
   const flushText = () => {
     if (!currentText) return;
@@ -58,32 +54,12 @@ export function buildResponseJSON(
   };
   const flushToolCall = () => {
     if (!currentToolCallId) return;
-    const mapped = options?.toolNsMap?.get(currentToolCallName);
-    const realName = mapped?.name ?? currentToolCallName;
-    const ns = mapped?.namespace;
-    const toolSearch = options?.toolSearchToolNames?.has(realName) ?? false;
-    const freeform = !toolSearch && (options?.freeformToolNames?.has(realName) ?? false);
-    if (toolSearch) {
-      output.push({
-        type: "tool_search_call", id: `tsc_${uuid()}`,
-        call_id: currentToolCallId, execution: "client",
-        arguments: parseArgsObj(currentToolCallArgs), status: "completed",
-      });
-    } else if (freeform) {
-      output.push({
-        type: "custom_tool_call", id: `ctc_${uuid()}`,
-        call_id: currentToolCallId, name: realName,
-        input: freeformInput(currentToolCallArgs), status: "completed",
-      });
-    } else {
-      output.push({
-        type: "function_call", id: `fc_${uuid()}`,
-        call_id: currentToolCallId, name: realName,
-        arguments: currentToolCallArgs || "{}", status: "completed",
-        ...(ns ? { namespace: ns } : {}),
-        ...plaintextCollaborationFields(ns, realName),
-      });
-    }
+    const { name, namespace, kind } = resolveOutputToolCall(
+      currentToolCallName, options?.toolNsMap, options?.freeformToolNames, options?.toolSearchToolNames,
+    );
+    output.push(completedToolCallItem(
+      kind, outputToolCallItemId(kind), currentToolCallId, name, currentToolCallArgs, namespace,
+    ));
     currentToolCallId = "";
     currentToolCallName = "";
     currentToolCallArgs = "";

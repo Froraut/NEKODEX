@@ -1,4 +1,7 @@
-import { uuid, responsesUsage, responseError, adapterFailureFromEvent, plaintextCollaborationFields, type OutputItem } from "./responses/output-policy";
+import {
+  uuid, responsesUsage, adapterFailureFromEvent, plaintextCollaborationFields, resolveOutputToolCall,
+  outputToolCallItemId, freeformToolInput, completedToolCallItem, type OutputItem, type OutputToolCallKind,
+} from "./responses/output-policy";
 export { buildResponseJSON } from "./responses/json-output";
 import type { AdapterEvent, CodexMessagePhase } from "./types";
 import { classifyError } from "./lib/errors";
@@ -33,12 +36,6 @@ export function bridgeToResponsesSSE(
     onCompletedResponse?: (response: Record<string, unknown>) => void;
   },
 ): ReadableStream<Uint8Array> {
-  // Freeform/custom tools (apply_patch) carry their body in `input`; the model is given a
-  // function with `{input:string}`, so unwrap it here when relaying back as a custom_tool_call.
-  const freeformInput = (args: string): string => {
-    try { const o = JSON.parse(args); if (o && typeof o.input === "string") return o.input; } catch { /* raw */ }
-    return args;
-  };
   // Best-effort unwrap of a PARTIAL freeform arg buffer for live input streaming
   // (`response.custom_tool_call_input.delta` — codex-rs uses it for UI preview only;
   // the completed custom_tool_call item stays authoritative). Compact `{"input":"...`
@@ -66,10 +63,6 @@ export function bridgeToResponsesSSE(
       } else out += c;
     }
     return out;
-  };
-  // tool_search_call carries arguments as a JSON object ({query, limit}); parse the model's arg string.
-  const parseArgsObj = (args: string): Record<string, unknown> => {
-    try { const o = JSON.parse(args); return o && typeof o === "object" ? o : {}; } catch { return {}; }
   };
   const encoder = new TextEncoder();
   const responseId = `resp_${uuid()}`;
@@ -133,7 +126,7 @@ export function bridgeToResponsesSSE(
       // Full assistant text of a compaction turn (across message boundaries) — becomes the
       // synthetic compaction item's payload on done.
       let compactionText = "";
-      let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; namespace?: string; freeform?: boolean; toolSearch?: boolean; inputEmitted?: string } | null = null;
+      let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; namespace?: string; kind: OutputToolCallKind; inputEmitted?: string } | null = null;
       const closeCurrentMessage = () => {
         if (!currentMsg) return;
         // Finalize the text part (Responses protocol). Without these .done events Codex never
@@ -177,45 +170,34 @@ export function bridgeToResponsesSSE(
 
       const closeCurrentToolCall = () => {
         if (!currentToolCall) return;
-        // Empty input (no-arg tools like computer_use get_app_state / list_apps) must serialize as
-        // "{}", never "" — Codex echoes the call back as a function_call next turn, and JSON.parse("")
-        // would 400 the whole session ("invalid JSON arguments"), poisoning all later turns.
-        const argsStr = currentToolCall.args || "{}";
         // Finalize streamed function-call arguments so Codex commits the call (incl. MCP / computer_use).
-        if (!currentToolCall.freeform && !currentToolCall.toolSearch) {
+        // Empty arguments serialize as "{}", as in the completed item.
+        if (currentToolCall.kind === "function") {
           emit("response.function_call_arguments.done", {
-            item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex, arguments: argsStr,
+            item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex, arguments: currentToolCall.args || "{}",
           });
         }
-        if (currentToolCall.freeform) {
+        if (currentToolCall.kind === "freeform") {
           emit("response.custom_tool_call_input.done", {
             item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex,
-            input: freeformInput(currentToolCall.args),
+            input: freeformToolInput(currentToolCall.args),
           });
         }
-        const item = currentToolCall.toolSearch
-          ? {
-              type: "tool_search_call", id: currentToolCall.itemId,
-              call_id: currentToolCall.callId, execution: "client",
-              arguments: parseArgsObj(currentToolCall.args), status: "completed",
-            }
-          : currentToolCall.freeform
-          ? {
-              type: "custom_tool_call", id: currentToolCall.itemId,
-              call_id: currentToolCall.callId, name: currentToolCall.name,
-              input: freeformInput(currentToolCall.args), status: "completed",
-            }
-          : {
-              type: "function_call", id: currentToolCall.itemId,
-              call_id: currentToolCall.callId, name: currentToolCall.name,
-              arguments: argsStr, status: "completed",
-              ...(currentToolCall.namespace ? { namespace: currentToolCall.namespace } : {}),
-              ...plaintextCollaborationFields(currentToolCall.namespace, currentToolCall.name),
-            };
+        const item = completedToolCallItem(
+          currentToolCall.kind, currentToolCall.itemId, currentToolCall.callId,
+          currentToolCall.name, currentToolCall.args, currentToolCall.namespace,
+        );
         emit("response.output_item.done", { output_index: currentToolCall.outputIndex, item });
-        finishedItems.push(item as OutputItem);
+        finishedItems.push(item);
         outputIndex++;
         currentToolCall = null;
+      };
+
+      // Boundaries and terminal events close whichever output item is still open.
+      const closeOpenItems = () => {
+        closeCurrentMessage();
+        closeCurrentReasoning();
+        closeCurrentToolCall();
       };
 
       // RC1: guarantee the Responses stream always ends with exactly one terminal event. Set true
@@ -283,9 +265,7 @@ export function bridgeToResponsesSSE(
             case "assistant_boundary": {
               // A guarded continuation starts a fresh assistant output item while keeping the
               // intermediate, suspicious text in the same Responses turn.
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentToolCall) closeCurrentToolCall();
+              closeOpenItems();
               break;
             }
             case "text_delta": {
@@ -335,18 +315,14 @@ export function bridgeToResponsesSSE(
               break;
             }
             case "tool_call_start": {
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentToolCall) closeCurrentToolCall();
-              const mapped = toolNsMap?.get(event.name);
-              const realName = mapped?.name ?? event.name;
-              const ns = mapped?.namespace;
-              const toolSearch = toolSearchToolNames?.has(realName) ?? false;
-              const freeform = !toolSearch && (freeformToolNames?.has(realName) ?? false);
-              const itemId = `${toolSearch ? "tsc" : freeform ? "ctc" : "fc"}_${uuid()}`;
-              const item = toolSearch
+              closeOpenItems();
+              const { name: realName, namespace: ns, kind } = resolveOutputToolCall(
+                event.name, toolNsMap, freeformToolNames, toolSearchToolNames,
+              );
+              const itemId = outputToolCallItemId(kind);
+              const item = kind === "tool_search"
                 ? { type: "tool_search_call", id: itemId, call_id: event.id, execution: "client", arguments: {}, status: "in_progress" }
-                : freeform
+                : kind === "freeform"
                 ? { type: "custom_tool_call", id: itemId, call_id: event.id, name: realName, input: "", status: "in_progress" }
                 : {
                     type: "function_call", id: itemId, call_id: event.id, name: realName,
@@ -354,19 +330,19 @@ export function bridgeToResponsesSSE(
                     ...plaintextCollaborationFields(ns, realName),
                   };
               emit("response.output_item.added", { output_index: outputIndex, item });
-              currentToolCall = { itemId, outputIndex, callId: event.id, name: realName, args: "", namespace: ns, freeform, toolSearch };
+              currentToolCall = { itemId, outputIndex, callId: event.id, name: realName, args: "", namespace: ns, kind };
               break;
             }
             case "tool_call_delta": {
               if (currentToolCall) {
                 currentToolCall.args += event.arguments;
-                if (!currentToolCall.freeform && !currentToolCall.toolSearch) {
+                if (currentToolCall.kind === "function") {
                   emit("response.function_call_arguments.delta", {
                     item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex,
                     delta: event.arguments,
                   });
                 }
-                if (currentToolCall.freeform) {
+                if (currentToolCall.kind === "freeform") {
                   // Hold while the buffer is still an ambiguous prefix of the JSON wrapper,
                   // then stream only the unwrapped input suffix (never rewind on mode flips).
                   if (!FREEFORM_WRAP_PREFIX.startsWith(currentToolCall.args)) {
@@ -389,9 +365,7 @@ export function bridgeToResponsesSSE(
               break;
             }
             case "done": {
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentToolCall) closeCurrentToolCall();
+              closeOpenItems();
               if (options?.compaction && event.stopReason !== "max_tokens" && event.stopReason !== "content_filter") {
                 // Exactly one checkpoint after authoritative completion. A truncated or filtered
                 // summary must never be advertised as replacement history.
@@ -428,9 +402,7 @@ export function bridgeToResponsesSSE(
               break;
             }
             case "error": {
-              if (currentMsg) closeCurrentMessage();
-              if (currentReasoning) closeCurrentReasoning();
-              if (currentToolCall) closeCurrentToolCall();
+              closeOpenItems();
               const failure = adapterFailureFromEvent(event);
               const failureDelivered = emit("response.failed", {
                 response: {
@@ -460,8 +432,8 @@ export function bridgeToResponsesSSE(
           emit("response.failed", {
             response: {
               ...responseSnapshot("failed", finishedItems),
-              error: responseError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
-              last_error: responseError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
+              error: classifyError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
+              last_error: classifyError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
             },
           });
           onCancel?.();
@@ -480,9 +452,7 @@ export function bridgeToResponsesSSE(
       if (!terminated) {
         // The adapter generator ended without an explicit done/error event. Mark as incomplete
         // rather than completed so Codex can distinguish a clean finish from a truncated stream.
-        if (currentMsg) closeCurrentMessage();
-        if (currentReasoning) closeCurrentReasoning();
-        if (currentToolCall) closeCurrentToolCall();
+        closeOpenItems();
         emit("response.incomplete", {
           response: {
             ...responseSnapshot("incomplete", finishedItems),
@@ -530,9 +500,7 @@ export function bridgeToResponsesSSE(
               + ` sinceStreamStartMs=${checkedAt - streamStartedAt}`
               + ` iteratorStarted=${iteratorStarted} upstreamDone=${upstreamDone} emittedFrames=${emittedFrames}`,
             );
-            if (currentMsg) closeCurrentMessage();
-            if (currentReasoning) closeCurrentReasoning();
-            if (currentToolCall) closeCurrentToolCall();
+            closeOpenItems();
             emit("response.incomplete", {
               response: {
                 ...responseSnapshot("incomplete", finishedItems),

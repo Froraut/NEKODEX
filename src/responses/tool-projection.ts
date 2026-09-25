@@ -2,11 +2,8 @@ import type { CodexTool, CodexRequestOptions } from "../types";
 import { namespacedToolName } from "../types";
 import { CHATGPT_WEB_MODEL_PREFIX } from "../chatgpt-web-models";
 import { isCollaborationTool } from "../collaboration-tools";
+import { isJsonRecord } from "../lib/json-record";
 import { toolSchema } from "./schema";
-
-function isObj(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export interface ToolAvailabilityPolicy {
   model: string;
@@ -27,13 +24,13 @@ export function availableTools(tools: readonly CodexTool[], policy: ToolAvailabi
 }
 
 export function projectAvailableTools(specs: unknown[] | undefined, policy: ToolAvailabilityPolicy): CodexTool[] {
-  return availableTools(buildTools(specs) ?? [], policy);
+  return availableTools(buildTools(specs), policy);
 }
 
 export function mapToolChoice(value: unknown): CodexRequestOptions["toolChoice"] {
   if (value === undefined || value === null) return undefined;
   if (value === "auto" || value === "none" || value === "required") return value;
-  if (isObj(value) && "type" in value) {
+  if (isJsonRecord(value) && "type" in value) {
     const t = (value as { type: string }).type;
     if ((t === "function" || t === "custom") && "name" in value) {
       return { name: (value as { name: string }).name };
@@ -52,7 +49,7 @@ export function mapToolChoice(value: unknown): CodexRequestOptions["toolChoice"]
 }
 
 function allowedToolName(tool: unknown): string | undefined {
-  if (!isObj(tool)) return undefined;
+  if (!isJsonRecord(tool)) return undefined;
   if (typeof tool.name === "string" && tool.name.length > 0) return tool.name;
   if (tool.type === "web_search" || tool.type === "web_search_preview") return "web_search";
   if (tool.type === "tool_search") return "tool_search";
@@ -67,8 +64,8 @@ function normalizedToolNamespace(value: unknown): string | undefined {
     : undefined;
 }
 
-function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
-  if (!tools) return undefined;
+function buildTools(tools: unknown[] | undefined): CodexTool[] {
+  if (!tools) return [];
   const out: CodexTool[] = [];
   const pushFn = (t: Record<string, unknown>, namespace?: string) => {
     // Namespaced and deferred definitions arrive through open extension envelopes, bypassing
@@ -107,7 +104,7 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
     out.push(tool);
   };
   for (const t of tools) {
-    if (!isObj(t)) continue;
+    if (!isJsonRecord(t)) continue;
     if (t.type === "function") {
       pushFn(t);
     } else if (t.type === "namespace" && Array.isArray(t.tools)) {
@@ -117,7 +114,7 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
       // need a distinct round-trip contract and must not be silently exposed as function calls.
       const ns = normalizedToolNamespace(t.name);
       for (const inner of t.tools as unknown[]) {
-        if (!isObj(inner)) continue;
+        if (!isJsonRecord(inner)) continue;
         if (inner.type === "function") pushFn(inner, ns);
         else if (typeof inner.name === "string" && t.name === DEFAULT_FUNCTION_NAMESPACE && inner.type === "custom") pushFreeform(inner);
       }
@@ -134,7 +131,7 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
       out.push({
         name: "tool_search",
         description: (t.description as string) ?? "Search for additional tools to load for the next turn.",
-        parameters: (isObj(t.parameters) ? t.parameters : {
+        parameters: (isJsonRecord(t.parameters) ? t.parameters : {
           type: "object",
           properties: {
             query: { type: "string", description: "Search query for tools to load." },
@@ -154,5 +151,5 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
     // Only the OpenAI-hosted server-side tools (web_search, image_generation) are intentionally
     // dropped — they're executed by OpenAI and can't be relayed to a routed chat model.
   }
-  return out.length > 0 ? out : undefined;
+  return out;
 }

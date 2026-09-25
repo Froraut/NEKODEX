@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { boundedIdentity } from "../lib/bounded-identity";
 import type { ResponseContinuationScope } from "./state-snapshot";
 export type { ResponseContinuationScope } from "./state-snapshot";
 
@@ -16,8 +17,18 @@ export interface ResponseContinuationOwnerContext {
   accountRoutingKey?: string;
 }
 
-export function boundedIdentity(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+function assertProviderNamespace(value: unknown): asserts value is string {
+  if (!boundedIdentity(value, MAX_PROVIDER_NAMESPACE_LENGTH)) {
+    throw new TypeError("Response continuation provider namespace is invalid");
+  }
+}
+
+function assertAccountRoutingKey(value: unknown): void {
+  if (value !== undefined
+    && (!boundedIdentity(value, MAX_ACCOUNT_ROUTING_KEY_LENGTH)
+      || !/^[a-f0-9]{64}$/.test(value))) {
+    throw new TypeError("Response continuation account routing key is invalid");
+  }
 }
 
 export function normalizeContinuationScope(value: unknown): ResponseContinuationScope | undefined {
@@ -26,17 +37,11 @@ export function normalizeContinuationScope(value: unknown): ResponseContinuation
     throw new TypeError("Response continuation scope must be an object");
   }
   const scope = value as Partial<ResponseContinuationScope>;
-  if (!boundedIdentity(scope.providerNamespace, MAX_PROVIDER_NAMESPACE_LENGTH)) {
-    throw new TypeError("Response continuation provider namespace is invalid");
-  }
+  assertProviderNamespace(scope.providerNamespace);
   if (!boundedIdentity(scope.ownerKey, MAX_OWNER_KEY_LENGTH) || !/^[a-f0-9]{64}$/.test(scope.ownerKey)) {
     throw new TypeError("Response continuation owner key is invalid");
   }
-  if (scope.accountRoutingKey !== undefined
-    && (!boundedIdentity(scope.accountRoutingKey, MAX_ACCOUNT_ROUTING_KEY_LENGTH)
-      || !/^[a-f0-9]{64}$/.test(scope.accountRoutingKey))) {
-    throw new TypeError("Response continuation account routing key is invalid");
-  }
+  assertAccountRoutingKey(scope.accountRoutingKey);
   return {
     providerNamespace: scope.providerNamespace,
     ownerKey: scope.ownerKey,
@@ -60,14 +65,8 @@ export function createResponseContinuationScope(
         ? { kind: "turn", id: context.turnId }
         : undefined;
   if (!owner) return undefined;
-  if (!boundedIdentity(context.providerNamespace, MAX_PROVIDER_NAMESPACE_LENGTH)) {
-    throw new TypeError("Response continuation provider namespace is invalid");
-  }
-  if (context.accountRoutingKey !== undefined
-    && (!boundedIdentity(context.accountRoutingKey, MAX_ACCOUNT_ROUTING_KEY_LENGTH)
-      || !/^[a-f0-9]{64}$/.test(context.accountRoutingKey))) {
-    throw new TypeError("Response continuation account routing key is invalid");
-  }
+  assertProviderNamespace(context.providerNamespace);
+  assertAccountRoutingKey(context.accountRoutingKey);
   return {
     providerNamespace: context.providerNamespace,
     ownerKey: createHash("sha256").update(JSON.stringify(owner)).digest("hex"),

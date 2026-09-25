@@ -1,4 +1,5 @@
-import { boundedIdentity, normalizeContinuationScope, continuationScopeStatus } from "./continuation-scope";
+import { boundedIdentity } from "../lib/bounded-identity";
+import { normalizeContinuationScope, continuationScopeStatus } from "./continuation-scope";
 import {
   MAX_STORED_RESPONSES, MAX_STORED_RESPONSE_BYTES, SNAPSHOT_TOTAL_MAX_BYTES,
   MAX_DELTA_DEPTH, MAX_NONRETAINED_RESPONSES, MAX_RESPONSE_ID_LENGTH,

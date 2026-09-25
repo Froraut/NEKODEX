@@ -1,10 +1,7 @@
 import { safeNativeModelId, validNativeReportedUsage,
   type NativeReportedUsage, type NativeUsageFailureCategory, type NativeUsageOutcome,
 } from "./usage/native-contract";
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
+import { isJsonRecord } from "./lib/json-record";
 
 const MAX_TELEMETRY_SSE_FRAME_BYTES = 64 * 1024;
 const MAX_TELEMETRY_JSON_BYTES = 256 * 1024;
@@ -21,9 +18,9 @@ interface NativeTerminalObservation {
 }
 
 function nativeReportedUsage(value: unknown): NativeReportedUsage | null {
-  if (!isObject(value)) return null;
-  const inputDetails = isObject(value.input_tokens_details) ? value.input_tokens_details : undefined;
-  const outputDetails = isObject(value.output_tokens_details) ? value.output_tokens_details : undefined;
+  if (!isJsonRecord(value)) return null;
+  const inputDetails = isJsonRecord(value.input_tokens_details) ? value.input_tokens_details : undefined;
+  const outputDetails = isJsonRecord(value.output_tokens_details) ? value.output_tokens_details : undefined;
   const usage = {
     inputTokens: value.input_tokens,
     outputTokens: value.output_tokens,
@@ -40,8 +37,8 @@ function observeNativeTerminal(
   eventName?: string,
   standaloneJson = false,
 ): NativeTerminalObservation | undefined {
-  if (!isObject(value)) return undefined;
-  const response = isObject(value.response) ? value.response : value;
+  if (!isJsonRecord(value)) return undefined;
+  const response = isJsonRecord(value.response) ? value.response : value;
   const type = typeof value.type === "string" ? value.type : eventName;
   const rawStatus = typeof response.status === "string" ? response.status : undefined;
   const eventOutcome = type === "response.completed"
@@ -189,10 +186,10 @@ export function createNativeTerminalInspector(eventStream: boolean) {
       }
       if (frameOversized) continue;
       if (line.startsWith("event:")) {
-        if (!frameOversized) frameEvent = line.slice(6).trim().slice(0, 128);
+        frameEvent = line.slice(6).trim().slice(0, 128);
         continue;
       }
-      if (!line.startsWith("data:") || frameOversized) continue;
+      if (!line.startsWith("data:")) continue;
       const value = line.slice(5).trimStart();
       const next = frameData ? `${frameData}\n${value}` : value;
       if (Buffer.byteLength(next, "utf8") > MAX_TELEMETRY_SSE_FRAME_BYTES) {

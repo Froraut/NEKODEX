@@ -28,6 +28,20 @@ export function authorizeLauncherControl(operation: string): string {
   return descriptorPath;
 }
 
+/** Authorize a launcher-controlled config command and load the configuration that launcher owns. */
+export async function loadLauncherOwnedConfig(operation: string): Promise<ReturnType<typeof loadConfigWithSnapshot>> {
+  const authorizedDescriptorPath = authorizeLauncherControl(operation);
+  const { config, snapshot } = loadConfigWithSnapshot();
+  if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath
+    || resolve(config.browserHostDescriptorPath) !== resolve(authorizedDescriptorPath)) {
+    throw new Error("Launcher authorization does not own this configuration");
+  }
+  // DEV has no Responses listener and must not consult the production launchd service.
+  // The authorized launcher IPC checks its own browser activity before invoking this command.
+  if (config.purpose !== "dev-harness") await assertServiceIdle(config);
+  return { config, snapshot };
+}
+
 function updateProModelVersion(
   config: AppConfig,
   version: ChatGptWebProModelVersion | undefined,
@@ -56,15 +70,7 @@ export async function runProModelVersionConfigCommand(args: string[]): Promise<v
   if (!launcherControl) {
     throw new Error("Pro model configuration must be changed through NEKODEX Settings");
   }
-  const authorizedDescriptorPath = authorizeLauncherControl("Pro model configuration");
-  const { config, snapshot } = loadConfigWithSnapshot();
-  if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath
-    || resolve(config.browserHostDescriptorPath) !== resolve(authorizedDescriptorPath)) {
-    throw new Error("Launcher authorization does not own this configuration");
-  }
-  // DEV has no Responses listener and must not consult the production launchd service.
-  // The authorized launcher IPC checks its own browser activity before invoking this command.
-  if (config.purpose !== "dev-harness") await assertServiceIdle(config);
+  const { config, snapshot } = await loadLauncherOwnedConfig("Pro model configuration");
   updateProModelVersion(config, version);
   saveConfig(config, snapshot);
   process.stdout.write(`${JSON.stringify({ proModelVersion: version ?? null })}\n`);

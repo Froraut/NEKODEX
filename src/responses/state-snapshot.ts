@@ -1,3 +1,5 @@
+import { boundedIdentity } from "../lib/bounded-identity";
+
 export const MAX_STORED_RESPONSES = 1_000;
 /** In-memory high-water byte cap across reachable history nodes. */
 export const MAX_STORED_RESPONSE_BYTES = 64 * 1024 * 1024;
@@ -42,9 +44,6 @@ export function serializedResponseStateBytes(items: readonly unknown[]): number 
 
 
 type ScopeDecoder = (value: unknown) => ResponseContinuationScope | undefined;
-function boundedIdentity(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
-}
 
 export function decodeResponseSnapshot(raw: unknown, normalizeScope: ScopeDecoder): LoadedSnapshot | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
