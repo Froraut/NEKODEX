@@ -18,16 +18,16 @@
 
 ## Download
 
-**6.0.0-nekodex.2 · prerelease**
+**6.1.0-nekodex.1 · prerelease**
 
 | Platform | Package | Delivery |
 | --- | --- | --- |
-| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.2/NEKODEX-6.0.0-nekodex.2-mac-arm64.dmg) | Developer ID signed and notarized |
-| macOS 13+ · Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.2/NEKODEX-6.0.0-nekodex.2-mac-x64.dmg) | Developer ID signed and notarized |
-| Linux x64 | [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.2/codex-web-gpt-6.0.0-nekodex.2-linux-x64.AppImage) | Authenticated release metadata |
+| macOS 13+ · Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.0-nekodex.1/NEKODEX-6.1.0-nekodex.1-mac-arm64.dmg) | Developer ID signed and notarized |
+| macOS 13+ · Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.0-nekodex.1/NEKODEX-6.1.0-nekodex.1-mac-x64.dmg) | Developer ID signed and notarized |
+| Linux x64 | [AppImage](https://github.com/Froraut/NEKODEX/releases/download/v6.1.0-nekodex.1/codex-web-gpt-6.1.0-nekodex.1-linux-x64.AppImage) | Authenticated release metadata |
 | Windows x64 | [Preview artifacts](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml) | Unsigned preview; outside authenticated updates |
 
-[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v6.0.0-nekodex.2) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v6.0.0-nekodex.2/checksums.txt) · [Release authenticity](docs/release-signing.md)
+[Release notes](https://github.com/Froraut/NEKODEX/releases/tag/v6.1.0-nekodex.1) · [Checksums](https://github.com/Froraut/NEKODEX/releases/download/v6.1.0-nekodex.1/checksums.txt) · [Release authenticity](docs/release-signing.md)
 
 On macOS, open the DMG and drag **NEKODEX** to **Applications**. For later releases, use **Updates → Download and restart** inside the app. Account profiles and settings stay in place. Finish active tasks first.
 
