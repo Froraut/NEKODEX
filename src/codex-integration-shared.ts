@@ -1,5 +1,5 @@
 import { writeFilesWithCompensation, type FileSnapshot } from "./file-transactions";
-export { snapshotFile, assertFileSnapshotCurrent, writeFileSnapshot, restoreFileSnapshot, writeFilesWithCompensation, fileSnapshotsMatch, type FileSnapshot, type CommittedFileReceipt } from "./file-transactions";
+export { snapshotFile, assertFileSnapshotCurrent, writeFileSnapshot, restoreFileSnapshot, writeFilesWithCompensation, type FileSnapshot } from "./file-transactions";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -258,6 +258,67 @@ export type ManagedRouteJournal =
   | LegacyCodexIntegrationJournalV4
   | LegacyCodexIntegrationJournalV3;
 export type AnyCodexIntegrationJournal = ManagedRouteJournal | LegacyCodexIntegrationJournal;
+
+// Journal version guards. Each narrows a journal union to the versions that carry the named state.
+type VersionedJournal = { version: number };
+
+/** Versions 3-11 install the managed Responses route. */
+export function journalIsManagedRouteV3Plus<T extends VersionedJournal>(
+  journal: T | undefined,
+): journal is Extract<T, { version: 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 }> {
+  const version = journal?.version;
+  return version === 3 || version === 4 || version === 5 || version === 6 || version === 7
+    || version === 8 || version === 9 || version === 10 || version === 11;
+}
+
+/** Versions 4-11 record whether the route is connected. */
+export function journalHasActiveFlag<T extends VersionedJournal>(
+  journal: T | undefined,
+): journal is Extract<T, { version: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 }> {
+  const version = journal?.version;
+  return version === 4 || version === 5 || version === 6 || version === 7
+    || version === 8 || version === 9 || version === 10 || version === 11;
+}
+
+/** Versions 5 and 6 own the legacy [features] assignments. */
+export function journalHasOwnedFeaturesV5V6<T extends VersionedJournal>(
+  journal: T | undefined,
+): journal is Extract<T, { version: 5 | 6 }> {
+  const version = journal?.version;
+  return version === 5 || version === 6;
+}
+
+/** Versions 7-11 route through openai_base_url without managing model_provider or model_catalog_json. */
+export function journalHasBaseUrlRouteV7Plus<T extends VersionedJournal>(
+  journal: T | undefined,
+): journal is Extract<T, { version: 7 | 8 | 9 | 10 | 11 }> {
+  const version = journal?.version;
+  return version === 7 || version === 8 || version === 9 || version === 10 || version === 11;
+}
+
+/** Versions 8-11 record the installed subagent protocol. */
+export function journalRecordsSubagentProtocol<T extends VersionedJournal>(
+  journal: T | undefined,
+): journal is Extract<T, { version: 8 | 9 | 10 | 11 }> {
+  const version = journal?.version;
+  return version === 8 || version === 9 || version === 10 || version === 11;
+}
+
+/** Versions 9-11 also pin the realtime WebRTC call base URL so Voice stays on ChatGPT. */
+export function journalHasRealtimeRoute<T extends VersionedJournal>(
+  journal: T | undefined,
+): journal is Extract<T, { version: 9 | 10 | 11 }> {
+  const version = journal?.version;
+  return version === 9 || version === 10 || version === 11;
+}
+
+/** Versions 10 and 11 install the Codex interrupt hook. */
+export function journalHasInterruptHook<T extends VersionedJournal>(
+  journal: T | undefined,
+): journal is Extract<T, { version: 10 | 11 }> {
+  const version = journal?.version;
+  return version === 10 || version === 11;
+}
 
 export interface InstallCodexIntegrationOptions {
   replaceExistingRoute?: boolean;

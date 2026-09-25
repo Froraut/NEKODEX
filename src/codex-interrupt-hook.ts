@@ -53,11 +53,9 @@ function cmdShellArgument(value: string): string {
   return `"${value}"`;
 }
 
-export function codexInterruptHookCommand(
-  config: Pick<AppConfig, "runtimeCommand">,
-  home = getConfigDir(),
-  platform: NodeJS.Platform = process.platform,
-): string {
+export function codexInterruptHookCommand(config: Pick<AppConfig, "runtimeCommand">): string {
+  const home = getConfigDir();
+  const platform = process.platform;
   const absoluteHome = platform === "win32" ? win32.resolve(home) : posix.resolve(home);
   const args = [...config.runtimeCommand, "--home", absoluteHome, "hook", "interrupt"];
   return args.map(platform === "win32" ? cmdShellArgument : posixShellArgument).join(" ");
@@ -65,6 +63,19 @@ export function codexInterruptHookCommand(
 
 function lineEnding(text: string): "\n" | "\r\n" | "\r" {
   return text.includes("\r\n") ? "\r\n" : text.includes("\n") ? "\n" : text.includes("\r") ? "\r" : "\n";
+}
+
+/** Blank-line separation before, and the file's final newline after, a fragment appended to `text`. */
+function appendSeparators(text: string, ending: string): { leading: string; trailing: string } {
+  const leading = text.length === 0
+    ? ""
+    : text.endsWith(`${ending}${ending}`)
+      ? ""
+      : text.endsWith(ending)
+        ? ending
+        : `${ending}${ending}`;
+  const trailing = text.length > 0 && text.endsWith(ending) ? ending : "";
+  return { leading, trailing };
 }
 
 function managedMarkerCount(text: string): number {
@@ -137,14 +148,7 @@ export function installCodexInterruptHookCommand(
     "",
     trustSection,
   ].join(ending);
-  const leading = text.length === 0
-    ? ""
-    : text.endsWith(`${ending}${ending}`)
-      ? ""
-      : text.endsWith(ending)
-        ? ending
-        : `${ending}${ending}`;
-  const trailing = text.length > 0 && text.endsWith(ending) ? ending : "";
+  const { leading, trailing } = appendSeparators(text, ending);
   const fragment = `${leading}${core}${trailing}`;
   const ast = parseTOML(text.replace(/\r(?!\n)/g, "\n"), { tomlVersion: "1.0" });
   const inline = inlineInterruptArray(ast);
@@ -187,14 +191,7 @@ export function installCodexInterruptHookTrust(
     `trusted_hash = ${JSON.stringify(trustedHash)}`,
     MANAGED_INTERRUPT_HOOK_TRUST_END,
   ].join(ending);
-  const leading = text.length === 0
-    ? ""
-    : text.endsWith(`${ending}${ending}`)
-      ? ""
-      : text.endsWith(ending)
-        ? ending
-        : `${ending}${ending}`;
-  const trailing = text.length > 0 && text.endsWith(ending) ? ending : "";
+  const { leading, trailing } = appendSeparators(text, ending);
   const fragment = `${leading}${core}${trailing}`;
   return { text: `${text}${fragment}`, installed: { stateKey, trustedHash, fragment } };
 }
@@ -308,9 +305,7 @@ export function verifyCodexInterruptHookTrust(text: string, installed: Installed
 }
 
 export function restoreCodexInterruptHookTrust(text: string, installed: InstalledCodexInterruptHookTrust): string {
-  const owned = locateCodexInterruptHookTrust(text, installed);
-  return owned.ranges.sort((left, right) => right.start - left.start)
-    .reduce((restored, range) => restored.slice(0, range.start) + restored.slice(range.end), text);
+  return removeRanges(text, locateCodexInterruptHookTrust(text, installed).ranges);
 }
 
 export function verifyCodexInterruptHookTrustRestored(text: string): void {
@@ -551,9 +546,7 @@ export function restoreCodexInterruptHook(
         && !Object.hasOwn(state, installed.stateKey))) return text;
     }
   }
-  const owned = locateCodexInterruptHook(text, installed).sort((left, right) => right.start - left.start);
-  for (const range of owned) text = text.slice(0, range.start) + text.slice(range.end);
-  return text;
+  return removeRanges(text, locateCodexInterruptHook(text, installed));
 }
 
 export function verifyCodexInterruptHookRestored(text: string): void {

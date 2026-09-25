@@ -1,10 +1,9 @@
 import { transitionSetupConfig, meaningfulRuntimeChange, type SetupOptions } from "./setup-policy";
 export type { SetupOptions } from "./setup-policy";
-import { fileSnapshotsMatch as sameSnapshot } from "./file-transactions";
+import { fileSnapshotsMatch as sameSnapshot, restoreFileSnapshot, snapshotFile, type FileSnapshot } from "./file-transactions";
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
-import { userInfo } from "node:os";
 import { join } from "node:path";
 import type { AppConfig, BrowserInteractionMode, RuntimeMode } from "./config";
 import {
@@ -29,8 +28,6 @@ import {
   preflightCodexIntegration,
   readCodexSubagentProtocol,
 } from "./codex-integration";
-import { restoreFileSnapshot, snapshotFile } from "./codex-integration-shared";
-import type { FileSnapshot } from "./codex-integration-shared";
 import { inspectLauncherBrowserHost } from "./launcher-browser-host";
 import {
   DEV_CONFIG_PURPOSE,
@@ -48,7 +45,8 @@ import {
 import { connectTunnel, createTunnelConfig, installRuntimeKey, installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, restoreTunnelClientInstallation, snapshotTunnelClientInstallation, stopTunnel, waitForTunnelReady } from "./tunnel";
 import type { TunnelClientInstallSnapshot } from "./tunnel";
 import { getTunnelServiceStatus, installTunnelService, restartTunnelService, stopTunnelService, tunnelServiceDefinitionMatches, uninstallTunnelService } from "./tunnel-service";
-import { runChecked, runCommand } from "./process";
+import { launchDomain } from "./launch-agent";
+import { runChecked, runCommand, type CommandResult } from "./process";
 import { VERSION } from "./version";
 
 export interface SetupResult {
@@ -216,18 +214,25 @@ async function inspectLauncherCapabilities(
   };
 }
 
+/** `tunnel-client runtimes status --json` explicitly reports a stopped runtime without error.
+ * An unreadable status is uncertain ownership, not evidence of a stopped runtime. */
+function runtimeStatusReportsStopped(result: CommandResult): boolean {
+  if (result.status !== 0) return false;
+  try {
+    const status = JSON.parse(result.stdout.trim() || result.stderr.trim()) as Record<string, unknown>;
+    return status.process_running === false
+      && (status.runtime_state === "stopped" || status.status === "stopped")
+      && status.error === undefined;
+  } catch { return false; }
+}
+
 /** A failed connect is not evidence of a stopped runtime. Probe with the candidate client;
  * never send stop to an alias whose launch did not return an ownership checkpoint. */
 function failedConnectIsStopped(config: AppConfig): boolean {
   if (!config.tunnel) return false;
   try {
-    const result = runCommand(config.tunnel.binaryPath,
-      ["runtimes", "status", config.tunnel.alias, "--json"], { timeout: 10_000 });
-    if (result.status !== 0) return false;
-    const status = JSON.parse(result.stdout.trim() || result.stderr.trim());
-    return status.process_running === false
-      && (status.runtime_state === "stopped" || status.status === "stopped")
-      && status.error === undefined;
+    return runtimeStatusReportsStopped(runCommand(config.tunnel.binaryPath,
+      ["runtimes", "status", config.tunnel.alias, "--json"], { timeout: 10_000 }));
   } catch { return false; }
 }
 
@@ -375,7 +380,7 @@ function prepareSetup(options: SetupOptions): PreparedSetup {
 
 /** Re-bootstrap the exact definition restored by rollback; installers regenerate plist bytes. */
 function bootstrapRestoredDefinition(path: string): void {
-  runChecked("launchctl", ["bootstrap", `gui/${userInfo().uid}`, path]);
+  runChecked("launchctl", ["bootstrap", launchDomain(), path]);
 }
 
 export function preflightSetup(options: SetupOptions): void {
@@ -940,16 +945,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     }
     const observed = runCommand(existing.tunnel.binaryPath,
       ["runtimes", "status", existing.tunnel.alias, "--json"], { timeout: 10_000 });
-    let stopped = false;
-    if (observed.status === 0) {
-      try {
-        const status = JSON.parse(observed.stdout.trim() || observed.stderr.trim()) as Record<string, unknown>;
-        stopped = status.process_running === false
-          && (status.runtime_state === "stopped" || status.status === "stopped")
-          && status.error === undefined;
-      } catch { /* An unreadable status is uncertain ownership. */ }
-    }
-    if (!stopped) {
+    if (!runtimeStatusReportsStopped(observed)) {
       throw new Error(
         "DEV setup requires an explicitly stopped existing Full tunnel before changing its profile. "
         + "Finish active turns and use the launcher owner/idle-drain setup path; direct CLI setup cannot stop or recover an unknown owner.",

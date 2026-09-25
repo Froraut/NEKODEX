@@ -112,17 +112,10 @@ function executableFile(path: string): boolean {
   }
 }
 
-export function installedLauncherCandidates({
-  environment = process.env,
-  homeDirectory = homedir(),
-  platform = process.platform,
-  windowsInstallLocation,
-}: {
-  environment?: NodeJS.ProcessEnv;
-  homeDirectory?: string;
-  platform?: NodeJS.Platform;
-  windowsInstallLocation?: string;
-} = {}): string[] {
+export function installedLauncherCandidates(): string[] {
+  const environment = process.env;
+  const homeDirectory = homedir();
+  const platform = process.platform;
   const override = environment.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE?.trim();
   const candidates = override ? [expandUserPath(override)] : [];
   const targetPath = platform === "win32" ? win32 : posix;
@@ -134,9 +127,7 @@ export function installedLauncherCandidates({
       posix.join(homeDirectory, "Applications", "Codex Web GPT.app", "Contents", "MacOS", "Codex Web GPT"),
     );
   } else if (platform === "win32") {
-    const registeredLocation = windowsInstallLocation?.trim()
-      || (process.platform === "win32" && environment === process.env
-        ? registeredWindowsLauncherInstallLocation() : undefined);
+    const registeredLocation = registeredWindowsLauncherInstallLocation();
     if (registeredLocation && win32.isAbsolute(registeredLocation)) {
       candidates.push(win32.join(registeredLocation, "NEKODEX.exe"));
       candidates.push(win32.join(registeredLocation, "Codex Web GPT.exe"));
@@ -156,8 +147,8 @@ export function installedLauncherCandidates({
   return [...new Set(candidates.map(candidate => targetPath.resolve(candidate)))];
 }
 
-export function findInstalledLauncherExecutable(options: Parameters<typeof installedLauncherCandidates>[0] = {}): string {
-  const candidates = installedLauncherCandidates(options);
+export function findInstalledLauncherExecutable(): string {
+  const candidates = installedLauncherCandidates();
   const executable = candidates.find(executableFile);
   if (executable) return executable;
   throw new Error(
@@ -166,11 +157,8 @@ export function findInstalledLauncherExecutable(options: Parameters<typeof insta
   );
 }
 
-export function devLauncherEnvironment(
-  paths: DevProfilePaths,
-  environment: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  const childEnvironment = { ...environment };
+export function devLauncherEnvironment(paths: DevProfilePaths): NodeJS.ProcessEnv {
+  const childEnvironment = { ...process.env };
   delete childEnvironment.CODEX_CHATGPT_WEB_HOME;
   delete childEnvironment.CODEX_HOME;
   delete childEnvironment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
@@ -205,13 +193,12 @@ export async function waitForDevLauncher(
 
 export async function launchDevProfile(
   paths = resolveDevProfilePaths(),
-  options: { executable?: string; timeoutMs?: number } = {},
 ): Promise<{ descriptor: LauncherBrowserHostDescriptor; executable: string; alreadyRunning: boolean }> {
   let existing: LauncherBrowserHostDescriptor | undefined;
   try { existing = devDescriptor(paths.descriptorPath); }
   catch { /* A stale or absent descriptor is replaced only by its owning launcher. */ }
 
-  const executable = options.executable ? resolve(options.executable) : findInstalledLauncherExecutable();
+  const executable = findInstalledLauncherExecutable();
   if (!isAbsolute(executable) || !executableFile(executable)) {
     throw new Error(`DEV launcher executable is not an executable regular file: ${executable}`);
   }
@@ -222,6 +209,6 @@ export async function launchDevProfile(
     windowsHide: false,
   });
   child.unref();
-  const descriptor = await waitForDevLauncher(paths.descriptorPath, options.timeoutMs);
+  const descriptor = await waitForDevLauncher(paths.descriptorPath);
   return { descriptor, executable, alreadyRunning: existing?.pid === descriptor.pid };
 }

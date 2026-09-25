@@ -1,10 +1,16 @@
-import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./codex-integration-shared";
+import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { AppConfig } from "./config";
 import { getConfigDir } from "./config";
-import { isMissingLaunchdService, runCommand, runChecked } from "./process";
+import {
+  assertLaunchdPrintResult,
+  launchAgentPlistPath,
+  launchDomain,
+  launchServiceTarget,
+  xmlEscape as xml,
+} from "./launch-agent";
+import { runCommand, runChecked } from "./process";
 
 const LABEL = "io.github.codex-chatgpt-web.tunnel";
 const LAUNCHCTL_PRINT_TIMEOUT_MS = 5_000;
@@ -19,25 +25,12 @@ export interface TunnelServiceStatus {
   definitionPath?: string;
 }
 
-function xml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
-}
-
 function plistPath(): string {
-  return join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
-}
-
-function launchDomain(): string {
-  return `gui/${userInfo().uid}`;
+  return launchAgentPlistPath(LABEL);
 }
 
 function serviceTarget(): string {
-  return `${launchDomain()}/${LABEL}`;
+  return launchServiceTarget(LABEL);
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -106,10 +99,7 @@ export function getTunnelServiceStatus(
   const result = runCommand("launchctl", ["print", serviceTarget()],
     { timeout: printTimeoutMs, signal });
   throwIfAborted(signal);
-  if (result.status !== 0 && !isMissingLaunchdService(result)) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-    throw new Error(`Unable to determine launchd service status for ${LABEL}: ${detail}`);
-  }
+  assertLaunchdPrintResult(LABEL, result);
   return {
     supported: true,
     installed: existsSync(path),

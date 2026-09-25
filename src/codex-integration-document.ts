@@ -363,12 +363,32 @@ function findTomlTable(lines: string[], tableName: string): TomlTableRange | und
   };
 }
 
-function insertFeatureTable(document: CodexConfigDocument): TomlTableRange {
+function insertTable(document: CodexConfigDocument, name: "features" | "agents"): TomlTableRange {
   if (document.lines.length > 0 && document.lines.at(-1)?.trim()) {
     insertDocumentLine(document, document.lines.length, "");
   }
-  insertDocumentLine(document, document.lines.length, "[features]");
-  return findTomlTable(document.lines, "features")!;
+  insertDocumentLine(document, document.lines.length, `[${name}]`);
+  return findTomlTable(document.lines, name)!;
+}
+
+/** Remove a table header added at setup once its last managed assignment has been removed. */
+function removeEmptyManagedTable(
+  document: CodexConfigDocument,
+  name: "features" | "agents",
+  separatorInserted: boolean | undefined,
+): void {
+  const table = findTomlTable(document.lines, name);
+  if (!table) throw new Error(`Managed Codex [${name}] table is missing`);
+  const remaining = document.lines
+    .slice(table.headerIndex + 1, table.endIndex)
+    .filter(line => line.trim().length > 0);
+  if (remaining.length === 0) {
+    const headerIndex = table.headerIndex;
+    removeDocumentLine(document, headerIndex);
+    if (separatorInserted && document.lines[headerIndex - 1] === "") {
+      removeDocumentLine(document, headerIndex - 1);
+    }
+  }
 }
 
 function setScalarFeature(
@@ -381,7 +401,7 @@ function setScalarFeature(
     document.lines[current.index] = managedLine;
     return;
   }
-  const table = findTomlTable(document.lines, "features") ?? insertFeatureTable(document);
+  const table = findTomlTable(document.lines, "features") ?? insertTable(document, "features");
   insertDocumentLine(document, table.endIndex, managedLine);
 }
 
@@ -447,14 +467,7 @@ function setAgentMaxDepth(document: CodexConfigDocument, value: number): void {
     document.lines[current.index] = managedLine;
     return;
   }
-  let table = findTomlTable(document.lines, "agents");
-  if (!table) {
-    if (document.lines.length > 0 && document.lines.at(-1)?.trim()) {
-      insertDocumentLine(document, document.lines.length, "");
-    }
-    insertDocumentLine(document, document.lines.length, "[agents]");
-    table = findTomlTable(document.lines, "agents")!;
-  }
+  const table = findTomlTable(document.lines, "agents") ?? insertTable(document, "agents");
   let insertionIndex = table.endIndex;
   while (insertionIndex > table.headerIndex + 1 && document.lines[insertionIndex - 1]?.trim() === "") {
     insertionIndex -= 1;
@@ -641,20 +654,7 @@ export function restoreBooleanFeature(
     document.lines[current.index] = previous.rawLine;
   } else {
     removeDocumentLine(document, current.index);
-    if (!previous.tablePresent) {
-      const table = findTomlTable(document.lines, "features");
-      if (!table) throw new Error("Managed Codex [features] table is missing");
-      const remaining = document.lines
-        .slice(table.headerIndex + 1, table.endIndex)
-        .filter(line => line.trim().length > 0);
-      if (remaining.length === 0) {
-        const headerIndex = table.headerIndex;
-        removeDocumentLine(document, headerIndex);
-        if (previous.separatorInserted && document.lines[headerIndex - 1] === "") {
-          removeDocumentLine(document, headerIndex - 1);
-        }
-      }
-    }
+    if (!previous.tablePresent) removeEmptyManagedTable(document, "features", previous.separatorInserted);
   }
   return renderDocument(document);
 }
@@ -725,13 +725,7 @@ export function verifyCompatibilityV1Features(
 ): void {
   verifyInstalledBooleanFeature(text, "multi_agent", "true", MANAGED_MULTI_AGENT_LINE);
   verifyInstalledMultiAgentV2Feature(text, previousMultiAgentV2);
-  const depth = findAgentMaxDepthAssignment(splitLines(text));
-  if (depth.value !== String(installedAgentMaxDepth)
-    || depth.rawLine !== managedAgentMaxDepthLine(installedAgentMaxDepth)) {
-    throw new Error(
-      "Codex [agents].max_depth changed after Compatibility V1 setup; refusing to overwrite the user's newer value",
-    );
-  }
+  verifyCompatibilityV1AgentDepth(text, installedAgentMaxDepth);
 }
 
 export function restoreCompatibilityV1Features(
@@ -773,18 +767,7 @@ export function restoreCompatibilityV1AgentDepth(
   } else {
     removeDocumentLine(document, current.index);
     if (!previousAgentMaxDepth.tablePresent) {
-      const table = findTomlTable(document.lines, "agents");
-      if (!table) throw new Error("Managed Codex [agents] table is missing");
-      const remaining = document.lines
-        .slice(table.headerIndex + 1, table.endIndex)
-        .filter(line => line.trim().length > 0);
-      if (remaining.length === 0) {
-        const headerIndex = table.headerIndex;
-        removeDocumentLine(document, headerIndex);
-        if (previousAgentMaxDepth.separatorInserted && document.lines[headerIndex - 1] === "") {
-          removeDocumentLine(document, headerIndex - 1);
-        }
-      }
+      removeEmptyManagedTable(document, "agents", previousAgentMaxDepth.separatorInserted);
     }
   }
   return renderDocument(document);

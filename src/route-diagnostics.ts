@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { readJournalSnapshot } from "./codex-integration-journal";
 import { readBoundedUtf8File } from "./read-bounded-file";
 import { getCodexHome } from "./codex-integration-shared";
+import { isJsonRecord } from "./lib/json-record";
 
 export interface CodexRouteDiagnostics {
   schemaVersion: 1;
@@ -22,7 +23,6 @@ export interface CodexRouteDiagnostics {
 }
 
 interface IntegrationInspection { installed: boolean; active: boolean | null; routeUrl?: string; errors: string[]; recoveryPending?: boolean }
-const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const safeName = (value: unknown): string | null => typeof value === "string" && value.trim() === value
   && /^[\p{L}\p{M}\p{N}_. -]{1,128}$/u.test(value) ? value : null;
 
@@ -58,7 +58,7 @@ export function diagnoseCodexConfiguration(
   let config: Record<string, unknown>;
   try {
     const parsed = Bun.TOML.parse((text ?? "").replace(/^\uFEFF/, ""));
-    if (!object(parsed)) throw new Error("Configuration root is not a table");
+    if (!isJsonRecord(parsed)) throw new Error("Configuration root is not a table");
     config = parsed;
   }
   catch {
@@ -81,7 +81,7 @@ export function diagnoseCodexConfiguration(
     let overlay: unknown;
     let profileInvalid = false;
     try { overlay = profileText === undefined ? undefined : Bun.TOML.parse(profileText.replace(/^\uFEFF/, "")); } catch { profileInvalid = true; }
-    if (!result.profile || !object(overlay)) {
+    if (!result.profile || !isJsonRecord(overlay)) {
       result.provider = null;
       result.providerSource = "unknown";
       result.issueCodes.push(profileInvalid || profileText !== undefined ? "profile-invalid" : "profile-unavailable");
@@ -109,32 +109,24 @@ export function diagnoseCodexConfiguration(
   return result;
 }
 
-export function readCodexRouteDiagnostics(options: {
-  codexHome?: string;
-  profile?: string;
-  inspect?: () => IntegrationInspection;
-  journalPaths?: { primaryPath: string; recoveryPath: string };
-} = {}): CodexRouteDiagnostics {
-  const home = resolve(options.codexHome ?? getCodexHome());
+export function readCodexRouteDiagnostics(options: { profile?: string } = {}): CodexRouteDiagnostics {
+  const home = resolve(getCodexHome());
   const configPath = join(home, "config.toml");
   let integration: IntegrationInspection | null = null;
   try {
-    if (options.inspect) integration = options.inspect();
-    else {
-      const snapshot = readJournalSnapshot(options.journalPaths);
-      const journal = snapshot.journal;
-      const samePath = journal && (process.platform === "win32"
-        ? resolve(journal.configPath).toLowerCase() === configPath.toLowerCase()
-        : resolve(journal.configPath) === configPath);
-      integration = {
-        installed: Boolean(journal && samePath),
-        active: snapshot.recoveryPending || (journal && !samePath) ? null : journal ? ("active" in journal ? journal.active : true) : false,
-        ...(!snapshot.recoveryPending && samePath && journal && "openai_base_url" in journal.installed && typeof journal.installed.openai_base_url === "string"
-          ? { routeUrl: journal.installed.openai_base_url } : {}),
-        errors: journal && !samePath ? ["different-home"] : [],
-        recoveryPending: snapshot.recoveryPending,
-      };
-    }
+    const snapshot = readJournalSnapshot();
+    const journal = snapshot.journal;
+    const samePath = journal && (process.platform === "win32"
+      ? resolve(journal.configPath).toLowerCase() === configPath.toLowerCase()
+      : resolve(journal.configPath) === configPath);
+    integration = {
+      installed: Boolean(journal && samePath),
+      active: snapshot.recoveryPending || (journal && !samePath) ? null : journal ? ("active" in journal ? journal.active : true) : false,
+      ...(!snapshot.recoveryPending && samePath && journal && "openai_base_url" in journal.installed && typeof journal.installed.openai_base_url === "string"
+        ? { routeUrl: journal.installed.openai_base_url } : {}),
+      errors: journal && !samePath ? ["different-home"] : [],
+      recoveryPending: snapshot.recoveryPending,
+    };
   } catch { /* Do not repair journals or include their contents in diagnostics. */ }
   let text: string | null = null;
   try {

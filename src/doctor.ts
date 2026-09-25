@@ -1,10 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { AppConfig } from "./config";
 import {
-  CHATGPT_ASYNC_CONNECTOR_NAME,
-  CHATGPT_CONNECTOR_NAME,
-  DEV_CHATGPT_ASYNC_CONNECTOR_NAME,
-  DEV_CHATGPT_CONNECTOR_NAME,
   getConfigDir,
   getConfigPath,
   loadConfig,
@@ -57,7 +53,7 @@ function launcherOwnershipError(config: AppConfig, health: Record<string, unknow
   try {
     state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   } catch (error) {
-    return `Launcher runtime ownership marker is invalid: ${error instanceof Error ? error.message : String(error)}`;
+    return `Launcher runtime ownership marker is invalid: ${errorDetail(error)}`;
   }
   if (state.version !== 1
     || !Number.isInteger(state.ownerPid)
@@ -115,8 +111,7 @@ async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
     }
     return { id: "proxy", status: "ok", message: `Responses proxy is healthy on 127.0.0.1:${config.port}` };
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { id: "proxy", status: "error", message: "Responses proxy is not reachable", detail };
+    return { id: "proxy", status: "error", message: "Responses proxy is not reachable", detail: errorDetail(error) };
   } finally {
     clearTimeout(timeout);
   }
@@ -135,7 +130,7 @@ export async function runDoctor(): Promise<DoctorReport> {
     config = loadConfig();
     checks.push({ id: "config", status: "ok", message: `Configuration is valid (${getConfigPath()})` });
   } catch (error) {
-    checks.push({ id: "config", status: "error", message: "Configuration is invalid", detail: error instanceof Error ? error.message : String(error) });
+    checks.push({ id: "config", status: "error", message: "Configuration is invalid", detail: errorDetail(error) });
     return { ok: false, build, checks };
   }
   // loadConfig validates generation/profile; a retained Native5 identity remains valid.
@@ -173,7 +168,7 @@ export async function runDoctor(): Promise<DoctorReport> {
         id: "browser-host",
         status: "error",
         message: "Embedded launcher browser is unavailable",
-        detail: error instanceof Error ? error.message : String(error),
+        detail: errorDetail(error),
       });
     }
   } else {

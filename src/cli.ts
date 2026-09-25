@@ -34,6 +34,7 @@ import { runDevCommand } from "./dev-chat/cli";
 import { runCompactionModelConfigCommand } from "./compaction-model-config";
 import { authorizeLauncherControl, runProModelVersionConfigCommand } from "./pro-model-config";
 import { readCodexRouteDiagnostics } from "./route-diagnostics";
+import { takeFlag, takeOption } from "./lib/cli-args";
 
 const HELP = `codex-chatgpt-web ${VERSION}
 
@@ -105,22 +106,6 @@ Global:
   -h, --help
   -v, --version
 `;
-
-function takeOption(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  if (index < 0) return undefined;
-  const value = args[index + 1];
-  if (!value || value.startsWith("--")) throw new Error(`${name} requires a value`);
-  args.splice(index, 2);
-  return value;
-}
-
-function takeFlag(args: string[], name: string): boolean {
-  const index = args.indexOf(name);
-  if (index < 0) return false;
-  args.splice(index, 1);
-  return true;
-}
 
 async function confirm(question: string): Promise<boolean> {
   if (!stdin.isTTY || !stdout.isTTY) return false;
