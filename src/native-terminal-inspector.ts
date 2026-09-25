@@ -8,6 +8,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 const MAX_TELEMETRY_SSE_FRAME_BYTES = 64 * 1024;
 const MAX_TELEMETRY_JSON_BYTES = 256 * 1024;
+// A terminal frame repeats the whole response, so long turns exceed the frame budget. Its event
+// type and model lead the payload and its usage trails it, so a bounded head and tail suffice.
+const OVERSIZED_FRAME_HEAD_CHARS = 16 * 1024;
+const OVERSIZED_FRAME_TAIL_CHARS = 32 * 1024;
 
 interface NativeTerminalObservation {
   outcome: NativeUsageOutcome;
@@ -61,6 +65,46 @@ function observeNativeTerminal(
   };
 }
 
+/** Extract the balanced JSON object that follows the last `"usage":` key in a bounded tail. */
+function trailingUsageObject(tail: string): unknown {
+  const key = tail.lastIndexOf('"usage"');
+  if (key < 0) return undefined;
+  const open = /^\s*:\s*\{/.exec(tail.slice(key + 7, key + 7 + 64));
+  if (!open) return undefined;
+  const start = key + 7 + open[0].length - 1;
+  let depth = 0;
+  let inString = false;
+  for (let index = start; index < tail.length; index += 1) {
+    const character = tail[index];
+    if (inString) {
+      if (character === "\\") index += 1;
+      else if (character === '"') inString = false;
+    } else if (character === '"') inString = true;
+    else if (character === "{") depth += 1;
+    else if (character === "}" && --depth === 0) {
+      try { return JSON.parse(tail.slice(start, index + 1)); }
+      catch { return undefined; }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Interpret an oversized terminal frame from its bounded head and tail only. Every field is
+ * re-validated by the same terminal/usage rules as a fully parsed frame; anything unrecognized
+ * yields no usage rather than an estimate.
+ */
+function observeOversizedTerminal(head: string, tail: string, eventName?: string): NativeTerminalObservation | undefined {
+  const type = eventName ?? /"type"\s*:\s*"([A-Za-z0-9_.]{1,64})"/.exec(head)?.[1];
+  if (type !== "response.completed" && type !== "response.incomplete"
+    && type !== "response.failed" && type !== "error") return undefined;
+  const model = /"model"\s*:\s*"([^"\\]{1,128})"/.exec(head)?.[1];
+  return observeNativeTerminal({
+    type,
+    response: { model, usage: type === "error" ? undefined : trailingUsageObject(tail) },
+  }, eventName);
+}
+
 /** Bounded terminal interpretation has no delivery or stream lifecycle authority. */
 export function createNativeTerminalInspector(eventStream: boolean) {
   const decoder = new TextDecoder();
@@ -72,14 +116,16 @@ export function createNativeTerminalInspector(eventStream: boolean) {
   let frameEvent: string | undefined;
   let frameData = "";
   let frameOversized = false;
+  let frameHead = "";
+  let frameTail = "";
   let jsonText = "";
   let jsonOversized = false;
 
   const finishFrame = (): void => {
     if (!frameOversized && frameData === "[DONE]") {
       streamEnded = true;
-    } else if (frameOversized && frameEvent) {
-      terminal ??= observeNativeTerminal({ type: frameEvent }, frameEvent);
+    } else if (frameOversized) {
+      terminal ??= observeOversizedTerminal(frameHead, frameTail, frameEvent);
     } else if (frameData && frameData !== "[DONE]") {
       try {
         terminal ??= observeNativeTerminal(JSON.parse(frameData), frameEvent);
@@ -90,6 +136,18 @@ export function createNativeTerminalInspector(eventStream: boolean) {
     frameEvent = undefined;
     frameData = "";
     frameOversized = false;
+    frameHead = "";
+    frameTail = "";
+  };
+
+  /** Keep a bounded copy of the raw frame text so an oversized terminal frame stays readable. */
+  const captureFrameText = (segment: string): void => {
+    if (frameHead.length < OVERSIZED_FRAME_HEAD_CHARS) {
+      frameHead += segment.slice(0, OVERSIZED_FRAME_HEAD_CHARS - frameHead.length);
+    }
+    frameTail = segment.length >= OVERSIZED_FRAME_TAIL_CHARS
+      ? segment.slice(-OVERSIZED_FRAME_TAIL_CHARS)
+      : (frameTail + segment).slice(-OVERSIZED_FRAME_TAIL_CHARS);
   };
 
   const inspectSseText = (text: string): void => {
@@ -98,6 +156,7 @@ export function createNativeTerminalInspector(eventStream: boolean) {
       const newline = text.indexOf("\n", offset);
       const end = newline < 0 ? text.length : newline;
       const segmentLength = end - offset;
+      captureFrameText(text.slice(offset, newline < 0 ? end : newline + 1));
       if (segmentLength > 0) {
         if (lineCharacterCount === 0 && segmentLength === 1 && text[offset] === "\r") {
           lineCharacterCount = 1;
