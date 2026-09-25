@@ -57,3 +57,29 @@ checked separately during handoff. Preserve the active route and account state.
 
 This report records source/development readiness. Installation and any signing
 or notarization outcome must be recorded separately after they actually finish.
+
+## Installed result and retained runtime
+
+The local application built from `58139fa` was Developer ID signed, accepted by
+Apple under submission `0289f1f4-4350-419e-8c44-b94336deb1c4`, stapled, and accepted
+by Gatekeeper. The existing transactional updater installed it and committed
+after replacement-launcher readiness. The installed runtime bundle ID is
+`fa0a873e5f550cebf8a6ccccfe8e14eef8ddbdfcf44e3474ed93b52b96c174b9`.
+Its build metadata records `dirty: true` because the local dependency symlinks
+were untracked; tracked application source was clean at the recorded commit.
+This is a local app update with the existing `6.0.0-nekodex.1` version marker;
+no release tag, DMG or public release assets were created.
+
+Runtime activation is **not complete**. The production Restart action retained
+the old daemon while Native HTTP work was active. A supported non-cancelling
+Stop connections and quit attempt also refused after its idle-drain timeout,
+then resumed admission. Following explicit consent, the UI acknowledged
+cancelling one HTTP stream; another restart still found active work. After the
+user reported that the connection worked again, the pending guarded cancellation
+observer was terminated before it performed another cancellation or launch.
+
+The final observation was daemon `5.9.0-nekodex.5`, PID `26835`, accepting requests
+and not draining. This distinguishes the working existing route from activation
+of the new backend. No update or cancellation worker remains scheduled. The
+previous application and private state snapshots are retained locally for rollback;
+no account credentials or profile data were copied into the application bundle.
