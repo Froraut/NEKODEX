@@ -167,7 +167,7 @@
   {"path":"launcher/src/Updates.tsx","dependencies":["launcher/src/UpdateProgress.tsx","launcher/src/icons.tsx","launcher/src/update-copy.ts","react","react/jsx-dev-runtime"]},
   {"path":"launcher/src/UsageCalendar.tsx","dependencies":["react","react/jsx-dev-runtime"]},
   {"path":"launcher/src/UsageDashboard.tsx","dependencies":["launcher/src/UsageCalendar.tsx","launcher/src/UsageInsights.tsx","launcher/src/usage-lifetime.css","launcher/src/usage-statistics.ts","launcher/src/useUsageReport.ts","launcher/src/workflow-copy.ts","react","react/jsx-dev-runtime"]},
-  {"path":"launcher/src/UsageInsights.tsx","dependencies":["launcher/src/usage-diagnostics.ts","launcher/src/usage-insights.css","react","react/jsx-dev-runtime"]},
+  {"path":"launcher/src/UsageInsights.tsx","dependencies":["launcher/src/usage-diagnostics.ts","launcher/src/usage-insights.css","launcher/src/usage-statistics.ts","react","react/jsx-dev-runtime"]},
   {"path":"launcher/src/account-availability.ts","dependencies":[]},
   {"path":"launcher/src/account-codex.css","dependencies":[]},
   {"path":"launcher/src/account-forms.css","dependencies":[]},
