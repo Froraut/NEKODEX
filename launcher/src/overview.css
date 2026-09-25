@@ -49,7 +49,6 @@
   overflow-wrap: anywhere;
 }
 
-.overview-surface .overview-inline-action,
 .overview-surface .overview-preference {
   display: inline-flex;
   align-items: center;
@@ -65,11 +64,6 @@
   text-align: left;
 }
 
-.overview-surface .overview-inline-action {
-  color: var(--brand-accent);
-}
-
-.overview-surface .overview-inline-action svg,
 .overview-surface .overview-preference svg {
   width: 14px;
   height: 14px;
@@ -112,7 +106,6 @@
   color: var(--brand-accent);
 }
 
-.overview-surface .overview-inline-action:hover,
 .overview-surface .overview-preference:hover strong {
   text-decoration: underline;
   text-underline-offset: 4px;
@@ -261,7 +254,6 @@
   flex: none;
 }
 
-.overview-surface .overview-inline-action:focus-visible,
 .overview-surface .overview-preference:focus-visible,
 .overview-surface .overview-live-runs button:focus-visible,
 .overview-surface .connection-list > button:focus-visible {

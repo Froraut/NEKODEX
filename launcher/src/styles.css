@@ -339,28 +339,6 @@ code {
   flex: none;
 }
 
-.sidebar-brand-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.sidebar-brand-actions .icon-button {
-  width: 28px;
-  height: 28px;
-  color: var(--color-icon-tertiary);
-}
-
-.sidebar-brand-actions .icon-button svg {
-  width: 22px;
-  height: 22px;
-}
-
-.sidebar-brand-actions .icon-button:hover {
-  background: transparent;
-  color: var(--color-icon-primary);
-}
-
 .sidebar-nav {
   min-height: 0;
   flex: 1;
@@ -530,10 +508,6 @@ code {
 
 .action-dot.is-error {
   background: var(--red-300);
-}
-
-.action-dot.is-success {
-  background: var(--green-300);
 }
 
 .action-dot.is-pulse {
@@ -1801,26 +1775,6 @@ code {
   margin-left: 0;
 }
 
-.connector-name {
-  display: flex;
-  min-height: 48px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border-top: 1px solid var(--color-border);
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-}
-
-.connector-name code {
-  padding: 3px 7px;
-  border-radius: var(--radius-xs);
-  background: var(--color-background-control-hover);
-  color: var(--color-text-primary);
-  font-size: var(--text-xs);
-}
-
 .wizard-footer {
   display: flex;
   align-items: center;
@@ -2062,10 +2016,6 @@ code {
   z-index: 1;
 }
 
-.language-menu.is-open {
-  z-index: 220;
-}
-
 .language-menu-trigger {
   display: block;
   min-width: 132px;
@@ -2084,78 +2034,10 @@ code {
 }
 
 .language-menu-trigger:hover,
-.language-menu-trigger:focus-visible,
-.language-menu.is-open .language-menu-trigger {
+.language-menu-trigger:focus-visible {
   border-color: var(--color-border-heavy);
   background: var(--color-background-control-hover);
   color: var(--color-text-primary);
-}
-
-.language-menu-trigger svg {
-  width: 13px;
-  height: 13px;
-  color: var(--color-icon-tertiary);
-  transform: rotate(90deg);
-  transition: transform var(--duration-micro) var(--ease-enter);
-}
-
-.language-menu.is-open .language-menu-trigger svg {
-  transform: rotate(-90deg);
-}
-
-.language-menu-scrim {
-  position: fixed;
-  z-index: 0;
-  inset: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.language-menu-panel {
-  position: absolute;
-  z-index: 1;
-  top: calc(100% + 6px);
-  right: 0;
-  width: 168px;
-  padding: 5px;
-  overflow: hidden;
-  border: 1px solid var(--color-border-heavy);
-  border-radius: var(--radius-md);
-  background: var(--color-background-elevated);
-  color: var(--color-text-primary);
-  box-shadow:
-    0 18px 48px rgb(0 0 0 / 42%),
-    inset 0 1px 0 rgb(255 255 255 / 4%);
-  animation: languageMenuEnter var(--duration-micro) var(--ease-enter) both;
-}
-
-.language-menu-panel button {
-  display: flex;
-  width: 100%;
-  height: 32px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-  text-align: left;
-}
-
-.language-menu-panel button:hover,
-.language-menu-panel button:focus-visible,
-.language-menu-panel button.is-selected {
-  background: var(--color-background-control-hover);
-  color: var(--color-text-primary);
-}
-
-.language-menu-panel button svg {
-  width: 13px;
-  height: 13px;
-  color: var(--color-icon-secondary);
 }
 
 @keyframes languageMenuEnter {
@@ -2520,23 +2402,6 @@ code {
   width: 14px;
   height: 14px;
   color: var(--color-icon-tertiary);
-}
-
-.welcome-option.is-social {
-  grid-template-columns: 34px minmax(0, 1fr) 16px;
-}
-
-.welcome-option.is-social.is-complete {
-  color: var(--color-text-primary);
-}
-
-.welcome-option.is-social.is-complete > span:first-child {
-  border-color: var(--color-border-heavy);
-  color: var(--color-icon-secondary);
-}
-
-.welcome-option.is-social.is-complete > svg {
-  color: var(--color-text-success);
 }
 
 .welcome-footer {
@@ -2931,8 +2796,7 @@ code {
 
 .account-settings { padding: 16px 0; border-bottom: 1px solid var(--color-border-light); }
 .account-settings h2 { font-size: var(--text-base); margin-bottom: 8px; }
-.account-settings > p, .account-row p { color: var(--color-text-secondary); margin: 6px 0 12px; }
-.account-row { padding: 12px 0; border-bottom: 1px solid var(--color-border-light); margin-bottom: 12px; }
+.account-settings > p { color: var(--color-text-secondary); margin: 6px 0 12px; }
 .account-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .account-settings .capacity-controls input { width: 180px; }
 

@@ -68,7 +68,7 @@ const finiteCount = (value: number): number => Number.isFinite(value) && value >
 const finiteDuration = (value: number | null): number | null =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 
-export function usageDiagnosticEligibility(group: UsageDiagnosticGroupLike): UsageDiagnosticEligibility {
+function usageDiagnosticEligibility(group: UsageDiagnosticGroupLike): UsageDiagnosticEligibility {
   const knownOutcomes = finiteCount(group.knownOutcomeTotal);
   const failureCount = finiteCount(group.failed);
   const observedSamples = finiteCount(group.durations.observedSamples);

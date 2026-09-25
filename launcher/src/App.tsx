@@ -7,7 +7,7 @@ import { Onboarding } from "./Onboarding";
 import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
-import { IconButton, StateDot, ContentSurface, PrimaryButton, McpMark, messageOf, useModalFocus, Switch } from './launcher-ui';
+import { IconButton, StateDot, ContentSurface, PrimaryButton, messageOf, useModalFocus, Switch } from './launcher-ui';
 import { runtimeCapabilities, currentToolProof } from './launcher-readiness';
 
 import { taskCenterTitle } from './task-center-copy';
@@ -814,7 +814,6 @@ function LauncherShell({
         language={language}
         surface={surface}
         devProfile={devProfile}
-        draggable
         sidebarOpen={sidebarOpen}
         sidebarToggle={sidebarToggle}
         toggleSidebar={toggleSidebar}
@@ -1079,7 +1078,6 @@ function TitleBar({
   language,
   surface,
   devProfile,
-  draggable,
   sidebarOpen,
   sidebarToggle,
   toggleSidebar,
@@ -1088,13 +1086,12 @@ function TitleBar({
   language: Language;
   surface: Surface;
   devProfile: boolean;
-  draggable: boolean;
   sidebarOpen: boolean;
   sidebarToggle: RefObject<HTMLButtonElement | null>;
   toggleSidebar: () => void;
 }) {
   return (
-    <header className={`app-titlebar${draggable ? " draggable" : ""}`}>
+    <header className="app-titlebar draggable">
       <div className="titlebar-left no-drag">
         <IconButton
           buttonRef={sidebarToggle}
@@ -1123,7 +1120,6 @@ function SidebarGroup({ children, label }: { children: ReactNode; label: string 
 function SidebarItem({
   active,
   badge,
-  disabled = false,
   icon,
   label,
   onClick,
@@ -1131,7 +1127,6 @@ function SidebarItem({
 }: {
   active: boolean;
   badge?: ReactNode;
-  disabled?: boolean;
   icon: IconName;
   label: string;
   onClick: () => void;
@@ -1141,18 +1136,17 @@ function SidebarItem({
     <button
       aria-current={active ? "page" : undefined}
       className={`sidebar-item${active ? " is-active" : ""}${tone === "update" ? " is-update" : ""}`}
-      disabled={disabled}
       onClick={onClick}
       type="button"
     >
-      {icon === "mcp" ? <McpMark /> : <Icon name={icon} />}
+      <Icon name={icon} />
       <span>{label}</span>
       {badge ? <i className="sidebar-item-badge">{badge}</i> : null}
     </button>
   );
 }
 
-function ActionDot({ pulse = false, tone }: { pulse?: boolean; tone: "required" | "optional" | "success" | "error" }) {
+function ActionDot({ pulse = false, tone }: { pulse?: boolean; tone: "required" | "optional" | "error" }) {
   return <i aria-hidden="true" className={`action-dot is-${tone}${pulse ? " is-pulse" : ""}`} />;
 }
 

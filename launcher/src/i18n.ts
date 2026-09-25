@@ -60,9 +60,7 @@ export function localizeRuntimeMessage(
 const native6Copies = {
   ru: {
     title: "Native6 · Рекомендуется",
-    current: "Текущий коннектор: {connector}",
     upgrade: "Перейти на Native6",
-    configure: "Настроить Native6",
     verify: "Проверить коннектор",
     compatibility: "Использовать Native4 (совместимость)",
     retained: "Используйте точное имя коннектора ниже. Сохранённые Native4/5 поддерживаются; переход на Native6 доступен в настройках.",
@@ -71,9 +69,7 @@ const native6Copies = {
   },
   en: {
     title: "Native6 · Recommended",
-    current: "Current connector: {connector}",
     upgrade: "Upgrade to Native6",
-    configure: "Set up Native6",
     verify: "Verify connector",
     compatibility: "Use Native4 (compatibility)",
     retained: "Use the exact connector name below. Saved Native4/5 remain supported; upgrade to Native6 in Settings.",
@@ -82,9 +78,7 @@ const native6Copies = {
   },
   "zh-CN": {
     title: "Native6 · 推荐",
-    current: "当前连接器：{connector}",
     upgrade: "升级到 Native6",
-    configure: "设置 Native6",
     verify: "验证连接器",
     compatibility: "使用 Native4（兼容模式）",
     retained: "请使用下方准确的连接器名称。已保存的 Native4/5 仍受支持；可在设置中升级到 Native6。",
@@ -93,9 +87,7 @@ const native6Copies = {
   },
   "zh-TW": {
     title: "Native6 · 建議使用",
-    current: "目前聯結器：{connector}",
     upgrade: "升級至 Native6",
-    configure: "設定 Native6",
     verify: "驗證聯結器",
     compatibility: "使用 Native4（相容模式）",
     retained: "請使用下方準確的聯結器名稱。已儲存的 Native4/5 仍受支援；可在設定中升級至 Native6。",
@@ -104,9 +96,7 @@ const native6Copies = {
   },
   ja: {
     title: "Native6 · 推奨",
-    current: "現在のコネクタ：{connector}",
     upgrade: "Native6 にアップグレード",
-    configure: "Native6 を設定",
     verify: "コネクタを検証",
     compatibility: "Native4 を使用（互換モード）",
     retained: "下記の正確なコネクタ名を使用してください。保存済みの Native4/5 は引き続きサポートされ、設定から Native6 にアップグレードできます。",
@@ -115,9 +105,7 @@ const native6Copies = {
   },
   ko: {
     title: "Native6 · 권장",
-    current: "현재 커넥터: {connector}",
     upgrade: "Native6로 업그레이드",
-    configure: "Native6 설정",
     verify: "커넥터 확인",
     compatibility: "Native4 사용(호환 모드)",
     retained: "아래의 정확한 커넥터 이름을 사용하세요. 저장된 Native4/5는 계속 지원되며 설정에서 Native6로 업그레이드할 수 있습니다.",
@@ -125,7 +113,7 @@ const native6Copies = {
     mismatch: "저장된 확인 결과가 다른 커넥터의 것입니다. 현재 커넥터를 다시 확인하세요.",
   },
 } satisfies Record<Language, {
-  title: string; current: string; upgrade: string; configure: string; verify: string;
+  title: string; upgrade: string; verify: string;
   compatibility: string; retained: string; body: string; mismatch: string;
 }>;
 
@@ -136,7 +124,6 @@ export function native6CopyFor(language: Language) {
 const accountCodexEn = {
   quotaTitle: "Codex allowance",
   quotaRefresh: "Refresh allowance",
-  quotaRefreshAll: "Refresh all allowances",
   quotaNotChecked: "Allowance has not been checked yet.",
   quotaChecking: "Reading Codex allowance…",
   quotaUnavailable: "Codex allowance is not available for this account.",
@@ -190,7 +177,6 @@ const accountCodexCopies: Record<Language, AccountCodexCopy> = {
   ru: {
     quotaTitle: "Лимит Codex",
     quotaRefresh: "Обновить лимит",
-    quotaRefreshAll: "Обновить все лимиты",
     quotaNotChecked: "Лимит ещё не проверялся.",
     quotaChecking: "Чтение лимита Codex…",
     quotaUnavailable: "Лимит Codex недоступен для этого аккаунта.",
@@ -240,7 +226,6 @@ const accountCodexCopies: Record<Language, AccountCodexCopy> = {
   "zh-CN": {
     quotaTitle: "Codex 使用额度",
     quotaRefresh: "刷新使用额度",
-    quotaRefreshAll: "刷新所有使用额度",
     quotaNotChecked: "尚未检查使用额度。",
     quotaChecking: "正在读取 Codex 使用额度…",
     quotaUnavailable: "此账户的 Codex 使用额度不可用。",
@@ -290,7 +275,6 @@ const accountCodexCopies: Record<Language, AccountCodexCopy> = {
   "zh-TW": {
     quotaTitle: "Codex 使用額度",
     quotaRefresh: "重新整理使用額度",
-    quotaRefreshAll: "重新整理所有使用額度",
     quotaNotChecked: "尚未檢查使用額度。",
     quotaChecking: "正在讀取 Codex 使用額度…",
     quotaUnavailable: "此帳號的 Codex 使用額度無法取得。",
@@ -340,7 +324,6 @@ const accountCodexCopies: Record<Language, AccountCodexCopy> = {
   ja: {
     quotaTitle: "Codex 利用枠",
     quotaRefresh: "利用枠を更新",
-    quotaRefreshAll: "すべての利用枠を更新",
     quotaNotChecked: "利用枠はまだ確認されていません。",
     quotaChecking: "Codex 利用枠を読み取り中…",
     quotaUnavailable: "このアカウントの Codex 利用枠は取得できません。",
@@ -390,7 +373,6 @@ const accountCodexCopies: Record<Language, AccountCodexCopy> = {
   ko: {
     quotaTitle: "Codex 사용 한도",
     quotaRefresh: "사용 한도 새로 고침",
-    quotaRefreshAll: "모든 사용 한도 새로 고침",
     quotaNotChecked: "사용 한도를 아직 확인하지 않았습니다.",
     quotaChecking: "Codex 사용 한도를 읽는 중…",
     quotaUnavailable: "이 계정의 Codex 사용 한도를 확인할 수 없습니다.",

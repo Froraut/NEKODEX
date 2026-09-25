@@ -155,7 +155,7 @@ dictionary before language-save IPC; Onboarding can preview another language whi
 an earlier load completes. The shared selection revision suppresses stale saves,
 receipts and failures. Failed loading preserves the saved preference and exposes
 English fallback plus explicit reload; Chromium can cache a rejected module fetch.
-All six dictionaries retain their keys/content from before extraction.
+All six dictionaries share one key set; a key is removed from all of them together.
 
 Account snapshots compose one full selected-host observation plus tab-only
 observations for other hosts; no cached authentication/navigation state is

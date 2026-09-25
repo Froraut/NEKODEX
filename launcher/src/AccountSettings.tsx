@@ -28,7 +28,7 @@ function localizedTime(value: string | null | undefined, language: Language) {
     ? new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(date) : null;
 }
 
-export function nextQuotaClockAt(values: Iterable<AccountQuotaSnapshot | null>, now: number) {
+function nextQuotaClockAt(values: Iterable<AccountQuotaSnapshot | null>, now: number) {
   let next: number | null = null;
   for (const quota of values) {
     for (const value of [quota?.retryAt, quota?.freshUntil]) {

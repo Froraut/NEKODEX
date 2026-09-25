@@ -1,20 +1,16 @@
 import type { AccountQuotaSnapshot } from "./types";
 
-export type QuotaPortfolioRow = {
+type QuotaPortfolioRow = {
   status: "updated" | "retained" | "unavailable" | "skipped";
   snapshot: AccountQuotaSnapshot | null;
 };
 
-export interface QuotaPortfolioCopy {
+interface QuotaPortfolioCopy {
   refreshing: string;
   summary: string;
-  updatedCount: string;
-  retainedCount: string;
-  unavailableCount: string;
-  skippedCount: string;
 }
 
-export function quotaPortfolioCounts(rows: QuotaPortfolioRow[]) {
+function quotaPortfolioCounts(rows: QuotaPortfolioRow[]) {
   const counts = { updated: 0, retained: 0, unavailable: 0, skipped: 0 };
   for (const row of rows) {
     if (row.status === "retained") { counts.retained += 1; continue; }
