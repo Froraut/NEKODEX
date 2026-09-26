@@ -4,6 +4,7 @@
 // existing-chrome-failed, setup-fresh, manual-tools, accounts-failed, update-active, diagnostics-redirect,
 // benefits-auth-unavailable, benefits-portfolio-mixed, benefits-insights, benefits-repair-success,
 // benefits-repair-failure, browser-ui-signed-out, browser-ui-ready, browser-ui-error, browser-ui-home-loading
+// Account forms: accounts-ui-ready, accounts-ui-error (first add/save attempt fails).
 // Add &no-animation-frames=true to keep requestAnimationFrame callbacks permanently paused.
 const http = require("node:http");
 const fs = require("node:fs");
@@ -21,7 +22,8 @@ function installMockLauncher() {
   }
   const language = ["en", "ru", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
   const browserUiScenario = scenario.startsWith("browser-ui-");
-  const benefitsScenario = scenario.startsWith("benefits-") || browserUiScenario;
+  const accountsUiScenario = scenario.startsWith("accounts-ui-");
+  const benefitsScenario = scenario.startsWith("benefits-") || browserUiScenario || accountsUiScenario;
   const astraScenario = scenario === "benefits-astra" || scenario === "browser-ui-ready";
   const listeners = {};
   const emit = (name, value) => (listeners[name] || []).forEach((listener) => listener(value));
@@ -186,6 +188,17 @@ function installMockLauncher() {
   if (scenario === "browser-ui-home-loading") {
     browser.status = "loading"; browser.loading = true; browser.tabs[0].status = "loading"; browser.tabs[0].loading = true;
   }
+  if (accountsUiScenario) Object.assign(browser, { accountId: "fixture-primary", accountName: "Primary", accountLabel: "primary@example.test" });
+  let accountSequence = 0;
+  const accountFailures = new Set();
+  const accountMutation = async (kind) => {
+    if (!accountsUiScenario) return;
+    await new Promise(resolve => setTimeout(resolve, 250));
+    if (scenario === "accounts-ui-error" && !accountFailures.has(kind)) {
+      accountFailures.add(kind);
+      throw new Error(`Fixture ${kind} failed. Your draft is preserved; try again.`);
+    }
+  };
   let workspaceSequence = 0;
   let workspaceFailed = false;
   window.codexWebLauncher = {
@@ -322,10 +335,32 @@ function installMockLauncher() {
       emit("browser", { ...browser }); return accountSnapshot;
     },
     checkAccount: async () => accountSnapshot,
-    addAccount: async () => accountSnapshot,
+    addAccount: async (label) => {
+      if (!accountsUiScenario) return accountSnapshot;
+      await accountMutation("add-account");
+      const id = `fixture-added-${++accountSequence}`;
+      const account = { id, label, enabled: true, authenticated: false, authenticationStatus: "signed-out",
+        activeTurns: 0, checked: false, connectorReady: false, evidenceEpoch: 1,
+        proxy: { mode: "system" }, safety: { policy: { ...defaultPolicy }, cooldownUntil: 0, stopped: false, newSessionWindow: null } };
+      accountSnapshot = { ...accountSnapshot, selectedId: id, accounts: [...accountSnapshot.accounts, account] };
+      Object.assign(browser, { accountId: id, accountName: label, accountLabel: null, authenticated: false, authenticationStatus: "signed-out", status: "signed-out" });
+      emit("browser", { ...browser });
+      return accountSnapshot;
+    },
     removeAccount: async () => accountSnapshot,
-    setAccountProxy: async () => accountSnapshot,
-    setAccountSafety: async () => accountSnapshot,
+    setAccountProxy: async (id, proxy) => {
+      if (!accountsUiScenario) return accountSnapshot;
+      await accountMutation("save-proxy");
+      accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(account => account.id === id ? { ...account, proxy } : account) };
+      return accountSnapshot;
+    },
+    setAccountSafety: async (id, policy) => {
+      if (!accountsUiScenario) return accountSnapshot;
+      await accountMutation("save-pacing");
+      accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(account => account.id === id
+        ? { ...account, safety: { ...account.safety, policy } } : account) };
+      return accountSnapshot;
+    },
     resumeAccount: async () => accountSnapshot,
     refreshAccountCodexQuotas: async () => ({ generatedAt: "2026-09-21T10:10:00.000Z", rows: [
       { accountId: "fixture-primary", evidenceEpoch: 1, status: "updated", snapshot: quota, reason: null },

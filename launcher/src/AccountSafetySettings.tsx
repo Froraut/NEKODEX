@@ -91,7 +91,10 @@ export function AccountSafetySettings({ id, language, safety, resumeRequired = f
     }
   };
   return <details className="account-safety account-form-panel">
-    <summary>{copy.pacingTitle}</summary>
+    <summary><span>{copy.pacingTitle}</span>
+      {saving || failed || dirty ? <span className="account-form-state">{saving ? copy.accountFormSaving
+        : failed ? copy.accountFormFailed : copy.accountFormUnsaved}</span> : null}
+    </summary>
     <p>{copy.pacingBody}</p>
     {safety.stopped ? <p role="status">{copy.pacingStopped}</p> : null}
     {safety.cooldownUntil > Date.now() ? <p role="status">{copy.pacingUntil}: {formatSafetyTime(safety.cooldownUntil, language)}</p> : null}

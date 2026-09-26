@@ -66,3 +66,47 @@ markers changed. The requested UI checks did not require the repository-wide ver
 Useful replay scenarios in `launcher/scripts/ui-preview.cjs`: `browser-ui-signed-out`,
 `browser-ui-error`, `browser-ui-home-loading`, and `benefits-astra`; add `language=ru`
 for longer localized labels. Fixture state is not provider authentication evidence.
+
+
+## Follow-up: account and settings workflows
+
+A second pass inspected the connected account forms and keyboard interactions.
+Account creation was below every full account card, sign-in actions followed long
+setup explanations, and an unavailable session check produced contradictory
+sign-in instructions in tools onboarding. The Settings logout confirmation did
+not respond to Escape and returned focus to the document body after cancellation.
+
+Changes:
+
+- Move the existing Add account form above the directory and account actions
+  directly below identity/status. After a successful creation receipt, reveal and
+  focus the new selected account heading. Failed creation retains the entered name.
+- Distinguish checking, verification unavailable, and signed out in tools setup.
+  Only verified session evidence can advance to automatic connector setup.
+- Show unsaved, saving and failure indicators in pacing/proxy disclosure summaries.
+  Existing save, restore and account ownership contracts are unchanged.
+- Bind logout confirmation to the displayed account identity, show its name,
+  dismiss with Escape and restore focus after cancellation.
+- Reserve the fixed title bar in page scroll padding. The first real DEV creation
+  exposed a clipped account heading; the corrected creation kept the full heading
+  below the bar. Correct a Russian relative-time phrase in allowance freshness copy.
+
+Focused evidence:
+
+| Scenario | Result |
+| --- | --- |
+| Renderer build and fixture syntax | TypeScript/Vite and `node --check` passed. |
+| Create failure then retry | Synthetic first attempt fails before mutation; the entered name remains. Retry adds one selected account, clears the error and focuses its heading. |
+| Proxy editing | Unsaved indicator survives collapse; failed save retains the URL; retry receives a saved receipt and removes the indicator. |
+| Pacing editing | Restore returns the prior interval; failed save retains the edit; retry persists it, and revisiting Accounts shows the saved value with Save disabled. |
+| Session unavailable | Both English and Russian onboarding ask for verification; a synthetic successful retry advances to the runtime setup step. No provider sign-in is inferred. |
+| Logout cancellation | Escape and Keep signed in both close confirmation and return focus to Log out. No logout was submitted. |
+| Real source Electron | Added credential-free local DEV profiles; the final creation selected its new card and displayed the full heading below the title bar. The real unknown state shows Checking saved session. |
+| Compact Russian, 760×680 | Long account name is focused at y≈76 below the 52px title bar; content scroll/client widths both equal 760px. Compact navigation remains usable. |
+
+New replay fixtures: `accounts-ui-ready`, `accounts-ui-error`. Errors are synthetic
+and scoped to the first create/proxy/pacing attempt; successful fixture receipts
+update their exact account. Real proxy changes, pacing enforcement, provider
+credentials and actual logout were not exercised. This follow-up changes renderer
+presentation only and reuses the earlier evidence for unchanged Browser and main
+screen behavior. The installed application remains unchanged.

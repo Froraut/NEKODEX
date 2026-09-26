@@ -1,4 +1,4 @@
-.account-form-panel > summary { min-height: 42px; display: flex; align-items: center; cursor: pointer; gap: 8px; font-weight: 600; }
+.account-form-panel > summary { min-height: 42px; display: flex; align-items: center; cursor: pointer; gap: 8px; flex-wrap: wrap; font-weight: 600; }
 .account-form-panel > summary::before { content: "›"; transition: transform 160ms ease; transform-origin: center; }
 .account-form-panel[open] > summary::before { transform: rotate(90deg); }
 .account-form-panel > summary::-webkit-details-marker { display: none; }
@@ -31,3 +31,5 @@
 .account-readiness-models dt { font-weight: 600; }
 .account-readiness-models dd { margin: 4px 0 0; color: var(--color-text-secondary); }
 .account-readiness p { font-size: 13px; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+
+.account-form-state { margin-left: auto; color: var(--color-text-warning); font-size: var(--text-xs); font-weight: 400; overflow-wrap: anywhere; }

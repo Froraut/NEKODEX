@@ -72,7 +72,7 @@ Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) a
 
 Prefer an explicit argument or small typed dependency to importing an orchestration module back into a leaf. Preserve public facade exports when a caller migration is unnecessary. Give one writer ownership of each coupled lifecycle area; additional feature modules should not create another registry for the same resource.
 
-For asynchronous UI, bind results and failures to the account, query or flow that started the operation. A screen unmount is not permission to cancel a host operation. Preserve dirty input until the user restores saved values or a matching save receipt arrives.
+For asynchronous UI, bind results and failures to the account, query or flow that started the operation. A screen unmount is not permission to cancel a host operation. Preserve dirty input until the user restores saved values or a matching save receipt arrives. In Accounts, creation receipts identify the new focus target, and collapsed pacing/proxy forms retain visible draft/error indicators. Keep unknown/unavailable session evidence distinct from signed-out guidance; logout confirmations belong to the displayed account.
 
 Login mutation receipts retire older status reads and explicitly restart observation even when their flow/phase fields are unchanged. A failed start followed by an unavailable host snapshot leaves the login state unknown; recover that snapshot before allowing another start. Keep this recovery action reachable in the affected account card.
 

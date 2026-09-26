@@ -51,6 +51,14 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   const workflow = workflowCopy(language);
   const { snapshot: state, failed: loadFailed, retry: retryPool, applyReceipt } = useAccountPoolSnapshot({ api });
   const [label, setLabel] = useState("");
+  const [createdAccountId, setCreatedAccountId] = useState<string | null>(null);
+  const createdHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (!createdAccountId || !createdHeading.current) return;
+    createdHeading.current.focus({ preventScroll: true });
+    createdHeading.current.scrollIntoView({ block: "start" });
+    setCreatedAccountId(null);
+  }, [createdAccountId, state]);
   const [busy, setBusy] = useState(false);
   const actionInFlight = useRef(false);
   const retryRef = useRef<HTMLButtonElement | null>(null);
@@ -331,6 +339,26 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       <p>{codexCopy.loginStatusUnavailable}</p>
       <button type="button" className="button-secondary" onClick={recoverLoginStatus}>{copy.retry}</button>
     </div> : null}
+    <form className="account-add" onSubmit={event => {
+      event.preventDefault();
+      if (!accountAddDisabled && startingId.current === null && loginLockedIdRef.current === null
+        && label.trim()) void run(async () => {
+        const existingIds = new Set(state.accounts.map(account => account.id));
+        const next = await api.addAccount(label.trim());
+        setLabel("");
+        setCreatedAccountId(existingIds.has(next.selectedId) ? null : next.selectedId);
+        return next;
+      });
+    }}>
+      <label htmlFor="account-name">{copy.accountsAdd}</label>
+      <div><input id="account-name" type="text" aria-label={copy.accountsLabel} placeholder={copy.accountsLabel} maxLength={80}
+        autoComplete="off" value={label} disabled={accountAddDisabled} title={accountAddBlockedReason}
+        onChange={event => setLabel(event.target.value)} />
+        <button type="submit" className="button-secondary" disabled={accountAddDisabled || !label.trim()}
+          title={accountAddBlockedReason}><Icon name="plus" />{copy.accountsAdd}</button></div>
+      {accountAddBlockedReason
+        ? <p className="account-codex-disabled-reason">{accountAddBlockedReason}</p> : null}
+    </form>
     <div className="account-routing">
       <label htmlFor="account-routing">{copy.accountsRouting}</label>
       <select id="account-routing" className="settings-select" value={manual ? "selected" : state.mode} disabled={mutationsDisabled || manual}
@@ -408,7 +436,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         return <>
       <header className="account-card-header">
         <span className="account-avatar" aria-hidden="true">{account.label.trim().slice(0, 1).toLocaleUpperCase()}</span>
-        <div><h2>{account.label}</h2><p>{account.accountLabel || (account.authenticated ? copy.accountsSignedIn
+        <div><h2 tabIndex={-1} ref={createdAccountId === account.id ? createdHeading : undefined}>{account.label}</h2><p>{account.accountLabel || (account.authenticated ? copy.accountsSignedIn
           : authUnavailable ? workflow.session.verificationUnavailable : copy.accountsSignInNeeded)}</p>
           {authUnavailable && lastVerified ? <small>{workflow.session.lastVerifiedAt.replace("{time}", lastVerified)}</small> : null}</div>
         {account.id === state.selectedId ? <span className="account-selected">{copy.accountsCurrent}</span> : null}
@@ -418,13 +446,6 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         <span className={account.checked ? "is-ready" : ""}><i className={`state-dot is-${account.checked ? "ready" : "idle"}`} />{copy.accountsChecked}: {account.checked ? copy.connectionVerified : copy.connectionPending}</span>
         <span className={account.connectorReady ? "is-ready" : ""}><i className={`state-dot is-${account.connectorReady ? "ready" : "idle"}`} />{copy.toolConnection}: {account.connectorReady ? copy.connectionVerified : copy.connectionPending}</span>
       </div>
-      <AccountReadiness account={account} language={language} />
-      <AccountToolsOnboarding account={account} copy={copy} language={language}
-        runtimeConfigured={toolsSetup.runtimeConfigured} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
-        manual={manual} disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy || authRefreshBusy}
-        focus={focusAccountId === account.id} onError={setError}
-        onSetup={() => onSetupTools(account.id, account.accountLabel ? `${account.label} · ${account.accountLabel}` : account.label)}
-        onVerify={() => void run(() => api.checkAccount(account.id, true))} />
       <div className="account-actions">
         <label title={loginBoundReason}><input type="checkbox" checked={account.enabled} disabled={mutationsDisabled || loginBoundActive}
           aria-describedby={(mutationsDisabled || loginBoundActive) ? describedBy(blockedReason) : undefined}
@@ -461,6 +482,13 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         onClick={openBrowser}>{copy.browser}</button> : null}
       {authUnavailable && authRetryDisabledReason ? <p className="field-hint" id={authRetryReasonId}>{authRetryDisabledReason}</p> : null}
       {actionHint ? <p className="field-hint" id={actionHintId} role="status">{actionHint}</p> : null}
+      <AccountReadiness account={account} language={language} />
+      <AccountToolsOnboarding account={account} copy={copy} language={language}
+        runtimeConfigured={toolsSetup.runtimeConfigured} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
+        manual={manual} disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy || authRefreshBusy}
+        focus={focusAccountId === account.id} onError={setError}
+        onSetup={() => onSetupTools(account.id, account.accountLabel ? `${account.label} · ${account.accountLabel}` : account.label)}
+        onVerify={() => void run(() => api.checkAccount(account.id, true))} />
       <AccountCodexControls account={account} copy={codexCopy} language={language}
         transitionBusy={transitionBusy}
         quota={quotas.has(account.id) ? quotas.get(account.id) : undefined}
@@ -487,21 +515,5 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         </>;
       })()}
     </article>)}
-    <form className="account-add" onSubmit={event => {
-      event.preventDefault();
-      if (!accountAddDisabled && startingId.current === null && loginLockedIdRef.current === null
-        && label.trim()) void run(async () => {
-        const next = await api.addAccount(label.trim()); setLabel(""); return next;
-      });
-    }}>
-      <label htmlFor="account-name">{copy.accountsAdd}</label>
-      <div><input id="account-name" type="text" aria-label={copy.accountsLabel} placeholder={copy.accountsLabel} maxLength={80}
-        autoComplete="off" value={label} disabled={accountAddDisabled} title={accountAddBlockedReason}
-        onChange={event => setLabel(event.target.value)} />
-        <button type="submit" className="button-secondary" disabled={accountAddDisabled || !label.trim()}
-          title={accountAddBlockedReason}><Icon name="plus" />{copy.accountsAdd}</button></div>
-      {accountAddBlockedReason
-        ? <p className="account-codex-disabled-reason">{accountAddBlockedReason}</p> : null}
-    </form>
   </section>;
 }

@@ -158,6 +158,15 @@ Resolve paths through [core configuration](src/config.ts) and the
 [launcher profile](launcher/electron/profile.cjs). Do not embed an individual
 developer's worktree, account, token or home directory in application code.
 
+Account creation remains owned by the account pool. The Accounts surface moves
+focus only after its creation receipt identifies a new selected account; failed
+creation keeps the draft. Pacing/proxy disclosure summaries expose local unsaved,
+saving and failed states without changing their persistence owners. Tools onboarding
+distinguishes unknown or unavailable session evidence from a confirmed sign-out.
+Settings binds its inline logout confirmation to the displayed account and returns
+keyboard focus on cancellation. Scrollable content reserves the fixed title bar
+when revealing focused controls or newly created cards.
+
 Renderer presentation work is separate from runtime correctness. Accounts,
 Settings, Task Center, Activity and Updates load through a shared Suspense/error
 boundary on first use; a failed feature load leaves shell navigation available

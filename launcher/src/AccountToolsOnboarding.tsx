@@ -29,8 +29,8 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
   };
   return <section className="account-tools-onboarding" aria-label={text.title}>
     <h3 tabIndex={-1} ref={heading}>{text.title}</h3>
-    <p role="status">{manual ? text.manual : text[step === 'sign-in' ? 'signIn' : step]}</p>
-    {step !== 'sign-in' || manual ? <>
+    <p role="status">{manual ? text.manual : step === 'checking' ? copy.checkingSignIn : text[step === 'sign-in' ? 'signIn' : step]}</p>
+    {(step !== 'sign-in' && step !== 'verification' && step !== 'checking') || manual ? <>
       {step !== 'verified' ? <>
         <p>{text.sharedTunnel}</p>
         {runtimeConfigured && !manual ? <>

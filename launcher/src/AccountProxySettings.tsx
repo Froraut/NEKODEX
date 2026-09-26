@@ -57,7 +57,10 @@ export function AccountProxySettings({ proxy, language, disabled, blockedReason,
     setDraft({ ...proxy }); setTouched(false); setFailed(false);
   };
   return <details className="account-form-panel account-proxy">
-    <summary>{copy.accountProxy}</summary>
+    <summary><span>{copy.accountProxy}</span>
+      {saving || failed || draftChanged ? <span className="account-form-state">{saving ? copy.accountFormSaving
+        : failed ? copy.accountFormFailed : copy.accountFormUnsaved}</span> : null}
+    </summary>
     <p>{copy.accountProxyBody}</p>
     <form onSubmit={event => { event.preventDefault(); void submit(); }}>
       <fieldset disabled={disabled || saving} aria-describedby={statusId}>
