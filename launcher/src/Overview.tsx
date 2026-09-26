@@ -45,7 +45,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
     runtime: runtime ? { ...runtime, transitionActive: Boolean(snapshot.lifecycle?.transition) }
       : { transitionActive: Boolean(snapshot.lifecycle?.transition) },
   });
-  const activeTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
+  const activeTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;

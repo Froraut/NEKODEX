@@ -97,6 +97,21 @@ separate facts.
    on the next offer. A committed Linux update removes the previous version
    directory it replaced.
 
+## Browser presentation
+
+`BrowserSurface` owns the selected-account control and changes it through the account
+pool's `selectAccount` operation. `BrowserWorkspaceManager` consumes that selection;
+it has no independent account filter. Its disclosure manages separate user windows
+and native macOS window tabs, with selected-account counts and an explicitly global
+capacity. These windows are distinct from the embedded home and task tab strip.
+The home surface is never counted as a running task by Browser or Overview.
+
+The embedded location/navigation bar renders only while its page is visible.
+Signed-out empty states have one primary sign-in action. External sign-in guides
+own their continue/cancel/retry controls, retain embedded-sign-in recovery, and
+retire after completion. Expanding the window directory changes the browser slot's
+layout; the existing bounds observer remains responsible for native view placement.
+
 ## State and persistence
 
 Web model identities are resolved in `chatgpt-web-models.ts` before browser
@@ -142,6 +157,15 @@ path. Both private and public Unix names remain subject to `sun_path` limits.
 Resolve paths through [core configuration](src/config.ts) and the
 [launcher profile](launcher/electron/profile.cjs). Do not embed an individual
 developer's worktree, account, token or home directory in application code.
+
+Account creation remains owned by the account pool. The Accounts surface moves
+focus only after its creation receipt identifies a new selected account; failed
+creation keeps the draft. Pacing/proxy disclosure summaries expose local unsaved,
+saving and failed states without changing their persistence owners. Tools onboarding
+distinguishes unknown or unavailable session evidence from a confirmed sign-out.
+Settings binds its inline logout confirmation to the displayed account and returns
+keyboard focus on cancellation. Scrollable content reserves the fixed title bar
+when revealing focused controls or newly created cards.
 
 Renderer presentation work is separate from runtime correctness. Accounts,
 Settings, Task Center, Activity and Updates load through a shared Suspense/error

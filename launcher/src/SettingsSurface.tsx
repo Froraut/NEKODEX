@@ -65,7 +65,16 @@ export function SettingsSurface({
   const [turnsCancelled, setTurnsCancelled] = useState<string | null>(null);
   const taskCopy = taskControlCopy[language] ?? taskControlCopy.en;
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
-  const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [logoutAccountId, setLogoutAccountId] = useState<string | null>(null);
+  const currentAccountId = browser?.accountId ?? "default";
+  const confirmingLogout = logoutAccountId === currentAccountId;
+  const logoutTrigger = useRef<HTMLButtonElement>(null);
+  const logoutWasOpen = useRef(false);
+  useEffect(() => {
+    if (logoutWasOpen.current && !confirmingLogout) logoutTrigger.current?.focus();
+    logoutWasOpen.current = confirmingLogout;
+  }, [confirmingLogout]);
+  useEffect(() => { setLogoutAccountId(null); }, [currentAccountId]);
   const [routeDiagnosticsGeneration, setRouteDiagnosticsGeneration] = useState(0);
   const codexStatus = codexSettingsStatus(snapshot.state, devProfile, Boolean(catalogFailure));
   const proModelBusy = busy
@@ -174,17 +183,24 @@ export function SettingsSurface({
         <SectionHeading label={copy.connectionsNav} spaced />
         {browser?.authenticated && snapshot.state.browserInteractionMode === "automatic" ? (
           <div className="setting-row">
-            <strong>ChatGPT</strong>
+            <div><strong>ChatGPT</strong>
+              {browser.accountName || browser.accountLabel ? <p>{[browser.accountName, browser.accountLabel].filter(Boolean).join(" · ")}</p> : null}
+            </div>
             {confirmingLogout ? (
-              <div className="logout-confirmation" role="group" aria-label={copy.logOut}>
+              <div className="logout-confirmation" role="group" aria-label={copy.logOut}
+                onKeyDown={event => {
+                  if (event.key === "Escape" && !busy) {
+                    event.preventDefault(); event.stopPropagation(); setLogoutAccountId(null);
+                  }
+                }}>
                 <p role="alert">{copy.logOutConfirmBody}</p>
                 <button className="button-secondary" type="button" autoFocus disabled={busy}
-                  onClick={() => setConfirmingLogout(false)}>
+                  onClick={() => setLogoutAccountId(null)}>
                   {copy.logOutKeepSignedIn}
                 </button>
                 <button className="button-secondary" type="button" disabled={busy}
                   onClick={() => {
-                    setConfirmingLogout(false);
+                    setLogoutAccountId(null);
                     void savePreference(async () => (await api!.logoutChatGpt()).state);
                   }}>
                   {copy.logOut}
@@ -192,7 +208,7 @@ export function SettingsSurface({
               </div>
             ) : (
               <button className="button-secondary" type="button" disabled={busy}
-                onClick={() => setConfirmingLogout(true)}>
+                ref={logoutTrigger} onClick={() => setLogoutAccountId(currentAccountId)}>
                 {copy.logOut}
               </button>
             )}

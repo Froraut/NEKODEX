@@ -2,6 +2,8 @@ import type { AccountPoolSnapshot, BrowserState, Language } from './types';
 
 type Account = AccountPoolSnapshot['accounts'][number];
 export function accountToolsStep(account: Account, runtimeConfigured: boolean) {
+  if (account.authenticationStatus === 'unavailable') return 'verification';
+  if (account.authenticationStatus === 'unknown') return 'checking';
   if (!account.authenticated || (account.authenticationStatus && account.authenticationStatus !== 'verified')) return 'sign-in';
   if (!runtimeConfigured) return 'runtime';
   return account.checked && account.connectorReady ? 'verified' : 'connector';
@@ -21,6 +23,7 @@ export function accountToolsHandoffAccount(browser: BrowserState, pool: AccountP
 const en = {
   target: 'Account being configured',
   title: 'Account tools setup',
+  verification: 'Verify this account’s session before continuing tools setup. An unavailable check does not mean you are signed out.',
   signIn: 'Sign in to ChatGPT to continue this account’s setup.',
   runtime: 'Next: configure the shared tunnel runtime.',
   connector: 'Next: connect and verify tools for this account.',
@@ -39,6 +42,7 @@ type AccountToolsCopy = { [K in keyof typeof en]: string };
 const ru: AccountToolsCopy = {
   target: 'Настраиваемый аккаунт',
   title: 'Настройка инструментов аккаунта',
+  verification: 'Повторите проверку сессии перед настройкой инструментов. Недоступная проверка не означает выход из аккаунта.',
   signIn: 'Войдите в ChatGPT, чтобы продолжить настройку этого аккаунта.',
   runtime: 'Следующий шаг: настройте общий туннель.',
   connector: 'Следующий шаг: подключите и проверьте инструменты этого аккаунта.',
@@ -55,6 +59,7 @@ const ru: AccountToolsCopy = {
 };
 const zhCN: AccountToolsCopy = {
   target: '正在设置的账户',
+  verification: '请先验证此账户的会话，再继续设置工具。无法检查不代表已退出登录。',
   title: '账户工具设置', signIn: '登录 ChatGPT 以继续设置此账户。', runtime: '下一步：配置共享隧道运行时。',
   connector: '下一步：为此账户连接并验证工具。', verified: '已验证此账户的连接器，但这并不代表已执行工具。', continue: '继续账户设置',
   sharedTunnel: '新账户不一定需要新隧道。可复用其 ChatGPT 工作区或个人组织有权访问的隧道。如果没有权限，请在允许的情况下于 OpenAI Platform 关联组织或工作区，或创建隧道。此交互模式共用已保存的运行时，替换凭据会影响使用它的其他账户。',
@@ -64,6 +69,7 @@ const zhCN: AccountToolsCopy = {
 };
 const zhTW: AccountToolsCopy = {
   target: '正在設定的帳號',
+  verification: '請先驗證此帳號的工作階段，再繼續設定工具。無法檢查不代表已登出。',
   title: '帳號工具設定', signIn: '登入 ChatGPT 以繼續設定此帳號。', runtime: '下一步：設定共用通道執行環境。',
   connector: '下一步：為此帳號連接並驗證工具。', verified: '已驗證此帳號的連接器，但這不代表已執行工具。', continue: '繼續帳號設定',
   sharedTunnel: '新帳號不一定需要新通道。可重用其 ChatGPT 工作區或個人組織有權存取的通道。若沒有權限，請在允許時於 OpenAI Platform 關聯組織或工作區，或建立通道。此互動模式共用已儲存的執行環境，替換憑證會影響使用它的其他帳號。',
@@ -73,6 +79,7 @@ const zhTW: AccountToolsCopy = {
 };
 const ja: AccountToolsCopy = {
   target: '設定対象のアカウント',
+  verification: 'ツール設定を続ける前にセッションを再確認してください。確認できない状態はログアウトを意味しません。',
   title: 'アカウントのツール設定', signIn: 'ChatGPT にサインインして、このアカウントの設定を続けてください。', runtime: '次の手順：共有トンネルの実行環境を設定します。',
   connector: '次の手順：このアカウントのツールを接続して検証します。', verified: 'このアカウントのコネクターを検証しました。ツールの実行を確認したものではありません。', continue: 'アカウント設定を続ける',
   sharedTunnel: '新しいアカウントでも新規トンネルが必要とは限りません。ChatGPT ワークスペースまたは個人組織から利用できる既存トンネルを再利用できます。アクセスできない場合は、許可されていれば OpenAI Platform で組織やワークスペースを関連付けるか、トンネルを作成します。この操作モードでは保存済みの実行環境を共有するため、認証情報の置換は他の利用アカウントにも影響します。',
@@ -82,6 +89,7 @@ const ja: AccountToolsCopy = {
 };
 const ko: AccountToolsCopy = {
   target: '설정 중인 계정',
+  verification: '도구 설정을 계속하기 전에 계정 세션을 다시 확인하세요. 확인할 수 없다고 해서 로그아웃된 것은 아닙니다.',
   title: '계정 도구 설정', signIn: 'ChatGPT에 로그인하여 이 계정의 설정을 계속하세요.', runtime: '다음 단계: 공유 터널 런타임을 설정하세요.',
   connector: '다음 단계: 이 계정의 도구를 연결하고 확인하세요.', verified: '이 계정의 커넥터를 확인했습니다. 도구 실행을 확인한 것은 아닙니다.', continue: '계정 설정 계속',
   sharedTunnel: '새 계정에 항상 새 터널이 필요한 것은 아닙니다. 해당 ChatGPT 워크스페이스나 개인 조직에서 접근 가능한 기존 터널을 재사용하세요. 접근 권한이 없으면 허용되는 경우 OpenAI Platform에서 조직이나 워크스페이스를 연결하거나 터널을 만드세요. 이 상호작용 모드에서는 저장된 런타임을 공유하므로 자격 증명을 교체하면 이를 사용하는 다른 계정에도 영향을 줍니다.',

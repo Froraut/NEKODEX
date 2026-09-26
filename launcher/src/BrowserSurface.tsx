@@ -48,7 +48,7 @@ export function BrowserSurface({
   const [passkeyStarting, setPasskeyStarting] = useState(false);
   const workflow = workflowCopy(language);
   const windowCopy = browserWindowCopy(language);
-  const windowAction = useFeatureAction<"window" | "tab">(false, cause => setError(messageOf(cause)));
+  const accountAction = useFeatureAction<string>(transitionBusy, cause => setError(messageOf(cause)));
   const [passkeyRequestPending, setPasskeyRequestPending] = useState(false);
   const [existingChromeStarting, setExistingChromeStarting] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<{ id: string; traceId: string | null } | null>(null);
@@ -58,8 +58,8 @@ export function BrowserSurface({
   const [confirmingTabs, setConfirmingTabs] = useState<Set<string>>(new Set());
   const sessionRetryInFlight = useRef(false);
   const [sessionRetryBusy, setSessionRetryBusy] = useState(false);
-  const activeBrowserTabs = browser?.tabs.filter(tab => ["running", "loading", "testing"].includes(tab.status)) ?? [];
-  const recoverableBrowserTabs = browser?.tabs.filter(tab => !["error", "aborted"].includes(tab.status)) ?? [];
+  const activeBrowserTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)) ?? [];
+  const recoverableBrowserTabs = browser?.tabs.filter(tab => tab.id !== "home" && !["error", "aborted"].includes(tab.status)) ?? [];
   const cancelTab = browser?.tabs.find(tab => tab.id === cancelTarget?.id
     && tab.traceId === cancelTarget?.traceId && tab.status === "running");
   useEffect(() => { if (cancelTarget && !cancelTab) setCancelTarget(null); }, [cancelTarget, cancelTab]);
@@ -70,6 +70,9 @@ export function BrowserSurface({
     browser, operation, platform, interactionMode,
   );
   const navigationLocked = transitionBusy || browserNavigationLocked;
+  const accountSelectionLocked = transitionBusy || accountAction.pending !== null
+    || browser?.loginInProgress === true || passkeyWaiting || existingChromeWaiting;
+  const accounts = browser?.workspaces?.accounts ?? [];
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
   const passkeyLabel = passkeyStarting || browser?.passkeyLogin?.phase === "starting" ? copy.passkeyStarting
     : !passkeyWaiting ? copy.passkeySignIn
@@ -202,6 +205,13 @@ export function BrowserSurface({
     }
   };
 
+  const externalLoginGuide = !manualInteraction && browser?.existingChromeLogin && browser.existingChromeLogin.phase !== "completed" ? (
+    <ExistingChromeLoginGuide transitionBusy={transitionBusy} progress={browser.existingChromeLogin} copy={copy} language={language} onRetry={openExistingChromeLogin} setError={setError} />
+  ) : !manualInteraction && browser?.passkeyLogin && browser.passkeyLogin.phase !== "completed" ? (
+    <PasskeyLoginGuide transitionBusy={transitionBusy} progress={browser.passkeyLogin} copy={copy} language={language}
+      onRetry={openPasskeyLogin} onContinue={continuePasskeyLogin} continuePending={passkeyRequestPending} setError={setError} />
+  ) : null;
+
   return (
     <section className="browser-surface">
       {accountSetup}
@@ -209,8 +219,23 @@ export function BrowserSurface({
         <p>{localizeLauncherError(copy, error)}</p>
         <button type="button" className="text-button" onClick={() => setError(null)}>{copy.dismiss}</button>
       </div> : null}
-      {browser?.accountName ? <div className="browser-account-label">{copy.accountsCurrent}: {browser.accountName}</div> : null}
-      <div className="browser-tab-strip" role="tablist" aria-label={copy.browser} title={copy.browserTabLimit}>
+      <div className="browser-context-bar">
+        <span>{windowCopy.taskTabs}</span>
+        {accounts.length > 0 && browser?.accountId ? <label>
+          <span>{windowCopy.account}</span>
+          <select className="settings-select" value={browser.accountId} disabled={accountSelectionLocked}
+            onChange={event => {
+              const accountId = event.target.value;
+              if (!accountSelectionLocked && accountId !== browser.accountId) {
+                setError(null);
+                void accountAction.run(accountId, () => api!.selectAccount(accountId));
+              }
+            }}>
+            {accounts.map(account => <option key={account.accountId} value={account.accountId}>{account.label}</option>)}
+          </select>
+        </label> : browser?.accountName ? <span>{browser.accountName}</span> : null}
+      </div>
+      <div className="browser-tab-strip" role="tablist" aria-label={windowCopy.taskTabs} title={copy.browserTabLimit}>
         {(browser?.tabs ?? []).map((tab) => (
           <div
             className={`browser-tab${tab.active ? " is-active" : ""}`}
@@ -237,7 +262,7 @@ export function BrowserSurface({
               aria-disabled={transitionBusy}
               role="tab"
               aria-selected={tab.active}
-              aria-label={`${browserTabTitleFromTitle(tab.title, copy)} — ${tab.status === "running" ? copy.running
+              aria-label={`${tab.id === "home" ? "ChatGPT" : browserTabTitleFromTitle(tab.title, copy)} — ${tab.id === "home" ? (browser?.authenticated ? copy.sessionConnected : copy.stepAccount) : tab.status === "running" ? copy.running
                 : tab.status === "loading" ? copy.loading : tab.status === "testing" ? copy.overviewRunTesting
                   : tab.status === "error" ? copy.failed : tab.status === "ready" ? copy.complete : copy.noActiveTask}`}
               tabIndex={tab.active ? 0 : -1}
@@ -246,7 +271,7 @@ export function BrowserSurface({
               <BrandMark small />
               {tab.loading ? <i className="tab-spinner" aria-hidden="true" /> : <StateDot state={browserTabTone(tab.status)} />}
               <span className="browser-tab-title" title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
-                {browserTabTitleFromTitle(tab.title, copy)}
+                {tab.id === "home" ? "ChatGPT" : browserTabTitleFromTitle(tab.title, copy)}
               </span>
             </button>
             {tab.closable ? (
@@ -281,24 +306,17 @@ export function BrowserSurface({
             onClick={() => void closeTab(cancelTab.id, cancelTab.traceId)}>{closingTabs.has(cancelTab.id) ? copy.browserCancellingTask : copy.manualPromptCancel}</button>
         </div>
       </div> : null}
-      <div className="browser-workspace-actions">
-        <button type="button" className="text-button" disabled={transitionBusy || windowAction.pending !== null}
-          onClick={() => void windowAction.run("window", () => api!.openBrowserWindow(false))}>{windowCopy.newWindow}</button>
-        {platform === "darwin" ? <button type="button" className="text-button" disabled={transitionBusy || windowAction.pending !== null}
-          onClick={() => void windowAction.run("tab", () => api!.openBrowserWindow(true))}>{windowCopy.newTab}</button> : null}
-        <span>{platform === "darwin" ? windowCopy.hint : windowCopy.tabsMacOnly}</span>
-      </div>
       {browser?.workspaces ? <BrowserWorkspaceManager
         language={language}
         snapshot={browser.workspaces}
         selectedAccountId={browser.accountId}
-        disabled={transitionBusy}
+        disabled={accountSelectionLocked}
         onOpen={(accountId, asTab) => api!.openBrowserWorkspace(accountId, { asTab })}
         onRestore={accountId => api!.restoreBrowserWorkspaces(accountId)}
         onFocus={(accountId, workspaceId) => api!.focusBrowserWorkspace(accountId, workspaceId)}
         onClose={(accountId, workspaceId) => api!.closeBrowserWorkspace(accountId, workspaceId)}
       /> : null}
-      <div className="browser-toolbar">
+      {visible ? <div className="browser-toolbar">
         <div className="browser-history">
           <IconButton
             disabled={navigationLocked || !browser?.canGoBack}
@@ -314,7 +332,7 @@ export function BrowserSurface({
           />
           <IconButton disabled={navigationLocked || !visible} icon="reload" label={copy.reload} onClick={() => void navigate("reload")} />
         </div>
-        <div className="browser-address" title={formatBrowserAddress(browser?.url, copy)}>
+        <div className="browser-location" title={formatBrowserAddress(browser?.url, copy)}>
           <Icon name="globe" />
           <span>{formatBrowserAddress(browser?.url, copy)}</span>
         </div>
@@ -331,12 +349,12 @@ export function BrowserSurface({
           </button>
           <IconButton icon="plus" label={copy.zoomIn} onClick={() => void zoom("in")} />
         </div>
-        {existingChromeAvailable ? (
+        {existingChromeAvailable && !externalLoginGuide ? (
           <button className="toolbar-text-button" type="button"
             disabled={transitionBusy || existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
             onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</button>
         ) : null}
-        {passkeyAvailable ? (
+        {passkeyAvailable && !externalLoginGuide ? (
           <button
             className="toolbar-text-button"
             disabled={passkeyActionDisabled}
@@ -350,17 +368,13 @@ export function BrowserSurface({
           {visible ? copy.hideBrowser : copy.openChatgpt}
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
-      </div>
-      {!manualInteraction && browser?.existingChromeLogin ? (
-        <ExistingChromeLoginGuide transitionBusy={transitionBusy} progress={browser.existingChromeLogin} copy={copy} language={language} onRetry={openExistingChromeLogin} setError={setError} />
-      ) : !manualInteraction && browser?.passkeyLogin && browser.passkeyLogin.phase !== "completed" ? (
-        <PasskeyLoginGuide transitionBusy={transitionBusy} progress={browser.passkeyLogin} copy={copy} language={language} onRetry={openPasskeyLogin} setError={setError} />
-      ) : browser?.loginKind === "embedded" ? (
+      </div> : null}
+      {visible && externalLoginGuide ? externalLoginGuide : visible && browser?.loginKind === "embedded" ? (
         <div className="browser-login-guide" role="status">
           <p>{passkeyAvailable ? copy.embeddedLoginPasskeyBody : copy.embeddedLoginBody}</p>
         </div>
       ) : null}
-      {!manualInteraction && browser?.authenticationStatus === "unavailable" ? (
+      {visible && !manualInteraction && browser?.authenticationStatus === "unavailable" ? (
         <section className="browser-recovery-notice" aria-live="polite" data-testid="browser-session-recovery">
           <Icon name="alert" />
           <div>
@@ -405,33 +419,40 @@ export function BrowserSurface({
         {!visible ? (
           <div className="browser-empty">
             <BrandMark />
-            <h1>{activeBrowserTabs.length ? `${activeBrowserTabs.length} · ${copy.overviewActiveRuns}` : manualInteraction
-              ? copy.browserReady
-              : browser?.authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
-                : browser?.authenticated ? copy.noActiveTask : copy.stepAccount}</h1>
-            <p>{activeBrowserTabs.length ? copy.overviewActiveRunsBody : manualInteraction
-              ? copy.stepAccountBody
-              : browser?.authenticationStatus === "unavailable" ? sessionIssueCopy(language, browser.authenticationIssue)
-                : browser?.authenticated
-              ? copy.noActiveTaskBody
-              : existingChromeWaiting ? copy.existingChromeBody : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
-            <div className="browser-empty-actions">
-              {activeBrowserTabs.length ? <PrimaryButton disabled={transitionBusy} onClick={() => void selectTab(activeBrowserTabs[0].id)}>{copy.openWorkspace}</PrimaryButton> : null}
-              {existingChromeAvailable && browser?.authenticationStatus !== "unavailable" ? <PrimaryButton
-                disabled={transitionBusy || existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
-                onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</PrimaryButton> : null}
-              <SecondaryButton disabled={transitionBusy || passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
-                {manualInteraction || browser?.authenticated || browser?.authenticationStatus === "unavailable" ? copy.openChatgpt : copy.signIn}
-              </SecondaryButton>
-              {passkeyAvailable && browser?.authenticationStatus !== "unavailable" ? (
-                <SecondaryButton
-                  disabled={passkeyActionDisabled}
-                  onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
-                >
-                  {passkeyLabel}
-                </SecondaryButton>
-              ) : null}
-            </div>
+            {externalLoginGuide ? externalLoginGuide : <>
+              <h1>{activeBrowserTabs.length ? `${activeBrowserTabs.length} · ${copy.overviewActiveRuns}` : manualInteraction
+                ? copy.browserReady
+                : browser?.authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
+                  : browser?.authenticated ? copy.noActiveTask : copy.stepAccount}</h1>
+              <p>{activeBrowserTabs.length ? copy.overviewActiveRunsBody : manualInteraction
+                ? copy.stepAccountBody
+                : browser?.authenticationStatus === "unavailable" ? sessionIssueCopy(language, browser.authenticationIssue)
+                  : browser?.authenticated
+                ? copy.noActiveTaskBody
+                : existingChromeWaiting ? copy.existingChromeBody : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
+              <div className="browser-empty-actions">
+                {activeBrowserTabs.length ? <PrimaryButton disabled={transitionBusy} onClick={() => void selectTab(activeBrowserTabs[0].id)}>{copy.openWorkspace}</PrimaryButton> :
+                  <PrimaryButton disabled={transitionBusy || passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
+                    {manualInteraction || browser?.authenticated || browser?.authenticationStatus === "unavailable" ? copy.openChatgpt : copy.stepAccount}
+                  </PrimaryButton>}
+                {browser?.authenticationStatus === "unavailable" && !manualInteraction ? <SecondaryButton
+                  disabled={sessionRetryBusy || transitionBusy || browser.navigationLocked || !browser.accountId}
+                  onClick={() => void retrySession()}>
+                  {sessionRetryBusy ? workflow.session.checkingVerification : workflow.session.retryVerification}
+                </SecondaryButton> : null}
+                {existingChromeAvailable && browser?.authenticationStatus !== "unavailable" ? <SecondaryButton
+                  disabled={transitionBusy || existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
+                  onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</SecondaryButton> : null}
+                {passkeyAvailable && browser?.authenticationStatus !== "unavailable" ? (
+                  <SecondaryButton
+                    disabled={passkeyActionDisabled}
+                    onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
+                  >
+                    {passkeyLabel}
+                  </SecondaryButton>
+                ) : null}
+              </div>
+            </>}
           </div>
         ) : (
           <div className="browser-underlay" aria-hidden="true">

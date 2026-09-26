@@ -3,11 +3,13 @@ import type { Copy } from "./i18n";
 import { passkeyFailureText } from "./passkey-copy";
 import type { PasskeyLoginProgress, Language } from "./types";
 
-export function PasskeyLoginGuide({ progress, copy, onRetry, setError, transitionBusy = false, language = 'en' }: {
+export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continuePending, setError, transitionBusy = false, language = 'en' }: {
   language?: Language;
   progress: PasskeyLoginProgress;
   copy: Copy;
   onRetry: () => Promise<void>;
+  onContinue: () => Promise<void>;
+  continuePending: boolean;
   setError: (error: string | null) => void;
   transitionBusy?: boolean;
 }) {
@@ -50,12 +52,16 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, setError, transitio
     {progress.error ? <p role="alert">{passkeyFailureText(progress.error, copy, language)}</p> : null}
     {progress.revealError ? <p role="alert">{passkeyFailureText(progress.revealError, copy, language)}</p> : null}
     <div className="browser-empty-actions">
+      {progress.canImport ? <button className="button-primary" type="button" disabled={pending || continuePending || transitionBusy}
+        onClick={() => void act(onContinue)}>{copy.passkeyContinue}</button> : null}
       {progress.canReveal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.revealPasskeyLogin(), false, copy.passkeyRevealFailed)}>{copy.passkeyReveal}</button> : null}
       {progress.canCancel ? <button className="toolbar-text-button" type="button" disabled={pending}
         onClick={() => void act(() => window.codexWebLauncher!.cancelPasskeyLogin(), true)}>{copy.passkeyCancel}</button> : null}
       {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(onRetry)}>{copy.retry}</button> : null}
+      {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+        onClick={() => void act(() => window.codexWebLauncher!.openLogin())}>{copy.stepAccount}</button> : null}
     </div>
   </div>;
 }
