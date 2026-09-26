@@ -3,7 +3,7 @@
 // Scenarios: ?scenario=embedded, passkey, passkey-failed, onboarding, startup-error,
 // existing-chrome-failed, setup-fresh, manual-tools, accounts-failed, update-active, diagnostics-redirect,
 // benefits-auth-unavailable, benefits-portfolio-mixed, benefits-insights, benefits-repair-success,
-// benefits-repair-failure
+// benefits-repair-failure, browser-ui-signed-out, browser-ui-ready, browser-ui-error, browser-ui-home-loading
 // Add &no-animation-frames=true to keep requestAnimationFrame callbacks permanently paused.
 const http = require("node:http");
 const fs = require("node:fs");
@@ -20,8 +20,9 @@ function installMockLauncher() {
     window.cancelAnimationFrame = () => {};
   }
   const language = ["en", "ru", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
-  const benefitsScenario = scenario.startsWith("benefits-");
-  const astraScenario = scenario === "benefits-astra";
+  const browserUiScenario = scenario.startsWith("browser-ui-");
+  const benefitsScenario = scenario.startsWith("benefits-") || browserUiScenario;
+  const astraScenario = scenario === "benefits-astra" || scenario === "browser-ui-ready";
   const listeners = {};
   const emit = (name, value) => (listeners[name] || []).forEach((listener) => listener(value));
   const listen = (name) => (listener) => {
@@ -166,6 +167,27 @@ function installMockLauncher() {
         ] },
     ] };
   }
+  if (browserUiScenario) {
+    const signedOut = scenario !== "browser-ui-ready";
+    Object.assign(browser, { accountId: "fixture-primary", accountName: "Primary", visible: false,
+      navigationLocked: false, loginInProgress: false, loginKind: null, passkeyLogin: null,
+      authenticated: !signedOut, authenticationStatus: signedOut ? "signed-out" : "verified",
+      status: signedOut ? "signed-out" : "ready", url: "https://chatgpt.com/auth/login",
+      activeTabId: "home", maxTabs: 16,
+      tabs: [{ id: "home", traceId: null, title: "Get started | ChatGPT", status: signedOut ? "signed-out" : "ready",
+        loading: false, active: true, closable: false }],
+      workspaces: { platform: "darwin", nativeTabs: true, maximum: 16, total: 0,
+        accounts: accountSnapshot.accounts.map(account => ({ accountId: account.id, label: account.label,
+          nativeTabs: true, restoreAttempted: true, restoreResult: null, manifestStatus: "ready", items: [] })) },
+    });
+    accountSnapshot.accounts = accountSnapshot.accounts.map(account => ({ ...account,
+      authenticated: !signedOut, authenticationStatus: signedOut ? "signed-out" : "verified" }));
+  }
+  if (scenario === "browser-ui-home-loading") {
+    browser.status = "loading"; browser.loading = true; browser.tabs[0].status = "loading"; browser.tabs[0].loading = true;
+  }
+  let workspaceSequence = 0;
+  let workspaceFailed = false;
   window.codexWebLauncher = {
     snapshot: async () => {
       if (scenario === "startup-error" && startupAttempts++ === 0) throw new Error("Error invoking remote method 'launcher:snapshot': Error: Fixture runtime unavailable");
@@ -175,6 +197,23 @@ function installMockLauncher() {
     onStateChanged: listen("state"), onBrowserState: listen("browser"), onOperation: listen("operation"), onLog: listen("log"), onUpdateState: listen("update"),
     setBrowserBounds: async bounds => { window.fixtureBounds = bounds; return true; },
     setBrowserSurfaceActive: async (active) => { browser.surfaceActive = active; return { ...browser }; },
+    openBrowserWorkspace: async (accountId, { asTab }) => {
+      calls.push(["workspace-open", accountId, asTab]);
+      if (scenario === "browser-ui-error" && !workspaceFailed) { workspaceFailed = true; throw new Error("Fixture window could not open. Try again."); }
+      const account = browser.workspaces.accounts.find(account => account.accountId === accountId);
+      const id = `workspace-${++workspaceSequence}`;
+      account.items.push({ id, groupId: "fixture-group", state: "open", kind: asTab ? "tab" : "window",
+        title: `${account.label} · ${asTab ? "Window tab" : "Separate window"} ${workspaceSequence}`,
+        location: "https://chatgpt.com/?temporary-chat=true", temporary: true, active: true, restorable: false });
+      browser.workspaces.total++;
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    closeBrowserWorkspace: async (accountId, id) => {
+      const account = browser.workspaces.accounts.find(account => account.accountId === accountId);
+      account.items = account.items.filter(item => item.id !== id); browser.workspaces.total--;
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    focusBrowserWorkspace: async (accountId, id) => { calls.push(["workspace-focus", accountId, id]); return { ...browser }; },
     openBrowserWindow: async asTab => { calls.push(["browser-window", asTab]); return {count:1}; },
     showBrowser: async () => { browser.visible = true; emit("browser", { ...browser }); return { ...browser }; },
     hideBrowser: async () => { browser.visible = false; emit("browser", { ...browser }); return { ...browser }; },
@@ -189,9 +228,27 @@ function installMockLauncher() {
       operation = { name: "passkey-login", status: "running", message: "Waiting in Chrome" };
       emit("browser", { ...browser }); emit("operation", operation); return { ...browser };
     },
-    continuePasskeyLogin: async () => { calls.push(["continue"]); return true; },
+    continuePasskeyLogin: async () => {
+      calls.push(["continue"]);
+      if (browserUiScenario) {
+        Object.assign(browser, { authenticated: true, authenticationStatus: "verified", loginKind: null,
+          passkeyLogin: { ...browser.passkeyLogin, phase: "completed", active: false, canImport: false, canCancel: false, canReveal: false } });
+        operation = { name: "passkey-login", status: "completed", message: "Fixture sign-in flow settled" };
+        emit("browser", { ...browser }); emit("operation", operation);
+      }
+      return { ...browser };
+    },
     revealPasskeyLogin: async () => { calls.push(["passkey-reveal"]); return true; },
-    cancelPasskeyLogin: async () => { calls.push(["passkey-cancel"]); return true; },
+    cancelPasskeyLogin: async () => {
+      calls.push(["passkey-cancel"]);
+      if (browserUiScenario) {
+        Object.assign(browser, { loginKind: null, passkeyLogin: { ...browser.passkeyLogin, phase: "cancelled",
+          active: false, canImport: false, canCancel: false, canReveal: false } });
+        operation = { name: "passkey-login", status: "completed", message: "Fixture sign-in flow settled" };
+        emit("browser", { ...browser }); emit("operation", operation);
+      }
+      return { ...browser };
+    },
     openExistingChromeLogin: async () => { calls.push(["existing-chrome-retry"]); return { ...browser }; },
     cancelExistingChromeLogin: async () => { calls.push(["existing-chrome-cancel"]); return { ...browser }; },
     allowExistingChromeFileAccess: async () => { calls.push(["existing-chrome-file-access"]); return { ...browser }; },
@@ -257,7 +314,13 @@ function installMockLauncher() {
     onCodexLogin: listen("codex-login"),
     setAccountMode: async (mode) => { accountSnapshot = { ...accountSnapshot, mode }; return accountSnapshot; },
     setAccountEnabled: async () => accountSnapshot,
-    selectAccount: async (id) => { accountSnapshot = { ...accountSnapshot, selectedId: id }; return accountSnapshot; },
+    selectAccount: async (id) => {
+      calls.push(["account-select", id]); accountSnapshot = { ...accountSnapshot, selectedId: id };
+      const account = accountSnapshot.accounts.find(account => account.id === id);
+      Object.assign(browser, { accountId: id, accountName: account.label, authenticated: account.authenticated,
+        authenticationStatus: account.authenticationStatus });
+      emit("browser", { ...browser }); return accountSnapshot;
+    },
     checkAccount: async () => accountSnapshot,
     addAccount: async () => accountSnapshot,
     removeAccount: async () => accountSnapshot,

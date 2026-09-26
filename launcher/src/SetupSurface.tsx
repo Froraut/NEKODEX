@@ -83,7 +83,8 @@ export function SetupSurface({
     await activateBrowser();
     await api!.openLogin();
   });
-  const useExistingChrome = !manualInteraction && ["darwin", "win32", "linux"].includes(snapshot.platform);
+  const useExistingChrome = !manualInteraction && ["darwin", "win32", "linux"].includes(snapshot.platform)
+    && (!browser?.accountId || browser.accountId === "default");
   const openExistingChromeLogin = () => run(async () => {
     await activateBrowser(false);
     await api!.openExistingChromeLogin();
@@ -200,16 +201,16 @@ export function SetupSurface({
           <SetupRow
             action={browser?.authenticated
               ? copy.signedIn
-              : browser?.status === "loading" ? copy.checkingSignIn : useExistingChrome ? copy.existingChromeSignIn : copy.signIn}
+              : browser?.status === "loading" ? copy.checkingSignIn : copy.stepAccount}
             complete={browser?.authenticated === true}
             description={browser?.authenticated && browser.accountLabel
               ? `${copy.signedIn}: ${browser.accountLabel}`
-              : useExistingChrome ? copy.existingChromeBody : copy.stepAccountBody}
+              : copy.stepAccountBody}
             disabled={busy}
             index={1}
-            onAction={useExistingChrome ? openExistingChromeLogin : openLogin}
-            secondaryAction={useExistingChrome && !browser?.authenticated ? copy.signIn : undefined}
-            onSecondaryAction={openLogin}
+            onAction={openLogin}
+            secondaryAction={useExistingChrome && !browser?.authenticated ? copy.existingChromeSignIn : undefined}
+            onSecondaryAction={openExistingChromeLogin}
             rowRef={accountSignInChoices}
             secondaryDisabled={busy}
             title={copy.stepAccount}

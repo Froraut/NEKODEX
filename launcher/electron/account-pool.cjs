@@ -789,7 +789,7 @@ class AccountBrowserPool {
     if (!account || this.destroyed) throw new Error('ChatGPT account is unavailable');
     const host = this.getHost(accountId);
     await host.ready();
-    const manager = host.workspaceManager();
+    const manager = host.workspaceManager(account.label);
     manager.open({ asTab: options.asTab }); this.publish(); return this.snapshot();
   }
   async restoreWorkspaces(accountId) {
@@ -798,7 +798,7 @@ class AccountBrowserPool {
     if (!account || this.destroyed) throw new Error('ChatGPT account is unavailable');
     const host = this.getHost(accountId);
     await host.ready();
-    const manager = host.workspaceManager();
+    const manager = host.workspaceManager(account.label);
     manager.restore(); this.publish(); return this.snapshot();
   }
   focusWorkspace(accountId, workspaceId) {

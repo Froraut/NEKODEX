@@ -99,7 +99,7 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
         onClick={() => void act(() => window.codexWebLauncher!.cancelExistingChromeLogin(), true)}>{copy.passkeyCancel}</button> : null}
       {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(onRetry)}>{copy.retry}</button> : null}
-      {verificationFailed ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+      {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.openLogin())}>{copy.signIn}</button> : null}
     </div>
   </div>;

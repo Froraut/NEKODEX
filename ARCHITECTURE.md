@@ -97,6 +97,21 @@ separate facts.
    on the next offer. A committed Linux update removes the previous version
    directory it replaced.
 
+## Browser presentation
+
+`BrowserSurface` owns the selected-account control and changes it through the account
+pool's `selectAccount` operation. `BrowserWorkspaceManager` consumes that selection;
+it has no independent account filter. Its disclosure manages separate user windows
+and native macOS window tabs, with selected-account counts and an explicitly global
+capacity. These windows are distinct from the embedded home and task tab strip.
+The home surface is never counted as a running task by Browser or Overview.
+
+The embedded location/navigation bar renders only while its page is visible.
+Signed-out empty states have one primary sign-in action. External sign-in guides
+own their continue/cancel/retry controls, retain embedded-sign-in recovery, and
+retire after completion. Expanding the window directory changes the browser slot's
+layout; the existing bounds observer remains responsible for native view placement.
+
 ## State and persistence
 
 Web model identities are resolved in `chatgpt-web-models.ts` before browser
