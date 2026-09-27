@@ -97,6 +97,13 @@ copyright and permission notice is retained in the root `LICENSE`.
   existing exact-file native chooser on that specific denial, retries once with
   the same profile claim through the private helper channel, and honors account
   cancellation. Cookie access still requires the Chrome session's own consent.
+- The Chrome profile picker uses the display's available height (up to 900 px),
+  shorter guidance, two-line rows and fixed footer actions. Manual source Electron
+  checks showed all seven fixture profiles without scrolling on the large display;
+  at the minimum 440 x 430 window the list scrolls while search and actions remain
+  visible. Filtering, selection and Continue were exercised in Russian.
+  Recoverable helper failures no longer create a stale global error banner;
+  the sign-in guide still reports final import errors.
 - An isolated real Electron shell crash preserved the existing browser PID,
   session, view and draft when attached to a replacement shell.
 - Official Claude Code 2.1.283 completed a streaming reply and actual Read tool

@@ -2,7 +2,7 @@ const path = require('node:path');
 
 const PICKER_CHANNEL = 'nekodex:chrome-profile-picker';
 
-function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId = null, language = 'en', signal }) {
+function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId = null, language = 'en', signal, workArea }) {
   if (typeof BrowserWindow !== 'function') throw new Error('Chrome profile picker window is unavailable');
   if (!Array.isArray(profiles) || profiles.some(profile => !profile || typeof profile.id !== 'string')) {
     throw new Error('Chrome profile picker received an invalid profile list');
@@ -10,8 +10,8 @@ function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId =
   return new Promise((resolve, reject) => {
     let settled = false;
     const picker = new BrowserWindow({
-      width: 620,
-      height: 610,
+      width: Math.min(760, Math.max(440, (workArea?.width ?? 840) - 80)),
+      height: Math.min(900, Math.max(430, (workArea?.height ?? 920) - 80)),
       minWidth: 440,
       minHeight: 430,
       parent: parent || undefined,

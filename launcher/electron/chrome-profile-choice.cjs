@@ -140,7 +140,7 @@ function openProfile(executable, id, url = 'https://chatgpt.com/?temporary-chat=
   });
 }
 
-function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, executable, language, dialog,
+function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, executable, language, dialog, getWorkArea,
   launch = openProfile, picker = showChromeProfilePicker, bindingStore = createChromeProfileBindingStore(coreHome) }) {
   return async ({ accountId, signal }) => {
     validateAccountId(accountId);
@@ -160,7 +160,7 @@ function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, exec
     let selection;
     try {
       selection = await picker({ BrowserWindow, parent: window(), profiles,
-        selectedId: selectMatch(profiles, null, saved)?.id ?? null, language: language(), signal });
+        selectedId: selectMatch(profiles, null, saved)?.id ?? null, language: language(), signal, workArea: getWorkArea?.() });
     } catch (error) { throw Object.assign(error, { profileChoiceStage: 'picker' }); }
     signal?.throwIfAborted();
     if (!selection || selection.kind === 'cancel') return { kind: 'cancel' };

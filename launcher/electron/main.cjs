@@ -1837,6 +1837,7 @@ async function start() {
     choose: createChromeProfileChoice({
       root: path.join(app.getPath("home"), "Library", "Application Support", "Google", "Chrome"),
       coreHome: CORE_HOME, BrowserWindow, dialog, window: () => mainWindow,
+      getWorkArea: () => screen.getDisplayMatching(mainWindow.getBounds()).workArea,
       // Existing-profile metadata and launches are deliberately paired to macOS Stable Chrome.
       // A configured Beta/Canary/Chromium executable remains available through isolated sign-in;
       // its unrelated "Profile N" directory must never be selected from Stable's catalog.
