@@ -97,6 +97,10 @@ copyright and permission notice is retained in the root `LICENSE`.
 - The built Russian client-settings UI was manually exercised with synthetic
   IPC: API enable/copy/rotate, Claude connection/stale-key guidance and Web-only
   selection/save/restart guidance. No real client settings were changed by it.
+- A separate real RuntimeHost-to-CLI check passed seven assertions for private
+  client status/activation/key receipts. It caught and fixed an IPC reader that
+  incorrectly expected retained stdout even though private output is discarded;
+  the key is now consumed in one bounded main-process receipt and stays out of logs.
 - On the actual signed-in DEV profile, browser smoke returned exactly
   `CODEX WEB GPT READY` at 2026-09-27T11:04:37Z. The saved session survived a
   controlled restart; an initial Cloudflare interstitial resolved without a

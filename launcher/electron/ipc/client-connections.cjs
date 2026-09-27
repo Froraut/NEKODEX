@@ -1,11 +1,18 @@
 function registerClientConnections({ handle, runtimeHost, clipboard, isDevProfile, assertIdle, providerChanged }) {
   const run = async action => {
-    const result = await runtimeHost.run('client-connections', ['connections', action], {
+    let receipt, invalid = false, lines = 0;
+    await runtimeHost.run('client-connections', ['connections', action], {
       embedded: true, privateOutput: true, timeoutMs: 20_000,
       message: 'Updating client connections', successMessage: 'Client connection settings read',
+      // Private runtime output is deliberately not retained in result.stdout.
+      // Consume one bounded receipt here without logging its API key.
+      onStdoutLine: line => {
+        if (++lines !== 1 || line.length > 32_768) { invalid = true; return true; }
+        try { receipt = JSON.parse(line); } catch { invalid = true; }
+        return true;
+      },
     });
-    let receipt;
-    try { receipt = JSON.parse(result.stdout); } catch { throw new Error('Client connection settings could not be read'); }
+    if (invalid || !receipt) throw new Error('Client connection settings could not be read');
     if (receipt?.ok !== true) throw new Error(typeof receipt?.error === 'string' ? receipt.error : 'Client connection operation failed');
     return receipt;
   };
