@@ -23,7 +23,8 @@ const { validateConnectorName } = require("./connector-identity.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { stableChromiumUserAgent } = require("./browser-user-agent.cjs");
 const { observeChatGptSession } = require("./browser-session-observation.cjs");
-const { isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
+const { deferredCaptureTransfer, isCloudflareChallengedVerification, isDeferredCaptureTransfer, isVerifiedCaptureTransfer,
+  sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
 const { captureOwnedSession, disposeOwnedSessionSnapshot, restoreOwnedSession } = require("./owned-session-rollback.cjs");
 const { initialPasskeyProgress, passkeyLoginFailure, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
 const { configureChatGptAnnouncementDismissal } = require("./browser-announcements.cjs");
@@ -2560,21 +2561,36 @@ class BrowserHost {
   }
 
   async verifyCapturedLoginTransfer(transfer, signal) {
-    const knownPrincipalFingerprint = this.authPrincipalFingerprint;
+    // Installing a deferred capture replaces the current identity before it is confirmed.
+    const known = { principalFingerprint: this.authPrincipalFingerprint, label: this.state.accountLabel ?? null };
+    if (isDeferredCaptureTransfer(transfer)) return { transfer, known };
     let verified = transfer;
     if (!isVerifiedCaptureTransfer(verified)) {
-      const identity = await verifyCapturedAccount(electronSession, transfer, {
-        signal,
-        accountId: this.accountId,
-        configureSession: (verificationSession, accountId) =>
-          this.configureAccountSession(verificationSession, accountId),
-      });
+      let identity;
+      try {
+        identity = await verifyCapturedAccount(electronSession, transfer, {
+          signal,
+          accountId: this.accountId,
+          configureSession: (verificationSession, accountId) =>
+            this.configureAccountSession(verificationSession, accountId),
+        });
+      } catch (error) {
+        // Cloudflare challenged the out-of-page check. The installed session is verified on
+        // the visible ChatGPT page instead, behind the rollback snapshot.
+        if (!isCloudflareChallengedVerification(error)) throw error;
+        return { transfer: deferredCaptureTransfer(transfer), known };
+      }
       verified = verifiedCaptureTransfer(transfer, identity);
     }
     signal?.throwIfAborted();
-    const identity = verified.verifiedIdentity;
+    await this.confirmCapturedIdentity(verified.verifiedIdentity, verified.identityIntent, known, signal);
+    return { transfer: verified, known };
+  }
+
+  /** Confirms a captured identity unless it is the current one or its producer already confirmed it. */
+  async confirmCapturedIdentity(identity, intent, known, signal) {
+    const knownPrincipalFingerprint = known.principalFingerprint;
     const capturedPrincipalFingerprint = identity.principalFingerprint;
-    const intent = verified.identityIntent;
     const intentCoversKnownReplacement = Boolean(knownPrincipalFingerprint
       && capturedPrincipalFingerprint !== knownPrincipalFingerprint
       && intent?.knownPrincipalFingerprint === knownPrincipalFingerprint
@@ -2583,7 +2599,7 @@ class BrowserHost {
       && (intent.knownPrincipalFingerprint === capturedPrincipalFingerprint
         || intent.actualIdentityConfirmed === true));
     if (capturedPrincipalFingerprint === knownPrincipalFingerprint
-      || intentCoversKnownReplacement || intentCoversUnloadedBinding) return verified;
+      || intentCoversKnownReplacement || intentCoversUnloadedBinding) return;
     if (!identity.label) {
       const error = new Error("Captured ChatGPT identity has no user-visible label");
       error.code = "chrome-account-unidentified";
@@ -2594,7 +2610,7 @@ class BrowserHost {
       type: replacing ? "warning" : "question",
       title: "Confirm ChatGPT account",
       message: replacing
-        ? `Replace the current ChatGPT account${this.state.accountLabel ? ` “${this.state.accountLabel}”` : ""} with “${identity.label}”?`
+        ? `Replace the current ChatGPT account${known.label ? ` “${known.label}”` : ""} with “${identity.label}”?`
         : `Connect ChatGPT account “${identity.label}”?`,
       detail: "This is the actual account verified by ChatGPT. Continue only if it is the account intended for this NEKODEX profile.",
       buttons: ["Cancel", replacing ? "Replace" : "Connect"],
@@ -2608,7 +2624,6 @@ class BrowserHost {
       error.code = "profile-login-cancelled";
       throw error;
     }
-    return verified;
   }
 
   async captureLoginRollbackSnapshot() {
@@ -2680,9 +2695,11 @@ class BrowserHost {
     let previousSessionRollback = null;
     let verificationStage = "capture-identity";
     let state;
+    let known;
     try {
       signal?.throwIfAborted();
-      verifiedTransfer = await this.verifyCapturedLoginTransfer(transfer, signal);
+      ({ transfer: verifiedTransfer, known } = await this.verifyCapturedLoginTransfer(transfer, signal));
+      const identityDeferred = isDeferredCaptureTransfer(verifiedTransfer);
       verificationStage = "session-snapshot";
       state = validatePasskeyLoginState(verifiedTransfer.storageState);
       const contents = this.view?.webContents;
@@ -2717,14 +2734,24 @@ class BrowserHost {
       }
       signal?.throwIfAborted();
       verificationStage = "verify-surface";
-      result = await this.waitForAuthenticated(60_000, signal);
+      // A deferred identity is waiting for a provider check on this visible page; allow the user
+      // the same time as an ordinary sign-in to complete it.
+      result = await this.waitForAuthenticated(identityDeferred ? 180_000 : 60_000, signal);
       verificationStage = "inspect-session";
       await this.runSessionInspection(false);
       signal?.throwIfAborted();
       if (!result?.authenticated || !this.authPrincipalFingerprint) {
         throw new Error("Passkey sign-in completed without an authenticated Launcher identity");
       }
-      if (this.authPrincipalFingerprint !== verifiedTransfer.verifiedIdentity.principalFingerprint) {
+      if (identityDeferred) {
+        // ChatGPT reported this identity on the installed page. Confirm it exactly like an
+        // identity verified before installation; cancelling restores the previous session.
+        verificationStage = "confirm-identity";
+        const identity = { principalFingerprint: this.authPrincipalFingerprint, label: this.state.accountLabel ?? null };
+        const intent = await verifiedTransfer.adoptIdentity(identity);
+        signal?.throwIfAborted();
+        await this.confirmCapturedIdentity(identity, intent, known, signal);
+      } else if (this.authPrincipalFingerprint !== verifiedTransfer.verifiedIdentity.principalFingerprint) {
         const mismatch = new Error("Installed ChatGPT identity does not match the verified capture");
         mismatch.code = "chrome-account-mismatch";
         throw mismatch;

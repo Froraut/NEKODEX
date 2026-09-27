@@ -1,4 +1,5 @@
-const { verifiedCaptureTransfer, verifyCapturedAccount } = require('./chrome-session-identity.cjs');
+const { deferredCaptureTransfer, isCloudflareChallengedVerification, verifiedCaptureTransfer,
+  verifyCapturedAccount } = require('./chrome-session-identity.cjs');
 const { safeProfileLoginError } = require('./chrome-profile-error-guidance.cjs');
 
 async function captureProfileSession({ runtime, onProgress, profileClaim, context, selectConnectionFile }) {
@@ -42,8 +43,15 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
       try {
         isolatedCapture=await runtime.capturePasskeyLogin(onProgress,'chrome');
         signal?.throwIfAborted();
-        const identity=await verifyCapturedAccount(session,isolatedCapture,{signal,accountId:context.accountId,
-          configureSession:context.configureVerificationSession});
+        let identity;
+        try {
+          identity=await verifyCapturedAccount(session,isolatedCapture,{signal,accountId:context.accountId,
+            configureSession:context.configureVerificationSession});
+        } catch(error) {
+          // Cloudflare challenged the out-of-page check; verify on the visible ChatGPT page instead.
+          if(isCloudflareChallengedVerification(error)) return deferredCaptureTransfer(isolatedCapture);
+          throw error;
+        }
         return verifiedCaptureTransfer(isolatedCapture,identity);
       } catch(error) {
         try { if(isolatedCapture)await isolatedCapture.cleanup(); }
@@ -84,31 +92,43 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
         onProgress: patch=>onProgress({phase:'importing', chromePhase:patch.phase,
           ...(patch.deadlineAt ? {deadlineAt:patch.deadlineAt} : {})}) });
       signal?.throwIfAborted();
-      const identity=await verifyCapturedAccount(session,capture,{signal,accountId:context.accountId,
-        configureSession:context.configureVerificationSession});
       const previous=choice.previousBinding;
-      if ((!previous || previous.principalFingerprint!==identity.principalFingerprint) && !identity.label) {
-        throw Object.assign(new Error('ChatGPT identity has no user-visible label'),{code:'chrome-account-unidentified'});
+      // The binding dialog runs for an identity verified before installation or, when Cloudflare
+      // challenged that check, for the identity the installed ChatGPT page reports.
+      const confirmBinding=async identity=>{
+        if ((!previous || previous.principalFingerprint!==identity.principalFingerprint) && !identity.label) {
+          throw Object.assign(new Error('ChatGPT identity has no user-visible label'),{code:'chrome-account-unidentified'});
+        }
+        if (!previous || previous.principalFingerprint!==identity.principalFingerprint) {
+          const replacement=Boolean(previous);
+          const confirmation=await dialog.showMessageBox(window(),{type:replacement?'warning':'question',
+            title:ru?'Подтвердите аккаунт ChatGPT':'Confirm ChatGPT account',
+            message:replacement
+              ? (ru?`Заменить привязку «${previous.chatgptLabel || 'аккаунт ChatGPT'}» на «${identity.label}»?`:`Replace the “${previous.chatgptLabel || 'ChatGPT account'}” binding with “${identity.label}”?`)
+              : (ru?`Подключить аккаунт ChatGPT «${identity.label}»?`:`Connect ChatGPT account “${identity.label}”?`),
+            detail:ru
+              ? `Профиль Google: ${choice.profile.googleEmail || 'не указан'}. Фактический аккаунт ChatGPT проверен отдельно. Изменение будет сохранено только после успешного входа в NEKODEX.`
+              : `Google profile metadata: ${choice.profile.googleEmail || 'not provided'}. The actual ChatGPT account was verified separately. The change is saved only after NEKODEX signs in successfully.`,
+            buttons:[ru?'Отмена':'Cancel',replacement?(ru?'Заменить':'Replace'):(ru?'Подключить':'Connect')],defaultId:0,cancelId:0,noLink:true,signal});
+          signal?.throwIfAborted();
+          if(confirmation.response!==1)throw Object.assign(new Error('Sign-in cancelled'),{code:'profile-login-cancelled'});
+        }
+        return { knownPrincipalFingerprint:previous?.principalFingerprint??null,
+          actualIdentityConfirmed:!previous||previous.principalFingerprint!==identity.principalFingerprint };
+      };
+      const commitBinding=identity=>choice.commitBinding({ ...identity, browserUserAgent: capture.browserUserAgent });
+      let identity;
+      try {
+        identity=await verifyCapturedAccount(session,capture,{signal,accountId:context.accountId,
+          configureSession:context.configureVerificationSession});
+      } catch(error) {
+        if(!isCloudflareChallengedVerification(error)) throw error;
+        return deferredCaptureTransfer(capture,{resolveIdentityIntent:confirmBinding,
+          commit:(_receipt,adopted)=>commitBinding(adopted),rollback:()=>choice.rollbackBinding()});
       }
-      if (!previous || previous.principalFingerprint!==identity.principalFingerprint) {
-        const replacement=Boolean(previous);
-        const confirmation=await dialog.showMessageBox(window(),{type:replacement?'warning':'question',
-          title:ru?'Подтвердите аккаунт ChatGPT':'Confirm ChatGPT account',
-          message:replacement
-            ? (ru?`Заменить привязку «${previous.chatgptLabel || 'аккаунт ChatGPT'}» на «${identity.label}»?`:`Replace the “${previous.chatgptLabel || 'ChatGPT account'}” binding with “${identity.label}”?`)
-            : (ru?`Подключить аккаунт ChatGPT «${identity.label}»?`:`Connect ChatGPT account “${identity.label}”?`),
-          detail:ru
-            ? `Профиль Google: ${choice.profile.googleEmail || 'не указан'}. Фактический аккаунт ChatGPT проверен отдельно. Изменение будет сохранено только после успешного входа в NEKODEX.`
-            : `Google profile metadata: ${choice.profile.googleEmail || 'not provided'}. The actual ChatGPT account was verified separately. The change is saved only after NEKODEX signs in successfully.`,
-          buttons:[ru?'Отмена':'Cancel',replacement?(ru?'Заменить':'Replace'):(ru?'Подключить':'Connect')],defaultId:0,cancelId:0,noLink:true,signal});
-        signal?.throwIfAborted();
-        if(confirmation.response!==1)throw Object.assign(new Error('Sign-in cancelled'),{code:'profile-login-cancelled'});
-      }
-      return verifiedCaptureTransfer(capture,identity,{commit:()=>choice.commitBinding({ ...identity, browserUserAgent: capture.browserUserAgent }),
-        rollback:()=>choice.rollbackBinding(),identityIntent:{
-          knownPrincipalFingerprint:previous?.principalFingerprint??null,
-          actualIdentityConfirmed:!previous||previous.principalFingerprint!==identity.principalFingerprint,
-        }});
+      const identityIntent=await confirmBinding(identity);
+      return verifiedCaptureTransfer(capture,identity,{commit:()=>commitBinding(identity),
+        rollback:()=>choice.rollbackBinding(),identityIntent});
     } catch(error) {
       let failure = safeProfileLoginError(error);
       // A cleanup failure must not be hidden by cancellation or expose private paths.
