@@ -51,3 +51,20 @@ test("a challenged or redirected session check is a failure, not a sign-out", as
     .rejects.toThrow("session endpoint redirected");
   await expect(observeChatGptSession({ isDestroyed: () => true })).rejects.toThrow("session page is unavailable");
 });
+
+// This optional fixture launches an isolated headless browser; it never uses an account.
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a hidden view's unmeasured composer still counts as rendered", async () => {
+  const { chromium } = await import("playwright-core");
+  const { authenticationProbeScript } = require("../launcher/electron/browser-auth-probe.cjs");
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<form><div id="prompt-textarea" contenteditable="true" style="display:block;width:0;height:26px"></div></form>');
+    const composer = () => page.evaluate(script => (0, eval)(script), authenticationProbeScript()).then((result: { composer: boolean }) => result.composer);
+    expect(await composer()).toBe(false);
+    await page.evaluate(() => Object.defineProperty(document, "visibilityState", { get: () => "hidden" }));
+    expect(await composer()).toBe(true);
+    await page.evaluate(() => { document.getElementById("prompt-textarea")!.style.height = "0"; });
+    expect(await composer()).toBe(false);
+  } finally { await browser.close(); }
+}, 15_000);

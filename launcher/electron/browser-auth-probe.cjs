@@ -14,11 +14,13 @@ const COMPOSER_SELECTOR = [
 ].join(", ");
 
 function visibleElementScript(selector) {
+  // A hidden NEKODEX view renders no animation frames, so ChatGPT never measures the composer's
+  // width there (it stays 0 while the height is laid out). Its height still proves it rendered.
   return `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find((element) => {
     const style = getComputedStyle(element);
     const bounds = element.getBoundingClientRect();
     return element.isConnected
-      && bounds.width > 0
+      && (bounds.width > 0 || document.visibilityState === "hidden")
       && bounds.height > 0
       && style.display !== "none"
       && style.visibility !== "hidden"
