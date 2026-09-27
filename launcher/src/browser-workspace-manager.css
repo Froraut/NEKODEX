@@ -35,3 +35,11 @@
 .browser-workspace-platform-note,
 .browser-workspace-temporary-note { margin: 0; }
 .browser-workspace-restore-result { flex-wrap: wrap; }
+
+/* Collapsed, the manager sits at the end of the task tab row; opened, it takes its own full-width line. */
+.browser-tab-row { display: flex; flex-wrap: wrap; flex: none; min-width: 0; border-bottom: 1px solid var(--color-border-light); background: var(--color-background-sidebar); }
+.browser-tab-row > .browser-tab-strip { flex: 1 1 0; min-width: 0; border-bottom: 0; }
+.browser-tab-row > .browser-workspace-manager { flex: 0 0 auto; display: flex; align-items: center; border-bottom: 0; background: transparent; }
+.browser-tab-row > .browser-workspace-manager > summary { padding: 0 14px; white-space: nowrap; }
+.browser-tab-row > .browser-workspace-manager[open] { flex: 1 0 100%; display: block; border-top: 1px solid var(--color-border-light); background: var(--color-background-panel); }
+.browser-tab-row > .browser-workspace-manager[open] > summary { padding: 10px 16px; }
