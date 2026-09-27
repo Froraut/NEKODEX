@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { CHATGPT_WEB_MODEL_ROUTES } from "../src/chatgpt-web-models";
+import { CHATGPT_WEB_NAMED_MODEL_ROUTES, chatGptWebRouteEfforts } from "../src/chatgpt-web-models";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 
@@ -34,7 +34,7 @@ try {
     models?: Array<{ slug?: string; supported_in_api?: boolean; visibility?: string; priority?: number }>;
   };
   // Native defaults change with Codex releases. Keep the first three visible native models
-  // ahead of Web rows, then Pro and Extra High in the bounded V1 override roster.
+  // ahead of Web rows, then the two Pro rows in the bounded V1 override roster.
   const nativeRows = sourceCatalog.models
     ?.filter(model => model.supported_in_api === true && model.visibility === "list" && model.slug && !model.slug.startsWith("chatgpt-web/"))
     .toSorted((left, right) => (left.priority ?? Number.MAX_SAFE_INTEGER) - (right.priority ?? Number.MAX_SAFE_INTEGER)) ?? [];
@@ -67,14 +67,16 @@ try {
     }>;
   };
   const web = catalog.models?.filter(model => model.slug?.startsWith("chatgpt-web/")) ?? [];
+  // Without an observed model picker only confirmed named families are advertised; fixed-mode
+  // slugs stay resolvable for saved tasks but must never reappear in the catalog.
   const webOrder = [
-    "chatgpt-web/pro", "chatgpt-web/extra-high", "chatgpt-web/high",
-    "chatgpt-web/medium", "chatgpt-web/light",
+    "chatgpt-web/gpt-6-pro", "chatgpt-web/gpt-5.6-pro",
+    "chatgpt-web/gpt-5.6-sol", "chatgpt-web/gpt-5.6-sol-instant",
   ];
   const expected = webOrder.map(slug => {
-    const route = CHATGPT_WEB_MODEL_ROUTES.find(route => route.slug === slug);
-    if (!route) throw new Error(`Missing fixed ChatGPT Web route: ${slug}`);
-    return { slug: route.slug, effort: route.codexEffort };
+    const route = CHATGPT_WEB_NAMED_MODEL_ROUTES.find(route => route.slug === slug);
+    if (!route) throw new Error(`Missing named ChatGPT Web route: ${slug}`);
+    return { slug: route.slug, effort: chatGptWebRouteEfforts(route, config).join(",") };
   });
   const actual = web.map(model => ({
     slug: model.slug,
@@ -83,10 +85,10 @@ try {
       : "",
   }));
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(`Codex did not preserve the fixed ChatGPT Web model contract: ${JSON.stringify(actual)}`);
+    throw new Error(`Codex did not preserve the named ChatGPT Web model contract: ${JSON.stringify(actual)}`);
   }
   const nativeLead = catalog.models?.find(model => model.slug === expectedNative);
-  const webPro = catalog.models?.find(model => model.slug === "chatgpt-web/pro");
+  const webPro = catalog.models?.find(model => model.slug === "chatgpt-web/gpt-6-pro");
   if (nativeLead?.multi_agent_version !== "v1" || webPro?.multi_agent_version !== "v1") {
     throw new Error(
       `Codex did not preserve Compatibility V1 metadata for the leading native model and Web Pro: ${JSON.stringify({

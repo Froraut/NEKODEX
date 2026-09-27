@@ -209,7 +209,7 @@ try {
 
   const started = await client.request("thread/start", {
     cwd: root,
-    model: "chatgpt-web/high",
+    model: "chatgpt-web/gpt-5.6-sol",
     approvalPolicy: "never",
     sandbox: "danger-full-access",
     ephemeral: true,
@@ -218,6 +218,8 @@ try {
   if (typeof threadId !== "string") throw new Error(`thread/start returned no thread id: ${JSON.stringify(started)}`);
   const turnStarted = await client.request("turn/start", {
     threadId,
+    // Named Web routes reject efforts they do not support instead of silently downgrading.
+    effort: "high",
     input: [{ type: "text", text: "Wait until this turn is interrupted." }],
   });
   const turnId = turnStarted?.turn?.id;

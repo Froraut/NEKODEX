@@ -12,8 +12,10 @@ const cachePath = join(codexHome, "models_cache.json");
 if (!existsSync(cachePath)) throw new Error("Open Codex once to populate its native model catalog, then retry.");
 const catalog = augmentNativeModelCatalog(JSON.parse(readFileSync(cachePath, "utf8")), config);
 const models = (catalog.models as Array<Record<string, unknown>>).filter(model => String(model.slug).startsWith("chatgpt-web/"));
-const medium = models.find(model => model.slug === "chatgpt-web/medium");
-if (!medium) throw new Error("ChatGPT Web Medium is unavailable in the configured account.");
+// Default to the newest confirmed everyday family; the catalog only advertises named Web models.
+const PROFILE_DEFAULTS = ["chatgpt-web/gpt-6-astra", "chatgpt-web/gpt-5.6-sol", "chatgpt-web/gpt-5.6-luna"];
+const selected = PROFILE_DEFAULTS.map(slug => models.find(model => model.slug === slug)).find(Boolean);
+if (!selected) throw new Error("No named ChatGPT Web model is available in the configured account.");
 const catalogPath = join(codexHome, "nekodex-models.json");
 const profilePath = join(codexHome, "nekodex.config.toml");
 const backup = join(codexHome, "backups", `nekodex-profile-${Date.now()}`);
@@ -25,12 +27,12 @@ if ([catalogPath, profilePath].some(existsSync)) {
 writeFileSync(catalogPath, JSON.stringify({ models }, null, 2) + "\n", { mode: 0o600 });
 writeFileSync(profilePath, [
   "# NEKODEX: opt-in ChatGPT Web task profile.",
-  'model = "chatgpt-web/medium"',
+  `model = ${JSON.stringify(selected.slug)}`,
   'model_provider = "openai"',
-  'model_reasoning_effort = "medium"',
+  `model_reasoning_effort = ${JSON.stringify(selected.default_reasoning_level)}`,
   `openai_base_url = ${JSON.stringify(`http://${config.host}:${config.port}/v1`)}`,
   `model_catalog_json = ${JSON.stringify(catalogPath)}`,
-  `model_context_window = ${medium.context_window}`,
+  `model_context_window = ${selected.context_window}`,
   "",
 ].join("\n"), { mode: 0o600 });
 console.log(`NEKODEX profile installed: ${profilePath}`);

@@ -51,7 +51,7 @@ const server = Bun.serve({
     await request.json();
     responseRequests += 1;
     if (responseRequests === 1) {
-      return new Response(bridgeToResponsesSSE(cancelledStream(), "chatgpt-web/high"), {
+      return new Response(bridgeToResponsesSSE(cancelledStream(), "chatgpt-web/gpt-5.6-sol"), {
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
       });
     }
@@ -66,7 +66,7 @@ const server = Bun.serve({
 });
 
 writeFileSync(join(codexHome, "config.toml"), [
-  'model = "chatgpt-web/high"',
+  'model = "chatgpt-web/gpt-5.6-sol"',
   'model_provider = "cancel-smoke"',
   `model_catalog_json = ${JSON.stringify(join(root, "models.json"))}`,
   "",
@@ -88,7 +88,7 @@ try {
     "--json",
     "--dangerously-bypass-approvals-and-sandbox",
     "--model",
-    "chatgpt-web/high",
+    "chatgpt-web/gpt-5.6-sol",
     "Wait for the provider cancellation contract.",
   ], {
     cwd: root,
