@@ -10,7 +10,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const dist = path.resolve(__dirname, "../dist");
+const dist = path.resolve(process.env.UI_PREVIEW_DIST || path.join(__dirname, "../dist"));
 
 function installMockLauncher() {
   const parameters = new URLSearchParams(location.search);
