@@ -24,16 +24,18 @@ launcher-owned codex-chatgpt-web daemon
 
 ### `browser-only`
 
-- Exposes Instant (`chatgpt-web/light`), Medium, High, and Extra High; each model advertises exactly one
-  immutable Codex effort matching its ChatGPT browser mode. `chatgpt-web/pro` is appended only when
-  the authenticated account exposes Pro.
+- Advertises named Web rows for GPT-5.6 Sol Instant, GPT-5.6 Sol, GPT-5.6 Pro,
+  GPT-6 Pro, or GPT-5.6 Luna according to the checked browser controls. Codex's
+  Effort selector exposes only the supported levels for each row. Previous
+  `chatgpt-web/light`, `medium`, `high`, `extra-high`, `pro`, `luna`, and `think`
+  IDs remain resolvable for saved tasks but are absent from the new picker.
 - Sends the complete Codex context and image attachments to a fresh ChatGPT Temporary Chat.
 - Never starts the broker, tunnel, or MCP server.
 - Emits a nonfatal Codex commentary warning that local tools are unavailable for the selected model.
 
 ### `full`
 
-- Exposes the same fixed models and attaches the turn-bound connector capability to every available
+- Exposes the same named Web models and attaches the turn-bound connector capability to every available
   effort, from Luna through Pro. There are no effort-specific MCP exclusions.
 - ChatGPT uses a custom MCP connector backed by `openai/tunnel-client`.
 - Every connector call presents one outer Codex turn capability; the MCP server keeps the derived

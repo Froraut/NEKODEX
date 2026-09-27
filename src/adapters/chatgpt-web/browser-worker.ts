@@ -295,6 +295,8 @@ interface ChatGptSubmissionBaseline {
   initialGenerationRunning?: boolean;
   acknowledgedStages?: readonly string[];
   domCache: ChatGptSubmissionDomCache;
+  submittedText?: string;
+  acceptedUserIdentity?: string;
 }
 
 interface ChatGptSubmissionObservationRecovery {
@@ -850,13 +852,21 @@ export class ChatGptBrowserWorker {
   ): Promise<ChatGptSubmissionEvidence | undefined> {
     const state = await submissionDomState(page, baseline.domCache, signal);
     baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
-    return chatGptSubmissionEvidence({
+    const evidence = chatGptSubmissionEvidence({
       initialTurnIdentities: baseline.initialTurnIdentities,
       userIdentities: state.userIdentities,
       responseIdentities: state.responseIdentities,
       // A pre-existing Stop control belongs to earlier work, not this send.
       generationRunning: state.visibleStopButtonCount > 0 && !baseline.initialGenerationRunning,
     });
+    if (evidence === "user_turn") {
+      const identity = chatGptNewTurnIdentity(baseline.initialTurnIdentities, state.userIdentities)!;
+      if (baseline.acceptedUserIdentity && baseline.acceptedUserIdentity !== identity) {
+        throw new Error("ChatGPT changed the user turn that acknowledged the submission");
+      }
+      baseline.acceptedUserIdentity = identity;
+    }
+    return evidence;
   }
 
   private async currentSubmissionAnswerText(
@@ -875,13 +885,14 @@ export class ChatGptBrowserWorker {
     return (await responseDomSnapshot(locator, {}, signal)).visibleText;
   }
 
-  private async captureSubmissionBaseline(page: Page, abortSignal?: AbortSignal): Promise<ChatGptSubmissionBaseline> {
+  private async captureSubmissionBaseline(page: Page, submittedText?: string, abortSignal?: AbortSignal): Promise<ChatGptSubmissionBaseline> {
     const domCache: ChatGptSubmissionDomCache = {};
     const state = await submissionDomState(page, domCache, abortSignal);
     return {
       initialTurnIdentities: state.turnIdentities,
       initialGenerationRunning: state.visibleStopButtonCount > 0,
       domCache,
+      submittedText,
     };
   }
 
@@ -1044,15 +1055,40 @@ export class ChatGptBrowserWorker {
     baseline.initialTurnIdentities = chatGptStagedBaselineIdentities(baseline.initialTurnIdentities, baseline.acknowledgedStages, state.acknowledgementTurns);
     const acceptedTurns = new Set(binding.acceptedTurnIdentities);
     const hasNewUserTurn = state.userIdentities.some(identity => !acceptedTurns.has(identity));
-    if (hasNewUserTurn && !allowMcpContinuationUserTurn) {
-      throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
-    }
-    const acceptedTurnIdentities = hasNewUserTurn ? state.turnIdentities : binding.acceptedTurnIdentities;
     const identity = chatGptReboundTurnIdentity(
       baseline.initialTurnIdentities,
       binding.identity,
       state.responseIdentities,
     );
+    if (hasNewUserTurn && !allowMcpContinuationUserTurn) {
+      const newUsers = state.userIdentities.filter(user => !acceptedTurns.has(user));
+      const user = newUsers[0];
+      const replacement = identity && user && newUsers.length === 1
+        && binding.identity.startsWith("group:assistant:")
+        && user.startsWith("group:user:")
+        && identity === `group:assistant:${user.slice("group:user:".length)}`
+        && !state.turnIdentities.includes(binding.identity)
+        && state.turnIdentities.every(turn => acceptedTurns.has(turn) || turn === user || turn === identity);
+      let matches = false;
+      if (replacement) {
+        const locator = chatGptTurnLocator(page, identity);
+        matches = baseline.acceptedUserIdentity
+          ? user === baseline.acceptedUserIdentity
+          : Boolean(baseline.submittedText) && await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(locator.evaluate((group, submitted) => {
+            const bubbles = group.querySelectorAll<HTMLElement>("[data-user-message-bubble]");
+            const contents = bubbles.length === 1
+              ? bubbles[0]!.querySelectorAll<HTMLElement>("[data-search-result-target]") : [];
+            const normalize = (value: string) => value.replace(/\r\n?/g, "\n");
+            return contents.length === 1 && normalize(contents[0]!.innerText) === normalize(submitted);
+          }, baseline.submittedText!), signal));
+        if (matches) {
+          const response = await responseDomSnapshot(locator, {}, signal);
+          matches = response.responsePresent && response.completionActionVisible;
+        }
+      }
+      if (!matches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
+    }
+    const acceptedTurnIdentities = hasNewUserTurn ? state.turnIdentities : binding.acceptedTurnIdentities;
     if (!identity || identity === binding.identity) {
       return acceptedTurnIdentities === binding.acceptedTurnIdentities
         ? binding : { ...binding, acceptedTurnIdentities };
@@ -1946,7 +1982,7 @@ export class ChatGptBrowserWorker {
     try {
       await withBrowserTurnAbort(Promise.all(files.map(file => (
         composerForm.getByRole("group", { name: file.name, exact: true })
-          .or(composerForm.locator(`.composer-attachment-surface[role="button"][aria-label=${JSON.stringify(file.name)}]`))
+          .or(composerForm.locator(`.composer-attachment-surface:is(button, [role="button"])[aria-label=${JSON.stringify(file.name)}]`))
           .waitFor({ state: "visible", timeout: 60_000 })
       ))), abortSignal);
     } catch (error) {
@@ -2461,7 +2497,7 @@ export class ChatGptBrowserWorker {
             await diagnostics.capture(page, `multipart-stage-${index + 1}-effort-selected`);
           }
           const stage = multipartStages[index]!;
-          let stageBaseline = await this.captureSubmissionBaseline(page, turn.abortSignal);
+          let stageBaseline = await this.captureSubmissionBaseline(page, stage.text, turn.abortSignal);
           await runBrowserStage(
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
@@ -2576,7 +2612,7 @@ export class ChatGptBrowserWorker {
         finalPrompt = multipartFinalPrompt;
       }
 
-      let submissionBaseline = await this.captureSubmissionBaseline(page, turn.abortSignal);
+      let submissionBaseline = await this.captureSubmissionBaseline(page, finalPrompt, turn.abortSignal);
       submissionBaseline.acknowledgedStages = multipartStages?.map(stage => stage.acknowledgement);
       let catalogRefreshAvailable = mode.localTools && !reuseConversation && !prepared.multipart;
       const connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
@@ -2636,7 +2672,7 @@ export class ChatGptBrowserWorker {
                 requestedMode.modelVersion,
                 refreshSignal,
               );
-              submissionBaseline = await this.captureSubmissionBaseline(page, refreshSignal);
+              submissionBaseline = await this.captureSubmissionBaseline(page, finalPrompt, refreshSignal);
             },
           );
           await diagnostics.capture(page, "connector-catalog-refreshed");

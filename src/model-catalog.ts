@@ -12,11 +12,11 @@ import {
 type JsonObject = Record<string, unknown>;
 
 const WEB_CATALOG_ORDER = [
-  "chatgpt-web/pro",
-  "chatgpt-web/extra-high",
-  "chatgpt-web/high",
-  "chatgpt-web/medium",
-  "chatgpt-web/light",
+  "chatgpt-web/gpt-6-pro",
+  "chatgpt-web/gpt-5.6-pro",
+  "chatgpt-web/gpt-5.6-sol",
+  "chatgpt-web/gpt-5.6-sol-instant",
+  "chatgpt-web/gpt-5.6-luna",
 ] as const;
 
 function webCatalogRank(route: ChatGptWebModelRoute): number {

@@ -192,11 +192,12 @@ export async function runChatGptMcpServer(options: {
       try {
         await settleTurnActivity(turnToken, activityId);
       } catch (cleanupError) {
-        throw new AggregateError(
-          [error, cleanupError],
-          "Codex Native claim failed and its broker activity could not be retired",
+        console.error(
+          `[chatgpt-web-mcp] ${toolName} claim failed and activity cleanup also failed: `
+          + `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
         );
       }
+      // Cleanup tombstones an ambiguous claim, but must not replace the claim failure.
       throw error;
     }
   };
@@ -461,7 +462,13 @@ export async function runChatGptMcpServer(options: {
     "codex_tool_call",
     {
       title: "Call any tool from the current Codex harness",
-      description: afterSafeStart(contract, "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle."),
+      description: afterSafeStart(contract, [
+        "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle.",
+        ...(contract === "native" ? [
+          `A pending context-compaction request can also provide the reserved ${CODEX_COMPACTION_CONTROL_WIRE_NAME} operation, which is not listed by inventory.`,
+          "Use only that request's issued control token and arguments {handoff_id, summary}. This operation submits the conversation summary to the pending Codex task; it does not execute commands, access files, or invoke other tools.",
+        ] : []),
+      ].join(" ")),
       inputSchema: {
         ...turnReferenceInput(contract),
         wire_name: z.string().min(1).max(1_000),

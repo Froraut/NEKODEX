@@ -303,6 +303,11 @@ class BrowserManualTurns {
       throw new Error("Manual prompt is no longer available");
     }
     this.writeManualPrompt(tab.prompt);
+    if (tab.manualState === "awaiting-user" && tab.manualSubmitTimeoutMs) {
+      tab.manualDeadlineAt = Date.now() + tab.manualSubmitTimeoutMs;
+      this.armManualTurnDeadline(tab);
+    }
+    this.presentation.publish();
     this.logger.info("browser.manual_prompt_copied", { tabId: tab.id, traceId: tab.traceId });
     return this.presentation.snapshot();
   }
@@ -321,7 +326,7 @@ class BrowserManualTurns {
     // remains cancellable through its helper or tab, including before the first MCP bind.
     tab.manualDeadlineAt = null;
     tab.sentAt = new Date().toISOString();
-    tab.prompt = null;
+    // Keep the prompt copyable until the connector actually binds. ChatGPT may refuse Send.
     tab.message = "Prompt sent; waiting for ChatGPT to start through the Codex harness";
     for (const resolve of tab.manualWaiters) resolve({ status: "sent", sentAt: tab.sentAt });
     tab.manualWaiters.clear();
@@ -342,6 +347,8 @@ class BrowserManualTurns {
     tab.manualDeadlineTimer = null;
     tab.manualDeadlineAt = null;
     tab.manualState = "running";
+    tab.prompt = null;
+    tab.promptDigest = null;
     tab.message = "ChatGPT is working through the Codex harness";
     tab.lastHeartbeatAt = Date.now();
     this.presentation.publish();

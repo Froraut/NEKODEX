@@ -79,7 +79,8 @@ separate facts.
    Unexpected input-stream/internal failures and cancellation retain their error path.
 3. **Manual request:** reserve an owned tab → copy prompt → wait for user Sent
    confirmation → execute through the harness → settle. The human submission
-   deadline ends at Sent. Runtime cancellation must be acknowledged before the
+   deadline refreshes on Copy and ends at Sent. A premature Sent leaves the prompt
+   copyable until the connector actually binds. Runtime cancellation must be acknowledged before the
    tab is removed; delayed acknowledgements cannot retire a replacement owner.
 4. **Account sign-in:** capture target account/flow → acquire the exclusive lease
    → verify the captured session/principal → publish a matching receipt → release
@@ -115,12 +116,16 @@ layout; the existing bounds observer remains responsible for native view placeme
 ## State and persistence
 
 Web model identities are resolved in `chatgpt-web-models.ts` before browser
-dispatch. The original fixed-mode rows retain their saved-task semantics and
-picker order. Explicit family routes add native effort choices only when their
+dispatch. The picker advertises named Web models; old fixed-mode IDs remain
+resolvable for saved tasks. Explicit family routes add native effort choices only when their
 context and compaction budgets are equal; Instant and Pro retain separate rows.
 The validated family travels with the turn and conversation identity, and the
 browser proves both the selected family and effort before sending. Native model
 rows and account entitlements are not inferred from these browser routes.
+The Electron host treats ChatGPT cookie changes as triggers for a bounded session
+endpoint check, never as proof of sign-in. It retires an identity only after a
+valid session response establishes sign-out or a different principal; the page
+probe still owns Temporary Chat readiness and the full session fingerprint.
 
 The optional `useSavedChats` setting selects ordinary ChatGPT history and remains
 false by default. It is independent of rebuilding every turn in a fresh browser

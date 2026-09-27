@@ -4,7 +4,7 @@ import type { ChatGptWebProModelVersion } from "../../chatgpt-web-models";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { stabilizeEffortSlider } from "./effort-stabilization";
 import { chatGptProUsageLimitTooltip } from "./pro-retry-hint";
-import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, parseChatGptEffortSliderState, readChatGptEffortAvailability, chatGptModelStateMatches } from "../../chatgpt-session";
+import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, readChatGptEffortSnapshot, chatGptModelStateMatches } from "../../chatgpt-session";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
 
 interface ModelSelectionDependencies {
@@ -351,17 +351,8 @@ export class ChatGptModelSelectionController {
     } finally {
       waitAbort.abort();
     }
-    const readOptions = { timeout: 1_000, signal: abortSignal };
-    const sliderState = parseChatGptEffortSliderState(
-      await effortSlider.getAttribute("aria-valuemin", readOptions),
-      await effortSlider.getAttribute("aria-valuemax", readOptions),
-      await effortSlider.getAttribute("aria-valuenow", readOptions),
-    );
-    if (!sliderState) {
-      throw chatGptModelControlUnavailableAdapterError(
-        "ChatGPT effort slider exposed an invalid ARIA range",
-      );
-    }
+    const sliderState = await readChatGptEffortSnapshot(sliderContainer)
+      .catch(error => { throw chatGptModelControlUnavailableAdapterError(String(error)); });
     const targetValue = sliderState.min + uiEffortIndex;
     if (targetValue > sliderState.max) {
       const proMayBeLimited = uiEffortIndex === 4 && sliderState.min === 0 && sliderState.max === 3;
@@ -379,8 +370,7 @@ export class ChatGptModelSelectionController {
         proRetryHint,
       );
     }
-    const availability = await readChatGptEffortAvailability(sliderContainer, sliderState)
-      .catch(error => { throw chatGptModelControlUnavailableAdapterError(String(error)); });
+    const availability = sliderState.available;
     if (availability && !availability[uiEffortIndex]) {
       throw new ChatGptWebAdapterError(
         `ChatGPT locks ${mode.displayLabel} behind an upgrade. The message was not sent. Choose an available effort and run Repair to refresh the account capabilities.`,
@@ -399,11 +389,12 @@ export class ChatGptModelSelectionController {
         signal: abortSignal,
         read: async options => {
           await this.dependencies.throwIfChatGptRateLimitDialog(page);
-          return parseChatGptEffortSliderState(
-            await effortSlider.getAttribute("aria-valuemin", options),
-            await effortSlider.getAttribute("aria-valuemax", options),
-            await effortSlider.getAttribute("aria-valuenow", options),
-          );
+          options.signal.throwIfAborted();
+          const state = await readChatGptEffortSnapshot(sliderContainer);
+          if (state.min !== sliderState.min || (state.available && !state.available[uiEffortIndex])) {
+            throw new Error("ChatGPT changed the requested effort range or availability during selection");
+          }
+          return state;
         },
         press: (key, options) => sliderControl.press(key, options),
       });
@@ -433,12 +424,9 @@ export class ChatGptModelSelectionController {
     await this.assertEffortSurface(page, mode.effort);
     const confirmation = await activateChatGptEffortMenu(page, currentEffort);
     try {
-      const confirmed = parseChatGptEffortSliderState(
-        await confirmation.slider.getAttribute("aria-valuemin", readOptions),
-        await confirmation.slider.getAttribute("aria-valuemax", readOptions),
-        await confirmation.slider.getAttribute("aria-valuenow", readOptions),
-      );
-      if (!confirmed || confirmed.min !== sliderState.min || confirmed.max !== sliderState.max || confirmed.value !== targetValue) {
+      const confirmed = await readChatGptEffortSnapshot(confirmation.sliderContainer);
+      if (confirmed.min !== sliderState.min || confirmed.value !== targetValue
+        || (confirmed.available && !confirmed.available[uiEffortIndex])) {
         throw chatGptModelControlUnavailableAdapterError("ChatGPT did not persist the requested effort after closing its menu");
       }
       if (modelVersion) {
@@ -459,7 +447,7 @@ export class ChatGptModelSelectionController {
       const control = composer.locator("xpath=ancestor::form[1]").locator(CHATGPT_EFFORT_CONTROL_SELECTOR).last();
       let verificationError: ChatGptWebAdapterError | undefined;
       try {
-        const { menu, slider } = await activateChatGptEffortMenu(page, control);
+        const { menu, slider, sliderContainer } = await activateChatGptEffortMenu(page, control);
         if (expectedMode.modelVersion) {
           await assertSelectedModelRadio(menu, expectedMode.modelVersion);
           await assertChatGptSelectedModelVersion(page, slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort);
@@ -467,11 +455,9 @@ export class ChatGptModelSelectionController {
         } else {
           this.validatedPinnedVersions.delete(page);
         }
-        const state = parseChatGptEffortSliderState(
-          await slider.getAttribute("aria-valuemin"), await slider.getAttribute("aria-valuemax"),
-          await slider.getAttribute("aria-valuenow"),
-        );
-        if (!state || expectedMode.uiEffortIndex === null || state.value !== state.min + expectedMode.uiEffortIndex) {
+        const state = await readChatGptEffortSnapshot(sliderContainer);
+        if (expectedMode.uiEffortIndex === null || state.value !== state.min + expectedMode.uiEffortIndex
+          || (state.available && !state.available[expectedMode.uiEffortIndex])) {
           throw chatGptModelControlUnavailableAdapterError("ChatGPT changed the requested effort before submission");
         }
         if (expectedMode.effort === "max") await this.observeSelectedProVersion(page, slider);

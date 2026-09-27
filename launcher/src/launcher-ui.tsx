@@ -678,7 +678,7 @@ export function ProModelVersionMenu({
     >
       <option value="">{copy.proModelFollow}</option>
       <option value="5.6">{copy.proModel56}</option>
-      <option value="5.5">{copy.proModel55}</option>
+      {value === "5.5" ? <option value="5.5" disabled>{copy.legacySavedModel}</option> : null}
       <option value="6">{copy.proModel6}</option>
     </select>
   );

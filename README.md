@@ -72,6 +72,13 @@ A saved configuration, a delivered model catalog and a verified connector are se
 | **Automatic · Browser-only** | NEKODEX sends and reads the browser conversation | No MCP connector required |
 | **Manual** | You paste the prepared prompt, select the model/connector and send | **Codex Zero Risk4** |
 
+The Codex picker shows named Web entries such as **GPT-5.6 Sol (Web)** and
+**GPT-6 Pro (Web)** when the account's controls allow them. Native entries keep
+the names supplied by Codex. Older fixed-mode Web IDs remain usable by saved
+tasks, but are no longer offered for new selection. Manual mode keeps a prepared
+prompt copyable until its connector starts, so a rejected ChatGPT Send can be
+retried with another available model.
+
 **Native6** combines synchronous tools with asynchronous start, poll, cancellation, acknowledgement and operation discovery. Existing Native4/5 configurations retain their identities; Native4 remains a compatibility option. To upgrade, create a **new connector**, not a renamed old one. The isolated Full DEV connector is **Codex Native6 DEV**. [Migration guide](docs/connector-identity-migration.md)
 
 <details>

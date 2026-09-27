@@ -469,6 +469,9 @@ class BrowserHost {
     this.embeddedLoginController = null;
     this.passkeyLoginOperation = null;
     this.sessionRefreshOperation = null;
+    this.authenticationRevision = 0;
+    this.authenticationRefresh = null;
+    this.authenticationRemovalPending = false;
     this.cloudflareChallengeRecovery = null;
     this.cloudflareChallengeRecoveryArmed = true;
     this.viewportCssKey = null;
@@ -571,6 +574,7 @@ class BrowserHost {
     this.bindShellZoomShortcuts(this.window.webContents);
     this.bindShellZoomShortcuts(this.view.webContents);
     this.bindChatGptBackendRecovery();
+    this.bindAuthenticationChanges();
     this.bindWorkspaceSessionRequestGuard();
     this.bindWebContents();
     this.initializationReady = this.initializePrimaryView().catch((error) => {
@@ -3175,8 +3179,98 @@ class BrowserHost {
     await browserSession.cookies.flushStore();
   }
 
+  bindAuthenticationChanges() {
+    this.authenticationCookieListener = (_event, cookie, cause, removed) => {
+      if (!cookie?.httpOnly || cookie.domain?.replace(/^\./, "") !== "chatgpt.com") return;
+      if (removed && (cause === "overwrite" || cause === "expired-overwrite")) return;
+      // A cookie is a reason to inspect the authenticated endpoint, never identity proof.
+      // The endpoint may renew a cookie; avoid recursively inspecting that renewal.
+      if (!removed && this.authenticationRefresh) return;
+      if (removed) this.authenticationRemovalPending = true;
+      this.authenticationRevision += 1;
+      if (this.authenticationRefresh) return;
+      void this.refreshAuthenticationFromSession();
+    };
+    this.view.webContents.session.cookies.on("changed", this.authenticationCookieListener);
+  }
+
+  async refreshAuthenticationFromSession() {
+    if (this.destroyed || browserInteractionModeFor(this) !== "automatic") return;
+    if (this.authenticationRefresh) return this.authenticationRefresh;
+    const operation = (async () => {
+      let revision;
+      do {
+        revision = this.authenticationRevision;
+        try {
+          const response = await this.view.webContents.session.fetch(`${CHATGPT_ORIGIN}/api/auth/session`, {
+            credentials: "include", redirect: "error", cache: "no-store",
+            signal: AbortSignal.timeout(5_000), headers: { accept: "application/json" },
+          });
+          if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+            throw new Error(`session HTTP ${response.status}`);
+          }
+          const payload = await readBoundedJson(response);
+          if (this.destroyed || browserInteractionModeFor(this) !== "automatic" || revision !== this.authenticationRevision) continue;
+          if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.error) {
+            throw new Error("session payload was unavailable");
+          }
+          if (payload.expires != null && (typeof payload.expires !== "string"
+            || !Number.isFinite(Date.parse(payload.expires)))) {
+            throw new Error("session expiry was invalid");
+          }
+          const identity = sessionIdentity(payload);
+          if (!identity) {
+            const user = payload.user;
+            const noUser = !user || typeof user !== "object" || Array.isArray(user)
+              || Object.keys(user).length === 0;
+            const expired = typeof payload.expires === "string" && Date.parse(payload.expires) <= Date.now();
+            if (!noUser && !expired) throw new Error("session principal was unavailable");
+            this.authenticationRemovalPending = false;
+            this.authGeneration += 1;
+            this.retireAuthenticatedIdentity();
+            this.setState({ authenticated: false, authenticationStatus: "signed-out",
+              authenticationCheckedAt: new Date().toISOString(), status: "signed-out", message: "Sign in to ChatGPT" });
+          } else if (this.authPrincipalFingerprint && this.authPrincipalFingerprint !== identity.principalFingerprint) {
+            this.authenticationRemovalPending = false;
+            this.authGeneration += 1;
+            this.retireAuthenticatedIdentity();
+            this.setState({ authenticated: false, authenticationStatus: "unknown",
+              authenticationCheckedAt: new Date().toISOString(), status: "idle",
+              message: "ChatGPT account changed; check this session", accountLabel: identity.label });
+          } else if (!this.state.authenticated && this.view.webContents.getURL().startsWith(CHATGPT_ORIGIN)) {
+            this.authenticationRemovalPending = false;
+            await this.probeAuthentication({ observationOnly: true });
+          } else {
+            this.authenticationRemovalPending = false;
+          }
+        } catch (error) {
+          if (revision === this.authenticationRevision && !this.destroyed) {
+            this.logger.warn("browser.session_refresh_failed", {
+              message: error instanceof Error ? error.message : String(error),
+            });
+            if (this.authenticationRemovalPending) {
+              this.setState({ authenticated: false, authenticationStatus: "unavailable",
+                authenticationCheckedAt: new Date().toISOString(),
+                ...(this.activeTraceId || this.manualOperation ? {} : {
+                  status: "error", message: "ChatGPT session verification unavailable; retry the check",
+                }) });
+            }
+          }
+        }
+      } while (!this.destroyed && revision !== this.authenticationRevision);
+    })();
+    const tracked = operation.finally(() => {
+      if (this.authenticationRefresh === tracked) this.authenticationRefresh = null;
+    });
+    this.authenticationRefresh = tracked;
+    return tracked;
+  }
+
   destroy() {
     this.destroyed = true;
+    if (this.authenticationCookieListener && !this.view.webContents.isDestroyed()) {
+      this.view.webContents.session.cookies.off("changed", this.authenticationCookieListener);
+    }
     if (this.artifactDownloads) artifactTransfersFor(this).dispose();
     this.readOnlyInspection?.controller.abort(new Error("Browser host closed"));
     this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));

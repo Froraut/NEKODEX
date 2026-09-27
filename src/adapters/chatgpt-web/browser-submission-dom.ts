@@ -110,7 +110,7 @@ export async function submissionDomState(
       // contents. Remounting an old answer must never acknowledge a new submission.
       turnIdentities.push(user, assistant);
       if (group.querySelector("[data-user-message-bubble]")) userIdentities.push(user);
-      if (group.querySelector('[data-conversation-role="assistant"]')) responseIdentities.push(assistant);
+      if (group.querySelector('[data-conversation-role="assistant"], [data-chatgpt-agent-turn-start]')) responseIdentities.push(assistant);
     });
     return {
       key: observerKey,

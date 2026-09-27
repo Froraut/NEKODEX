@@ -445,11 +445,11 @@ export function availableChatGptWebModelRoutes(
       ? [CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE, CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE]
       : [CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE];
   }
-  if (!capabilities.solAvailable) return [
-    ...CHATGPT_WEB_LUNA_MODEL_ROUTES,
-    ...CHATGPT_WEB_NAMED_MODEL_ROUTES.filter(route => route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL),
-  ];
-  return [...CHATGPT_WEB_MODEL_ROUTES, ...CHATGPT_WEB_NAMED_MODEL_ROUTES].filter(route => (
+  // Keep fixed-mode slugs resolvable for saved tasks, but advertise only named Web models.
+  if (!capabilities.solAvailable) return CHATGPT_WEB_NAMED_MODEL_ROUTES.filter(
+    route => route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL,
+  );
+  return CHATGPT_WEB_NAMED_MODEL_ROUTES.filter(route => (
     route.backendModel !== CHATGPT_WEB_LUNA_BACKEND_MODEL
     && (!route.requiresPro || capabilities.proAvailable)
     && (!route.requiresExtraHigh || chatGptExtraHighAvailable(capabilities))

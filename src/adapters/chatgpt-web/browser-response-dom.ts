@@ -86,11 +86,12 @@ export async function responseDomSnapshot(
     // hidden or has no measured width. Layout geometry is therefore not response visibility:
     // completed Markdown can have width=0 while remaining connected, rendered and readable.
     const isRendered = (candidate: HTMLElement): boolean => {
-      const style = getComputedStyle(candidate);
-      return candidate.isConnected
-        && style.display !== "none"
-        && style.visibility !== "hidden"
-        && style.opacity !== "0";
+      if (!candidate.isConnected) return false;
+      for (let node: HTMLElement | null = candidate; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (node.hidden || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+      }
+      return true;
     };
     // A stylesheet change or CSS animation can reveal an answer or completion control
     // without mutating this response subtree. Recheck the previous scan's dependencies.
@@ -118,27 +119,38 @@ export async function responseDomSnapshot(
     // The grouped renderer marks assistant Markdown explicitly and shares its turn with the
     // user's bubble, so keep only roots owned by the assistant's content unit.
     const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"], [data-markdown-text-style="assistant-message"]';
+    const activityContainers = [...root.querySelectorAll<HTMLElement>("[data-chatgpt-agent-turn-start]")]
+      .map(marker => marker.parentElement!);
     const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]
       .filter(candidate => {
         if (!root.hasAttribute("data-turn-key") && !candidate.hasAttribute("data-markdown-text-style")) return true;
         const unit = candidate.closest("[data-content-search-unit-key]");
-        return Boolean(unit) && Array.from(unit!.children)
-          .some(child => child.getAttribute("data-conversation-role") === "assistant");
+        return unit ? Array.from(unit.children)
+          .some(child => child.getAttribute("data-conversation-role") === "assistant")
+          : activityContainers.some(container => container.contains(candidate));
       })
       .filter(candidate => !candidate.parentElement?.closest(answerRootSelector))
       .filter(renderedInDom);
     const streamingStatusContainers = [...root.querySelectorAll<HTMLElement>("[data-streaming-response-status]")]
       .filter(renderedInDom);
+    const activitySummaryRoots = new Set(allMarkdownRoots.filter(candidate => (
+      candidate.getAttribute("data-markdown-text-tone") === "tertiary"
+      && !candidate.closest("[data-content-search-unit-key]")
+      && activityContainers.some(container => container.contains(candidate))
+    )));
     // CHATGPT_COMMENTARY_CLASSIFIER_BEGIN
     // Self-contained so the test suite can execute this exact source against a synthetic DOM;
     // it must not close over anything from the surrounding evaluate scope.
     const selectChatGptAnswerRoots = (
       markdownRoots: HTMLElement[],
       statusContainers: HTMLElement[],
+      activityContainers: HTMLElement[] = [],
     ): { commentaryRoots: HTMLElement[]; answerRoots: HTMLElement[] } => {
       const firstStatusContainer = statusContainers[0];
       const commentary = markdownRoots.filter(candidate => (
-        candidate.closest("[data-streaming-response-status]") !== null
+        (!candidate.closest("[data-content-search-unit-key]")
+          && activityContainers.some(container => container.contains(candidate)))
+        || candidate.closest("[data-streaming-response-status]") !== null
         // Chain-of-thought components carry reasoning, never the final answer, so containment is
         // a position-independent commentary signal. Position alone cannot separate "commentary
         // between two status containers" from "answer between two tool calls".
@@ -158,7 +170,11 @@ export async function responseDomSnapshot(
       };
     };
     // CHATGPT_COMMENTARY_CLASSIFIER_END
-    const classified = selectChatGptAnswerRoots(allMarkdownRoots, streamingStatusContainers);
+    const classified = selectChatGptAnswerRoots(
+      allMarkdownRoots.filter(candidate => !activitySummaryRoots.has(candidate)),
+      streamingStatusContainers,
+      activityContainers,
+    );
     const commentaryRoots = classified.commentaryRoots;
     const renderedRoots = classified.answerRoots;
     // CHATGPT_MARKDOWN_CONTENT_BEGIN
@@ -386,11 +402,15 @@ export async function responseDomSnapshot(
     const candidates = new Map<HTMLElement, ChatGptVisibleTraceBlock["kind"]>();
     renderedRoots.forEach(candidate => candidates.set(candidate, "answer"));
     commentaryRoots.forEach(candidate => candidates.set(candidate, "commentary"));
+    activitySummaryRoots.forEach(candidate => candidates.set(candidate, "status"));
     const overlapsRenderedAnswer = (candidate: HTMLElement): boolean => renderedRoots.some(rendered => (
       candidate.contains(rendered) || rendered.contains(candidate)
     ));
     const overlapsCommentary = (candidate: HTMLElement): boolean => commentaryRoots.some(commentary => (
       candidate.contains(commentary) || commentary.contains(candidate)
+    ));
+    const overlapsActivitySummary = (candidate: HTMLElement): boolean => [...activitySummaryRoots].some(summary => (
+      candidate.contains(summary) || summary.contains(candidate)
     ));
     const statusSemantic = (candidate: HTMLElement): HTMLElement => {
       // Current cot-v5 action rows expose the semantic text on their item anchor while the
@@ -444,6 +464,7 @@ export async function responseDomSnapshot(
       // side to the trace stream duplicates or truncates the answer under Codex's `Working` UI.
       if (!overlapsRenderedAnswer(semantic)
         && !overlapsCommentary(semantic)
+        && !overlapsActivitySummary(semantic)
         && !candidates.has(semantic)) {
         candidates.set(semantic, "status");
       }
