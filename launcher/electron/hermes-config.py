@@ -101,7 +101,7 @@ def install(options):
         "api": endpoint,
         "api_key": token,
         "transport": runtime,
-        "default_model": "chatgpt-web/high" if "chatgpt-web/high" in names else names[0],
+        "default_model": "chatgpt-web/gpt-5.6-sol" if "chatgpt-web/gpt-5.6-sol" in names else names[0],
         "discover_models": True,
         "models": {model["id"]: {"context_length": model["context_length"], "vision": True,
                           "tool_calling": True, "openai_native_compaction": False}

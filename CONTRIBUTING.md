@@ -2,7 +2,7 @@
 
 This fork of Codex Web GPT is developed and maintained by
 [FroRaut](https://github.com/Froraut). Submit issues and pull requests to
-[Froraut/codex-chatgpt-web](https://github.com/Froraut/codex-chatgpt-web).
+[Froraut/NEKODEX](https://github.com/Froraut/NEKODEX).
 Original project attribution and the MIT license are preserved in the repository.
 
 External contributions are welcome, but this is an intentionally maintainer-led project. Pull

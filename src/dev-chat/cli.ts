@@ -39,19 +39,19 @@ import { runProModelVersionConfigCommand } from "../pro-model-config";
 import { takeFlag, takeOption } from "../lib/cli-args";
 import { isJsonRecord } from "../lib/json-record";
 
-const DEV_HELP = `Codex Web GPT DEV chat
+const DEV_HELP = `NEKODEX DEV chat
 
 Usage:
   codex-chatgpt-web dev launcher
   codex-chatgpt-web dev status [--json]
-  codex-chatgpt-web dev config pro-model-version <follow|5.6|5.5|6> --launcher-control
+  codex-chatgpt-web dev config pro-model-version <follow|5.6|6> --launcher-control
   codex-chatgpt-web dev setup --browser-only [--automatic-browser-interaction] [--saved-chats|--temporary-chats]
   codex-chatgpt-web dev setup --full --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction] [--saved-chats|--temporary-chats]
   codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
   codex-chatgpt-web dev list
 
 Repository shortcut:
-  bun run dev:launcher
+  bun run launcher:dev
   bun run dev:chat NAME "message"
   bun run dev:chat NAME
 
@@ -64,13 +64,13 @@ Interactive commands:
   /fill TOKENS         Append deterministic inert context without opening ChatGPT
   /send-fill TOKENS    Send deterministic inert text through the live browser now
   /compact             Run the real browser compaction path now
-  /model MODEL         Select zero-risk, luna, think, light, medium, high, extra-high, pro, or a named GPT route
+  /model MODEL         Select zero-risk or a named GPT Web route
   /reset yes           Clear this named DEV chat and create a new thread identity
   /help                Show this command list
   /exit                Exit
 
 Experimental settings:
-  Bigger Context       Enable in Settings; adapts context across 1, 2, or 3 messages
+  Bigger Context       Enable in Settings; adapts context across 1, 2, or 6 messages
   Async tool operations Automatic Full mode; new setups use Codex Native6 DEV
 `;
 
@@ -241,11 +241,11 @@ function printHeader(
   biggerContext: boolean,
   useSavedChats: boolean,
 ): void {
-  stdout.write(`${bold("Codex Web GPT DEV")} · ${created ? "created" : "continued"} chat ${cyan(state.name)}\n`);
+  stdout.write(`${bold("NEKODEX DEV")} · ${created ? "created" : "continued"} chat ${cyan(state.name)}\n`);
   stdout.write(`model ${state.model} · ${useSavedChats ? "saved ChatGPT chats" : "temporary ChatGPT chats"} · ${mode === "full" ? "tools explicitly simulated" : "browser-only, no outer tools"} · live launcher browser\n`);
   stdout.write(`context ${statusLine(status)}\n`);
   if (biggerContext) {
-    stdout.write(`${yellow("Bigger Context experimental")} · adaptive 1/2/3-message context · same-agent compaction handoff · elevated rate-limit/cooldown risk\n`);
+    stdout.write(`${yellow("Bigger Context experimental")} · adaptive 1/2/6-message context · same-agent compaction handoff · elevated rate-limit/cooldown risk\n`);
   }
   stdout.write(`${dim("Codex route is untouched. No Responses port is bound, replaced, stopped, or restarted.")}\n`);
 }
@@ -451,7 +451,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
       stdout.write(`launcher: ${launcher.running ? `running (pid ${launcher.pid})` : `not ready${launcher.error ? ` · ${launcher.error}` : ""}`}\n`);
       stdout.write(`config: ${config.configured ? `${config.mode} (${config.purpose})` : `not ready${config.error ? ` · ${config.error}` : ""}`}\n`);
       stdout.write(`MCP runtime: ${mcpRuntime.required ? (mcpRuntime.ready ? "ready" : `not ready${mcpRuntime.detail ? ` · ${mcpRuntime.detail}` : ""}`) : "not required"}\n`);
-      stdout.write(`Bigger Context: ${features.error ? `unavailable · ${features.error}` : features.biggerContext ? "enabled (experimental, adaptive 1/2/3 messages; same-agent compaction handoff)" : "disabled"}\n`);
+      stdout.write(`Bigger Context: ${features.error ? `unavailable · ${features.error}` : features.biggerContext ? "enabled (experimental, adaptive 1/2/6 messages; same-agent compaction handoff)" : "disabled"}\n`);
       stdout.write("Codex route: isolated and unused\nResponses listener: not started\n");
     }
     return;

@@ -122,6 +122,10 @@ context and compaction budgets are equal; Instant and Pro retain separate rows.
 The validated family travels with the turn and conversation identity, and the
 browser proves both the selected family and effort before sending. Native model
 rows and account entitlements are not inferred from these browser routes.
+Hermes' direct provider advertises the same named Web routes and validates
+requests against the shared automatic route identities. Its launcher setup
+defaults new Hermes sessions to GPT-5.6 Sol when available; saved sessions may
+still present a legacy fixed-mode ID, which retains its original routing.
 The Electron host treats ChatGPT cookie changes as triggers for a bounded session
 endpoint check, never as proof of sign-in. It retires an identity only after a
 valid session response establishes sign-out or a different principal; the page

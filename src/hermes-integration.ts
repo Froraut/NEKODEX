@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, type AppConfig } from "./config";
-import { availableChatGptWebModelRoutes, CHATGPT_WEB_BACKEND_MODEL, resolveChatGptWebContextLimits, resolveChatGptWebMessageTokenBudget } from "./chatgpt-web-models";
+import { availableChatGptWebModelRoutes, CHATGPT_WEB_BACKEND_MODEL, CHATGPT_WEB_MODEL_ROUTES, CHATGPT_WEB_LUNA_MODEL_ROUTES, CHATGPT_WEB_NAMED_MODEL_ROUTES, resolveChatGptWebContextLimits, resolveChatGptWebMessageTokenBudget } from "./chatgpt-web-models";
 import { readRequestBodyBytes } from "./http-body";
 import { formatErrorResponse } from "./bridge";
 import type { CodexParsedRequest } from "./types";
@@ -12,6 +12,11 @@ const object = (v: unknown): v is Obj => v !== null && typeof v === "object" && 
 const digest = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 export type HermesContext = NonNullable<CodexParsedRequest["_hermesContext"]>;
 type Session = { turn: string; active: boolean; touched: number; pending: Map<string, string>; issued: Set<string>; lastRequest?: string };
+const HERMES_WEB_MODEL_IDS = new Set([
+  ...CHATGPT_WEB_MODEL_ROUTES,
+  ...CHATGPT_WEB_LUNA_MODEL_ROUTES,
+  ...CHATGPT_WEB_NAMED_MODEL_ROUTES,
+].map(route => route.slug));
 
 export function hermesModels(config: AppConfig) {
   // Hermes refuses windows below 64k. Use the real ordinary-message budget, not Bigger Context
@@ -53,7 +58,7 @@ export class HermesIntegration {
   prepare(raw: unknown): { body: Obj; context: HermesContext; complete: (value: Obj) => void; release: () => void } {
     if (!object(raw) || typeof raw.prompt_cache_key !== "string" || !raw.prompt_cache_key.trim()
       || raw.prompt_cache_key.length > 256) throw new Error("Hermes must supply its session-scoped prompt_cache_key. Update Hermes and start a new session.");
-    if (typeof raw.model !== "string" || !/^chatgpt-web\/(light|medium|high|extra-high|pro|luna|think)$/.test(raw.model)) {
+    if (typeof raw.model !== "string" || !HERMES_WEB_MODEL_IDS.has(raw.model)) {
       throw new Error("Choose a ChatGPT Web model from the Hermes provider; native/API models are not forwarded.");
     }
     if (raw.previous_response_id || raw.context_management || raw.client_metadata) {
