@@ -1,5 +1,6 @@
 import { useFeatureAction } from "./useFeatureAction";
 import { useState } from "react";
+import { Icon } from "./icons";
 import type { BrowserWorkspaceDirectorySnapshot, BrowserWorkspaceItem, Language } from "./types";
 import { browserWindowCopy } from "./browser-window-copy";
 import { stripIpcErrorPrefix } from "./ipc-error";
@@ -61,7 +62,14 @@ export function BrowserWorkspaceManager({
   const restoreBlocked = busy || snapshot.total >= snapshot.maximum || Boolean(account.sessionMutation)
     || (saved > 0 && !account.items.some(item => item.state === "saved" && item.restorable));
 
-  return <details className="browser-workspace-manager">
+  const newWindowBlocked = busy || Boolean(account.sessionMutation) || snapshot.total >= snapshot.maximum;
+  const openNewWindow = () => void run("new-window", () => onOpen(account.accountId, false));
+  return <>
+  <button type="button" className="browser-workspace-quick-new" disabled={newWindowBlocked}
+    title={copy.newWindow} aria-label={copy.newWindow} onClick={openNewWindow}>
+    <Icon name="plus" /><span>{copy.newWindowShort}</span>
+  </button>
+  <details className="browser-workspace-manager">
     <summary>
       <span>{copy.windows}</span>{" "}
       <span className="browser-workspace-count">{copy.openCount(open)}{saved > 0 ? ` · ${copy.savedCount(saved)}` : ""}</span>
@@ -79,8 +87,8 @@ export function BrowserWorkspaceManager({
       {!snapshot.nativeTabs ? <p className="browser-workspace-platform-note">{copy.tabsMacOnly}</p> : null}
 
       <div className="browser-workspace-manager-actions">
-        <button type="button" className="button-secondary" disabled={busy || Boolean(account.sessionMutation) || snapshot.total >= snapshot.maximum}
-          onClick={() => void run("new-window", () => onOpen(account.accountId, false))}>{copy.newWindow}</button>
+        <button type="button" className="button-secondary" disabled={newWindowBlocked}
+          onClick={openNewWindow}>{copy.newWindow}</button>
         {snapshot.nativeTabs ? <button type="button" className="button-secondary" title={open === 0 ? copy.openFirst : undefined}
           disabled={busy || open === 0 || Boolean(account.sessionMutation) || snapshot.total >= snapshot.maximum}
           onClick={() => void run("new-tab", () => onOpen(account.accountId, true))}>{copy.newTab}</button> : null}
@@ -116,5 +124,6 @@ export function BrowserWorkspaceManager({
       {snapshot.nativeTabs && open > 0 ? <p className="browser-workspace-platform-note">{copy.hint}</p> : null}
       {account.items.some(item => item.temporary) ? <p className="browser-workspace-temporary-note">{copy.temporary}</p> : null}
     </div>
-  </details>;
+  </details>
+  </>;
 }

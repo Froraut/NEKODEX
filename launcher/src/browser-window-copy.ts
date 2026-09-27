@@ -1,7 +1,7 @@
 import type { Language } from "./types";
 
 export type BrowserWindowCopy = {
-  newWindow: string; newTab: string; hint: string; windows: string; account: string;
+  newWindow: string; newWindowShort: string; newTab: string; hint: string; windows: string; account: string;
   open: string; close: string; restore: string; saved: string; current: string;
   empty: string; temporary: string; tabsMacOnly: string; saveFailed: string;
   identityChanging: string; taskTabs: string; scope: string; openFirst: string; forget: string;
@@ -23,7 +23,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     openCount: (count: number) => `${count} open`,
     savedCount: (count: number) => `${count} saved`,
     totalCapacity: (count: number, maximum: number) => `Across all accounts: ${count} / ${maximum} windows and window tabs`,
-    newWindow: "Open separate window", newTab: "Add tab to window",
+    newWindow: "Open separate window", newWindowShort: "New window", newTab: "Add tab to window",
     hint: "In separate windows: ⌘T adds a tab · Control-Tab switches tabs",
     windows: "Separate browser windows", account: "Account", open: "Open", close: "Close",
     restore: "Restore saved workspaces", saved: "Saved for restart", current: "Open now",
@@ -45,7 +45,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     openCount: (count: number) => `Открыто: ${count}`,
     savedCount: (count: number) => `Сохранено: ${count}`,
     totalCapacity: (count: number, maximum: number) => `Во всех аккаунтах: ${count} / ${maximum} окон и вкладок в окнах`,
-    newWindow: "Открыть отдельное окно", newTab: "Добавить вкладку в окно",
+    newWindow: "Открыть отдельное окно", newWindowShort: "Новое окно", newTab: "Добавить вкладку в окно",
     hint: "В отдельных окнах: ⌘T добавляет вкладку · Control-Tab переключает вкладки",
     windows: "Отдельные окна браузера", account: "Аккаунт", open: "Открыть", close: "Закрыть",
     restore: "Восстановить сохранённые окна", saved: "Сохранено для перезапуска", current: "Открыто сейчас",
@@ -67,7 +67,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     openCount: (count: number) => `${count} 个已打开`,
     savedCount: (count: number) => `${count} 个已保存`,
     totalCapacity: (count: number, maximum: number) => `所有账户：${count} / ${maximum} 个窗口和窗口标签页`,
-    newWindow: "打开独立窗口", newTab: "在窗口中添加标签页",
+    newWindow: "打开独立窗口", newWindowShort: "新窗口", newTab: "在窗口中添加标签页",
     hint: "在独立窗口中：⌘T 添加标签页 · Control-Tab 切换标签页",
     windows: "独立浏览器窗口", account: "账户", open: "打开", close: "关闭",
     restore: "恢复已保存的工作区", saved: "已保存以供重启后恢复", current: "当前已打开",
@@ -89,7 +89,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     openCount: (count: number) => `${count} 個已開啟`,
     savedCount: (count: number) => `${count} 個已儲存`,
     totalCapacity: (count: number, maximum: number) => `所有帳戶：${count} / ${maximum} 個視窗與視窗分頁`,
-    newWindow: "開啟獨立視窗", newTab: "在視窗中新增分頁",
+    newWindow: "開啟獨立視窗", newWindowShort: "新視窗", newTab: "在視窗中新增分頁",
     hint: "在獨立視窗中：⌘T 新增分頁 · Control-Tab 切換分頁",
     windows: "獨立瀏覽器視窗", account: "帳戶", open: "開啟", close: "關閉",
     restore: "還原已儲存的工作區", saved: "已儲存供重新啟動後還原", current: "目前已開啟",
@@ -111,7 +111,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     openCount: (count: number) => `${count} 件を表示中`,
     savedCount: (count: number) => `${count} 件を保存済み`,
     totalCapacity: (count: number, maximum: number) => `全アカウント：ウインドウとタブ ${count} / ${maximum} 件`,
-    newWindow: "別ウインドウを開く", newTab: "ウインドウにタブを追加",
+    newWindow: "別ウインドウを開く", newWindowShort: "新規ウインドウ", newTab: "ウインドウにタブを追加",
     hint: "別ウインドウ内：⌘T でタブを追加 · Control-Tab で切り替え",
     windows: "独立したブラウザーウインドウ", account: "アカウント", open: "開く", close: "閉じる",
     restore: "保存済みワークスペースを復元", saved: "再起動後のために保存済み", current: "現在開いています",
@@ -133,7 +133,7 @@ const copy: Record<Language, BrowserWindowCopy> = {
     openCount: (count: number) => `열린 창 ${count}개`,
     savedCount: (count: number) => `저장된 창 ${count}개`,
     totalCapacity: (count: number, maximum: number) => `모든 계정: 창 및 창 탭 ${count} / ${maximum}개`,
-    newWindow: "별도 창 열기", newTab: "창에 탭 추가",
+    newWindow: "별도 창 열기", newWindowShort: "새 창", newTab: "창에 탭 추가",
     hint: "별도 창에서: ⌘T 탭 추가 · Control-Tab 탭 전환",
     windows: "별도 브라우저 창", account: "계정", open: "열기", close: "닫기",
     restore: "저장된 작업 공간 복원", saved: "재시작 후 복원하도록 저장됨", current: "현재 열림",
