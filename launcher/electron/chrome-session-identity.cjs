@@ -5,6 +5,7 @@ const { validatedChromeUserAgent } = require('./browser-user-agent.cjs');
 const FINGERPRINT = /^[a-f0-9]{64}$/;
 const SESSION_ENDPOINT = 'https://chatgpt.com/api/auth/session';
 const VERIFIED_CAPTURE = Symbol('nekodex-verified-capture');
+const DEFERRED_CAPTURE = Symbol('nekodex-deferred-capture');
 
 function safeLabel(value) {
   if (typeof value !== 'string') return null;
@@ -57,7 +58,12 @@ async function verifyCapturedAccount(sessionApi, transfer, { expectedPrincipalFi
       headers: { accept: 'application/json' },
     });
     if (!response.ok || !response.headers.get('content-type')?.toLowerCase().includes('application/json') || !response.body) {
-      throw Object.assign(new Error('Session verification unavailable'), { code: 'session-verification-failed', httpStatus: response.status });
+      // This request runs outside any page and carries no Cloudflare clearance, so ChatGPT
+      // often answers it with a challenge that only a visible ChatGPT page can complete.
+      const cloudflareChallenge = response.status === 403
+        && /challenge/i.test(response.headers.get('cf-mitigated') ?? '');
+      throw Object.assign(new Error('Session verification unavailable'), {
+        code: 'session-verification-failed', httpStatus: response.status, cloudflareChallenge });
     }
     const reader = response.body.getReader();
     let size = 0;
@@ -127,8 +133,61 @@ function verifiedCaptureTransfer(transfer, identity, { commit = () => {}, rollba
   return verified;
 }
 
+const isCloudflareChallengedVerification = error => error?.code === 'session-verification-failed'
+  && error.cloudflareChallenge === true;
+
+/**
+ * A capture ChatGPT would not identify outside a page. The launcher installs it behind its
+ * rollback snapshot, verifies the identity on the visible ChatGPT surface where the provider
+ * check can be completed, and adopts that identity before any confirmation or commit.
+ * `resolveIdentityIntent` runs the producer's own confirmation for the adopted identity.
+ */
+function deferredCaptureTransfer(transfer, { resolveIdentityIntent = async () => null, commit = () => {},
+  rollback = () => {} } = {}) {
+  if (!transfer || typeof transfer !== 'object' || typeof transfer.cleanup !== 'function'
+    || typeof resolveIdentityIntent !== 'function' || typeof commit !== 'function' || typeof rollback !== 'function') {
+    throw new Error('Deferred ChatGPT capture transfer is invalid');
+  }
+  let adopted = null;
+  const deferred = {
+    ...transfer,
+    verifiedIdentity: null,
+    identityIntent: null,
+    async adoptIdentity(identity) {
+      if (adopted) throw new Error('Deferred ChatGPT capture identity was already adopted');
+      if (!identity || !FINGERPRINT.test(identity.principalFingerprint)) {
+        throw new Error('Installed ChatGPT identity is invalid');
+      }
+      const intent = await resolveIdentityIntent(identity);
+      if (intent !== null && (!intent || typeof intent !== 'object'
+        || (intent.knownPrincipalFingerprint !== null && !FINGERPRINT.test(intent.knownPrincipalFingerprint))
+        || typeof intent.actualIdentityConfirmed !== 'boolean')) {
+        throw new Error('Verified ChatGPT identity intent is invalid');
+      }
+      adopted = Object.freeze({ principalFingerprint: identity.principalFingerprint, label: safeLabel(identity.label) });
+      return intent && Object.freeze({ knownPrincipalFingerprint: intent.knownPrincipalFingerprint,
+        actualIdentityConfirmed: intent.actualIdentityConfirmed });
+    },
+    commit(receipt) {
+      if (!adopted || !receipt || receipt.authenticated !== true
+        || receipt.principalFingerprint !== adopted.principalFingerprint) {
+        throw new Error('Installed ChatGPT identity does not match the verified capture');
+      }
+      return commit(receipt, adopted);
+    },
+    rollback,
+  };
+  Object.defineProperty(deferred, DEFERRED_CAPTURE, { value: true, enumerable: false, configurable: false });
+  return deferred;
+}
+
+const isDeferredCaptureTransfer = transfer => Boolean(transfer && transfer[DEFERRED_CAPTURE] === true
+  && typeof transfer.adoptIdentity === 'function' && typeof transfer.commit === 'function'
+  && typeof transfer.rollback === 'function');
+
 const isVerifiedCaptureTransfer = transfer => Boolean(transfer && transfer[VERIFIED_CAPTURE] === true
   && transfer.verifiedIdentity && FINGERPRINT.test(transfer.verifiedIdentity.principalFingerprint)
   && typeof transfer.commit === 'function' && typeof transfer.rollback === 'function');
 
-module.exports = { isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount };
+module.exports = { deferredCaptureTransfer, isCloudflareChallengedVerification, isDeferredCaptureTransfer,
+  isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount };
