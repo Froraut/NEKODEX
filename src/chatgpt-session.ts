@@ -563,17 +563,38 @@ async function expandChatGptModelPicker(activation: ChatGptEffortActivation, sig
   }
 }
 
+/**
+ * ChatGPT can re-render the picker while a freshly loaded page finishes its model bootstrap, which
+ * detaches the open menu under the click. Reopen the menu and retry instead of failing the check.
+ */
+async function expandChatGptModelPickerWithReopen(
+  page: Page, control: Locator, activation: ChatGptEffortActivation, signal?: AbortSignal,
+): Promise<ChatGptEffortActivation> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await expandChatGptModelPicker(activation, signal);
+      return activation;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (attempt >= 2) throw error;
+      await closeOwnedChatGptEffortMenu(page, control, 5_000, signal).catch(() => {});
+      await waitForChatGptProbeSettle(750, signal);
+      activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
+    }
+  }
+}
+
 /** Inspect lazy model rows, then return to the effort view without selecting a model. */
 export async function assertSelectedChatGptModelFamily(
   page: Page, control: Locator, activation: ChatGptEffortActivation,
   version: ChatGptWebProModelVersion, signal?: AbortSignal,
 ): Promise<ChatGptEffortActivation> {
-  const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(version), exact: true, includeHidden: true });
-  if (await option.count() === 1 && await option.getAttribute("aria-checked") === "true"
+  const option = () => activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(version), exact: true, includeHidden: true });
+  if (await option().count() === 1 && await option().getAttribute("aria-checked") === "true"
     && await activation.sliderContainer.isVisible().catch(() => false)) return activation;
-  await expandChatGptModelPicker(activation, signal);
-  await option.waitFor({ state: "attached", timeout: 3_000, signal });
-  if (await option.count() !== 1 || await option.getAttribute("aria-checked") !== "true") {
+  activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
+  await option().waitFor({ state: "attached", timeout: 3_000, signal });
+  if (await option().count() !== 1 || await option().getAttribute("aria-checked") !== "true") {
     throw new Error(`ChatGPT did not retain model family ${version}`);
   }
   await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
@@ -594,7 +615,7 @@ export async function selectChatGptModelFamily(
     await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
     return activateChatGptEffortMenu(page, control, { abortSignal: signal });
   }
-  await expandChatGptModelPicker(activation, signal);
+  activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
   await option().waitFor({ state: "attached", timeout: 3_000, signal });
   if (await option().count() !== 1 || await option().getAttribute("aria-disabled") === "true") {
     throw new Error(`ChatGPT model family ${version} is unavailable`);
@@ -616,7 +637,7 @@ async function detectChatGptModelCapabilities(
   let primaryError: unknown;
   let capabilities: ChatGptWebModelCapabilities | undefined;
   try {
-    await expandChatGptModelPicker(activation, signal);
+    activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
     const present: ChatGptWebProModelVersion[] = [];
     for (const family of ["5.5", "5.6", "6"] as const) {
       const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(family), exact: true, includeHidden: true });
@@ -636,7 +657,7 @@ async function detectChatGptModelCapabilities(
       for (const family of present) {
         signal?.throwIfAborted();
         activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
-        await expandChatGptModelPicker(activation, signal);
+        activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
         const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(family), exact: true, includeHidden: true });
         await option.waitFor({ state: "attached", timeout: 3_000, signal });
         if (await option.getAttribute("aria-disabled") === "true") { capabilities.families[family] = []; continue; }
