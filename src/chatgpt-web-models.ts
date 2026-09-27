@@ -241,6 +241,8 @@ export interface ChatGptWebAutomaticModelRoute extends ChatGptWebModelRouteBase 
   adapterEffort: ChatGptWebAdapterEffort;
   /** Explicit browser family; independent of the shared transport budget. */
   modelFamily?: ChatGptWebModelFamily;
+  /** New families are advertised only after that account's picker confirms them. */
+  requiresModelObservation?: boolean;
 }
 
 export interface ChatGptWebZeroRiskModelRoute extends ChatGptWebModelRouteBase {
@@ -252,7 +254,38 @@ export interface ChatGptWebZeroRiskModelRoute extends ChatGptWebModelRouteBase {
 
 export type ChatGptWebModelRoute = ChatGptWebAutomaticModelRoute | ChatGptWebZeroRiskModelRoute;
 
+/** Observed selectability, not a subscription or a promise of remaining quota. */
+export interface ChatGptWebModelCapabilities {
+  observedAt: number;
+  families: Partial<Record<ChatGptWebProModelVersion, readonly ChatGptWebAdapterEffort[]>>;
+}
+
+export function parseChatGptWebModelCapabilities(value: unknown): ChatGptWebModelCapabilities | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid ChatGPT model capabilities");
+  const candidate = value as ChatGptWebModelCapabilities;
+  if (!Number.isSafeInteger(candidate.observedAt) || candidate.observedAt <= 0
+    || !candidate.families || typeof candidate.families !== "object" || Array.isArray(candidate.families)) {
+    throw new Error("Invalid ChatGPT model capability observation");
+  }
+  const families: ChatGptWebModelCapabilities["families"] = {};
+  for (const [family, efforts] of Object.entries(candidate.families)) {
+    if (!["5.5", "5.6", "6"].includes(family) || !Array.isArray(efforts)
+      || efforts.some(effort => !["low", "medium", "high", "xhigh", "max"].includes(effort))
+      || new Set(efforts).size !== efforts.length) throw new Error("Invalid ChatGPT model effort capabilities");
+    families[family as ChatGptWebProModelVersion] = [...efforts];
+  }
+  return { observedAt: candidate.observedAt, families };
+}
+
+export function chatGptModelOptionName(version: ChatGptWebProModelVersion): RegExp {
+  if (version === "5.6") return /^GPT[-\s]?5\.6\s+Sol(?:\s+Pro)?$/i;
+  if (version === "5.5") return /^GPT[-\s]?5\.5(?:\s+Pro)?$/i;
+  return /^(?:Latest|Le plus récent|最新|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i;
+}
+
 export interface ChatGptWebAccountCapabilities {
+  modelCapabilities?: ChatGptWebModelCapabilities;
   solAvailable: boolean;
   extraHighAvailable?: boolean;
   proAvailable: boolean;
@@ -380,7 +413,7 @@ export const CHATGPT_WEB_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] 
   },
 ];
 
-/** Add explicit upstream identities without hiding the user's existing fixed-mode picker rows. */
+/** Advertise explicit model identities while keeping saved fixed-mode tasks resolvable. */
 export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
     slug: "chatgpt-web/gpt-5.6-sol-instant",
@@ -402,6 +435,20 @@ export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRo
     description: "Pinned GPT-5.6 Pro through ChatGPT. Max selects Pro.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
     codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
+  },
+  {
+    slug: "chatgpt-web/gpt-6-astra-instant",
+    displayName: "GPT-6 Astra Instant (Web)",
+    description: "The Latest ChatGPT family in Instant mode, available after a verified model observation.",
+    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6", requiresModelObservation: true,
+    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"], requiresPro: false,
+  },
+  {
+    slug: "chatgpt-web/gpt-6-astra",
+    displayName: "GPT-6 Astra (Web)",
+    description: "The Latest ChatGPT family with its observed Medium, High, or Extra High reasoning choices.",
+    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6", requiresModelObservation: true,
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"], requiresPro: false,
   },
   {
     slug: "chatgpt-web/gpt-6-pro",
@@ -451,8 +498,11 @@ export function availableChatGptWebModelRoutes(
   );
   return CHATGPT_WEB_NAMED_MODEL_ROUTES.filter(route => (
     route.backendModel !== CHATGPT_WEB_LUNA_BACKEND_MODEL
-    && (!route.requiresPro || capabilities.proAvailable)
-    && (!route.requiresExtraHigh || chatGptExtraHighAvailable(capabilities))
+    && (!route.requiresModelObservation || capabilities.modelCapabilities)
+    && (route.modelFamily && capabilities.modelCapabilities
+      ? chatGptWebRouteEfforts(route, capabilities).length > 0
+      : (!route.requiresPro || capabilities.proAvailable)
+        && (!route.requiresExtraHigh || chatGptExtraHighAvailable(capabilities)))
   ));
 }
 
@@ -487,10 +537,17 @@ export function requireChatGptWebModelRoute(
   if (!capabilities.solAvailable) {
     throw new Error(`${route.displayName} is not available for this Luna-only account`);
   }
-  if (route.requiresPro && !capabilities.proAvailable) {
+  if (route.requiresModelObservation && !capabilities.modelCapabilities) {
+    throw new Error(`${route.displayName} needs a verified model observation; run Repair to refresh capabilities`);
+  }
+  if (route.modelFamily && capabilities.modelCapabilities
+    && chatGptWebRouteEfforts(route, capabilities).length === 0) {
+    throw new Error(`${route.displayName} is currently unavailable in this account's model picker; run Repair to refresh capabilities`);
+  }
+  if (!(route.modelFamily && capabilities.modelCapabilities) && route.requiresPro && !capabilities.proAvailable) {
     throw new Error(`${route.displayName} is not available for this account`);
   }
-  if (route.requiresExtraHigh && !chatGptExtraHighAvailable(capabilities)) {
+  if (!(route.modelFamily && capabilities.modelCapabilities) && route.requiresExtraHigh && !chatGptExtraHighAvailable(capabilities)) {
     throw new Error(`${route.displayName} is not available for this account`);
   }
   return resolveRouteEffort(route, capabilities, reasoning);
@@ -500,8 +557,12 @@ export function chatGptWebRouteEfforts(
   route: ChatGptWebModelRoute,
   capabilities: ChatGptWebAccountCapabilities,
 ): readonly ChatGptWebCodexEffort[] {
+  const observed = route.interactionMode === "automatic" && route.modelFamily && capabilities.modelCapabilities
+    ? capabilities.modelCapabilities.families[route.modelFamily] ?? [] : undefined;
   return (route.supportedCodexEfforts ?? [route.codexEffort])
-    .filter(effort => effort !== "xhigh" || chatGptExtraHighAvailable(capabilities));
+    .filter(effort => observed
+      ? observed.includes(effort === "ultra" ? "max" : effort as ChatGptWebAdapterEffort)
+      : effort !== "xhigh" || chatGptExtraHighAvailable(capabilities));
 }
 
 function resolveRouteEffort(
@@ -510,7 +571,8 @@ function resolveRouteEffort(
   reasoning?: string,
 ): ChatGptWebModelRoute {
   if (route.interactionMode !== "automatic" || !route.supportedCodexEfforts) return route;
-  const effort = reasoning ?? route.codexEffort;
+  const available = chatGptWebRouteEfforts(route, capabilities);
+  const effort = reasoning ?? (available.includes(route.codexEffort) ? route.codexEffort : available[0]);
   if (!chatGptWebRouteEfforts(route, capabilities).includes(effort as ChatGptWebCodexEffort)) {
     throw new Error(`${route.displayName} does not support effort ${JSON.stringify(effort)} for this account`);
   }

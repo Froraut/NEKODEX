@@ -25,7 +25,10 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
   const seconds = Math.max(0, Math.ceil((Date.parse(progress.deadlineAt) - now) / 1000));
   const remaining = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   const terminal = !progress.active && progress.phase !== "completed";
-  const title = progress.phase === "waiting" ? copy.passkeyWindowTitle
+  const chromeWaiting = progress.active && ["discovering", "waiting-for-chrome"].includes(progress.chromePhase ?? "");
+  const title = chromeWaiting ? copy.existingChromeWaiting
+    : progress.active && progress.chromePhase === "reading-session" ? copy.existingChromeReading
+    : progress.phase === "waiting" ? copy.passkeyWindowTitle
     : progress.phase === "starting" ? copy.passkeyStarting
     : progress.phase === "verifying" ? copy.passkeyVerifying
     : progress.phase === "cancelling" ? copy.passkeyCancelling
@@ -44,12 +47,13 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
   return <div className="browser-login-guide">
     <div role="status" aria-live="polite">
       <strong>{title}</strong>
-      <p>{terminal ? copy.passkeyRecoveryBody : ["starting", "waiting"].includes(progress.phase) ? copy.passkeyContinueBody : copy.passkeyImportingBody}</p>
+      <p>{chromeWaiting ? copy.existingChromeSteps : terminal ? copy.passkeyRecoveryBody : ["starting", "waiting"].includes(progress.phase) ? copy.passkeyContinueBody : copy.passkeyImportingBody}</p>
     </div>
-    {progress.active && ["starting", "waiting"].includes(progress.phase) ? (
+    {progress.active && (chromeWaiting || ["starting", "waiting"].includes(progress.phase)) ? (
       <p>{copy.passkeyTimeRemaining.replace("{time}", remaining)}</p>
     ) : null}
-    {progress.error ? <p role="alert">{passkeyFailureText(progress.error, copy, language)}</p> : null}
+    {progress.error && passkeyFailureText(progress.error, copy, language) !== title
+      ? <p role="alert">{passkeyFailureText(progress.error, copy, language)}</p> : null}
     {progress.revealError ? <p role="alert">{passkeyFailureText(progress.revealError, copy, language)}</p> : null}
     <div className="browser-empty-actions">
       {progress.canImport ? <button className="button-primary" type="button" disabled={pending || continuePending || transitionBusy}

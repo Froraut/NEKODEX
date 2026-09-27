@@ -100,6 +100,13 @@ separate facts.
 
 ## Browser presentation
 
+`main.cjs` owns shell recovery. After a renderer process failure it creates one
+replacement trusted shell and asks the existing account pool to reparent its
+WebContentsViews. Browser processes, sessions and turn leases retain their
+owners. A failed replacement rolls back to the previous window; an explicit
+restart uses the supervisor's idle shutdown instead of requiring background
+Native route readiness.
+
 `BrowserSurface` owns the selected-account control and changes it through the account
 pool's `selectAccount` operation. `BrowserWorkspaceManager` consumes that selection;
 it has no independent account filter. Its disclosure manages separate user windows
@@ -114,6 +121,43 @@ retire after completion. Expanding the window directory changes the browser slot
 layout; the existing bounds observer remains responsible for native view placement.
 
 ## State and persistence
+
+`modelCapabilities` stores timestamped, family-specific selectable efforts through
+config/login/helper boundaries. The shared picker helpers restore the selected
+family, effort and draft after inspection, including menus whose rows unmount.
+Catalog and account admission use that family evidence; the older aggregate
+flags remain compatibility data. Setup refreshes missing or stale observations.
+Chrome profile bindings can retain the observed Chrome user agent for compatible
+session handoff; it never replaces endpoint/principal verification. Sign-in
+mutation receipts are published after the owning lease is released.
+
+## Optional client connections
+
+`local-api-access.ts` owns a private revocable API key. `server.ts` admits scoped
+loopback API candidates before Native/admin dispatch. `chat-completions/` owns
+request validation, bounded stream encoding and exact tool continuation receipts;
+`messages/` translates Claude Messages and never fabricates signed thinking.
+`client-turns.ts` is the shared Hermes/Claude receipt owner. Authenticated
+in-process `external-client-context.ts` values identify the client and supply an
+inert read-only environment to the existing adapter; request bodies cannot grant
+Native workspace authority. Clients execute their own declared tools.
+
+`claude-integration.ts` owns reversible settings and a private journal, using
+snapshot/compensation writes together with local API activation.
+`codex-web-provider.ts` participates in the existing v11 Codex integration
+transaction: publish the hashed Web catalog before switching configuration,
+preserve original Native selection, and reject foreign provider/catalog edits.
+`client-connections.ts` is the private CLI protocol for guarded main-process IPC
+in `ipc/client-connections.cjs`. The renderer's `ClientConnections` owns its drafts
+and action feedback; API key copying stays in the main process. DEV cannot change
+installed clients. None of these modes activates merely by updating the app.
+
+The opt-in `check-claude-client.ts` and `check-web-provider-client.ts` scripts use
+actual installed CLIs with disposable profiles and inert model adapters. The UI
+preview supplies synthetic client settings, while live browser smoke and the
+isolated Electron shell crash check verify their separate boundaries.
+
+## Model and conversation state
 
 Web model identities are resolved in `chatgpt-web-models.ts` before browser
 dispatch. The picker advertises named Web models; old fixed-mode IDs remain

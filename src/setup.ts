@@ -96,7 +96,9 @@ export function launcherCapabilityProbeRequired(
     || existing?.browserHost !== "launcher"
     || typeof existing.solAvailable !== "boolean"
     || (typeof existing.extraHighAvailable !== "boolean" && existing.proAvailable !== true)
-    || typeof existing.proAvailable !== "boolean";
+    || typeof existing.proAvailable !== "boolean"
+    || !existing.modelCapabilities
+    || Date.now() - existing.modelCapabilities.observedAt > 30 * 60_000;
 }
 
 export function existingFullSetupCredentials(
@@ -195,7 +197,7 @@ async function inspectLauncherCapabilities(
   existing: AppConfig | undefined,
   refreshAccountCapabilities: boolean,
   expectedProfile: "production" | "development",
-): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean }> {
+): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean; modelCapabilities?: AppConfig["modelCapabilities"] }> {
   const detectCapabilities = launcherCapabilityProbeRequired(
     existing,
     refreshAccountCapabilities,
@@ -211,6 +213,7 @@ async function inspectLauncherCapabilities(
       ? inspected.extraHighAvailable === true
       : existing!.extraHighAvailable ?? existing!.proAvailable,
     proAvailable: detectCapabilities ? inspected.proAvailable === true : existing!.proAvailable,
+    modelCapabilities: detectCapabilities ? inspected.modelCapabilities : existing!.modelCapabilities,
   };
 }
 
@@ -454,6 +457,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   let solAvailable: boolean | undefined = config.solAvailable;
   let extraHighAvailable: boolean | undefined = config.extraHighAvailable;
   let proAvailable: boolean | undefined = config.proAvailable;
+  let modelCapabilities = config.modelCapabilities;
   if (config.browserInteractionMode === "manual") {
     // The generic manual route is independent of account capabilities. The launcher may open the
     // authenticated surface, but setup must not inspect its model selector or infer availability.
@@ -468,11 +472,13 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     solAvailable = capabilities.solAvailable;
     extraHighAvailable = capabilities.extraHighAvailable;
     proAvailable = capabilities.proAvailable;
+    modelCapabilities = capabilities.modelCapabilities;
   } else {
     const stored = storedBrowserLoginCapabilities(config);
     solAvailable = stored.solAvailable;
     extraHighAvailable = stored.extraHighAvailable;
     proAvailable = stored.proAvailable;
+    modelCapabilities = stored.modelCapabilities;
     const verifiedLogin = browserLoginStateExists(config);
     const legacyLoginNeedsReverification = !verifiedLogin && browserLoginStateNeedsReverification(config);
     const loginRequired = options.forceLogin || (!verifiedLogin && !legacyLoginNeedsReverification);
@@ -482,7 +488,9 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
         || existing?.browserInteractionMode === "manual"
         || solAvailable === undefined
         || extraHighAvailable === undefined
-        || proAvailable === undefined);
+        || proAvailable === undefined
+        || !modelCapabilities
+        || Date.now() - modelCapabilities.observedAt > 30 * 60_000);
     if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && !options.restartService) {
       throw new Error(
         "Setup must verify the browser account before changing the running daemon. "
@@ -495,18 +503,21 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       solAvailable = login.solAvailable;
       extraHighAvailable = login.extraHighAvailable;
       proAvailable = login.proAvailable;
+      modelCapabilities = login.modelCapabilities;
       loginCreated = true;
     } else if (capabilityProbeRequired) {
       const inspected = await inspectBrowserLoginCapabilities(config);
       solAvailable = inspected.solAvailable;
       extraHighAvailable = inspected.extraHighAvailable;
       proAvailable = inspected.proAvailable;
+      modelCapabilities = inspected.modelCapabilities;
     }
   }
   assertConfigReadCurrent(read);
   config.solAvailable = solAvailable === true;
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
+  config.modelCapabilities = config.browserInteractionMode === "manual" ? undefined : modelCapabilities;
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
   const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config)
     || connectorIdentityMigrating || explicitTunnelChange || options.forceLogin));
@@ -931,6 +942,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     config.solAvailable = capabilities.solAvailable;
     config.extraHighAvailable = capabilities.solAvailable && capabilities.extraHighAvailable;
     config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
+    config.modelCapabilities = capabilities.modelCapabilities;
   }
 
   assertConfigReadCurrent(read);

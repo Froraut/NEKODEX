@@ -554,8 +554,8 @@ export async function runChatGptMcpServer(options: {
           .update(`${turn_token}\0${operation_key}`)
           .digest("base64url")}`;
         return withClaimedTurn("codex_tool_start", turn_token, extra, async claimed => {
-          if (claimed.environment.producer === "hermes") {
-            throw new Error("Owned async Codex operations are unavailable for Hermes-origin turns");
+          if (claimed.environment.producer !== undefined && claimed.environment.producer !== "codex") {
+            throw new Error("Owned async Codex operations are unavailable for external-client turns");
           }
           const invocation = resolveBrowserInvocation(routingPolicy, claimed.environment, wire_name, args, input);
           const snapshot = await callTurnBroker<BrokerOwnedOperationStartResult>(options.brokerSocketPath, {

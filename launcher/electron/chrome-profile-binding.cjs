@@ -3,6 +3,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 const { validateAccountId } = require('./account-registry.cjs');
+const { validatedChromeUserAgent } = require('./browser-user-agent.cjs');
 
 const VERSION = 2;
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -30,9 +31,11 @@ function validateBinding(value) {
     ? value.verifiedAt : null;
   if (!profileId || !principalFingerprint || !verifiedAt) return null;
   const keys = Object.keys(value);
-  if (keys.some(key => !['profileId', 'profileName', 'googleEmail', 'chatgptLabel', 'principalFingerprint', 'verifiedAt'].includes(key))) {
+  if (keys.some(key => !['profileId', 'profileName', 'googleEmail', 'chatgptLabel', 'principalFingerprint', 'verifiedAt', 'browserUserAgent'].includes(key))) {
     return null;
   }
+  let browserUserAgent;
+  try { browserUserAgent = validatedChromeUserAgent(value.browserUserAgent); } catch { return null; }
   return {
     profileId,
     profileName: safeLabel(value.profileName, 80),
@@ -40,6 +43,7 @@ function validateBinding(value) {
     chatgptLabel: safeLabel(value.chatgptLabel),
     principalFingerprint,
     verifiedAt,
+    ...(browserUserAgent ? { browserUserAgent } : {}),
   };
 }
 
@@ -117,6 +121,7 @@ function createChromeProfileBindingStore(coreHome) {
             chatgptLabel: safeLabel(identity.label),
             principalFingerprint: identity.principalFingerprint,
             verifiedAt: now.toISOString(),
+            ...(identity.browserUserAgent ? { browserUserAgent: validatedChromeUserAgent(identity.browserUserAgent) } : {}),
           };
           const state = { version: VERSION, accounts: { ...opened.state.accounts, [accountId]: binding } };
           attemptedState = state;

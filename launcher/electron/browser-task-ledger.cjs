@@ -10,8 +10,16 @@ const MAX_RECORDS = 2048;
 // Only catalog identifiers, never prompts or other caller-supplied free text.
 const taskModels = new Set(['chatgpt-web/light', 'chatgpt-web/medium', 'chatgpt-web/high',
   'chatgpt-web/extra-high', 'chatgpt-web/pro', 'chatgpt-web/luna', 'chatgpt-web/think',
-  'chatgpt-web/zero-risk', 'chatgpt-web/zero-risk-pro']);
+  'chatgpt-web/zero-risk', 'chatgpt-web/zero-risk-pro', 'chatgpt-web/gpt-5.6-sol-instant',
+  'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro', 'chatgpt-web/gpt-6-pro', 'chatgpt-web/gpt-5.6-luna',
+  'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant']);
 function isTaskModel(model) { return typeof model === 'string' && taskModels.has(model); }
+function taskModelFamily(model) {
+  if (!isTaskModel(model)) return undefined;
+  if (['chatgpt-web/gpt-6-pro', 'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant'].includes(model)) return '6';
+  if (['chatgpt-web/gpt-5.6-sol-instant', 'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro'].includes(model)) return '5.6';
+  return undefined;
+}
 function taskModelForRequirement(requirement) {
   return isTaskModel(requirement?.requestedModel) ? requirement.requestedModel : null;
 }
@@ -115,4 +123,4 @@ class BrowserTaskLedger {
     this.save(this.records.filter(item => item !== row));
   }
 }
-module.exports = { BrowserTaskLedger, taskModelForRequirement, isTaskModel };
+module.exports = { BrowserTaskLedger, taskModelForRequirement, taskModelFamily, isTaskModel };

@@ -4,6 +4,7 @@ const { parseExistingChromeProgress } = require("./existing-chrome-login.cjs");
 const { parseExistingChromeError, existingChromeError } = require("./existing-chrome-errors.cjs");
 const { validateConnectionContents } = require("./existing-chrome-file-access.cjs");
 const IMPORT_TIMEOUT_MS = 180_000;
+const { validatedChromeUserAgent } = require('./browser-user-agent.cjs');
 
 function validateProfileClaim(value) {
   const claimUrl = value && typeof value === "object" && typeof value.url === "string"
@@ -76,6 +77,16 @@ async function captureExistingChromeLogin(host, onProgress, options = {}) {
       successMessage: "Existing Chrome session captured for private Launcher verification",
       timeoutMs: IMPORT_TIMEOUT_MS + 10_000,
       onStdoutLine: line => {
+        if (line.startsWith('@codex-chrome-cookie-scope:') && line.length < 256) {
+          try {
+            const scope = JSON.parse(line.slice('@codex-chrome-cookie-scope:'.length));
+            if (['partitioned', 'partitionedClearance', 'ordinaryClearance'].every(key => Number.isInteger(scope[key]) && scope[key] >= 0 && scope[key] <= 1000)) {
+              host.logger?.info?.('runtime.chrome_cookie_scope', { partitioned: scope.partitioned,
+                partitionedClearance: scope.partitionedClearance, ordinaryClearance: scope.ordinaryClearance });
+            }
+          } catch {}
+          return true;
+        }
         const code = parseExistingChromeError(line);
         if (code) reportedErrorCode = code;
         const progress = parseExistingChromeProgress(line);
@@ -94,7 +105,8 @@ async function captureExistingChromeLogin(host, onProgress, options = {}) {
       || !Number.isFinite(capturedAt) || capturedAt < Date.now() - IMPORT_TIMEOUT_MS - 60_000 || capturedAt > Date.now() + 60_000) {
       throw new Error("Invalid existing Chrome capture evidence");
     }
-    return { storageState: JSON.parse(fs.readFileSync(storageStatePath, "utf8")), cleanup };
+    return { storageState: JSON.parse(fs.readFileSync(storageStatePath, "utf8")),
+      browserUserAgent: validatedChromeUserAgent(marker.browserUserAgent), cleanup };
   } catch (error) {
     await cleanup();
     if (reportedErrorCode) {

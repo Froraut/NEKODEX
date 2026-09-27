@@ -1,5 +1,6 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { validatePasskeyLoginState } = require('./passkey-login-state.cjs');
+const { validatedChromeUserAgent } = require('./browser-user-agent.cjs');
 
 const FINGERPRINT = /^[a-f0-9]{64}$/;
 const SESSION_ENDPOINT = 'https://chatgpt.com/api/auth/session';
@@ -44,6 +45,8 @@ async function verifyCapturedAccount(sessionApi, transfer, { expectedPrincipalFi
       signal?.throwIfAborted();
     }
     const state = validatePasskeyLoginState(transfer?.storageState);
+    const userAgent = validatedChromeUserAgent(transfer?.browserUserAgent);
+    if (userAgent) isolated.setUserAgent(userAgent);
     for (const cookie of state.cookies) {
       signal?.throwIfAborted();
       await isolated.cookies.set(cookie);
@@ -54,7 +57,7 @@ async function verifyCapturedAccount(sessionApi, transfer, { expectedPrincipalFi
       headers: { accept: 'application/json' },
     });
     if (!response.ok || !response.headers.get('content-type')?.toLowerCase().includes('application/json') || !response.body) {
-      throw new Error('Session verification unavailable');
+      throw Object.assign(new Error('Session verification unavailable'), { code: 'session-verification-failed', httpStatus: response.status });
     }
     const reader = response.body.getReader();
     let size = 0;

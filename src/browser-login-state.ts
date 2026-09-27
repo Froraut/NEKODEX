@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { BrowserContext } from "playwright-core";
 import { atomicWriteFile, type AppConfig } from "./config";
 import { readBoundedUtf8File } from "./read-bounded-file";
-import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import { parseChatGptWebModelCapabilities, type ChatGptWebAccountCapabilities, type ChatGptWebModelCapabilities } from "./chatgpt-web-models";
 
 export type BrowserLoginStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
@@ -15,6 +15,7 @@ interface LoginVerificationMarker {
   solAvailable?: boolean;
   extraHighAvailable?: boolean;
   proAvailable?: boolean;
+  modelCapabilities?: ChatGptWebModelCapabilities;
 }
 
 const MAX_LOGIN_STORAGE_STATE_BYTES = 16 * 1024 * 1024;
@@ -72,6 +73,7 @@ export function publishBrowserLoginVerification(
     solAvailable: capabilities.solAvailable,
     extraHighAvailable: capabilities.extraHighAvailable,
     proAvailable: capabilities.proAvailable,
+    modelCapabilities: capabilities.modelCapabilities,
   };
   atomicWriteFile(loginVerificationMarkerPath(storageStatePath), `${JSON.stringify(marker)}\n`);
 }
@@ -94,6 +96,7 @@ export function storedBrowserLoginCapabilities(
         ? { extraHighAvailable: marker.extraHighAvailable }
         : marker.proAvailable === true ? { extraHighAvailable: true } : {}),
       ...(typeof marker.proAvailable === "boolean" ? { proAvailable: marker.proAvailable } : {}),
+      modelCapabilities: parseChatGptWebModelCapabilities(marker.modelCapabilities),
     };
   } catch {
     return {};

@@ -9,7 +9,7 @@ const { AccountNetwork, validateProxy } = require('./account-network.cjs');
 const { UsageStore } = require('./usage-store.cjs');
 const { createAccountRegistry, validateAccountId } = require('./account-registry.cjs');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
-const { BrowserTaskLedger, taskModelForRequirement } = require('./browser-task-ledger.cjs');
+const { BrowserTaskLedger, taskModelForRequirement, taskModelFamily } = require('./browser-task-ledger.cjs');
 const { BrowserAdmissionQueue } = require('./browser-admission-queue.cjs');
 const { BrowserWorkspaceDirectory } = require('./browser-workspace-directory.cjs');
 const { AccountSessionMutationCoordinator } = require('./browser-workspace-session-mutations.cjs');
@@ -236,6 +236,17 @@ class AccountBrowserPool {
     if (reserved) return reserved;
     return [...this.hosts.values()].map(host => host.currentOperation()).find(Boolean) || null;
   }
+  replaceShellWindow(window) {
+    const previous = this.options.window;
+    const moved = [];
+    try {
+      for (const host of this.hosts.values()) { host.replaceShellWindow(window); moved.push(host); }
+      this.options.window = window;
+    } catch (error) {
+      for (const host of moved.reverse()) host.replaceShellWindow(previous);
+      throw error;
+    }
+  }
   accountOperationLabel(id) {
     validateAccountId(id);
     const mutation = this.accountMutationOperationLabel(id);
@@ -346,6 +357,7 @@ class AccountBrowserPool {
           solAvailable: typeof capabilities.solAvailable === 'boolean' ? capabilities.solAvailable : null,
           extraHighAvailable: typeof capabilities.extraHighAvailable === 'boolean' ? capabilities.extraHighAvailable : null,
           proAvailable: typeof capabilities.proAvailable === 'boolean' ? capabilities.proAvailable : null,
+          ...(capabilities.modelCapabilities ? { modelCapabilities: structuredClone(capabilities.modelCapabilities) } : {}),
         } : null,
         checked: this.capabilities.has(account.id),
         connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()) };
@@ -820,7 +832,8 @@ class AccountBrowserPool {
     const host = this.getHost(id);
     if (this.passkeyImportLease) {
       if (this.passkeyImportLease.id !== id) throw new Error('Another account owns passkey sign-in');
-      return await host.openPasskeyLogin(...args);
+      await host.openPasskeyLogin(...args);
+      return this.snapshot();
     }
     if (this.existingChromeImportLease) throw new Error('Finish the existing Chrome import before passkey sign-in');
     // Only a pool-owned embedded login can hand off its lease. The host cancels and joins
@@ -829,11 +842,13 @@ class AccountBrowserPool {
     const releaseOperation = handoff ? () => {} : this.acquireAccountOperation(id, 'ChatGPT passkey login');
     const lease = Object.freeze({ id });
     this.passkeyImportLease = lease;
-    try { return await host.openPasskeyLogin(...args); }
+    try { await host.openPasskeyLogin(...args); }
     finally {
       if (this.passkeyImportLease === lease) this.passkeyImportLease = null;
       releaseOperation();
+      this.publish();
     }
+    return this.snapshot();
   }
   async openExistingChromeLogin(...args) {
     if (this.passkeyImportLease) throw new Error('Finish or cancel passkey sign-in before Chrome import');
@@ -962,11 +977,16 @@ class AccountBrowserPool {
       if (!account.enabled || this.accountOperationLabel(account.id) || this.admissionQueue?.accountPaused(account.id)) return false;
       if (host?.state.authenticated !== true) return false;
       const caps = this.capabilities.get(account.id);
+      const family = taskModelFamily(requirement?.requestedModel);
+      if (family && caps?.modelCapabilities
+        && !caps.modelCapabilities.families[family]?.includes(requirement?.effort)) return false;
       if (config.mode === 'balanced' && account.id !== 'default' && !caps) return false;
       if (requirement?.effort === 'luna' && caps?.solAvailable !== false) return false;
-      if (requirement?.effort === 'max' && caps?.proAvailable !== true) return false;
-      if (requirement?.effort === 'xhigh' && caps?.extraHighAvailable !== true) return false;
-      if (requirement?.effort && requirement.effort !== 'max' && requirement.effort !== 'luna' && caps?.solAvailable !== true) return false;
+      if (!(family && caps?.modelCapabilities)) {
+        if (requirement?.effort === 'max' && caps?.proAvailable !== true) return false;
+        if (requirement?.effort === 'xhigh' && caps?.extraHighAvailable !== true) return false;
+        if (requirement?.effort && requirement.effort !== 'max' && requirement.effort !== 'luna' && caps?.solAvailable !== true) return false;
+      }
       if (requirement?.connector && this.connectors.get(account.id) !== requirement.connector) return false;
       return true;
     };
@@ -1273,6 +1293,7 @@ class AccountBrowserPool {
     if (!active.has(request.traceId) && active.size >= this.options.maxTabs) return { reason: 'capacity' };
     try {
       const id = this.chooseAccount(request.traceId, request.key ?? undefined, request.retained, {
+        requestedModel: request.requestedModel,
         effort: request.effort, connector: request.connector, routingKey: request.routingKey,
         requestedAccountId: request.requestedAccountId ?? undefined,
       });

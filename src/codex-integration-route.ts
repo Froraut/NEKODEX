@@ -1,3 +1,4 @@
+import { restoreWebProvider } from "./codex-web-provider";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -207,6 +208,7 @@ export function replacementBaseline(
 ): string {
   if (!configExists) return "";
   if (!managedJournalIsActive(journal)) return currentText;
+  if (journal.version === 11 && journal.webProvider) currentText = restoreWebProvider(currentText, journal.webProvider);
 
   if (journalHasRealtimeRoute(journal)) {
     const withoutHook = removeManagedInterruptHook(currentText, journal, { allowAbsent: true });
@@ -317,6 +319,7 @@ export function installRoute(
 }
 
 export function verifyInstalledRoute(text: string, journal: ManagedRouteJournal): void {
+  if (journal.version === 11 && journal.webProvider) text = restoreWebProvider(text, journal.webProvider);
   const lines = splitLines(text);
   const current = assignments(lines);
   if (current.openai_base_url.value !== journal.installed.openai_base_url) {
@@ -376,6 +379,9 @@ export function verifyRestoredRoute(
   text: string,
   journal: CodexIntegrationJournal | LegacyCodexIntegrationJournalV10 | LegacyCodexIntegrationJournalV9 | LegacyCodexIntegrationJournalV8 | LegacyCodexIntegrationJournalV7 | LegacyCodexIntegrationJournalV6 | LegacyCodexIntegrationJournalV5 | LegacyCodexIntegrationJournalV4,
 ): void {
+  if (journal.version === 11 && journal.webProvider && text.includes(journal.webProvider.fragment)) {
+    throw new Error("Managed Web provider remains installed while the bridge is disconnected");
+  }
   const lines = splitLines(text);
   const current = assignments(lines);
   const keys = journalHasBaseUrlRouteV7Plus(journal)
@@ -481,6 +487,7 @@ export function assertPreservedPreviousRealtimeAssignment(
 
 export function restoreManagedRoute(text: string, journal: ManagedRouteJournal): string {
   verifyInstalledRoute(text, journal);
+  if (journal.version === 11 && journal.webProvider) text = restoreWebProvider(text, journal.webProvider);
   const withoutHook = removeManagedInterruptHook(text, journal);
   const document = parseDocument(withoutHook);
   removeManagedComment(document);

@@ -1,6 +1,6 @@
 import type { Locator, Page } from "playwright-core";
 import { stabilizeEffortSlider } from "./adapters/chatgpt-web/effort-stabilization";
-import type { ChatGptWebAccountCapabilities, ChatGptWebProModelVersion } from "./chatgpt-web-models";
+import { chatGptModelOptionName, type ChatGptWebAccountCapabilities, type ChatGptWebProModelVersion, type ChatGptWebModelCapabilities, type ChatGptWebAdapterEffort } from "./chatgpt-web-models";
 
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 export const CHATGPT_SAVED_CHAT_URL = "https://chatgpt.com/";
@@ -36,7 +36,7 @@ const CHATGPT_EXTRA_HIGH_OFFSET = 3;
 const CHATGPT_EXTRA_HIGH_GATE_SETTLE_MS = 500;
 /** Resolve only inside the verified composer's form; multiple submitters are an error. */
 export const CHATGPT_SEND_BUTTON_SELECTOR = '[data-testid="send-button"], button[type="submit"]';
-export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"], form[data-chatgpt-composer] button[type="button"][aria-label="Stop"]';
+export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"], form[data-chatgpt-composer] button[type="button"][aria-label="Stop"], form[data-chatgpt-composer] button[type="button"][aria-label="Arrêter"]';
 // The new footer is shared with user messages. Response extraction additionally requires
 // this control to FOLLOW the last assistant answer, excluding the user's earlier footer.
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"], [data-turn-key] .turn-action-controls button';
@@ -515,17 +515,165 @@ export function chatGptModelStateMatches(
 ): boolean {
   // Parse all owned state descriptions before checking the requested family. Selecting just
   // one matching description would conceal a contradictory live model/effort description.
-  const prefix = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+(Instant|Medium|Extra High|High|即时|中|极高|高|Pro)(?=\s*(?:[,，]|$))/i;
+  const prefix = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+(Instantané|Instant|Medium|Moyen|Extra High|Très élevé|High|Élevée?|Elevée?|即时|中|极高|高|Pro)(?=\s*(?:[,，]|$))/i;
   const states = descriptions.flatMap(description => {
     const match = prefix.exec(description.replace(/\s+/g, " ").trim());
     return match ? [{ version: match[1]!, family: match[2]?.toLowerCase(), effort: match[3]!.toLowerCase() }] : [];
   });
-  const efforts = { low: ["instant", "即时"], medium: ["medium", "中"], high: ["high", "高"], xhigh: ["extra high", "极高"], max: ["pro"] };
+  const efforts = { low: ["instant", "instantané", "即时"], medium: ["medium", "moyen", "中"], high: ["high", "élevé", "élevée", "elevé", "elevée", "高"], xhigh: ["extra high", "très élevé", "极高"], max: ["pro"] };
   return states.length > 0 && states.every(state => {
     if (state.version !== version) return false;
     if (state.family && state.family !== (version === "5.6" ? "sol" : version === "6" ? "astra" : undefined)) return false;
     return expectedEffort ? efforts[expectedEffort].includes(state.effort) : !requirePro || state.effort === "pro";
   });
+}
+
+/** Only valid alongside a checked family radio and the exact verified slider position. */
+export function chatGptUnversionedEffortMatches(descriptions: readonly string[], effort: ChatGptWebAdapterEffort): boolean {
+  if (descriptions.some(text => /^(?:GPT[-\s]?)?\d+(?:\.\d+)?\s/i.test(text.trim()))) return false;
+  const labels: Record<ChatGptWebAdapterEffort, RegExp> = {
+    low: /^(?:Instant|Instantané)$/i, medium: /^(?:Medium|Moyen)$/i,
+    high: /^(?:High|Élevée?|Elevée?)$/i, xhigh: /^(?:Extra High|Très élevé)$/i, max: /^Pro$/i,
+  };
+  const states = descriptions.map(text => /^(.*?),\s*([1-5])\s+(?:of|sur)\s+([1-5])\.$/i.exec(text.trim())).filter(Boolean);
+  const index = ["low", "medium", "high", "xhigh", "max"].indexOf(effort) + 1;
+  return states.length === 1 && labels[effort].test(states[0]![1]!)
+    && Number(states[0]![2]) === index && Number(states[0]![3]) >= index;
+}
+
+async function expandChatGptModelPicker(activation: ChatGptEffortActivation, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const powerView = activation.menu.locator("[data-model-picker-view]");
+  const count = await powerView.count();
+  if (count > 1) throw new Error("ChatGPT model picker is ambiguous");
+  if (count === 1) {
+    const view = await powerView.getAttribute("data-model-picker-view");
+    if (view === "advanced") return;
+    if (view !== "simple") throw new Error("ChatGPT model picker view is unknown");
+    const toggle = powerView.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]');
+    if (await toggle.count() !== 1) throw new Error("ChatGPT model picker toggle is ambiguous");
+    await toggle.click({ timeout: 5_000, signal });
+    return;
+  }
+  const trigger = activation.menu.getByLabel(/^(?:Select model|Choose model|Sélectionner le modèle|Choisir le modèle|选择模型|モデルを選択)$/);
+  if (await trigger.count() === 1 && await trigger.getAttribute("aria-expanded") === "false") {
+    await trigger.click({ timeout: 5_000, signal });
+  }
+}
+
+/** Inspect lazy model rows, then return to the effort view without selecting a model. */
+export async function assertSelectedChatGptModelFamily(
+  page: Page, control: Locator, activation: ChatGptEffortActivation,
+  version: ChatGptWebProModelVersion, signal?: AbortSignal,
+): Promise<ChatGptEffortActivation> {
+  const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(version), exact: true, includeHidden: true });
+  if (await option.count() === 1 && await option.getAttribute("aria-checked") === "true"
+    && await activation.sliderContainer.isVisible().catch(() => false)) return activation;
+  await expandChatGptModelPicker(activation, signal);
+  await option.waitFor({ state: "attached", timeout: 3_000, signal });
+  if (await option.count() !== 1 || await option.getAttribute("aria-checked") !== "true") {
+    throw new Error(`ChatGPT did not retain model family ${version}`);
+  }
+  await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
+  return activateChatGptEffortMenu(page, control, { abortSignal: signal });
+}
+
+/** Family selection is shared by capability discovery and actual turn preparation. */
+export async function selectChatGptModelFamily(
+  page: Page, control: Locator, activation: ChatGptEffortActivation,
+  version: ChatGptWebProModelVersion, signal?: AbortSignal,
+): Promise<ChatGptEffortActivation> {
+  const option = () => activation.menu.getByRole("menuitemradio", {
+    name: chatGptModelOptionName(version), exact: true, includeHidden: true,
+  });
+  signal?.throwIfAborted();
+  if (await option().count() === 1 && await option().getAttribute("aria-checked") === "true") {
+    if (await activation.sliderContainer.isVisible().catch(() => false)) return activation;
+    await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
+    return activateChatGptEffortMenu(page, control, { abortSignal: signal });
+  }
+  await expandChatGptModelPicker(activation, signal);
+  await option().waitFor({ state: "attached", timeout: 3_000, signal });
+  if (await option().count() !== 1 || await option().getAttribute("aria-disabled") === "true") {
+    throw new Error(`ChatGPT model family ${version} is unavailable`);
+  }
+  await option().click({ timeout: 5_000, signal });
+  await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
+  activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
+  return assertSelectedChatGptModelFamily(page, control, activation, version, signal);
+}
+
+async function detectChatGptModelCapabilities(
+  page: Page, control: Locator, activation: ChatGptEffortActivation,
+  signal?: AbortSignal,
+): Promise<ChatGptWebModelCapabilities | undefined> {
+  const originalState = await readChatGptEffortSnapshot(activation.sliderContainer);
+  const initialView = activation.menu.locator("[data-model-picker-view]");
+  const originalView = await initialView.count() === 1 ? await initialView.getAttribute("data-model-picker-view") : null;
+  let original: ChatGptWebProModelVersion | undefined;
+  let primaryError: unknown;
+  let capabilities: ChatGptWebModelCapabilities | undefined;
+  try {
+    await expandChatGptModelPicker(activation, signal);
+    const present: ChatGptWebProModelVersion[] = [];
+    for (const family of ["5.5", "5.6", "6"] as const) {
+      const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(family), exact: true, includeHidden: true });
+      const count = await option.count();
+      if (count > 1) throw new Error("ChatGPT model capability radios are ambiguous");
+      if (!count) continue;
+      present.push(family);
+      if (await option.getAttribute("aria-checked") === "true") {
+        if (original) throw new Error("ChatGPT selected more than one model family");
+        original = family;
+      }
+    }
+    if (present.length) {
+      if (!original) throw new Error("ChatGPT selected model family could not be verified");
+      capabilities = { observedAt: Date.now(), families: {} };
+      const efforts: ChatGptWebAdapterEffort[] = ["low", "medium", "high", "xhigh", "max"];
+      for (const family of present) {
+        signal?.throwIfAborted();
+        activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
+        await expandChatGptModelPicker(activation, signal);
+        const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(family), exact: true, includeHidden: true });
+        await option.waitFor({ state: "attached", timeout: 3_000, signal });
+        if (await option.getAttribute("aria-disabled") === "true") { capabilities.families[family] = []; continue; }
+        activation = await selectChatGptModelFamily(page, control, activation, family, signal);
+        const state = await readChatGptEffortSnapshot(activation.sliderContainer);
+        if (!state.available) {
+          // Legacy selectors have no per-position lock evidence. Preserve their existing
+          // account probe; do not manufacture a family-specific entitlement from its range.
+          capabilities = undefined;
+          break;
+        }
+        capabilities.families[family] = efforts.filter((_, index) => state.available![index] === true);
+      }
+    }
+  } catch (error) { primaryError = error; }
+  // Cleanup has its own bound so cancellation cannot leave a changed model/effort behind.
+  const cleanup = new AbortController();
+  const timer = setTimeout(() => cleanup.abort(new Error("ChatGPT model capability restoration timed out")), 15_000);
+  try {
+    activation = await activateChatGptEffortMenu(page, control, { abortSignal: cleanup.signal });
+    if (original) {
+      activation = await selectChatGptModelFamily(page, control, activation, original, cleanup.signal);
+      const state = await readChatGptEffortSnapshot(activation.sliderContainer);
+      if (state.min !== originalState.min) throw new Error("ChatGPT original effort range changed during inspection");
+      if (state.value !== originalState.value) {
+        await setChatGptEffortValue(page, activation.slider, originalState.value, cleanup.signal, true);
+      }
+    }
+    if (originalView === "simple") {
+      const view = activation.menu.locator("[data-model-picker-view]");
+      if (await view.getAttribute("data-model-picker-view") === "advanced") {
+        await view.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]').click({ timeout: 5_000, signal: cleanup.signal });
+      }
+    }
+  } catch (error) {
+    throw new AggregateError(primaryError ? [primaryError, error] : [error], "ChatGPT model capability inspection could not restore the original picker");
+  } finally { clearTimeout(timer); }
+  if (primaryError) throw primaryError;
+  return capabilities;
 }
 
 async function anyVisible(locator: Locator): Promise<boolean> {
@@ -639,6 +787,12 @@ export async function detectChatGptAccountCapabilities(
       // evidence than counting positions or probing a different effort.
       capabilities = { solAvailable: true, extraHighAvailable: available[3] === true,
         proAvailable: available[4] === true };
+      const modelCapabilities = await detectChatGptModelCapabilities(page, effortButton, activation, options.abortSignal);
+      if (modelCapabilities) {
+        const efforts = Object.values(modelCapabilities.families).flat();
+        capabilities = { solAvailable: true, extraHighAvailable: efforts.includes("xhigh"),
+          proAvailable: efforts.includes("max"), modelCapabilities };
+      }
     } else if (positions === 3) {
       capabilities = { solAvailable: true, extraHighAvailable: false, proAvailable: false };
     } else {

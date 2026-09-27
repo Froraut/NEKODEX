@@ -15,6 +15,8 @@ export interface CodexParsedRequest {
   _chatgptModelFamily?: "5.6" | "6";
   /** In-process only, set by the authenticated Hermes endpoint; never parsed from HTTP JSON. */
   _hermesContext?: { threadId: string; turnId: string; root: string };
+  /** Server-owned external client identity; conveys no local filesystem authority. */
+  _clientContext?: import("./external-client-context").ExternalClientContext;
   /** Number of leading raw input items restored from local previous_response_id state. */
   _replayPrefixLen?: number;
   /**

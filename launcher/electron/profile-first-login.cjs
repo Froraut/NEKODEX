@@ -1,5 +1,5 @@
 const { verifiedCaptureTransfer, verifyCapturedAccount } = require('./chrome-session-identity.cjs');
-const { chromeProfileErrorGuidance, safeProfileLoginError } = require('./chrome-profile-error-guidance.cjs');
+const { safeProfileLoginError } = require('./chrome-profile-error-guidance.cjs');
 
 function createProfileFirstLogin({choose, runtime, session, dialog, window, language}) {
   const login = async (onProgress, context) => {
@@ -58,7 +58,7 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
       signal?.throwIfAborted();
       // Existing-Chrome phases belong to a different progress protocol. Keep the
       // passkey operation active/cancellable while Chrome approves and captures it.
-      capture=await runtime.captureExistingChromeLogin(patch=>onProgress({phase:'importing',
+      capture=await runtime.captureExistingChromeLogin(patch=>onProgress({phase:'importing', chromePhase:patch.phase,
         ...(patch.deadlineAt ? {deadlineAt:patch.deadlineAt} : {})}), {profileClaim});
       signal?.throwIfAborted();
       const identity=await verifyCapturedAccount(session,capture,{signal,accountId:context.accountId,
@@ -81,7 +81,7 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
         signal?.throwIfAborted();
         if(confirmation.response!==1)throw Object.assign(new Error('Sign-in cancelled'),{code:'profile-login-cancelled'});
       }
-      return verifiedCaptureTransfer(capture,identity,{commit:()=>choice.commitBinding(identity),
+      return verifiedCaptureTransfer(capture,identity,{commit:()=>choice.commitBinding({ ...identity, browserUserAgent: capture.browserUserAgent }),
         rollback:()=>choice.rollbackBinding(),identityIntent:{
           knownPrincipalFingerprint:previous?.principalFingerprint??null,
           actualIdentityConfirmed:!previous||previous.principalFingerprint!==identity.principalFingerprint,
@@ -93,10 +93,8 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
       catch { failure = safeProfileLoginError({code:'existing_chrome_cleanup_failed'}); }
       try { if(capture)await capture.cleanup(); }
       catch { failure = safeProfileLoginError({code:'existing_chrome_cleanup_failed'}); }
-      if ((!signal?.aborted && failure.code!=='profile-login-cancelled')
-        || failure.code==='existing_chrome_cleanup_failed') await dialog.showMessageBox(window(), {type:'error',
-        message:ru?'Вход не подключён':'Sign-in was not connected',
-        detail:chromeProfileErrorGuidance(failure.code, ru?'ru':'en'),buttons:['OK']});
+      // The browser guide owns terminal feedback and retry. A modal here held the
+      // operation in "importing" until dismissed and hid the real Chrome failure.
       throw failure;
     } finally {
       signal?.removeEventListener('abort',abort);

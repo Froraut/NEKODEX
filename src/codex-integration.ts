@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
+import { applyWebProvider, prepareWebProviderRoute, ownedWebProviderCatalog, verifyWebProviderCatalog } from "./codex-web-provider";
 import type { AppConfig } from "./config";
 import { getConfigPath, loadConfig, preserveUtf8Bom } from "./config";
 import {
@@ -454,11 +455,14 @@ function installCodexIntegrationState(
       } : {}),
       ...(existing.format ? { format: existing.format } : {}),
     };
+    const providerRoute = prepareWebProviderRoute(updated, patched.text, config, options,
+      existing.version === 11 ? existing.webProvider : undefined, currentText);
     writeIntegrationState(
       updated,
-      { path: configPath, data: patched.text },
-      [getCodexModelsCachePath()],
+      { path: configPath, data: providerRoute.text },
+      providerRoute.removals,
       [...(patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : []), ...runtimeWrites],
+      providerRoute.writes,
     );
     return updated;
   }
@@ -500,11 +504,13 @@ function installCodexIntegrationState(
     } : {}),
     format: textFormat(baseline),
   };
+  const providerRoute = prepareWebProviderRoute(journal, patched.text, config, options, undefined, currentText);
   writeIntegrationState(
     journal,
-    { path: configPath, data: patched.text },
-    [getCodexModelsCachePath()],
+    { path: configPath, data: providerRoute.text },
+    providerRoute.removals,
     [...(patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : []), ...runtimeWrites],
+    providerRoute.writes,
   );
   if (existing?.version === 2 && existsSync(existing.catalogPath)) rmSync(existing.catalogPath);
   return journal;
@@ -540,6 +546,11 @@ export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
     verifyManagedJsonHook(existing);
   }
   const restored = restoreManagedRoute(current, existing);
+  if (existing.version === 11 && existing.webProvider) {
+    const selected = Bun.TOML.parse(current) as { model: string; model_reasoning_effort: string };
+    existing.webProvider = { ...existing.webProvider, installed: { ...existing.webProvider.installed,
+      model: selected.model, model_reasoning_effort: selected.model_reasoning_effort } };
+  }
   const disconnected:
     | CodexIntegrationJournal
     | LegacyCodexIntegrationJournalV10
@@ -629,10 +640,13 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
       previousAgentMaxDepth: route.previousAgentMaxDepth,
     } : {}),
     ...(existing.format ? { format: existing.format } : {}),
+    ...(existing.version === 11 && existing.webProvider ? { webProvider: structuredClone(existing.webProvider) } : {}),
   };
+  if (connected.webProvider) verifyWebProviderCatalog(connected.webProvider);
+  const connectedText = connected.webProvider ? applyWebProvider(route.text, connected.webProvider) : route.text;
   writeIntegrationState(
     connected,
-    { path: existing.configPath, data: route.text },
+    { path: existing.configPath, data: connectedText },
     [getCodexModelsCachePath()],
     route.hooksText && hooksJson ? [{ path: hooksJson.path, data: route.hooksText, followSymlink: true }] : [],
   );
@@ -682,9 +696,10 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     : undefined;
   const configSnapshot = snapshotFile(journal.configPath, { followSymlink: true });
   const hooksSnapshot = restoredHooks ? snapshotFile(restoredHooks.path, { followSymlink: true }) : undefined;
+  const webCatalog = journal.version === 11 && journal.webProvider ? ownedWebProviderCatalog(journal.webProvider) : undefined;
   const catalogSnapshot = journal.version === 2
     ? snapshotFile(journal.catalogPath, { followSymlink: true })
-    : undefined;
+    : webCatalog ? snapshotFile(webCatalog) : undefined;
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath(), { followSymlink: true });
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());

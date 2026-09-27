@@ -150,6 +150,7 @@ export interface ExistingChromeLoginProgress {
 }
 
 export interface PasskeyLoginProgress {
+  chromePhase?: "discovering" | "waiting-for-chrome" | "reading-session" | "verifying" | null;
   phase: "starting" | "waiting" | "importing" | "verifying" | "cancelling" | "cancelled" | "timed-out" | "failed" | "completed";
   startedAt: string;
   deadlineAt: string;
@@ -423,6 +424,14 @@ export interface LauncherLifecycle extends RuntimeCapabilities {
   catalog?: { status: string; request: number | null; at: string | null; failure: unknown };
 }
 
+export interface ClientConnectionsSnapshot {
+  api: { enabled: boolean; configured: boolean; keyFingerprint: string | null; baseUrl: string };
+  claude: { installed: boolean; ready: boolean; model: string | null; issue: string | null };
+  provider: { installed: boolean; active: boolean; mode: "mixed" | "web-only"; issue: string | null };
+}
+export type ClientConnectionAction = "api-enable" | "api-disable" | "api-rotate" | "claude-connect"
+  | "claude-disconnect" | "provider-mixed" | "provider-web-only";
+
 export interface LauncherSnapshot {
   browserCapacity: BrowserCapacitySettings;
   profile: LauncherProfile;
@@ -492,6 +501,9 @@ export interface LauncherApi {
   restartLauncher(): Promise<boolean>;
   cancelContextChange(): Promise<LauncherState>;
   confirmCodexModels(): Promise<LauncherState>;
+  getClientConnections(): Promise<ClientConnectionsSnapshot>;
+  changeClientConnection(action: ClientConnectionAction): Promise<ClientConnectionsSnapshot>;
+  copyClientApiKey(): Promise<{ copied: boolean }>;
   setupHermes(input?: { runtime: "codex_responses" | "codex_app_server"; makeDefault?: boolean }): Promise<{ provider: string; configPath: string; backupPath: string; baseUrl: string; defaultChanged: boolean }>;
   snapshot(): Promise<LauncherSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;

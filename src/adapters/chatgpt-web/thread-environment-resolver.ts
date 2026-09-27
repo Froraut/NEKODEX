@@ -1,3 +1,4 @@
+import { externalClientContext } from "../../external-client-context";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import type { CodexParsedRequest } from "../../types";
 import { jsonRecord as record } from "../../lib/json-record";
@@ -139,9 +140,10 @@ export function resolveThreadEnvironment(
 ): ThreadEnvironmentResolution {
   // Hermes owns execution and approvals. The bridge itself receives no filesystem authority,
   // and its producer scope never enters the persistent native Codex environment cache.
-  if (parsed._hermesContext) return { environment: {
-    producer: "hermes",
-    cwd: parsed._hermesContext.root, roots: [parsed._hermesContext.root], writableRoots: [],
+  const client = externalClientContext(parsed);
+  if (client) return { environment: {
+    producer: client.producer,
+    cwd: client.root, roots: [client.root], writableRoots: [],
     sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: parsed.context.tools ?? [],
   } };
   const identity = extractChatGptTurnIdentity(parsed);

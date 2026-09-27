@@ -8,6 +8,8 @@ import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import {
   parseChatGptWebProModelVersion,
+  parseChatGptWebModelCapabilities,
+  type ChatGptWebModelCapabilities,
   type ChatGptWebProModelVersion,
 } from "./chatgpt-web-models";
 import {
@@ -54,6 +56,7 @@ export interface AppConfig {
   /** Independent Extra High evidence; missing legacy values use the prior Pro proof. */
   extraHighAvailable?: boolean;
   proAvailable: boolean;
+  modelCapabilities?: ChatGptWebModelCapabilities;
   /** Optional explicit ChatGPT model family used for automatic Pro turns. */
   proModelVersion?: ChatGptWebProModelVersion;
   compactionModel?: ChatGptWebCompactionModel;
@@ -509,6 +512,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;
   const extraHighAvailable = parsed.extraHighAvailable ?? proAvailable;
+  const modelCapabilities = parseChatGptWebModelCapabilities(parsed.modelCapabilities);
   if (parsed.experimentalSkillAttachments !== undefined && typeof parsed.experimentalSkillAttachments !== "boolean") {
     throw new Error(`Invalid experimentalSkillAttachments in ${path}`);
   }
@@ -561,6 +565,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     solAvailable: browserInteractionMode === "manual" ? false : solAvailable,
     extraHighAvailable: browserInteractionMode === "manual" ? false : extraHighAvailable,
     proAvailable: browserInteractionMode === "manual" ? false : proAvailable,
+    modelCapabilities: browserInteractionMode === "manual" ? undefined : modelCapabilities,
     proModelVersion,
     compactionModel,
     experimentalBiggerContext,

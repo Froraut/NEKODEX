@@ -245,3 +245,10 @@
 @container workspace (max-width: 600px) {
   .runtime-restart-notice { align-items: stretch; flex-direction: column; }
 }
+.client-connections section + section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+}
+.client-connections .browser-empty-actions { justify-content: flex-start; }
+.client-connections code { overflow-wrap: anywhere; }
