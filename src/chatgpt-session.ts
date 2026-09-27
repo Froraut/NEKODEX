@@ -541,6 +541,18 @@ export function chatGptUnversionedEffortMatches(descriptions: readonly string[],
     && Number(states[0]![2]) === index && Number(states[0]![3]) >= index;
 }
 
+async function waitForChatGptModelPickerView(
+  view: Locator, expected: "simple" | "advanced", timeoutMs: number, signal?: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    signal?.throwIfAborted();
+    if (await view.getAttribute("data-model-picker-view", { timeout: 500 }).catch(() => null) === expected) return true;
+    await waitForChatGptProbeSettle(50, signal);
+  } while (Date.now() < deadline);
+  return false;
+}
+
 // Background surfaces are drawn offscreen and produce no animation frames, so Playwright's
 // stability check never completes there. Menu targets are verified before each forced click.
 async function expandChatGptModelPicker(activation: ChatGptEffortActivation, signal?: AbortSignal): Promise<void> {
@@ -555,7 +567,12 @@ async function expandChatGptModelPicker(activation: ChatGptEffortActivation, sig
     const toggle = powerView.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]');
     if (await toggle.count() !== 1) throw new Error("ChatGPT model picker toggle is ambiguous");
     await toggle.click({ force: true, timeout: 5_000, signal });
-    return;
+    // A forced click can land during the menu's entry transition without effect. The model rows
+    // render only in the advanced view, so require that view instead of assuming the click worked.
+    if (await waitForChatGptModelPickerView(powerView, "advanced", 1_500, signal)) return;
+    await toggle.dispatchEvent("click", undefined, { timeout: 2_000, ...(signal ? { signal } : {}) });
+    if (await waitForChatGptModelPickerView(powerView, "advanced", 1_500, signal)) return;
+    throw new Error("ChatGPT model picker did not open its model list");
   }
   const trigger = activation.menu.getByLabel(/^(?:Select model|Choose model|Sélectionner le modèle|Choisir le modèle|选择模型|モデルを選択)$/);
   if (await trigger.count() === 1 && await trigger.getAttribute("aria-expanded") === "false") {
