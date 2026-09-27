@@ -126,6 +126,7 @@ export function transitionSetupConfig(existing: AppConfig | undefined, options: 
     config.experimentalSkillAttachments = false;
     config.experimentalFreshConversationPerTurn = false;
     config.solAvailable = false;
+    config.modelCapabilities = undefined;
     config.extraHighAvailable = false;
     config.proAvailable = false;
   }
@@ -158,6 +159,7 @@ export function setupRuntimeProjection(config: AppConfig) {
     solAvailable: config.solAvailable,
     extraHighAvailable: config.extraHighAvailable,
     proAvailable: config.proAvailable,
+    modelCapabilities: config.modelCapabilities?.families,
     experimentalBiggerContext: config.experimentalBiggerContext,
     allowWebSubagents: config.allowWebSubagents,
     experimentalSkillAttachments: config.experimentalSkillAttachments,

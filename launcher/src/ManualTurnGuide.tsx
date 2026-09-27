@@ -62,7 +62,7 @@ export function ManualTurnGuide({
     <section className={`manual-turn-guide${waiting ? " is-waiting" : ""}`} aria-labelledby={headingId}>
       <div>
         <strong id={headingId}>{waiting ? copy.manualPromptTitle : copy.manualPromptWaiting}</strong>
-        {waiting ? <p>{copy.manualPromptInstruction}</p> : null}
+        {tab.canCopyPrompt ? <p>{copy.manualPromptInstruction}</p> : null}
       </div>
       <span className="manual-turn-status">{status}</span>
       <span className="visually-hidden" aria-live="polite">{waiting ? "" : status}</span>

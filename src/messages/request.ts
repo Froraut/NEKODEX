@@ -1,0 +1,316 @@
+// Adapted from Evanlau1798/codex-chatgpt-web fa514a46 (MIT).
+import { createHash, randomUUID } from "node:crypto";
+import { isClaudeCompactRequest } from "./compact";
+import { historicalClaudeGuidance } from "./claude-steering-history";
+import { resolveClaudeGatewayModelId } from "./models";
+import { claudeAgentTurnId, claudeSessionThreadId } from "../claude-session-identity";
+
+export { claudeSessionThreadId } from "../claude-session-identity";
+
+type Json = Record<string, unknown>;
+type TextFilter = (text: string) => string | undefined;
+
+function object(value: unknown, label: string): Json {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
+  return value as Json;
+}
+
+function textBlocks(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value.flatMap(block => {
+    const part = object(block, "content block");
+    return part.type === "text" && typeof part.text === "string" ? [part.text] : [];
+  }).join("\n");
+}
+
+function inputParts(content: unknown, filterText: TextFilter = text => text): Json[] {
+  if (typeof content === "string") {
+    const text = filterText(content);
+    return text === undefined ? [] : [{ type: "input_text", text }];
+  }
+  if (!Array.isArray(content)) return [];
+  const parts: Json[] = [];
+  for (const raw of content) {
+    const block = object(raw, "message content block");
+    if (block.type === "text" && typeof block.text === "string") {
+      const text = filterText(block.text);
+      if (text !== undefined) parts.push({ type: "input_text", text });
+    } else if (block.type === "image") {
+      const source = object(block.source, "image source");
+      if (source.type !== "base64" || typeof source.media_type !== "string" || typeof source.data !== "string") {
+        throw new Error("only base64 Claude image sources are supported");
+      }
+      parts.push({ type: "input_image", image_url: `data:${source.media_type};base64,${source.data}` });
+    } else if (block.type !== "tool_result") {
+      throw new Error("Unsupported Messages content block");
+    }
+  }
+  return parts;
+}
+
+function assistantItems(content: unknown): Json[] {
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
+  if (!Array.isArray(blocks)) return [];
+  const items: Json[] = [];
+  let text: Json[] = [];
+  const flushText = () => {
+    if (text.length > 0) items.push({ type: "message", role: "assistant", content: text });
+    text = [];
+  };
+  for (const raw of blocks) {
+    const block = object(raw, "assistant content block");
+    if (block.type === "text" && typeof block.text === "string") {
+      text.push({ type: "output_text", text: block.text });
+    } else if (block.type === "thinking" && typeof block.thinking === "string") {
+      flushText();
+      items.push({ type: "reasoning", summary: [{ type: "summary_text", text: block.thinking }] });
+    } else if (block.type === "redacted_thinking" && typeof block.data === "string") {
+      flushText();
+      items.push({ type: "reasoning", encrypted_content: block.data });
+    } else if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+      flushText();
+      items.push({ type: "function_call", call_id: block.id, name: block.name, arguments: JSON.stringify(block.input ?? {}) });
+    } else {
+      throw new Error("Unsupported assistant content block");
+    }
+  }
+  flushText();
+  return items;
+}
+
+function userItems(content: unknown, turnId: string, filterText?: TextFilter): Json[] {
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
+  if (!Array.isArray(blocks)) return [];
+  const filter = filterText ?? (text => text);
+  const items: Json[] = [];
+  const ordinary = inputParts(blocks, filter);
+  if (ordinary.length > 0) {
+    items.push({
+      type: "message",
+      role: "user",
+      content: ordinary,
+      internal_chat_message_metadata_passthrough: { turn_id: turnId },
+    });
+  }
+  for (const raw of blocks) {
+    const block = object(raw, "user content block");
+    if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+    let output: string | Json[] = typeof block.content === "string" ? (filter(block.content) ?? "") : inputParts(block.content, filter);
+    if (block.is_error === true) output = typeof output === "string" ? JSON.stringify({ is_error: true, content: output })
+      : [{ type: "input_text", text: "The client reports that this tool call failed." }, ...output];
+    items.push({ type: "function_call_output", call_id: block.tool_use_id, output });
+  }
+  return items;
+}
+
+function toolChoice(value: unknown): unknown {
+  if (!value) return undefined;
+  const choice = object(value, "tool_choice");
+  if (choice.type === "auto") return "auto";
+  if (choice.type === "any") return "required";
+  if (choice.type === "none") return "none";
+  if (choice.type === "tool" && typeof choice.name === "string") return { type: "function", name: choice.name };
+  return undefined;
+}
+
+function isClaudeSessionTitleSchema(format: Json): boolean {
+  if (format.type !== "json_schema") return false;
+  const schema = format.schema;
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return false;
+  const schemaObject = schema as Json;
+  const properties = schemaObject.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return false;
+  const propertyNames = Object.keys(properties);
+  if (propertyNames.length !== 1 || propertyNames[0] !== "title") return false;
+  const title = (properties as Json).title;
+  if (!title || typeof title !== "object" || Array.isArray(title) || (title as Json).type !== "string") return false;
+  const required = schemaObject.required;
+  return Array.isArray(required)
+    && required.length === 1
+    && required[0] === "title"
+    && schemaObject.additionalProperties === false;
+}
+
+function isClaudeSessionTitlePrompt(system: string): boolean {
+  if (!/\bcoding session\b/i.test(system) || !/return json\b/i.test(system)) return false;
+  return /sentence[- ]case title/i.test(system)
+    || /naming a coding session/i.test(system)
+    || /title is a name for what the session is about/i.test(system);
+}
+
+function claudeTitleResponse(request: Json, system: string): string | undefined {
+  const outputConfig = request.output_config;
+  if (!outputConfig || typeof outputConfig !== "object" || Array.isArray(outputConfig)) return undefined;
+  const format = (outputConfig as Json).format;
+  if (!format || typeof format !== "object" || Array.isArray(format)
+    || !isClaudeSessionTitleSchema(format as Json)
+    || !isClaudeSessionTitlePrompt(system)) return undefined;
+  const latestUser = [...request.messages as unknown[]].reverse().find(raw => raw && typeof raw === "object"
+    && !Array.isArray(raw) && (raw as Json).role === "user") as Json | undefined;
+  const session = textBlocks(latestUser?.content).match(/<session>\s*([\s\S]*?)\s*<\/session>/i)?.[1];
+  const firstLine = session?.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? "Claude Code session";
+  return JSON.stringify({ title: [...firstLine].slice(0, 80).join("") });
+}
+
+export interface TranslatedClaudeRequest {
+  requestedModel: string;
+  stream: boolean;
+  compact: boolean;
+  suppressedSteeringReplays: number;
+  auxiliaryResponse?: string;
+  body: Json;
+}
+
+type ClaudeSteeringSuppressionCount = (threadId: string, turnId: string, instruction: string) => number;
+
+const CLAUDE_MID_TURN_HEADER = "The user sent a new message while you were working:";
+const CLAUDE_COORDINATOR_HEADER = "The coordinator sent a message while you were working:";
+const CLAUDE_MID_TURN_TAIL = "This is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.";
+const CLAUDE_COORDINATOR_TAIL = "Address this before completing your current task.";
+
+interface ClaudeQueuedCommand { instruction: string; source: "user" | "coordinator" }
+
+function claudeQueuedCommand(text: string): ClaudeQueuedCommand | undefined {
+  const trimmed = text.trim();
+  const wrapper = trimmed.match(/^<system-reminder>\r?\n([\s\S]*)\r?\n<\/system-reminder>$/);
+  if (trimmed.startsWith("<system-reminder>") && !wrapper) return undefined;
+  const message = wrapper?.[1] ?? trimmed;
+  const header = message.match(new RegExp(`^(?:${CLAUDE_MID_TURN_HEADER}|${CLAUDE_COORDINATOR_HEADER})\\r?\\n`));
+  if (!header) return undefined;
+  const source = header[0].startsWith(CLAUDE_COORDINATOR_HEADER) ? "coordinator" : "user";
+  const body = message.slice(header[0].length);
+  const separators = [...body.matchAll(/\r?\n\r?\n/g)];
+  for (const boundary of separators.reverse()) {
+    const tail = body.slice(boundary.index! + boundary[0].length);
+    if (tail === CLAUDE_MID_TURN_TAIL || tail === CLAUDE_COORDINATOR_TAIL
+      || /^IMPORTANT:[\s\S]*\bmessage above\b/i.test(tail)) {
+      return { instruction: body.slice(0, boundary.index), source };
+    }
+  }
+  return undefined;
+}
+
+function filterClaudeQueuedCommandReplays(text: string, suppress: (instruction: string) => boolean): string | undefined {
+  const whole = claudeQueuedCommand(text);
+  if (whole && suppress(whole.instruction)) return historicalClaudeGuidance(whole.instruction, whole.source);
+  let cursor = 0;
+  let filtered = "";
+  let changed = false;
+  for (const match of text.matchAll(/<system-reminder>\r?\n[\s\S]*?\r?\n<\/system-reminder>/g)) {
+    const command = claudeQueuedCommand(match[0]);
+    if (!command || !suppress(command.instruction)) continue;
+    filtered += text.slice(cursor, match.index) + historicalClaudeGuidance(command.instruction, command.source);
+    cursor = match.index + match[0].length;
+    changed = true;
+  }
+  filtered = changed ? filtered + text.slice(cursor) : text;
+  const bareStart = Math.max(
+    filtered.lastIndexOf(`\n${CLAUDE_MID_TURN_HEADER}`),
+    filtered.lastIndexOf(`\n${CLAUDE_COORDINATOR_HEADER}`),
+  );
+  if (bareStart >= 0) {
+    const command = claudeQueuedCommand(filtered.slice(bareStart + 1));
+    if (command && suppress(command.instruction)) {
+      const cut = bareStart > 0 && filtered[bareStart - 1] === "\r" ? bareStart - 1 : bareStart;
+      const prefix = filtered.slice(0, cut);
+      filtered = `${prefix}${prefix ? "\n" : ""}${historicalClaudeGuidance(command.instruction, command.source)}`;
+    }
+  }
+  return filtered || undefined;
+}
+
+export function translateClaudeMessages(
+  raw: unknown,
+  headers: Headers,
+  suppressionCount?: ClaudeSteeringSuppressionCount,
+): TranslatedClaudeRequest {
+  const request = object(raw, "request body");
+  const discoveredModel = typeof request.model === "string"
+    ? resolveClaudeGatewayModelId(request.model)
+    : undefined;
+  if (typeof request.model !== "string"
+    || (!discoveredModel && !request.model.startsWith("chatgpt-web/") && !request.model.startsWith("chatgpt-web-"))) {
+    throw new Error("model must be an existing chatgpt-web route slug or Claude Code alias");
+  }
+  const model = discoveredModel ?? (request.model.startsWith("chatgpt-web-")
+    ? `chatgpt-web/${request.model.slice("chatgpt-web-".length)}`
+    : request.model);
+  if (!Array.isArray(request.messages) || request.messages.length === 0 || request.messages.length > 4096) throw new Error("messages must contain 1..4096 items");
+  if (request.max_tokens !== undefined && (!Number.isSafeInteger(request.max_tokens) || Number(request.max_tokens) < 1 || Number(request.max_tokens) > 65536)) {
+    throw new Error("max_tokens must be a positive number");
+  }
+
+  const session = headers.get("x-claude-code-session-id") ?? randomUUID();
+  const subagent = headers.has("x-claude-code-agent-id");
+  const agent = headers.get("x-claude-code-agent-id") ?? "root";
+  const threadId = claudeSessionThreadId(JSON.stringify([session, agent]));
+  const turnId = claudeAgentTurnId(agent);
+  const system = textBlocks(request.system);
+  const auxiliaryResponse = undefined;
+  const input: Json[] = [];
+  const suppressedByInstruction = new Map<string, number>();
+  let suppressedSteeringReplays = 0;
+  const consumeSuppression = (instruction: string): boolean => {
+    if (!suppressionCount) return false;
+    const used = suppressedByInstruction.get(instruction) ?? 0;
+    if (used >= suppressionCount(threadId, turnId, instruction)) return false;
+    suppressedByInstruction.set(instruction, used + 1);
+    suppressedSteeringReplays += 1;
+    return true;
+  };
+  const filterUserText = (text: string) => filterClaudeQueuedCommandReplays(text, consumeSuppression);
+  let latestUserOffset = -1;
+  for (const rawMessage of request.messages) {
+    const message = object(rawMessage, "message");
+    if (message.role === "assistant") input.push(...assistantItems(message.content));
+    else if (message.role === "system") {
+      const content = textBlocks(message.content);
+      if (content) input.push({ type: "message", role: "system", content: [{ type: "input_text", text: content }] });
+    } else if (message.role === "user") {
+      const start = input.length;
+      input.push(...userItems(message.content, turnId, filterUserText));
+      if (input.slice(start).some(item => item.type === "message")) latestUserOffset = start;
+    } else throw new Error("message role must be user or assistant");
+  }
+  if (latestUserOffset < 0) throw new Error("messages must contain a user text or image block");
+
+  const tools = Array.isArray(request.tools) ? request.tools.map(rawTool => {
+    const tool = object(rawTool, "tool");
+    if (typeof tool.name !== "string") throw new Error("tool name must be a string");
+    return {
+      type: "function",
+      name: tool.name,
+      description: typeof tool.description === "string" ? tool.description : "",
+      parameters: object(tool.input_schema ?? {}, "tool input_schema"),
+    };
+  }) : undefined;
+  const compact = isClaudeCompactRequest(system, request.messages);
+  const historyAnchor = createHash("sha256")
+    .update(JSON.stringify(request.messages[0]))
+    .digest("hex");
+  const choice = toolChoice(request.tool_choice);
+  const harness = "You are serving Claude Code through ChatGPT Web. Follow the supplied system and user instructions. Use only advertised client tools; the client owns tool execution and permission decisions.";
+  return {
+    requestedModel: request.model,
+    stream: request.stream === true,
+    compact,
+    suppressedSteeringReplays,
+    ...(auxiliaryResponse ? { auxiliaryResponse } : {}),
+    body: {
+      model,
+      stream: request.stream === true,
+      input,
+      instructions: [system, harness].filter(Boolean).join("\n\n"),
+      ...(request.max_tokens !== undefined ? { max_output_tokens: request.max_tokens } : {}),
+      ...(tools ? { tools } : {}),
+      ...(choice !== undefined ? { tool_choice: choice } : {}),
+      ...(request.output_config && object(request.output_config, "output_config").format ? {
+        text: { format: { ...object(object(request.output_config, "output_config").format, "output format"), name: "claude_response" } },
+      } : {}),
+      parallel_tool_calls: true,
+      prompt_cache_key: threadId,
+
+    },
+  };
+}

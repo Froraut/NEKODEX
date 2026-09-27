@@ -6,15 +6,15 @@ import type { ChatGptWebModelMode } from "./model";
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 
 export const chatGptRateLimitDialog = (page: Page): Locator => page.locator('[role="dialog"]')
-  .filter({ hasText: /Too many requests|太多要求|太多请求|リクエストが多すぎます|요청이 너무 많습니다|요청을 너무 빠르게 보내고 있습니다/i })
-  .filter({ hasText: /making requests too quickly|過於頻繁|过于频繁|リクエストの頻度が高すぎます|요청을 너무 빠르게 보내고 있습니다/i })
+  .filter({ hasText: /Too many requests|Trop de requêtes|太多要求|太多请求|リクエストが多すぎます|요청이 너무 많습니다|요청을 너무 빠르게 보내고 있습니다/i })
+  .filter({ hasText: /making requests too quickly|Vous envoyez des demandes trop rapidement|過於頻繁|过于频繁|リクエストの頻度が高すぎます|요청을 너무 빠르게 보내고 있습니다/i })
   .last();
 
 export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
   const dialog = chatGptRateLimitDialog(page);
   if (!await dialog.isVisible().catch(() => false)) return;
 
-  const acknowledge = dialog.getByRole("button", { name: /^(Got it|知道了|了解|알겠습니다)$/ }).last();
+  const acknowledge = dialog.getByRole("button", { name: /^(Got it|J[’']ai compris|Compris|知道了|了解|알겠습니다)$/ }).last();
   if (await acknowledge.isVisible().catch(() => false)) {
     try {
       await acknowledge.press("Enter");
@@ -66,15 +66,15 @@ export async function throwIfChatGptEffortCapabilityDialog(
 
 const chatGptTemporaryChatOnboardingDialog = (page: Page): Locator => page
   .locator('[role="dialog"]')
-  .filter({ hasText: "Not in history" })
-  .filter({ hasText: "No model training" })
-  .filter({ hasText: "Memory off" })
+  .filter({ hasText: /Not in history|Pas de conservation dans l[’']historique/ })
+  .filter({ hasText: /No model training|Aucun entraînement de modèle/ })
+  .filter({ hasText: /Memory off|Mémoire désactivée/ })
   .last();
 
 export async function dismissChatGptTemporaryChatOnboarding(page: Page): Promise<boolean> {
   const dialog = chatGptTemporaryChatOnboardingDialog(page);
   if (!await dialog.isVisible().catch(() => false)) return false;
-  const continueButton = dialog.getByRole("button", { name: "Continue", exact: true }).last();
+  const continueButton = dialog.getByRole("button", { name: /^(?:Continue|Continuer)$/, exact: true }).last();
   if (!await continueButton.isVisible().catch(() => false)) {
     throw new Error("ChatGPT Temporary Chat onboarding is visible without its Continue action");
   }
@@ -87,18 +87,18 @@ type ChatGptTextScope = Pick<Locator, "getByText" | "getByTestId">;
 
 const chatGptSubscriptionFailureAlert = (page: Page): Locator => page
   .locator('[role="alert"]')
-  .filter({ hasText: /Failed to load subscription/i })
+  .filter({ hasText: /Failed to load subscription|Échec du chargement de l[’']abonnement/i })
   .last();
 
 export const chatGptExpiredSessionAlert = (page: Page): Locator => page
   .locator('[role="alert"], [role="dialog"]')
-  .filter({ hasText: /Your session has expired|你的工作階段已過期|您的工作階段已過期|你的会话已过期|您的会话已过期/i })
+  .filter({ hasText: /Your session has expired|Votre session a expiré|你的工作階段已過期|您的工作階段已過期|你的会话已过期|您的会话已过期/i })
   .last();
 
 export async function throwIfChatGptSessionFailureAlert(page: Page): Promise<void> {
   const safetyAlert = page.locator('[role="alert"], [role="dialog"], [role="alertdialog"]')
-    .filter({ hasText: /Suspicious activity detected/i })
-    .filter({ hasText: /someone else.*using your ChatGPT account/i }).last();
+    .filter({ hasText: /Suspicious activity detected|Nous détectons une activité suspecte|Activité inhabituelle détectée/i })
+    .filter({ hasText: /someone else.*using your ChatGPT account|activité suspecte|activité inhabituelle/i }).last();
   if (await safetyAlert.isVisible().catch(() => false)) {
     throw new ChatGptWebAdapterError("ChatGPT reported suspicious account activity. Automation is paused; review the account before explicitly resuming in Accounts.", {
       status: 403, errorType: "permission_error", code: "account_safety_stop", retryable: false,
@@ -118,7 +118,7 @@ export async function throwIfChatGptSessionFailureAlert(page: Page): Promise<voi
 }
 
 const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
-  .getByText(/Something went wrong[\s\S]*help\.openai\.com/i)
+  .getByText(/(?:Something went wrong|Une erreur s[’']est produite)[\s\S]*help\.openai\.com/i)
   .last();
 
 const chatGptThinkingFailedAlert = (scope: ChatGptTextScope): Locator => scope
@@ -204,8 +204,9 @@ export async function resolveChatGptToolConfirmation(
   timeoutMs = CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
   onVisible?: () => Promise<void>,
 ): Promise<boolean> {
+  const escapedAppName = appName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const dialog = page.locator('[role="dialog"], [data-testid="tool-approval-card"]')
-    .filter({ hasText: `Allow ChatGPT to use ${appName}?` })
+    .filter({ hasText: new RegExp(`(?:Allow ChatGPT to use|Autoriser ChatGPT à utiliser) ${escapedAppName}\\s*\\?`) })
     .last();
   if (!await dialog.isVisible().catch(() => false)) return false;
   await onVisible?.();
@@ -215,7 +216,7 @@ export async function resolveChatGptToolConfirmation(
     // current one-shot approval. Keep the matcher anchored so persistent
     // actions such as "Always allow" cannot match.
     const allowCurrentAction = dialog
-      .getByRole("button", { name: /^Allow(?: once)?$/ })
+      .getByRole("button", { name: /^(?:Allow(?: once)?|Autoriser(?: une fois)?)$/ })
       .last();
     await allowCurrentAction.waitFor({ state: "visible", timeout: 10_000 });
     await allowCurrentAction.press("Enter");
@@ -230,7 +231,7 @@ export async function resolveChatGptToolConfirmation(
   }
 
   if (!await dialog.isVisible().catch(() => false)) return true;
-  const deny = dialog.getByRole("button", { name: "Deny", exact: true }).last();
+  const deny = dialog.getByRole("button", { name: /^(?:Deny|Refuser)$/, exact: true }).last();
   await deny.waitFor({ state: "visible", timeout: 5_000 });
   await deny.press("Enter");
   await dialog.waitFor({ state: "hidden", timeout: 10_000 });

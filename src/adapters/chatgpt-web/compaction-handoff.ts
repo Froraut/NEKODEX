@@ -117,15 +117,18 @@ export async function requestRetainedCompactionHandoff(
       onTextDelta: () => {},
       onSendActivated: () => { sendActivated = true; },
     });
-    const browserFailure = browser.then<never>(
-      () => new Promise<never>(() => {}),
-      error => { throw error; },
-    );
+    const handoff = broker.waitForCompactionHandoff(transaction.token, operationSignal);
+    const browserFailure = browser.then<never>(() => {
+      throw new ChatGptWebAdapterError(
+        "ChatGPT finished without sending the context summary to Codex. Check its response for a refusal or tool error.",
+        { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_missing", retryable: false },
+      );
+    });
     // A synchronous worker cancellation can precede the abort race attaching its handler.
     void browserFailure.catch(() => {});
     const summary = await withCompactionAbort(
       Promise.race([
-        broker.waitForCompactionHandoff(transaction.token, operationSignal),
+        handoff,
         browserFailure,
       ]),
       operationSignal,

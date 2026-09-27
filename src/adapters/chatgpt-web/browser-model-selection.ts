@@ -4,7 +4,7 @@ import type { ChatGptWebProModelVersion } from "../../chatgpt-web-models";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { stabilizeEffortSlider } from "./effort-stabilization";
 import { chatGptProUsageLimitTooltip } from "./pro-retry-hint";
-import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, parseChatGptEffortSliderState, readChatGptEffortAvailability, chatGptModelStateMatches } from "../../chatgpt-session";
+import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, readChatGptEffortSnapshot, chatGptModelStateMatches, chatGptUnversionedEffortMatches, selectChatGptModelFamily, assertSelectedChatGptModelFamily } from "../../chatgpt-session";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
 
 interface ModelSelectionDependencies {
@@ -66,22 +66,6 @@ function chatGptPinnedModelError(version: ChatGptWebProModelVersion, cause?: unk
   );
 }
 
-function chatGptProModelOptionName(version: ChatGptWebProModelVersion): RegExp {
-  if (version === "5.6") return /^GPT[-\s]?5\.6\s+Sol(?:\s+Pro)?$/i;
-  if (version === "5.5") return /^GPT[-\s]?5\.5(?:\s+Pro)?$/i;
-  return /^(?:Latest|Le plus récent|最新|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i;
-}
-
-async function assertSelectedModelRadio(menu: Locator, version: ChatGptWebProModelVersion): Promise<void> {
-  const option = menu.getByRole("menuitemradio", {
-    name: chatGptProModelOptionName(version), exact: true, includeHidden: true,
-  });
-  if (await option.count() !== 1 || await option.getAttribute("aria-checked") !== "true") {
-    throw chatGptPinnedModelError(version);
-  }
-}
-
-
 async function assertChatGptSelectedModelVersion(
   page: Page,
   slider: Locator,
@@ -108,7 +92,8 @@ async function assertChatGptSelectedModelVersion(
     // Latest uses 5.6 for its lower efforts and 6 for Pro. The checked radio
     // is verified separately, so 5.6 in this description alone is not family proof.
     const describedVersion = version === "6" && expectedEffort !== "max" ? "5.6" : version;
-    if (chatGptModelStateMatches(descriptions, describedVersion, requirePro, expectedEffort)) return;
+    if (chatGptModelStateMatches(descriptions, describedVersion, requirePro, expectedEffort)
+      || (expectedEffort && chatGptUnversionedEffortMatches(descriptions, expectedEffort))) return;
     if (Date.now() >= deadline) break;
     await new Promise(resolveSettle => setTimeout(resolveSettle, 50));
   }
@@ -123,7 +108,7 @@ export async function setChatGptThinkMode(
 ): Promise<void> {
   throwIfPromptAttachmentAborted(abortSignal);
   const controls = composerForm
-    .getByRole("button", { name: "Think", exact: true })
+    .getByRole("button", { name: /^(?:Think|Analyser)$/, exact: true })
     .filter({ visible: true });
   const count = await controls.count();
   if (count === 0 && !enabled) {
@@ -280,43 +265,7 @@ export class ChatGptModelSelectionController {
     const modelVersion = stageModelVersion ?? mode.modelVersion;
     if (modelVersion) {
       try {
-        const modelName = chatGptProModelOptionName(modelVersion);
-        let option = activation.menu.getByRole("menuitemradio", { name: modelName, exact: true, includeHidden: true });
-        const optionCount = await option.count();
-        if (optionCount > 1) throw chatGptPinnedModelError(modelVersion);
-        const familyPinned = optionCount === 1 && await option.getAttribute("aria-checked") === "true";
-        if (!familyPinned) {
-          // The power picker keeps its model rows in an explicit advanced view.
-          const powerView = activation.menu.locator("[data-model-picker-view]");
-          const powerViews = await powerView.count();
-          if (powerViews > 1) throw chatGptPinnedModelError(modelVersion);
-          if (powerViews === 1) {
-            const view = await powerView.getAttribute("data-model-picker-view");
-            if (view === "simple") {
-              const toggle = powerView.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]');
-              if (await toggle.count() !== 1) throw chatGptPinnedModelError(modelVersion);
-              await toggle.click({ timeout: 5_000 });
-            } else if (view !== "advanced") throw chatGptPinnedModelError(modelVersion);
-          } else {
-            const modelTrigger = activation.menu.getByLabel(/^(?:Select model|Choose model|选择模型|モデルを選択)$/);
-            // Advanced rows can retain geometry while their owning submenu is collapsed/inert.
-            const collapsed = await modelTrigger.count() === 1 && await modelTrigger.getAttribute("aria-expanded") === "false";
-            if (collapsed || !await option.isVisible().catch(() => false)) await modelTrigger.click({ timeout: 5_000 });
-          }
-          await option.waitFor({ state: "visible", timeout: 5_000 });
-          await option.click({ timeout: 5_000 });
-          await page.keyboard.press("Escape");
-          activation = await activateChatGptEffortMenu(page, currentEffort);
-          option = activation.menu.getByRole("menuitemradio", { name: modelName, exact: true, includeHidden: true });
-          const deadline = Date.now() + 1_000;
-          for (;;) {
-            const count = await option.count();
-            if (count > 1) throw chatGptPinnedModelError(modelVersion);
-            if (count === 1 && await option.getAttribute("aria-checked") === "true") break;
-            if (Date.now() >= deadline) throw chatGptPinnedModelError(modelVersion);
-            await new Promise(resolveSettle => setTimeout(resolveSettle, 50));
-          }
-        }
+        activation = await selectChatGptModelFamily(page, currentEffort, activation, modelVersion, abortSignal);
       } catch (error) {
         throw chatGptPinnedModelError(modelVersion, error);
       }
@@ -351,17 +300,8 @@ export class ChatGptModelSelectionController {
     } finally {
       waitAbort.abort();
     }
-    const readOptions = { timeout: 1_000, signal: abortSignal };
-    const sliderState = parseChatGptEffortSliderState(
-      await effortSlider.getAttribute("aria-valuemin", readOptions),
-      await effortSlider.getAttribute("aria-valuemax", readOptions),
-      await effortSlider.getAttribute("aria-valuenow", readOptions),
-    );
-    if (!sliderState) {
-      throw chatGptModelControlUnavailableAdapterError(
-        "ChatGPT effort slider exposed an invalid ARIA range",
-      );
-    }
+    const sliderState = await readChatGptEffortSnapshot(sliderContainer)
+      .catch(error => { throw chatGptModelControlUnavailableAdapterError(String(error)); });
     const targetValue = sliderState.min + uiEffortIndex;
     if (targetValue > sliderState.max) {
       const proMayBeLimited = uiEffortIndex === 4 && sliderState.min === 0 && sliderState.max === 3;
@@ -379,8 +319,7 @@ export class ChatGptModelSelectionController {
         proRetryHint,
       );
     }
-    const availability = await readChatGptEffortAvailability(sliderContainer, sliderState)
-      .catch(error => { throw chatGptModelControlUnavailableAdapterError(String(error)); });
+    const availability = sliderState.available;
     if (availability && !availability[uiEffortIndex]) {
       throw new ChatGptWebAdapterError(
         `ChatGPT locks ${mode.displayLabel} behind an upgrade. The message was not sent. Choose an available effort and run Repair to refresh the account capabilities.`,
@@ -399,11 +338,12 @@ export class ChatGptModelSelectionController {
         signal: abortSignal,
         read: async options => {
           await this.dependencies.throwIfChatGptRateLimitDialog(page);
-          return parseChatGptEffortSliderState(
-            await effortSlider.getAttribute("aria-valuemin", options),
-            await effortSlider.getAttribute("aria-valuemax", options),
-            await effortSlider.getAttribute("aria-valuenow", options),
-          );
+          options.signal.throwIfAborted();
+          const state = await readChatGptEffortSnapshot(sliderContainer);
+          if (state.min !== sliderState.min || (state.available && !state.available[uiEffortIndex])) {
+            throw new Error("ChatGPT changed the requested effort range or availability during selection");
+          }
+          return state;
         },
         press: (key, options) => sliderControl.press(key, options),
       });
@@ -423,7 +363,7 @@ export class ChatGptModelSelectionController {
       );
     }
     if (modelVersion) {
-      await assertSelectedModelRadio(activation.menu, modelVersion);
+      activation = await assertSelectedChatGptModelFamily(page, currentEffort, activation, modelVersion, abortSignal);
       await assertChatGptSelectedModelVersion(page, effortSlider, modelVersion, mode.effort === "max", mode.effort, 1_000);
     }
     await captureDiagnostic?.("effort-selected");
@@ -431,18 +371,15 @@ export class ChatGptModelSelectionController {
     await this.dependencies.settleChatGptUi();
     this.effortSelections.set(page, { label: (await currentEffort.innerText()).trim(), url: page.url(), effort: mode.effort });
     await this.assertEffortSurface(page, mode.effort);
-    const confirmation = await activateChatGptEffortMenu(page, currentEffort);
+    let confirmation = await activateChatGptEffortMenu(page, currentEffort);
     try {
-      const confirmed = parseChatGptEffortSliderState(
-        await confirmation.slider.getAttribute("aria-valuemin", readOptions),
-        await confirmation.slider.getAttribute("aria-valuemax", readOptions),
-        await confirmation.slider.getAttribute("aria-valuenow", readOptions),
-      );
-      if (!confirmed || confirmed.min !== sliderState.min || confirmed.max !== sliderState.max || confirmed.value !== targetValue) {
+      const confirmed = await readChatGptEffortSnapshot(confirmation.sliderContainer);
+      if (confirmed.min !== sliderState.min || confirmed.value !== targetValue
+        || (confirmed.available && !confirmed.available[uiEffortIndex])) {
         throw chatGptModelControlUnavailableAdapterError("ChatGPT did not persist the requested effort after closing its menu");
       }
       if (modelVersion) {
-        await assertSelectedModelRadio(confirmation.menu, modelVersion);
+        confirmation = await assertSelectedChatGptModelFamily(page, currentEffort, confirmation, modelVersion, abortSignal);
         await assertChatGptSelectedModelVersion(page, confirmation.slider, modelVersion, mode.effort === "max", mode.effort, 1_000);
       }
     } finally { await page.keyboard.press("Escape"); }
@@ -459,22 +396,20 @@ export class ChatGptModelSelectionController {
       const control = composer.locator("xpath=ancestor::form[1]").locator(CHATGPT_EFFORT_CONTROL_SELECTOR).last();
       let verificationError: ChatGptWebAdapterError | undefined;
       try {
-        const { menu, slider } = await activateChatGptEffortMenu(page, control);
+        let activation = await activateChatGptEffortMenu(page, control);
         if (expectedMode.modelVersion) {
-          await assertSelectedModelRadio(menu, expectedMode.modelVersion);
-          await assertChatGptSelectedModelVersion(page, slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort);
+          activation = await assertSelectedChatGptModelFamily(page, control, activation, expectedMode.modelVersion, abortSignal);
+          await assertChatGptSelectedModelVersion(page, activation.slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort);
           this.validatedPinnedVersions.set(page, expectedMode.modelVersion);
         } else {
           this.validatedPinnedVersions.delete(page);
         }
-        const state = parseChatGptEffortSliderState(
-          await slider.getAttribute("aria-valuemin"), await slider.getAttribute("aria-valuemax"),
-          await slider.getAttribute("aria-valuenow"),
-        );
-        if (!state || expectedMode.uiEffortIndex === null || state.value !== state.min + expectedMode.uiEffortIndex) {
+        const state = await readChatGptEffortSnapshot(activation.sliderContainer);
+        if (expectedMode.uiEffortIndex === null || state.value !== state.min + expectedMode.uiEffortIndex
+          || (state.available && !state.available[expectedMode.uiEffortIndex])) {
           throw chatGptModelControlUnavailableAdapterError("ChatGPT changed the requested effort before submission");
         }
-        if (expectedMode.effort === "max") await this.observeSelectedProVersion(page, slider);
+        if (expectedMode.effort === "max") await this.observeSelectedProVersion(page, activation.slider);
         else this.observedProVersions.delete(page);
       } catch (error) {
         verificationError = expectedMode.modelVersion ? chatGptPinnedModelError(expectedMode.modelVersion, error)
@@ -501,7 +436,7 @@ export class ChatGptModelSelectionController {
           "ChatGPT Luna now exposes a model selector before submission; rerun setup",
         );
       }
-      const controls = composerForm.getByRole("button", { name: "Think", exact: true }).filter({ visible: true });
+      const controls = composerForm.getByRole("button", { name: /^(?:Think|Analyser)$/, exact: true }).filter({ visible: true });
       const count = await controls.count();
       if (!(count === 0 && !expectedMode.thinkEnabled)) {
         if (count !== 1) {

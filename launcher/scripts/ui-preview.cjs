@@ -201,7 +201,28 @@ function installMockLauncher() {
   };
   let workspaceSequence = 0;
   let workspaceFailed = false;
+  const clientConnections = { api: { enabled: false, configured: false, keyFingerprint: null, baseUrl: 'http://127.0.0.1:8765/v1' },
+    claude: { installed: false, ready: false, model: null, issue: null },
+    provider: { installed: true, active: true, mode: 'mixed', issue: null } };
   window.codexWebLauncher = {
+    getClientConnections: async () => structuredClone(clientConnections),
+    changeClientConnection: async action => {
+      calls.push(['client-connection', action]);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (action === 'api-enable') Object.assign(clientConnections.api, { enabled: true, configured: true });
+      if (action === 'api-disable') clientConnections.api.enabled = false;
+      if (action === 'api-rotate' || action === 'api-disable') {
+        if (clientConnections.claude.installed) Object.assign(clientConnections.claude, { ready: false, issue: 'Reconnect Claude after replacing or disabling the key' });
+      }
+      if (action === 'claude-connect') {
+        Object.assign(clientConnections.api, { enabled: true, configured: true });
+        Object.assign(clientConnections.claude, { installed: true, ready: true, model: 'chatgpt-web/gpt-6-astra', issue: null });
+      }
+      if (action === 'claude-disconnect') Object.assign(clientConnections.claude, { installed: false, ready: false, model: null, issue: null });
+      if (action.startsWith('provider-')) clientConnections.provider.mode = action.slice('provider-'.length);
+      return structuredClone(clientConnections);
+    },
+    copyClientApiKey: async () => { calls.push(['api-key-copy']); return { copied: true }; },
     snapshot: async () => {
       if (scenario === "startup-error" && startupAttempts++ === 0) throw new Error("Error invoking remote method 'launcher:snapshot': Error: Fixture runtime unavailable");
       return snapshot();

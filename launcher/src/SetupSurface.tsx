@@ -1,4 +1,5 @@
 import { modelConnectionReadiness, setupNextStep } from "./setup-progress";
+import { ClientConnections } from "./ClientConnections";
 import { useRef, useState } from "react";
 import { type Copy } from "./i18n";
 import { Icon } from "./icons";
@@ -273,6 +274,8 @@ export function SetupSurface({
         <em>{toolsVerified ? copy.mcpReady : copy.configureMcp}</em>
         <Icon name="chevron" />
       </button>
+      {!manualInteraction ? <ClientConnections language={snapshot.state.language ?? "en"} busy={busy}
+        configured={snapshot.state.coreSetupComplete === true} devProfile={devProfile} /> : null}
       {!devProfile && !manualInteraction ? <>
         <details className="setup-troubleshooting"><summary>Hermes <small>{copy.optional}</small><Icon name="chevron" /></summary>
         <div className="setup-overview">

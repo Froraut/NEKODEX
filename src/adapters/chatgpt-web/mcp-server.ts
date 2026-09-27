@@ -51,7 +51,7 @@ const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 // letting the tunnel tear down and poison its long-lived stdio transport.
 const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
 const ZERO_RISK_MCP_INSTRUCTIONS = [
-  "For each pasted Codex Web GPT request, begin with codex_turn_start using the request_id in its request block.",
+  "For each pasted NEKODEX request, begin with codex_turn_start using the request_id in its request block.",
   "Use that request_id with the Codex tools needed for the task.",
   "When the task is finished, send the complete answer with codex_turn_complete.",
   "If a tool returns an error, report that error instead of changing the request_id.",
@@ -192,11 +192,12 @@ export async function runChatGptMcpServer(options: {
       try {
         await settleTurnActivity(turnToken, activityId);
       } catch (cleanupError) {
-        throw new AggregateError(
-          [error, cleanupError],
-          "Codex Native claim failed and its broker activity could not be retired",
+        console.error(
+          `[chatgpt-web-mcp] ${toolName} claim failed and activity cleanup also failed: `
+          + `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
         );
       }
+      // Cleanup tombstones an ambiguous claim, but must not replace the claim failure.
       throw error;
     }
   };
@@ -266,7 +267,7 @@ export async function runChatGptMcpServer(options: {
       "codex_turn_start",
       {
         title: "Connect a Codex Manual mode request",
-        description: "Connect the request_id included in the pasted Codex Web GPT request so its Codex tools can be used.",
+        description: "Connect the request_id included in the pasted NEKODEX request so its Codex tools can be used.",
         inputSchema: {
           request_id: turnTokenSchema,
         },
@@ -461,7 +462,13 @@ export async function runChatGptMcpServer(options: {
     "codex_tool_call",
     {
       title: "Call any tool from the current Codex harness",
-      description: afterSafeStart(contract, "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle."),
+      description: afterSafeStart(contract, [
+        "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle.",
+        ...(contract === "native" ? [
+          `A pending context-compaction request can also provide the reserved ${CODEX_COMPACTION_CONTROL_WIRE_NAME} operation, which is not listed by inventory.`,
+          "Use only that request's issued control token and arguments {handoff_id, summary}. This operation submits the conversation summary to the pending Codex task; it does not execute commands, access files, or invoke other tools.",
+        ] : []),
+      ].join(" ")),
       inputSchema: {
         ...turnReferenceInput(contract),
         wire_name: z.string().min(1).max(1_000),
@@ -547,8 +554,8 @@ export async function runChatGptMcpServer(options: {
           .update(`${turn_token}\0${operation_key}`)
           .digest("base64url")}`;
         return withClaimedTurn("codex_tool_start", turn_token, extra, async claimed => {
-          if (claimed.environment.producer === "hermes") {
-            throw new Error("Owned async Codex operations are unavailable for Hermes-origin turns");
+          if (claimed.environment.producer !== undefined && claimed.environment.producer !== "codex") {
+            throw new Error("Owned async Codex operations are unavailable for external-client turns");
           }
           const invocation = resolveBrowserInvocation(routingPolicy, claimed.environment, wire_name, args, input);
           const snapshot = await callTurnBroker<BrokerOwnedOperationStartResult>(options.brokerSocketPath, {

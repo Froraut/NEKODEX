@@ -79,7 +79,8 @@ separate facts.
    Unexpected input-stream/internal failures and cancellation retain their error path.
 3. **Manual request:** reserve an owned tab → copy prompt → wait for user Sent
    confirmation → execute through the harness → settle. The human submission
-   deadline ends at Sent. Runtime cancellation must be acknowledged before the
+   deadline refreshes on Copy and ends at Sent. A premature Sent leaves the prompt
+   copyable until the connector actually binds. Runtime cancellation must be acknowledged before the
    tab is removed; delayed acknowledgements cannot retire a replacement owner.
 4. **Account sign-in:** capture target account/flow → acquire the exclusive lease
    → verify the captured session/principal → publish a matching receipt → release
@@ -99,6 +100,13 @@ separate facts.
 
 ## Browser presentation
 
+`main.cjs` owns shell recovery. After a renderer process failure it creates one
+replacement trusted shell and asks the existing account pool to reparent its
+WebContentsViews. Browser processes, sessions and turn leases retain their
+owners. A failed replacement rolls back to the previous window; an explicit
+restart uses the supervisor's idle shutdown instead of requiring background
+Native route readiness.
+
 `BrowserSurface` owns the selected-account control and changes it through the account
 pool's `selectAccount` operation. `BrowserWorkspaceManager` consumes that selection;
 it has no independent account filter. Its disclosure manages separate user windows
@@ -114,13 +122,58 @@ layout; the existing bounds observer remains responsible for native view placeme
 
 ## State and persistence
 
+`modelCapabilities` stores timestamped, family-specific selectable efforts through
+config/login/helper boundaries. The shared picker helpers restore the selected
+family, effort and draft after inspection, including menus whose rows unmount.
+Catalog and account admission use that family evidence; the older aggregate
+flags remain compatibility data. Setup refreshes missing or stale observations.
+Chrome profile bindings can retain the observed Chrome user agent for compatible
+session handoff; it never replaces endpoint/principal verification. Sign-in
+mutation receipts are published after the owning lease is released.
+
+## Optional client connections
+
+`local-api-access.ts` owns a private revocable API key. `server.ts` admits scoped
+loopback API candidates before Native/admin dispatch. `chat-completions/` owns
+request validation, bounded stream encoding and exact tool continuation receipts;
+`messages/` translates Claude Messages and never fabricates signed thinking.
+`client-turns.ts` is the shared Hermes/Claude receipt owner. Authenticated
+in-process `external-client-context.ts` values identify the client and supply an
+inert read-only environment to the existing adapter; request bodies cannot grant
+Native workspace authority. Clients execute their own declared tools.
+
+`claude-integration.ts` owns reversible settings and a private journal, using
+snapshot/compensation writes together with local API activation.
+`codex-web-provider.ts` participates in the existing v11 Codex integration
+transaction: publish the hashed Web catalog before switching configuration,
+preserve original Native selection, and reject foreign provider/catalog edits.
+`client-connections.ts` is the private CLI protocol for guarded main-process IPC
+in `ipc/client-connections.cjs`. The renderer's `ClientConnections` owns its drafts
+and action feedback; API key copying stays in the main process. DEV cannot change
+installed clients. None of these modes activates merely by updating the app.
+
+The opt-in `check-claude-client.ts` and `check-web-provider-client.ts` scripts use
+actual installed CLIs with disposable profiles and inert model adapters. The UI
+preview supplies synthetic client settings, while live browser smoke and the
+isolated Electron shell crash check verify their separate boundaries.
+
+## Model and conversation state
+
 Web model identities are resolved in `chatgpt-web-models.ts` before browser
-dispatch. The original fixed-mode rows retain their saved-task semantics and
-picker order. Explicit family routes add native effort choices only when their
+dispatch. The picker advertises named Web models; old fixed-mode IDs remain
+resolvable for saved tasks. Explicit family routes add native effort choices only when their
 context and compaction budgets are equal; Instant and Pro retain separate rows.
 The validated family travels with the turn and conversation identity, and the
 browser proves both the selected family and effort before sending. Native model
 rows and account entitlements are not inferred from these browser routes.
+Hermes' direct provider advertises the same named Web routes and validates
+requests against the shared automatic route identities. Its launcher setup
+defaults new Hermes sessions to GPT-5.6 Sol when available; saved sessions may
+still present a legacy fixed-mode ID, which retains its original routing.
+The Electron host treats ChatGPT cookie changes as triggers for a bounded session
+endpoint check, never as proof of sign-in. It retires an identity only after a
+valid session response establishes sign-out or a different principal; the page
+probe still owns Temporary Chat readiness and the full session fingerprint.
 
 The optional `useSavedChats` setting selects ordinary ChatGPT history and remains
 false by default. It is independent of rebuilding every turn in a fresh browser

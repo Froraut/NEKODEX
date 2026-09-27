@@ -1,11 +1,19 @@
+import { externalClientContext, type ExternalClientContext } from "./external-client-context";
+import { localApiKey } from "./local-api-access";
+import { chatCompletionApiKey, chatCompletionRequestGuard, chatCompletionErrorResponse, chatCompletionModels, chatCompletionRequest } from "./chat-completions/http";
+import { activeChatCompletionTurns, type ChatCompletionExecutor } from "./chat-completions/runtime";
+import { NativeChatCompletionBridge } from "./chat-completions/native-bridge";
+import { ChatCompletionError } from "./chat-completions/contract";
+import { ClaudeMessagesGateway } from "./messages";
+import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "./messages/models";
 import { MAX_CHATGPT_BROWSER_TABS } from "./adapters/chatgpt-web/concurrency";
-import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
+import { chatGptWebTraceId, chatGptWebExecutionNamespace, createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { normalizeNativeDelegation } from "./adapters/chatgpt-web/native-delegation";
 import { validateChatGptWebInputImage } from "./adapters/chatgpt-web/input-image-validation";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
+import { chatGptTurnSessions, chatGptTurnExecutionKey } from "./adapters/chatgpt-web/turn-execution";
 import {
   activeStructuredCompactionCount,
   cancelAllStructuredCompactions,
@@ -79,6 +87,7 @@ export interface ResponseRequestOptions {
   webAdmission?: () => Response | undefined;
   fetchUpstream?: NativeFetch;
   hermesContext?: HermesContext;
+  clientContext?: ExternalClientContext;
   onCompletedResponse?: (response: Record<string, unknown>) => void;
   /** DEV and other in-process harnesses can keep continuation state in their own canonical store. */
   rememberState?: boolean;
@@ -295,9 +304,10 @@ export async function responseRequest(
   let route: ChatGptWebModelRoute;
   try {
     parsed = parseRequest(expanded, { allowWebSubagents: config.allowWebSubagents });
-    const delegated = normalizeNativeDelegation(parsed);
+    const delegated = options.clientContext || options.hermesContext ? undefined : normalizeNativeDelegation(parsed);
     if (delegated) parsed = parseRequest(delegated, { allowWebSubagents: config.allowWebSubagents });
     if (options.hermesContext) parsed._hermesContext = options.hermesContext;
+    if (options.clientContext) parsed._clientContext = options.clientContext;
     route = routeChatGptWebRequest(parsed, config);
     const identity = extractChatGptTurnIdentity(parsed);
     if (identity.threadId && identity.turnId) {
@@ -408,7 +418,7 @@ export async function responseRequest(
   }
 
   const provider = providerConfig(requestConfig);
-  if (options.hermesContext && !parsed.context.tools?.length && provider.chatgptWeb) {
+  if (externalClientContext(parsed) && !parsed.context.tools?.length && provider.chatgptWeb) {
     provider.chatgptWeb.localToolsEnabled = false;
   }
   // A Pro pin is part of retained-chat identity only for turns whose UI selection it changes.
@@ -718,6 +728,8 @@ export function startServer(
   config: AppConfig,
   dependencies: {
     fetchUpstream?: NativeFetch;
+    apiKey?: string;
+    chatCompletionExecutor?: ChatCompletionExecutor;
     adapterFactory?: ChatGptWebAdapterFactory;
     readProModelVersion?: () => ChatGptWebProModelVersion | undefined;
     readCompactionModel?: () => ChatGptWebCompactionModel | undefined;
@@ -779,10 +791,26 @@ export function startServer(
   } | null = null;
   const httpTurns = new HttpTurnCounter();
   const hermes = new HermesIntegration();
+  const claude = new ClaudeMessagesGateway((request, settings, options) =>
+    responseRequest(request, settings, dependencies.adapterFactory, { ...options, rememberState: false }));
+  const apiExecutionKey = (body: Record<string, unknown>, settings: AppConfig, context: ExternalClientContext) => {
+    const parsed = parseRequest(body);
+    parsed._clientContext = context;
+    routeChatGptWebRequest(parsed, settings);
+    return `${chatGptWebExecutionNamespace(providerConfig(settings))}:${chatGptTurnExecutionKey(parsed)}`;
+  };
+  const apiTools = new NativeChatCompletionBridge((request, settings, clientContext) =>
+    responseRequest(request, settings, dependencies.adapterFactory, { clientContext, rememberState: false }), Date.now, {
+      isLive: (body, callIds, settings, context) => {
+        const session = chatGptTurnSessions.find(apiExecutionKey(body, settings, context));
+        return Boolean(session?.isActive() && callIds.every(id => session.hasOutstanding(id)));
+      },
+      retire: async (body, settings, context) => { await chatGptTurnSessions.retireAndWait(apiExecutionKey(body, settings, context)); },
+    });
   const activity = () => ({
     active_http_turns: httpTurns.count(),
     active_web_http_turns: httpTurns.webCount(),
-    active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0),
+    active_browser_turns: chatGptTurnSessions.activeCount() + activeChatCompletionTurns() + (turnBroker?.externalOwnerActiveCount() ?? 0),
     active_compaction_runs: activeStructuredCompactionCount(),
   });
   const controlAuthorized = (req: Request): boolean => {
@@ -831,6 +859,25 @@ export function startServer(
       const policy = inferenceRoutePolicy(req.method, url.pathname);
       const rejection = localHttpRequestRejection(req, url, server.port!);
       if (rejection) return rejection;
+      const localApiRequest = url.pathname === "/v1/chat/completions" || url.pathname.startsWith("/v1/messages")
+        || url.pathname.startsWith("/claude/") || req.headers.has("x-api-key")
+        || /^Bearer sk-local-/i.test(req.headers.get("authorization") ?? "");
+      if (localApiRequest) {
+        let key: string | undefined;
+        try { key = chatCompletionApiKey(config, dependencies.apiKey ?? localApiKey() ?? ""); }
+        catch { return chatCompletionErrorResponse(new ChatCompletionError("Local API configuration is unavailable", 503, "api_configuration_unavailable")); }
+        const guard = chatCompletionRequestGuard(req, url.pathname, key, server.port!, server.requestIP(req)?.address);
+        if (guard) return guard;
+        if (url.pathname === "/v1/models" || url.pathname === "/claude/v1/models") return isClaudeGatewayModelsRequest(req)
+          ? claudeGatewayModelsResponse(config) : chatCompletionModels(config);
+        if (url.pathname.endsWith("/messages/count_tokens")) return claude.countTokens(req);
+        if (!acceptingTurns()) return admissionFailure();
+        return httpTurns.track((signal, _identity, bindWeb) => {
+          bindWeb();
+          if (url.pathname.endsWith("/messages")) return claude.respond(new Request(req, { signal }), config);
+          return chatCompletionRequest(req, config, signal, dependencies.chatCompletionExecutor, apiTools);
+        }, req.signal, process.platform, "responses");
+      }
       if (url.pathname.startsWith("/hermes/")) {
         if (!hermes.authorized(req)) return formatErrorResponse(401, "authentication_error", "Add the Hermes provider from Setup to authorize this local connection.");
         if (req.method === "GET" && url.pathname === "/hermes/v1/models") return hermes.models(config);

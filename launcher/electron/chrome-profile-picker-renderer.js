@@ -13,17 +13,17 @@ let copy = null;
 
 const text = {
   en: {
-    eyebrow: 'Connect Google Chrome Stable', title: 'Choose a Chrome Stable profile',
-    intro: 'These profiles belong to Google Chrome Stable. The Google account shown here is profile metadata. NEKODEX verifies the actual ChatGPT account separately before changing your saved session.',
+    eyebrow: 'Google Chrome Stable', title: 'Choose a Chrome profile',
+    intro: 'Google profile details are shown below. Your ChatGPT account is verified separately before connecting.',
     search: 'Search profiles', placeholder: 'Name, Google email, or profile', cancel: 'Cancel',
-    createNew: 'Use a new isolated sign-in', connect: 'Continue', noEmail: 'No Google email in profile metadata',
+    createNew: 'New isolated sign-in', connect: 'Continue', noEmail: 'No Google email in profile metadata',
     none: 'No profiles match this search.', count: count => `${count} profile${count === 1 ? '' : 's'} shown`, selected: 'Previously connected profile',
   },
   ru: {
-    eyebrow: 'Подключение Google Chrome Stable', title: 'Выберите профиль Chrome Stable',
-    intro: 'Эти профили принадлежат Google Chrome Stable. Показанный аккаунт Google — это только метаданные профиля. Перед изменением сохранённой сессии NEKODEX отдельно проверит фактический аккаунт ChatGPT.',
+    eyebrow: 'Google Chrome Stable', title: 'Выберите профиль Chrome',
+    intro: 'Ниже указаны данные профилей Google. Перед подключением NEKODEX отдельно проверит аккаунт ChatGPT.',
     search: 'Поиск профилей', placeholder: 'Имя, почта Google или профиль', cancel: 'Отмена',
-    createNew: 'Использовать новый изолированный вход', connect: 'Продолжить', noEmail: 'В метаданных нет почты Google',
+    createNew: 'Новый изолированный вход', connect: 'Продолжить', noEmail: 'В метаданных нет почты Google',
     none: 'По этому запросу профили не найдены.', count: count => `Показано профилей: ${count}`, selected: 'Ранее подключённый профиль',
   },
 };

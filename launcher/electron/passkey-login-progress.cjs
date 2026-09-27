@@ -1,4 +1,6 @@
+const { isExistingChromeErrorCode } = require('./existing-chrome-errors.cjs');
 const ACTIVE_PHASES = new Set(["starting", "waiting", "importing", "verifying", "cancelling"]);
+const CHROME_PHASES = new Set(["discovering", "waiting-for-chrome", "reading-session", "verifying"]);
 const PUBLIC_ERROR_CODES = new Set([
   "chrome-account-mismatch",
   "chrome-account-unverified",
@@ -30,7 +32,9 @@ function publicPasskeyProgress(progress) {
     phase: progress.phase,
     startedAt: progress.startedAt,
     deadlineAt: progress.deadlineAt,
-    error: PUBLIC_ERROR_CODES.has(progress.error) ? progress.error : progress.error ? "passkey-import-failed" : null,
+    error: PUBLIC_ERROR_CODES.has(progress.error) || isExistingChromeErrorCode(progress.error)
+      ? progress.error : progress.error ? "passkey-import-failed" : null,
+    chromePhase: CHROME_PHASES.has(progress.chromePhase) && ACTIVE_PHASES.has(progress.phase) ? progress.chromePhase : null,
     revealError: progress.revealError === "passkey-reveal-failed" ? progress.revealError : null,
     active: ACTIVE_PHASES.has(progress.phase),
     canImport: progress.phase === "waiting",
@@ -45,6 +49,7 @@ function passkeyLoginFailure(error, { aborted, progressPhase }) {
   const cancelled = (aborted || error?.code === "profile-login-cancelled") && !CLEANUP_FAILURE.test(message);
   const phase = cancelled ? "cancelled" : /timed out/i.test(message) ? "timed-out" : "failed";
   const errorCode = phase === "cancelled" ? null
+    : isExistingChromeErrorCode(error?.code) ? error.code
     : ["chrome-account-mismatch", "chrome-account-unverified", "chrome-account-unidentified",
       "chrome-profile-claim-missing"].includes(error?.code) ? error.code
     : error?.code === "existing_chrome_handoff_timeout" ? "passkey-handoff-timeout"

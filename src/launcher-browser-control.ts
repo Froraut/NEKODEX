@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseChatGptWebModelCapabilities, type ChatGptWebModelCapabilities } from "./chatgpt-web-models";
 import { dirname, join, resolve } from "node:path";
 import { expandUserPath } from "./config";
 import { assertExpectedLauncherProfile, readLauncherBrowserHostDescriptor, type LauncherBrowserHostDescriptor, type LauncherBrowserHostProfile } from "./launcher-browser-descriptor";
@@ -29,7 +30,7 @@ export async function inspectLauncherBrowserHost(
     expectedProfile?: LauncherBrowserHostProfile;
     timeoutMs?: number;
   } = {},
-): Promise<{ solAvailable?: boolean; extraHighAvailable?: boolean; proAvailable?: boolean; url: string }> {
+): Promise<{ solAvailable?: boolean; extraHighAvailable?: boolean; proAvailable?: boolean; modelCapabilities?: ChatGptWebModelCapabilities; url: string }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   assertExpectedLauncherProfile(descriptor, options.expectedProfile);
   const timeoutMs = options.timeoutMs ?? (options.detectCapabilities
@@ -71,6 +72,7 @@ export async function inspectLauncherBrowserHost(
         solAvailable: body.solAvailable as boolean,
         extraHighAvailable: extraHighAvailable as boolean,
         proAvailable: body.proAvailable as boolean,
+        modelCapabilities: parseChatGptWebModelCapabilities(body.modelCapabilities),
       } : {}),
     };
   } catch (error) {

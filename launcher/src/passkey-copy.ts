@@ -1,10 +1,12 @@
 import type { Copy } from "./i18n";
 import type { Language } from './types';
-import { profileLoginFailureText } from './profile-login-copy';
+import { profileLoginFailureText } from "./profile-login-copy";
+import { existingChromeFailureText } from "./existing-chrome-copy";
 
 export function passkeyFailureText(code: string | null, copy: Copy, language: Language = 'en'): string {
   const profile = profileLoginFailureText(code, language);
   if (profile) return profile;
+  if (code && !code.startsWith("passkey-")) return existingChromeFailureText(code, copy, language);
   switch (code) {
     case "chrome-account-mismatch":
       return copy.passkeyFailed;

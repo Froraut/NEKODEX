@@ -7,26 +7,26 @@ The original direct Hermes Responses provider remains available as an experiment
 ```mermaid
 flowchart LR
   H[Hermes] --> C[Codex app-server]
-  C --> L[Codex Web GPT]
+  C --> L[NEKODEX]
   L --> W[ChatGPT Web]
-  W --> M[Codex Native3 connector]
+  W --> M[Codex Native6 connector]
   M --> C
   C --> H
 ```
 
 ## Recommended setup
 
-1. Complete ChatGPT sign-in and Codex tools setup in **Codex Web GPT**. Use the same account in
+1. Complete ChatGPT sign-in and Codex tools setup in **NEKODEX**. Use the same account in
    the embedded browser, ChatGPT and OpenAI Platform. The connector is installed in ChatGPT.
-2. In **Setup → Hermes**, choose **Use Codex runtime in Hermes**.
+2. In **Connections → Hermes**, choose **Use Codex runtime in Hermes**.
 3. Restart Hermes and start a new session. The selected provider is
-   **ChatGPT Web via Codex · FroRaut**, with **ChatGPT Web High** selected by default.
-4. Keep Codex Web GPT open. Ask Hermes to read or edit a file in the session's workspace using
+   **ChatGPT Web via Codex · FroRaut**, with **GPT-5.6 Sol (Web)** selected by default.
+4. Keep NEKODEX open. Ask Hermes to read or edit a file in the session's workspace using
    its available tools. In this runtime, file operations use Codex tools such as `exec_command`
    and `apply_patch`; do not require a tool literally named Hermes `read_file`.
 
 The installer adds `providers.codex-web-native`, uses `transport: codex_app_server`, and selects
-that provider's Web High model for new sessions. It backs up the existing Hermes config and
+that provider's named GPT-5.6 Sol Web model for new sessions. It backs up the existing Hermes config and
 preserves other providers and unrelated settings. It does not rewrite global Codex permissions,
 copy account credentials, migrate every Hermes MCP server, or select a paid API fallback.
 Existing sessions retain their old runtime until a new session is started.
@@ -68,7 +68,7 @@ are a separate local catalog token, not an OpenAI model API key.
 
 ## Verification
 
-A real Hermes AIAgent using the patched `codex_app_server` runtime and `chatgpt-web/high`
+A historical Hermes AIAgent check using the patched `codex_app_server` runtime and `chatgpt-web/high`
 completed a file-read task in **72.84 seconds**. Hermes emitted actual `exec_command` start and
 completion callbacks, received the independently prepared marker from the file, and received
 the model's final answer. The marker was not included in the user prompt. The answer escaped
@@ -82,7 +82,7 @@ file or command tool, matching the runtime selected by the user.
 
 ## Experimental direct runtime
 
-Expand **Experimental direct Hermes runtime** in Setup to add `providers.codex-web` without
+Expand **Experimental direct Hermes runtime** in Connections to add `providers.codex-web` without
 changing the selected default. This path uses `/hermes/v1/responses` and keeps Hermes' own
 agent loop. It requires the same ChatGPT connector for tool calls.
 

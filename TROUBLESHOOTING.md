@@ -177,24 +177,24 @@ Browser-only mode does not use an MCP connector. The following checks apply to F
 **With Automation** selected. For **Manual mode**, use the [manual workflow checks](#zero-risk-manual-workflow-stops)
 below; its connector and Tunnel are separate.
 
-Check the runtime version first. The published `5.2.0-nekodex.1` binary uses **Codex Native3**
-(**Codex Native3 DEV** in DEV) and **Codex Zero Risk2** in Manual. A runtime built from the `.2`
-source contract uses **Codex Native4**, **Codex Native4 DEV**, and **Codex Zero Risk4** respectively.
-The `.2` source contract is not yet a published binary release.
+Check the running version and the exact connector name shown by NEKODEX. New Automatic Full
+setups use **Codex Native6** (**Codex Native6 DEV** in the isolated DEV profile); Manual uses
+**Codex Zero Risk4**. Older Native4/5 connectors can remain for saved configurations, but
+renaming an old ChatGPT connector does not load a new public tool schema.
 
-- a newly created connector named exactly **Codex Native4** for the `.2` Automatic Full runtime;
+- a newly created connector named exactly **Codex Native6** for a new Automatic Full setup;
 - **Developer Mode** enabled in ChatGPT;
 - the exact Tunnel selected with **Authentication: None**;
 - the connector and Tunnel on the same OpenAI account as the ChatGPT workspace;
 - **Allow all actions** under the connector's permissions; and
 - **Connect harness** completed before **Verify runtime**.
 
-For the `.2` runtime, start **MCP → Connect harness** for the mode in use, then create a new
+Start **Connections → Local tools connector → Connect harness** for the mode in use, then create a new
 ChatGPT connector with that mode's exact name and the Tunnel shown by setup. Select
 **Authentication: None**; use **Allow all actions** for Full harness if those tools are intended,
 while outer Codex sandbox and approvals still apply. Run **Verify runtime** for Automatic Full;
 select the Manual connector yourself before sending. DEV Full uses its isolated Tunnel and
-**Codex Native4 DEV**. Keep older connectors unchanged: ChatGPT caches the public MCP contract by
+**Codex Native6 DEV**. Keep older connectors unchanged: ChatGPT caches the public MCP contract by
 identity, and renaming or refreshing one does not load the new schema. Local setup or connector
 visibility is not proof of an actual tool call.
 
@@ -244,15 +244,16 @@ being inserted as an extra reviewer after the Web tool call already completed.
 **Manual mode** is the name of the manual browser interaction mode. It still exposes the local Codex
 harness through MCP, so manual submission does not remove account limits or local-tool risks.
 
-First check the mode-specific setup: `.2` Manual turns use **Codex Zero Risk4** and their own OpenAI
-Tunnel; `.2` Automatic Full turns use **Codex Native4**. The published `.1` binary uses
-**Codex Zero Risk2** and **Codex Native3** instead. Use the names for the runtime actually running.
+First check the mode-specific setup: Manual turns use **Codex Zero Risk4** and their own OpenAI
+Tunnel; new Automatic Full setups use **Codex Native6**. Use the exact names displayed by the
+running app. Older connector identities remain only for previously configured modes.
 The launcher does not inspect the ChatGPT page to verify the model, effort, or connector you choose.
 
 For a manual turn, wait for the launcher to prepare the prompt, then use **Copy prompt** if needed.
-In ChatGPT, select the intended model, effort, and **Codex Zero Risk4** connector for the `.2`
-runtime (**Codex Zero Risk2** for the published `.1`) before pasting and sending the prompt.
-Return to the launcher and confirm **Sent** only after sending it in ChatGPT.
+In ChatGPT, select the intended model, effort, and **Codex Zero Risk4** connector before pasting
+and sending the prompt. Return to the launcher and confirm **Sent** only after ChatGPT accepts it.
+If ChatGPT cannot send with that model, select another available model and use **Copy prompt**
+again. A premature Sent confirmation still leaves the prompt copyable until the connector starts.
 
 To locate a failure, record the last step that worked and the next step that failed:
 
@@ -368,7 +369,7 @@ To remove the integration safely:
 2. Fully restart Codex.
 3. Quit the launcher and uninstall the application normally for the platform.
 4. If Full harness was configured and is no longer wanted, separately delete the connector used
-   by that runtime (**Codex Native4** for `.2`, **Codex Native3** for the published `.1`), its
+   by that runtime (check the exact name in its settings), its
    Tunnel, and the API key created for that Tunnel from the corresponding account settings.
 
 Deleting the application before step 1 can leave Codex pointed at a local route that no longer

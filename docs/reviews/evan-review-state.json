@@ -2,32 +2,51 @@
   "schemaVersion": 1,
   "upstream": "Evanlau1798/codex-chatgpt-web",
   "fork": "Froraut/NEKODEX",
-  "updatedAt": "2026-09-21T09:50:16.924333+00:00",
-  "sourceRevision": "108cd5f1ce1df55776fbfe346a49800aff446691",
-  "localSourceRevision": "2ce06d6a8ec32c6cea6c76ef1e40a223a6edfee9",
+  "updatedAt": "2026-09-27T11:27:57.228203+00:00",
+  "sourceRevision": "fa514a4630e322c9dd50ac2345956b2b64918821",
+  "localSourceRevision": "bd74f1c37409ed5ede240439f37b5ef49eec0467",
   "lastCompleteScan": {
-    "method": "gh with explicit Evanlau1798/codex-chatgpt-web repository and REST --paginate",
-    "openIssuesFetched": 9,
-    "repositoryIssueCommentsFetched": 44,
-    "commentsOnOpenIssuesReviewed": 17,
-    "openPullRequests": 0,
-    "branchesFetched": 10,
+    "at": "2026-09-27T11:27:57.228203+00:00",
+    "method": "gh REST explicit repository, per_page=100 --paginate --slurp; final delta refreshed",
+    "paginationComplete": true,
     "scanComplete": true,
+    "issueAndPullRecords": 62,
+    "pullRecords": 48,
+    "repositoryIssueCommentsFetched": 63,
+    "inlineReviewCommentsFetched": 8,
+    "openIssuesFetched": 12,
+    "openPullRequests": 1,
+    "scope": "Repository enumeration complete; content review covers open reports and deltas since September21, PR45-57 and PR62. Unchanged old closed records are inventory only.",
     "openIssues": [
       {
-        "number": 44,
-        "updatedAt": "2026-09-21T01:37:53Z",
+        "number": 61,
+        "updatedAt": "2026-09-27T10:45:38Z",
+        "comments": 3
+      },
+      {
+        "number": 60,
+        "updatedAt": "2026-09-26T06:03:34Z",
         "comments": 1
       },
       {
-        "number": 43,
-        "updatedAt": "2026-09-20T22:13:16Z",
+        "number": 59,
+        "updatedAt": "2026-09-26T12:34:52Z",
+        "comments": 1
+      },
+      {
+        "number": 58,
+        "updatedAt": "2026-09-25T03:34:41Z",
+        "comments": 1
+      },
+      {
+        "number": 44,
+        "updatedAt": "2026-09-23T05:29:21Z",
         "comments": 2
       },
       {
         "number": 42,
-        "updatedAt": "2026-09-20T22:13:19Z",
-        "comments": 1
+        "updatedAt": "2026-09-23T05:29:19Z",
+        "comments": 2
       },
       {
         "number": 41,
@@ -41,8 +60,8 @@
       },
       {
         "number": 38,
-        "updatedAt": "2026-09-20T18:26:52Z",
-        "comments": 4
+        "updatedAt": "2026-09-25T03:34:42Z",
+        "comments": 7
       },
       {
         "number": 37,
@@ -66,11 +85,11 @@
       "kind": "issue",
       "number": 43,
       "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/43",
-      "reviewedAt": "2026-09-21T09:23:06Z",
-      "sourceUpdatedAt": "2026-09-20T22:13:16Z",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-22T04:39:36Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "Do not port the Evan chunked insertion series and do not normalize or accept the extra LF. Browser-worker owner may add one focused 89k block-boundary fixture against the existing atomic path; a production change requires a local reproduction.",
+      "decision": "Closed upstream; local atomic native-text insertion already avoids the guarded chunk/HTML multiline path. Preserve exact readback, no newline normalization or speculative timeout increase.",
       "applicability": "not_applicable_to_current_insertion_architecture",
       "relevantCommits": [
         "b2120ca99453bcf388293ecdbdbb814fd3550284",
@@ -80,9 +99,15 @@
         "a8e5b8e4cac36152af3a1ef292c646241f874eb9"
       ],
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
       ],
-      "recheckRequired": false
+      "recheckRequired": false,
+      "sourceState": "closed",
+      "fingerprint": {
+        "bodySha256": "e17d7cbee3196d271a95be8d50ce22c433b814285277d126011b1deee2831619",
+        "commentsSha256": "84fb94a1372305b56757f902bd925ca5c6715b88937b26a0872de1565b17b87a",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
     },
     "issue:44": {
       "kind": "issue",
@@ -162,11 +187,11 @@
       "kind": "issue",
       "number": 38,
       "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/38",
-      "reviewedAt": "2026-09-21T09:23:06Z",
-      "sourceUpdatedAt": "2026-09-20T18:26:52Z",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-25T03:34:42Z",
       "headSha": null,
       "status": "reviewed",
-      "decision": "Do not port. The original accepted-response recovery shipped in Evan v5.0.8-Enhanced.1. Later comments describe 350k-token stranded history after No Context Window plus retained-session expiry; NEKODEX does not expose that unlimited advertised-context mode and already uses separate bounded compaction, Bigger Context, and retained-turn recovery contracts.",
+      "decision": "Reviewed latest retained-turn and oversized-context follow-ups. Keep bounded NEKODEX compaction/checkpoint owners; do not import No Context Window or the coupled Enhanced retained stack.",
       "applicability": "original_recovery_fix_is_fork_specific_and_follow_up_depends_on_absent_no_context_window_mode",
       "relevantCommits": [
         "1ebf7f5d23bf785539337f4a0310b85dbeeb551e",
@@ -174,9 +199,15 @@
         "b384c00cb00f46d2a63114a1e33b002db8dec663"
       ],
       "evidence": [
-        "docs/reviews/upstream-20260921.md"
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
       ],
-      "recheckRequired": false
+      "recheckRequired": false,
+      "sourceState": "open",
+      "fingerprint": {
+        "bodySha256": "0c565997ec45c28f65d2f69ed3469cd564d0c78ef493d4895bfd0acf33c8817f",
+        "commentsSha256": "d175e1036956c086021047af68dea2f4eb8f617231fec9ee70b1cae4a96f921b",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
     },
     "issue:37": {
       "kind": "issue",
@@ -239,15 +270,375 @@
         "docs/reviews/upstream-20260921.md"
       ],
       "recheckRequired": false
+    },
+    "issue:58": {
+      "kind": "issue",
+      "number": 58,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/58",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-25T03:34:41Z",
+      "headSha": null,
+      "sourceState": "open",
+      "status": "reviewed",
+      "decision": "Enhanced retained Native2 output conflict is in an absent transport. Local bound-answer/full-text completion and fences remain; no claim of reproducing the long retained-task failure.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "f98bcff3707aa593670c456689d28fe66f708f88f071d4c7e54c698cc701deba",
+        "commentsSha256": "8986dc606604286672dde785d013a20bc0e066233d5e582d0d566f4cdbd27b86",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "issue:59": {
+      "kind": "issue",
+      "number": 59,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/59",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-26T12:34:52Z",
+      "headSha": null,
+      "sourceState": "open",
+      "status": "reviewed",
+      "decision": "Adapted opt-in Web-only provider into local v11 ownership transaction; actual Codex CLI catalog/turn passed without native credentials. Exhausted desktop quota GUI not reproduced.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "1a1b2865a46d25731af855aa7296f0b50936a965eab9e21d41b5f041666b0df4",
+        "commentsSha256": "09e7477f51e717b0bb3ee75f24c1dfd0a757d25baf85e4b3edf9d0ea5bebf3e7",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "issue:60": {
+      "kind": "issue",
+      "number": 60,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/60",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-26T06:03:34Z",
+      "headSha": null,
+      "sourceState": "open",
+      "status": "reviewed",
+      "decision": "Inspected attached diagnostics: native401, attachment rejection and Luna empty answer are separate failures. Added independently configurable Claude client; do not label these provider errors fixed.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "a8d211cb0b3e58de479ddf71dff71ed4928827586fa3dd7545e2059f1f142f36",
+        "commentsSha256": "bd2d7e96e586155095603e5831d7943e37cea8ac14e8d5d730961c56e3e99026",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "issue:61": {
+      "kind": "issue",
+      "number": 61,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/issues/61",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-27T10:45:38Z",
+      "headSha": null,
+      "sourceState": "open",
+      "status": "reviewed",
+      "decision": "Adapted French page controls and per-family effort observations through setup/catalog/admission. Added observed-only GPT-6 Astra entries. No inferred quota balances, background polling or reset-time UI.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "076e58b0cf89de4ade59b4e3a87634008c398ca1fcfb596bda15cacf4e92c142",
+        "commentsSha256": "c47fcfd882f3243e59835b5a3cac5e83e2ad40bfe6e088054a8b548b2be1d7dd",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:62": {
+      "kind": "pull",
+      "number": 62,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/62",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-27T11:15:22Z",
+      "headSha": "0f54c8f2922f99d9d5b1da6ea3fc774c87930e5e",
+      "sourceState": "open",
+      "status": "reviewed",
+      "decision": "Reviewed through 0f54c8f2922f99d9d5b1da6ea3fc774c87930e5e. Adapted model/effort and French-page controls. Canonical delegation and two-source checkpoint proof already have different local owners; Enhanced output tunnel is absent. Launcher dictionaries not transplanted.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "70822a9cc5acba33a32f4e03c26cbc2ebf3ad2150c657419e5ed9eed2c3202e3",
+        "commentsSha256": "a741462fc6d084a318632e680ec5e1f2dc26683eeec3d4059d37403edbb5166a",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:45": {
+      "kind": "pull",
+      "number": 45,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/45",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:49:44Z",
+      "headSha": "6ab0532a499ad664710e7150cb37ec3f9de8ee77",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed composer/recovery series against local atomic writer, strict full readback and exact-surface recovery. Preserve local owners; do not import guarded chunk stack, relax integrity or add speculative timeout expansion.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "ad569614215461d4717901a9f1409b5883a358c002d599f177af0712ecc75489",
+        "commentsSha256": "4b60e4b902662366c78ccdf9d876846dd24dc649f5a80bf5115ceb5e3786206e",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:46": {
+      "kind": "pull",
+      "number": 46,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/46",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:49:47Z",
+      "headSha": "df81bf4036d701645d2a3b659f6cda8d994781c2",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed composer/recovery series against local atomic writer, strict full readback and exact-surface recovery. Preserve local owners; do not import guarded chunk stack, relax integrity or add speculative timeout expansion.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "c706b6f18cdd3073de3004b7a1f10c488765bef7b7a6ca3a1b29c1166a793799",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:47": {
+      "kind": "pull",
+      "number": 47,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/47",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:49:49Z",
+      "headSha": "d66dc09a2985b03ae58a757db3c45874ed4b85ad",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed composer/recovery series against local atomic writer, strict full readback and exact-surface recovery. Preserve local owners; do not import guarded chunk stack, relax integrity or add speculative timeout expansion.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "3d7c43c9a3014032a38495b419bae5cddd792c83a0449c90ea07d367a01fcea8",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:48": {
+      "kind": "pull",
+      "number": 48,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/48",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:49:52Z",
+      "headSha": "702a4361dc67db92110c32711f7eaceb8202e3fa",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed composer/recovery series against local atomic writer, strict full readback and exact-surface recovery. Preserve local owners; do not import guarded chunk stack, relax integrity or add speculative timeout expansion.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "6193e56a97638bdeb520f9fa935532944845caeaccd90f0b3ddac28d03ea891e",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:49": {
+      "kind": "pull",
+      "number": 49,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/49",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:49:54Z",
+      "headSha": "2bc9dcc05f51930eb5829350188fa563af02014a",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed composer/recovery series against local atomic writer, strict full readback and exact-surface recovery. Preserve local owners; do not import guarded chunk stack, relax integrity or add speculative timeout expansion.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "4e2bf083692e7545c572f61db4c0c14fcf8f3a61923907fe866e3d4582c72468",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:50": {
+      "kind": "pull",
+      "number": 50,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/50",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:49:57Z",
+      "headSha": "770be183aaac6e7a45005bc5e747abf678376fb4",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed composer/recovery series against local atomic writer, strict full readback and exact-surface recovery. Preserve local owners; do not import guarded chunk stack, relax integrity or add speculative timeout expansion.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "b83f3553fb162840ee03602a809d0d5f50bdcda1cde0a60a252fb10361ea8be5",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:51": {
+      "kind": "pull",
+      "number": 51,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/51",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:50:00Z",
+      "headSha": "384ba5d5e50e3b950525f6025360f96cd7006485",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed composer/recovery series against local atomic writer, strict full readback and exact-surface recovery. Preserve local owners; do not import guarded chunk stack, relax integrity or add speculative timeout expansion.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "00297bed4cc96e5eaf3a63afc5faff741bb840e63d43c83e1fabaa95a9d5d68a",
+        "commentsSha256": "8d7a5565243728eb6447b8862d407af3693837072b5a6e8552c93c2db54ed962",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:52": {
+      "kind": "pull",
+      "number": 52,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/52",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:50:02Z",
+      "headSha": "f0ba405e19a03a0257a2b931edaf49fce01368fb",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed composer/recovery series against local atomic writer, strict full readback and exact-surface recovery. Preserve local owners; do not import guarded chunk stack, relax integrity or add speculative timeout expansion.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "91aebb426bddc3c4129bc8ea02cef4e9db626d65626347e41be32d88f5b29a2b",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:53": {
+      "kind": "pull",
+      "number": 53,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/53",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:50:05Z",
+      "headSha": "0e8543606d8e87d1456ac63cfbe64b3fe4cf6f80",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Adapted scoped Chat Completions/Messages API and client-owned function rounds with separate revocable key, existing pool/admission, bounded streams and exact transcript receipts. Actual Claude/Codex client fixtures passed; not a live Pi inference claim.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "94b76482b2ebc50d7316e36406c6ab340894500b776980cc4f36a7b636d4ea30",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:54": {
+      "kind": "pull",
+      "number": 54,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/54",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:50:08Z",
+      "headSha": "d12bba9a6991e36ed6267bd56044e3655481f668",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Adapted scoped Chat Completions/Messages API and client-owned function rounds with separate revocable key, existing pool/admission, bounded streams and exact transcript receipts. Actual Claude/Codex client fixtures passed; not a live Pi inference claim.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "7b36d04031a5e0c7997fac55111467ad53ffa8858e849cf8e8a7364cf215c940",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:55": {
+      "kind": "pull",
+      "number": 55,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/55",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:50:11Z",
+      "headSha": "1a71b900f618e2e3bd6216aef66a53aa3cde3b5f",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Adapted scoped Chat Completions/Messages API and client-owned function rounds with separate revocable key, existing pool/admission, bounded streams and exact transcript receipts. Actual Claude/Codex client fixtures passed; not a live Pi inference claim.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "92e47e233078a3a69804b74dfe102845400d3fcc73ecf26dd4e13e06aedcf2bd",
+        "commentsSha256": "461aa0122a264acb5d83e6b544334ae19bf8ecb4a3c7226dbdb2f89dbffc5651",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:56": {
+      "kind": "pull",
+      "number": 56,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/56",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:50:25Z",
+      "headSha": "31a6c05d8897e4df2080cff209907253461db9d8",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed packaging/runtime integration scope. NEKODEX already adapted v6/v6.1/v6.1.1 behavior in its own review sequence. Preserve fork signing/updater/ownership and no publication or cross-platform certification.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "5220a307a86384da1b68ef73929d290eff75151236b5db939e54b14bd5b2d8f0",
+        "commentsSha256": "e3ed6f98ffb5ac978f9a8a8c65b9ec93235ce5d3d804bbea59aac758699f9d3f",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "pull:57": {
+      "kind": "pull",
+      "number": 57,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/57",
+      "reviewedAt": "2026-09-27T11:27:57.228203+00:00",
+      "sourceUpdatedAt": "2026-09-24T12:50:19Z",
+      "headSha": "01ec8fa47f3f972b82dcce38818d99e6f6858863",
+      "sourceState": "closed",
+      "status": "reviewed",
+      "decision": "Reviewed packaging/runtime integration scope. NEKODEX already adapted v6/v6.1/v6.1.1 behavior in its own review sequence. Preserve fork signing/updater/ownership and no publication or cross-platform certification.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ],
+      "recheckRequired": false,
+      "fingerprint": {
+        "bodySha256": "c28319770a3c6b26fffda320e5fa84e76de03a15ca68db306d69e813f20d6af8",
+        "commentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "reviewCommentsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
     }
   },
   "lastReviewed": {
-    "issue": 33,
-    "pull": null
+    "issue": 60,
+    "pull": 62
   },
   "maxReviewedNumber": {
-    "issue": 44,
-    "pull": null
+    "issue": 61,
+    "pull": 62
   },
   "codeDecisions": [
     {
@@ -372,6 +763,66 @@
       ],
       "applicability": "alternative_architecture_not_safe_for_selective_port",
       "decision": "Do not port as a series. It is coupled to Evan's retained-session registry, No Context Window, Native2 compatibility, prompt insertion and release gates. Open issue #38 shows a recoverability failure when retained state expires after history grows beyond a fresh bootstrap. Evaluate individual observed defects against NEKODEX contracts instead."
+    },
+    {
+      "id": "family-efforts-and-french-controls",
+      "commits": [
+        "fc4fd260cc04643a1ff325a59cf3b48f46ff2cf7",
+        "a6333434de873ff1a6ba33ce82ba9ceb34c10734"
+      ],
+      "decision": "Adapted French page controls and per-family effort observations through setup/catalog/admission. Added observed-only GPT-6 Astra entries. No inferred quota balances, background polling or reset-time UI.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ]
+    },
+    {
+      "id": "web-only-provider",
+      "commits": [
+        "a6f9656f"
+      ],
+      "decision": "Adapted opt-in Web-only provider into local v11 ownership transaction; actual Codex CLI catalog/turn passed without native credentials. Exhausted desktop quota GUI not reproduced.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ]
+    },
+    {
+      "id": "local-api-and-claude-client",
+      "commits": [
+        "836dfc96",
+        "56d89bad"
+      ],
+      "decision": "Adapted scoped Chat Completions/Messages API and client-owned function rounds with separate revocable key, existing pool/admission, bounded streams and exact transcript receipts. Actual Claude/Codex client fixtures passed; not a live Pi inference claim.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ]
+    },
+    {
+      "id": "retained-output-completion",
+      "commits": [
+        "869305f9",
+        "0928f29e",
+        "1e6b42eb",
+        "f38ffa37"
+      ],
+      "decision": "Enhanced retained Native2 output conflict is in an absent transport. Local bound-answer/full-text completion and fences remain; no claim of reproducing the long retained-task failure.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ]
+    },
+    {
+      "id": "delegation-and-v2-checkpoint-proof",
+      "commits": [
+        "b019e9a6",
+        "0f54c8f2"
+      ],
+      "decision": "Local native-delegation normalization and source/v1Source checkpoint proof already cover the representation boundary through different owners; no duplicate mechanism added.",
+      "evidence": [
+        "docs/reviews/2026-09-27-enhanced-follow-up.md"
+      ]
     }
+  ],
+  "localRevisionMeaning": "Implementation base; changes and focused evidence are in PR39 and the linked follow-up report.",
+  "notes": [
+    "Review cutoff PR62 0f54c8f2; maximum numbers do not imply exhaustive historical code review. Raw attachment/account logs are not committed. See follow-up report for actual local versus peer evidence."
   ]
 }

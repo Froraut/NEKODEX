@@ -21,6 +21,8 @@ const {
 } = require("./browser-helper-verifier.cjs");
 const { validateConnectorName } = require("./connector-identity.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
+const { validatedChromeUserAgent } = require("./browser-user-agent.cjs");
+const { createChromeProfileBindingStore } = require("./chrome-profile-binding.cjs");
 const { isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
 const { captureOwnedSession, disposeOwnedSessionSnapshot, restoreOwnedSession } = require("./owned-session-rollback.cjs");
 const { initialPasskeyProgress, passkeyLoginFailure, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
@@ -81,6 +83,9 @@ const SHELL_ZOOM_LEVEL_LIMIT = 5;
 const CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS = 500;
 const CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS = 1_000;
 const CHATGPT_VIEWPORT_CSS = `
+  /* ChatGPT's desktop styles must not turn embedded controls into native drag regions. */
+  * { -webkit-app-region: no-drag !important; }
+
   html,
   body {
     width: 100% !important;
@@ -469,6 +474,9 @@ class BrowserHost {
     this.embeddedLoginController = null;
     this.passkeyLoginOperation = null;
     this.sessionRefreshOperation = null;
+    this.authenticationRevision = 0;
+    this.authenticationRefresh = null;
+    this.authenticationRemovalPending = false;
     this.cloudflareChallengeRecovery = null;
     this.cloudflareChallengeRecoveryArmed = true;
     this.viewportCssKey = null;
@@ -519,6 +527,8 @@ class BrowserHost {
         webSecurity: true,
       },
     });
+    const savedUserAgent = createChromeProfileBindingStore(this.coreHome).read(this.accountId)?.browserUserAgent;
+    if (savedUserAgent) { this.view.webContents.session.setUserAgent(savedUserAgent); this.view.webContents.setUserAgent(savedUserAgent); }
     this.artifactDownloads = createTaskArtifactDownloadGuard(this.view.webContents.session, {
       onEvent: (event, detail) => this.logger[event === 'cancelled' ? 'warn' : 'info']?.(
         `browser.artifact_download_${event}`,
@@ -571,6 +581,7 @@ class BrowserHost {
     this.bindShellZoomShortcuts(this.window.webContents);
     this.bindShellZoomShortcuts(this.view.webContents);
     this.bindChatGptBackendRecovery();
+    this.bindAuthenticationChanges();
     this.bindWorkspaceSessionRequestGuard();
     this.bindWebContents();
     this.initializationReady = this.initializePrimaryView().catch((error) => {
@@ -584,6 +595,32 @@ class BrowserHost {
 
   async ready() {
     await this.initializationReady;
+  }
+
+  replaceShellWindow(window) {
+    const previous = this.window;
+    if (window === previous) return;
+    if (!window || window.isDestroyed() || previous.isDestroyed()) throw new Error("Browser shell replacement has no live window owner");
+    const owned = new Set([this.view, this.authView, ...[...this.turnTabs.values()].map(tab => tab.view)].filter(Boolean));
+    // Preserve native stacking order and every existing WebContents/session/turn lease.
+    const views = previous.contentView.children.filter(view => owned.has(view));
+    const moved = [];
+    try {
+      for (const view of views) { window.contentView.addChildView(view); moved.push(view); }
+    } catch (error) {
+      for (const view of moved) previous.contentView.addChildView(view);
+      throw error;
+    }
+    for (const event of WINDOW_VISIBILITY_EVENTS) previous.off(event, this.windowVisibilityListener);
+    const oldShortcut = this.shellZoomShortcutBindings.get(previous.webContents);
+    if (oldShortcut) {
+      if (!previous.webContents.isDestroyed()) previous.webContents.off("before-input-event", oldShortcut);
+      this.shellZoomShortcutBindings.delete(previous.webContents);
+    }
+    this.window = window;
+    for (const event of WINDOW_VISIBILITY_EVENTS) window.on(event, this.windowVisibilityListener);
+    this.bindShellZoomShortcuts(window.webContents);
+    this.syncViewVisibility();
   }
 
   async initializePrimaryView() {
@@ -2443,7 +2480,7 @@ class BrowserHost {
         }, { accountId: this.accountId, accountLabel: this.state.accountLabel, signal: controller.signal,
           configureVerificationSession: (verificationSession, accountId) =>
             this.configureAccountSession(verificationSession, accountId) });
-        this.updatePasskeyProgress({ phase: controller.signal.aborted ? "cancelling" : "verifying" });
+        this.updatePasskeyProgress({ phase: controller.signal.aborted ? "cancelling" : "verifying", chromePhase: null });
         const result = await this.installPasskeyLogin(transfer, controller.signal);
         this.updatePasskeyProgress({ phase: "completed", error: null });
         return result;
@@ -2476,7 +2513,7 @@ class BrowserHost {
       if (this.passkeyLoginOperation === tracked) this.passkeyLoginOperation = null;
       if (this.passkeyLoginController === controller) this.passkeyLoginController = null;
       publishBrowserSnapshot(this);
-    });
+    }).then(() => this.snapshot());
     this.loginOperation = tracked;
     this.passkeyLoginOperation = tracked;
     publishBrowserSnapshot(this);
@@ -2581,6 +2618,7 @@ class BrowserHost {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) throw new Error("Owned ChatGPT browser session is unavailable");
     return {
+      userAgent: contents.getUserAgent(),
       storage: await captureOwnedSession(contents),
       evidence: {
         principalFingerprint: this.authPrincipalFingerprint,
@@ -2594,6 +2632,10 @@ class BrowserHost {
   async restoreLoginRollbackSnapshot(snapshot) {
     if (!snapshot?.storage || !snapshot.evidence || !snapshot.state) {
       throw new Error("Previous ChatGPT session rollback snapshot is unavailable");
+    }
+    if (snapshot.userAgent) {
+      this.view.webContents.session.setUserAgent(snapshot.userAgent);
+      this.view.webContents.setUserAgent(snapshot.userAgent);
     }
     await this.clearOwnedSessionForPasskey();
     const contents = this.view?.webContents;
@@ -2644,16 +2686,21 @@ class BrowserHost {
     let sessionMutated = false;
     let transferCommitted = false;
     let previousSessionRollback = null;
+    let verificationStage = "capture-identity";
     let state;
     try {
       signal?.throwIfAborted();
       verifiedTransfer = await this.verifyCapturedLoginTransfer(transfer, signal);
+      verificationStage = "session-snapshot";
       state = validatePasskeyLoginState(verifiedTransfer.storageState);
       const contents = this.view?.webContents;
       if (!contents || contents.isDestroyed()) throw new Error("Owned ChatGPT browser session is unavailable");
       previousSessionRollback = await this.captureLoginRollbackSnapshot();
       signal?.throwIfAborted();
       sessionMutated = true;
+      const userAgent = validatedChromeUserAgent(verifiedTransfer.browserUserAgent);
+      if (userAgent) { contents.session.setUserAgent(userAgent); contents.setUserAgent(userAgent); }
+      verificationStage = "install-session";
       await this.clearOwnedSessionForPasskey();
       for (const cookie of state.cookies) {
         signal?.throwIfAborted();
@@ -2661,6 +2708,12 @@ class BrowserHost {
       }
       contents.session.flushStorageData();
       await contents.session.cookies.flushStore();
+      // Session verification can require a provider check on the actual embedded
+      // surface. Show that owned page during import instead of waiting invisibly
+      // and then rolling the captured session back after the verification timeout.
+      this.activateHomeSurface();
+      this.show();
+      verificationStage = "open-session";
       await contents.loadURL(TEMPORARY_CHAT_URL);
       if (state.localStorage.length > 0) {
         const entries = javaScriptLiteral(state.localStorage);
@@ -2673,7 +2726,9 @@ class BrowserHost {
         await contents.loadURL(TEMPORARY_CHAT_URL);
       }
       signal?.throwIfAborted();
+      verificationStage = "verify-surface";
       result = await this.waitForAuthenticated(60_000, signal);
+      verificationStage = "inspect-session";
       await this.runSessionInspection(false);
       signal?.throwIfAborted();
       if (!result?.authenticated || !this.authPrincipalFingerprint) {
@@ -2689,6 +2744,12 @@ class BrowserHost {
       this.logger.info("browser.passkey_login_imported");
     } catch (caught) {
       error = caught;
+      this.logger.warn("browser.session_import_verification_failed", {
+        stage: verificationStage,
+        code: typeof caught?.code === "string" && /^[a-z_-]{1,64}$/.test(caught.code) ? caught.code : null,
+        authenticationStatus: this.state.authenticationStatus,
+        observation: this.lastAuthenticationSurfaceObservation ?? null,
+      });
     }
 
     try {
@@ -2912,6 +2973,12 @@ class BrowserHost {
       result = await probe(primaryContents);
       if (!isCurrent()) return superseded();
     }
+    this.lastAuthenticationSurfaceObservation = {
+      composer: result.composer === true, temporary: result.temporary === true,
+      sessionVerification: result.sessionVerification,
+      verificationFailure: result.verificationFailure,
+      readyState: result.readyState,
+    };
     if (result.composer && result.temporary && result.sessionAuthenticated) {
       if (authView) {
         this.closeAuthView(authView, true, false);
@@ -3098,6 +3165,16 @@ class BrowserHost {
       || inspected.proAvailable && inspected.extraHighAvailable === false)) {
       throw new Error("Browser helper returned contradictory ChatGPT capability evidence");
     }
+    if (detectCapabilities && inspected.modelCapabilities !== undefined) {
+      const caps = inspected.modelCapabilities;
+      if (!caps || !Number.isSafeInteger(caps.observedAt) || caps.observedAt <= 0
+        || !caps.families || typeof caps.families !== 'object' || Array.isArray(caps.families)
+        || Object.entries(caps.families).some(([family, efforts]) => !['5.5', '5.6', '6'].includes(family)
+          || !Array.isArray(efforts) || new Set(efforts).size !== efforts.length
+          || efforts.some(effort => !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)))) {
+        throw new Error("Browser helper returned invalid model-specific capability evidence");
+      }
+    }
     if (startedIdle) await awaitInspection(this.returnToIdle(), signal);
     else this.setState({ status: "ready", message: "ChatGPT is ready", loading: false });
     return inspected;
@@ -3175,8 +3252,98 @@ class BrowserHost {
     await browserSession.cookies.flushStore();
   }
 
+  bindAuthenticationChanges() {
+    this.authenticationCookieListener = (_event, cookie, cause, removed) => {
+      if (!cookie?.httpOnly || cookie.domain?.replace(/^\./, "") !== "chatgpt.com") return;
+      if (removed && (cause === "overwrite" || cause === "expired-overwrite")) return;
+      // A cookie is a reason to inspect the authenticated endpoint, never identity proof.
+      // The endpoint may renew a cookie; avoid recursively inspecting that renewal.
+      if (!removed && this.authenticationRefresh) return;
+      if (removed) this.authenticationRemovalPending = true;
+      this.authenticationRevision += 1;
+      if (this.authenticationRefresh) return;
+      void this.refreshAuthenticationFromSession();
+    };
+    this.view.webContents.session.cookies.on("changed", this.authenticationCookieListener);
+  }
+
+  async refreshAuthenticationFromSession() {
+    if (this.destroyed || browserInteractionModeFor(this) !== "automatic") return;
+    if (this.authenticationRefresh) return this.authenticationRefresh;
+    const operation = (async () => {
+      let revision;
+      do {
+        revision = this.authenticationRevision;
+        try {
+          const response = await this.view.webContents.session.fetch(`${CHATGPT_ORIGIN}/api/auth/session`, {
+            credentials: "include", redirect: "error", cache: "no-store",
+            signal: AbortSignal.timeout(5_000), headers: { accept: "application/json" },
+          });
+          if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+            throw new Error(`session HTTP ${response.status}`);
+          }
+          const payload = await readBoundedJson(response);
+          if (this.destroyed || browserInteractionModeFor(this) !== "automatic" || revision !== this.authenticationRevision) continue;
+          if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.error) {
+            throw new Error("session payload was unavailable");
+          }
+          if (payload.expires != null && (typeof payload.expires !== "string"
+            || !Number.isFinite(Date.parse(payload.expires)))) {
+            throw new Error("session expiry was invalid");
+          }
+          const identity = sessionIdentity(payload);
+          if (!identity) {
+            const user = payload.user;
+            const noUser = !user || typeof user !== "object" || Array.isArray(user)
+              || Object.keys(user).length === 0;
+            const expired = typeof payload.expires === "string" && Date.parse(payload.expires) <= Date.now();
+            if (!noUser && !expired) throw new Error("session principal was unavailable");
+            this.authenticationRemovalPending = false;
+            this.authGeneration += 1;
+            this.retireAuthenticatedIdentity();
+            this.setState({ authenticated: false, authenticationStatus: "signed-out",
+              authenticationCheckedAt: new Date().toISOString(), status: "signed-out", message: "Sign in to ChatGPT" });
+          } else if (this.authPrincipalFingerprint && this.authPrincipalFingerprint !== identity.principalFingerprint) {
+            this.authenticationRemovalPending = false;
+            this.authGeneration += 1;
+            this.retireAuthenticatedIdentity();
+            this.setState({ authenticated: false, authenticationStatus: "unknown",
+              authenticationCheckedAt: new Date().toISOString(), status: "idle",
+              message: "ChatGPT account changed; check this session", accountLabel: identity.label });
+          } else if (!this.state.authenticated && this.view.webContents.getURL().startsWith(CHATGPT_ORIGIN)) {
+            this.authenticationRemovalPending = false;
+            await this.probeAuthentication({ observationOnly: true });
+          } else {
+            this.authenticationRemovalPending = false;
+          }
+        } catch (error) {
+          if (revision === this.authenticationRevision && !this.destroyed) {
+            this.logger.warn("browser.session_refresh_failed", {
+              message: error instanceof Error ? error.message : String(error),
+            });
+            if (this.authenticationRemovalPending) {
+              this.setState({ authenticated: false, authenticationStatus: "unavailable",
+                authenticationCheckedAt: new Date().toISOString(),
+                ...(this.activeTraceId || this.manualOperation ? {} : {
+                  status: "error", message: "ChatGPT session verification unavailable; retry the check",
+                }) });
+            }
+          }
+        }
+      } while (!this.destroyed && revision !== this.authenticationRevision);
+    })();
+    const tracked = operation.finally(() => {
+      if (this.authenticationRefresh === tracked) this.authenticationRefresh = null;
+    });
+    this.authenticationRefresh = tracked;
+    return tracked;
+  }
+
   destroy() {
     this.destroyed = true;
+    if (this.authenticationCookieListener && !this.view.webContents.isDestroyed()) {
+      this.view.webContents.session.cookies.off("changed", this.authenticationCookieListener);
+    }
     if (this.artifactDownloads) artifactTransfersFor(this).dispose();
     this.readOnlyInspection?.controller.abort(new Error("Browser host closed"));
     this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));

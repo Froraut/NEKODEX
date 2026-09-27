@@ -25,6 +25,7 @@ export interface BrowserLoginResult {
   solAvailable: boolean;
   extraHighAvailable: boolean;
   proAvailable: boolean;
+  modelCapabilities?: ChatGptWebAccountCapabilities["modelCapabilities"];
 }
 
 export {
@@ -197,6 +198,7 @@ export async function inspectBrowserLoginCapabilities(config: AppConfig): Promis
     solAvailable: inspected.solAvailable,
     extraHighAvailable: inspected.extraHighAvailable === true,
     proAvailable: inspected.proAvailable,
+    modelCapabilities: inspected.modelCapabilities,
   };
 }
 
@@ -467,6 +469,7 @@ export async function loginToChatGpt(
       solAvailable: inspected.solAvailable,
       extraHighAvailable: inspected.extraHighAvailable === true,
       proAvailable: inspected.proAvailable,
+      modelCapabilities: inspected.modelCapabilities,
     };
   } catch (error) {
     primaryError = error;

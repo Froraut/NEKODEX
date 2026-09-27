@@ -87,11 +87,11 @@ export class ChatGptVisibleTraceTracker {
 export function isChatGptTraceControl(block: ChatGptVisibleTraceBlock): boolean {
   if (block.kind !== "status") return false;
   const text = block.text.replace(/\s+/g, " ").trim();
-  return block.uiControl === true || text === "Answer now" || text === "Thinking";
+  return block.uiControl === true || /^(?:Answer now|Thinking|Répondre maintenant|Réflexion(?: en cours)?(?:\.\.\.|…)?)$/.test(text);
 }
 
 export function stripChatGptTraceControlSuffix(block: ChatGptVisibleTraceBlock): ChatGptVisibleTraceBlock {
   if (block.kind !== "status") return block;
-  const text = block.text.replace(/(?:^|\s)Answer now\s*$/, "").trimEnd();
+  const text = block.text.replace(/(?:^|\s)(?:Answer now|Répondre maintenant)\s*$/, "").trimEnd();
   return text === block.text ? block : { ...block, text };
 }

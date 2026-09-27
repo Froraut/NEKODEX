@@ -145,6 +145,7 @@ export class ChatGptBrowserDiagnostics {
               temporaryChat: currentUrl.searchParams.has("temporary-chat"),
             },
             titleChars: document.title.length,
+            documentComplete: document.readyState === "complete",
             viewport: { width: innerWidth, height: innerHeight },
             surfaceBound: typeof (globalThis as typeof globalThis & { __CODEX_WEB_GPT_SURFACE_ID__?: unknown })
               .__CODEX_WEB_GPT_SURFACE_ID__ === "string",
@@ -161,6 +162,20 @@ export class ChatGptBrowserDiagnostics {
                 contentEditable: (element as HTMLElement).isContentEditable,
                 focused: element === document.activeElement,
               })),
+              unrecognizedEditors: composers.length === 0
+                ? [...document.querySelectorAll('textarea, [contenteditable="true"]')]
+                  .filter(rendered).slice(0, 10).map(element => ({
+                    tag: element.tagName.toLowerCase(),
+                    role: element.getAttribute("role"),
+                    attributes: Object.fromEntries([
+                      "id", "data-testid", "data-lexical-editor", "data-composer-markdown",
+                      "contenteditable", "placeholder", "autofocus", "disabled", "readonly",
+                    ].map(name => [name, element.hasAttribute(name)])),
+                    inForm: Boolean(element.closest("form")),
+                    inComposerForm: Boolean(element.closest("form[data-chatgpt-composer]")),
+                    focused: element === document.activeElement,
+                  }))
+                : [],
               selectedConnectorCount: selectedConnectors.length,
               exactSelectedConnectorCount: selectedConnectors.filter(
                 element => (element.getAttribute("data-keyword") ?? element.getAttribute("app-mention-display-name")) === appName,

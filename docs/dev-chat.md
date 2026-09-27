@@ -9,13 +9,13 @@ usable.
 
 - Use the repository-pinned Bun version.
 - Install a launcher built from the same working tree.
-- Start the isolated launcher with `bun run dev:launcher`.
+- Start the isolated launcher with `bun run launcher:dev`.
 - It skips the normal marketing onboarding and opens the setup surface directly. Sign in inside the
   window labelled **DEV**. This may be a different ChatGPT account.
 - Run its browser smoke test and initialize the DEV profile. Complete MCP setup only when testing
   simulated tool rounds; browser, effort, context-limit, and compaction work in browser-only mode.
   The launcher stores any MCP credentials only in the DEV home and supervises only that isolated
-  tunnel. Create the ChatGPT connector as `Codex Native3 DEV`; keep `Codex Native3` unchanged.
+  tunnel. Create the ChatGPT connector as `Codex Native6 DEV`; keep the production connector unchanged.
 
 Nothing is copied from the normal launcher. The DEV command fails closed if its own launcher,
 browser descriptor, credentials, or connector are not ready. It never falls back to the production
@@ -26,7 +26,7 @@ profile, another model, a fake browser, or a second connector.
 One browser-only message:
 
 ```bash
-bun run dev:launcher
+bun run launcher:dev
 bun run src/cli.ts dev status
 bun run dev:chat smoke "Reply with exactly: DEV READY"
 ```
@@ -56,7 +56,7 @@ response. On an exact native compaction request, the same Web agent submits the 
 a one-shot MCP control call in that chat; only then does the surface close and the next epoch open a
 new Temporary Chat. The complete named history remains owned by the existing prompt compiler. New
 chats use the cheapest account-supported browser mode:
-Instant (`light`) when Sol is available, otherwise Luna. Override it with `--model` or `/model`.
+`gpt-5.6-sol-instant` when Sol is available, otherwise `gpt-5.6-luna`. Override it with `--model` or `/model`.
 
 Interactive commands:
 
@@ -65,7 +65,7 @@ Interactive commands:
 /fill 30000
 /send-fill 12000
 /compact
-/model high
+/model gpt-5.6-sol
 /reset yes
 /help
 /exit
@@ -130,7 +130,7 @@ Luna's later requests still include the accumulated transcript inside the same m
 28,000-token browser transport budget.
 
 Browser-only chats do not advertise outer tools and never claim simulated effects. Full setup keeps
-the launcher-owned DEV tunnel ready so ChatGPT can create and validate `Codex Native3 DEV` before a
+the launcher-owned DEV tunnel ready so ChatGPT can create and validate `Codex Native6 DEV` before a
 CLI chat starts. Each named chat attaches its broker to that tunnel, while every dispatched action
 still returns an explicit simulation receipt.
 

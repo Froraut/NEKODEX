@@ -8,7 +8,7 @@ import { augmentNativeModelCatalog } from "../src/model-catalog";
 import type { AdapterEvent } from "../src/types";
 
 const protocol = process.argv.includes("--v1") ? "v1" : "v2";
-const explicitChildModel = "gpt-5.6-sol";
+const explicitChildModel = "gpt-6-sol";
 const explicitChildReasoningEffort = "max";
 const codexArg = process.argv.slice(2).find(argument => argument !== "--v1" && argument !== "--v2");
 const codex = resolve(codexArg ?? "/Applications/ChatGPT.app/Contents/Resources/codex");

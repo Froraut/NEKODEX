@@ -57,14 +57,15 @@ export async function runProModelVersionConfigCommand(args: string[]): Promise<v
   const launcherControl = launcherControlIndex >= 0;
   if (launcherControl) args.splice(launcherControlIndex, 1);
   if (action !== "pro-model-version" || !rawVersion || args.length > 0) {
-    throw new Error("Config command must be: config pro-model-version <follow|5.6|5.5|6> --launcher-control");
+    throw new Error("Config command must be: config pro-model-version <follow|5.6|6> --launcher-control");
   }
   let version: ChatGptWebProModelVersion | undefined;
   if (rawVersion !== "follow") {
+    if (rawVersion === "5.5") throw new Error("Select a current Pro model version in NEKODEX Settings");
     try {
       version = parseChatGptWebProModelVersion(rawVersion);
     } catch {
-      throw new Error("Invalid Pro model version; choose follow, 5.6, 5.5, or 6");
+      throw new Error("Invalid Pro model version; choose follow, 5.6, or 6");
     }
   }
   if (!launcherControl) {

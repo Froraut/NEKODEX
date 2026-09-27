@@ -85,7 +85,8 @@ export interface ExistingChromeProfileClaim {
 }
 export interface ExistingChromeLoginCapture {
   storageState: BrowserLoginStorageState;
-  marker: { version: 1; captureComplete: true; source: "existing-chrome-profile"; capturedAt: string };
+  marker: { version: 1; captureComplete: true; source: "existing-chrome-profile"; capturedAt: string; browserUserAgent?: string;
+    cookieScope?: { partitioned: number; partitionedClearance: number; ordinaryClearance: number } };
 }
 
 /** Stable Chrome only. This never reads Preferences, Local State, profile databases or tabs. */
@@ -399,26 +400,43 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
       claimTargetId = claimed.targetId;
       browserContextId = claimed.browserContextId as string | undefined;
     }
-    // Chrome 144 supports hidden targets tied to this connection. Disconnect destroys an
-    // unresolved/late target too; never attach to or read content from a visible user tab.
-    const creation = connection.request("Target.createTarget", { url: "about:blank", background: true, hidden: true,
-      ...(browserContextId ? { browserContextId } : {}) }, Math.min(10_000, check()), undefined, result => {
-      creationObserved();
-      if (typeof result.targetId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(result.targetId)) throw failure("invalid-response");
-      targetId = result.targetId;
-      if (closing) lateClose = closeOwnedTarget();
-    });
-    creationPending = creation;
-    const created = await abortable(creation, options.signal);
-    creationPending = undefined;
-    check();
-    if (!targetId || created.targetId !== targetId) throw failure("invalid-response");
-    const attached = await request("Target.attachToTarget", { targetId, flatten: true });
+    // A regular Chrome profile may omit browserContextId. Creating a new target
+    // without it selects Chrome's default context, not necessarily the profile
+    // that opened our one-use claim. Read cookies through that exact owned claim
+    // target; never attach to an unrelated visible user page or infer a context.
+    let captureTargetId = claimTargetId;
+    if (!captureTargetId) {
+      const creation = connection.request("Target.createTarget", { url: "about:blank", background: true, hidden: true,
+        ...(browserContextId ? { browserContextId } : {}) }, Math.min(10_000, check()), undefined, result => {
+        creationObserved();
+        if (typeof result.targetId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(result.targetId)) throw failure("invalid-response");
+        targetId = result.targetId;
+        if (closing) lateClose = closeOwnedTarget();
+      });
+      creationPending = creation;
+      const created = await abortable(creation, options.signal);
+      creationPending = undefined;
+      check();
+      if (!targetId || created.targetId !== targetId) throw failure("invalid-response");
+      captureTargetId = targetId;
+    }
+    const attached = await request("Target.attachToTarget", { targetId: captureTargetId, flatten: true });
     if (typeof attached.sessionId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(attached.sessionId)) throw failure("invalid-response");
     const result = await request("Network.getCookies", { urls: [...COOKIE_URLS] }, attached.sessionId);
     check();
     const storageState = sanitizeExistingChromeCookies(result.cookies);
-    return { storageState, marker: { version: 1, captureComplete: true, source: "existing-chrome-profile", capturedAt: new Date().toISOString() } };
+    const allowedCookies = (result.cookies as JsonObject[]).filter(cookie => typeof cookie.domain === "string"
+      && /^\.?chatgpt\.com$/i.test(cookie.domain));
+    const cookieScope = {
+      partitioned: allowedCookies.filter(cookie => cookie.partitionKey !== undefined).length,
+      partitionedClearance: allowedCookies.filter(cookie => cookie.name === "cf_clearance" && cookie.partitionKey !== undefined).length,
+      ordinaryClearance: allowedCookies.filter(cookie => cookie.name === "cf_clearance" && cookie.partitionKey === undefined).length,
+    };
+    const userAgent = version.userAgent;
+    if (typeof userAgent !== "string" || userAgent.length > 512 || !/^Mozilla\/5\.0 [\x20-\x7e]+$/.test(userAgent)
+      || !/\bChrome\/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\b/.test(userAgent) || /Electron\//.test(userAgent)) throw failure("invalid-response");
+    return { storageState, marker: { version: 1, captureComplete: true, source: "existing-chrome-profile",
+      capturedAt: new Date().toISOString(), browserUserAgent: userAgent, cookieScope } };
   } catch (error) {
     if (options.signal?.aborted) throw failure("cancelled");
     throw error instanceof ExistingChromeLoginError ? error : failure("invalid-response");
@@ -444,6 +462,7 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
 
 export async function captureExistingChromeLoginToFile(config: Pick<AppConfig, "storageStatePath">, options: ExistingChromeLoginOptions): Promise<void> {
   const capture = await captureExistingChromeLogin(options);
+  if (capture.marker.cookieScope) process.stdout.write(`@codex-chrome-cookie-scope:${JSON.stringify(capture.marker.cookieScope)}\n`);
   if (options.signal?.aborted) throw failure("cancelled");
   const markerPath = loginVerificationMarkerPath(config.storageStatePath);
   try {

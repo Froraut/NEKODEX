@@ -1,3 +1,4 @@
+import { externalClientContext } from "../../external-client-context";
 import type { ChatGptSandboxPolicy } from "./environment-envelope";
 export type { ChatGptSandboxPolicy } from "./environment-envelope";
 import {
@@ -39,7 +40,7 @@ export { extractCodexTurnIdentityFromBody } from "./browser-request-contract";
 export type { ChatGptTurnIdentity } from "./browser-request-contract";
 
 export interface ChatGptTurnEnvironment {
-  producer?: "codex" | "hermes";
+  producer?: "codex" | "hermes" | "claude" | "api";
   cwd: string;
   roots: string[];
   writableRoots: string[];
@@ -802,9 +803,8 @@ function parseChatGptEnvironmentText(parsed: CodexParsedRequest, text: string): 
 }
 
 export function extractChatGptTurnIdentity(parsed: CodexParsedRequest): ChatGptTurnIdentity {
-  if (parsed._hermesContext) return {
-    threadId: parsed._hermesContext.threadId, turnId: parsed._hermesContext.turnId,
-  };
+  const client = externalClientContext(parsed);
+  if (client) return { threadId: client.threadId, turnId: client.turnId };
   const body = record(parsed._rawBody);
   return {
     ...extractCodexTurnIdentityFromBody(body),

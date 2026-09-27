@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+import { clientConnectionsCommand } from "./client-connections";
+import { claudeIntegrationCommand } from "./claude-integration";
+import { localApiCommand } from "./local-api-access";
+import { codexProviderCommand } from "./codex-provider-command";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { existsSync, rmSync } from "node:fs";
@@ -49,6 +53,9 @@ Usage:
   codex-chatgpt-web compaction-checkpoints show ID --binding HASH
   codex-chatgpt-web route <status|connect|disconnect|diagnostics> [--profile NAME]
   codex-chatgpt-web subagents <status|compatibility-v1|native>
+  codex-chatgpt-web provider <status|mixed|web-only> [--catalog PATH]
+  codex-chatgpt-web api <status|enable|disable|rotate|key>
+  codex-chatgpt-web claude <status|connect|disconnect>
   codex-chatgpt-web config pro-model-version <follow|5.6|5.5|6> --launcher-control
   codex-chatgpt-web config compaction-model <follow|extra-high|5.6-pro|5.5-pro> --launcher-control
   codex-chatgpt-web browser check
@@ -628,6 +635,10 @@ async function main(): Promise<void> {
   else if (command === "doctor" || command === "status") await doctorCommand(args);
   else if (command === "compaction-checkpoints") await compactionCheckpointsCommand(args);
   else if (command === "route") await routeCommand(args);
+  else if (command === "connections") clientConnectionsCommand(args);
+  else if (command === "claude") claudeIntegrationCommand(args);
+  else if (command === "api") localApiCommand(args);
+  else if (command === "provider") codexProviderCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "config") {
     if (args[0] === "compaction-model") await runCompactionModelConfigCommand(args);

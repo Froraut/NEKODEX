@@ -229,7 +229,10 @@ export function App() {
         } else if (next.status === "completed") {
           releaseCatalogAlert();
         }
-      } else if (next.status === "failed" && next.name !== "mcp-verification") {
+      } else if (next.status === "failed" && next.name !== "mcp-verification"
+        // The sign-in guide may recover a protected-file denial in this same
+        // operation. It owns terminal import errors and their retry actions.
+        && next.name !== "existing-chrome-login") {
         setError(next.message);
       }
       if (next.status === "completed" && initialized) refreshCompletedOperation();

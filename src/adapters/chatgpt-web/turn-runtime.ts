@@ -391,7 +391,7 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
               kind: "commentary",
               text: "> **Action required in Manual mode**\n>\n> Open the launcher and copy the prompt into ChatGPT. Select the `Codex Zero Risk4` plugin and the model you want.\n>\n> "
                 + attachmentInstructions.replaceAll("\n", "\n> ")
-                + "\n>\n> Send only after the exact required files are attached, then confirm `Sent` in the launcher.",
+                + "\n>\n> Send only after the exact required files are attached, then confirm `Sent` in the launcher after ChatGPT accepts the message. If the selected model cannot send, choose another available model and copy the same prompt again; it remains available until the connector starts.",
             });
           }
           await zeroRiskManualControl.start(retainedLauncherDescriptor, {

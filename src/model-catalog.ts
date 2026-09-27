@@ -12,11 +12,13 @@ import {
 type JsonObject = Record<string, unknown>;
 
 const WEB_CATALOG_ORDER = [
-  "chatgpt-web/pro",
-  "chatgpt-web/extra-high",
-  "chatgpt-web/high",
-  "chatgpt-web/medium",
-  "chatgpt-web/light",
+  "chatgpt-web/gpt-6-pro",
+  "chatgpt-web/gpt-6-astra",
+  "chatgpt-web/gpt-6-astra-instant",
+  "chatgpt-web/gpt-5.6-pro",
+  "chatgpt-web/gpt-5.6-sol",
+  "chatgpt-web/gpt-5.6-sol-instant",
+  "chatgpt-web/gpt-5.6-luna",
 ] as const;
 
 function webCatalogRank(route: ChatGptWebModelRoute): number {
@@ -149,7 +151,7 @@ export function buildChatGptWebModel(
     // Responses tool surface so MCP namespaces, deferred tool_search, and custom tools reach us.
     tool_mode: null,
     upgrade: null,
-    default_reasoning_level: route.codexEffort,
+    default_reasoning_level: efforts.includes(route.codexEffort) ? route.codexEffort : efforts[0],
     supported_reasoning_levels: efforts.map(effort => reasoningLevel(template, effort,
       efforts.length === 1 ? route.displayName
         : route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL ? effort === "low" ? "Ordinary Luna" : "Think"

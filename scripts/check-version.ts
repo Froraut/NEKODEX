@@ -5,6 +5,7 @@ import { assertReadmeDownloads } from "./readme-downloads";
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
   version?: string;
+  publishedReleaseVersion?: string;
   packageManager?: string;
   devDependencies?: Record<string, string>;
   engines?: Record<string, string>;
@@ -12,6 +13,10 @@ const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8
 };
 const packageVersion = packageJson.version;
 if (!packageVersion) throw new Error("package.json has no version");
+const publishedReleaseVersion = packageJson.publishedReleaseVersion ?? packageVersion;
+if (!/^\d+\.\d+\.\d+-nekodex\.\d+$/.test(publishedReleaseVersion)) {
+  throw new Error("package.json has an invalid publishedReleaseVersion");
+}
 const packageManagerMatch = /^bun@(\d+\.\d+\.\d+)$/.exec(packageJson.packageManager ?? "");
 if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun packageManager version");
 const bunVersion = packageManagerMatch[1];
@@ -23,7 +28,7 @@ if (packageJson.engines?.bun !== bunVersion) throw new Error(`engines.bun is not
 const expected = [
   ["src/version.ts", `export const VERSION = ${JSON.stringify(packageVersion)};`],
   ["src/adapters/chatgpt-web/mcp-server.ts", "version: VERSION"],
-  ["scripts/install.sh", `VERSION=\"\${CODEX_CHATGPT_WEB_VERSION:-${packageVersion}}\"`],
+  ["scripts/install.sh", `VERSION=\"\${CODEX_CHATGPT_WEB_VERSION:-${publishedReleaseVersion}}\"`],
   ["scripts/install.sh", `Bun-${bunVersion}.md`],
   ["README.md", `requires Bun ${bunVersion}.`],
   ["README.zh-CN.md", `Bun ${bunVersion}`],
@@ -50,7 +55,7 @@ const repository = packageJson.repository?.url?.match(/^git\+https:\/\/github\.c
 if (!repository) throw new Error("package.json must identify the GitHub release repository");
 for (const name of readdirSync(root).filter(name => /^README(?:\.[\w-]+)?\.md$/.test(name))) {
   assertReadmeDownloads(name, readFileSync(resolve(root, name), "utf8"), {
-    version: packageVersion,
+    version: publishedReleaseVersion,
     repository,
     dmgName: launcherPackage.build.dmg.artifactName,
     archiveName: launcherPackage.build.artifactName,

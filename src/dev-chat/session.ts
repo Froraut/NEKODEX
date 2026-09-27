@@ -18,6 +18,8 @@ export const DEV_CHAT_MODELS = [
   "chatgpt-web/gpt-5.6-sol",
   "chatgpt-web/gpt-5.6-pro",
   "chatgpt-web/gpt-6-pro",
+  "chatgpt-web/gpt-6-astra",
+  "chatgpt-web/gpt-6-astra-instant",
 ] as const;
 
 export type DevChatModel = typeof DEV_CHAT_MODELS[number];

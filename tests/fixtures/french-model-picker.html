@@ -1,0 +1,22 @@
+<!-- Synthetic reproduction adapted from Evanlau1798/codex-chatgpt-web PR #62 (MIT). -->
+<form><div id="prompt-textarea" contenteditable="true">Brouillon à conserver</div>
+      <button type="button" data-tone="neutral" aria-haspopup="menu" aria-controls="picker" aria-expanded="false">5.6 Pro</button></form>
+      <div id="picker" role="menu" hidden><div data-model-picker-view="simple">
+      <div role="menuitem" data-model-picker-view-toggle="true" aria-hidden="false" tabindex="0">Sélectionner le modèle</div>
+      <div id="power" role="menuitem" aria-describedby="status hint" tabindex="0"><div data-model-picker-power-slider style="height:30px;width:250px"></div></div>
+      <div id="radios"><div role="menuitemradio" data-family="6">Le plus récent</div><div role="menuitemradio" data-family="5.6">GPT-5.6 Sol</div></div>
+      <span id="status"></span><span id="hint">Utilisez les touches fléchées gauche et droite pour régler la puissance</span></div></div>
+      <script>
+      let family='5.6', value=4; const control=document.querySelector('button'),menu=document.querySelector('#picker'),view=document.querySelector('[data-model-picker-view]');
+      function render(){const max=family==='5.6'?4:3,advanced=view.dataset.modelPickerView==='advanced';
+        document.querySelector('#radios').innerHTML=advanced?'<div role="menuitemradio" data-family="6">Le plus récent</div><div role="menuitemradio" data-family="5.6">GPT-5.6 Sol</div>':'';
+        document.querySelector('#power').style.display=advanced?'none':'block';
+        for(const radio of document.querySelectorAll('[data-family]'))radio.setAttribute('aria-checked',String(radio.dataset.family===family));
+        document.querySelector('[data-model-picker-power-slider]').innerHTML='<span data-orientation="horizontal" aria-disabled="false">'+Array.from({length:max+1},(_,i)=>'<span data-selected="'+(i<=value)+'"></span>').join('')+'<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="'+max+'" aria-valuenow="'+value+'"></span></span>';
+        document.querySelector('#status').textContent=['Instantané','Moyen','Élevée','Très élevé','Pro'][value]+', '+(value+1)+' sur '+(max+1)+'.'; }
+      control.onclick=()=>{menu.hidden=false;control.setAttribute('aria-expanded','true');view.dataset.modelPickerView='simple';render()};
+      document.querySelector('[data-model-picker-view-toggle]').onclick=()=>{view.dataset.modelPickerView='advanced';render()};
+      document.querySelector('#radios').onclick=e=>{const radio=e.target.closest('[data-family]');if(radio){family=radio.dataset.family;value=0;view.dataset.modelPickerView='simple';render()}};
+      document.addEventListener('keydown',e=>{if(e.key==='Escape'){setTimeout(()=>{menu.hidden=true;control.setAttribute('aria-expanded','false')},75)}
+        else if(e.key==='ArrowRight'||e.key==='ArrowLeft'){value=Math.max(0,Math.min(family==='5.6'?4:3,value+(e.key==='ArrowRight'?1:-1)));render();e.preventDefault()}});render();
+      </script>

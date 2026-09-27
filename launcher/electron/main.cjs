@@ -1,3 +1,4 @@
+const { registerClientConnections } = require("./ipc/client-connections.cjs");
 const { registerBrowserHandlers } = require("./ipc/browser-handlers.cjs");
 const { registerAccountHandlers } = require("./ipc/account-handlers.cjs");
 const { createChromeProfileChoice } = require("./chrome-profile-choice.cjs");
@@ -553,6 +554,7 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
   });
   window.webContents.on("render-process-gone", (_event, details) => {
     if (!rendererStartupComplete || quitting || exitCommitted) return;
+    logger.error("launcher.renderer_gone", { reason: details?.reason || "gone", exitCode: details?.exitCode });
     void recoverMainRenderer(`renderer-${details?.reason || "gone"}`);
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -654,6 +656,51 @@ function rendererRestartBlocked() {
   return Boolean(lifecycleAdmission.busy() || currentGlobalOperation() || browserHost?.hasActiveTurns());
 }
 
+function rendererWindowReplacementBlocked() {
+  // Native account/setup dialogs belong to the existing window. Tool turns belong
+  // to their WebContentsViews and can continue while only the shell is replaced.
+  return Boolean(lifecycleAdmission.busy() || currentGlobalOperation());
+}
+
+async function replaceOwnedRendererWindow() {
+  const previous = mainWindow;
+  if (!previous || previous.isDestroyed() || rendererWindowReplacementBlocked()) {
+    throw new Error("The interface cannot be replaced during an owned window operation");
+  }
+  const visible = previous.isVisible();
+  const replacement = createWindow({ logger, stateStore: launcherStateStore,
+    windowStatePath: path.join(app.getPath("userData"), "window-state.json"),
+    startHidden: !visible, foregroundOnReady: visible });
+  let attached = false;
+  try {
+    browserHost?.replaceShellWindow(replacement);
+    attached = true;
+    mainWindow = replacement;
+    mainWindowReadyToShow = false;
+    // IPC still requires the new window's live frame and exact trusted renderer URL.
+    // Allow its startup snapshot; no old frame becomes trusted through this flag.
+    rendererUnavailable = false;
+    let timeout;
+    try {
+      await Promise.race([loadRenderer(replacement), new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Replacement interface load timed out")), 10_000);
+      })]);
+    } finally { clearTimeout(timeout); }
+    const frame = replacement.webContents.mainFrame;
+    if (!frame || frame.isDestroyed() || frame.detached !== false || !rendererNavigationAllowed(frame.url)) {
+      throw new Error("Replacement interface did not acquire a live trusted frame");
+    }
+    previous.destroy();
+  } catch (error) {
+    rendererUnavailable = true;
+    mainWindow = previous;
+    mainWindowReadyToShow = false;
+    if (attached) browserHost?.replaceShellWindow(previous);
+    replacement.destroy();
+    throw error;
+  }
+}
+
 async function promptRendererRecovery() {
   if (!rendererUnavailable || rendererRecoveryInFlight || rendererRecoveryDialogInFlight
     || quitting || exitCommitted) return;
@@ -675,14 +722,20 @@ async function promptRendererRecovery() {
       title: copy.title,
       message: copy.message,
       detail: blocked ? copy.active : copy.idle,
-      buttons: blocked ? [copy.keep] : [copy.keep, copy.restart],
-      defaultId: blocked ? 0 : 1,
+      buttons: rendererWindowReplacementBlocked() ? [copy.keep]
+        : blocked ? [copy.keep, copy.recover] : [copy.keep, copy.recover, copy.restart],
+      defaultId: rendererWindowReplacementBlocked() ? 0 : 1,
       cancelId: 0,
       noLink: true,
     };
     const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
     const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
-    if (result.response !== 1) return;
+    if (result.response === 1 && !rendererWindowReplacementBlocked()) {
+      rendererReloadAttempted = false;
+      await recoverMainRenderer("renderer-user-recovery");
+      return;
+    }
+    if (result.response !== 2) return;
     if (rendererRestartBlocked()) {
       await dialog.showMessageBox({ ...options, buttons: [copy.keep], defaultId: 0, detail: copy.active });
       return;
@@ -700,14 +753,6 @@ async function promptRendererRecovery() {
 
 async function recoverMainRenderer(reason) {
   if (!rendererStartupComplete || quitting || exitCommitted) return;
-  if (reason.startsWith("renderer-")) {
-    // On the pinned Electron build, reloading a crashed WebContents can retain a detached
-    // main-frame wrapper. Keep IPC closed and offer a guarded application restart instead.
-    rendererUnavailable = true;
-    logger?.error("launcher.renderer_restart_required", { reason });
-    await promptRendererRecovery();
-    return;
-  }
   if (rendererRecoveryInFlight) {
     rendererRecoveryFollowup = reason;
     return;
@@ -720,7 +765,8 @@ async function recoverMainRenderer(reason) {
     logger?.warn("launcher.renderer_recovery_started", { reason, reloadAttempted: rendererReloadAttempted });
     if (!rendererReloadAttempted && mainWindow && !mainWindow.isDestroyed()) {
       rendererReloadAttempted = true;
-      await reloadOwnedRenderer(mainWindow);
+      if (reason.startsWith("renderer-")) await replaceOwnedRendererWindow();
+      else await reloadOwnedRenderer(mainWindow);
       if (!quitting && !exitCommitted && mainWindow && !mainWindow.isDestroyed()) {
         rendererUnavailable = false;
         recovered = true;
@@ -1139,6 +1185,15 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return { ok: true, stdout: result.stdout, restartRequired: !IS_DEV_PROFILE };
   });
+  registerClientConnections({ handle, runtimeHost, clipboard, isDevProfile: IS_DEV_PROFILE,
+    assertIdle: () => assertBrowserIdleFor("client connections"),
+    providerChanged: mode => {
+      stopCatalogVerificationMonitor();
+      const state = stateStore.update({ codexCatalogVerified: mode === "web-only", codexPickerConfirmed: false, codexRestartRequired: true });
+      send("launcher:state-changed", state);
+      if (mode === "mixed") startCatalogVerificationMonitor({ logger, stateStore });
+    },
+  });
   handle("launcher:setup-hermes", async (_event, input) => {
     if (IS_DEV_PROFILE) throw new Error("Add Hermes from the production app profile.");
     if (input?.runtime !== undefined && !["codex_responses", "codex_app_server"].includes(input.runtime)) throw new Error("Invalid Hermes runtime");
@@ -1528,9 +1583,10 @@ async function requestQuit({ admissionHeld = false, restart = false, stopRuntime
       throw new Error("Finish or cancel active tasks before quitting NEKODEX");
     }
 
-    // Closing the interface releases only its Web dependency. Explicit stop/setup still
-    // use the global idle drain. A failed detach is pre-commit and preserves the GUI.
-    shutdownResult = stopRuntime || IS_DEV_PROFILE
+    // Ordinary Quit preserves the background Native runtime. An explicit restart
+    // replaces that runtime and uses the existing idle drain; it must not require
+    // a healthy background route just to recover a failed application.
+    shutdownResult = stopRuntime || restart || IS_DEV_PROFILE
       ? await runtimeSupervisor?.shutdown({ cancelActiveTurns: false, force: false })
       : await runtimeSupervisor?.detachForQuit();
 
@@ -1780,13 +1836,19 @@ async function start() {
   const profileFirstLogin = createProfileFirstLogin({
     choose: createChromeProfileChoice({
       root: path.join(app.getPath("home"), "Library", "Application Support", "Google", "Chrome"),
-      coreHome: CORE_HOME, BrowserWindow, window: () => mainWindow,
+      coreHome: CORE_HOME, BrowserWindow, dialog, window: () => mainWindow,
+      getWorkArea: () => screen.getDisplayMatching(mainWindow.getBounds()).workArea,
       // Existing-profile metadata and launches are deliberately paired to macOS Stable Chrome.
       // A configured Beta/Canary/Chromium executable remains available through isolated sign-in;
       // its unrelated "Profile N" directory must never be selected from Stable's catalog.
       executable: () => "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       language: () => stateStore.read().language,
     }), runtime: runtimeHost, session, dialog, window: () => mainWindow, language: () => stateStore.read().language,
+    selectConnectionFile: ({ signal, accountId }) => selectChromeConnectionFile({
+      dialog, window: mainWindow, homeDir: app.getPath("home"), language: stateStore.read().language, signal,
+      isCurrent: () => browserHost?.getHost(accountId).passkeyLoginController?.signal === signal
+        && mainWindow && !mainWindow.isDestroyed(),
+    }),
   });
   browserHost = new AccountBrowserPool({
     skipInitialNavigation: launcherSmokeTest,
