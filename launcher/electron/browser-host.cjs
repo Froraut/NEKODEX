@@ -23,6 +23,7 @@ const { validateConnectorName } = require("./connector-identity.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { stableChromiumUserAgent } = require("./browser-user-agent.cjs");
 const { observeChatGptSession } = require("./browser-session-observation.cjs");
+const { checkNetworkEgress } = require("./network-egress-check.cjs");
 const { deferredCaptureTransfer, isCloudflareChallengedVerification, isDeferredCaptureTransfer, isVerifiedCaptureTransfer,
   sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
 const { captureOwnedSession, disposeOwnedSessionSnapshot, restoreOwnedSession } = require("./owned-session-rollback.cjs");
@@ -85,6 +86,7 @@ const CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS = 500;
 const CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS = 1_000;
 const SESSION_TOKEN_COOKIE = /^__Secure-next-auth\.session-token(?:\.\d+)?$/;
 const SESSION_TOKEN_SETTLE_MS = 1_500;
+const NETWORK_EGRESS_CHECK_INTERVAL_MS = 10 * 60_000;
 const CHATGPT_VIEWPORT_CSS = `
   /* ChatGPT's desktop styles must not turn embedded controls into native drag regions. */
   * { -webkit-app-region: no-drag !important; }
@@ -492,6 +494,8 @@ class BrowserHost {
       authenticationStatus: "unknown",
       authenticationCheckedAt: null,
       lastVerifiedAt: null,
+      networkIssue: null,
+      networkIssueCheckedAt: null,
       visible: false,
       surfaceActive: true,
       loading: false,
@@ -1514,6 +1518,7 @@ class BrowserHost {
       return false;
     }
     if (!isChatGptCloudflareChallengeResponse(details)) return false;
+    this.scheduleNetworkEgressCheck();
     if (this.cloudflareChallengeRecovery) {
       this.cloudflareChallengeRecoveryArmed = false;
       return true;
@@ -1543,6 +1548,47 @@ class BrowserHost {
       });
     this.cloudflareChallengeRecovery = tracked;
     return true;
+  }
+
+  /**
+   * A Cloudflare challenge can come from a network whose public address changes between
+   * connections. Check at most every ten minutes, in a throwaway session with this account's
+   * network settings, and keep re-checking while a warning is shown so it clears once fixed.
+   */
+  scheduleNetworkEgressCheck() {
+    if (this.destroyed || this.networkEgressCheck) return;
+    if (Date.now() - (this.networkEgressCheckedAt ?? 0) < NETWORK_EGRESS_CHECK_INTERVAL_MS) return;
+    this.networkEgressCheckedAt = Date.now();
+    const check = (async () => {
+      const probeSession = electronSession.fromPartition(`nekodex-egress-check-${this.accountId}`, { cache: false });
+      try {
+        await this.configureAccountSession(probeSession, this.accountId);
+        const result = await checkNetworkEgress(probeSession);
+        if (this.destroyed) return;
+        // Counts and booleans only: the addresses never leave the check.
+        this.logger.info("browser.network_egress_checked", result);
+        this.setState({ networkIssue: result.issue, networkIssueCheckedAt: new Date().toISOString() });
+        this.armNetworkEgressRecheck(result.issue !== null);
+      } catch (error) {
+        this.logger.warn("browser.network_egress_check_failed", {
+          message: (error instanceof Error ? error.message : String(error)).split("\n")[0].slice(0, 160),
+        });
+      } finally {
+        await probeSession.clearStorageData().catch(() => {});
+      }
+    })();
+    this.networkEgressCheck = check.finally(() => { this.networkEgressCheck = null; });
+  }
+
+  armNetworkEgressRecheck(active) {
+    clearTimeout(this.networkEgressRecheckTimer);
+    this.networkEgressRecheckTimer = null;
+    if (!active || this.destroyed) return;
+    this.networkEgressRecheckTimer = setTimeout(() => {
+      this.networkEgressRecheckTimer = null;
+      this.scheduleNetworkEgressCheck();
+    }, NETWORK_EGRESS_CHECK_INTERVAL_MS);
+    this.networkEgressRecheckTimer.unref?.();
   }
 
   async reloadHomeAfterCloudflareChallenge() {
@@ -3377,6 +3423,7 @@ class BrowserHost {
   destroy() {
     this.destroyed = true;
     clearTimeout(this.authenticationRefreshTimer);
+    clearTimeout(this.networkEgressRecheckTimer);
     if (this.authenticationCookieListener && !this.view.webContents.isDestroyed()) {
       this.view.webContents.session.cookies.off("changed", this.authenticationCookieListener);
     }

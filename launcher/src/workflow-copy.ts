@@ -8,6 +8,12 @@ const en = {
     retryVerification: "Retry verification",
     checkingVerification: "Checking…",
   },
+  network: {
+    title: "Your network changes its public address",
+    egressUnstable: "New connections to ChatGPT leave from different public IP addresses, usually because a VPN switches between several servers. Cloudflare ties its security check to one address, so ChatGPT asks you to verify again after restarts. Choose one fixed VPN server for chatgpt.com, openai.com and challenges.cloudflare.com.",
+    challengeRoute: "Cloudflare's security check (challenges.cloudflare.com) is reached from a different public IP address than ChatGPT, usually because of VPN routing rules. Cloudflare then rejects the check or asks again. Send challenges.cloudflare.com through the same VPN server as chatgpt.com.",
+    checkedAt: "Checked {time}",
+  },
   portfolio: {
     refreshAll: "Refresh account limits",
     refreshing: "Refreshing account limits…",
@@ -57,6 +63,12 @@ const ru: WorkflowCopy = {
     retryVerification: "Повторить проверку",
     checkingVerification: "Проверка…",
   },
+  network: {
+    title: "Сеть меняет внешний IP-адрес",
+    egressUnstable: "Новые соединения с ChatGPT выходят с разных внешних IP-адресов — обычно VPN переключается между несколькими серверами. Cloudflare привязывает проверку к одному адресу, поэтому после перезапуска ChatGPT снова просит подтвердить, что вы человек. Выберите в VPN один постоянный сервер для chatgpt.com, openai.com и challenges.cloudflare.com.",
+    challengeRoute: "Проверка Cloudflare (challenges.cloudflare.com) идёт с другого внешнего IP-адреса, чем ChatGPT, — обычно из-за правил маршрутизации VPN. Тогда Cloudflare отклоняет проверку или спрашивает снова. Направьте challenges.cloudflare.com через тот же сервер VPN, что и chatgpt.com.",
+    checkedAt: "Проверено {time}",
+  },
   portfolio: {
     refreshAll: "Обновить лимиты аккаунтов",
     refreshing: "Обновление лимитов аккаунтов…",
@@ -102,6 +114,12 @@ const zhCN: WorkflowCopy = {
     lastVerifiedAt: "上次验证：{time}",
     retryVerification: "重试验证",
     checkingVerification: "正在检查…",
+  },
+  network: {
+    title: "网络的公网地址在变化",
+    egressUnstable: "到 ChatGPT 的新连接来自不同的公网 IP 地址，通常是因为 VPN 在多个服务器之间切换。Cloudflare 会把安全检查绑定到一个地址，因此重启后 ChatGPT 会再次要求验证。请为 chatgpt.com、openai.com 和 challenges.cloudflare.com 选择一个固定的 VPN 服务器。",
+    challengeRoute: "Cloudflare 安全检查（challenges.cloudflare.com）使用的公网 IP 地址与 ChatGPT 不同，通常是 VPN 分流规则造成的。Cloudflare 会因此拒绝检查或再次要求验证。请让 challenges.cloudflare.com 与 chatgpt.com 走同一个 VPN 服务器。",
+    checkedAt: "检查于 {time}",
   },
   portfolio: {
     refreshAll: "刷新账号限制",
@@ -149,6 +167,12 @@ const zhTW: WorkflowCopy = {
     retryVerification: "重試驗證",
     checkingVerification: "正在檢查…",
   },
+  network: {
+    title: "網路的公用位址在變動",
+    egressUnstable: "連到 ChatGPT 的新連線來自不同的公用 IP 位址，通常是因為 VPN 在多台伺服器之間切換。Cloudflare 會把安全檢查綁定到單一位址，因此重新啟動後 ChatGPT 會再次要求驗證。請為 chatgpt.com、openai.com 和 challenges.cloudflare.com 選擇一台固定的 VPN 伺服器。",
+    challengeRoute: "Cloudflare 安全檢查（challenges.cloudflare.com）使用的公用 IP 位址與 ChatGPT 不同，通常是 VPN 分流規則造成的。Cloudflare 會因此拒絕檢查或再次要求驗證。請讓 challenges.cloudflare.com 與 chatgpt.com 走同一台 VPN 伺服器。",
+    checkedAt: "檢查於 {time}",
+  },
   portfolio: {
     refreshAll: "重新整理帳號限制",
     refreshing: "正在重新整理帳號限制…",
@@ -195,6 +219,12 @@ const ja: WorkflowCopy = {
     retryVerification: "確認を再試行",
     checkingVerification: "確認中…",
   },
+  network: {
+    title: "ネットワークの公開アドレスが変わっています",
+    egressUnstable: "ChatGPT への新しい接続が異なる公開 IP アドレスから送信されています。多くの場合、VPN が複数のサーバーを切り替えていることが原因です。Cloudflare はセキュリティ確認を 1 つのアドレスに結び付けるため、再起動後に ChatGPT が再び確認を求めます。chatgpt.com、openai.com、challenges.cloudflare.com には固定の VPN サーバーを 1 つ使用してください。",
+    challengeRoute: "Cloudflare のセキュリティ確認（challenges.cloudflare.com）が ChatGPT とは異なる公開 IP アドレスから行われています。多くの場合、VPN のルーティング規則が原因です。そのため Cloudflare が確認を拒否したり、再度求めたりします。challenges.cloudflare.com を chatgpt.com と同じ VPN サーバー経由にしてください。",
+    checkedAt: "{time} に確認",
+  },
   portfolio: {
     refreshAll: "アカウント制限を更新",
     refreshing: "アカウント制限を更新中…",
@@ -240,6 +270,12 @@ const ko: WorkflowCopy = {
     lastVerifiedAt: "마지막 확인: {time}",
     retryVerification: "확인 다시 시도",
     checkingVerification: "확인 중…",
+  },
+  network: {
+    title: "네트워크의 공인 주소가 바뀌고 있습니다",
+    egressUnstable: "ChatGPT로 가는 새 연결이 서로 다른 공인 IP 주소에서 나가고 있습니다. 보통 VPN이 여러 서버 사이를 전환하기 때문입니다. Cloudflare는 보안 확인을 하나의 주소에 묶기 때문에 재시작 후 ChatGPT가 다시 확인을 요청합니다. chatgpt.com, openai.com, challenges.cloudflare.com에는 고정된 VPN 서버 하나를 사용하세요.",
+    challengeRoute: "Cloudflare 보안 확인(challenges.cloudflare.com)이 ChatGPT와 다른 공인 IP 주소에서 이루어지고 있습니다. 보통 VPN 라우팅 규칙 때문입니다. 그러면 Cloudflare가 확인을 거부하거나 다시 요청합니다. challenges.cloudflare.com을 chatgpt.com과 같은 VPN 서버로 보내세요.",
+    checkedAt: "{time}에 확인함",
   },
   portfolio: {
     refreshAll: "계정 한도 새로 고침",

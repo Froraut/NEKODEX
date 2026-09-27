@@ -13,6 +13,7 @@ import { browserWindowCopy } from "./browser-window-copy";
 import { passkeyFailureText } from "./passkey-copy";
 import { sessionIssueCopy } from "./session-issue-copy";
 import { workflowCopy } from "./workflow-copy";
+import { NetworkIssueNotice } from "./NetworkIssueNotice";
 import type { WorkspaceReadiness } from "./workspace-readiness";
 import type { BrowserInteractionMode, BrowserState, Language, OperationState } from "./types";
 
@@ -402,6 +403,7 @@ export function BrowserSurface({
             {readiness.native === "ready" ? <small>{workflow.recovery.nativePreserved}</small> : null}</div>
         </section>
       ) : null}
+      {!manualInteraction ? <NetworkIssueNotice language={language} browser={browser} /> : null}
       {selectedManualTab
         && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
         <ManualTurnGuide
