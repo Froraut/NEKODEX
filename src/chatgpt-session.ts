@@ -541,6 +541,8 @@ export function chatGptUnversionedEffortMatches(descriptions: readonly string[],
     && Number(states[0]![2]) === index && Number(states[0]![3]) >= index;
 }
 
+// Background surfaces are drawn offscreen and produce no animation frames, so Playwright's
+// stability check never completes there. Menu targets are verified before each forced click.
 async function expandChatGptModelPicker(activation: ChatGptEffortActivation, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
   const powerView = activation.menu.locator("[data-model-picker-view]");
@@ -552,12 +554,12 @@ async function expandChatGptModelPicker(activation: ChatGptEffortActivation, sig
     if (view !== "simple") throw new Error("ChatGPT model picker view is unknown");
     const toggle = powerView.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]');
     if (await toggle.count() !== 1) throw new Error("ChatGPT model picker toggle is ambiguous");
-    await toggle.click({ timeout: 5_000, signal });
+    await toggle.click({ force: true, timeout: 5_000, signal });
     return;
   }
   const trigger = activation.menu.getByLabel(/^(?:Select model|Choose model|Sélectionner le modèle|Choisir le modèle|选择模型|モデルを選択)$/);
   if (await trigger.count() === 1 && await trigger.getAttribute("aria-expanded") === "false") {
-    await trigger.click({ timeout: 5_000, signal });
+    await trigger.click({ force: true, timeout: 5_000, signal });
   }
 }
 
@@ -597,7 +599,7 @@ export async function selectChatGptModelFamily(
   if (await option().count() !== 1 || await option().getAttribute("aria-disabled") === "true") {
     throw new Error(`ChatGPT model family ${version} is unavailable`);
   }
-  await option().click({ timeout: 5_000, signal });
+  await option().click({ force: true, timeout: 5_000, signal });
   await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
   activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
   return assertSelectedChatGptModelFamily(page, control, activation, version, signal);
@@ -666,7 +668,7 @@ async function detectChatGptModelCapabilities(
     if (originalView === "simple") {
       const view = activation.menu.locator("[data-model-picker-view]");
       if (await view.getAttribute("data-model-picker-view") === "advanced") {
-        await view.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]').click({ timeout: 5_000, signal: cleanup.signal });
+        await view.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]').click({ force: true, timeout: 5_000, signal: cleanup.signal });
       }
     }
   } catch (error) {
