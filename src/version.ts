@@ -1,1 +1,1 @@
-export const VERSION = "6.1.4-nekodex.1";
+export const VERSION = "6.1.5-nekodex.1";
