@@ -403,7 +403,7 @@ export function BrowserSurface({
             {readiness.native === "ready" ? <small>{workflow.recovery.nativePreserved}</small> : null}</div>
         </section>
       ) : null}
-      {!manualInteraction ? <NetworkIssueNotice language={language} browser={browser} /> : null}
+      <NetworkIssueNotice language={language} browser={browser} />
       {selectedManualTab
         && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
         <ManualTurnGuide

@@ -1033,7 +1033,8 @@ class BrowserHost {
       tab.loading = true;
       publishBrowserSnapshot(this);
     });
-    contents.on("did-navigate", (_event, url) => {
+    contents.on("did-navigate", (_event, url, httpResponseCode) => {
+      this.noteChatGptDocumentResponse(url, httpResponseCode);
       // Electron emits did-navigate for a committed main-frame document only. Even a brief
       // foreign document must permanently lose the old conversation before it can return.
       tab.url = url;
@@ -1496,7 +1497,20 @@ class BrowserHost {
     return true;
   }
 
+  /**
+   * Cloudflare answers a challenged ChatGPT document with 403 and its "Just a moment" page. The
+   * page then makes no backend requests, so check the network route from the document response.
+   */
+  noteChatGptDocumentResponse(url, httpResponseCode) {
+    if (httpResponseCode !== 403) return;
+    try { if (new URL(url).origin !== CHATGPT_ORIGIN) return; } catch { return; }
+    this.scheduleNetworkEgressCheck();
+  }
+
   bindChatGptBackendRecovery() {
+    this.view.webContents.on("did-navigate", (_event, url, httpResponseCode) => {
+      this.noteChatGptDocumentResponse(url, httpResponseCode);
+    });
     this.view.webContents.session.webRequest.onCompleted(
       CHATGPT_BACKEND_REQUEST_FILTER,
       details => {
