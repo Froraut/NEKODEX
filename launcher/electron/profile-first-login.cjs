@@ -1,7 +1,26 @@
 const { verifiedCaptureTransfer, verifyCapturedAccount } = require('./chrome-session-identity.cjs');
 const { safeProfileLoginError } = require('./chrome-profile-error-guidance.cjs');
 
-function createProfileFirstLogin({choose, runtime, session, dialog, window, language}) {
+async function captureProfileSession({ runtime, onProgress, profileClaim, context, selectConnectionFile }) {
+  const { signal } = context;
+  signal?.throwIfAborted();
+  try { return await runtime.captureExistingChromeLogin(onProgress, { profileClaim }); }
+  catch (error) {
+    signal?.throwIfAborted();
+    if (error?.code !== 'chrome-profile-access-denied' || runtime.platform !== 'darwin'
+      || typeof selectConnectionFile !== 'function') throw error;
+    // The failed helper has settled and removed its transfer. Ask macOS for the
+    // exact discovery file, then retry once under the same account/profile claim.
+    const selectedDiscoveryContents = await selectConnectionFile(context);
+    signal?.throwIfAborted();
+    if (selectedDiscoveryContents === null) {
+      throw Object.assign(new Error('Sign-in cancelled'), { code: 'profile-login-cancelled' });
+    }
+    return runtime.captureExistingChromeLogin(onProgress, { profileClaim, selectedDiscoveryContents });
+  }
+}
+
+function createProfileFirstLogin({choose, runtime, session, dialog, window, language, selectConnectionFile}) {
   const login = async (onProgress, context) => {
     const {signal}=context;
     signal?.throwIfAborted();
@@ -61,8 +80,9 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
       signal?.throwIfAborted();
       // Existing-Chrome phases belong to a different progress protocol. Keep the
       // passkey operation active/cancellable while Chrome approves and captures it.
-      capture=await runtime.captureExistingChromeLogin(patch=>onProgress({phase:'importing', chromePhase:patch.phase,
-        ...(patch.deadlineAt ? {deadlineAt:patch.deadlineAt} : {})}), {profileClaim});
+      capture=await captureProfileSession({ runtime, profileClaim, context, selectConnectionFile,
+        onProgress: patch=>onProgress({phase:'importing', chromePhase:patch.phase,
+          ...(patch.deadlineAt ? {deadlineAt:patch.deadlineAt} : {})}) });
       signal?.throwIfAborted();
       const identity=await verifyCapturedAccount(session,capture,{signal,accountId:context.accountId,
         configureSession:context.configureVerificationSession});
@@ -113,4 +133,4 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
     }
   };
 }
-module.exports={createProfileFirstLogin,verifyCapturedAccount};
+module.exports={createProfileFirstLogin,verifyCapturedAccount,captureProfileSession};

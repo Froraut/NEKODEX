@@ -8,6 +8,7 @@ const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
 const { createChromeProfileBindingStore } = require("../launcher/electron/chrome-profile-binding.cjs");
 const { publicPasskeyProgress, passkeyLoginFailure } = require("../launcher/electron/passkey-login-progress.cjs");
 const { readProfilesWithPermission } = require("../launcher/electron/chrome-profile-choice.cjs");
+const { captureProfileSession } = require("../launcher/electron/profile-first-login.cjs");
 
 test("successful sign-in returns the settled pool receipt instead of a stale locked host snapshot", async () => {
   let held = false, published = false;
@@ -57,4 +58,37 @@ test("protected Chrome profile metadata uses the exact system-selected file and 
   await expect(readProfilesWithPermission({ ...options, dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['/fixture/Chrome/Cookies'] }) } }))
     .rejects.toThrow('Select the Chrome Local State file');
   expect(reads).toBe(1);
+});
+
+test("protected Chrome discovery retries only the granted file and preserves the selected profile and cancellation", async () => {
+  const controller = new AbortController();
+  const context = { signal: controller.signal, accountId: 'fixture' };
+  const claim = { nonce: 'fixture-claim' };
+  const capture = { storageState: { cookies: [] } };
+  const attempts: any[] = [];
+  let grants = 0;
+  const denied = Object.assign(new Error('Protected'), { code: 'chrome-profile-access-denied' });
+  const options = { context, profileClaim: claim, onProgress() {},
+    runtime: { platform: 'darwin', captureExistingChromeLogin: async (_progress: unknown, args: any) => {
+      attempts.push(args);
+      if (!Object.hasOwn(args, 'selectedDiscoveryContents')) throw denied;
+      return capture;
+    } },
+    selectConnectionFile: async (received: unknown) => { grants++; expect(received).toBe(context); return 'private discovery'; },
+  };
+  expect(await captureProfileSession(options)).toBe(capture);
+  expect(attempts).toEqual([{ profileClaim: claim }, { profileClaim: claim, selectedDiscoveryContents: 'private discovery' }]);
+  expect(grants).toBe(1);
+  attempts.length = 0;
+  await expect(captureProfileSession({ ...options, selectConnectionFile: async () => null })).rejects.toThrow('Sign-in cancelled');
+  expect(attempts).toHaveLength(1);
+  attempts.length = 0;
+  await expect(captureProfileSession({ ...options, selectConnectionFile: async () => {
+    controller.abort(new Error('Account changed')); return 'private discovery';
+  } })).rejects.toThrow('Account changed');
+  expect(attempts).toHaveLength(1);
+  const unavailable = Object.assign(new Error('Unavailable'), { code: 'chrome-unavailable' });
+  await expect(captureProfileSession({ ...options, context: { signal: new AbortController().signal },
+    runtime: { platform: 'darwin', captureExistingChromeLogin: async () => { throw unavailable; } } })).rejects.toBe(unavailable);
+  expect(grants).toBe(1);
 });

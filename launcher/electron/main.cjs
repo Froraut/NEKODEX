@@ -1843,6 +1843,11 @@ async function start() {
       executable: () => "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       language: () => stateStore.read().language,
     }), runtime: runtimeHost, session, dialog, window: () => mainWindow, language: () => stateStore.read().language,
+    selectConnectionFile: ({ signal, accountId }) => selectChromeConnectionFile({
+      dialog, window: mainWindow, homeDir: app.getPath("home"), language: stateStore.read().language, signal,
+      isCurrent: () => browserHost?.getHost(accountId).passkeyLoginController?.signal === signal
+        && mainWindow && !mainWindow.isDestroyed(),
+    }),
   });
   browserHost = new AccountBrowserPool({
     skipInitialNavigation: launcherSmokeTest,
