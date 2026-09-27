@@ -24,6 +24,7 @@ import { copyFor, localizeLauncherError, type Copy } from "./i18n";
 
 import { deriveWorkspaceReadiness } from "./workspace-readiness";
 import { workflowCopy } from "./workflow-copy";
+import { useNetworkIssueDismissalReset } from "./NetworkIssueNotice";
 import { ActionDot, BiggerContextRecommendation, COMPACT_SIDEBAR_QUERY, ErrorToast, FatalMessage, LaunchLoading, SidebarGroup, SidebarItem, TitleBar, useCompactSidebarDrawer } from "./AppShell";
 import { useUpdateControls } from "./useUpdateControls";
 
@@ -460,6 +461,12 @@ function LauncherShell({
   updatePanelRequest: number;
 }) {
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
+  useNetworkIssueDismissalReset(browser?.networkIssue);
+  const networkNoticeMuted = snapshot.state.showNetworkIssueNotice === false;
+  const muteNetworkNotice = async () => {
+    try { updateState(await api!.setPreference("showNetworkIssueNotice", false)); }
+    catch (cause) { setError(messageOf(cause)); }
+  };
   const modelReadiness = modelConnectionReadiness({
     manual: manualInteraction,
     installed: snapshot.state.coreSetupComplete === true,
@@ -799,7 +806,7 @@ function LauncherShell({
           >
             {surface === "overview" ? <Overview copy={copy} browser={browser} catalogFailure={catalogFailure}
               snapshot={snapshot} toolsReady={toolProof} logStore={logStore} navigate={navigateSurface}
-              openTab={(tabId) => void openBrowserTab(tabId)} /> : null}
+              openTab={(tabId) => void openBrowserTab(tabId)} onMuteNetworkNotice={muteNetworkNotice} /> : null}
             {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
               <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
                 setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
@@ -842,6 +849,8 @@ function LauncherShell({
                 platform={snapshot.platform}
                 readiness={readiness}
                 setError={setError}
+                networkNoticeMuted={networkNoticeMuted}
+                onMuteNetworkNotice={muteNetworkNotice}
               />
             ) : null}
             {surface === "setup" ? (

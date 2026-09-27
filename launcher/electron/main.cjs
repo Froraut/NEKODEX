@@ -1441,7 +1441,7 @@ function registerIpc({ logger, stateStore }) {
       if (!Number.isInteger(value) || value < 30 || value > 600) throw new Error("Manual submission time must be 30–600 seconds");
       return stateStore.update({ manualSubmitTimeoutSec: value });
     }
-    const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns";
+    const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns" || key === "showNetworkIssueNotice";
     if (!ordinary) throw new Error("Unknown preference");
     return stateStore.update({ [key]: value === true });
   });

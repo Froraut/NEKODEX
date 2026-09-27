@@ -185,6 +185,10 @@ function installMockLauncher() {
     accountSnapshot.accounts = accountSnapshot.accounts.map(account => ({ ...account,
       authenticated: !signedOut, authenticationStatus: signedOut ? "signed-out" : "verified" }));
   }
+  const networkIssue = parameters.get("network-issue");
+  if (networkIssue === "egress-unstable" || networkIssue === "challenge-route") {
+    Object.assign(browser, { networkIssue, networkIssueCheckedAt: new Date().toISOString() });
+  }
   if (scenario === "browser-ui-home-loading") {
     browser.status = "loading"; browser.loading = true; browser.tabs[0].status = "loading"; browser.tabs[0].loading = true;
   }
@@ -205,6 +209,7 @@ function installMockLauncher() {
     claude: { installed: false, ready: false, model: null, issue: null },
     provider: { installed: true, active: true, mode: 'mixed', issue: null } };
   window.codexWebLauncher = {
+    setPreference: async (key, value) => { calls.push(["set-preference", key, value]); state[key] = value; return { ...state }; },
     getClientConnections: async () => structuredClone(clientConnections),
     changeClientConnection: async action => {
       calls.push(['client-connection', action]);
