@@ -7,6 +7,17 @@
   margin-bottom: 0;
 }
 
+/* The hero drops its bottom margin for the run summary; a notice between them needs its own gap. */
+.overview-surface .overview-network-notice {
+  margin: 12px 0 0;
+  padding: 14px 18px;
+  border-radius: 13px;
+}
+
+.overview-surface .overview-network-notice p {
+  max-width: 860px;
+}
+
 .overview-surface .overview-work {
   padding: 24px 0;
   margin-bottom: 24px;
