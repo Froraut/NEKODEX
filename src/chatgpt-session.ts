@@ -688,12 +688,17 @@ async function detectChatGptModelCapabilities(
     }
     if (originalView === "simple") {
       const view = activation.menu.locator("[data-model-picker-view]");
-      if (await view.getAttribute("data-model-picker-view") === "advanced") {
-        await view.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]').click({ force: true, timeout: 5_000, signal: cleanup.signal });
+      if (await view.getAttribute("data-model-picker-view").catch(() => null) === "advanced") {
+        // The advanced view has no reliable way back, and ChatGPT reopens the picker in its
+        // simple view. Closing restores the original presentation without another click.
+        await closeOwnedChatGptEffortMenu(page, control, 5_000, cleanup.signal);
       }
     }
   } catch (error) {
-    throw new AggregateError(primaryError ? [primaryError, error] : [error], "ChatGPT model capability inspection could not restore the original picker");
+    const causes = (primaryError ? [primaryError, error] : [error])
+      .map(cause => (cause instanceof Error ? cause.message : String(cause)).split("\n")[0]).join("; ");
+    throw new AggregateError(primaryError ? [primaryError, error] : [error],
+      `ChatGPT model capability inspection could not restore the original picker: ${causes}`.slice(0, 600));
   } finally { clearTimeout(timer); }
   if (primaryError) throw primaryError;
   return capabilities;
