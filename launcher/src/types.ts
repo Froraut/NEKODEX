@@ -98,6 +98,9 @@ export interface BrowserState {
   authenticationIssue?: "timeout" | "access" | "rate-limit" | "network" | "identity" | "response" | "browser" | "expired" | "unknown" | null;
   authenticationCheckedAt?: string | null;
   lastVerifiedAt?: string | null;
+  /** Set after a Cloudflare challenge when the public address changes between connections. */
+  networkIssue?: "egress-unstable" | "challenge-route" | null;
+  networkIssueCheckedAt?: string | null;
   accountLabel?: string | null;
   visible: boolean;
   surfaceActive: boolean;

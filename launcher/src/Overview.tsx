@@ -10,6 +10,7 @@ import type { Copy } from "./i18n";
 import { deriveWorkspaceReadiness, type WorkspaceAction } from "./workspace-readiness";
 import { modelConnectionReadiness } from "./setup-progress";
 import { workflowCopy } from "./workflow-copy";
+import { NetworkIssueNotice } from "./NetworkIssueNotice";
 import type { BrowserState, LauncherSnapshot, Surface } from "./types";
 
 const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
@@ -118,6 +119,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
         </div>
         <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>
       </section>
+      <NetworkIssueNotice language={snapshot.state.language ?? "en"} browser={browser} className="connection-recovery-card overview-network-notice" />
       <section className="overview-work" aria-labelledby={`${overviewId}-runs`} aria-describedby={`${overviewId}-runs-description`}>
         <div className="overview-work-header">
           <div className="overview-work-summary">

@@ -12,7 +12,7 @@
 }
 
 .browser-recovery-notice > svg,
-.connection-recovery-card > svg { color: var(--color-text-warning); }
+.connection-recovery-card > svg { color: var(--color-text-warning); height: 18px; width: 18px; }
 .browser-recovery-notice p,
 .connection-recovery-card p { margin: 3px 0 0; }
 .browser-recovery-notice small { display: block; margin-top: 4px; }
