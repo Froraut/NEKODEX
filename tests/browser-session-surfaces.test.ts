@@ -2,21 +2,18 @@ import { expect, test } from "bun:test";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { accountUserAgent, stableChromiumUserAgent } = require("../launcher/electron/browser-user-agent.cjs");
+const { stableChromiumUserAgent } = require("../launcher/electron/browser-user-agent.cjs");
 const { observeChatGptSession } = require("../launcher/electron/browser-session-observation.cjs");
 
 const electronDefault = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
   + "NEKODEX/6.1.2-nekodex.1 Chrome/146.0.7680.216 Electron/41.10.7 Safari/537.36";
-const chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36";
 
-test("every surface gets one UA that survives NEKODEX and Electron patch updates", () => {
+test("the app-wide UA survives NEKODEX and Electron patch updates and is idempotent", () => {
   const stable = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
   expect(stableChromiumUserAgent(electronDefault, "146.0.7680.216")).toBe(stable);
   expect(stableChromiumUserAgent(electronDefault.replace("6.1.2-nekodex.1", "6.2.0-nekodex.1"), "146.0.7690.1")).toBe(stable);
-  expect(accountUserAgent(undefined, electronDefault, "146.0.7680.216")).toBe(stable);
-  expect(accountUserAgent(chrome, electronDefault, "146.0.7680.216")).toBe(chrome);
-  // A damaged binding never leaks Electron's version-bearing UA.
-  expect(accountUserAgent(electronDefault, electronDefault, "146.0.7680.216")).toBe(stable);
+  // Views derive their UA from the fallback main.cjs already replaced.
+  expect(stableChromiumUserAgent(stable, "146.0.7680.216")).toBe(stable);
   expect(() => stableChromiumUserAgent("garbage", "146")).toThrow();
 });
 

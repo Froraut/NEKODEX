@@ -21,9 +21,8 @@ const {
 } = require("./browser-helper-verifier.cjs");
 const { validateConnectorName } = require("./connector-identity.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
-const { accountUserAgent, validatedChromeUserAgent } = require("./browser-user-agent.cjs");
+const { stableChromiumUserAgent } = require("./browser-user-agent.cjs");
 const { observeChatGptSession } = require("./browser-session-observation.cjs");
-const { createChromeProfileBindingStore } = require("./chrome-profile-binding.cjs");
 const { isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
 const { captureOwnedSession, disposeOwnedSessionSnapshot, restoreOwnedSession } = require("./owned-session-rollback.cjs");
 const { initialPasskeyProgress, passkeyLoginFailure, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
@@ -511,10 +510,10 @@ class BrowserHost {
       },
     });
     // All surfaces of this account share one cookie jar, and Cloudflare binds its clearance to
-    // the user agent. Every surface therefore presents this single UA (see applyAccountUserAgent).
-    this.userAgent = accountUserAgent(
-      createChromeProfileBindingStore(this.coreHome).read(this.accountId)?.browserUserAgent,
-      this.view.webContents.getUserAgent(), process.versions.chrome);
+    // the user agent. Every surface presents the app's stable UA (see applyAccountUserAgent); the
+    // Chrome UA captured at sign-in is not reused because cross-site frames and client hints would
+    // still report the bundled Chromium.
+    this.userAgent = stableChromiumUserAgent(this.view.webContents.getUserAgent(), process.versions.chrome);
     this.view.webContents.session.setUserAgent(this.userAgent);
     this.view.webContents.setUserAgent(this.userAgent);
     this.artifactDownloads = createTaskArtifactDownloadGuard(this.view.webContents.session, {
@@ -801,17 +800,6 @@ class BrowserHost {
     if (contents.getUserAgent() !== this.userAgent) contents.setUserAgent(this.userAgent);
   }
 
-  setAccountUserAgent(userAgent) {
-    this.userAgent = userAgent;
-    this.view.webContents.session.setUserAgent(userAgent);
-    for (const contents of this.accountSurfaceContents()) this.applyAccountUserAgent(contents);
-  }
-
-  accountSurfaceContents() {
-    return [this.view?.webContents, this.authView?.webContents,
-      ...[...this.turnTabs.values()].map(tab => tab.view?.webContents), ...this.workspaceContents.keys()]
-      .filter(contents => contents && !contents.isDestroyed());
-  }
 
   attachAutomaticTurnView(tab) {
     const view = tab.view;
@@ -2627,7 +2615,6 @@ class BrowserHost {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) throw new Error("Owned ChatGPT browser session is unavailable");
     return {
-      userAgent: contents.getUserAgent(),
       storage: await captureOwnedSession(contents),
       evidence: {
         principalFingerprint: this.authPrincipalFingerprint,
@@ -2642,7 +2629,6 @@ class BrowserHost {
     if (!snapshot?.storage || !snapshot.evidence || !snapshot.state) {
       throw new Error("Previous ChatGPT session rollback snapshot is unavailable");
     }
-    if (snapshot.userAgent) this.setAccountUserAgent(snapshot.userAgent);
     await this.clearOwnedSessionForPasskey();
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) throw new Error("Owned ChatGPT browser session is unavailable");
@@ -2704,8 +2690,6 @@ class BrowserHost {
       previousSessionRollback = await this.captureLoginRollbackSnapshot();
       signal?.throwIfAborted();
       sessionMutated = true;
-      const userAgent = validatedChromeUserAgent(verifiedTransfer.browserUserAgent);
-      if (userAgent) this.setAccountUserAgent(userAgent);
       verificationStage = "install-session";
       await this.clearOwnedSessionForPasskey();
       for (const cookie of state.cookies) {

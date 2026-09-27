@@ -9,10 +9,11 @@ function validatedChromeUserAgent(value) {
   return value;
 }
 
-// Cloudflare binds its clearance cookie to the user agent. Electron's default UA carries the
-// app and Electron versions, so every NEKODEX update would invalidate the clearance. Present
-// the engine's own reduced Chromium UA instead: it matches the client hints and TLS of the
-// bundled Chromium and changes only with its major version.
+// Cloudflare binds its clearance cookie to the user agent and its challenge compares the request
+// header with navigator.userAgent inside a cross-site frame. Chromium keeps the app-wide fallback
+// UA in such frames even when a view overrides its own, and the bundled Chromium's client hints
+// always report its real version. NEKODEX therefore presents one UA everywhere: the engine's own
+// reduced Chromium UA, without the app and Electron versions that change on every update.
 function stableChromiumUserAgent(defaultUserAgent, chromeVersion) {
   const platform = /^Mozilla\/5\.0 (\([^()]+\))/.exec(String(defaultUserAgent ?? ''))?.[1];
   const major = /^([0-9]+)\./.exec(String(chromeVersion ?? ''))?.[1];
@@ -20,11 +21,4 @@ function stableChromiumUserAgent(defaultUserAgent, chromeVersion) {
   return `Mozilla/5.0 ${platform} AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
 }
 
-/** One UA for every surface of an account: the approved Chrome UA, else the stable engine UA. */
-function accountUserAgent(savedUserAgent, defaultUserAgent, chromeVersion) {
-  let saved;
-  try { saved = validatedChromeUserAgent(savedUserAgent); } catch { saved = undefined; }
-  return saved ?? stableChromiumUserAgent(defaultUserAgent, chromeVersion);
-}
-
-module.exports = { accountUserAgent, stableChromiumUserAgent, validatedChromeUserAgent };
+module.exports = { stableChromiumUserAgent, validatedChromeUserAgent };
