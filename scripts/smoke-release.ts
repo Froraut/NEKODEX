@@ -138,7 +138,7 @@ try {
   const rejectedWhileDraining = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: "chatgpt-web/high", reasoning: { effort: "high" }, input: "test", stream: false }),
+    body: JSON.stringify({ model: "chatgpt-web/gpt-5.6-sol", reasoning: { effort: "high" }, input: "test", stream: false }),
   });
   if (rejectedWhileDraining.status !== 503) {
     throw new Error(`daemon accepted a new turn while draining: HTTP ${rejectedWhileDraining.status}`);

@@ -46,7 +46,7 @@ budget. Do not launch a long context workload just to complete this list.
    closes. Explain the actual restart/picker requirement; avoid interrupting active work blindly.
    In versions with an explicit picker confirmation, select it only after observing the actual
    Web entries in Codex. A background catalog request cannot stand in for that observation.
-5. A fresh native CLI request with an explicitly selected `chatgpt-web/high` must return a
+5. A fresh native CLI request with an explicitly selected named Web model such as `chatgpt-web/gpt-5.6-sol` must return a
    recognizable fixed marker. Use an empty/disposable cwd and no private project input.
 
 ## Tools (MCP)

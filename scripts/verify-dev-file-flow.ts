@@ -16,7 +16,7 @@ const USAGE = `Focused real DEV file-flow acceptance
 Usage:
   bun run scripts/verify-dev-file-flow.ts \\
     --dev-home /absolute/path/to/existing/dev-home \\
-    --model chatgpt-web/medium [--scenario all|read|generate] [--timeout-seconds 180] [--cleanup-artifacts]
+    --model chatgpt-web/gpt-5.6-sol [--scenario all|read|generate] [--timeout-seconds 180] [--cleanup-artifacts]
 
 This command requires an already-running, already-authenticated DEV launcher and an existing
 dev-harness config. It never starts a launcher, performs setup, or falls back to a production home.
@@ -27,13 +27,13 @@ type Scenario = "all" | "read" | "generate";
 
 const DEV_CHAT_MODELS = [
   "chatgpt-web/zero-risk",
-  "chatgpt-web/luna",
-  "chatgpt-web/think",
-  "chatgpt-web/light",
-  "chatgpt-web/medium",
-  "chatgpt-web/high",
-  "chatgpt-web/extra-high",
-  "chatgpt-web/pro",
+  "chatgpt-web/gpt-5.6-luna",
+  "chatgpt-web/gpt-5.6-sol-instant",
+  "chatgpt-web/gpt-5.6-sol",
+  "chatgpt-web/gpt-5.6-pro",
+  "chatgpt-web/gpt-6-astra-instant",
+  "chatgpt-web/gpt-6-astra",
+  "chatgpt-web/gpt-6-pro",
 ] as const;
 
 type DevChatModel = typeof DEV_CHAT_MODELS[number];

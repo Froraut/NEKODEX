@@ -33,7 +33,7 @@ async function measure(Host, Pool) {
   pool.snapshot = function () { counts.poolSnapshots++; return snapshot.call(this); };
   for (const account of accounts) {
     const records = Array.from({ length: 128 }, (_, i) => ({ id: `record-${i}`, traceId: `trace-${i}`, tabId: `tab-${i}`,
-      createdAt: i, updatedAt: i, phase: 'completed', submission: 'accepted', sequence: 1, terminal: true, model: 'chatgpt-web/high' }));
+      createdAt: i, updatedAt: i, phase: 'completed', submission: 'accepted', sequence: 1, terminal: true, model: 'chatgpt-web/gpt-5.6-sol' }));
     const host = Object.assign(Object.create(Host.prototype), {
       state: { authenticated: true, title: account.label, status: 'ready' }, visible: false, surfaceActive: false,
       selectedTabId: 'home', turnTabs: new Map(),

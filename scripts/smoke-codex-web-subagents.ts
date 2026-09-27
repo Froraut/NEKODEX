@@ -50,7 +50,7 @@ writeFileSync(
 
 const bridgeBaseUrl = `http://${runtimeConfig.host}:${runtimeConfig.port}/v1`;
 writeFileSync(join(codexHome, "config.toml"), [
-  'model = "chatgpt-web/medium"',
+  'model = "chatgpt-web/gpt-5.6-sol"',
   'model_provider = "live_bridge"',
   `model_catalog_json = ${JSON.stringify(catalogPath)}`,
   "",
@@ -79,7 +79,7 @@ if (typeof expectedVersion !== "string" || !expectedVersion) {
 
 const prompt = [
   "Use the available agent tools; do not read package.json in the parent yourself.",
-  "Spawn exactly one child with model chatgpt-web/high, reasoning_effort high, and no forked history.",
+  "Spawn exactly one child with model chatgpt-web/gpt-5.6-sol-instant, reasoning_effort low, and no forked history.",
   "Ask it to read package.json through its repository tools and return CHILD_RESULT followed by the",
   "exact version. Wait for that exact child id even if it has already completed, then return",
   "LIVE_WEB_SUBAGENT_OK followed by the same version.",
@@ -139,7 +139,7 @@ try {
     "--json",
     "--dangerously-bypass-approvals-and-sandbox",
     "--model",
-    "chatgpt-web/medium",
+    "chatgpt-web/gpt-5.6-sol",
     prompt,
   ], {
     cwd: process.cwd(),
@@ -182,8 +182,8 @@ try {
   if (!childSession) failures.push("missing depth-1 Web child rollout");
 
   for (const [label, session, expectedModel] of [
-    ["root", rootSession, "chatgpt-web/medium"],
-    ["child", childSession, "chatgpt-web/high"],
+    ["root", rootSession, "chatgpt-web/gpt-5.6-sol"],
+    ["child", childSession, "chatgpt-web/gpt-5.6-sol-instant"],
   ] as const) {
     const context = object(session?.context?.payload);
     if (context?.cwd !== process.cwd()) failures.push(`${label} did not inherit the repository cwd`);
@@ -217,7 +217,7 @@ try {
     );
   }
   process.stdout.write(
-    `LIVE_WEB_SUBAGENT_CHAIN_OK root=chatgpt-web/medium child=chatgpt-web/high version=${expectedVersion}\n`,
+    `LIVE_WEB_SUBAGENT_CHAIN_OK root=chatgpt-web/gpt-5.6-sol child=chatgpt-web/gpt-5.6-sol-instant version=${expectedVersion}\n`,
   );
 } finally {
   rmSync(root, { recursive: true, force: true });
