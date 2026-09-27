@@ -111,3 +111,14 @@
 .browser-empty > .browser-login-guide { max-width: 600px; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 24px; }
 .browser-empty > .browser-login-guide p { max-width: none; }
 .browser-empty > .browser-login-guide strong { font-size: var(--text-lg); }
+
+/* Sign-in guides (passkey and existing Chrome): readable hierarchy in both the toolbar strip and the empty-state card. */
+.browser-login-guide { display: grid; gap: 8px; padding: 14px 16px; background: var(--color-background-panel); }
+.browser-login-guide strong { font-size: var(--text-base); font-weight: 600; }
+.browser-login-guide p { color: var(--color-text-secondary); line-height: 1.5; overflow-wrap: anywhere; }
+.browser-login-guide p[role="alert"] { color: var(--color-text-error); }
+.browser-login-guide code { font-size: var(--text-xs); padding: 1px 5px; border-radius: 4px; background: var(--color-background-control-hover); }
+.browser-login-guide > .browser-empty-actions { justify-content: flex-start; gap: 8px; margin-top: 4px; }
+.browser-login-guide > .browser-empty-actions > button { min-height: 34px; }
+.browser-empty > .browser-login-guide { gap: 10px; padding: 28px; background: var(--color-background-panel); box-shadow: var(--shadow-panel); text-align: center; }
+.browser-empty > .browser-login-guide > .browser-empty-actions { justify-content: center; margin-top: 8px; }
