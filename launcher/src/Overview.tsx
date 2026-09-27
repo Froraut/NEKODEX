@@ -16,11 +16,12 @@ import type { BrowserState, LauncherSnapshot, Surface } from "./types";
 const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
 const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
 
-export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logStore, navigate, openTab }: {
+export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logStore, navigate, openTab, onMuteNetworkNotice }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
   catalogFailure: string | null;
   toolsReady: boolean;
   logStore: LauncherLogStore; navigate: (surface: Surface) => void; openTab: (tabId: string) => void;
+  onMuteNetworkNotice?: () => Promise<void>;
 }) {
   const logs = useSyncExternalStore(logStore.subscribe, logStore.getSnapshot);
   const overviewId = useId();
@@ -119,7 +120,8 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
         </div>
         <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>
       </section>
-      <NetworkIssueNotice language={snapshot.state.language ?? "en"} browser={browser} className="connection-recovery-card overview-network-notice" />
+      <NetworkIssueNotice language={snapshot.state.language ?? "en"} browser={browser} className="connection-recovery-card overview-network-notice"
+        muted={snapshot.state.showNetworkIssueNotice === false} onDontShowAgain={onMuteNetworkNotice} />
       <section className="overview-work" aria-labelledby={`${overviewId}-runs`} aria-describedby={`${overviewId}-runs-description`}>
         <div className="overview-work-header">
           <div className="overview-work-summary">

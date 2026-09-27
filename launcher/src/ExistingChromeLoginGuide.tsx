@@ -66,16 +66,16 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
     {progress.active && progress.phase === "preparing" ? <p>{copy.existingChromeHandoffRemaining.replace("{time}", remaining)}</p> : null}
     {progress.error ? <p role="alert">{existingChromeFailureText(progress.error, copy, language)}</p> : null}
     <div className="browser-empty-actions">
-      {progress.canAllowFileAccess ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+      {progress.canAllowFileAccess ? <button className="button-primary" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.allowExistingChromeFileAccess())}>{copy.existingChromeAllowFile}</button> : null}
-      {progress.canCopySettings ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+      {progress.canCopySettings ? <button className="button-secondary" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(async () => { await window.codexWebLauncher!.copyExistingChromeSettingsAddress(); setCopied(true); })}>
         {copied ? copy.existingChromeCopied : copy.existingChromeCopy}</button> : null}
-      {progress.canCancel ? <button className="toolbar-text-button" type="button" disabled={pending}
+      {progress.canCancel ? <button className="text-button" type="button" disabled={pending}
         onClick={() => void act(() => window.codexWebLauncher!.cancelExistingChromeLogin(), true)}>{copy.passkeyCancel}</button> : null}
-      {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+      {terminal ? <button className={progress.canAllowFileAccess ? "button-secondary" : "button-primary"} type="button" disabled={pending || transitionBusy}
         onClick={() => void act(onRetry)}>{copy.retry}</button> : null}
-      {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+      {terminal ? <button className="button-secondary" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.openLogin())}>{copy.signIn}</button> : null}
     </div>
   </div>;

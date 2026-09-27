@@ -43,3 +43,16 @@
 .browser-tab-row > .browser-workspace-manager > summary { padding: 0 14px; white-space: nowrap; }
 .browser-tab-row > .browser-workspace-manager[open] { flex: 1 0 100%; display: block; border-top: 1px solid var(--color-border-light); background: var(--color-background-panel); }
 .browser-tab-row > .browser-workspace-manager[open] > summary { padding: 10px 16px; }
+
+/* Opening a separate window is a primary browser action, so it stays visible beside the collapsed list. */
+.browser-workspace-quick-new {
+  display: inline-flex; flex: none; align-self: center; align-items: center; gap: 6px;
+  height: 28px; margin-left: 8px; padding: 0 10px;
+  border: 1px solid var(--color-border); border-radius: 8px;
+  background: var(--color-background-control); color: var(--color-text-secondary);
+  font-size: var(--text-xs); font-weight: 500; white-space: nowrap;
+  transition: background-color var(--duration-micro) ease, color var(--duration-micro) ease, border-color var(--duration-micro) ease;
+}
+.browser-workspace-quick-new svg { width: 13px; height: 13px; color: var(--brand-accent); }
+.browser-workspace-quick-new:hover:not(:disabled) { border-color: var(--color-border-heavy); background: var(--color-background-control-hover); color: var(--color-text-primary); }
+.browser-workspace-quick-new:disabled { opacity: .45; }

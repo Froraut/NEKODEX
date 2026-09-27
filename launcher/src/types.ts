@@ -16,6 +16,7 @@ export interface LauncherState {
   autoStart: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
+  showNetworkIssueNotice?: boolean;
   manualSubmitTimeoutSec: number;
   passkeyBrowser: "chrome" | "firefox";
   browserInteractionMode: BrowserInteractionMode;
@@ -596,7 +597,7 @@ export interface LauncherApi {
   setPreference(key: "passkeyBrowser", value: "chrome" | "firefox"): Promise<LauncherState>;
   setPreference(key: "manualSubmitTimeoutSec", value: number): Promise<LauncherState>;
   setPreference(
-    key: "keepRunningOnClose" | "showBrowserDuringTurns",
+    key: "keepRunningOnClose" | "showBrowserDuringTurns" | "showNetworkIssueNotice",
     value: boolean,
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;

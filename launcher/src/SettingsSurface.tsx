@@ -8,6 +8,7 @@ import { type Copy } from "./i18n";
 import { LocaleNotice } from "./LocaleNotice";
 import { Icon } from "./icons";
 import { RouteDiagnostics } from "./RouteDiagnostics";
+import { workflowCopy } from "./workflow-copy";
 import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState, ProModelVersion } from "./types";
 const api = window.codexWebLauncher;
 import { ContentSurface, SecondaryButton, SectionHeading, messageOf, DoctorSummary, InteractionModePicker, ContextBudgetTable, SettingRow, Switch, LanguageMenu, ProModelVersionMenu, platformLabel } from './launcher-ui';
@@ -177,6 +178,14 @@ export function SettingsSurface({
             checked={snapshot.state.showBrowserDuringTurns}
             disabled={busy || snapshot.state.browserInteractionMode === "manual"}
             onChange={(checked) => void savePreference(() => api!.setPreference("showBrowserDuringTurns", checked))}
+          />
+        </SettingRow>
+        <SettingRow body={workflowCopy(language).network.settingBody} label={workflowCopy(language).network.settingTitle}>
+          <Switch
+            label={workflowCopy(language).network.settingTitle}
+            checked={snapshot.state.showNetworkIssueNotice !== false}
+            disabled={busy}
+            onChange={(checked) => void savePreference(() => api!.setPreference("showNetworkIssueNotice", checked))}
           />
         </SettingRow>
 

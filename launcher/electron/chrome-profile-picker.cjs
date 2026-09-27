@@ -19,7 +19,7 @@ function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId =
       show: false,
       resizable: true,
       title: language === 'ru' ? 'Профиль Chrome' : 'Chrome profile',
-      backgroundColor: '#111318',
+      backgroundColor: '#1b1b24',
       webPreferences: {
         preload: path.join(__dirname, 'chrome-profile-picker-preload.cjs'),
         contextIsolation: true,

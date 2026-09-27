@@ -32,6 +32,8 @@ export function BrowserSurface({
   platform,
   readiness,
   setError,
+  networkNoticeMuted = false,
+  onMuteNetworkNotice,
 }: {
   accountSetup?: ReactNode;
   browser: BrowserState | null;
@@ -45,6 +47,8 @@ export function BrowserSurface({
   platform: string;
   readiness: WorkspaceReadiness;
   setError: (error: string | null) => void;
+  networkNoticeMuted?: boolean;
+  onMuteNetworkNotice?: () => Promise<void>;
 }) {
   const [passkeyStarting, setPasskeyStarting] = useState(false);
   const workflow = workflowCopy(language);
@@ -403,7 +407,7 @@ export function BrowserSurface({
             {readiness.native === "ready" ? <small>{workflow.recovery.nativePreserved}</small> : null}</div>
         </section>
       ) : null}
-      <NetworkIssueNotice language={language} browser={browser} />
+      <NetworkIssueNotice language={language} browser={browser} muted={networkNoticeMuted} onDontShowAgain={onMuteNetworkNotice} />
       {selectedManualTab
         && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
         <ManualTurnGuide

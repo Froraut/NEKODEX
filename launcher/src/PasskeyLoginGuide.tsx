@@ -58,13 +58,13 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
     <div className="browser-empty-actions">
       {progress.canImport ? <button className="button-primary" type="button" disabled={pending || continuePending || transitionBusy}
         onClick={() => void act(onContinue)}>{copy.passkeyContinue}</button> : null}
-      {progress.canReveal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+      {progress.canReveal ? <button className="button-secondary" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.revealPasskeyLogin(), false, copy.passkeyRevealFailed)}>{copy.passkeyReveal}</button> : null}
-      {progress.canCancel ? <button className="toolbar-text-button" type="button" disabled={pending}
+      {progress.canCancel ? <button className="text-button" type="button" disabled={pending}
         onClick={() => void act(() => window.codexWebLauncher!.cancelPasskeyLogin(), true)}>{copy.passkeyCancel}</button> : null}
-      {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+      {terminal ? <button className="button-primary" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(onRetry)}>{copy.retry}</button> : null}
-      {terminal ? <button className="toolbar-text-button" type="button" disabled={pending || transitionBusy}
+      {terminal ? <button className="button-secondary" type="button" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.openLogin())}>{copy.stepAccount}</button> : null}
     </div>
   </div>;
