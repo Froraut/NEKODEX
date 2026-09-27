@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { getConfigDir, stripUtf8Bom, type AppConfig } from "./config";
 import { augmentNativeModelCatalog, buildChatGptWebModel } from "./model-catalog";
 import { initialNativeCatalog } from "./codex-picker-catalog";
-import { CHATGPT_WEB_MODEL_ROUTES, CHATGPT_WEB_LUNA_MODEL_ROUTES, requireChatGptWebModelRoute } from "./chatgpt-web-models";
+import { CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES, requireChatGptWebModelRoute } from "./chatgpt-web-models";
 import { findTopLevelAssignment, firstTableIndex, insertDocumentLine, parseDocument,
   removeDocumentLine, renderDocument } from "./codex-integration-document";
 import { getCodexModelsCachePath, sha256,
@@ -114,7 +114,7 @@ export function prepareWebProviderRoute(
     const template = (source.models as Array<Record<string, unknown>>).find(model => model.visibility === "list"
       && Array.isArray(model.supported_reasoning_levels) && (config.mode !== "full" || typeof model.tool_mode === "string"));
     if (template && config.browserInteractionMode !== "manual") {
-      for (const legacy of [...CHATGPT_WEB_MODEL_ROUTES, ...CHATGPT_WEB_LUNA_MODEL_ROUTES]) {
+      for (const legacy of CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES) {
         try {
           const route = requireChatGptWebModelRoute(legacy.slug, config);
           models.push({ ...buildChatGptWebModel(template, route, config), visibility: "hide" });

@@ -1,7 +1,7 @@
 # Automated Pro model selection
 
 In **Settings → Automated Pro model**, choose **Follow ChatGPT** (the unchanged default),
-**GPT-5.6 Sol Pro**, **GPT-5.5 Pro**, or **GPT-6 Astra Pro**. The setting only pins automated
+**GPT-5.6 Sol Pro**, **GPT-5.5 Pro**, or **GPT-6 Pro** (powered by GPT-6 Astra). The setting only pins automated
 Pro turns. It does not change other reasoning levels, Manual mode's manual selection, context
 limits, the Responses route, or the MCP tunnel.
 

@@ -686,7 +686,9 @@ async function detectChatGptModelCapabilities(
           capabilities = undefined;
           break;
         }
-        capabilities.families[family] = efforts.filter((_, index) => state.available![index] === true);
+        // Below Pro, ChatGPT runs GPT-5.6 Sol even with Latest selected; only Pro reaches GPT-6.
+        capabilities.families[family] = efforts.filter((effort, index) => state.available![index] === true
+          && (family !== "6" || effort === "max"));
       }
     }
   } catch (error) { primaryError = error; }

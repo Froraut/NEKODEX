@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { getConfigDir } from "./config";
-import { CHATGPT_WEB_MODEL_ROUTES, CHATGPT_WEB_LUNA_MODEL_ROUTES, CHATGPT_WEB_NAMED_MODEL_ROUTES } from "./chatgpt-web-models";
+import { CHATGPT_WEB_NAMED_MODEL_ROUTES, CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES } from "./chatgpt-web-models";
 import type { ExternalClientContext } from "./external-client-context";
 
 type Obj = Record<string, any>;
@@ -19,7 +19,7 @@ function argumentReceipt(value: unknown): string {
 }
 type Session = { turn: string; active: boolean; touched: number; pending: Map<string, { name: string; arguments: string }>;
   issued: Set<string>; lastRequest?: string; toolContract?: string };
-const CLIENT_WEB_MODEL_IDS = new Set([...CHATGPT_WEB_MODEL_ROUTES, ...CHATGPT_WEB_LUNA_MODEL_ROUTES, ...CHATGPT_WEB_NAMED_MODEL_ROUTES].map(route => route.slug));
+const CLIENT_WEB_MODEL_IDS = new Set([...CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES, ...CHATGPT_WEB_NAMED_MODEL_ROUTES].map(route => route.slug));
 
 /** One owner for authenticated external-client turn identity and issued tool-result receipts. */
 export class ClientTurns {

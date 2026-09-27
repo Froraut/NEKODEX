@@ -328,7 +328,7 @@
   "proModelFollow": "ChatGPT 설정 따르기",
   "proModel56": "GPT-5.6 Sol Pro",
   "legacySavedModel": "이전에 저장한 모델 — 현재 모델을 선택하세요",
-  "proModel6": "GPT-6 Astra Pro",
+  "proModel6": "GPT-6 Pro",
   "launchAtLogin": "로그인 시 실행",
   "launchAtLoginBody": "Codex가 열리기 전에도 로컬 Responses 경로를 사용할 수 있도록 유지합니다.",
   "keepRunningOnClose": "창을 닫아도 서버 계속 실행",

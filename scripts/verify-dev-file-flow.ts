@@ -31,8 +31,6 @@ const DEV_CHAT_MODELS = [
   "chatgpt-web/gpt-5.6-sol-instant",
   "chatgpt-web/gpt-5.6-sol",
   "chatgpt-web/gpt-5.6-pro",
-  "chatgpt-web/gpt-6-astra-instant",
-  "chatgpt-web/gpt-6-astra",
   "chatgpt-web/gpt-6-pro",
 ] as const;
 

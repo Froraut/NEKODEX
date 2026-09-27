@@ -49,9 +49,8 @@ Installed locally:
 
 Start with `codex --profile nekodex`. Regenerate after changing available modes
 or context settings using `bun run scripts/install-nekodex-profile.ts`. The profile
-defaults to the newest confirmed named family (GPT-6 Astra, then GPT-5.6 Sol, then
-GPT-5.6 Luna) and copies only the named Web rows; legacy fixed-mode IDs are not
-written.
+defaults to GPT-5.6 Sol, then GPT-5.6 Luna, and copies only the named Web rows;
+legacy fixed-mode IDs are not written.
 The profile installer backs up its previous generated files and never changes
 `config.toml` or the default selected model. This profile is optional; it does
 not remove the shared-route dependency while the unified route remains active.

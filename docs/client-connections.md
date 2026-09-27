@@ -136,9 +136,10 @@ codex-chatgpt-web provider web-only --catalog /tmp/nekodex-native-models.json
 
 The saved catalog is a snapshot. After account or model availability changes,
 run Repair and restart Codex. Family-specific observations keep unavailable
-GPT-6 Pro from hiding GPT-5.6 Pro. Ordinary GPT-6 Astra entries require explicit
-browser observations; older fixed-mode IDs remain hidden but resolvable for saved
-tasks. Availability is not a quota balance or reset-time prediction.
+GPT-6 Pro from hiding GPT-5.6 Sol Pro. GPT-6 is offered only at ChatGPT's Pro level;
+below Pro ChatGPT always runs GPT-5.6 Sol. Older fixed-mode IDs and the retired
+GPT-6 Astra IDs remain hidden but resolvable for saved tasks. Availability is not
+a quota balance or reset-time prediction.
 
 ## Verification boundaries
 

@@ -36,7 +36,7 @@ try {
   if (catalog.status !== 0) throw new Error(`Codex rejected the Web catalog: ${catalog.stderr}`);
   const rows = JSON.parse(catalog.stdout).models as Array<{ slug: string; visibility: string }>;
   if (!rows.length || rows.some(row => !row.slug.startsWith("chatgpt-web/"))) throw new Error("Catalog leaked native models");
-  const child = Bun.spawn([executable, "exec", "--skip-git-repo-check", "--json", "-m", "chatgpt-web/gpt-6-astra",
+  const child = Bun.spawn([executable, "exec", "--skip-git-repo-check", "--json", "-m", "chatgpt-web/gpt-5.6-sol",
     "Reply with the requested verification marker. Do not use tools."], {
     cwd: directory, env: { ...process.env, OPENAI_API_KEY: "", CODEX_API_KEY: "" }, stdin: "ignore", stdout: "pipe", stderr: "pipe",
   });

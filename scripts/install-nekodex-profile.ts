@@ -13,7 +13,7 @@ if (!existsSync(cachePath)) throw new Error("Open Codex once to populate its nat
 const catalog = augmentNativeModelCatalog(JSON.parse(readFileSync(cachePath, "utf8")), config);
 const models = (catalog.models as Array<Record<string, unknown>>).filter(model => String(model.slug).startsWith("chatgpt-web/"));
 // Default to the newest confirmed everyday family; the catalog only advertises named Web models.
-const PROFILE_DEFAULTS = ["chatgpt-web/gpt-6-astra", "chatgpt-web/gpt-5.6-sol", "chatgpt-web/gpt-5.6-luna"];
+const PROFILE_DEFAULTS = ["chatgpt-web/gpt-5.6-sol", "chatgpt-web/gpt-5.6-luna"];
 const selected = PROFILE_DEFAULTS.map(slug => models.find(model => model.slug === slug)).find(Boolean);
 if (!selected) throw new Error("No named ChatGPT Web model is available in the configured account.");
 const catalogPath = join(codexHome, "nekodex-models.json");
