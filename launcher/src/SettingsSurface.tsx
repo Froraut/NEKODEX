@@ -235,7 +235,7 @@ export function SettingsSurface({
             }}>
             <option value="follow">{copy.compactionFollow}</option>
             <option value="extra-high">GPT-5.6 Sol · Extra High</option>
-            <option value="5.6-pro">GPT-5.6 Pro</option>
+            <option value="5.6-pro">GPT-5.6 Sol Pro</option>
             {snapshot.compactionModel === "5.5-pro"
               ? <option value="5.5-pro" disabled>{copy.legacySavedModel}</option> : null}
           </select>

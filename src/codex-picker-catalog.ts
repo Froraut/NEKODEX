@@ -3,9 +3,8 @@ import { join } from "node:path";
 import { atomicWriteFile, getConfigDir, stripUtf8Bom, type AppConfig } from "./config";
 import { augmentNativeModelCatalog, buildChatGptWebModel } from "./model-catalog";
 import {
-  CHATGPT_WEB_LUNA_MODEL_ROUTES,
   CHATGPT_WEB_MODEL_PREFIX,
-  CHATGPT_WEB_MODEL_ROUTES,
+  CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES,
   requireChatGptWebModelRoute,
 } from "./chatgpt-web-models";
 import {
@@ -63,7 +62,7 @@ export function buildPickerCatalog(
     && Array.isArray(model.supported_reasoning_levels)
     && (config.mode !== "full" || typeof model.tool_mode === "string"));
   if (template && config.browserInteractionMode !== "manual") {
-    for (const legacy of [...CHATGPT_WEB_MODEL_ROUTES, ...CHATGPT_WEB_LUNA_MODEL_ROUTES]) {
+    for (const legacy of CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES) {
       if (models.some(model => model.slug === legacy.slug)) continue;
       try {
         const route = requireChatGptWebModelRoute(legacy.slug, config);

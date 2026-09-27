@@ -413,47 +413,37 @@ export const CHATGPT_WEB_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] 
   },
 ];
 
-/** Advertise explicit model identities while keeping saved fixed-mode tasks resolvable. */
+/**
+ * Advertise explicit model identities while keeping saved fixed-mode tasks resolvable. They mirror
+ * ChatGPT's five thinking levels: GPT-5.6 Sol runs Instant, Medium, High and Extra High, and the
+ * Pro level runs GPT-5.6 Sol Pro or, where the plan includes it, GPT-6 Pro (powered by GPT-6 Astra).
+ */
 export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
     slug: "chatgpt-web/gpt-5.6-sol-instant",
     displayName: "GPT-5.6 Sol Instant (Web)",
-    description: "GPT-5.6 Sol Instant through ChatGPT, with its own context and compaction budget.",
+    description: "GPT-5.6 Sol at ChatGPT's Instant level, with its own context and compaction budget.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
     codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"], requiresPro: false,
   },
   {
     slug: "chatgpt-web/gpt-5.6-sol",
     displayName: "GPT-5.6 Sol (Web)",
-    description: "GPT-5.6 Sol through ChatGPT with Medium, High, or account-supported Extra High reasoning.",
+    description: "GPT-5.6 Sol at ChatGPT's Medium, High, or account-supported Extra High thinking level.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
     codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"], requiresPro: false,
   },
   {
     slug: "chatgpt-web/gpt-5.6-pro",
-    displayName: "GPT-5.6 Pro (Web)",
-    description: "Pinned GPT-5.6 Pro through ChatGPT. Max selects Pro.",
+    displayName: "GPT-5.6 Sol Pro (Web)",
+    description: "GPT-5.6 Sol Pro at ChatGPT's Pro thinking level.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
     codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
   },
   {
-    slug: "chatgpt-web/gpt-6-astra-instant",
-    displayName: "GPT-6 Astra Instant (Web)",
-    description: "The Latest ChatGPT family in Instant mode, available after a verified model observation.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6", requiresModelObservation: true,
-    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"], requiresPro: false,
-  },
-  {
-    slug: "chatgpt-web/gpt-6-astra",
-    displayName: "GPT-6 Astra (Web)",
-    description: "The Latest ChatGPT family with its observed Medium, High, or Extra High reasoning choices.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6", requiresModelObservation: true,
-    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"], requiresPro: false,
-  },
-  {
     slug: "chatgpt-web/gpt-6-pro",
     displayName: "GPT-6 Pro (Web)",
-    description: "Pinned GPT-6 Pro through ChatGPT. Max selects Pro.",
+    description: "GPT-6 Pro, powered by GPT-6 Astra, at ChatGPT's Pro thinking level.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6",
     codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
   },
@@ -466,6 +456,35 @@ export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRo
   },
 ];
 
+/**
+ * 6.1.1 advertised "GPT-6 Astra" rows below Pro. ChatGPT runs GPT-5.6 Sol at every level below
+ * Pro, including with Latest selected, so those rows only ever reached Sol. Saved tasks keep
+ * resolving them as GPT-5.6 Sol; they are never advertised again.
+ */
+export const CHATGPT_WEB_RETIRED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
+  {
+    slug: "chatgpt-web/gpt-6-astra-instant",
+    displayName: "GPT-5.6 Sol Instant (Web)",
+    description: "Saved-task alias of GPT-5.6 Sol Instant.",
+    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
+    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"], requiresPro: false,
+  },
+  {
+    slug: "chatgpt-web/gpt-6-astra",
+    displayName: "GPT-5.6 Sol (Web)",
+    description: "Saved-task alias of GPT-5.6 Sol.",
+    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"], requiresPro: false,
+  },
+];
+
+/** Identities that only saved tasks use: resolvable, and present in Codex catalogs as hidden rows. */
+export const CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES: readonly ChatGptWebModelRoute[] = [
+  ...CHATGPT_WEB_MODEL_ROUTES,
+  ...CHATGPT_WEB_LUNA_MODEL_ROUTES,
+  ...CHATGPT_WEB_RETIRED_MODEL_ROUTES,
+];
+
 const routesBySlug = new Map(
   [
     CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE,
@@ -473,6 +492,7 @@ const routesBySlug = new Map(
     ...CHATGPT_WEB_LUNA_MODEL_ROUTES,
     ...CHATGPT_WEB_MODEL_ROUTES,
     ...CHATGPT_WEB_NAMED_MODEL_ROUTES,
+    ...CHATGPT_WEB_RETIRED_MODEL_ROUTES,
   ]
     .map(route => [route.slug, route]),
 );

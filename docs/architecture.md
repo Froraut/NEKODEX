@@ -24,11 +24,14 @@ launcher-owned codex-chatgpt-web daemon
 
 ### `browser-only`
 
-- Advertises named Web rows for GPT-5.6 Sol Instant, GPT-5.6 Sol, GPT-5.6 Pro,
-  GPT-6 Pro, or GPT-5.6 Luna according to the checked browser controls. Codex's
-  Effort selector exposes only the supported levels for each row. Previous
-  `chatgpt-web/light`, `medium`, `high`, `extra-high`, `pro`, `luna`, and `think`
-  IDs remain resolvable for saved tasks but are absent from the new picker.
+- Advertises named Web rows for GPT-5.6 Sol Instant, GPT-5.6 Sol, GPT-5.6 Sol Pro,
+  GPT-6 Pro, or GPT-5.6 Luna according to the checked browser controls. They mirror
+  ChatGPT's five thinking levels: Sol runs Instant through Extra High, and the Pro
+  level runs Sol Pro or GPT-6 Pro. Codex's Effort selector exposes only the supported
+  levels for each row. Previous `chatgpt-web/light`, `medium`, `high`, `extra-high`,
+  `pro`, `luna`, and `think` IDs, and the retired `gpt-6-astra` and
+  `gpt-6-astra-instant` IDs (which always ran GPT-5.6 Sol), remain resolvable for
+  saved tasks but are absent from the picker.
 - Sends the complete Codex context and image attachments to a fresh ChatGPT Temporary Chat.
 - Never starts the broker, tunnel, or MCP server.
 - Emits a nonfatal Codex commentary warning that local tools are unavailable for the selected model.

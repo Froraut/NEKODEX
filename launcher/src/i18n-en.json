@@ -459,7 +459,7 @@
   "proModelFollow": "Follow ChatGPT",
   "proModel56": "GPT-5.6 Sol Pro",
   "legacySavedModel": "Previously saved model — choose a current one",
-  "proModel6": "GPT-6 Astra Pro",
+  "proModel6": "GPT-6 Pro",
   "launchAtLogin": "Launch at login",
   "launchAtLoginBody": "Keep the local Responses route available before Codex opens.",
   "keepRunningOnClose": "Keep server running when window closes",

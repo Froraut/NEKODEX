@@ -16,8 +16,10 @@ const taskModels = new Set(['chatgpt-web/light', 'chatgpt-web/medium', 'chatgpt-
 function isTaskModel(model) { return typeof model === 'string' && taskModels.has(model); }
 function taskModelFamily(model) {
   if (!isTaskModel(model)) return undefined;
-  if (['chatgpt-web/gpt-6-pro', 'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant'].includes(model)) return '6';
-  if (['chatgpt-web/gpt-5.6-sol-instant', 'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro'].includes(model)) return '5.6';
+  if (model === 'chatgpt-web/gpt-6-pro') return '6';
+  // The retired Astra identities always ran GPT-5.6 Sol below Pro.
+  if (['chatgpt-web/gpt-5.6-sol-instant', 'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro',
+    'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant'].includes(model)) return '5.6';
   return undefined;
 }
 function taskModelForRequirement(requirement) {

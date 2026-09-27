@@ -1,4 +1,5 @@
 const { registerClientConnections } = require("./ipc/client-connections.cjs");
+const { stableChromiumUserAgent } = require("./browser-user-agent.cjs");
 const { registerBrowserHandlers } = require("./ipc/browser-handlers.cjs");
 const { registerAccountHandlers } = require("./ipc/account-handlers.cjs");
 const { createChromeProfileChoice } = require("./chrome-profile-choice.cjs");
@@ -106,6 +107,10 @@ const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 process.env.CODEX_CHATGPT_WEB_HOME = CORE_HOME;
 process.env.CODEX_HOME = LAUNCHER_PROFILE.codexHome;
 app.setName(LAUNCHER_PROFILE.displayName);
+// Cross-site frames keep this fallback as navigator.userAgent even when their view overrides its
+// UA, and Cloudflare's challenge frame compares it with the request header. Present one stable
+// Chromium UA app-wide; browser views apply the same value explicitly.
+app.userAgentFallback = stableChromiumUserAgent(app.userAgentFallback, process.versions.chrome);
 if (process.platform === "win32") {
   app.setAppUserModelId(IS_DEV_PROFILE ? "dev.codexwebgpt.launcher.dev" : "dev.codexwebgpt.launcher");
 }

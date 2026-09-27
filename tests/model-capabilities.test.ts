@@ -16,7 +16,7 @@ const { BrowserAdmissionQueue } = require("../launcher/electron/browser-admissio
 const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
 const evidence = { observedAt: Date.now(), families: {
   "5.6": ["low", "medium", "high", "xhigh", "max"] as const,
-  "6": ["low", "medium", "high", "xhigh"] as const,
+  "6": [] as const,
 } };
 const config = { ...defaultConfig(), solAvailable: true, extraHighAvailable: true,
   proAvailable: true, modelCapabilities: evidence, browserHost: "launcher" as const };
@@ -28,14 +28,20 @@ test("one family's Pro limit does not hide another family's Pro or alter native 
   expect(models.find(model => model.slug === native.slug)).toEqual(native);
   expect(models.some(model => model.slug === "chatgpt-web/gpt-5.6-pro")).toBe(true);
   expect(models.some(model => model.slug === "chatgpt-web/gpt-6-pro")).toBe(false);
-  expect(models.some(model => model.slug === "chatgpt-web/gpt-6-astra")).toBe(true);
-  expect(requireChatGptWebModelRoute("chatgpt-web/gpt-6-astra", config, "xhigh").adapterEffort).toBe("xhigh");
-  expect(availableChatGptWebModelRoutes({ ...config, modelCapabilities: undefined })
-    .some(model => model.slug === "chatgpt-web/gpt-6-astra")).toBe(false);
+  // Below Pro ChatGPT runs GPT-5.6 Sol; the retired Astra rows are never advertised, and
+  // saved tasks that name them keep resolving to GPT-5.6 Sol.
+  expect(models.some(model => model.slug.startsWith("chatgpt-web/gpt-6-astra"))).toBe(false);
+  const astra = requireChatGptWebModelRoute("chatgpt-web/gpt-6-astra", config, "xhigh");
+  expect(astra.interactionMode === "automatic" && astra.modelFamily).toBe("5.6");
+  expect(astra.adapterEffort).toBe("xhigh");
+  expect(requireChatGptWebModelRoute("chatgpt-web/gpt-6-astra-instant", config).adapterEffort).toBe("low");
   expect(requireChatGptWebModelRoute("chatgpt-web/gpt-5.6-pro", config).adapterEffort).toBe("max");
   expect(() => requireChatGptWebModelRoute("chatgpt-web/gpt-6-pro", config)).toThrow("unavailable");
-  const refreshed = { ...config, modelCapabilities: { ...evidence, families: { ...evidence.families, "6": evidence.families["5.6"] } } };
+  const refreshed = { ...config, modelCapabilities: { ...evidence, families: { ...evidence.families, "6": ["max"] as const } } };
   expect(requireChatGptWebModelRoute("chatgpt-web/gpt-6-pro", refreshed).adapterEffort).toBe("max");
+  const listed = (augmentNativeModelCatalog({ models: [native] }, { ...refreshed, subagentProtocol: "native" }).models as Array<{ slug: string; display_name: string }>)
+    .filter(model => model.slug.startsWith("chatgpt-web/")).map(model => model.display_name);
+  expect(listed).toEqual(["GPT-6 Pro (Web)", "GPT-5.6 Sol Pro (Web)", "GPT-5.6 Sol (Web)", "GPT-5.6 Sol Instant (Web)"]);
   expect(requireChatGptWebModelRoute("chatgpt-web/high", config).adapterEffort).toBe("high");
 });
 
@@ -78,6 +84,7 @@ test("account admission uses the requested family's efforts independently of the
   const select = (requestedModel: string, effort: string) => AccountBrowserPool.prototype.chooseAccount.call(pool, 'test-trace', null, false, { requestedModel, effort });
   expect(select('chatgpt-web/gpt-5.6-pro', 'max')).toBe('default');
   expect(select('chatgpt-web/gpt-6-astra', 'xhigh')).toBe('default');
+  expect(select('chatgpt-web/gpt-5.6-sol', 'xhigh')).toBe('default');
   expect(() => select('chatgpt-web/gpt-6-pro', 'max')).toThrow('No enabled ChatGPT account');
 });
 

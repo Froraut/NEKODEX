@@ -21,8 +21,8 @@ const {
 } = require("./browser-helper-verifier.cjs");
 const { validateConnectorName } = require("./connector-identity.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
-const { validatedChromeUserAgent } = require("./browser-user-agent.cjs");
-const { createChromeProfileBindingStore } = require("./chrome-profile-binding.cjs");
+const { stableChromiumUserAgent } = require("./browser-user-agent.cjs");
+const { observeChatGptSession } = require("./browser-session-observation.cjs");
 const { isVerifiedCaptureTransfer, sessionIdentity, verifiedCaptureTransfer, verifyCapturedAccount } = require("./chrome-session-identity.cjs");
 const { captureOwnedSession, disposeOwnedSessionSnapshot, restoreOwnedSession } = require("./owned-session-rollback.cjs");
 const { initialPasskeyProgress, passkeyLoginFailure, publicPasskeyProgress } = require("./passkey-login-progress.cjs");
@@ -82,6 +82,8 @@ const SHELL_ZOOM_LEVEL_STEP = 0.5;
 const SHELL_ZOOM_LEVEL_LIMIT = 5;
 const CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS = 500;
 const CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS = 1_000;
+const SESSION_TOKEN_COOKIE = /^__Secure-next-auth\.session-token(?:\.\d+)?$/;
+const SESSION_TOKEN_SETTLE_MS = 1_500;
 const CHATGPT_VIEWPORT_CSS = `
   /* ChatGPT's desktop styles must not turn embedded controls into native drag regions. */
   * { -webkit-app-region: no-drag !important; }
@@ -155,26 +157,6 @@ function normalizeBounds(bounds) {
     width: Math.min(MAX_BROWSER_VIEW_DIMENSION, Math.max(1, read(bounds?.width))),
     height: Math.min(MAX_BROWSER_VIEW_DIMENSION, Math.max(1, read(bounds?.height))),
   };
-}
-
-async function readBoundedJson(response, maximum = 256 * 1024) {
-  if (!response?.body) throw new Error("ChatGPT session response was empty");
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > maximum) throw new Error("ChatGPT session response was too large");
-  const reader = response.body.getReader();
-  const chunks = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maximum) throw new Error("ChatGPT session response was too large");
-      chunks.push(Buffer.from(value));
-    }
-  } finally { await reader.cancel().catch(() => {}); }
-  try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
-  catch { throw new Error("ChatGPT session response was not JSON"); }
 }
 
 function browserInteractionModeFor(host) {
@@ -527,8 +509,13 @@ class BrowserHost {
         webSecurity: true,
       },
     });
-    const savedUserAgent = createChromeProfileBindingStore(this.coreHome).read(this.accountId)?.browserUserAgent;
-    if (savedUserAgent) { this.view.webContents.session.setUserAgent(savedUserAgent); this.view.webContents.setUserAgent(savedUserAgent); }
+    // All surfaces of this account share one cookie jar, and Cloudflare binds its clearance to
+    // the user agent. Every surface presents the app's stable UA (see applyAccountUserAgent); the
+    // Chrome UA captured at sign-in is not reused because cross-site frames and client hints would
+    // still report the bundled Chromium.
+    this.userAgent = stableChromiumUserAgent(this.view.webContents.getUserAgent(), process.versions.chrome);
+    this.view.webContents.session.setUserAgent(this.userAgent);
+    this.view.webContents.setUserAgent(this.userAgent);
     this.artifactDownloads = createTaskArtifactDownloadGuard(this.view.webContents.session, {
       onEvent: (event, detail) => this.logger[event === 'cancelled' ? 'warn' : 'info']?.(
         `browser.artifact_download_${event}`,
@@ -799,8 +786,20 @@ class BrowserHost {
   }
 
   createAutomaticTurnView() {
-    return new WebContentsView({ webPreferences: turnViewPreferences(this.partition) });
+    const view = new WebContentsView({ webPreferences: turnViewPreferences(this.partition) });
+    this.applyAccountUserAgent(view.webContents);
+    return view;
   }
+
+  /**
+   * Electron's session UA does not reach new views, and a surface with a different UA presents
+   * a Cloudflare clearance issued for another one. Apply the account UA before first navigation.
+   */
+  applyAccountUserAgent(contents) {
+    if (!contents || contents.isDestroyed() || !this.userAgent) return;
+    if (contents.getUserAgent() !== this.userAgent) contents.setUserAgent(this.userAgent);
+  }
+
 
   attachAutomaticTurnView(tab) {
     const view = tab.view;
@@ -848,6 +847,7 @@ class BrowserHost {
       .find(candidate => ![...this.turnTabs.values()].some(tab => tab.ordinal === candidate));
     if (!ordinal) throw new Error("ChatGPT Web browser tab allocation is inconsistent");
     const view = new WebContentsView({ webPreferences: turnViewPreferences(this.partition) });
+    this.applyAccountUserAgent(view.webContents);
     const tab = {
       id,
       surfaceId: null,
@@ -1842,6 +1842,7 @@ class BrowserHost {
   createAuthView(options = {}, requestedUrl = "", { referrer, postBody } = {}) {
     this.closeAuthView(this.authView, true);
     const authView = new WebContentsView(authViewOptions(options, this.partition));
+    this.applyAccountUserAgent(authView.webContents);
     this.authView = authView;
     this.authNavigationError = null;
     this.window.contentView.addChildView(authView);
@@ -2307,6 +2308,7 @@ class BrowserHost {
       displays: this.workspaceDisplays,
       getVerifiedPrincipal: () => this.authPrincipalFingerprint,
       register: (contents, window, metadata) => {
+        this.applyAccountUserAgent(contents);
         this.workspaceContents.set(contents, window);
         this.workspaceMetadata.set(contents, metadata);
         this.permissionPolicy.register(contents, 'auth'); this.externalLinkBroker.register(contents);
@@ -2367,14 +2369,9 @@ class BrowserHost {
         const requestSignal = signal
           ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
           : AbortSignal.timeout(10_000);
-        const response = await this.view.webContents.session.fetch(`${CHATGPT_ORIGIN}/api/auth/session`, {
-          credentials: "include", redirect: "error", cache: "no-store", signal: requestSignal,
-          headers: { accept: "application/json" },
-        });
-        if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) {
-          throw new Error(`ChatGPT session verification failed with HTTP ${response.status}`);
-        }
-        const json = await readBoundedJson(response);
+        const page = this.chatGptSessionPage(contents);
+        if (!page) throw new Error("ChatGPT session verification needs a loaded ChatGPT page");
+        const json = await observeChatGptSession(page, { signal: requestSignal });
         const identity = sessionIdentity(json);
         const evidence = identity
           ? { status: "authenticated", ...identity }
@@ -2618,7 +2615,6 @@ class BrowserHost {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) throw new Error("Owned ChatGPT browser session is unavailable");
     return {
-      userAgent: contents.getUserAgent(),
       storage: await captureOwnedSession(contents),
       evidence: {
         principalFingerprint: this.authPrincipalFingerprint,
@@ -2632,10 +2628,6 @@ class BrowserHost {
   async restoreLoginRollbackSnapshot(snapshot) {
     if (!snapshot?.storage || !snapshot.evidence || !snapshot.state) {
       throw new Error("Previous ChatGPT session rollback snapshot is unavailable");
-    }
-    if (snapshot.userAgent) {
-      this.view.webContents.session.setUserAgent(snapshot.userAgent);
-      this.view.webContents.setUserAgent(snapshot.userAgent);
     }
     await this.clearOwnedSessionForPasskey();
     const contents = this.view?.webContents;
@@ -2698,8 +2690,6 @@ class BrowserHost {
       previousSessionRollback = await this.captureLoginRollbackSnapshot();
       signal?.throwIfAborted();
       sessionMutated = true;
-      const userAgent = validatedChromeUserAgent(verifiedTransfer.browserUserAgent);
-      if (userAgent) { contents.session.setUserAgent(userAgent); contents.setUserAgent(userAgent); }
       verificationStage = "install-session";
       await this.clearOwnedSessionForPasskey();
       for (const cookie of state.cookies) {
@@ -3254,7 +3244,10 @@ class BrowserHost {
 
   bindAuthenticationChanges() {
     this.authenticationCookieListener = (_event, cookie, cause, removed) => {
-      if (!cookie?.httpOnly || cookie.domain?.replace(/^\./, "") !== "chatgpt.com") return;
+      // Only the session token identifies the signed-in account. Cloudflare and analytics
+      // cookies change constantly and are no reason to inspect the session endpoint.
+      if (!cookie?.httpOnly || cookie.domain?.replace(/^\./, "") !== "chatgpt.com"
+        || !SESSION_TOKEN_COOKIE.test(cookie.name ?? "")) return;
       if (removed && (cause === "overwrite" || cause === "expired-overwrite")) return;
       // A cookie is a reason to inspect the authenticated endpoint, never identity proof.
       // The endpoint may renew a cookie; avoid recursively inspecting that renewal.
@@ -3262,9 +3255,26 @@ class BrowserHost {
       if (removed) this.authenticationRemovalPending = true;
       this.authenticationRevision += 1;
       if (this.authenticationRefresh) return;
-      void this.refreshAuthenticationFromSession();
+      // ChatGPT writes its session token in several chunks. Inspect only after the writes
+      // settle: a request between chunks presents a torn token that the server discards.
+      clearTimeout(this.authenticationRefreshTimer);
+      this.authenticationRefreshTimer = setTimeout(() => {
+        this.authenticationRefreshTimer = null;
+        void this.refreshAuthenticationFromSession();
+      }, SESSION_TOKEN_SETTLE_MS);
+      this.authenticationRefreshTimer.unref?.();
     };
     this.view.webContents.session.cookies.on("changed", this.authenticationCookieListener);
+  }
+
+  /** A loaded ChatGPT page of this account that NEKODEX may inspect, preferring the home surface. */
+  chatGptSessionPage(preferred) {
+    const automaticTabs = [...this.turnTabs.values()]
+      .filter(tab => tab.interactionMode === "automatic").map(tab => tab.view?.webContents);
+    return [preferred, this.view?.webContents, ...automaticTabs].find(contents => {
+      if (!contents || contents.isDestroyed()) return false;
+      try { return new URL(contents.getURL()).origin === CHATGPT_ORIGIN; } catch { return false; }
+    }) ?? null;
   }
 
   async refreshAuthenticationFromSession() {
@@ -3275,15 +3285,13 @@ class BrowserHost {
       do {
         revision = this.authenticationRevision;
         try {
-          const response = await this.view.webContents.session.fetch(`${CHATGPT_ORIGIN}/api/auth/session`, {
-            credentials: "include", redirect: "error", cache: "no-store",
-            signal: AbortSignal.timeout(5_000), headers: { accept: "application/json" },
-          });
-          if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) {
-            throw new Error(`session HTTP ${response.status}`);
-          }
-          const payload = await readBoundedJson(response);
+          // Without a loaded ChatGPT page there is no request Cloudflare accepts; the next
+          // page load runs the ordinary authentication probe instead.
+          const page = this.chatGptSessionPage();
+          if (!page) continue;
+          const payload = await observeChatGptSession(page);
           if (this.destroyed || browserInteractionModeFor(this) !== "automatic" || revision !== this.authenticationRevision) continue;
+          if (payload?.error === "RefreshAccessTokenError") throw new Error("session refresh was rejected");
           if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.error) {
             throw new Error("session payload was unavailable");
           }
@@ -3341,6 +3349,7 @@ class BrowserHost {
 
   destroy() {
     this.destroyed = true;
+    clearTimeout(this.authenticationRefreshTimer);
     if (this.authenticationCookieListener && !this.view.webContents.isDestroyed()) {
       this.view.webContents.session.cookies.off("changed", this.authenticationCookieListener);
     }

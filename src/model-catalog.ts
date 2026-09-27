@@ -13,8 +13,6 @@ type JsonObject = Record<string, unknown>;
 
 const WEB_CATALOG_ORDER = [
   "chatgpt-web/gpt-6-pro",
-  "chatgpt-web/gpt-6-astra",
-  "chatgpt-web/gpt-6-astra-instant",
   "chatgpt-web/gpt-5.6-pro",
   "chatgpt-web/gpt-5.6-sol",
   "chatgpt-web/gpt-5.6-sol-instant",

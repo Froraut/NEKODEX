@@ -459,7 +459,7 @@
   "proModelFollow": "跟随 ChatGPT",
   "proModel56": "GPT-5.6 Sol Pro",
   "legacySavedModel": "以前保存的模型——请选择当前模型",
-  "proModel6": "GPT-6 Astra Pro",
+  "proModel6": "GPT-6 Pro",
   "launchAtLogin": "登录时启动",
   "launchAtLoginBody": "在 Codex 启动前保持本地 Responses 路由可用。",
   "keepRunningOnClose": "关闭窗口后保持服务器运行",
