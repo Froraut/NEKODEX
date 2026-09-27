@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
 const { createChromeProfileBindingStore } = require("../launcher/electron/chrome-profile-binding.cjs");
 const { publicPasskeyProgress, passkeyLoginFailure } = require("../launcher/electron/passkey-login-progress.cjs");
+const { readProfilesWithPermission } = require("../launcher/electron/chrome-profile-choice.cjs");
 
 test("successful sign-in returns the settled pool receipt instead of a stale locked host snapshot", async () => {
   let held = false, published = false;
@@ -34,4 +35,26 @@ test("verified Chrome compatibility metadata persists and permission failures re
     expect(progress.chromePhase).toBeNull();
     expect(JSON.stringify(progress)).not.toContain('private detail');
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("protected Chrome profile metadata uses the exact system-selected file and respects cancellation", async () => {
+  const root = '/fixture/Chrome'; let reads = 0;
+  const profiles = [{ id: 'Profile 5', name: 'Fixture' }];
+  const read = () => { if (++reads === 1) throw Object.assign(new Error('Protected'), { code: 'EPERM' }); return profiles; };
+  const options = { root, platform: 'darwin', read, language: 'en',
+    dialog: { showOpenDialog: async (_parent: unknown, options: any) => {
+      expect(options.defaultPath).toBe('/fixture/Chrome/Local State');
+      expect(options.properties).toEqual(['openFile', 'noResolveAliases']);
+      return { canceled: false, filePaths: ['/fixture/Chrome/Local State'] };
+    } } };
+  expect(await readProfilesWithPermission(options)).toEqual(profiles);
+  expect(reads).toBe(2);
+  reads = 0;
+  await expect(readProfilesWithPermission({ ...options, dialog: { showOpenDialog: async () => ({ canceled: true }) } }))
+    .rejects.toThrow('Sign-in cancelled');
+  expect(reads).toBe(1);
+  reads = 0;
+  await expect(readProfilesWithPermission({ ...options, dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['/fixture/Chrome/Cookies'] }) } }))
+    .rejects.toThrow('Select the Chrome Local State file');
+  expect(reads).toBe(1);
 });

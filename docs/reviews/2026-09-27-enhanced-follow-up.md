@@ -88,6 +88,11 @@ copyright and permission notice is retained in the root `LICENSE`.
   image/tool-error translation, invalid tool output and exact call receipts.
 - Two login settlement/binding checks passed (seven assertions). The exact
   Chrome claim-target capture check separately passed (five assertions).
+- Installed macOS validation exposed a separate `EPERM` while reading Chrome's
+  profile-list metadata, despite DEV access succeeding. The chooser now uses
+  the native open-file panel for the exact `Local State` file. A focused check
+  verifies selection identity, cancellation and rejection of a different file;
+  cookie access still requires the selected Chrome session's own consent.
 - An isolated real Electron shell crash preserved the existing browser PID,
   session, view and draft when attached to a replacement shell.
 - Official Claude Code 2.1.283 completed a streaming reply and actual Read tool

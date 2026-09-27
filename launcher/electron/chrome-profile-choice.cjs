@@ -34,6 +34,34 @@ function selectMatch(profiles, _accountLabel, saved) {
   return saved && profiles.find(profile => profile.id === saved.profileId) || null;
 }
 
+async function readProfilesWithPermission({ root, dialog, window, language, signal,
+  platform = process.platform, read = readProfiles }) {
+  signal?.throwIfAborted();
+  try { return read(root); }
+  catch (error) {
+    if (platform !== 'darwin' || !['EPERM', 'EACCES'].includes(error?.code) || !dialog?.showOpenDialog) throw error;
+  }
+  // macOS may protect another application's metadata from the installed app,
+  // even while a development runner can read it. Request this exact file through
+  // the system panel; do not broaden access to cookies or the whole Chrome tree.
+  const expected = path.join(root, 'Local State');
+  const ru = language === 'ru';
+  const result = await dialog.showOpenDialog(window, {
+    title: ru ? 'Разрешить чтение списка профилей Chrome' : 'Allow Chrome profile list access',
+    message: ru ? 'Выберите файл Local State. NEKODEX прочитает названия профилей; подключение к выбранной сессии Chrome запрашивается отдельно.'
+      : 'Select Local State. NEKODEX reads profile names; connecting to the chosen Chrome session requires a separate Chrome prompt.',
+    buttonLabel: ru ? 'Разрешить этот файл' : 'Allow this file', defaultPath: expected,
+    properties: ['openFile', 'noResolveAliases'],
+  });
+  signal?.throwIfAborted();
+  if (result?.canceled) throw Object.assign(new Error('Sign-in cancelled'), { code: 'profile-login-cancelled' });
+  if (result?.canceled !== false || !Array.isArray(result.filePaths)
+    || result.filePaths.length !== 1 || result.filePaths[0] !== expected) {
+    throw Object.assign(new Error('Select the Chrome Local State file'), { code: 'chrome-file-selection-invalid' });
+  }
+  return read(root);
+}
+
 function createProfileClaim(port, now = Date.now()) {
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid Chrome profile claim port');
   const nonce = randomBytes(24).toString('base64url');
@@ -112,21 +140,28 @@ function openProfile(executable, id, url = 'https://chatgpt.com/?temporary-chat=
   });
 }
 
-function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, executable, language,
+function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, executable, language, dialog,
   launch = openProfile, picker = showChromeProfilePicker, bindingStore = createChromeProfileBindingStore(coreHome) }) {
   return async ({ accountId, signal }) => {
     validateAccountId(accountId);
     signal?.throwIfAborted();
     let profiles;
-    try { profiles = readProfiles(root); }
-    catch {
-      throw new Error(language() === 'ru'
+    try { profiles = await readProfilesWithPermission({ root, dialog, window: window(), language: language(), signal }); }
+    catch (cause) {
+      if (['profile-login-cancelled', 'chrome-file-selection-invalid'].includes(cause?.code)) throw cause;
+      throw Object.assign(new Error(language() === 'ru'
         ? 'Не удалось прочитать список профилей Chrome. Проверьте доступ NEKODEX; новый профиль автоматически не создавался.'
-        : 'Could not read Chrome profiles. Check NEKODEX access; no new profile was created.');
+        : 'Could not read Chrome profiles. Check NEKODEX access; no new profile was created.'), {
+        code: ['EPERM', 'EACCES'].includes(cause?.code) ? 'chrome-profile-access-denied' : 'chrome-profile-list-invalid',
+        profileChoiceStage: 'profile-list',
+      });
     }
     const saved = bindingStore.read(accountId);
-    const selection = await picker({ BrowserWindow, parent: window(), profiles,
-      selectedId: selectMatch(profiles, null, saved)?.id ?? null, language: language(), signal });
+    let selection;
+    try {
+      selection = await picker({ BrowserWindow, parent: window(), profiles,
+        selectedId: selectMatch(profiles, null, saved)?.id ?? null, language: language(), signal });
+    } catch (error) { throw Object.assign(error, { profileChoiceStage: 'picker' }); }
     signal?.throwIfAborted();
     if (!selection || selection.kind === 'cancel') return { kind: 'cancel' };
     if (selection.kind === 'new') return { kind: 'new' };
@@ -134,7 +169,7 @@ function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, exec
     if (!selected) throw new Error('Selected Chrome profile is no longer available');
     const binding = bindingStore.begin(accountId, selected);
     try { await launch(executable(), selected.id, 'https://chatgpt.com/?temporary-chat=true'); }
-    catch (error) { binding.rollback(); throw error; }
+    catch (error) { binding.rollback(); throw Object.assign(error, { profileChoiceStage: 'launch' }); }
     let claimPrepared = false;
     let claimServer;
     return {
@@ -162,4 +197,4 @@ function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, exec
   };
 }
 
-module.exports = { createChromeProfileChoice, createProfileClaim, createProfileClaimServer, openProfile, readProfiles, selectMatch };
+module.exports = { createChromeProfileChoice, createProfileClaim, createProfileClaimServer, openProfile, readProfiles, readProfilesWithPermission, selectMatch };

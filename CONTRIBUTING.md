@@ -26,6 +26,9 @@ large unsolicited pull request may be closed even when substantial work went int
 - Model selection is explicit. Never silently fall back to another model or reasoning level.
 - Full mode exposes local tools only through the active outer Codex registry and official MCP
   tunnel. Browser-only mode must not create a broker capability or attach an MCP connector.
+  For explicitly connected external clients, the authenticated client owns its
+  declared function execution and permissions; its request must not acquire a
+  fabricated Native environment or launcher/admin authority.
 - Every available ChatGPT Web effort has the same turn-bound MCP capability in Full mode. Do not
   add effort-specific MCP exclusions.
 - Preserve fail-closed behavior. A selector or protocol failure must return an explicit error, not

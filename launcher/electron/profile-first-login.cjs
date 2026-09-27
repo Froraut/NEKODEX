@@ -8,9 +8,12 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
     let choice;
     try { choice=await choose(context); }
     catch (error) {
-      if (!signal?.aborted) await dialog.showMessageBox(window(), {type:'error',
-        message:language()==='ru'?'Не удалось открыть выбранный профиль Chrome':'Could not open the selected Chrome profile',
-        detail:language()==='ru'?'Проверьте доступ NEKODEX к списку профилей и наличие Google Chrome. Новый профиль автоматически не создавался.':'Check NEKODEX access to the profile list and that Google Chrome is installed. No new profile was created.',buttons:['OK']});
+      runtime.logger?.warn?.('runtime.chrome_profile_choice_failed', {
+        stage: error?.profileChoiceStage ?? 'selection', name: error?.name ?? 'Error',
+        code: typeof error?.code === 'string' ? error.code : null,
+        ...(error?.profileChoiceStage === 'picker' ? { detail: String(error.message).slice(0, 240) } : {}),
+      });
+      // The guide settles this operation and exposes its specific retry action.
       throw error;
     }
     signal?.throwIfAborted();
