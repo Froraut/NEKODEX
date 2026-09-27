@@ -263,6 +263,18 @@ be completed, the operation fails closed and restores the drained runtime when p
 unexpected child exit is recovered with a bounded restart budget; a crash loop becomes an explicit
 launcher error.
 
+### Codex model picker catalog
+
+Mixed-mode integration owns `model_catalog_json` through the v11 journal's optional
+`pickerCatalog` block, which is mutually exclusive with the Web-only `webProvider` block
+(`src/codex-picker-catalog.ts`). The desktop picker filters `model/list` through an OpenAI
+allowlist unless a catalog is configured. Codex loads the file once per app-server start and
+then skips `/v1/models`. For that reason `modelsRequest` and a ten-minute background refresh on
+authenticated `/v1/responses` traffic both rewrite the file and a raw native seed. The
+background refresh uses the incoming Codex credentials. The picker file is owned by its
+location in the NEKODEX home. Verification checks only that the assignment points there, and
+uninstall removes both files.
+
 ## Launcher transition ownership
 
 `main.cjs` composes runtime, browser, account and updater services. A small lifecycle-admission

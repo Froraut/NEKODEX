@@ -77,6 +77,37 @@ An interrupted stream is an error, not a successful partial answer. Cancelling
 a request waits for owned work to settle; it cannot undo tools already executed
 by the client. Model prompts are still processed remotely by ChatGPT.
 
+## Web models in the Codex app picker
+
+The Codex desktop app now lists only models that OpenAI allows for the signed-in
+account, so routed Web models returned by `/v1/models` never reached its picker.
+In the default **Native and Web models** mode NEKODEX gives Codex its own
+`model_catalog_json`: `codex-picker-models.json` in the NEKODEX home. The file
+holds every native row from the account's live catalog, the named Web rows, and
+hidden fixed-mode rows for saved tasks. Codex then lists all non-hidden rows.
+
+Codex reads this file once per start and stops requesting `/v1/models` while
+it is set. The runtime refreshes the file from authenticated Codex traffic at
+most every ten minutes, and on any `/v1/models` request. Fully quit and reopen
+Codex to see a changed list. A `model_catalog_json` you set yourself takes
+precedence and is never replaced. Web-only mode owns the key, so the picker
+catalog is removed while it is active. Disconnect, uninstall and the opt-out
+restore the previous Codex configuration exactly.
+
+Turn it off under **Connections → Other clients → Codex provider**, or:
+
+```sh
+codex-chatgpt-web provider picker-off
+codex-chatgpt-web provider picker-on
+```
+
+The choice is kept across later setup runs. If you change or remove the managed
+`model_catalog_json` line yourself, NEKODEX keeps your value and no longer
+manages it. Turn the list off before installing an older NEKODEX version, which
+does not know this setting. If Codex has not loaded its models
+since setup cleared its cache, turning the picker on asks you to open Codex once
+first.
+
 ## Web-only Codex
 
 Choose **Web models only** and apply, fully quit/reopen Codex, then start a new

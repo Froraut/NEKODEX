@@ -15,6 +15,9 @@ const words = {
     provider: "Codex provider", mixed: "Native and Web models", web: "Web models only", apply: "Apply provider mode",
     providerBody: "Web-only uses a separate provider when native Codex account limits prevent Web tasks from starting. ChatGPT limits still apply; native models are unavailable in this mode.",
     codexRestart: "Provider saved. Fully quit and reopen Codex, then start a new task.",
+    picker: "Show Web models in the Codex app model picker",
+    pickerBody: "The Codex app lists only models OpenAI allows for your account. NEKODEX gives Codex its own model list with your native and Web models and keeps it up to date. Codex reads the list when it starts; restart it after model changes.",
+    pickerRestart: "Model list saved. Fully quit and reopen Codex to see it.",
     setup: "Connect your models first to configure other clients.", dev: "Use the main NEKODEX app to configure your installed clients.",
   },
   ru: {
@@ -29,6 +32,9 @@ const words = {
     provider: "Провайдер Codex", mixed: "Native и Web модели", web: "Только Web модели", apply: "Применить режим провайдера",
     providerBody: "Режим Web-only использует отдельного провайдера, если лимит Native-аккаунта Codex мешает запуску Web-задач. Лимиты ChatGPT сохраняются; Native-модели в этом режиме недоступны.",
     codexRestart: "Провайдер сохранён. Полностью закройте и откройте Codex, затем начните новую задачу.",
+    picker: "Показывать Web-модели в выборе моделей Codex",
+    pickerBody: "Приложение Codex показывает только модели, разрешённые OpenAI для вашего аккаунта. NEKODEX передаёт Codex собственный список с Native- и Web-моделями и поддерживает его актуальным. Codex читает список при запуске — после изменения моделей перезапустите его.",
+    pickerRestart: "Список моделей сохранён. Полностью закройте и откройте Codex, чтобы его увидеть.",
     setup: "Сначала подключите модели, затем настройте другие клиенты.", dev: "Настраивайте установленные клиенты в основном приложении NEKODEX.",
   },
 };
@@ -65,7 +71,8 @@ export function ClientConnections({ language, busy, configured, devProfile }: {
       const next = await window.codexWebLauncher!.changeClientConnection(action);
       if (!mounted.current) return;
       setStatus(next);
-      if (action.startsWith("provider-")) { setMode(null); setNotice(copy.codexRestart); }
+      if (action.startsWith("provider-picker-")) setNotice(copy.pickerRestart);
+      else if (action.startsWith("provider-")) { setMode(null); setNotice(copy.codexRestart); }
       if (action === "claude-connect") setNotice(copy.claudeRestart);
     } catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : copy.loading); }
     finally { inFlight.current = false; if (mounted.current) setPending(false); }
@@ -120,6 +127,12 @@ export function ClientConnections({ language, busy, configured, devProfile }: {
               <button type="button" className="button-secondary" disabled={locked || !mode || mode === status.provider.mode}
                 onClick={() => void act(mode === "web-only" ? "provider-web-only" : "provider-mixed")}>{copy.apply}</button>
             </div>
+            {status.provider.mode === "mixed" && status.provider.picker ? <>
+              <label className="account-policy-enabled"><span><input type="checkbox" disabled={locked}
+                checked={status.provider.picker === "on"}
+                onChange={event => void act(event.target.checked ? "provider-picker-on" : "provider-picker-off")} /> {copy.picker}</span></label>
+              <p>{copy.pickerBody}</p>
+            </> : null}
           </section> : null}
         </> : null}
       </>}

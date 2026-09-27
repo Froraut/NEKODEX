@@ -541,6 +541,20 @@ export function chatGptUnversionedEffortMatches(descriptions: readonly string[],
     && Number(states[0]![2]) === index && Number(states[0]![3]) >= index;
 }
 
+async function waitForChatGptModelPickerView(
+  view: Locator, expected: "simple" | "advanced", timeoutMs: number, signal?: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    signal?.throwIfAborted();
+    if (await view.getAttribute("data-model-picker-view", { timeout: 500 }).catch(() => null) === expected) return true;
+    await waitForChatGptProbeSettle(50, signal);
+  } while (Date.now() < deadline);
+  return false;
+}
+
+// Background surfaces are drawn offscreen and produce no animation frames, so Playwright's
+// stability check never completes there. Menu targets are verified before each forced click.
 async function expandChatGptModelPicker(activation: ChatGptEffortActivation, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
   const powerView = activation.menu.locator("[data-model-picker-view]");
@@ -552,12 +566,38 @@ async function expandChatGptModelPicker(activation: ChatGptEffortActivation, sig
     if (view !== "simple") throw new Error("ChatGPT model picker view is unknown");
     const toggle = powerView.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]');
     if (await toggle.count() !== 1) throw new Error("ChatGPT model picker toggle is ambiguous");
-    await toggle.click({ timeout: 5_000, signal });
-    return;
+    await toggle.click({ force: true, timeout: 5_000, signal });
+    // A forced click can land during the menu's entry transition without effect. The model rows
+    // render only in the advanced view, so require that view instead of assuming the click worked.
+    if (await waitForChatGptModelPickerView(powerView, "advanced", 1_500, signal)) return;
+    await toggle.dispatchEvent("click", undefined, { timeout: 2_000, ...(signal ? { signal } : {}) });
+    if (await waitForChatGptModelPickerView(powerView, "advanced", 1_500, signal)) return;
+    throw new Error("ChatGPT model picker did not open its model list");
   }
   const trigger = activation.menu.getByLabel(/^(?:Select model|Choose model|Sélectionner le modèle|Choisir le modèle|选择模型|モデルを選択)$/);
   if (await trigger.count() === 1 && await trigger.getAttribute("aria-expanded") === "false") {
-    await trigger.click({ timeout: 5_000, signal });
+    await trigger.click({ force: true, timeout: 5_000, signal });
+  }
+}
+
+/**
+ * ChatGPT can re-render the picker while a freshly loaded page finishes its model bootstrap, which
+ * detaches the open menu under the click. Reopen the menu and retry instead of failing the check.
+ */
+async function expandChatGptModelPickerWithReopen(
+  page: Page, control: Locator, activation: ChatGptEffortActivation, signal?: AbortSignal,
+): Promise<ChatGptEffortActivation> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await expandChatGptModelPicker(activation, signal);
+      return activation;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (attempt >= 2) throw error;
+      await closeOwnedChatGptEffortMenu(page, control, 5_000, signal).catch(() => {});
+      await waitForChatGptProbeSettle(750, signal);
+      activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
+    }
   }
 }
 
@@ -566,12 +606,12 @@ export async function assertSelectedChatGptModelFamily(
   page: Page, control: Locator, activation: ChatGptEffortActivation,
   version: ChatGptWebProModelVersion, signal?: AbortSignal,
 ): Promise<ChatGptEffortActivation> {
-  const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(version), exact: true, includeHidden: true });
-  if (await option.count() === 1 && await option.getAttribute("aria-checked") === "true"
+  const option = () => activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(version), exact: true, includeHidden: true });
+  if (await option().count() === 1 && await option().getAttribute("aria-checked") === "true"
     && await activation.sliderContainer.isVisible().catch(() => false)) return activation;
-  await expandChatGptModelPicker(activation, signal);
-  await option.waitFor({ state: "attached", timeout: 3_000, signal });
-  if (await option.count() !== 1 || await option.getAttribute("aria-checked") !== "true") {
+  activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
+  await option().waitFor({ state: "attached", timeout: 3_000, signal });
+  if (await option().count() !== 1 || await option().getAttribute("aria-checked") !== "true") {
     throw new Error(`ChatGPT did not retain model family ${version}`);
   }
   await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
@@ -592,12 +632,12 @@ export async function selectChatGptModelFamily(
     await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
     return activateChatGptEffortMenu(page, control, { abortSignal: signal });
   }
-  await expandChatGptModelPicker(activation, signal);
+  activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
   await option().waitFor({ state: "attached", timeout: 3_000, signal });
   if (await option().count() !== 1 || await option().getAttribute("aria-disabled") === "true") {
     throw new Error(`ChatGPT model family ${version} is unavailable`);
   }
-  await option().click({ timeout: 5_000, signal });
+  await option().click({ force: true, timeout: 5_000, signal });
   await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
   activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
   return assertSelectedChatGptModelFamily(page, control, activation, version, signal);
@@ -614,7 +654,7 @@ async function detectChatGptModelCapabilities(
   let primaryError: unknown;
   let capabilities: ChatGptWebModelCapabilities | undefined;
   try {
-    await expandChatGptModelPicker(activation, signal);
+    activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
     const present: ChatGptWebProModelVersion[] = [];
     for (const family of ["5.5", "5.6", "6"] as const) {
       const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(family), exact: true, includeHidden: true });
@@ -634,7 +674,7 @@ async function detectChatGptModelCapabilities(
       for (const family of present) {
         signal?.throwIfAborted();
         activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
-        await expandChatGptModelPicker(activation, signal);
+        activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
         const option = activation.menu.getByRole("menuitemradio", { name: chatGptModelOptionName(family), exact: true, includeHidden: true });
         await option.waitFor({ state: "attached", timeout: 3_000, signal });
         if (await option.getAttribute("aria-disabled") === "true") { capabilities.families[family] = []; continue; }
@@ -665,12 +705,17 @@ async function detectChatGptModelCapabilities(
     }
     if (originalView === "simple") {
       const view = activation.menu.locator("[data-model-picker-view]");
-      if (await view.getAttribute("data-model-picker-view") === "advanced") {
-        await view.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]').click({ timeout: 5_000, signal: cleanup.signal });
+      if (await view.getAttribute("data-model-picker-view").catch(() => null) === "advanced") {
+        // The advanced view has no reliable way back, and ChatGPT reopens the picker in its
+        // simple view. Closing restores the original presentation without another click.
+        await closeOwnedChatGptEffortMenu(page, control, 5_000, cleanup.signal);
       }
     }
   } catch (error) {
-    throw new AggregateError(primaryError ? [primaryError, error] : [error], "ChatGPT model capability inspection could not restore the original picker");
+    const causes = (primaryError ? [primaryError, error] : [error])
+      .map(cause => (cause instanceof Error ? cause.message : String(cause)).split("\n")[0]).join("; ");
+    throw new AggregateError(primaryError ? [primaryError, error] : [error],
+      `ChatGPT model capability inspection could not restore the original picker: ${causes}`.slice(0, 600));
   } finally { clearTimeout(timer); }
   if (primaryError) throw primaryError;
   return capabilities;

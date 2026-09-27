@@ -1,4 +1,5 @@
 import { restoreWebProvider } from "./codex-web-provider";
+import { restorePickerCatalog } from "./codex-picker-catalog";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -192,6 +193,14 @@ function removeManagedInterruptHook(
         : text;
 }
 
+/** Removes the mutually exclusive Web-only provider or mixed-mode picker catalog. */
+function restoreClientOverlays(text: string, journal: ManagedRouteJournal): string {
+  if (journal.version !== 11) return text;
+  if (journal.webProvider) text = restoreWebProvider(text, journal.webProvider);
+  if (journal.pickerCatalog) text = restorePickerCatalog(text, journal.pickerCatalog);
+  return text;
+}
+
 export function managedJournalIsActive(journal: ManagedRouteJournal): boolean {
   return journal.version === 3 || journal.active;
 }
@@ -208,7 +217,7 @@ export function replacementBaseline(
 ): string {
   if (!configExists) return "";
   if (!managedJournalIsActive(journal)) return currentText;
-  if (journal.version === 11 && journal.webProvider) currentText = restoreWebProvider(currentText, journal.webProvider);
+  currentText = restoreClientOverlays(currentText, journal);
 
   if (journalHasRealtimeRoute(journal)) {
     const withoutHook = removeManagedInterruptHook(currentText, journal, { allowAbsent: true });
@@ -319,7 +328,7 @@ export function installRoute(
 }
 
 export function verifyInstalledRoute(text: string, journal: ManagedRouteJournal): void {
-  if (journal.version === 11 && journal.webProvider) text = restoreWebProvider(text, journal.webProvider);
+  text = restoreClientOverlays(text, journal);
   const lines = splitLines(text);
   const current = assignments(lines);
   if (current.openai_base_url.value !== journal.installed.openai_base_url) {
@@ -487,7 +496,7 @@ export function assertPreservedPreviousRealtimeAssignment(
 
 export function restoreManagedRoute(text: string, journal: ManagedRouteJournal): string {
   verifyInstalledRoute(text, journal);
-  if (journal.version === 11 && journal.webProvider) text = restoreWebProvider(text, journal.webProvider);
+  text = restoreClientOverlays(text, journal);
   const withoutHook = removeManagedInterruptHook(text, journal);
   const document = parseDocument(withoutHook);
   removeManagedComment(document);

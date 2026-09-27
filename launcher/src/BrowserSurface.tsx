@@ -235,64 +235,77 @@ export function BrowserSurface({
           </select>
         </label> : browser?.accountName ? <span>{browser.accountName}</span> : null}
       </div>
-      <div className="browser-tab-strip" role="tablist" aria-label={windowCopy.taskTabs} title={copy.browserTabLimit}>
-        {(browser?.tabs ?? []).map((tab) => (
-          <div
-            className={`browser-tab${tab.active ? " is-active" : ""}`}
-            key={tab.id}
-          >
-            <button
-              className="browser-tab-select"
-              onClick={() => void selectTab(tab.id)}
-              onKeyDown={(event) => {
-                if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
-                  event.preventDefault();
-                  const tabs = browser?.tabs ?? [];
-                  const index = tabs.findIndex((candidate) => candidate.id === tab.id);
-                  const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
-                    : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
-                  const next = tabs[nextIndex];
-                  if (next) {
-                    void selectTab(next.id);
-                    event.currentTarget.closest('[role="tablist"]')
-                      ?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus();
-                  }
-                }
-              }}
-              aria-disabled={transitionBusy}
-              role="tab"
-              aria-selected={tab.active}
-              aria-label={`${tab.id === "home" ? "ChatGPT" : browserTabTitleFromTitle(tab.title, copy)} — ${tab.id === "home" ? (browser?.authenticated ? copy.sessionConnected : copy.stepAccount) : tab.status === "running" ? copy.running
-                : tab.status === "loading" ? copy.loading : tab.status === "testing" ? copy.overviewRunTesting
-                  : tab.status === "error" ? copy.failed : tab.status === "ready" ? copy.complete : copy.noActiveTask}`}
-              tabIndex={tab.active ? 0 : -1}
-              type="button"
+      {/* Separate windows share the tab row to save height; an open list wraps below it. */}
+      <div className="browser-tab-row">
+        <div className="browser-tab-strip" role="tablist" aria-label={windowCopy.taskTabs} title={copy.browserTabLimit}>
+          {(browser?.tabs ?? []).map((tab) => (
+            <div
+              className={`browser-tab${tab.active ? " is-active" : ""}`}
+              key={tab.id}
             >
-              <BrandMark small />
-              {tab.loading ? <i className="tab-spinner" aria-hidden="true" /> : <StateDot state={browserTabTone(tab.status)} />}
-              <span className="browser-tab-title" title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
-                {tab.id === "home" ? "ChatGPT" : browserTabTitleFromTitle(tab.title, copy)}
-              </span>
-            </button>
-            {tab.closable ? (
               <button
-                aria-label={`${tab.status === "running" ? copy.manualPromptCancel : copy.hideTab}: ${browserTabTitleFromTitle(tab.title, copy)}`}
-                disabled={transitionBusy || closingTabs.has(tab.id)}
-                className={tab.status === "running" ? "browser-tab-cancel" : undefined}
-                onClick={() => {
-                  if (tab.status === "running") setCancelTarget({ id: tab.id, traceId: tab.traceId });
-                  else void closeTab(tab.id, tab.traceId);
+                className="browser-tab-select"
+                onClick={() => void selectTab(tab.id)}
+                onKeyDown={(event) => {
+                  if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                    event.preventDefault();
+                    const tabs = browser?.tabs ?? [];
+                    const index = tabs.findIndex((candidate) => candidate.id === tab.id);
+                    const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+                      : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                    const next = tabs[nextIndex];
+                    if (next) {
+                      void selectTab(next.id);
+                      event.currentTarget.closest('[role="tablist"]')
+                        ?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus();
+                    }
+                  }
                 }}
-                title={tab.status === "running" ? copy.manualPromptCancel : copy.hideTab}
+                aria-disabled={transitionBusy}
+                role="tab"
+                aria-selected={tab.active}
+                aria-label={`${tab.id === "home" ? "ChatGPT" : browserTabTitleFromTitle(tab.title, copy)} — ${tab.id === "home" ? (browser?.authenticated ? copy.sessionConnected : copy.stepAccount) : tab.status === "running" ? copy.running
+                  : tab.status === "loading" ? copy.loading : tab.status === "testing" ? copy.overviewRunTesting
+                    : tab.status === "error" ? copy.failed : tab.status === "ready" ? copy.complete : copy.noActiveTask}`}
+                tabIndex={tab.active ? 0 : -1}
                 type="button"
               >
-                {closingTabs.has(tab.id) ? <i className="tab-spinner" aria-hidden="true" />
-                  : <Icon name={tab.status === "running" ? "stop" : "close"} />}
+                <BrandMark small />
+                {tab.loading ? <i className="tab-spinner" aria-hidden="true" /> : <StateDot state={browserTabTone(tab.status)} />}
+                <span className="browser-tab-title" title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
+                  {tab.id === "home" ? "ChatGPT" : browserTabTitleFromTitle(tab.title, copy)}
+                </span>
               </button>
-            ) : null}
-          </div>
-        ))}
-        <div className="browser-tab-drag draggable" />
+              {tab.closable ? (
+                <button
+                  aria-label={`${tab.status === "running" ? copy.manualPromptCancel : copy.hideTab}: ${browserTabTitleFromTitle(tab.title, copy)}`}
+                  disabled={transitionBusy || closingTabs.has(tab.id)}
+                  className={tab.status === "running" ? "browser-tab-cancel" : undefined}
+                  onClick={() => {
+                    if (tab.status === "running") setCancelTarget({ id: tab.id, traceId: tab.traceId });
+                    else void closeTab(tab.id, tab.traceId);
+                  }}
+                  title={tab.status === "running" ? copy.manualPromptCancel : copy.hideTab}
+                  type="button"
+                >
+                  {closingTabs.has(tab.id) ? <i className="tab-spinner" aria-hidden="true" />
+                    : <Icon name={tab.status === "running" ? "stop" : "close"} />}
+                </button>
+              ) : null}
+            </div>
+          ))}
+          <div className="browser-tab-drag draggable" />
+        </div>
+        {browser?.workspaces ? <BrowserWorkspaceManager
+          language={language}
+          snapshot={browser.workspaces}
+          selectedAccountId={browser.accountId}
+          disabled={accountSelectionLocked}
+          onOpen={(accountId, asTab) => api!.openBrowserWorkspace(accountId, { asTab })}
+          onRestore={accountId => api!.restoreBrowserWorkspaces(accountId)}
+          onFocus={(accountId, workspaceId) => api!.focusBrowserWorkspace(accountId, workspaceId)}
+          onClose={(accountId, workspaceId) => api!.closeBrowserWorkspace(accountId, workspaceId)}
+        /> : null}
       </div>
       {cancelTab ? <div className="browser-cancel-confirm" role="alert"
         onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setCancelTarget(null); } }}>
@@ -306,16 +319,6 @@ export function BrowserSurface({
             onClick={() => void closeTab(cancelTab.id, cancelTab.traceId)}>{closingTabs.has(cancelTab.id) ? copy.browserCancellingTask : copy.manualPromptCancel}</button>
         </div>
       </div> : null}
-      {browser?.workspaces ? <BrowserWorkspaceManager
-        language={language}
-        snapshot={browser.workspaces}
-        selectedAccountId={browser.accountId}
-        disabled={accountSelectionLocked}
-        onOpen={(accountId, asTab) => api!.openBrowserWorkspace(accountId, { asTab })}
-        onRestore={accountId => api!.restoreBrowserWorkspaces(accountId)}
-        onFocus={(accountId, workspaceId) => api!.focusBrowserWorkspace(accountId, workspaceId)}
-        onClose={(accountId, workspaceId) => api!.closeBrowserWorkspace(accountId, workspaceId)}
-      /> : null}
       {visible ? <div className="browser-toolbar">
         <div className="browser-history">
           <IconButton

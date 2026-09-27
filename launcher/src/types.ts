@@ -427,10 +427,10 @@ export interface LauncherLifecycle extends RuntimeCapabilities {
 export interface ClientConnectionsSnapshot {
   api: { enabled: boolean; configured: boolean; keyFingerprint: string | null; baseUrl: string };
   claude: { installed: boolean; ready: boolean; model: string | null; issue: string | null };
-  provider: { installed: boolean; active: boolean; mode: "mixed" | "web-only"; issue: string | null };
+  provider: { installed: boolean; active: boolean; mode: "mixed" | "web-only"; picker?: "on" | "off" | "unavailable"; issue: string | null };
 }
 export type ClientConnectionAction = "api-enable" | "api-disable" | "api-rotate" | "claude-connect"
-  | "claude-disconnect" | "provider-mixed" | "provider-web-only";
+  | "claude-disconnect" | "provider-mixed" | "provider-web-only" | "provider-picker-on" | "provider-picker-off";
 
 export interface LauncherSnapshot {
   browserCapacity: BrowserCapacitySettings;

@@ -1,6 +1,7 @@
 // Adapted from Evanlau1798/codex-chatgpt-web a6f9656f (MIT).
 import { loadConfig } from "./config";
 import { inspectCodexIntegration, installCodexIntegration } from "./codex-integration";
+import { pickerCatalogInUse } from "./codex-picker-catalog";
 
 export function codexProviderCommand(args: string[]): void {
   const action = args.shift() ?? "status";
@@ -8,20 +9,31 @@ export function codexProviderCommand(args: string[]): void {
   if (args[0] === "--catalog" && args[1] && !args[1].startsWith("--")) {
     args.shift(); catalogPath = args.shift();
   }
-  if (args.length || !["status", "mixed", "web-only"].includes(action)
+  if (args.length || !["status", "mixed", "web-only", "picker-on", "picker-off"].includes(action)
     || (catalogPath && action !== "web-only")) {
-    throw new Error("Usage: codex-chatgpt-web provider <status|mixed|web-only> [--catalog PATH]");
+    throw new Error("Usage: codex-chatgpt-web provider <status|mixed|web-only|picker-on|picker-off> [--catalog PATH]");
   }
   const status = inspectCodexIntegration();
   if (status.errors.length) throw new Error(status.errors.join("; "));
   if (action === "status") {
+    const journal = status.journal?.version === 11 ? status.journal : undefined;
     process.stdout.write(JSON.stringify({installed:status.installed,active:status.active,
-      providerMode:status.journal?.version === 11 && status.journal.webProvider ? "web-only" : "mixed"},null,2)+"\n");
+      providerMode:journal?.webProvider ? "web-only" : "mixed",
+      pickerCatalog:journal?.webProvider ? "unavailable" : journal?.pickerCatalog && pickerCatalogInUse() ? "on" : "off"},null,2)+"\n");
     return;
   }
   if (!status.installed || !status.active) throw new Error("Connect the Codex integration before changing provider mode");
   const config = loadConfig();
   if (config.purpose === "dev-harness") throw new Error("The isolated DEV harness has no Codex integration to configure");
+  if (action === "picker-on" || action === "picker-off") {
+    if (status.journal?.version === 11 && status.journal.webProvider) {
+      throw new Error("Web-only mode owns the Codex model list. Switch to mixed mode first");
+    }
+    installCodexIntegration(config,{providerMode:"mixed",pickerCatalog:action === "picker-on"});
+    process.stdout.write(JSON.stringify({providerMode:"mixed",pickerCatalog:action === "picker-on" ? "on" : "off",codexRestartRequired:true},null,2)+"\n");
+    process.stderr.write("Fully restart Codex to reload its model list.\n");
+    return;
+  }
   installCodexIntegration(config,{providerMode:action as "mixed"|"web-only",catalogPath});
   process.stdout.write(JSON.stringify({providerMode:action,codexRestartRequired:true},null,2)+"\n");
   process.stderr.write(action === "web-only"

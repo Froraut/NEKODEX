@@ -1,6 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { applyWebProvider, prepareWebProviderRoute, ownedWebProviderCatalog, verifyWebProviderCatalog } from "./codex-web-provider";
+import {
+  applyPickerCatalog,
+  buildPickerCatalog,
+  initialNativeCatalog,
+  nativeCatalogPath,
+  pickerCatalogPath,
+  removePickerCatalogFiles,
+} from "./codex-picker-catalog";
 import type { AppConfig } from "./config";
 import { getConfigPath, loadConfig, preserveUtf8Bom } from "./config";
 import {
@@ -229,6 +237,7 @@ export {
   getCodexModelsCachePath,
 } from "./codex-integration-shared";
 export { readCodexModelContextOverride } from "./codex-integration-document";
+import { readCodexModelContextOverride } from "./codex-integration-document";
 export type {
   CodexIntegrationJournal,
   CodexModelContextOverride,
@@ -355,6 +364,51 @@ export function preflightCodexIntegration(
     hooksJson,
   );
 }
+/**
+ * Mixed mode points Codex at a NEKODEX-maintained model_catalog_json so the desktop
+ * picker lists Web models despite its server allowlist. Web-only mode owns the key.
+ */
+function preparePickerCatalogRoute(
+  journal: CodexIntegrationJournal,
+  text: string,
+  config: AppConfig,
+  options: InstallCodexIntegrationOptions,
+  existing: AnyCodexIntegrationJournal | undefined,
+): { text: string; writes: Array<{ path: string; data: string }>; removals: string[] } {
+  const previouslyDisabled = existing?.version === 11 && existing.pickerCatalogDisabled === true;
+  const enabled = options.pickerCatalog ?? !previouslyDisabled;
+  if (!enabled) journal.pickerCatalogDisabled = true;
+  if (journal.webProvider || !enabled || config.purpose === "dev-harness") {
+    return { text, writes: [], removals: journal.webProvider || !enabled ? removePickerCatalogFiles() : [] };
+  }
+  let applied: ReturnType<typeof applyPickerCatalog>;
+  try {
+    applied = applyPickerCatalog(text, pickerCatalogPath());
+  } catch (error) {
+    // A user-owned catalog keeps precedence; an explicit opt-in says why nothing changed.
+    if (options.pickerCatalog === true) {
+      throw new Error("Codex already uses its own model_catalog_json. Remove it from Codex config.toml to let NEKODEX manage the model list");
+    }
+    return { text, writes: [], removals: [] };
+  }
+  const native = initialNativeCatalog(getCodexModelsCachePath());
+  if (!native) {
+    if (options.pickerCatalog === true) {
+      throw new Error("No Codex model catalog is available yet. Open Codex once so NEKODEX can read its models, then retry");
+    }
+    return { text, writes: [], removals: [] };
+  }
+  journal.pickerCatalog = applied.state;
+  return {
+    text: applied.text,
+    writes: [
+      { path: applied.state.path, data: buildPickerCatalog(native, config, readCodexModelContextOverride()) },
+      { path: nativeCatalogPath(), data: JSON.stringify(native) + "\n" },
+    ],
+    removals: [],
+  };
+}
+
 export function installCodexIntegration(
   config: AppConfig,
   options: InstallCodexIntegrationOptions = {},
@@ -457,12 +511,13 @@ function installCodexIntegrationState(
     };
     const providerRoute = prepareWebProviderRoute(updated, patched.text, config, options,
       existing.version === 11 ? existing.webProvider : undefined, currentText);
+    const pickerRoute = preparePickerCatalogRoute(updated, providerRoute.text, config, options, existing);
     writeIntegrationState(
       updated,
-      { path: configPath, data: providerRoute.text },
-      providerRoute.removals,
+      { path: configPath, data: pickerRoute.text },
+      [...providerRoute.removals, ...pickerRoute.removals],
       [...(patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : []), ...runtimeWrites],
-      providerRoute.writes,
+      [...providerRoute.writes, ...pickerRoute.writes],
     );
     return updated;
   }
@@ -505,12 +560,13 @@ function installCodexIntegrationState(
     format: textFormat(baseline),
   };
   const providerRoute = prepareWebProviderRoute(journal, patched.text, config, options, undefined, currentText);
+  const pickerRoute = preparePickerCatalogRoute(journal, providerRoute.text, config, options, existing);
   writeIntegrationState(
     journal,
-    { path: configPath, data: providerRoute.text },
-    providerRoute.removals,
+    { path: configPath, data: pickerRoute.text },
+    [...providerRoute.removals, ...pickerRoute.removals],
     [...(patched.hooksText && hooksJson ? [{ path: hooksJson.path, data: patched.hooksText, followSymlink: true }] : []), ...runtimeWrites],
-    providerRoute.writes,
+    [...providerRoute.writes, ...pickerRoute.writes],
   );
   if (existing?.version === 2 && existsSync(existing.catalogPath)) rmSync(existing.catalogPath);
   return journal;
@@ -641,9 +697,18 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     } : {}),
     ...(existing.format ? { format: existing.format } : {}),
     ...(existing.version === 11 && existing.webProvider ? { webProvider: structuredClone(existing.webProvider) } : {}),
+    ...(existing.version === 11 && existing.pickerCatalogDisabled ? { pickerCatalogDisabled: true } : {}),
   };
   if (connected.webProvider) verifyWebProviderCatalog(connected.webProvider);
-  const connectedText = connected.webProvider ? applyWebProvider(route.text, connected.webProvider) : route.text;
+  let connectedText = connected.webProvider ? applyWebProvider(route.text, connected.webProvider) : route.text;
+  // The picker catalog is a runtime-maintained cache; reconnect it only while it still exists.
+  if (existing.version === 11 && existing.pickerCatalog && !connected.webProvider && existsSync(existing.pickerCatalog.path)) {
+    try {
+      const applied = applyPickerCatalog(connectedText, existing.pickerCatalog.path);
+      connectedText = applied.text;
+      connected.pickerCatalog = applied.state;
+    } catch { /* A catalog the user configured while disconnected keeps precedence. */ }
+  }
   writeIntegrationState(
     connected,
     { path: existing.configPath, data: connectedText },
@@ -737,6 +802,7 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     removeJournalCopy(journalSnapshot);
     assertInactiveJsonHookAbsent(journal);
     removeJournalCopy(recoverySnapshot);
+    for (const path of removePickerCatalogFiles({ includeNativeSeed: true })) rmSync(path, { force: true });
   } catch (error) {
     const rollbackFailures: string[] = [];
     for (const snapshot of [recoverySnapshot, journalSnapshot, modelsCacheSnapshot, catalogSnapshot, hooksSnapshot, configSnapshot]) {
