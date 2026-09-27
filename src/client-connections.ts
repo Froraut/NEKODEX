@@ -8,10 +8,12 @@ export function clientConnectionsStatus() {
   const provider = (() => {
     try {
       const value = inspectCodexIntegration();
+      const journal = value.journal?.version === 11 ? value.journal : undefined;
       return { installed: value.installed, active: value.active,
-        mode: value.journal?.version === 11 && value.journal.webProvider ? "web-only" : "mixed",
+        mode: journal?.webProvider ? "web-only" : "mixed",
+        picker: journal?.webProvider ? "unavailable" : journal?.pickerCatalog ? "on" : "off",
         issue: value.errors.length ? value.errors.join("; ") : null };
-    } catch (error) { return { installed: false, active: false, mode: "mixed", issue: error instanceof Error ? error.message : "Codex configuration unavailable" }; }
+    } catch (error) { return { installed: false, active: false, mode: "mixed", picker: "off", issue: error instanceof Error ? error.message : "Codex configuration unavailable" }; }
   })();
   const claude = (() => {
     try { return inspectClaudeIntegration(); }
@@ -30,10 +32,13 @@ export function clientConnectionsCommand(args: string[]) {
     else if (action === "api-rotate") setLocalApiAccess(localApiStatus().enabled, true);
     else if (action === "claude-connect") installClaudeIntegration(loadConfigForSetup());
     else if (action === "claude-disconnect") removeClaudeIntegration();
-    else if (action === "provider-mixed" || action === "provider-web-only") {
+    else if (action === "provider-mixed" || action === "provider-web-only"
+      || action === "provider-picker-on" || action === "provider-picker-off") {
       const status = inspectCodexIntegration();
       if (!status.active || !status.installed || status.errors.length) throw new Error("Connect the Codex route before changing provider mode");
-      installCodexIntegration(loadConfigForSetup(), { providerMode: action === "provider-web-only" ? "web-only" : "mixed" });
+      installCodexIntegration(loadConfigForSetup(), action === "provider-picker-on" || action === "provider-picker-off"
+        ? { providerMode: "mixed", pickerCatalog: action === "provider-picker-on" }
+        : { providerMode: action === "provider-web-only" ? "web-only" : "mixed" });
     } else if (action === "api-key") {
       const key = localApiKey();
       if (!key) throw new Error("Local API access is disabled");

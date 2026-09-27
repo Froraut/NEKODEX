@@ -39,6 +39,7 @@ import { createInternalJsonRequest, readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
 import { createHash } from "node:crypto";
 import { augmentNativeModelCatalog } from "./model-catalog";
+import { pickerCatalogAgeMs, refreshPickerCatalog } from "./codex-picker-catalog";
 import { startNativeUsageDelivery } from "./native-usage-telemetry";
 import { fetchNativeCodex, nativeNetworkBackgroundReady } from "./native-network";
 import {
@@ -141,6 +142,8 @@ function safeErrorCode(error: unknown): string | undefined {
   return typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? code : undefined;
 }
 
+const PICKER_CATALOG_REFRESH_MS = 10 * 60_000;
+
 function modelCatalogFailure(stage: ModelCatalogFailure["stage"], error: unknown): ModelCatalogFailure {
   const code = safeErrorCode(error);
   return { stage, ...(code !== undefined ? { code } : {}) };
@@ -213,11 +216,18 @@ export async function modelsRequest(
     return upstream;
   }
   let catalog: Record<string, unknown>;
+  let native: unknown;
   try {
-    catalog = augmentNativeModelCatalog(await upstream.json(), config, contextOverride?.());
+    native = await upstream.json();
+    catalog = augmentNativeModelCatalog(native, config, contextOverride?.());
   } catch (error) {
     onFailure?.(modelCatalogFailure("catalog", error));
     return formatErrorResponse(502, "invalid_response_error", error instanceof Error ? error.message : String(error));
+  }
+  try {
+    refreshPickerCatalog(native, config, contextOverride?.());
+  } catch (error) {
+    console.error(`[chatgpt-web] Codex picker catalog refresh failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   const body = JSON.stringify(catalog);
   const headers = new Headers(upstream.headers);
@@ -789,6 +799,28 @@ export function startServer(
   let lastModelCatalogResult: {
     request: number; at: string; status: number; failure?: ModelCatalogFailure;
   } | null = null;
+  // Codex stops requesting /v1/models once it reads the picker catalog file, so ordinary
+  // authenticated Codex traffic refreshes that file with the same account credentials.
+  let pickerRefreshStartedAt = 0;
+  let pickerRefreshInFlight = false;
+  const refreshPickerCatalogFromTraffic = (req: Request): void => {
+    const now = Date.now();
+    const age = pickerCatalogAgeMs(now);
+    if (age === undefined || age < PICKER_CATALOG_REFRESH_MS || pickerRefreshInFlight
+      || now - pickerRefreshStartedAt < PICKER_CATALOG_REFRESH_MS
+      || !req.headers.get("authorization")?.startsWith("Bearer ")) return;
+    pickerRefreshInFlight = true;
+    pickerRefreshStartedAt = now;
+    const headers = new Headers(req.headers);
+    for (const name of ["content-type", "content-length", "content-encoding", "transfer-encoding", "accept"]) headers.delete(name);
+    const probe = new Request(new URL("/v1/models", req.url), { method: "GET", headers });
+    void (async () => {
+      const catalogConfig = { ...config, subagentProtocol: readCodexSubagentProtocol(config.subagentProtocol) };
+      await modelsRequest(probe, catalogConfig, dependencies.fetchUpstream, readCodexModelContextOverride);
+    })().catch(error => {
+      console.error(`[chatgpt-web] Codex picker catalog background refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+    }).finally(() => { pickerRefreshInFlight = false; });
+  };
   const httpTurns = new HttpTurnCounter();
   const hermes = new HermesIntegration();
   const claude = new ClaudeMessagesGateway((request, settings, options) =>
@@ -1187,6 +1219,7 @@ export function startServer(
         });
       }
       if (policy?.endpoint === "responses" || policy?.endpoint === "compact") {
+        refreshPickerCatalogFromTraffic(req);
         const handler = policy.endpoint === "responses" ? responseRequest : compactRequest;
         return trackInference(req, policy, (signal, bindIdentity, bindWeb) => handler(
           new Request(req, { signal }), config, dependencies.adapterFactory,

@@ -19,7 +19,7 @@ function registerClientConnections({ handle, runtimeHost, clipboard, isDevProfil
   handle('launcher:client-connections', async () => (await run('status')).value);
   handle('launcher:client-connection-action', async (_event, action) => {
     if (isDevProfile) throw new Error('Use the main NEKODEX profile to connect your installed clients');
-    if (!['api-enable', 'api-disable', 'api-rotate', 'claude-connect', 'claude-disconnect', 'provider-mixed', 'provider-web-only'].includes(action)) {
+    if (!['api-enable', 'api-disable', 'api-rotate', 'claude-connect', 'claude-disconnect', 'provider-mixed', 'provider-web-only', 'provider-picker-on', 'provider-picker-off'].includes(action)) {
       throw new Error('Unknown client connection action');
     }
     assertIdle();

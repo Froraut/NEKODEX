@@ -70,6 +70,10 @@ export interface InstalledCodexInterruptHookToml extends InstalledCodexInterrupt
 export interface CodexIntegrationJournal {
   version: 11;
   webProvider?: import("./codex-web-provider").WebProviderState;
+  /** Mixed-mode model_catalog_json that lets the Codex desktop picker list Web models. */
+  pickerCatalog?: import("./codex-picker-catalog").PickerCatalogState;
+  /** Explicit opt-out that later setup runs preserve. */
+  pickerCatalogDisabled?: boolean;
   active: boolean;
   configPath: string;
   installed: {
@@ -323,6 +327,8 @@ export function journalHasInterruptHook<T extends VersionedJournal>(
 
 export interface InstallCodexIntegrationOptions {
   providerMode?: "mixed" | "web-only";
+  /** Mixed mode only; omitted keeps the saved choice (enabled by default). */
+  pickerCatalog?: boolean;
   catalogPath?: string;
   replaceExistingRoute?: boolean;
 }

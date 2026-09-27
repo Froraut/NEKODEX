@@ -1,4 +1,5 @@
 import { isWebProviderState } from "./codex-web-provider";
+import { isPickerCatalogState } from "./codex-picker-catalog";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { atomicWriteFile, stripUtf8Bom } from "./config";
@@ -121,6 +122,9 @@ function parseJournal(path: string, contents?: string): AnyCodexIntegrationJourn
   const installed = value.installed as Record<string, unknown> | undefined;
   if (value.version === 11
     && (value.webProvider === undefined || isWebProviderState(value.webProvider))
+    && (value.pickerCatalog === undefined || isPickerCatalogState(value.pickerCatalog))
+    && (value.pickerCatalogDisabled === undefined || typeof value.pickerCatalogDisabled === "boolean")
+    && !(value.webProvider !== undefined && value.pickerCatalog !== undefined)
     && typeof value.active === "boolean"
     && installed
     && hasRealtimeRoute(installed)

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, stripUtf8Bom, type AppConfig } from "./config";
 import { augmentNativeModelCatalog, buildChatGptWebModel } from "./model-catalog";
+import { initialNativeCatalog } from "./codex-picker-catalog";
 import { CHATGPT_WEB_MODEL_ROUTES, CHATGPT_WEB_LUNA_MODEL_ROUTES, requireChatGptWebModelRoute } from "./chatgpt-web-models";
 import { findTopLevelAssignment, firstTableIndex, insertDocumentLine, parseDocument,
   removeDocumentLine, renderDocument } from "./codex-integration-document";
@@ -97,7 +98,12 @@ export function prepareWebProviderRoute(
   if (mode === "web-only") {
     const sourcePath = options.catalogPath ?? getCodexModelsCachePath();
     const source = options.catalogPath || !previous ? (() => {
-      if (!existsSync(sourcePath)) throw new Error("A native model catalog is required. Open Codex in mixed mode to populate models_cache.json, or provide --catalog PATH");
+      if (!existsSync(sourcePath)) {
+        // Setup clears Codex's cache; the runtime's last live catalog is the same account data.
+        const seed = options.catalogPath ? undefined : initialNativeCatalog(sourcePath);
+        if (seed) return seed as Record<string, unknown>;
+        throw new Error("A native model catalog is required. Open Codex in mixed mode to populate models_cache.json, or provide --catalog PATH");
+      }
       return JSON.parse(stripUtf8Bom(readFileSync(sourcePath,"utf8")));
     })() : previous.source;
     if (!source || typeof source !== "object" || !Array.isArray(source.models)) throw new Error("Web provider requires a model catalog with a models array");
