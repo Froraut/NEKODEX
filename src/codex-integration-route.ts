@@ -1,5 +1,5 @@
 import { restoreWebProvider } from "./codex-web-provider";
-import { restorePickerCatalog, verifyPickerCatalogRestored } from "./codex-picker-catalog";
+import { restorePickerCatalog } from "./codex-picker-catalog";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -391,7 +391,6 @@ export function verifyRestoredRoute(
   if (journal.version === 11 && journal.webProvider && text.includes(journal.webProvider.fragment)) {
     throw new Error("Managed Web provider remains installed while the bridge is disconnected");
   }
-  if (journal.version === 11 && journal.pickerCatalog) verifyPickerCatalogRestored(text, journal.pickerCatalog);
   const lines = splitLines(text);
   const current = assignments(lines);
   const keys = journalHasBaseUrlRouteV7Plus(journal)

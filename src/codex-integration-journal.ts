@@ -1,5 +1,5 @@
 import { isWebProviderState } from "./codex-web-provider";
-import { isPickerCatalogState } from "./codex-picker-catalog";
+import { isPickerCatalogState, pickerOwnershipMatches } from "./codex-picker-catalog";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { atomicWriteFile, stripUtf8Bom } from "./config";
@@ -228,6 +228,7 @@ function journalConfigMatches(journal: AnyCodexIntegrationJournal): boolean {
     if (journal.version === 2) return text.includes(journal.providerBlock)
       || Boolean(journal.uninstalling && sha256(text) === journal.uninstalling.restoredConfigSha256);
     verifyManagedJournalState(text, journal);
+    if (journal.version === 11 && !pickerOwnershipMatches(text, journal.active, journal.pickerCatalog)) return false;
     return true;
   } catch {
     return false;

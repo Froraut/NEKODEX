@@ -381,18 +381,21 @@ function preparePickerCatalogRoute(
   if (journal.webProvider || !enabled || config.purpose === "dev-harness") {
     return { text, writes: [], removals: journal.webProvider || !enabled ? removePickerCatalogFiles() : [] };
   }
+  let applied: ReturnType<typeof applyPickerCatalog>;
+  try {
+    applied = applyPickerCatalog(text, pickerCatalogPath());
+  } catch (error) {
+    // A user-owned catalog keeps precedence; an explicit opt-in says why nothing changed.
+    if (options.pickerCatalog === true) {
+      throw new Error("Codex already uses its own model_catalog_json. Remove it from Codex config.toml to let NEKODEX manage the model list");
+    }
+    return { text, writes: [], removals: [] };
+  }
   const native = initialNativeCatalog(getCodexModelsCachePath());
   if (!native) {
     if (options.pickerCatalog === true) {
       throw new Error("No Codex model catalog is available yet. Open Codex once so NEKODEX can read its models, then retry");
     }
-    return { text, writes: [], removals: [] };
-  }
-  let applied: ReturnType<typeof applyPickerCatalog>;
-  try {
-    applied = applyPickerCatalog(text, pickerCatalogPath());
-  } catch {
-    // A user-owned catalog keeps precedence; Codex keeps its own picker behavior.
     return { text, writes: [], removals: [] };
   }
   journal.pickerCatalog = applied.state;

@@ -1,5 +1,6 @@
 import { loadConfigForSetup } from "./config";
 import { inspectCodexIntegration, installCodexIntegration } from "./codex-integration";
+import { pickerCatalogInUse } from "./codex-picker-catalog";
 import { inspectClaudeIntegration, installClaudeIntegration, removeClaudeIntegration } from "./claude-integration";
 import { localApiKey, localApiStatus, setLocalApiAccess } from "./local-api-access";
 
@@ -11,7 +12,7 @@ export function clientConnectionsStatus() {
       const journal = value.journal?.version === 11 ? value.journal : undefined;
       return { installed: value.installed, active: value.active,
         mode: journal?.webProvider ? "web-only" : "mixed",
-        picker: journal?.webProvider ? "unavailable" : journal?.pickerCatalog ? "on" : "off",
+        picker: journal?.webProvider ? "unavailable" : journal?.pickerCatalog && pickerCatalogInUse() ? "on" : "off",
         issue: value.errors.length ? value.errors.join("; ") : null };
     } catch (error) { return { installed: false, active: false, mode: "mixed", picker: "off", issue: error instanceof Error ? error.message : "Codex configuration unavailable" }; }
   })();
@@ -36,6 +37,10 @@ export function clientConnectionsCommand(args: string[]) {
       || action === "provider-picker-on" || action === "provider-picker-off") {
       const status = inspectCodexIntegration();
       if (!status.active || !status.installed || status.errors.length) throw new Error("Connect the Codex route before changing provider mode");
+      if ((action === "provider-picker-on" || action === "provider-picker-off")
+        && status.journal?.version === 11 && status.journal.webProvider) {
+        throw new Error("Web-only mode owns the Codex model list. Choose Native and Web models first");
+      }
       installCodexIntegration(loadConfigForSetup(), action === "provider-picker-on" || action === "provider-picker-off"
         ? { providerMode: "mixed", pickerCatalog: action === "provider-picker-on" }
         : { providerMode: action === "provider-web-only" ? "web-only" : "mixed" });

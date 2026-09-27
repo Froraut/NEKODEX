@@ -101,7 +101,10 @@ codex-chatgpt-web provider picker-off
 codex-chatgpt-web provider picker-on
 ```
 
-The choice is kept across later setup runs. If Codex has not loaded its models
+The choice is kept across later setup runs. If you change or remove the managed
+`model_catalog_json` line yourself, NEKODEX keeps your value and no longer
+manages it. Turn the list off before installing an older NEKODEX version, which
+does not know this setting. If Codex has not loaded its models
 since setup cleared its cache, turning the picker on asks you to open Codex once
 first.
 

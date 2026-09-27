@@ -17,7 +17,7 @@ import {
   renderDocument,
   splitLines,
 } from "./codex-integration-document";
-import type { CodexModelContextOverride, PreviousAssignment } from "./codex-integration-shared";
+import { getCodexConfigPath, type CodexModelContextOverride, type PreviousAssignment } from "./codex-integration-shared";
 
 // The Codex desktop picker lists only an OpenAI-supplied allowlist unless Codex is
 // configured with its own model_catalog_json. This mixed-mode catalog keeps every
@@ -138,23 +138,32 @@ export function applyPickerCatalog(text: string, path: string): { text: string; 
   return { text: renderDocument(document), state: { path, previous: { present: false } } };
 }
 
-export function verifyPickerCatalog(text: string, state: PickerCatalogState): void {
-  if (findTopLevelAssignment(splitLines(text), KEY).value !== state.path) {
-    throw new Error("Codex model_catalog_json changed after setup; refusing to overwrite the user's newer value");
-  }
+/** True when Codex currently points at the NEKODEX-owned picker catalog. */
+export function pointsAtPickerCatalog(text: string): boolean {
+  return findTopLevelAssignment(splitLines(text), KEY).value === pickerCatalogPath();
 }
 
-export function verifyPickerCatalogRestored(text: string, state: PickerCatalogState): void {
-  const current = findTopLevelAssignment(splitLines(text), KEY);
-  if (current.present !== state.previous.present || (current.present && current.value !== state.previous.value)) {
-    throw new Error("Codex model_catalog_json changed while the bridge was disconnected; refusing to overwrite the user's newer value");
-  }
+/** Whether the Codex config currently in effect points at the picker catalog. */
+export function pickerCatalogInUse(): boolean {
+  try { return pointsAtPickerCatalog(readFileSync(getCodexConfigPath(), "utf8")); } catch { return false; }
 }
 
+/**
+ * Crash recovery chooses between journal copies by exact picker ownership: a journal
+ * with an active picker catalog needs our line, every other journal state forbids it.
+ */
+export function pickerOwnershipMatches(text: string, active: boolean, state: PickerCatalogState | undefined): boolean {
+  return pointsAtPickerCatalog(text) === Boolean(active && state);
+}
+
+/**
+ * Removes only our line. A value the user changed or removed while connected is theirs,
+ * so it is kept instead of blocking disconnect, repair or uninstall.
+ */
 export function restorePickerCatalog(text: string, state: PickerCatalogState): string {
-  verifyPickerCatalog(text, state);
   const document = parseDocument(text);
   const found = findTopLevelAssignment(document.lines, KEY);
+  if (found.value !== state.path) return text;
   if (found.index !== undefined) removeDocumentLine(document, found.index);
   if (state.previous.present) {
     insertDocumentLine(document, Math.min(state.previous.index ?? 0, firstTableIndex(document.lines)), state.previous.rawLine!);

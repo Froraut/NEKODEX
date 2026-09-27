@@ -6,6 +6,7 @@ import { defaultConfig } from "../src/config";
 import { activateCodexIntegration, deactivateCodexIntegration, installCodexIntegration,
   inspectCodexIntegration, uninstallCodexIntegration } from "../src/codex-integration";
 import { pickerCatalogPath, refreshPickerCatalog } from "../src/codex-picker-catalog";
+import { getCodexJournalPath, getCodexJournalRecoveryPath } from "../src/codex-integration-shared";
 
 function isolated(action: (fixture: ReturnType<typeof fixture>) => void) {
   const root = mkdtempSync(join(tmpdir(), "nekodex-picker-catalog-"));
@@ -105,5 +106,54 @@ test.serial("the runtime refreshes only an installed picker catalog and reports 
   expect(refreshed?.changed).toBe(true);
   expect(refreshed?.webModels).toBeGreaterThan(0);
   expect(slugs(pickerCatalogPath()).map(model => model.slug)).toContain("native-next");
+  uninstallCodexIntegration();
+}));
+
+test.serial("a catalog the user sets while disconnected blocks neither reconnect nor uninstall", () => isolated(f => {
+  installCodexIntegration(f.config);
+  deactivateCodexIntegration();
+  const own = join(process.env.CODEX_HOME!, "own-models.json");
+  writeFileSync(own, JSON.stringify({ models: [nativeRow("native-model", 1)] }));
+  writeFileSync(f.path, `model_catalog_json = ${JSON.stringify(own)}\n${readFileSync(f.path, "utf8")}`);
+  expect(inspectCodexIntegration().errors).toEqual([]);
+  activateCodexIntegration();
+  expect(f.read().model_catalog_json).toBe(own);
+  uninstallCodexIntegration();
+  expect(f.read().model_catalog_json).toBe(own);
+}));
+
+test.serial("a managed catalog line the user removed while connected is not required back", () => isolated(f => {
+  installCodexIntegration(f.config);
+  writeFileSync(f.path, readFileSync(f.path, "utf8").replace(/^model_catalog_json = .*\n/m, ""));
+  expect(inspectCodexIntegration().errors).toEqual([]);
+  deactivateCodexIntegration();
+  expect(readFileSync(f.path, "utf8")).toBe(f.original);
+  uninstallCodexIntegration();
+  expect(readFileSync(f.path, "utf8")).toBe(f.original);
+}));
+
+test.serial("an interrupted opt-in resolves to the journal copy that owns the written catalog line", () => isolated(f => {
+  installCodexIntegration(f.config, { pickerCatalog: false });
+  const journals = [getCodexJournalPath(), getCodexJournalRecoveryPath()];
+  expect(journals.every(path => existsSync(path))).toBe(true);
+  const before = journals.map(path => readFileSync(path, "utf8"));
+  writeFileSync(f.cache, JSON.stringify({ models: [nativeRow("native-model", 1)] }));
+  installCodexIntegration(f.config, { pickerCatalog: true });
+  // Simulate a crash after the config and recovery copy were written but before the primary copy.
+  writeFileSync(journals[0]!, before[0]!);
+  expect(readFileSync(journals[0]!, "utf8")).not.toBe(readFileSync(journals[1]!, "utf8"));
+  expect(inspectCodexIntegration().errors).toEqual([]);
+  expect(f.read().model_catalog_json).toBe(pickerCatalogPath());
+  uninstallCodexIntegration();
+  expect(readFileSync(f.path, "utf8")).toBe(f.original);
+}));
+
+test.serial("an explicit opt-in explains a user-owned catalog and picker changes never leave Web-only mode", () => isolated(f => {
+  const own = join(process.env.CODEX_HOME!, "own-models.json");
+  writeFileSync(own, JSON.stringify({ models: [nativeRow("native-model", 1)] }));
+  writeFileSync(f.path, `model_catalog_json = ${JSON.stringify(own)}\n${f.original}`);
+  installCodexIntegration(f.config);
+  expect(() => installCodexIntegration(f.config, { pickerCatalog: true })).toThrow("its own model_catalog_json");
+  expect(f.read().model_catalog_json).toBe(own);
   uninstallCodexIntegration();
 }));
