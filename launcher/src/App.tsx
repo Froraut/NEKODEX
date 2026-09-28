@@ -374,13 +374,39 @@ export function App() {
     setSnapshot((current) => current ? { ...current, compactionModel } : current);
   }, []);
 
+  // "Try again" gives way to the loading screen, so its focus falls to <body>. A failed retry hands it to the new
+  // failure screen's Try again; a successful one to the first page (the shell's focusPageOnMount hand-off) or, when
+  // onboarding opens instead, to its step heading. Focus the user placed meanwhile stays.
+  const startupRetried = useRef(false);
+  const startupRetryFocus = useRef(false);
+  const retryButton = useRef<HTMLButtonElement>(null);
+  const appRoot = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!startupRetryFocus.current) return;
+    const retryFailed = !snapshot && startupError !== null;
+    if (!retryFailed && !(snapshot && hasPresentedLocale.current)) return;
+    startupRetryFocus.current = false;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    if (retryFailed) {
+      retryButton.current?.focus();
+      return;
+    }
+    const heading = appRoot.current?.querySelector<HTMLElement>(".nk-onboarding__scroll h1");
+    if (!heading) return;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  });
+
   if (!api) return <FatalMessage language="en" message="Launcher IPC is unavailable." />;
   if (!snapshot && startupError) return (
     <FatalMessage
       language={startupLanguage()}
       message={localizeLauncherError(copyFor(startupLanguage()), startupError)}
       retryLabel={shellCopy(startupLanguage()).tryAgain}
+      retryRef={retryButton}
       onRetry={() => {
+        startupRetried.current = true;
+        startupRetryFocus.current = true;
         setStartupError(null);
         setStartupAttempt((attempt) => attempt + 1);
       }}
@@ -401,6 +427,7 @@ export function App() {
       data-language={language}
       data-platform={snapshot.platform}
       data-profile={snapshot.profile}
+      ref={appRoot}
     >
         {(locale.pending || locale.status === "failed") ? <LocaleNotice language={requestedLanguage} copy={copy} failed={locale.status === "failed"} floating /> : null}
         {!snapshot.state.onboardingComplete ? (
@@ -414,7 +441,7 @@ export function App() {
         ) : (
           <LauncherShell
             browser={browser}
-            focusPageOnMount={sawOnboarding.current}
+            focusPageOnMount={sawOnboarding.current || startupRetried.current}
             catalogFailure={catalogFailure}
             error={error}
             copy={copy}
@@ -456,7 +483,7 @@ function LauncherShell({
   updatePanelRequest,
 }: {
   browser: BrowserState | null;
-  /** Focus the first page's heading once it renders (the shell replaces onboarding, which had the focus). */
+  /** Focus the first page's heading once it renders (the shell replaces onboarding or a retried startup, which had focus). */
   focusPageOnMount: boolean;
   catalogFailure: string | null;
   error: string | null;
@@ -702,7 +729,7 @@ function LauncherShell({
   // Each surface remounts its scroller (key={surface}). When the control that navigated was on the old page, focus
   // fell to <body>: hand it to the new page's h1 (once a deferred page has rendered it), else the page region. A nav
   // item, a tab that restores its own focus, or anything the user focused meanwhile keeps focus. The same hand-off
-  // runs once on mount when the shell replaces onboarding.
+  // runs once on mount when the shell replaces onboarding or a retried startup failure.
   const workspace = useRef<HTMLElement>(null);
   const drawerNavigation = useRef(false);
   const shownSurface = useRef<Surface | null>(focusPageOnMount ? null : surface);
