@@ -120,12 +120,12 @@ export function Onboarding({
       <header className="nk-onboarding__bar draggable">
         {/* macOS draws the traffic lights over this reserve; other platforms hide it. */}
         <span aria-hidden="true" className="nk-onboarding__controls" />
-        <div className="nk-onboarding__brand no-drag">
+        <div className="nk-onboarding__brand">
           <Mark label={null} size={32} />
           <span className="nk-wordmark"><strong>{localized.product}</strong></span>
           {snapshot.profile === "development" ? <span className="nk-dev-tag">{localized.devBadge}</span> : null}
         </div>
-        <span className="nk-onboarding__version nk-type-code no-drag">v{snapshot.version}</span>
+        <span className="nk-onboarding__version nk-type-code">v{snapshot.version}</span>
       </header>
 
       <div className="nk-onboarding__scroll" ref={scrollRef}>

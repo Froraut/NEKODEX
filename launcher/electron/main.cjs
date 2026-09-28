@@ -574,7 +574,8 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
     titleBarStyle: isMac ? "hiddenInset" : "hidden",
     transparent: false,
     ...(isMac ? {
-      trafficLightPosition: { x: 16, y: 17 },
+      // The 14 pt buttons sit on the centre line of the 52 px titlebar (--size-titlebar).
+      trafficLightPosition: { x: 16, y: 19 },
       visualEffectState: "active",
     } : {
       titleBarOverlay: {

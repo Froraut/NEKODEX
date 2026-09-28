@@ -393,6 +393,8 @@ body {
 }
 .nk-sidebar__chrome { display: flex; flex: none; align-items: center; justify-content: space-between; height: var(--size-titlebar); padding-left: var(--space-2); -webkit-app-region: drag; }
 .nk-sidebar__chrome button { -webkit-app-region: no-drag; }
+/* The drag strip reaches both sidebar edges (beside the traffic lights too); the toggle keeps its place. */
+.nk-sidebar > .nk-sidebar__chrome { width: calc(var(--size-sidebar) - 1px); margin-inline: calc(-1 * var(--space-3)); padding-inline: calc(var(--space-2) + var(--space-3)) var(--space-3); }
 .nk-sidebar__brand { display: flex; flex: none; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-4); }
 .nk-sidebar__brand .nk-mark { --mark-size: 32px; }
 .nk-wordmark { display: grid; min-width: 0; }
