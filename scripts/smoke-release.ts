@@ -104,10 +104,12 @@ try {
   }
 
   const unauthenticatedModels = await fetch(`http://127.0.0.1:${port}/v1/models`);
-  const unauthenticatedModelsBody = await unauthenticatedModels.json() as { error?: { message?: string } };
-  if (unauthenticatedModels.status !== 502
+  const unauthenticatedModelsBody = await unauthenticatedModels.json() as { error?: { type?: string; message?: string } };
+  // A missing Bearer is a local client error (401), rejected before any request to ChatGPT.
+  if (unauthenticatedModels.status !== 401
+    || unauthenticatedModelsBody.error?.type !== "authentication_error"
     || !unauthenticatedModelsBody.error?.message?.includes("incoming Bearer authorization")) {
-    throw new Error(`native model passthrough did not fail closed without Codex auth: ${JSON.stringify(unauthenticatedModelsBody)}`);
+    throw new Error(`native model passthrough did not fail closed without Codex auth: HTTP ${unauthenticatedModels.status} ${JSON.stringify(unauthenticatedModelsBody)}`);
   }
   const websocketNegotiation = await fetch(`http://127.0.0.1:${port}/v1/responses`);
   if (websocketNegotiation.status !== 426) {
