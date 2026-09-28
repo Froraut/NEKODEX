@@ -117,6 +117,9 @@ export function BrowserSurface({
     if (!frame) return;
     const find = (selector: string) => frame.querySelector<HTMLElement>(selector);
     const selectedTab = () => find('.browser-tabs [role="tab"][aria-selected="true"]');
+    // A replacement that mounts disabled cannot take focus (the idle Sign in while a passkey sign-in waits, after
+    // Hide ChatGPT): skip it for the next candidate, the state's heading.
+    const enabled = (element: HTMLElement | null) => element && !element.matches(":disabled") ? element : null;
     let target: HTMLElement | null = null;
     if (previous.closest(".browser-confirm")) {
       target = confirmOpener.current?.isConnected ? confirmOpener.current : selectedTab();
@@ -126,7 +129,7 @@ export function BrowserSurface({
       target = find(".browser-manual__title");
     }
     target ??= find(".browser-guide__title")
-      ?? (visible ? toolbarToggle.current : idlePrimary.current)
+      ?? enabled(visible ? toolbarToggle.current : idlePrimary.current)
       ?? find("h1")
       ?? selectedTab();
     target?.focus();

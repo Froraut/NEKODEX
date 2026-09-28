@@ -311,12 +311,13 @@ export function LaunchLoading({ language = startupLanguage() }: { language?: Lan
   );
 }
 
-/** The launcher could not start: what failed (the heading), the cause, and a retry. */
-export function FatalMessage({ language = startupLanguage(), message, onRetry, retryLabel }: {
+/** The launcher could not start: what failed (the heading), the cause, and a retry. `retryRef`: the retry button. */
+export function FatalMessage({ language = startupLanguage(), message, onRetry, retryLabel, retryRef }: {
   language?: Language;
   message: string;
   onRetry?: () => void;
   retryLabel?: string;
+  retryRef?: RefObject<HTMLButtonElement | null>;
 }) {
   return (
     <main className="nk-launch" lang={language}>
@@ -324,7 +325,7 @@ export function FatalMessage({ language = startupLanguage(), message, onRetry, r
       <Mark size={48} />
       <h1>{shellCopy(language).startupFailed}</h1>
       <p role="alert">{message}</p>
-      {onRetry ? <Button onClick={onRetry} variant="primary">{retryLabel}</Button> : null}
+      {onRetry ? <Button onClick={onRetry} ref={retryRef} variant="primary">{retryLabel}</Button> : null}
     </main>
   );
 }
