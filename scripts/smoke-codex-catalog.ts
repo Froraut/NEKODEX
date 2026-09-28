@@ -70,8 +70,8 @@ try {
   // The picker lists ChatGPT's five levels, one fixed effort each; fixed-mode and retired slugs
   // stay resolvable for saved tasks but must never reappear in the catalog.
   const webOrder = [
-    "chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-5.6-sol-medium", "chatgpt-web/gpt-5.6-sol-high",
-    "chatgpt-web/gpt-5.6-sol-extra-high", "chatgpt-web/gpt-6-pro",
+    "chatgpt-web/gpt-6-pro", "chatgpt-web/gpt-5.6-sol-extra-high", "chatgpt-web/gpt-5.6-sol-high",
+    "chatgpt-web/gpt-5.6-sol-medium", "chatgpt-web/gpt-5.6-sol-instant",
   ];
   const expected = webOrder.map(slug => {
     const route = CHATGPT_WEB_NAMED_MODEL_ROUTES.find(route => route.slug === slug);

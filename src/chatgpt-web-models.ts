@@ -497,19 +497,11 @@ const SOL = { interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MO
  */
 export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
-    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-instant", displayName: "GPT-5.6 Sol Instant (Web)",
-    description: "GPT-5.6 Sol at ChatGPT's Instant level.",
-    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"],
-  },
-  {
-    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-medium", displayName: "GPT-5.6 Sol Medium (Web)",
-    description: "GPT-5.6 Sol at ChatGPT's Medium thinking level.",
-    codexEffort: "medium", adapterEffort: "medium", supportedCodexEfforts: ["medium"],
-  },
-  {
-    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-high", displayName: "GPT-5.6 Sol High (Web)",
-    description: "GPT-5.6 Sol at ChatGPT's High thinking level.",
-    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["high"],
+    slug: "chatgpt-web/gpt-6-pro",
+    displayName: "GPT-6 Astra Pro (Web)",
+    description: "GPT-6 Pro, powered by GPT-6 Astra, at ChatGPT's account-gated Pro level.",
+    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6",
+    codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
   },
   {
     ...SOL, slug: "chatgpt-web/gpt-5.6-sol-extra-high", displayName: "GPT-5.6 Sol Extra High (Web)",
@@ -517,11 +509,19 @@ export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRo
     codexEffort: "xhigh", adapterEffort: "xhigh", supportedCodexEfforts: ["xhigh"], requiresExtraHigh: true,
   },
   {
-    slug: "chatgpt-web/gpt-6-pro",
-    displayName: "GPT-6 Astra Pro (Web)",
-    description: "GPT-6 Pro, powered by GPT-6 Astra, at ChatGPT's account-gated Pro level.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6",
-    codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-high", displayName: "GPT-5.6 Sol High (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's High thinking level.",
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["high"],
+  },
+  {
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-medium", displayName: "GPT-5.6 Sol Medium (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's Medium thinking level.",
+    codexEffort: "medium", adapterEffort: "medium", supportedCodexEfforts: ["medium"],
+  },
+  {
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-instant", displayName: "GPT-5.6 Sol Instant (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's Instant level.",
+    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"],
   },
   {
     slug: "chatgpt-web/gpt-5.6-luna",
@@ -585,7 +585,7 @@ export function isChatGptWebModelSlug(modelId: string): boolean {
   return modelId.startsWith(CHATGPT_WEB_MODEL_PREFIX);
 }
 
-/** The picker order: the five ChatGPT levels as listed, then Luna. */
+/** The picker order: strongest first (Astra Pro, Sol Extra High, High, Medium, Instant), then Luna. */
 export function compareChatGptWebModelRoutes(left: ChatGptWebModelRoute, right: ChatGptWebModelRoute): number {
   const rank = (route: ChatGptWebModelRoute) => {
     const index = CHATGPT_WEB_NAMED_MODEL_ROUTES.findIndex(candidate => candidate.slug === route.slug);

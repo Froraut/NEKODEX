@@ -42,8 +42,8 @@ test("one family's Pro limit does not hide another family's Pro or alter native 
   expect(requireChatGptWebModelRoute("chatgpt-web/gpt-6-pro", refreshed).adapterEffort).toBe("max");
   const listed = (augmentNativeModelCatalog({ models: [native] }, { ...refreshed, subagentProtocol: "native" }).models as Array<{ slug: string; display_name: string }>)
     .filter(model => model.slug.startsWith("chatgpt-web/")).map(model => model.display_name);
-  expect(listed).toEqual(["GPT-5.6 Sol Instant (Web)", "GPT-5.6 Sol Medium (Web)", "GPT-5.6 Sol High (Web)",
-    "GPT-5.6 Sol Extra High (Web)", "GPT-6 Astra Pro (Web)"]);
+  expect(listed).toEqual(["GPT-6 Astra Pro (Web)", "GPT-5.6 Sol Extra High (Web)", "GPT-5.6 Sol High (Web)",
+    "GPT-5.6 Sol Medium (Web)", "GPT-5.6 Sol Instant (Web)"]);
   expect(requireChatGptWebModelRoute("chatgpt-web/high", config).adapterEffort).toBe("high");
 });
 

@@ -74,11 +74,11 @@ test("the Codex picker lists exactly ChatGPT's five levels, each with one effort
   } });
   expect(parseChatGptWebModelCapabilities(JSON.parse(JSON.stringify(observed)))).toEqual(observed);
   const five = [
-    ["chatgpt-web/gpt-5.6-sol-instant", "GPT-5.6 Sol Instant (Web)", "low"],
-    ["chatgpt-web/gpt-5.6-sol-medium", "GPT-5.6 Sol Medium (Web)", "medium"],
-    ["chatgpt-web/gpt-5.6-sol-high", "GPT-5.6 Sol High (Web)", "high"],
-    ["chatgpt-web/gpt-5.6-sol-extra-high", "GPT-5.6 Sol Extra High (Web)", "xhigh"],
     ["chatgpt-web/gpt-6-pro", "GPT-6 Astra Pro (Web)", "max"],
+    ["chatgpt-web/gpt-5.6-sol-extra-high", "GPT-5.6 Sol Extra High (Web)", "xhigh"],
+    ["chatgpt-web/gpt-5.6-sol-high", "GPT-5.6 Sol High (Web)", "high"],
+    ["chatgpt-web/gpt-5.6-sol-medium", "GPT-5.6 Sol Medium (Web)", "medium"],
+    ["chatgpt-web/gpt-5.6-sol-instant", "GPT-5.6 Sol Instant (Web)", "low"],
   ];
   const native = { slug: "gpt-6-astra", visibility: "list", priority: 1, tool_mode: "code_mode_only",
     supported_reasoning_levels: [{ effort: "high" }] };
@@ -111,7 +111,7 @@ test("the account's picker decides which of the five levels are listed", () => {
     { label: "GPT-5.6 Sol", positions: { low: described("5.6", "Sol"), medium: described("5.6", "Sol"), high: described("5.6", "Sol") } },
   ]);
   expect(availableChatGptWebModelRoutes({ ...config, extraHighAvailable: false, proAvailable: false, modelCapabilities: plus })
-    .map(route => route.slug)).toEqual(["chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-5.6-sol-medium", "chatgpt-web/gpt-5.6-sol-high"]);
+    .map(route => route.slug)).toEqual(["chatgpt-web/gpt-5.6-sol-high", "chatgpt-web/gpt-5.6-sol-medium", "chatgpt-web/gpt-5.6-sol-instant"]);
   // A newer model at Pro does not become GPT-6 Astra Pro; that row needs GPT-6 at Pro.
   const newer = aggregateChatGptModelObservation([
     { label: "Latest", positions: { high: described("5.6", "Sol"), max: described("6.5", "Nova") } },
@@ -135,7 +135,7 @@ test("observations saved before model names keep GPT-6 only at Pro", () => {
   const legacy = parseChatGptWebModelCapabilities({ observedAt: 1, families: { "6": ["low", "medium", "max"], "5.6": ["low", "max"] } })!;
   expect(legacy.families["6"]).toEqual(["max"]);
   expect(availableChatGptWebModelRoutes({ ...config, modelCapabilities: legacy }).map(route => route.slug))
-    .toEqual(["chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-6-pro"]);
+    .toEqual(["chatgpt-web/gpt-6-pro", "chatgpt-web/gpt-5.6-sol-instant"]);
   expect(() => parseChatGptWebModelCapabilities({ observedAt: 1, families: { "gpt-6": ["max"] } })).toThrow();
   expect(() => parseChatGptWebModelCapabilities({ observedAt: 1, families: { "6": ["max"] }, names: { "6": "pro" } })).toThrow();
 });
