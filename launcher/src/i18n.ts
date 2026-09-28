@@ -63,7 +63,7 @@ const native6Copies = {
     upgrade: "Перейти на Native6",
     verify: "Проверить коннектор",
     compatibility: "Использовать Native4 (совместимость)",
-    retained: "Используйте точное имя коннектора ниже. Сохранённые Native4/5 поддерживаются; переход на Native6 доступен в настройках.",
+    retained: "Используйте точное имя коннектора ниже. Сохранённые Native4/5 поддерживаются; переход на Native6 доступен на этом экране.",
     body: "Для первой настройки или перехода создайте новый коннектор {connector} в ChatGPT с новым App ID и прежним туннелем этого режима. Не переименовывайте старый коннектор. Затем проверьте подключение в NEKODEX. Сохранённые Native4/5 продолжают работать до явного перехода.",
     mismatch: "Сохранённая проверка относится к другому коннектору. Проверьте текущий коннектор заново.",
   },
@@ -72,7 +72,7 @@ const native6Copies = {
     upgrade: "Upgrade to Native6",
     verify: "Verify connector",
     compatibility: "Use Native4 (compatibility)",
-    retained: "Use the exact connector name below. Saved Native4/5 remain supported; upgrade to Native6 in Settings.",
+    retained: "Use the exact connector name below. Saved Native4/5 remain supported; you can upgrade to Native6 on this screen.",
     body: "For first-time setup or an upgrade, create a new {connector} connector in ChatGPT with a new App ID and this mode's existing tunnel. Do not rename the old connector. Then verify the connection in NEKODEX. Saved Native4/5 connectors remain supported until an explicit upgrade.",
     mismatch: "The saved verification belongs to a different connector. Verify the current connector again.",
   },
@@ -81,7 +81,7 @@ const native6Copies = {
     upgrade: "升级到 Native6",
     verify: "验证连接器",
     compatibility: "使用 Native4（兼容模式）",
-    retained: "请使用下方准确的连接器名称。已保存的 Native4/5 仍受支持；可在设置中升级到 Native6。",
+    retained: "请使用下方准确的连接器名称。已保存的 Native4/5 仍受支持；可在此页面升级到 Native6。",
     body: "首次设置或升级时，请使用新的 App ID 和此模式现有的隧道，在 ChatGPT 中创建新的 {connector} 连接器。不要重命名旧连接器。然后在 NEKODEX 中验证连接。已保存的 Native4/5 连接器在明确升级前仍受支持。",
     mismatch: "已保存的验证属于另一个连接器。请重新验证当前连接器。",
   },
@@ -90,7 +90,7 @@ const native6Copies = {
     upgrade: "升級至 Native6",
     verify: "驗證聯結器",
     compatibility: "使用 Native4（相容模式）",
-    retained: "請使用下方準確的聯結器名稱。已儲存的 Native4/5 仍受支援；可在設定中升級至 Native6。",
+    retained: "請使用下方準確的聯結器名稱。已儲存的 Native4/5 仍受支援；可在此頁面升級至 Native6。",
     body: "首次設定或升級時，請使用新的 App ID 和此模式現有的 Tunnel，在 ChatGPT 中建立新的 {connector} 聯結器。不要重新命名舊聯結器。然後在 NEKODEX 中驗證連線。已儲存的 Native4/5 聯結器在明確升級前仍受支援。",
     mismatch: "已儲存的驗證屬於另一個聯結器。請重新驗證目前的聯結器。",
   },
@@ -99,7 +99,7 @@ const native6Copies = {
     upgrade: "Native6 にアップグレード",
     verify: "コネクタを検証",
     compatibility: "Native4 を使用（互換モード）",
-    retained: "下記の正確なコネクタ名を使用してください。保存済みの Native4/5 は引き続きサポートされ、設定から Native6 にアップグレードできます。",
+    retained: "下記の正確なコネクタ名を使用してください。保存済みの Native4/5 は引き続きサポートされ、この画面で Native6 にアップグレードできます。",
     body: "初回設定またはアップグレードでは、新しい App ID とこのモードの既存トンネルを使って、ChatGPT に新しい {connector} コネクタを作成します。古いコネクタの名前を変更しないでください。その後、NEKODEX で接続を検証します。保存済みの Native4/5 コネクタは、明示的にアップグレードするまで引き続きサポートされます。",
     mismatch: "保存済みの検証は別のコネクタのものです。現在のコネクタを再検証してください。",
   },
@@ -108,7 +108,7 @@ const native6Copies = {
     upgrade: "Native6로 업그레이드",
     verify: "커넥터 확인",
     compatibility: "Native4 사용(호환 모드)",
-    retained: "아래의 정확한 커넥터 이름을 사용하세요. 저장된 Native4/5는 계속 지원되며 설정에서 Native6로 업그레이드할 수 있습니다.",
+    retained: "아래의 정확한 커넥터 이름을 사용하세요. 저장된 Native4/5는 계속 지원되며 이 화면에서 Native6로 업그레이드할 수 있습니다.",
     body: "처음 설정하거나 업그레이드할 때는 새 App ID와 이 모드의 기존 터널을 사용해 ChatGPT에 새 {connector} 커넥터를 만드세요. 기존 커넥터의 이름을 바꾸지 마세요. 그런 다음 NEKODEX에서 연결을 확인하세요. 저장된 Native4/5 커넥터는 명시적으로 업그레이드할 때까지 계속 지원됩니다.",
     mismatch: "저장된 확인 결과가 다른 커넥터의 것입니다. 현재 커넥터를 다시 확인하세요.",
   },
@@ -119,6 +119,57 @@ const native6Copies = {
 
 export function native6CopyFor(language: Language) {
   return native6Copies[language];
+}
+
+// Re-attaching the connector identity that is already saved: nothing is renamed or upgraded, but
+// apps belong to one ChatGPT account and workspace, so another account needs its own app.
+const connectorAttachCopies = {
+  ru: {
+    nameInChatGpt: "Имя коннектора в ChatGPT",
+    accountNamed: "аккаунте ChatGPT «{account}»",
+    accountSelected: "выбранном аккаунте ChatGPT",
+    attach: "Подключите «{connector}» в {accountPhrase}. Приложения ChatGPT принадлежат одному аккаунту и рабочему пространству. Если в этом аккаунте ещё нет приложения с точно таким именем, включите в нём Developer mode и создайте приложение на туннеле этого режима с Authentication = None. Если оно там уже есть, не создавайте второе: убедитесь, что оно включено, и проверьте подключение.",
+  },
+  en: {
+    nameInChatGpt: "Connector name in ChatGPT",
+    accountNamed: "the ChatGPT account “{account}”",
+    accountSelected: "the selected ChatGPT account",
+    attach: "Attach “{connector}” in {accountPhrase}. ChatGPT apps belong to one account and workspace. If this account has no app with this exact name yet, enable Developer mode in it and create the app on this mode's tunnel with Authentication set to None. If the app already exists there, don't create another one: make sure it is enabled, then verify.",
+  },
+  "zh-CN": {
+    nameInChatGpt: "ChatGPT 中的连接器名称",
+    accountNamed: "ChatGPT 账户“{account}”",
+    accountSelected: "所选的 ChatGPT 账户",
+    attach: "在{accountPhrase}中连接“{connector}”。ChatGPT 应用只属于一个账户和工作区。如果此账户中还没有名称完全相同的应用，请在此账户中启用 Developer mode，并在此模式的隧道上创建应用，Authentication 设为 None。如果应用已存在，请不要再创建一个：确认它已启用，然后进行验证。",
+  },
+  "zh-TW": {
+    nameInChatGpt: "ChatGPT 中的聯結器名稱",
+    accountNamed: "ChatGPT 帳戶「{account}」",
+    accountSelected: "所選的 ChatGPT 帳戶",
+    attach: "在{accountPhrase}中連接「{connector}」。ChatGPT 應用程式只屬於一個帳戶和工作區。如果此帳戶中還沒有名稱完全相同的應用程式，請在此帳戶中啟用 Developer mode，並在此模式的 Tunnel 上建立應用程式，Authentication 設為 None。如果應用程式已存在，請勿再建立一個：確認它已啟用，然後進行驗證。",
+  },
+  ja: {
+    nameInChatGpt: "ChatGPT でのコネクタ名",
+    accountNamed: "ChatGPT アカウント「{account}」",
+    accountSelected: "選択中の ChatGPT アカウント",
+    attach: "{accountPhrase}で「{connector}」を接続します。ChatGPT のアプリは 1 つのアカウントとワークスペースに属します。このアカウントにまだ同じ名前のアプリがない場合は、このアカウントで Developer mode を有効にし、このモードのトンネルで Authentication を None にしてアプリを作成してください。すでにある場合は新しく作成せず、有効になっていることを確認してから検証してください。",
+  },
+  ko: {
+    nameInChatGpt: "ChatGPT의 커넥터 이름",
+    accountNamed: "ChatGPT 계정 “{account}”",
+    accountSelected: "선택한 ChatGPT 계정",
+    attach: "{accountPhrase}에서 “{connector}”을(를) 연결하세요. ChatGPT 앱은 하나의 계정과 워크스페이스에 속합니다. 이 계정에 정확히 같은 이름의 앱이 아직 없다면 이 계정에서 Developer mode를 켜고 이 모드의 터널에서 Authentication을 None으로 설정해 앱을 만드세요. 이미 있다면 새로 만들지 말고, 활성화되어 있는지 확인한 다음 연결을 검증하세요.",
+  },
+} satisfies Record<Language, { nameInChatGpt: string; accountNamed: string; accountSelected: string; attach: string }>;
+
+export function connectorAttachCopyFor(language: Language) {
+  return connectorAttachCopies[language];
+}
+
+export function connectorAttachNotice(language: Language, connector: string, account: string | null | undefined): string {
+  const copy = connectorAttachCopies[language];
+  const accountPhrase = account ? copy.accountNamed.replace("{account}", () => account) : copy.accountSelected;
+  return copy.attach.replace("{accountPhrase}", () => accountPhrase).replace("{connector}", () => connector);
 }
 
 const accountCodexEn = {

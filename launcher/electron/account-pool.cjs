@@ -716,10 +716,12 @@ class AccountBrowserPool {
           const evidence = await host.inspectSession(true);
           if (this.evidenceIsCurrent(account.id, epoch)) {
             this.recordCapabilityEvidence(account.id, evidence);
-            if (!this.inspectionsPaused && account.id === 'default' && this.options.bootstrapPrimaryConnector?.() === true) {
+            // Connector readiness lives only in memory; restore it for every enabled account, not just
+            // the primary one, so a restart does not strand the other accounts' tool turns.
+            if (!this.inspectionsPaused && this.options.bootstrapAccountConnectors?.() === true) {
               await host.verifyConnector(host.connectorName());
               if (!this.evidenceIsCurrent(account.id, epoch)) {
-                throw new Error('Primary account readiness changed while bootstrapping its connector');
+                throw new Error('ChatGPT account readiness changed while bootstrapping its connector');
               }
               this.connectors.set(account.id, host.connectorName());
             }
