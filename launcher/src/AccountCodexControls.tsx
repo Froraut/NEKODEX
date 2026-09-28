@@ -22,14 +22,10 @@ export interface QuotaFreshnessCopy {
   retainedAt: string;
 }
 
-/** Ids shared by an account's allowance section and its Codex sign-in disclosure. */
+/** Ids of an account's allowance section and its Codex sign-in section. */
 export function accountCodexIds(prefix: string) {
-  return { quotaTitle: `${prefix}-quota-title`, quotaReason: `${prefix}-quota-reason`, loginReason: `${prefix}-login-reason` };
-}
-
-/** The allowance and sign-in controls share one visible reason when both are blocked for the same cause. */
-function sharedReason(login: CodexLoginProgress | null, quotaDisabledReason?: string, loginDisabledReason?: string) {
-  return !login?.active && quotaDisabledReason === loginDisabledReason ? quotaDisabledReason : undefined;
+  return { quotaTitle: `${prefix}-quota-title`, quotaReason: `${prefix}-quota-reason`, quotaRefresh: `${prefix}-quota-refresh`,
+    loginReason: `${prefix}-login-reason` };
 }
 
 export function AccountCodexAllowance({
@@ -43,6 +39,8 @@ export function AccountCodexAllowance({
   quotaDisabledReason,
   quotaFreshnessCopy,
   quotaNow = Date.now(),
+  quotaReadFailedText,
+  quotaReasonId,
   transitionBusy = false,
 }: {
   copy: AccountCodexCopy;
@@ -55,94 +53,73 @@ export function AccountCodexAllowance({
   quotaDisabledReason?: string;
   quotaFreshnessCopy?: QuotaFreshnessCopy;
   quotaNow?: number;
+  /** Shown when the allowance could not be read at all (the read failed, not "no allowance"). */
+  quotaReadFailedText: string;
+  /**
+   * The disabled reason is already visible elsewhere (the page notice, the card's session notice):
+   * the button points there instead of repeating it under the header.
+   */
+  quotaReasonId?: string;
   transitionBusy?: boolean;
 }) {
   const ids = accountCodexIds(idPrefix);
+  const reasonId = quotaDisabledReason ? quotaReasonId ?? ids.quotaReason : undefined;
   const reported = quota && quota.availability === "available" && quota.coverage === "reported_buckets";
   const updatedAt = reported ? quota.fetchedAt ?? quota.checkedAt ?? null : null;
   return <section className="accounts-allowance" aria-labelledby={ids.quotaTitle}>
     <header className="accounts-allowance__header">
       <h3 id={ids.quotaTitle} className="nk-type-label">{copy.quotaTitle}</h3>
       {updatedAt ? <p className="accounts-caption nk-type-caption">{copy.quotaUpdated.replace("{time}", formatDateTime(updatedAt, language, copy.quotaUnknown))}</p> : null}
-      <Button size="sm" icon="reload"
+      <Button size="sm" icon="reload" id={ids.quotaRefresh}
         busy={quotaBusy}
         disabled={transitionBusy || Boolean(quotaDisabledReason)}
-        aria-describedby={quotaDisabledReason ? ids.quotaReason : undefined}
+        aria-describedby={reasonId}
         title={quotaDisabledReason}
         onClick={() => void onRefreshQuota()}>
         {quotaBusy ? copy.quotaChecking : copy.quotaRefresh}
       </Button>
     </header>
-    {quotaDisabledReason ? <p className="accounts-reason nk-type-caption" id={ids.quotaReason}>{quotaDisabledReason}</p> : null}
+    {quotaDisabledReason && !quotaReasonId ? <p className="accounts-reason nk-type-caption" id={ids.quotaReason}>{quotaDisabledReason}</p> : null}
     <QuotaContent copy={copy} language={language} quota={quota} disabledReason={quotaDisabledReason}
-      failed={quotaFailed} freshnessCopy={quotaFreshnessCopy} now={quotaNow} />
+      failed={quotaFailed} readFailedText={quotaReadFailedText} freshnessCopy={quotaFreshnessCopy} now={quotaNow} />
   </section>;
 }
 
+/** "Sign in to Codex": a section of the card's setup disclosure. A running flow shows in the card body instead. */
 export function AccountCodexLogin({
-  account,
   copy,
+  headingId,
   idPrefix,
-  language,
   login,
-  loginAction,
   loginDisabledReason,
   loginStarting,
   loginRecovery,
-  onCancelLogin,
-  onCopyCode,
-  onOpenLogin,
   onStartLogin,
-  quotaDisabledReason,
   transitionBusy = false,
 }: {
-  account: Account;
   copy: AccountCodexCopy;
+  headingId: string;
   idPrefix: string;
-  language: Language;
   login: CodexLoginProgress | null;
-  loginAction: "open" | "copy" | "cancel" | null;
   loginDisabledReason?: string;
   loginStarting: boolean;
   loginRecovery?: { label: string; retry: () => void };
-  onCancelLogin: () => Promise<void>;
-  onCopyCode: () => Promise<boolean>;
-  onOpenLogin: () => Promise<void>;
   onStartLogin: () => Promise<void>;
-  quotaDisabledReason?: string;
   transitionBusy?: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-  const copiedTimer = useRef<number | undefined>(undefined);
   const ids = accountCodexIds(idPrefix);
-  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
-  // A sign-in flow opens the disclosure when it starts; otherwise it stays under the user's control.
-  const hasLogin = Boolean(login);
-  const [open, setOpen] = useState(hasLogin);
-  useEffect(() => { if (hasLogin) setOpen(true); }, [hasLogin]);
-
-  const shared = sharedReason(login, quotaDisabledReason, loginDisabledReason);
   const flowRunning = Boolean(login?.active || login?.settling);
-
-  const copyCode = async () => {
-    if (transitionBusy || loginAction !== null) return;
-    if (!await onCopyCode()) return;
-    setCopied(true);
-    window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopied(false), 2_000);
-  };
-
-  return <Disclosure className="accounts-codex-login" title={copy.loginTitle} open={open} onToggle={setOpen}>
-    <div className="accounts-disclosure">
+  return <section className="accounts-details__section accounts-codex-login" aria-labelledby={headingId}>
+    <h3 id={headingId} className="nk-type-label">{copy.loginTitle}</h3>
     <p>{copy.loginBody}</p>
-    {loginDisabledReason && !flowRunning && !shared
+    {loginDisabledReason && !flowRunning
       ? <p className="accounts-reason nk-type-caption" id={ids.loginReason}>{loginDisabledReason}</p>
       : null}
     {!flowRunning || loginRecovery ? <div className="accounts-inline-actions">
       {!flowRunning ? <Button size="sm"
         busy={loginStarting}
         disabled={transitionBusy || Boolean(loginDisabledReason)}
-        aria-describedby={loginDisabledReason ? (shared ? ids.quotaReason : ids.loginReason) : undefined}
+        aria-describedby={loginDisabledReason ? ids.loginReason : undefined}
         title={loginDisabledReason}
         onClick={() => void onStartLogin()}>
         {loginStarting ? copy.loginStarting : copy.loginAction}
@@ -151,24 +128,104 @@ export function AccountCodexLogin({
         aria-label={`${loginRecovery.label}: ${copy.loginTitle}`}
         onClick={loginRecovery.retry}>{loginRecovery.label}</Button> : null}
     </div> : null}
-    {login ? <LoginProgressView account={account} copy={copy} language={language} login={login}
-      action={loginAction} copied={copied} transitionBusy={transitionBusy}
-      onCancel={onCancelLogin} onCopy={copyCode} onOpen={onOpenLogin} /> : null}
-    </div>
-  </Disclosure>;
+  </section>;
 }
 
-function QuotaContent({ copy, disabledReason, failed, freshnessCopy, language, now, quota }: {
+/**
+ * A Codex sign-in flow for this account, shown in the card body while it exists.
+ * `primary`: "Open OpenAI sign-in" is the page's next step. `claimFocus`: the flow was just started from this
+ * card, so focus moves here once the start button is gone.
+ */
+export function AccountCodexLoginProgress({
+  account,
+  claimFocus = false,
+  copy,
+  language,
+  login,
+  loginAction,
+  onCancelLogin,
+  onCopyCode,
+  onFocusClaimed,
+  onOpenLogin,
+  primary = true,
+  statusId,
+  transitionBusy = false,
+}: {
+  account: Account;
+  claimFocus?: boolean;
+  copy: AccountCodexCopy;
+  language: Language;
+  login: CodexLoginProgress;
+  loginAction: "open" | "copy" | "cancel" | null;
+  onCancelLogin: () => Promise<void>;
+  onCopyCode: () => Promise<boolean>;
+  onFocusClaimed?: () => void;
+  onOpenLogin: () => Promise<void>;
+  primary?: boolean;
+  /** Id of the "sign-in is in progress for …" line, which explains the card's disabled actions. */
+  statusId?: string;
+  transitionBusy?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+  const region = useRef<HTMLDivElement>(null);
+  // Set when one of this flow's buttons is used; if that button is then removed (the flow moved on), focus
+  // goes to the next button of the flow or to its message instead of falling back to the document.
+  const keepFocus = useRef(false);
+  useEffect(() => {
+    const active = document.activeElement;
+    const lost = !active || active === document.body || !active.isConnected;
+    if (claimFocus) {
+      onFocusClaimed?.();
+      if (lost) moveFocus(region.current);
+      return;
+    }
+    if (!keepFocus.current) return;
+    if (!lost) { if (loginAction === null) keepFocus.current = false; return; }
+    keepFocus.current = false;
+    moveFocus(region.current);
+  });
+
+  const copyCode = async () => {
+    if (transitionBusy || loginAction !== null) return;
+    keepFocus.current = true;
+    if (!await onCopyCode()) return;
+    setCopied(true);
+    window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 2_000);
+  };
+  return <div ref={region} className="accounts-login-flow">
+    <h3 className="nk-type-label">{copy.loginTitle}</h3>
+    <LoginProgressView account={account} copy={copy} language={language} login={login}
+      action={loginAction} copied={copied} transitionBusy={transitionBusy} primary={primary} statusId={statusId}
+      onCancel={() => { keepFocus.current = true; return onCancelLogin(); }} onCopy={copyCode}
+      onOpen={() => { keepFocus.current = true; return onOpenLogin(); }} />
+  </div>;
+}
+
+/** The flow's first enabled button, else its message (focusable only by script). */
+function moveFocus(region: HTMLElement | null) {
+  if (!region) return;
+  const button = region.querySelector<HTMLButtonElement>("button:not(:disabled)");
+  if (button) { button.focus(); return; }
+  const message = region.querySelector<HTMLElement>(".accounts-login-progress__message") ?? region;
+  message.tabIndex = -1;
+  message.focus();
+}
+
+function QuotaContent({ copy, disabledReason, failed, freshnessCopy, language, now, quota, readFailedText }: {
   copy: AccountCodexCopy;
   disabledReason?: string;
   failed: boolean;
+  readFailedText: string;
   freshnessCopy?: QuotaFreshnessCopy;
   language: Language;
   now: number;
   quota: AccountQuotaSnapshot | null | undefined;
 }) {
   if (failed && (quota === null || quota === undefined)) {
-    return <p className="accounts-allowance__message nk-type-small" role="alert">{copy.quotaUnavailable}</p>;
+    return <p className="accounts-allowance__message nk-type-small" role="status">{readFailedText}</p>;
   }
   if (quota === undefined) return disabledReason ? null : <p className="accounts-allowance__message nk-type-small" role="status">{copy.quotaChecking}</p>;
   if (quota === null) return disabledReason ? null : <p className="accounts-allowance__message nk-type-small">{copy.quotaNotChecked}</p>;
@@ -272,7 +329,7 @@ function QuotaWindowMeter({ copy, label, language, value }: {
     value={remaining / 100} tone={tone} note={note} />;
 }
 
-function LoginProgressView({ account, action, copied, copy, language, login, onCancel, onCopy, onOpen, transitionBusy }: {
+function LoginProgressView({ account, action, copied, copy, language, login, onCancel, onCopy, onOpen, primary, statusId, transitionBusy }: {
   account: Account;
   action: "open" | "copy" | "cancel" | null;
   copied: boolean;
@@ -282,6 +339,9 @@ function LoginProgressView({ account, action, copied, copy, language, login, onC
   onCancel: () => Promise<void>;
   onCopy: () => Promise<void>;
   onOpen: () => Promise<void>;
+  primary: boolean;
+  /** Id of the "sign-in is in progress for …" line, which explains the card's disabled actions. */
+  statusId?: string;
   transitionBusy: boolean;
 }) {
   const actual = login.actualAccount?.email || login.actualAccount?.planType || null;
@@ -292,8 +352,8 @@ function LoginProgressView({ account, action, copied, copy, language, login, onC
   const repeatsOpenAction = login.active && login.phase === "waiting" && login.canOpen && message === copy.loginOpen;
   return <div className={cx("accounts-login-progress nk-type-small", `phase-${login.phase}`)} aria-live="polite">
     {!repeatsOpenAction ? <p className="accounts-login-progress__message"><strong>{message}</strong></p> : null}
-    {login.settling ? <p>{copy.loginSettlingCurrent.replace("{account}", account.label)}</p>
-      : login.active ? <p>{copy.loginCurrent.replace("{account}", account.label)}</p> : null}
+    {login.settling ? <p id={statusId}>{copy.loginSettlingCurrent.replace("{account}", account.label)}</p>
+      : login.active ? <p id={statusId}>{copy.loginCurrent.replace("{account}", account.label)}</p> : null}
     {login.active ? <p>{copy.loginDeadline.replace("{time}", formatDateTime(login.deadlineAt, language, copy.quotaUnknown))}</p> : null}
     {actual ? <p>{copy.loginActualAccount.replace("{account}", actual)}</p> : null}
     {login.userCode ? <div className="accounts-device-code">
@@ -306,7 +366,7 @@ function LoginProgressView({ account, action, copied, copy, language, login, onC
       <small className="nk-type-caption">{copy.loginCodeHint}</small>
     </div> : null}
     {login.active ? <div className="accounts-inline-actions">
-      {login.canOpen ? <Button variant="primary" size="sm" iconEnd="external" disabled={transitionBusy || action !== null}
+      {login.canOpen ? <Button variant={primary ? "primary" : "secondary"} size="sm" iconEnd="external" disabled={transitionBusy || action !== null}
         busy={action === "open"}
         onClick={() => void onOpen()}>{copy.loginOpen}</Button> : null}
       {login.canCancel ? <Button variant="ghost" size="sm" disabled={action !== null}

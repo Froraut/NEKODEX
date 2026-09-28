@@ -1,7 +1,8 @@
 import { selectLanguage } from "./language-selection";
 import { useEffect, useRef, useState } from "react";
 import languages from "../electron/languages.json";
-import { Badge, Button, Icon, Mark, Page, Panel, PhaseSteps, SurfaceHeader, cx, type PhaseStep } from "./design";
+import { Badge, Button, Icon, Mark, Notice, Page, Panel, PhaseSteps, SurfaceHeader, cx, type PhaseStep } from "./design";
+import { localizeLauncherError } from "./i18n";
 import { useLocaleCopy } from "./useLocaleCopy";
 import { LocaleNotice } from "./LocaleNotice";
 import { messageOf, handleRadioGroupKeys, InteractionModePicker } from "./launcher-ui";
@@ -29,9 +30,13 @@ export function Onboarding({
     snapshot.state.browserInteractionMode,
   );
   const [localBusy, setBusy] = useState(false);
+  // A failed save is shown on this page, above the footer, so it never covers the button that retries it.
+  const [failure, setFailure] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLElement>(null);
   const languageGroupRef = useRef<HTMLDivElement>(null);
   const focusLanguageAfterBack = useRef(false);
+  const focusHeadingAfterStep = useRef(false);
   const locale = useLocaleCopy(selectedLanguage);
   const busy = localBusy || locale.status !== "ready" || Boolean(snapshot.lifecycle?.transition);
   const localized = locale.copy;
@@ -45,17 +50,35 @@ export function Onboarding({
     state: index < stageIndex ? "complete" : index === stageIndex ? "current" : "upcoming",
   }));
 
-  // Each step opens at the top. Back from the second step removes the Back button itself, so focus moves
+  // Each step opens at the top. Continue moves focus to the new step's title, so the step change is announced
+  // and Tab starts at its choices. Back from the second step removes the Back button itself, so focus moves
   // to the selected language instead of falling to the document.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
+    if (focusHeadingAfterStep.current) {
+      focusHeadingAfterStep.current = false;
+      const active = document.activeElement;
+      // Only when focus is still on the footer (or was dropped); a choice made meanwhile keeps its focus.
+      if (active && active !== document.body && !footerRef.current?.contains(active)) return;
+      const heading = scrollRef.current?.querySelector<HTMLHeadingElement>("h1");
+      if (!heading) return;
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+      return;
+    }
     if (stage !== "language" || !focusLanguageAfterBack.current) return;
     focusLanguageAfterBack.current = false;
     languageGroupRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus();
   }, [stage]);
 
+  const goForward = (next: "interaction" | "support") => {
+    focusHeadingAfterStep.current = true;
+    setStage(next);
+  };
+
   const goBack = (event: { currentTarget: HTMLElement }) => {
     focusLanguageAfterBack.current = isInteraction && document.activeElement === event.currentTarget;
+    setFailure(null);
     setStage(isInteraction ? "language" : "interaction");
   };
 
@@ -63,11 +86,12 @@ export function Onboarding({
     if (busy) return;
     setBusy(true);
     setError(null);
+    setFailure(null);
     try {
       const state = await selectLanguage(selectedLanguage, next => api!.setLanguage(next));
-      if (state) { updateState(state); setStage("interaction"); }
+      if (state) { updateState(state); goForward("interaction"); }
     } catch (cause) {
-      setError(messageOf(cause));
+      setFailure(messageOf(cause));
     } finally {
       setBusy(false);
     }
@@ -77,11 +101,12 @@ export function Onboarding({
     if (busy) return;
     setBusy(true);
     setError(null);
+    setFailure(null);
     try {
       const state = await selectLanguage(selectedLanguage, next => api!.completeOnboarding(next, selectedInteractionMode));
       if (state) updateState(state);
     } catch (cause) {
-      setError(messageOf(cause));
+      setFailure(messageOf(cause));
     } finally {
       setBusy(false);
     }
@@ -158,12 +183,15 @@ export function Onboarding({
         </Page>
       </div>
 
-      {locale.status !== "ready" ? (
-        <div className="nk-onboarding__locale">
-          <LocaleNotice language={selectedLanguage} copy={localized} failed={locale.status === "failed"} />
+      {locale.status !== "ready" || failure ? (
+        <div className="nk-onboarding__notices">
+          {locale.status !== "ready" ? (
+            <LocaleNotice language={selectedLanguage} copy={localized} failed={locale.status === "failed"} />
+          ) : null}
+          {failure ? <Notice title={localized.error} tone="error">{localizeLauncherError(localized, failure)}</Notice> : null}
         </div>
       ) : null}
-      <footer className="nk-onboarding__footer">
+      <footer className="nk-onboarding__footer" ref={footerRef}>
         <div className="nk-onboarding__back">
           {!isLanguage ? (
             <Button
@@ -183,7 +211,7 @@ export function Onboarding({
           disabled={busy}
           onClick={isLanguage
             ? chooseLanguage
-            : isInteraction ? () => setStage("support") : finish}
+            : isInteraction ? () => goForward("support") : finish}
           variant="primary"
         >
           {stage === "support" ? localized.finishWelcome : localized.continue}

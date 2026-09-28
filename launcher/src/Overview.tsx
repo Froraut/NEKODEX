@@ -1,19 +1,26 @@
 import type { LauncherLogStore } from './launcher-log-store';
-import { sessionIssueCopy } from "./session-issue-copy";
 import { browserTabTitleFromTitle } from "./BrowserSurface";
 import { humanEvent } from "./log-format";
-import { useId, useSyncExternalStore } from "react";
+import { useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Copy } from "./i18n";
-import { deriveWorkspaceReadiness, type WorkspaceAction } from "./workspace-readiness";
-import { modelConnectionReadiness } from "./setup-progress";
-import { workflowCopy } from "./workflow-copy";
+import { deriveWorkspaceReadiness, workspaceReadinessInput, type ConnectionStatus } from "./workspace-readiness";
+import { connectionActionWord, connectionStatusWord, connectionsCopy, workspaceHeadline, type HeadlineStep } from "./connections-copy";
 import { overviewCopy } from "./overview-copy";
 import { NetworkIssueNotice } from "./NetworkIssueNotice";
+import { messageOf } from "./launcher-ui";
 import {
-  Button, ConnectionRow, EmptyState, EventList, Hero, Page, Panel, Stat, StatGroup, SurfaceHeader,
+  Button, ConnectionRow, EmptyState, EventList, Hero, Notice, Page, Panel, Stat, StatGroup, SurfaceHeader,
   type EventItem, type IconName,
 } from "./design";
 import type { BrowserState, LauncherSnapshot, Surface } from "./types";
+
+const api = window.codexWebLauncher;
+
+/** Where each hero step leads (retry-session runs in place; wait has no destination). */
+const stepSurface: Record<Exclude<HeadlineStep, "wait" | "retry-session">, Surface> = {
+  "sign-in": "browser", setup: "setup", "routing-checks": "setup", tools: "mcp", repair: "mcp",
+  activity: "activity", "open-workspace": "browser",
+};
 
 export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logStore, navigate, openTab, onMuteNetworkNotice }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
@@ -24,119 +31,85 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
 }) {
   const logs = useSyncExternalStore(logStore.subscribe, logStore.getSnapshot);
   const overviewId = useId();
-  const workflow = workflowCopy(snapshot.state.language ?? "en");
+  const language = snapshot.state.language ?? "en";
+  const overview = overviewCopy(language);
   const manual = snapshot.state.browserInteractionMode === "manual";
-  const catalogUnavailable = !manual && Boolean(catalogFailure);
-  const signedIn = browser?.authenticated === true;
-  const authenticationStatus = browser?.authenticationStatus
-    ?? (signedIn ? "verified" : browser?.status === "signed-out" ? "signed-out" : "unknown");
-  const accountVerified = authenticationStatus === "verified";
-  const runtime = snapshot.runtimeCapabilities ?? snapshot.lifecycle;
-  const readiness = deriveWorkspaceReadiness({
-    manual,
-    authenticationStatus,
-    catalogUnavailable,
-    smokePassed: snapshot.smokePassed,
-    installed: snapshot.state.coreSetupComplete === true,
-    catalogVerified: snapshot.state.codexCatalogVerified === true,
-    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
-    toolsVerified: toolsReady,
-    development: snapshot.profile === "development",
-    runtime: runtime ? { ...runtime, transitionActive: Boolean(snapshot.lifecycle?.transition) }
-      : { transitionActive: Boolean(snapshot.lifecycle?.transition) },
-  });
+  const development = snapshot.profile === "development";
+  // The same derivation the shell and the Connections page use, so every surface reports the same state.
+  const readiness = deriveWorkspaceReadiness(workspaceReadinessInput({ snapshot, browser, catalogFailure, toolsVerified: toolsReady }));
+  const headline = workspaceHeadline(readiness, { app: copy, language, development, manual,
+    authenticationIssue: browser?.authenticationIssue });
+
+  // "Retry verification" checks the session here instead of only navigating to Accounts.
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const retryInFlight = useRef(false);
+  const retrySession = async () => {
+    if (retryInFlight.current || snapshot.lifecycle?.transition || browser?.navigationLocked) return;
+    if (!browser?.accountId || !api) { navigate("accounts"); return; }
+    retryInFlight.current = true;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await api.refreshAccountAuthentication(browser.accountId);
+    } catch (cause) {
+      setRetryError(messageOf(cause));
+    } finally {
+      retryInFlight.current = false;
+      setRetrying(false);
+    }
+  };
+  const waiting = headline.step === "wait";
+  const runStep = () => {
+    if (headline.step === "wait") return;
+    if (headline.step === "retry-session") void retrySession();
+    else navigate(stepSurface[headline.step]);
+  };
+
   const activeTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
-  const modelReadiness = modelConnectionReadiness({
-    manual,
-    installed: snapshot.state.coreSetupComplete === true,
-    catalogVerified: snapshot.state.codexCatalogVerified === true,
-    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-    development: snapshot.profile === "development",
-  });
-  const modelsReady = modelReadiness === "available";
-  const modelStatus = catalogUnavailable ? copy.catalogUnavailable
-    : modelsReady ? (manual ? copy.setupInstalledTitle : copy.connectionVerified)
-      : modelReadiness === "catalog-pending" ? copy.modelsWaitingShort
-        : modelReadiness === "picker-pending" ? copy.modelsConfirmShort : copy.connectionPending;
-  const toolsError = readiness.tools === "degraded"
-    || (readiness.tools === "unavailable" && readiness.action === "open-tools");
-  const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [
-    { icon: "accounts", label: copy.accountConnection, ready: manual || accountVerified, surface: "accounts",
-      status: manual ? copy.manualShort : accountVerified ? copy.connectionVerified
-        : authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
-          : authenticationStatus === "unknown" ? workflow.session.checkingVerification : copy.signInNeededShort },
-    { error: catalogUnavailable, icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogUnavailable,
-      surface: "setup", status: modelStatus },
-    { error: toolsError, icon: "mcp", label: copy.toolsConnectionTab,
-      ready: readiness.tools === "ready", surface: "mcp",
-      status: toolsError
-        ? copy.localToolsUnavailable : toolsReady ? copy.connectorVerified : copy.connectorNotVerified },
+  const connections: Array<{ icon: IconName; label: string; surface: Surface; status: ConnectionStatus }> = [
+    { icon: "accounts", label: copy.accountConnection, surface: "accounts", status: readiness.connections.session },
+    { icon: "setup", label: copy.modelsConnectionTab, surface: "setup", status: readiness.connections.models },
+    { icon: "mcp", label: copy.toolsConnectionTab, surface: "mcp", status: readiness.connections.tools },
   ];
-  const actionSurface: Partial<Record<WorkspaceAction, Surface>> = {
-    "retry-session": "accounts", "open-accounts": "accounts", "open-setup": "setup",
-    "open-tools": "mcp", "repair-web": "mcp", "open-browser": "browser",
-  };
-  const nativePreserved = readiness.native === "ready"
-    && (readiness.web === "degraded" || readiness.web === "unavailable"
-      || readiness.tools === "degraded" || readiness.tools === "unavailable");
-  const setupPending = readiness.action === "open-setup";
-  const toolsPending = readiness.action === "open-tools" || readiness.action === "repair-web"
-    || readiness.reason === "web-repair-active";
-  const catalogIsNext = readiness.reason === "catalog-unavailable";
-  const heroTitle = catalogIsNext ? copy.catalogUnavailable
-    : readiness.reason === "session-unavailable" ? workflow.session.verificationUnavailable
-      : toolsPending ? workflow.recovery.webTransportTitle
-        : readiness.action === "open-browser" ? (nativePreserved ? copy.setupReadyModels : copy.setupChecksPassed)
-          : setupPending ? copy.setupInstalledTitle : copy.overviewTitle;
-  const heroBody = catalogIsNext ? copy.catalogFailureKeptInstall
-    : readiness.reason === "session-unavailable" ? sessionIssueCopy(snapshot.state.language ?? "en", browser?.authenticationIssue)
-      : toolsPending ? (readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody)
-        : readiness.action === "open-browser" ? (nativePreserved ? workflow.recovery.webTransportBody : copy.connectorAvailableNotExecuted)
-          : setupPending ? (readiness.reason === "picker-confirmation-required" ? copy.setupConfirmTitle
-            : readiness.reason === "catalog-waiting" ? copy.setupCatalogTitle : copy.overviewBody)
-            : copy.overviewBody;
-  const heroSurface = catalogIsNext ? "setup" : actionSurface[readiness.action];
-  const heroAction = catalogIsNext ? copy.openRoutingChecks
-    : readiness.action === "retry-session" ? workflow.session.retryVerification
-      : readiness.action === "open-accounts" ? copy.accountConnection
-        : readiness.action === "repair-web" ? workflow.recovery.repairAction
-          : readiness.action === "open-tools" ? copy.manageToolsConnection
-          : readiness.action === "open-browser" ? copy.openWorkspace
-            : readiness.action === "open-setup" ? copy.finishSetup
-              : readiness.reason === "web-repair-active" ? workflow.recovery.repairing : copy.loading;
-  const heroRecovery = catalogIsNext || readiness.reason === "session-unavailable" || toolsPending;
-  const showActivityAction = heroRecovery || readiness.action === "open-browser";
-  const language = snapshot.state.language ?? "en";
-  const overview = overviewCopy(language);
   const modeValue = manual ? copy.manualShort : copy.automaticShort;
-  const events: EventItem[] = logs.slice(-8).reverse().map(({ id, record: log }) => {
+  // Time of day only: the list covers the current session, and the full timestamp lives in Activity.
+  const timeFormat = useMemo(() => new Intl.DateTimeFormat(language, { timeStyle: "short" }), [language]);
+  // Debug records (process output) stay in Activity; Overview lists launcher events.
+  const events: EventItem[] = logs.filter(({ record }) => record.level !== "debug").slice(-8).reverse().map(({ id, record: log }) => {
     const text = humanEvent(log.event);
+    const at = new Date(log.at);
     return {
       id: String(id),
       text: text.charAt(0).toUpperCase() + text.slice(1),
-      time: new Date(log.at).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" }),
+      time: Number.isFinite(at.getTime()) ? timeFormat.format(at) : undefined,
       dateTime: log.at,
       level: log.level === "error" ? "error" : log.level === "warning" ? "warning" : "info",
     };
   });
   return <Page width="wide" className="overview-page">
+    <SurfaceHeader title={copy.overview} subtitle={copy.overviewSubtitle} />
     <div className="nk-stack">
-      <SurfaceHeader title={copy.overview} subtitle={copy.overviewSubtitle} />
-      <Hero eyebrow={heroSurface ? copy.setupNext : undefined} title={heroTitle}
+      <Hero eyebrow={waiting ? connectionsCopy(language).inProgress : copy.setupNext} title={headline.title}
         actions={<>
-          <Button variant="primary" iconEnd="forward" disabled={!heroSurface}
-            onClick={() => { if (heroSurface) navigate(heroSurface); }}>{heroAction}</Button>
-          {showActivityAction ? <Button variant="ghost" onClick={() => navigate("activity")}>{copy.viewActivity}</Button> : null}
+          <Button variant="primary" busy={waiting || retrying} iconEnd={waiting || headline.step === "retry-session" ? undefined : "forward"}
+            onClick={runStep}>{headline.action}</Button>
+          {headline.secondary === "activity"
+            ? <Button variant="ghost" onClick={() => navigate("activity")}>{copy.viewActivity}</Button>
+            : headline.secondary === "tools"
+              ? <Button variant="ghost" onClick={() => navigate("mcp")}>{copy.manageToolsConnection}</Button>
+              : null}
         </>}>
-        {heroBody}
+        {headline.body}
       </Hero>
+      {retryError && headline.step === "retry-session"
+        ? <Notice tone="error">{retryError}</Notice> : null}
       <NetworkIssueNotice language={language} browser={browser}
         muted={snapshot.state.showNetworkIssueNotice === false} onDontShowAgain={onMuteNetworkNotice} />
-      <StatGroup label={copy.overviewActiveRuns}>
+      <StatGroup label={overview.statsLabel}>
         <Stat label={copy.overviewActiveRuns} value={active} note={copy.overviewActiveRunsBody} />
         <Stat label={copy.configuredLimit} value={snapshot.browserCapacity.active} onClick={() => navigate("settings")}
           title={copy.capacityHint} aria-label={`${copy.configuredLimit}: ${snapshot.browserCapacity.active}. ${copy.capacityLink}`}
@@ -158,10 +131,10 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
           </Panel> : null}
           <Panel title={copy.connectionsShort} titleId={`${overviewId}-connections`} padding="compact">
             <p className="nk-visually-hidden">{copy.connectionsBody}</p>
+            {/* Word, dot and action all come from one derived status per connection. */}
             <div className="nk-conn-list">{connections.map(connection => <ConnectionRow key={connection.surface}
-              icon={connection.icon} label={connection.label} status={connection.status}
-              state={connection.error ? "error" : connection.ready ? "ready" : "idle"}
-              action={connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.openRoutingChecks : copy.connectShort}
+              icon={connection.icon} label={connection.label} status={connectionStatusWord(connection.status, copy, language)}
+              state={connection.status.dot} action={connectionActionWord(connection.status.action, copy, language)}
               onClick={() => navigate(connection.surface)} />)}</div>
           </Panel>
         </div>

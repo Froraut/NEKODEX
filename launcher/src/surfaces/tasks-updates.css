@@ -2,9 +2,13 @@
 
 /* ---------- Task center (size-content) ---------- */
 .task-queue { margin-bottom: var(--space-6); }
-.task-queue__scope { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; }
+/* Pause scope + pause button: a control row under the header, aligned like the recorded-task filters. */
+.task-queue__scope { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); min-width: 0; padding: var(--space-2) var(--space-5) var(--space-4); }
+.task-queue__scope > .nk-field { flex: 0 1 240px; min-width: 0; }
+.task-queue__scope .nk-select { width: 100%; min-width: 0; }
 .task-queue__state { margin-right: var(--space-2); vertical-align: 1px; }
 .task-queue__notices, .task-history-notices { display: grid; gap: var(--space-3); padding: var(--space-2) var(--space-5) var(--space-4); }
+.task-queue__scope + .task-queue__notices { padding-top: 0; }
 
 .task-history-count { color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
 .task-history-filters {
@@ -51,6 +55,8 @@
 @container workspace (max-width: 760px) {
   .task-row { grid-template-columns: minmax(0, 1fr); }
   .task-row__actions { justify-content: flex-start; }
+  /* A leading ghost button bleeds by its inline padding (+ border) so its label lines up with the row text. */
+  .task-row__actions > .nk-btn--sm.nk-btn--ghost:first-child { margin-inline-start: calc(-1 * (var(--space-3) + 1px)); }
 }
 @container workspace (max-width: 480px) {
   .task-history-filters { grid-template-columns: minmax(0, 1fr); }

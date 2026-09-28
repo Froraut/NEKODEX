@@ -51,6 +51,8 @@ export function BrowserWorkspaceManager({
   const [error, setError] = useState<{ accountId: string; message: string } | null>(null);
   const { pending, run: runAction } = useFeatureAction<{ accountId: string; action: string }>(disabled, (cause, identity) => {
     setError({ accountId: identity.accountId, message: stripIpcErrorPrefix(cause instanceof Error ? cause.message : String(cause)) });
+    // A failure started from the bar ("New window") must be seen: open the panel, whose error Notice explains it.
+    setExpanded(true);
   });
 
   const account = snapshot.accounts.find(candidate => candidate.accountId === selectedAccountId);
@@ -77,15 +79,19 @@ export function BrowserWorkspaceManager({
   return <>
     <div className="browser-bar__end">
       {children}
+      {/* The visible label is the accessible name; the tooltip says where it opens. */}
       <Button size="sm" icon="plus" className="browser-windows__new" disabled={newWindowBlocked}
-        title={copy.newWindow} aria-label={copy.newWindow} onClick={openNewWindow}>{copy.newWindowShort}</Button>
-      <Button variant="ghost" size="sm" iconEnd="chevron" className="browser-windows__toggle"
+        title={copy.newWindow} onClick={openNewWindow}>{copy.newWindowShort}</Button>
+      <Button variant="ghost" size="sm" iconEnd="chevron" className="browser-windows__toggle" title={copy.windows}
         aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpanded(value => !value)}>
         <span className="browser-windows__label">{copy.windows}</span>{" "}
         <span className="browser-windows__count">{copy.openCount(open)}{saved > 0 ? ` · ${copy.savedCount(saved)}` : ""}</span>
-        {account.persistenceFailed || accountError ? <span className="browser-windows__alert" role="status"
-          aria-label={account.persistenceFailed ? copy.saveFailed : accountError?.message}
-          title={account.persistenceFailed ? copy.saveFailed : accountError?.message}><Icon name="alert" /></span> : null}
+        {/* A secondary cue while the panel is closed; the panel's Notice carries the message (and role=alert). */}
+        {account.persistenceFailed || accountError ? <span className="browser-windows__alert"
+          title={account.persistenceFailed ? copy.saveFailed : accountError?.message}>
+          <Icon name="alert" />
+          <span className="nk-visually-hidden">{account.persistenceFailed ? copy.saveFailed : accountError?.message}</span>
+        </span> : null}
       </Button>
     </div>
     <div className="browser-windows" id={panelId} hidden={!expanded}>
@@ -119,7 +125,7 @@ export function BrowserWorkspaceManager({
       </div> : null}
 
       {account.items.length === 0 ? <p className="browser-windows__note">{copy.empty}</p> : <ul className="browser-windows__list">
-        {account.items.map(item => <li className={item.active ? "is-active" : undefined} key={item.id}>
+        {account.items.map((item, index) => <li className={item.active ? "is-active" : undefined} key={item.id} data-window-row={index}>
           <button type="button" className="browser-windows__item" disabled={busy || item.state !== "open"}
             onClick={() => void run(`focus-${item.id}`, () => onFocus(account.accountId, item.id))}>
             <span className="browser-windows__item-title" title={item.title || locationLabel(item)}>{item.title || locationLabel(item)}</span>

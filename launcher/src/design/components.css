@@ -58,22 +58,24 @@ body {
     transform var(--duration-press) ease;
 }
 .nk-btn .nk-icon { width: 16px; height: 16px; }
-.nk-btn:active:not(:disabled) { transform: scale(0.985); }
-.nk-btn:disabled { opacity: 0.38; }
-.nk-btn[aria-busy="true"]:disabled { opacity: 0.72; }
+/* App: [aria-disabled="true"] is a control that became disabled or busy while focused (it keeps focus, see
+   useFocusSafeDisabled); it looks and behaves like :disabled. */
+.nk-btn:active:not(:disabled, [aria-disabled="true"]) { transform: scale(0.985); }
+.nk-btn:is(:disabled, [aria-disabled="true"]) { opacity: 0.38; }
+.nk-btn[aria-busy="true"]:is(:disabled, [aria-disabled="true"]) { opacity: 0.72; }
 .nk-btn--sm { height: var(--size-control-sm); padding: 0 var(--space-3); gap: var(--space-1); font-size: 13px; line-height: 18px; }
 .nk-btn--sm .nk-icon { width: 14px; height: 14px; }
 .nk-btn--block { width: 100%; }
 .nk-btn--primary { background: var(--accent); color: var(--on-accent); }
-.nk-btn--primary:hover:not(:disabled) { background: var(--accent-hover); box-shadow: var(--shadow-accent), var(--shadow-control); }
+.nk-btn--primary:hover:not(:disabled, [aria-disabled="true"]) { background: var(--accent-hover); box-shadow: var(--shadow-accent), var(--shadow-control); }
 .nk-btn--secondary { background: var(--bg-control); border-color: var(--border); color: var(--text-secondary); }
-.nk-btn--secondary:hover:not(:disabled) { background: var(--bg-control-hover); border-color: var(--border-heavy); color: var(--text-primary); box-shadow: var(--shadow-control); }
+.nk-btn--secondary:hover:not(:disabled, [aria-disabled="true"]) { background: var(--bg-control-hover); border-color: var(--border-heavy); color: var(--text-primary); box-shadow: var(--shadow-control); }
 .nk-btn--ghost { color: var(--text-secondary); }
-.nk-btn--ghost:hover:not(:disabled) { background: var(--bg-control-hover); color: var(--text-primary); }
+.nk-btn--ghost:hover:not(:disabled, [aria-disabled="true"]) { background: var(--bg-control-hover); color: var(--text-primary); }
 .nk-btn--link { height: auto; min-height: var(--size-control-sm); padding: 0 var(--space-1); color: var(--text-accent); }
-.nk-btn--link:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 4px; }
+.nk-btn--link:hover:not(:disabled, [aria-disabled="true"]) { text-decoration: underline; text-underline-offset: 4px; }
 .nk-btn--danger { background: var(--danger); color: var(--on-danger); }
-.nk-btn--danger:hover:not(:disabled) { box-shadow: var(--shadow-control); filter: brightness(1.06); }
+.nk-btn--danger:hover:not(:disabled, [aria-disabled="true"]) { box-shadow: var(--shadow-control); filter: brightness(1.06); }
 .nk-spinner {
   width: 14px;
   height: 14px;
@@ -100,8 +102,8 @@ body {
   transition: color var(--duration-micro) ease, background-color var(--duration-micro) ease;
 }
 .nk-icon-btn .nk-icon { width: 16px; height: 16px; }
-.nk-icon-btn:hover:not(:disabled), .nk-icon-btn[aria-pressed="true"], .nk-icon-btn[aria-expanded="true"] { background: var(--bg-control-hover); color: var(--icon-primary); }
-.nk-icon-btn:disabled { color: var(--text-disabled); }
+.nk-icon-btn:hover:not(:disabled, [aria-disabled="true"]), .nk-icon-btn[aria-pressed="true"], .nk-icon-btn[aria-expanded="true"] { background: var(--bg-control-hover); color: var(--icon-primary); }
+.nk-icon-btn:is(:disabled, [aria-disabled="true"]) { color: var(--text-disabled); }
 /* App: IconButton size="sm", a 24px control inside a 32px row (closing a tab). */
 .nk-icon-btn--sm { width: 24px; height: 24px; border-radius: var(--radius-xs); }
 .nk-icon-btn--sm .nk-icon { width: 14px; height: 14px; }
@@ -185,10 +187,11 @@ body {
   background: var(--bg-elevated);
   box-shadow: var(--shadow-overlay);
 }
-.nk-toast--fixed { position: fixed; z-index: var(--z-toast); right: var(--space-5); bottom: var(--space-5); width: min(430px, calc(100vw - 40px)); }
+.nk-toast--fixed { position: fixed; z-index: calc(var(--z-toast) + 1); right: var(--space-5); bottom: var(--space-5); width: min(430px, calc(100vw - 40px)); }
 /* App: fixed toasts portal into one bottom-right stack on <body>, so two never cover each other (newest at the
-   bottom). It sits just under dialogs, which make the page, the stack included, inert while open. */
-.nk-toast-stack { position: fixed; z-index: calc(var(--z-toast) - 1); right: var(--space-5); bottom: var(--space-5); display: grid; gap: var(--space-2); width: min(430px, calc(100vw - 40px)); pointer-events: none; }
+   bottom). It sits above dialog scrims (a dialog leaves the stack out of its inert page and its Tab cycle takes the
+   toast in), and above a [data-toast-floor] footer (--toast-floor, set by the Toast). */
+.nk-toast-stack { position: fixed; z-index: calc(var(--z-toast) + 1); right: var(--space-5); bottom: calc(var(--toast-floor, 0px) + var(--space-5)); display: grid; gap: var(--space-2); width: min(430px, calc(100vw - 40px)); pointer-events: none; }
 .nk-toast-stack:empty { display: none; }
 .nk-toast-stack > .nk-toast { position: static; width: 100%; pointer-events: auto; }
 .nk-toast > .nk-dot { margin-top: 7px; }
@@ -223,7 +226,7 @@ body {
 .nk-steps li.is-error > span, .nk-steps li.is-error > button > span { border-color: currentColor; }
 /* App: PhaseSteps onSelect makes each step a button (marker + label) that returns to that phase. */
 .nk-steps li > button { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: left; }
-.nk-steps li > button:hover:not(:disabled) { color: var(--text-primary); }
+.nk-steps li > button:hover:not(:disabled, [aria-disabled="true"]) { color: var(--text-primary); }
 
 /* ---------- Switch ---------- */
 .nk-switch { position: relative; width: var(--size-hit); height: var(--size-hit); flex: 0 0 var(--size-hit); padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; }
@@ -250,12 +253,15 @@ body {
   box-shadow: var(--shadow-control);
   transition: transform var(--duration-control) var(--ease-enter);
 }
-.nk-switch:hover:not(:disabled)::before { box-shadow: var(--shadow-control); }
+.nk-switch:hover:not(:disabled, [aria-disabled="true"])::before { box-shadow: var(--shadow-control); }
 .nk-switch.is-on::before { background: var(--accent); }
 .nk-switch.is-on > span { transform: translateX(14px); }
-.nk-switch:active:not(:disabled) > span { transform: scale(0.9); transition-duration: var(--duration-press); }
-.nk-switch.is-on:active:not(:disabled) > span { transform: translateX(14px) scale(0.9); }
-.nk-switch:disabled { opacity: 0.42; }
+.nk-switch:active:not(:disabled, [aria-disabled="true"]) > span { transform: scale(0.9); transition-duration: var(--duration-press); }
+.nk-switch.is-on:active:not(:disabled, [aria-disabled="true"]) > span { transform: translateX(14px) scale(0.9); }
+.nk-switch:is(:disabled, [aria-disabled="true"]) { opacity: 0.42; }
+/* App: Switch busy (the change is being saved) pulses its thumb and stays at full strength. */
+.nk-switch[aria-busy="true"] { opacity: 1; }
+.nk-switch[aria-busy="true"] > span { animation: nk-pulse 1.3s ease-in-out infinite; }
 
 /* ---------- Select / TextField / Checkbox ---------- */
 .nk-select { position: relative; display: inline-flex; min-width: 180px; max-width: 100%; }
@@ -273,10 +279,10 @@ body {
 .nk-select select { appearance: none; -webkit-appearance: none; padding: 0 36px 0 var(--space-3); }
 .nk-select select option { background: var(--bg-elevated); color: var(--text-primary); }
 .nk-select > .nk-icon { position: absolute; top: 50%; right: var(--space-3); width: 14px; height: 14px; color: var(--icon-secondary); pointer-events: none; transform: translateY(-50%) rotate(90deg); }
-.nk-select select:hover:not(:disabled), .nk-input:hover:not(:disabled) { background: var(--bg-control-hover); }
+.nk-select select:hover:not(:disabled, [aria-disabled="true"]), .nk-input:hover:not(:disabled, [aria-disabled="true"]) { background: var(--bg-control-hover); }
 /* App: Select size="sm", level with small buttons in a dense bar. */
 .nk-select--sm select { height: var(--size-control-sm); }
-.nk-select select:disabled, .nk-input:disabled { color: var(--text-disabled); opacity: 0.62; }
+.nk-select select:is(:disabled, [aria-disabled="true"]), .nk-input:is(:disabled, [aria-disabled="true"]) { color: var(--text-disabled); opacity: 0.62; }
 .nk-input { padding: 0 var(--space-3); }
 .nk-input::placeholder { color: var(--text-tertiary); }
 .nk-input[aria-invalid="true"] { border-color: var(--text-error); }
@@ -288,6 +294,7 @@ body {
 .nk-field__error { margin: 0; color: var(--text-error); font-size: 13px; line-height: 18px; }
 .nk-check { display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--size-control-sm); color: var(--text-secondary); font-size: 14px; line-height: 20px; }
 .nk-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.nk-check input[aria-disabled="true"] { opacity: 0.5; }
 
 /* ---------- Tabs ---------- */
 .nk-tabs { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--border); }
@@ -304,8 +311,8 @@ body {
 .nk-tabs > button > span { color: var(--text-secondary); font-size: 14px; line-height: 20px; font-weight: 500; }
 .nk-tabs > button > small { display: flex; align-items: center; gap: var(--space-2); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
 .nk-tabs > button:hover > span { color: var(--text-primary); }
-.nk-tabs > button[aria-current="page"] { border-bottom-color: var(--accent); }
-.nk-tabs > button[aria-current="page"] > span { color: var(--text-primary); }
+.nk-tabs > button[aria-selected="true"] { border-bottom-color: var(--accent); }
+.nk-tabs > button[aria-selected="true"] > span { color: var(--text-primary); }
 
 /* ---------- AppShell ---------- */
 .nk-shell {

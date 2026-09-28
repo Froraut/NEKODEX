@@ -3,6 +3,7 @@ import type { AccountProxy, Language } from "./types";
 import type { Copy } from "./i18n";
 import { normalizeAccountProxy } from "./account-proxy-validation";
 import { Button, Select, TextField, cx } from "./design";
+import type { AccountFormState } from "./AccountSafetySettings";
 
 const restoreSavedProxyCopy: Record<Language, string> = {
   en: "Restore saved proxy",
@@ -24,8 +25,8 @@ export function proxyModeOptions(copy: Copy) {
 export function AccountProxySettings({ proxy, language, disabled, blockedReason, copy, save, onStateChange }: {
   proxy: AccountProxy; language: Language; disabled: boolean; blockedReason?: string; copy: Copy;
   save: (value: AccountProxy) => Promise<boolean>;
-  /** Reports "Saving…" / "Could not save…" / "Unsaved changes" (or null) for the enclosing disclosure summary. */
-  onStateChange?: (state: string | null) => void;
+  /** Reports saving / failed / unsaved (or null) for the enclosing disclosure summary. */
+  onStateChange?: (state: AccountFormState) => void;
 }) {
   const [draft, setDraft] = useState(proxy);
   const [touched, setTouched] = useState(false);
@@ -67,30 +68,29 @@ export function AccountProxySettings({ proxy, language, disabled, blockedReason,
     setDraft({ ...proxy }); setTouched(false); setFailed(false);
   };
   const modeOptions = proxyModeOptions(copy);
-  const formState = saving ? copy.accountFormSaving : failed ? copy.accountFormFailed : draftChanged ? copy.accountFormUnsaved : null;
+  const formState: AccountFormState = saving ? "saving" : failed ? "failed" : draftChanged ? "unsaved" : null;
   useEffect(() => { onStateChange?.(formState); }, [formState, onStateChange]);
-  return <section className="accounts-controls__section" aria-labelledby={`${statusId}-title`}>
-    <header className="accounts-controls__head">
-      <h3 id={`${statusId}-title`} className="nk-type-label">{copy.accountProxy}</h3>
-      {formState ? <span className="accounts-hint is-attention nk-type-caption">{formState}</span> : null}
-    </header>
+  // Controls are disabled one by one (not through <fieldset disabled>) so a focused control keeps focus while saving.
+  const locked = disabled || saving;
+  return <section className="accounts-details__section accounts-controls__section" aria-labelledby={`${statusId}-title`}>
+    <h3 id={`${statusId}-title`} className="nk-type-label">{copy.accountProxy}</h3>
     <p>{copy.accountProxyBody}</p>
     <form className="accounts-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
-      <fieldset disabled={disabled || saving} aria-describedby={statusId}>
+      <fieldset aria-describedby={statusId}>
         <div className="accounts-proxy__fields">
-          <Select label={copy.accountProxy} value={draft.mode} options={modeOptions}
+          <Select label={copy.accountProxy} value={draft.mode} options={modeOptions} disabled={locked}
             onChange={value => { setTouched(false); setFailed(false); setDraft({ mode: value as AccountProxy["mode"], url: "" }); }} />
-          {needsUrl ? <TextField ref={input} label={copy.proxyUrl} type="url" required maxLength={2048}
+          {needsUrl ? <TextField ref={input} label={copy.proxyUrl} disabled={locked} type="url" required maxLength={2048}
             aria-invalid={Boolean(invalid)} aria-describedby={statusId}
             value={draft.url ?? ""} placeholder={draft.mode === "pac" ? "https://example.com/proxy.pac" : `${draft.mode}://127.0.0.1:8080`}
             autoComplete="off" spellCheck={false} onBlur={() => setTouched(true)}
             onChange={event => { setFailed(false); setDraft({ ...draft, url: event.target.value }); }} /> : null}
         </div>
         <div className="accounts-inline-actions">
-          <Button type="submit" size="sm" busy={saving} disabled={!changed || !normalized.value}>
+          <Button type="submit" size="sm" busy={saving} disabled={disabled || !changed || !normalized.value}>
             {saving ? copy.accountFormSaving : copy.proxySave}
           </Button>
-          <Button size="sm" variant="ghost" disabled={!draftChanged || saving}
+          <Button size="sm" variant="ghost" disabled={locked || !draftChanged}
             onClick={restoreSaved}>{restoreSavedProxyCopy[language]}</Button>
         </div>
       </fieldset>

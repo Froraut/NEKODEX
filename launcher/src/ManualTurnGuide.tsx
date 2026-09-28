@@ -15,7 +15,8 @@ export function ManualTurnGuide({
   copy: Copy;
   confirmPending: boolean;
   transitionBusy: boolean;
-  onCancel: () => void;
+  /** Receives the Cancel turn button, so focus can return to it when a confirmation closes. */
+  onCancel: (opener: HTMLElement) => void;
   onCopy: () => Promise<boolean>;
   onSent: () => void;
   tab: BrowserState["tabs"][number];
@@ -65,15 +66,17 @@ export function ManualTurnGuide({
   return (
     <Panel as="section" titleId={headingId} variant="brand" padding="compact" className={`browser-manual${waiting ? " is-waiting" : ""}`}>
       <div className="browser-manual__copy">
-        <strong id={headingId}>{waiting ? copy.manualPromptTitle : copy.manualPromptWaiting}</strong>
+        <h2 id={headingId} className="browser-manual__title" tabIndex={-1}>{waiting ? copy.manualPromptTitle : copy.manualPromptWaiting}</h2>
         {tab.canCopyPrompt ? <p>{copy.manualPromptInstruction}</p> : null}
       </div>
       <Badge className="browser-manual__status" tone={tone} dot={dot}>{status}</Badge>
       <span className="nk-visually-hidden" aria-live="polite">{waiting ? "" : status}</span>
       <div className="browser-manual__actions">
-        <Button variant="ghost" disabled={transitionBusy} onClick={onCancel}>{copy.manualPromptCancel}</Button>
+        <Button variant="ghost" disabled={transitionBusy} onClick={event => onCancel(event.currentTarget)}>{copy.manualPromptCancel}</Button>
         <Button disabled={transitionBusy || !tab.canCopyPrompt} onClick={() => void onCopy().then(ok => { if (ok) setCopied(true); })}>{copied ? copy.manualPromptCopied : copy.manualPromptCopy}</Button>
-        <Button variant="primary" disabled={transitionBusy || confirmPending || !tab.canConfirmSent} onClick={onSent}>{confirmPending ? copy.running : waiting ? copy.manualPromptConfirmSent : copy.manualPromptSent}</Button>
+        {/* Once sent, the status badge says so; the confirm button is only the next step while the turn waits. */}
+        {waiting ? <Button variant="primary" disabled={transitionBusy || confirmPending || !tab.canConfirmSent} onClick={onSent}>
+          {confirmPending ? copy.running : copy.manualPromptConfirmSent}</Button> : null}
       </div>
     </Panel>
   );

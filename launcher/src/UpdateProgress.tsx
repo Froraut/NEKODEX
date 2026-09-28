@@ -42,7 +42,28 @@ function useTransferReading(target: Reading, enabled: boolean): Reading {
   return reading;
 }
 
+/** Decimal byte units (as macOS and Windows Explorer show sizes), formatted and localized by Intl. */
+const byteUnits = [["gigabyte", 1e9], ["megabyte", 1e6], ["kilobyte", 1e3]] as const;
+
+/** "31 kB", "84.1 MB", "1.25 GB" (or per second): the unit follows the size, so small transfers never read 0.0. */
+function byteFormatter(language: Language) {
+  const formats = new Map<string, Intl.NumberFormat>();
+  return (bytes: number, perSecond = false) => {
+    const [unit, size] = byteUnits.find(([, threshold]) => bytes >= threshold) ?? byteUnits[2];
+    const digits = unit === "kilobyte" ? 0 : unit === "megabyte" ? 1 : 2;
+    const key = `${unit}${perSecond ? "-per-second" : ""}`;
+    let format = formats.get(key);
+    if (!format) {
+      format = new Intl.NumberFormat(language, { style: "unit", unit: key, unitDisplay: "short",
+        minimumFractionDigits: digits, maximumFractionDigits: digits });
+      formats.set(key, format);
+    }
+    return format.format(bytes / size);
+  };
+}
+
 export function UpdateProgress({ state, label, language = "en" }: { state: UpdateState; label: string; language?: Language }) {
+  const copy = updateCopyFor(language);
   const downloading = state.status === "downloading";
   const total = downloading && Number.isFinite(state.totalBytes) && state.totalBytes! > 0 ? state.totalBytes : undefined;
   const bytes = downloading && Number.isFinite(state.downloadedBytes)
@@ -56,22 +77,22 @@ export function UpdateProgress({ state, label, language = "en" }: { state: Updat
   const unit = remaining !== undefined && remaining >= 3600 ? "hour"
     : remaining !== undefined && remaining >= 60 ? "minute" : "second";
   const divisor = unit === "hour" ? 3600 : unit === "minute" ? 60 : 1;
-  const eta = remaining === undefined ? undefined : updateCopyFor(language).downloadRemaining.replace("{duration}",
+  const eta = remaining === undefined ? undefined : copy.downloadRemaining.replace("{duration}",
     new Intl.NumberFormat(language, { style: "unit", unit, unitDisplay: "short" }).format(Math.ceil(remaining / divisor)));
   const reading = useTransferReading({ bytes, speed }, downloading);
   // No reported total is not evidence that part of the file has arrived: the meter stays indeterminate.
   const fraction = total ? Math.min(1, reading.bytes / total) : 0;
-  const decimal = new Intl.NumberFormat(language, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const percent = new Intl.NumberFormat(language, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  const mib = (value: number) => `${decimal.format(value / 1024 / 1024)} MiB`;
-  // Accessible values follow telemetry directly, not the visual animation frames.
+  const size = byteFormatter(language);
+  const transferred = (done: number) => total ? copy.transferred.replace("{done}", size(done)).replace("{total}", size(total)) : size(done);
+  // Accessible values follow telemetry directly, not the visual animation frames. An unreported speed is left out
+  // rather than shown as a placeholder.
   const valueText = downloading ? [
-    `${mib(bytes)}${total ? ` / ${mib(total)} (${percent.format(bytes / total)})` : ""}`,
-    hasSpeed ? `${mib(speed)}/s` : undefined, eta,
+    `${transferred(bytes)}${total ? ` (${percent.format(bytes / total)})` : ""}`,
+    hasSpeed ? size(speed, true) : undefined, eta,
   ].filter(Boolean).join("; ") : undefined;
-  const figures = downloading ? [
-    `${mib(reading.bytes)}${total ? ` / ${mib(total)}` : ""}`, hasSpeed ? `${mib(reading.speed)}/s` : "— MiB/s", eta,
-  ].filter(Boolean).join(" · ") : undefined;
+  const figures = downloading ? [transferred(reading.bytes), hasSpeed ? size(reading.speed, true) : undefined, eta]
+    .filter(Boolean).join(" · ") : undefined;
   // The bar follows telemetry (the kit fill transitions its width); the figures interpolate between readings.
   return <ProgressMeter className="updates-download" label={label} value={total ? Math.min(1, bytes / total) : null}
     valueLabel={total ? percent.format(fraction) : undefined} valueText={valueText} note={figures} />;

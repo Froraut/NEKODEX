@@ -1,13 +1,13 @@
 import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
 import { useAccountCodexLogin } from "./useAccountCodexLogin";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AccountSafetySettings } from "./AccountSafetySettings";
+import { AccountSafetySettings, type AccountFormState } from "./AccountSafetySettings";
 import { AccountProxySettings, proxyModeOptions } from "./AccountProxySettings";
-import { AccountCodexAllowance, AccountCodexLogin } from "./AccountCodexControls";
+import { AccountCodexAllowance, AccountCodexLogin, AccountCodexLoginProgress } from "./AccountCodexControls";
 import { AccountReadiness, accountPacingStatus } from "./AccountReadiness";
 import { AccountToolsOnboarding } from "./AccountToolsOnboarding";
-import { QuotaPortfolioSummary } from "./QuotaPortfolioSummary";
-import { accountToolsStep } from "./account-tools-onboarding";
+import { quotaPortfolioSummary } from "./QuotaPortfolioSummary";
+import { accountToolsCopy, accountToolsStep } from "./account-tools-onboarding";
 import { accountsCopy } from "./accounts-copy";
 import { AccountCard, Button, Checkbox, Disclosure, Notice, Page, Panel, Select, SurfaceHeader, TextField, cx, type Status, type Tone } from "./design";
 import { accountCodexCopyFor, type Copy } from "./i18n";
@@ -40,23 +40,50 @@ function nextQuotaClockAt(values: Iterable<AccountQuotaSnapshot | null>, now: nu
   return next;
 }
 
-type FormStateReporter = (state: string | null) => void;
+/** The card action (or page action) a pool mutation is running for: that control shows the spinner. */
+type PendingKind = "enabled" | "credentials" | "select" | "check" | "connector" | "mode" | "add" | "safety" | "proxy" | "resume";
+type Pending = { kind: PendingKind; accountId: string | null };
 
-/** One disclosure for an account's pacing, new-session window and proxy forms; unsaved work shows in its summary. */
-function AccountControlsDisclosure({ title, summary, held, pacing, proxy }: {
-  title: string; summary: string; held: boolean;
-  pacing: (report: FormStateReporter) => ReactNode;
-  proxy: (report: FormStateReporter) => ReactNode;
+/** The page's one next step, which alone gets the primary button. */
+type PrimaryStep = { kind: "add" | "runtime" } | { kind: "login-open" | "sign-in" | "check" | "connector"; accountId: string };
+
+/** Moves focus to a heading (or other non-control) that only script focuses; accounts.css hides its ring. */
+function focusTarget(element: HTMLElement | null | undefined) {
+  if (!element) return;
+  if (!element.matches("button, input, select, textarea, summary, a[href]")) element.tabIndex = -1;
+  element.focus();
+}
+
+/**
+ * The card's one disclosure: account tools setup, Codex sign-in, models, pacing and proxy. Its summary is one line:
+ * what is inside ("Pacing on · Proxy: System settings"), led by a short token while a form there is unsaved,
+ * saving or failed. `focus` (returning from the shared tools setup) opens it once and focuses its summary.
+ */
+function AccountDetails({ title, summary, tokens, focus, children }: {
+  title: string; summary: string[]; focus: boolean;
+  tokens: Record<NonNullable<AccountFormState>, string>;
+  children: (report: { pacing: (state: AccountFormState) => void; proxy: (state: AccountFormState) => void }) => ReactNode;
 }) {
-  const [pacingState, setPacingState] = useState<string | null>(null);
-  const [proxyState, setProxyState] = useState<string | null>(null);
-  const attention = pacingState ?? proxyState;
-  return <Disclosure className="accounts-controls" title={title}
-    hint={<span className={cx("accounts-hint", (attention || held) && "is-attention")}>{attention ?? summary}</span>}>
-    <div className="accounts-disclosure accounts-controls__body">
-      {pacing(setPacingState)}
-      {proxy(setProxyState)}
-    </div>
+  const summaryRef = useRef<HTMLElement>(null);
+  const [open, setOpen] = useState(focus);
+  const [pacingState, setPacingState] = useState<AccountFormState>(null);
+  const [proxyState, setProxyState] = useState<AccountFormState>(null);
+  useEffect(() => {
+    if (!focus) return;
+    setOpen(true);
+    summaryRef.current?.scrollIntoView({ block: "nearest" });
+    summaryRef.current?.focus({ preventScroll: true });
+  }, [focus]);
+  const states = [pacingState, proxyState];
+  const formState = (["failed", "saving", "unsaved"] as const).find(state => states.includes(state)) ?? null;
+  const plain = [formState ? tokens[formState] : null, ...summary].filter(Boolean).join(" · ");
+  const hint = plain ? <span className="accounts-details__hint" title={plain}>
+    {formState ? <><span className={cx("accounts-details__state", `is-${formState}`)}>{tokens[formState]}</span>
+      {summary.length ? " · " : null}</> : null}
+    {summary.join(" · ")}
+  </span> : undefined;
+  return <Disclosure className="accounts-details" title={title} hint={hint} open={open} onToggle={setOpen} summaryRef={summaryRef}>
+    <div className="accounts-details__body">{children({ pacing: setPacingState, proxy: setProxyState })}</div>
   </Disclosure>;
 }
 
@@ -70,7 +97,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   const api = window.codexWebLauncher!;
   const codexCopy = accountCodexCopyFor(language);
   const workflow = workflowCopy(language);
-  const { snapshot: state, failed: loadFailed, retry: retryPool, applyReceipt } = useAccountPoolSnapshot({ api });
+  const { snapshot: state, failed: loadFailed, loading: poolLoading, retry: retryPool, applyReceipt } = useAccountPoolSnapshot({ api });
   const [label, setLabel] = useState("");
   const [createdAccountId, setCreatedAccountId] = useState<string | null>(null);
   // The new account's card hands over its name heading, which takes focus once the card has rendered.
@@ -93,9 +120,53 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     focusAddInput.current = false;
     addInput.current?.focus();
   }, [addOpen]);
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const busy = pending !== null;
   const actionInFlight = useRef(false);
   const retryRef = useRef<HTMLButtonElement | null>(null);
+  // A focused control that an action removes (Select on the card that became selected, Retry verification once
+  // verified) hands focus to the card's next action, or its name heading, instead of <body>.
+  const focusReturn = useRef<{ accountId: string; trigger: Element } | null>(null);
+  const rememberFocus = (accountId: string) => {
+    const trigger = document.activeElement;
+    focusReturn.current = trigger && trigger !== document.body ? { accountId, trigger } : null;
+  };
+  useEffect(() => {
+    const target = focusReturn.current;
+    if (!target) return;
+    const active = document.activeElement;
+    if (target.trigger.isConnected) {
+      if (active !== target.trigger) focusReturn.current = null;
+      return;
+    }
+    focusReturn.current = null;
+    if (active && active !== document.body && active.isConnected) return;
+    const card = [...document.querySelectorAll<HTMLElement>(".accounts-list > [data-account-id]")]
+      .find(element => element.dataset.accountId === target.accountId);
+    focusTarget(card?.querySelector<HTMLElement>(".accounts-card__buttons .nk-btn:not(:disabled)")
+      ?? card?.querySelector<HTMLElement>(".nk-account__who > :is(h2, h3, h4)"));
+  });
+  const focusAddAfterFailure = useRef(false);
+  // Retry of a failed account read: spinner until that read settles; on success focus goes to the page heading
+  // (the notice holding Retry is gone).
+  const [retrying, setRetrying] = useState(false);
+  const retrySawLoading = useRef(false);
+  const retryRequested = useRef(false);
+  useEffect(() => {
+    if (!retrying) return;
+    if (poolLoading) { retrySawLoading.current = true; return; }
+    if (!retrySawLoading.current) return;
+    retrySawLoading.current = false;
+    setRetrying(false);
+  }, [retrying, poolLoading]);
+  useEffect(() => {
+    if (!retryRequested.current || retrying) return;
+    retryRequested.current = false;
+    if (loadFailed || !state) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    focusTarget(document.querySelector<HTMLElement>(".accounts-page > .nk-surface-header h1"));
+  }, [loadFailed, retrying, state]);
   const [quotas, setQuotas] = useState<Map<string, AccountQuotaSnapshot | null>>(new Map());
   const [quotaFailures, setQuotaFailures] = useState<Set<string>>(new Set());
   const [quotaRefreshing, setQuotaRefreshing] = useState<Set<string>>(new Set());
@@ -162,16 +233,14 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
             next.delete(id);
             return next;
           });
-        } catch (error) {
-          if (!disposed && quotaRevisions.current.get(id) === revision) {
-            setQuotaFailures(current => new Set(current).add(id));
-            setError(error instanceof Error ? error.message : String(error));
-          }
+        } catch {
+          // The card says the allowance could not be read; a toast would repeat it without more detail.
+          if (!disposed && quotaRevisions.current.get(id) === revision) setQuotaFailures(current => new Set(current).add(id));
         }
       }
     })();
     return () => { disposed = true; };
-  }, [api, quotaEvidenceKey, setError]);
+  }, [api, quotaEvidenceKey]);
 
   useEffect(() => {
     const nextChange = nextQuotaClockAt(quotas.values(), quotaClock);
@@ -295,6 +364,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     const revision = (authRevisions.current.get(id) ?? 0) + 1;
     authRevisions.current.set(id, revision);
     authInFlight.current.add(id);
+    rememberFocus(id);
     setAuthRefreshing(current => new Set(current).add(id));
     setError(null);
     try {
@@ -314,32 +384,54 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
     }
   };
 
-  const run = async (action: () => Promise<AccountPoolSnapshot>) => {
+  const run = async (kind: PendingKind, accountId: string | null, action: () => Promise<AccountPoolSnapshot>,
+    onFailed?: () => void) => {
     if (transitionBusy || loadFailed || actionInFlight.current) return false;
     actionInFlight.current = true;
-    setBusy(true); setError(null);
+    if (accountId) rememberFocus(accountId);
+    setPending({ kind, accountId }); setError(null);
     try {
       const next = await action();
       applyReceipt(next);
       return true;
     }
-    catch (error) { setError(error instanceof Error ? error.message : String(error)); return false; }
-    finally { actionInFlight.current = false; setBusy(false); }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); onFailed?.(); return false; }
+    finally { actionInFlight.current = false; setPending(null); }
   };
   const retryAccounts = () => {
     setError(null);
+    retryRequested.current = true;
+    retrySawLoading.current = false;
+    setRetrying(true);
     retryPool();
   };
+  // A failed add keeps the typed name: focus returns to it once the field is enabled again.
+  useEffect(() => {
+    if (busy || !focusAddAfterFailure.current) return;
+    focusAddAfterFailure.current = false;
+    addInput.current?.focus();
+  }, [busy]);
+  // Closing the add form brings back the header's "Add account" button, which takes focus again.
+  const focusAddToggle = useRef(false);
+  useEffect(() => {
+    if (addOpen || !focusAddToggle.current) return;
+    focusAddToggle.current = false;
+    addToggle.current?.focus();
+  }, [addOpen]);
+  // "Sign in to Codex" was pressed on this account: its flow takes focus when the start button goes away.
+  const loginStartRequested = useRef<string | null>(null);
   const text = accountsCopy(language);
+  const toolsText = accountToolsCopy(language);
   if (!state) return <Page className="accounts-page">
     <SurfaceHeader title={copy.accountsTitle} subtitle={copy.accountsBody} />
     {loadFailed
-      ? <Notice tone="error" action={<Button ref={retryRef} size="sm" icon="reload" onClick={retryAccounts}>{copy.retry}</Button>}>
-        {copy.accountsRefreshFailed}</Notice>
+      ? <Notice tone="error" action={<Button ref={retryRef} size="sm" icon="reload" busy={retrying} onClick={retryAccounts}>{copy.retry}</Button>}>
+        {text.loadFailed}</Notice>
       : <p className="accounts-loading nk-type-small" role="status" aria-live="polite">{copy.accountsLoading}</p>}
   </Page>;
   const mutationsDisabled = transitionBusy || busy || loadFailed;
   const transitionReason = transitionBusy ? copy.loading : undefined;
+  const loadFailedReason = loadFailed ? copy.accountsRefreshFailed : undefined;
   const authenticatedAccounts = state.accounts.filter(account => account.authenticated);
   const loginLockedAccount = loginLockedId
     ? state.accounts.find(account => account.id === loginLockedId)?.label ?? loginLockedId : null;
@@ -364,47 +456,87 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       : refreshableAccounts.length === 0 ? (loginLockedId
         ? loginLockedReason
         : codexCopy.quotaRateLimited) : undefined);
+  // The allowance notice names a lasting reason once. A running refresh shows only as the spinner on its button.
+  const allowanceReason = refreshAllDisabledReason && refreshAllDisabledReason !== transitionReason
+    && refreshAllDisabledReason !== loadFailedReason && refreshAllDisabledReason !== codexCopy.quotaChecking
+    ? refreshAllDisabledReason : undefined;
+  const portfolioSummary = !refreshAllBusy && quotaPortfolio
+    ? quotaPortfolioSummary(text, quotaPortfolio.rows, language) : null;
+  const freshnessCopy = { ...workflow.portfolio, quotaUnavailable: text.quotaRefreshFailed };
+  // Reasons that are already on screen once for the whole page: disabled card controls point at them.
+  const pageReasons = new Map<string, string>();
+  if (manual) pageReasons.set(copy.accountsManual, "accounts-manual-reason");
+  if (loadFailedReason) pageReasons.set(loadFailedReason, "accounts-stale-status");
+  if (allowanceReason) pageReasons.set(allowanceReason, "accounts-allowance-reason");
+  if (refreshAllBusy) pageReasons.set(codexCopy.quotaChecking, "accounts-refresh-all");
   const recoverLoginStatus = () => { setError(null); retryLogin(); };
   const addVisible = addOpen || state.accounts.length === 0;
-  const toggleAdd = () => {
-    if (!addVisible) { focusAddInput.current = true; setAddOpen(true); return; }
-    if (state.accounts.length === 0) { addInput.current?.focus(); return; }
+  const openAdd = () => { focusAddInput.current = true; setAddOpen(true); };
+  const closeAdd = () => {
+    if (state.accounts.length === 0) return;
+    focusAddToggle.current = true;
     setAddOpen(false);
   };
   const submitAdd = () => {
     if (!accountAddDisabled && startingId.current === null && loginLockedIdRef.current === null
-      && label.trim()) void run(async () => {
+      && label.trim()) void run("add", null, async () => {
       const existingIds = new Set(state.accounts.map(account => account.id));
       const next = await api.addAccount(label.trim());
       setLabel("");
       setAddOpen(false);
       setCreatedAccountId(existingIds.has(next.selectedId) ? null : next.selectedId);
       return next;
-    });
+    }, () => { focusAddAfterFailure.current = true; });
   };
+  // The shared tunnel runtime is set up once for every account: one page notice instead of a step in each card.
+  const runtimeAccount = !manual && !toolsSetup.runtimeConfigured
+    ? [state.accounts.find(account => account.id === state.selectedId), ...state.accounts]
+      .find(account => account && accountToolsStep(account, false) === "runtime") ?? null
+    : null;
+  const primaryStep = ((): PrimaryStep | null => {
+    if (addVisible) return { kind: "add" };
+    if (login?.active && login.canOpen && state.accounts.some(account => account.id === login.accountId)) {
+      return { kind: "login-open", accountId: login.accountId };
+    }
+    const signIn = state.accounts.find(account => !account.authenticated
+      && account.authenticationStatus !== "unknown" && account.authenticationStatus !== "unavailable");
+    if (signIn) return { kind: "sign-in", accountId: signIn.id };
+    if (manual) return null;
+    const check = state.accounts.find(account => account.authenticated && !account.checked
+      && (!account.authenticationStatus || account.authenticationStatus === "verified"));
+    if (check) return { kind: "check", accountId: check.id };
+    if (runtimeAccount) return { kind: "runtime" };
+    const connector = toolsSetup.runtimeConfigured && toolsSetup.connectorName
+      ? state.accounts.find(account => accountToolsStep(account, true) === "connector") : undefined;
+    return connector ? { kind: "connector", accountId: connector.id } : null;
+  })();
+  const isPrimary = (kind: PrimaryStep["kind"], accountId?: string) => primaryStep?.kind === kind
+    && (!("accountId" in primaryStep) || primaryStep.accountId === accountId);
   return <Page className="accounts-page">
     <SurfaceHeader title={copy.accountsTitle} subtitle={copy.accountsBody}
-      actions={<Button ref={addToggle} icon="plus" aria-expanded={addVisible} aria-controls="accounts-add"
-        onClick={toggleAdd}>{copy.accountsAdd}</Button>} />
+      actions={!addVisible ? <Button ref={addToggle} icon="plus" aria-expanded={false} aria-controls="accounts-add"
+        onClick={openAdd}>{copy.accountsAdd}</Button> : undefined} />
     <section className="accounts-surface" aria-label={copy.accountsTitle} aria-busy={busy || transitionBusy}>
       <div id="accounts-add" hidden={!addVisible}><Panel padding="compact" className="accounts-add">
         <form onSubmit={event => { event.preventDefault(); submitAdd(); }}
           onKeyDown={event => {
             if (event.key !== "Escape" || state.accounts.length === 0) return;
             event.preventDefault();
-            setAddOpen(false);
-            addToggle.current?.focus();
+            closeAdd();
           }}>
           <TextField id="account-name" ref={addInput} label={copy.accountsLabel} maxLength={80}
             autoComplete="off" value={label} disabled={accountAddDisabled} title={accountAddBlockedReason}
             hint={accountAddBlockedReason}
             onChange={event => setLabel(event.target.value)}
-            action={<Button type="submit" variant="primary" icon="plus" disabled={accountAddDisabled || !label.trim()}
-              title={accountAddBlockedReason}>{copy.accountsAdd}</Button>} />
+            action={<>
+              <Button type="submit" variant="primary" icon="plus" busy={pending?.kind === "add"}
+                disabled={accountAddDisabled || !label.trim()} title={accountAddBlockedReason}>{copy.accountsAdd}</Button>
+              {state.accounts.length > 0 ? <Button variant="ghost" onClick={closeAdd}>{text.cancel}</Button> : null}
+            </>} />
         </form>
       </Panel></div>
-      {loadFailed ? <Notice tone="error" className="accounts-stale-status"
-        action={<Button ref={retryRef} size="sm" icon="reload" onClick={retryAccounts}>{copy.retry}</Button>}>
+      {loadFailed ? <Notice tone="error" id="accounts-stale-status" className="accounts-stale-status"
+        action={<Button ref={retryRef} size="sm" icon="reload" busy={retrying} onClick={retryAccounts}>{copy.retry}</Button>}>
         {copy.accountsRefreshFailed}</Notice> : null}
       {loginSnapshotStatus === "failed" ? <Notice tone="error"
         action={<Button size="sm" icon="reload" onClick={recoverLoginStatus}>{copy.retry}</Button>}>
@@ -417,31 +549,41 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           </div>
           <Select id="account-routing" value={manual ? "selected" : state.mode} disabled={mutationsDisabled || manual}
             options={[{ value: "selected", label: copy.accountsSelected }, { value: "balanced", label: copy.accountsBalanced }]}
-            onChange={value => void run(() => api.setAccountMode(value as "selected" | "balanced"))} />
+            onChange={value => void run("mode", null, () => api.setAccountMode(value as "selected" | "balanced"))} />
         </div>
       </Panel>
-      <div className="accounts-allowances">
-        <Notice meta={refreshAllDisabledReason && !loadFailed ? refreshAllDisabledReason : undefined}
-          action={<Button size="sm" icon="reload" busy={refreshAllBusy}
-            disabled={Boolean(refreshAllDisabledReason)}
-            title={refreshAllDisabledReason}
-            onClick={() => void refreshAllQuotas()}>
-            {refreshAllBusy ? workflow.portfolio.refreshing : workflow.portfolio.refreshAll}
-          </Button>}>
-          {codexCopy.quotaReportedOnly}
-        </Notice>
-        {refreshAllBusy || quotaPortfolio ? <QuotaPortfolioSummary copy={workflow.portfolio}
-          pending={refreshAllBusy ? state.accounts.length : 0}
-          rows={(quotaPortfolio?.rows ?? []).map(row => ({ status: row.status, snapshot: row.snapshot }))} /> : null}
-      </div>
+      <Notice className="accounts-allowances"
+        meta={allowanceReason || portfolioSummary ? <>
+          {allowanceReason ? <span id="accounts-allowance-reason">{allowanceReason}</span> : null}
+          {allowanceReason && portfolioSummary ? <span aria-hidden="true"> · </span> : null}
+          {portfolioSummary ? <span className="accounts-portfolio">{portfolioSummary}</span> : null}
+        </> : undefined}
+        action={<Button id="accounts-refresh-all" size="sm" icon="reload" busy={refreshAllBusy}
+          disabled={Boolean(refreshAllDisabledReason)}
+          title={refreshAllDisabledReason}
+          aria-describedby={allowanceReason ? "accounts-allowance-reason" : undefined}
+          onClick={() => void refreshAllQuotas()}>
+          {refreshAllBusy ? text.refreshingAll : text.refreshAll}
+        </Button>}>
+        {codexCopy.quotaReportedOnly}
+      </Notice>
+      {runtimeAccount ? <Notice className="accounts-runtime"
+        action={<Button size="sm" variant={isPrimary("runtime") ? "primary" : "secondary"} iconEnd="forward"
+          disabled={mutationsDisabled}
+          onClick={() => onSetupTools(runtimeAccount.id, runtimeAccount.accountLabel
+            ? `${runtimeAccount.label} · ${runtimeAccount.accountLabel}` : runtimeAccount.label)}>{toolsText.setup}</Button>}>
+        {text.runtimeNotice}
+      </Notice> : null}
       <div className="accounts-list">
         {state.accounts.map((account, accountIndex) => {
           const selected = account.id === state.selectedId;
           const credentialLabel = account.authenticated ? copy.replaceCredentials : copy.accountsSignIn;
           const authUnavailable = account.authenticationStatus === "unavailable";
+          const authChecking = account.authenticationStatus === "unknown";
           const authRefreshBusy = authRefreshing.has(account.id);
           const lastVerified = localizedTime(account.lastVerifiedAt, language);
           const active = account.activeTurns > 0;
+          const pendingHere = pending?.accountId === account.id ? pending.kind : null;
           const flowForAccount = login?.accountId === account.id ? login : null;
           const flowAccount = login ? state.accounts.find(candidate => candidate.id === login.accountId) : null;
           const loginBoundActive = startingAccountId === account.id
@@ -451,25 +593,16 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
             : loginBoundActive ? codexCopy.loginCurrent.replace("{account}", account.label) : undefined;
           const quotaReadBusy = quotaRefreshing.has(account.id);
           const sessionMutationReason = loginBoundReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined);
-          const blockedReason = transitionReason ?? (loadFailed ? copy.accountsRefreshFailed
-            : loginBoundReason ?? (active ? copy.accountsBusyTasks.replace("{count}", String(account.activeTurns))
-              : busy ? copy.loading : undefined));
-          const selectionReadinessReason = !selected
-            ? authUnavailable ? workflow.session.verificationUnavailable
-              : !account.authenticated ? copy.accountsSignInNeeded
-              : !manual && !account.checked ? copy.connectionPending : undefined
-            : undefined;
-          const credentialActionReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined);
-          const authRetryDisabledReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined);
-          const authRetryReasonId = authRetryDisabledReason ? `account-auth-retry-reason-${accountIndex}` : undefined;
-          const checkActionReason = blockedReason ?? (manual ? copy.accountsManual
-            : authUnavailable ? workflow.session.verificationUnavailable
-              : !account.authenticated ? copy.accountsSignInNeeded : undefined);
-          const actionHint = blockedReason ?? selectionReadinessReason
-            ?? (!manual ? checkActionReason : undefined) ?? credentialActionReason;
-          const actionHintId = actionHint ? `account-action-reason-${accountIndex}` : undefined;
-          const describedBy = (reason?: string) => reason === actionHint
-            ? actionHintId : reason === copy.accountsManual && manual ? "accounts-manual-reason" : undefined;
+          // A pool mutation in progress disables the other actions without a caption: its button shows the spinner.
+          const blockedReason = transitionReason ?? loadFailedReason ?? loginBoundReason
+            ?? (active ? copy.accountsBusyTasks.replace("{count}", String(account.activeTurns)) : undefined);
+          const readinessReason = authUnavailable ? workflow.session.verificationUnavailable
+            : authChecking ? text.waitForSessionCheck
+            : !account.authenticated ? codexCopy.quotaSignedOut : undefined;
+          const selectReason = blockedReason ?? readinessReason
+            ?? (!manual && !account.checked ? text.selectNeedsCheck : undefined);
+          const checkReason = blockedReason ?? (manual ? copy.accountsManual : readinessReason);
+          const credentialReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined);
           const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id)
             || Boolean(login && (login.active || login.settling) && login.accountId !== account.id)
             ? (login?.settling ? codexCopy.loginSettlingCurrent : codexCopy.loginCurrent)
@@ -477,6 +610,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const loginDisabledReason = transitionReason ?? (loadFailed ? copy.accountsRefreshFailed
             : quotaReadBusy ? codexCopy.quotaChecking
             : authUnavailable ? workflow.session.verificationUnavailable
+              : authChecking && !account.authenticated ? text.waitForSessionCheck
               : !account.authenticated ? codexCopy.quotaSignedOut
             : loginSnapshotStatus === "loading" ? codexCopy.loginStarting
               : loginSnapshotStatus === "failed" ? codexCopy.loginFailed : anotherLoginReason);
@@ -485,6 +619,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const quotaDisabledReason = transitionReason ?? (loadFailed ? copy.accountsRefreshFailed
             : manual ? codexCopy.quotaManualUnavailable
             : authUnavailable ? workflow.session.verificationUnavailable
+              : authChecking && !account.authenticated ? text.waitForSessionCheck
               : !account.authenticated ? codexCopy.quotaSignedOut
               : refreshAllBusy ? codexCopy.quotaChecking
                 : loginBoundReason ?? (quotaRetryBlocked ? codexCopy.quotaRateLimited : undefined));
@@ -493,113 +628,160 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const toolsStep = accountToolsStep(account, runtimeConfigured);
           const showCheckConnector = !manual && runtimeConfigured && (toolsStep === "connector" || toolsStep === "verified");
           const pacing = accountPacingStatus(account, language);
-          const codexIds = `account-codex-${accountIndex}`;
+          const ids = {
+            codex: `account-codex-${accountIndex}`,
+            session: `account-session-${accountIndex}`,
+            flow: `account-flow-${accountIndex}`,
+            hint: `account-action-reason-${accountIndex}`,
+            details: `account-details-${accountIndex}`,
+          };
+          // Reasons already on screen (page notices, this card's session notice, sign-in flow or allowance line):
+          // disabled controls point at them, and the action row shows at most one other reason.
+          const shown = new Map(pageReasons);
+          if (authUnavailable) shown.set(workflow.session.verificationUnavailable, ids.session);
+          if (flowForAccount && (flowForAccount.active || flowForAccount.settling) && loginBoundReason) shown.set(loginBoundReason, ids.flow);
+          if (quotaReadBusy && !refreshAllBusy) shown.set(codexCopy.quotaChecking, `${ids.codex}-quota-refresh`);
+          const quotaReasonId = quotaDisabledReason ? shown.get(quotaDisabledReason) : undefined;
+          if (quotaDisabledReason && !quotaReasonId) shown.set(quotaDisabledReason, `${ids.codex}-quota-reason`);
+          const enabledDisabled = mutationsDisabled || loginBoundActive;
+          const credentialDisabled = mutationsDisabled || active || loginBoundActive || quotaReadBusy;
+          const authRetryDisabled = Boolean(credentialReason);
+          const selectDisabled = mutationsDisabled || loginBoundActive || !account.authenticated || (!manual && !account.checked);
+          const checkDisabled = mutationsDisabled || manual || active || loginBoundActive || !account.authenticated;
+          const caption = [
+            enabledDisabled ? blockedReason : undefined,
+            !authUnavailable && credentialDisabled ? credentialReason : undefined,
+            authUnavailable && authRetryDisabled ? credentialReason : undefined,
+            !selected && selectDisabled ? selectReason : undefined,
+            checkDisabled ? checkReason : undefined,
+          ].find(reason => reason && !shown.has(reason));
+          const describedBy = (disabled: boolean, reason?: string) => !disabled || !reason ? undefined
+            : shown.get(reason) ?? (reason === caption ? ids.hint : undefined);
           const facts: Array<{ label: string; tone?: Tone; dot?: Status }> = [];
           if (authUnavailable) facts.push({ label: workflow.session.verificationUnavailable, tone: "warning", dot: "optional" });
-          else if (account.authenticationStatus === "unknown") facts.push({ label: copy.checkingSignIn, dot: "busy" });
+          else if (authChecking) facts.push({ label: copy.checkingSignIn, dot: "busy" });
           else if (!account.authenticated) facts.push({ label: copy.accountsSignInNeeded, tone: "warning", dot: "optional" });
           facts.push({ label: `${copy.accountsActive}: ${account.activeTurns}`, dot: active ? "busy" : undefined });
           facts.push(account.checked
             ? { label: `${copy.accountsChecked}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
             : { label: `${copy.accountsChecked}: ${copy.connectionPending}`, dot: "idle" });
-          facts.push(account.connectorReady
+          // The same evidence as the tools setup's "verified" step (and the Check connector button's weight).
+          facts.push(account.checked && account.connectorReady
             ? { label: `${copy.toolConnection}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
             : { label: `${copy.toolConnection}: ${copy.connectionPending}`, dot: "idle" });
           if (pacing && (pacing.held || !account.safety)) {
             facts.push({ label: `${pacing.label}: ${pacing.value}`, tone: pacing.held ? "warning" : undefined, dot: pacing.held ? "busy" : "ready" });
           }
-          return <AccountCard key={account.id} className="accounts-card" name={account.label} headingLevel={2}
+          const proxyLabel = account.proxy
+            ? proxyModeOptions(copy).find(option => option.value === account.proxy.mode)?.label ?? account.proxy.mode : null;
+          const detailsSummary = [
+            account.safety ? account.safety.policy.enabled ? text.pacingOn : text.pacingOff : null,
+            proxyLabel ? text.proxyMode.replace("{mode}", proxyLabel) : null,
+          ].filter((part): part is string => Boolean(part));
+          const checkVariant = isPrimary("check", account.id) ? "primary"
+            : !manual && account.authenticated && !account.checked ? "secondary" : "ghost";
+          return <AccountCard key={account.id} data-account-id={account.id} className="accounts-card" name={account.label} headingLevel={2}
             headingRef={account.id === createdAccountId ? createdHeading : undefined}
             email={account.accountLabel || (account.authenticated ? copy.accountsSignedIn : undefined)}
             initial={account.label.trim().slice(0, 1).toLocaleUpperCase()}
             selected={selected} selectedLabel={copy.accountsCurrent} facts={facts}
             actions={<>
-              <Checkbox label={copy.accountsEnabled} checked={account.enabled} disabled={mutationsDisabled || loginBoundActive}
+              <Checkbox label={copy.accountsEnabled} checked={account.enabled} disabled={enabledDisabled}
                 title={loginBoundReason}
-                aria-describedby={(mutationsDisabled || loginBoundActive) ? describedBy(blockedReason) : undefined}
-                onChange={checked => void run(() => api.setAccountEnabled(account.id, checked))} />
-              {!authUnavailable ? <Button size="sm" variant={account.authenticated ? "secondary" : "primary"}
-                icon="browser"
-                disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy} aria-label={credentialLabel}
-                aria-describedby={describedBy(credentialActionReason)}
-                title={sessionMutationReason} onClick={() => void run(async () => {
-                  const next = await api.selectAccount(account.id);
-                  applyReceipt(next);
-                  openBrowser();
-                  await api.openAccountLogin(account.id);
-                  return api.accounts();
-                })}>{credentialLabel}</Button> : null}
-              {authUnavailable ? <Button size="sm" icon="reload"
-                busy={authRefreshBusy}
-                disabled={Boolean(authRetryDisabledReason)}
-                aria-describedby={authRetryDisabledReason === actionHint ? actionHintId : authRetryReasonId}
-                title={authRetryDisabledReason}
-                onClick={() => void refreshAuthentication(account.id)}>{authRefreshBusy
-                  ? workflow.session.checkingVerification : workflow.session.retryVerification}</Button> : null}
-              {!selected ? <Button size="sm"
-                disabled={mutationsDisabled || loginBoundActive || !account.authenticated || (!manual && !account.checked)}
-                aria-describedby={describedBy(blockedReason ?? selectionReadinessReason)}
-                title={loginBoundReason}
-                onClick={() => void run(() => api.selectAccount(account.id))}>{copy.accountsSelect}</Button> : null}
-              <Button size="sm" variant="ghost" disabled={mutationsDisabled || manual || active || loginBoundActive || !account.authenticated}
-                aria-describedby={describedBy(checkActionReason)}
-                title={loginBoundReason} onClick={() => void run(() => api.checkAccount(account.id, false))}>{copy.accountsCheck}</Button>
-              {showCheckConnector ? <Button size="sm" variant={toolsStep === "verified" ? "ghost" : "primary"}
-                disabled={toolsDisabled || !toolsSetup.connectorName}
-                onClick={() => void run(() => api.checkAccount(account.id, true))}>{copy.accountsCheckConnector}</Button> : null}
-              {authUnavailable && authRetryDisabledReason && authRetryDisabledReason !== actionHint
-                ? <p className="accounts-card__hint nk-type-caption" id={authRetryReasonId}>{authRetryDisabledReason}</p> : null}
-              {actionHint ? <p className="accounts-card__hint nk-type-caption" id={actionHintId} role="status">{actionHint}</p> : null}
+                aria-describedby={describedBy(enabledDisabled, blockedReason)}
+                onChange={checked => void run("enabled", account.id, () => api.setAccountEnabled(account.id, checked))} />
+              <div className="accounts-card__buttons">
+                {!authUnavailable ? <Button size="sm" variant={isPrimary("sign-in", account.id) ? "primary" : "secondary"}
+                  icon="browser" busy={pendingHere === "credentials"}
+                  disabled={credentialDisabled} aria-label={credentialLabel}
+                  aria-describedby={describedBy(credentialDisabled, credentialReason)}
+                  title={sessionMutationReason} onClick={() => void run("credentials", account.id, async () => {
+                    const next = await api.selectAccount(account.id);
+                    applyReceipt(next);
+                    openBrowser();
+                    await api.openAccountLogin(account.id);
+                    return api.accounts();
+                  })}>{credentialLabel}</Button> : null}
+                {authUnavailable ? <Button size="sm" icon="reload"
+                  busy={authRefreshBusy}
+                  disabled={authRetryDisabled}
+                  aria-describedby={describedBy(authRetryDisabled, credentialReason)}
+                  title={credentialReason}
+                  onClick={() => void refreshAuthentication(account.id)}>{authRefreshBusy
+                    ? workflow.session.checkingVerification : workflow.session.retryVerification}</Button> : null}
+                {!selected ? <Button size="sm" busy={pendingHere === "select"}
+                  disabled={selectDisabled}
+                  aria-describedby={describedBy(selectDisabled, selectReason)}
+                  title={selectDisabled ? selectReason : undefined}
+                  onClick={() => void run("select", account.id, () => api.selectAccount(account.id))}>{copy.accountsSelect}</Button> : null}
+                <Button size="sm" variant={checkVariant} busy={pendingHere === "check"}
+                  disabled={checkDisabled}
+                  aria-describedby={describedBy(checkDisabled, checkReason)}
+                  title={checkDisabled ? checkReason : undefined}
+                  onClick={() => void run("check", account.id, () => api.checkAccount(account.id, false))}>
+                  {pendingHere === "check" ? workflow.session.checkingVerification : copy.accountsCheck}</Button>
+                {showCheckConnector ? <Button size="sm"
+                  variant={isPrimary("connector", account.id) ? "primary" : toolsStep === "verified" ? "ghost" : "secondary"}
+                  busy={pendingHere === "connector"}
+                  disabled={toolsDisabled || !toolsSetup.connectorName}
+                  onClick={() => void run("connector", account.id, () => api.checkAccount(account.id, true))}>
+                  {pendingHere === "connector" ? workflow.session.checkingVerification : copy.accountsCheckConnector}</Button> : null}
+              </div>
+              {caption ? <p className="accounts-card__hint nk-type-caption" id={ids.hint} role="status">{caption}</p> : null}
             </>}>
             <div className="accounts-card__body">
-              {authUnavailable ? <Notice tone="warning"
+              {authUnavailable ? <Notice tone="warning" id={ids.session}
                 meta={lastVerified ? workflow.session.lastVerifiedAt.replace("{time}", lastVerified) : undefined}
                 action={selected ? <Button size="sm" variant="ghost" icon="browser"
                   disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy}
                   onClick={openBrowser}>{copy.browser}</Button> : undefined}>
                 {sessionIssueCopy(language, account.authenticationIssue)}
               </Notice> : null}
-              <AccountCodexAllowance copy={codexCopy} idPrefix={codexIds} language={language}
+              {flowForAccount ? <AccountCodexLoginProgress account={account} copy={codexCopy} language={language}
+                login={flowForAccount} statusId={ids.flow} primary={isPrimary("login-open", account.id)}
+                transitionBusy={transitionBusy}
+                claimFocus={loginStartRequested.current === account.id}
+                onFocusClaimed={() => { loginStartRequested.current = null; }}
+                loginAction={loginAction?.accountId === account.id ? loginAction.kind : null}
+                onOpenLogin={async () => { await openCodexLogin(flowForAccount); }}
+                onCopyCode={async () => await copyCodexLoginCode(flowForAccount)}
+                onCancelLogin={async () => { await cancelCodexLogin(flowForAccount); }} /> : null}
+              <AccountCodexAllowance copy={codexCopy} idPrefix={ids.codex} language={language}
                 transitionBusy={transitionBusy}
                 quota={quotas.has(account.id) ? quotas.get(account.id) : undefined}
                 quotaFailed={quotaFailures.has(account.id)}
-                quotaBusy={quotaRefreshing.has(account.id)} quotaDisabledReason={quotaDisabledReason}
-                quotaFreshnessCopy={workflow.portfolio} quotaNow={quotaClock}
+                quotaReadFailedText={text.quotaReadFailed}
+                quotaBusy={quotaReadBusy && !refreshAllBusy} quotaDisabledReason={quotaDisabledReason}
+                quotaReasonId={quotaReasonId}
+                quotaFreshnessCopy={freshnessCopy} quotaNow={quotaClock}
                 onRefreshQuota={() => refreshQuota(account.id)} />
-              <div className="accounts-card__more">
-                <AccountToolsOnboarding account={account} copy={copy} language={language}
-                  runtimeConfigured={runtimeConfigured} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
-                  manual={manual} disabled={toolsDisabled}
-                  focus={focusAccountId === account.id} onError={setError}
-                  onSetup={() => onSetupTools(account.id, account.accountLabel ? `${account.label} · ${account.accountLabel}` : account.label)} />
-                <AccountCodexLogin account={account} copy={codexCopy} idPrefix={codexIds} language={language}
-                  transitionBusy={transitionBusy}
-                  quotaDisabledReason={quotaDisabledReason}
-                  login={flowForAccount} loginStarting={startingAccountId === account.id}
-                  loginRecovery={loginSnapshotStatus === "failed" ? { label: copy.retry, retry: recoverLoginStatus } : undefined}
-                  loginDisabledReason={loginDisabledReason}
-                  loginAction={loginAction?.accountId === account.id ? loginAction.kind : null}
-                  onStartLogin={() => startCodexLogin(account.id)}
-                  onOpenLogin={async () => { if (flowForAccount) await openCodexLogin(flowForAccount); }}
-                  onCopyCode={async () => flowForAccount ? await copyCodexLoginCode(flowForAccount) : false}
-                  onCancelLogin={async () => { if (flowForAccount) await cancelCodexLogin(flowForAccount); }} />
-                <AccountReadiness account={account} language={language} />
-                {account.safety || account.proxy ? <AccountControlsDisclosure title={text.controlsTitle}
-                  held={pacing?.held === true}
-                  summary={[account.safety ? pacing?.value : null,
-                    account.proxy ? proxyModeOptions(copy).find(option => option.value === account.proxy.mode)?.label ?? account.proxy.mode : null]
-                    .filter(Boolean).join(" · ")}
-                  pacing={report => account.safety ? <AccountSafetySettings id={account.id} language={language} safety={account.safety} copy={copy}
-                    pacingStatus={pacing} onStateChange={report}
+              <AccountDetails title={text.detailsTitle} summary={detailsSummary} focus={focusAccountId === account.id}
+                tokens={{ failed: text.notSaved, saving: copy.accountFormSaving, unsaved: copy.accountFormUnsaved }}>
+                {report => <>
+                  <AccountToolsOnboarding account={account} copy={copy} language={language} headingId={`${ids.details}-tools`}
+                    runtimeConfigured={runtimeConfigured} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
+                    manual={manual} disabled={toolsDisabled} onError={setError}
+                    onSetup={() => onSetupTools(account.id, account.accountLabel ? `${account.label} · ${account.accountLabel}` : account.label)} />
+                  <AccountCodexLogin copy={codexCopy} headingId={`${ids.details}-login`} idPrefix={ids.codex}
+                    transitionBusy={transitionBusy}
+                    login={flowForAccount} loginStarting={startingAccountId === account.id}
+                    loginRecovery={loginSnapshotStatus === "failed" ? { label: copy.retry, retry: recoverLoginStatus } : undefined}
+                    loginDisabledReason={loginDisabledReason}
+                    onStartLogin={() => { loginStartRequested.current = account.id; return startCodexLogin(account.id); }} />
+                  <AccountReadiness account={account} language={language} headingId={`${ids.details}-models`}
+                    notChecked={text.modelsNotChecked} />
+                  {account.safety ? <AccountSafetySettings id={account.id} language={language} safety={account.safety} copy={copy}
+                    pacingStatus={pacing} onStateChange={report.pacing}
                     resumeRequired={account.availability?.reason === "session-limit"}
                     disabled={mutationsDisabled || active || loginBoundActive} blockedReason={blockedReason}
-                    save={policy => run(() => api.setAccountSafety(account.id, policy))}
-                    resume={() => void run(() => api.resumeAccount(account.id))} /> : null}
-                  proxy={report => account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy} language={language}
-                    onStateChange={report}
+                    save={policy => run("safety", account.id, () => api.setAccountSafety(account.id, policy))}
+                    resume={() => void run("resume", account.id, () => api.resumeAccount(account.id))} /> : null}
+                  {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy} language={language}
+                    onStateChange={report.proxy}
                     disabled={mutationsDisabled || active || loginBoundActive || quotaReadBusy} blockedReason={sessionMutationReason ?? blockedReason}
-                    save={value => run(() => api.setAccountProxy(account.id, value))} /> : null} /> : null}
-              </div>
+                    save={value => run("proxy", account.id, () => api.setAccountProxy(account.id, value))} /> : null}
+                </>}
+              </AccountDetails>
             </div>
           </AccountCard>;
         })}

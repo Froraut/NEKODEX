@@ -1,5 +1,5 @@
 import type { HTMLAttributes, ReactNode, Ref } from "react";
-import { NkIcon, cx, type IconName, type Status, type Tone } from "./shared";
+import { NkIcon, cx, useFocusSafeDisabled, type IconName, type Status, type Tone } from "./shared";
 
 export function StateDot({ state = "idle", className }: { state?: Status; className?: string }) {
   return <i aria-hidden="true" className={cx("nk-dot", `is-${state}`, className)} />;
@@ -145,19 +145,32 @@ export function PhaseSteps({ steps, label, onSelect, disabled = false, className
         const selectable = step.selectable ?? (state === "complete" || state === "error");
         return (
           <li className={`is-${state}`} key={index}>
-            <button
-              aria-current={current ? "step" : undefined}
-              aria-label={`${index + 1}. ${step.label}`}
-              disabled={disabled || !selectable}
-              onClick={() => onSelect(index)}
-              type="button"
-            >
+            <StepButton current={current} disabled={disabled || !selectable} label={`${index + 1}. ${step.label}`} onSelect={() => onSelect(index)}>
               <span aria-hidden="true">{marker}</span>
               {step.label}
-            </button>
+            </StepButton>
           </li>
         );
       })}
     </ol>
+  );
+}
+
+/** A PhaseSteps step button; one that is focused when the flow turns busy keeps focus (see useFocusSafeDisabled). */
+function StepButton({ current, disabled, label, onSelect, children }: { current: boolean; disabled: boolean; label: string; onSelect: () => void; children: ReactNode }) {
+  const guard = useFocusSafeDisabled<HTMLButtonElement>(disabled);
+  return (
+    <button
+      aria-current={current ? "step" : undefined}
+      aria-disabled={guard.soft ? "true" : undefined}
+      aria-label={label}
+      disabled={guard.disabled}
+      onBlur={guard.onBlur}
+      onClick={guard.soft ? event => event.preventDefault() : onSelect}
+      onFocus={guard.onFocus}
+      type="button"
+    >
+      {children}
+    </button>
   );
 }

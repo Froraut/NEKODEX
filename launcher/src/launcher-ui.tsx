@@ -3,7 +3,7 @@ import { cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef
 import { createPortal } from "react-dom";
 import {
   Button, cx, Icon, IconButton as KitIconButton, Notice, Page, Select, StateDot as KitStateDot, SurfaceHeader, Switch, Tabs,
-  type IconName, type Status,
+  useFocusSafeDisabled, type IconName, type Status,
 } from "./design";
 import { localizeRuntimeMessage, type Copy } from "./i18n";
 import { stripIpcErrorPrefix } from "./ipc-error";
@@ -22,26 +22,46 @@ export { useModalFocus };
 // the tabs gets focus back after the switch, so the kit's arrow-key model keeps working across surfaces.
 let pendingConnectionsTab: "models" | "tools" | null = null;
 
+const CONNECTIONS_TAB_PREFIX = "connections-tab";
+const CONNECTIONS_PANEL_ID = "connections-panel";
+
+/** Props for the element that holds the active Connections tab's content (the tab panel the tabs point at). */
+export function connectionsTabPanelProps(active: "models" | "tools") {
+  return { "aria-labelledby": `${CONNECTIONS_TAB_PREFIX}-${active}`, id: CONNECTIONS_PANEL_ID, role: "tabpanel" } as const;
+}
+
+/** A tab's status line; derive it from the same readiness that drives the page (word and dot together). */
+export interface ConnectionsTabStatus { state: Status; label: string }
+
 export function ConnectionsTabs({
   active,
   copy,
   modelsReady,
+  modelsStatus,
   onModels,
   onTools,
   toolsReady,
+  toolsStatus,
 }: {
   active: "models" | "tools";
   copy: Copy;
   modelsReady: boolean;
+  /** Overrides the Verified / Not connected line derived from modelsReady. */
+  modelsStatus?: ConnectionsTabStatus;
   onModels: () => void;
   onTools: () => void;
   toolsReady: boolean;
+  /** Overrides the Verified / Not connected line derived from toolsReady. */
+  toolsStatus?: ConnectionsTabStatus;
 }) {
+  const status = (ready: boolean, override?: ConnectionsTabStatus) => override
+    ?? { state: ready ? "ready" as const : "idle" as const, label: ready ? copy.connectionVerified : copy.connectionPending };
+  const models = status(modelsReady, modelsStatus);
+  const tools = status(toolsReady, toolsStatus);
   useLayoutEffect(() => {
     if (pendingConnectionsTab !== active) return;
     pendingConnectionsTab = null;
-    const tabs = [...document.querySelectorAll<HTMLElement>("nav.nk-tabs")].find(nav => nav.getAttribute("aria-label") === copy.connectionsNav);
-    tabs?.querySelector<HTMLElement>('button[aria-current="page"]')?.focus();
+    document.getElementById(`${CONNECTIONS_TAB_PREFIX}-${active}`)?.focus();
   }, [active]);
   const select = (id: string) => {
     if (id !== "models" && id !== "tools") return;
@@ -55,11 +75,13 @@ export function ConnectionsTabs({
     <Tabs
       active={active}
       className="nk-connections-tabs"
+      idPrefix={CONNECTIONS_TAB_PREFIX}
       label={copy.connectionsNav}
       onSelect={select}
+      panelId={CONNECTIONS_PANEL_ID}
       tabs={[
-        { id: "models", label: copy.modelsConnectionTab, state: modelsReady ? "ready" : "idle", status: modelsReady ? copy.connectionVerified : copy.connectionPending },
-        { id: "tools", label: copy.toolsConnectionTab, state: toolsReady ? "ready" : "idle", status: toolsReady ? copy.connectionVerified : copy.connectionPending },
+        { id: "models", label: copy.modelsConnectionTab, state: models.state, status: models.label },
+        { id: "tools", label: copy.toolsConnectionTab, state: tools.state, status: tools.label },
       ]}
     />
   );
@@ -195,22 +217,15 @@ export function ZeroRiskModelMenu({
     if (enabled !== proEnabled) onChange(enabled);
   };
   const option = (enabled: boolean, title: string, body: string) => (
-    <button
-      aria-checked={proEnabled === enabled}
-      className={cx("nk-choice", "nk-choice--compact", proEnabled === enabled && "is-selected")}
+    <ChoiceButton
+      body={body}
+      buttonRef={proEnabled === enabled ? selectedRadio : undefined}
+      compact
       disabled={busy}
-      onClick={() => choose(enabled)}
-      ref={proEnabled === enabled ? selectedRadio : undefined}
-      role="radio"
-      tabIndex={proEnabled === enabled ? 0 : -1}
-      type="button"
-    >
-      <ChoiceMark selected={proEnabled === enabled} />
-      <span className="nk-choice__copy">
-        <strong>{title}</strong>
-        <small>{body}</small>
-      </span>
-    </button>
+      onChoose={() => choose(enabled)}
+      selected={proEnabled === enabled}
+      title={title}
+    />
   );
 
   return (
@@ -277,6 +292,8 @@ export function handleRadioGroupKeys(event: ReactKeyboardEvent<HTMLElement>) {
   if (!radios.length) return;
   const target = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('[role="radio"]') : null;
   if (!target || !event.currentTarget.contains(target)) return;
+  // The group is busy (the focused radio keeps focus while aria-disabled): the keys do nothing, not even scroll.
+  if (target.getAttribute("aria-disabled") === "true") { event.preventDefault(); return; }
   const current = radios.indexOf(target);
   if (current < 0) return;
   let next = current;
@@ -437,6 +454,40 @@ function ChoiceMark({ selected }: { selected: boolean }) {
   return <span aria-hidden="true" className="nk-choice__mark">{selected ? <Icon className="nk-icon" name="check" /> : null}</span>;
 }
 
+/** A choice card (role="radio"); one that is focused when the group turns busy keeps focus (useFocusSafeDisabled). */
+function ChoiceButton({ body, buttonRef, compact = false, disabled, onChoose, selected, title }: {
+  body: string;
+  buttonRef?: RefObject<HTMLButtonElement | null>;
+  compact?: boolean;
+  disabled: boolean;
+  onChoose: () => void;
+  selected: boolean;
+  title: string;
+}) {
+  const guard = useFocusSafeDisabled<HTMLButtonElement>(disabled);
+  return (
+    <button
+      aria-checked={selected}
+      aria-disabled={guard.soft ? "true" : undefined}
+      className={cx("nk-choice", compact && "nk-choice--compact", selected && "is-selected")}
+      disabled={guard.disabled}
+      onBlur={guard.onBlur}
+      onClick={guard.soft ? undefined : onChoose}
+      onFocus={guard.onFocus}
+      ref={buttonRef}
+      role="radio"
+      tabIndex={selected ? 0 : -1}
+      type="button"
+    >
+      <ChoiceMark selected={selected} />
+      <span className="nk-choice__copy">
+        <strong>{title}</strong>
+        <small>{body}</small>
+      </span>
+    </button>
+  );
+}
+
 export function InteractionModePicker({
   className,
   copy,
@@ -451,21 +502,7 @@ export function InteractionModePicker({
   onChange: (mode: BrowserInteractionMode) => void;
 }) {
   const choice = (value: BrowserInteractionMode, title: string, body: string) => (
-    <button
-      aria-checked={mode === value}
-      className={cx("nk-choice", mode === value && "is-selected")}
-      disabled={disabled}
-      onClick={() => onChange(value)}
-      role="radio"
-      tabIndex={mode === value ? 0 : -1}
-      type="button"
-    >
-      <ChoiceMark selected={mode === value} />
-      <span className="nk-choice__copy">
-        <strong>{title}</strong>
-        <small>{body}</small>
-      </span>
-    </button>
+    <ChoiceButton body={body} disabled={disabled} onChoose={() => onChange(value)} selected={mode === value} title={title} />
   );
   return (
     <div

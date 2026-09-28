@@ -1,5 +1,7 @@
 import { useUsageReport, type UsageLoader } from "./useUsageReport";
-import { UsageCalendar, completeCalendar, dateLabel } from "./UsageCalendar";
+import { UsageCalendar, completeCalendar, dateLabel, dateRangeLabel } from "./UsageCalendar";
+import languages from "../electron/languages.json";
+import { activityCopy, usageIdentityWords } from "./activity-copy";
 import { useId, useMemo } from "react";
 import type { Copy } from "./i18n";
 import type {
@@ -11,7 +13,7 @@ import type {
   UsageSnapshot,
 } from "./types";
 import { aggregateUsageGroups, formatUsageDuration, formatUsageRate, usageReportCsv, type UsageDisplayGroup } from "./usage-statistics";
-import { UsageInsights } from "./UsageInsights";
+import { UsageInsights, type UsageIdentityWords } from "./UsageInsights";
 import { Button, Disclosure, EmptyState, Notice, Panel, Select, Stat, StatGroup, StateDot, type Status } from "./design";
 import { workflowCopy } from "./workflow-copy";
 
@@ -19,13 +21,12 @@ const loadUsage: UsageLoader = query => window.codexWebLauncher!.usage(query);
 const ranges: UsageRangeDays[] = [1, 7, 30, 90];
 const number = (value: number, language: Language) => value.toLocaleString(language);
 
-const groupLabel = (row: UsageGroup, copy: Copy, source: UsageSource) => {
-  if (source === "native") {
-    const modelId = row.modelId?.trim();
-    return modelId && modelId !== "unknown" ? modelId : copy.usageUnknown;
-  }
-  const effort = row.effort === "max" ? "Pro" : !row.effort || row.effort === "unknown" ? copy.usageUnknown : row.effort;
-  return `${row.mode ?? copy.usageUnknown} · ${effort} · ${!row.modelVersion || row.modelVersion === "unknown" ? copy.usageUnknown : `GPT-${row.modelVersion}`}`;
+const known = (value: string | null | undefined) => value && value.trim() && value !== "unknown" ? value : null;
+
+const groupLabel = (row: UsageGroup, copy: Copy, source: UsageSource, words: UsageIdentityWords) => {
+  if (source === "native") return known(row.modelId?.trim()) ?? copy.usageUnknown;
+  const mode = known(row.mode), effort = known(row.effort), version = known(row.modelVersion);
+  return `${mode ? words.mode(mode) : copy.usageUnknown} · ${effort ? words.effort(effort) : copy.usageUnknown} · ${version ? `GPT-${version}` : copy.usageUnknown}`;
 };
 
 function UsageTable({ caption, groups, copy, language, showIncomplete, showUnrecorded, totalLabel }: { caption: string; groups: UsageDisplayGroup[]; copy: Copy; language: Language; showIncomplete: boolean; showUnrecorded: boolean; totalLabel: string }) {
@@ -63,11 +64,15 @@ const outcomeLabel = (label: string, state?: Status) => state ? <><StateDot stat
 export function UsageDashboard({ copy, language }: { copy: Copy; language: Language }) {
   const { filters, visible, visibleError, refreshing, knownAccounts, changeFilters, retry } = useUsageReport(loadUsage, copy.usageUnavailable);
   const sourceId = useId(), accountId = useId(), rangeId = useId();
+  const text = activityCopy(language);
+  const locale = languages[language]?.locale ?? language;
+  const words = useMemo<UsageIdentityWords>(() => ({ ...usageIdentityWords(activityCopy(language)),
+    mode: value => value === "automatic" ? copy.automaticShort : value === "manual" ? copy.manualShort : value }), [language, copy]);
 
   const groups = useMemo(() => aggregateUsageGroups(visible?.rows ?? [], visible?.source ?? filters.source,
-    (row, source) => groupLabel(row, copy, source)), [visible, copy, filters.source]);
+    (row, source) => groupLabel(row, copy, source, words)), [visible, copy, filters.source, words]);
   const lifetimeGroups = useMemo(() => aggregateUsageGroups(visible?.lifetimeGroups ?? [], visible?.source ?? filters.source,
-    (row, source) => groupLabel(row, copy, source)), [visible, copy, filters.source]);
+    (row, source) => groupLabel(row, copy, source, words)), [visible, copy, filters.source, words]);
 
   const failureLabels: Record<UsageFailureCode, string> = {
     rate_limit: copy.usageFailureRateLimit,
@@ -95,7 +100,6 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const totalLabel = web ? copy.usageWebTotal : copy.usageNativeTotal;
   const sourceBody = web ? copy.usageBody : copy.usageNativeBody;
   const emptyCopy = web ? copy.usageEmpty : copy.usageNativeEmpty;
-  const calendarSummary = web ? copy.usageCalendarSummary : copy.usageNativeCalendarSummary;
   const durationSamples = web ? copy.usageDurationSamples : copy.usageNativeDurationSamples;
   const noDurations = web ? copy.usageNoDurations : copy.usageNativeNoDurations;
   const knownRateBody = web ? copy.usageWebKnownRateBody : copy.usageNativeKnownRateBody;
@@ -105,14 +109,19 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const rateValue = rate === null || rate === undefined ? copy.usageNotAvailable : formatUsageRate(rate, language);
   const medianValue = visible ? duration(visible.durations.medianMs, copy, language) : copy.usageNotAvailable;
   const p95Value = visible ? duration(visible.durations.p95Ms, copy, language) : copy.usageNotAvailable;
+  const exportable = Boolean(visible && visible.metrics.total > 0);
+  // The generic "unavailable" message is already the title; the body then gives the next step instead of repeating it.
+  const errorBody = stale ? copy.usageStaleBody : visibleError === copy.usageUnavailable ? text.usageUnavailableBody : visibleError;
 
+  // The view tab already shows "Local usage", so the heading is for assistive navigation only. The CSV export is this
+  // view's own header action, shown only when there is something to export.
   return <section className="usage-dashboard" aria-labelledby="usage-title">
     <header className="usage-header">
       <div>
-        <h2 className="nk-type-heading" id="usage-title">{copy.usageTitle}</h2>
+        <h2 className="nk-visually-hidden" id="usage-title">{copy.usageTitle}</h2>
         <p>{sourceBody}</p>
       </div>
-      <Button size="sm" disabled={!visible || visible.metrics.total === 0} onClick={() => visible && exportReport({ ...visible, calendar })}>{copy.usageExportCsv}</Button>
+      {exportable ? <Button size="sm" icon="external" onClick={() => visible && exportReport({ ...visible, calendar })}>{copy.usageExportCsv}</Button> : null}
     </header>
 
     <div className="usage-filters" role="group" aria-label={copy.usageFilters}>
@@ -144,8 +153,8 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
     </div>
 
     {visibleError ? <Notice tone={stale ? "warning" : "error"} title={stale ? copy.usageStaleTitle : copy.usageUnavailable}
-      action={<Button size="sm" busy={refreshing} onClick={retry}>{refreshing ? copy.loading : copy.retry}</Button>}>
-      {stale ? copy.usageStaleBody : visibleError}
+      action={<Button size="sm" busy={refreshing} onClick={retry}>{text.retryUsage}</Button>}>
+      {errorBody}
     </Notice> : null}
 
     {!visible ? refreshing ? <p className="usage-status" role="status">{copy.loading}</p> : visibleError ? null
@@ -154,15 +163,14 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
       {visible.backupAvailable === false && (visible.lifetime ?? 0) > 0 ? <Notice tone="warning">{copy.usageBackupUnavailable}</Notice> : null}
 
       <p className="usage-meta">
-        <span>{copy.usagePeriod.replace("{start}", dateLabel(visible.period.startDay, language)).replace("{end}", dateLabel(visible.period.endDay, language))}</span>
-        <span>{copy.usageUpdated.replace("{time}", generatedAt && Number.isFinite(generatedAt.getTime()) ? generatedAt.toLocaleString(language) : copy.usageUnknown)}</span>
+        <span>{dateRangeLabel(visible.period.startDay, visible.period.endDay, language,
+          copy.usagePeriod.replace("{start}", dateLabel(visible.period.startDay, language)).replace("{end}", dateLabel(visible.period.endDay, language)))}</span>
+        <span>{copy.usageUpdated.replace("{time}", generatedAt && Number.isFinite(generatedAt.getTime())
+          ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(generatedAt) : copy.usageUnknown)}</span>
       </p>
 
       {visible.metrics.total === 0 ? <Panel className="usage-empty"><div role="status">
-        <EmptyState icon="activity" title={emptyCopy}>
-          {copy.usageEmptyHelp}{" "}
-          {calendarSummary.replace("{total}", "0").replace("{active}", "0").replace("{days}", number(visible.period.days, language))}
-        </EmptyState>
+        <EmptyState icon="activity" title={emptyCopy}>{copy.usageEmptyHelp}</EmptyState>
       </div></Panel> : <>
         <div className="usage-figures">
           <StatGroup className={`usage-stats${web ? "" : " is-native"}`} label={copy.usageTitle}>
@@ -199,13 +207,13 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
         </Panel> : null}
 
         <UsageInsights groups={diagnosticGroups} accounts={visible.accounts} copy={insightsCopy}
-          language={language} failureLabels={failureLabels} detailsLabel={copy.usageDetailedBreakdown}
-          hideDetailsLabel={copy.usageHideTable} completedLabel={copy.usageCompleted} failedLabel={copy.usageFailed}
+          language={language} failureLabels={failureLabels} detailsLabel={text.showComparison} words={words}
+          hideDetailsLabel={text.hideComparison} completedLabel={copy.usageCompleted} failedLabel={copy.usageFailed}
           cancelledLabel={copy.usageAborted} incompleteLabel={copy.usageIncomplete}
           labels={{ unknown: copy.usageUnknown, group: copy.usageModel, seconds: copy.usageSeconds, minutes: copy.usageMinutes }} />
 
         <div className="usage-columns">
-          <UsageCalendar report={visible} copy={copy} language={language} />
+          <UsageCalendar report={visible} copy={copy} text={text} language={language} />
           <Panel headingLevel={3} titleId="usage-failures-title" title={copy.usageFailures} className="usage-failures">
             {failures.length ? <ul>{failures.map(item => <li key={item.code}><span>{failureLabels[item.code]}</span><strong>{number(item.count, language)}</strong></li>)}</ul>
               : <EmptyState icon="info" title={copy.usageNoFailures} />}
@@ -216,7 +224,8 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
       {(groups.length > 0 || lifetimeGroups.length > 0 || (visible.lifetime ?? 0) > 0 || (visible.lifetimeUnclassified ?? 0) > 0) ? <Disclosure className="usage-breakdown" title={copy.usageDetailedBreakdown}><div className="usage-breakdown__content">
         {groups.length > 0 ? <UsageTable caption={copy.usageGroups} groups={groups} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
         {lifetimeGroups.length > 0 ? <UsageTable caption={copy.usageLifetimeGroups} groups={lifetimeGroups} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
-        <p>{copy.usageLifetime}: <span className="usage-figure">{number(visible.lifetime ?? 0, language)}</span> · {copy.usageSince}: {visible.startedAt ? new Date(visible.startedAt).toLocaleDateString(language) : copy.usageUnknown}</p>
+        <p>{copy.usageLifetime}: <span className="usage-figure">{number(visible.lifetime ?? 0, language)}</span> · {copy.usageSince}: {visible.startedAt && Number.isFinite(new Date(visible.startedAt).getTime())
+          ? new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(visible.startedAt)) : copy.usageUnknown}</p>
         {!!visible.lifetimeUnclassified && <p>{copy.usageLifetimeUnclassified}: <span className="usage-figure">{number(visible.lifetimeUnclassified, language)}</span></p>}
       </div></Disclosure> : null}
     </>}

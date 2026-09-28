@@ -1,17 +1,21 @@
 import type { LauncherLogStore } from './launcher-log-store';
 import languages from "../electron/languages.json";
-import { memo, useId, useMemo, useState, useSyncExternalStore } from "react";
+import { memo, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { UsageDashboard } from "./UsageDashboard";
-import { Button, EmptyState, EventList, Page, Panel, Select, SurfaceHeader, TextField, type EventItem } from "./design";
+import { Badge, Button, EmptyState, EventList, Page, Panel, Select, SurfaceHeader, Tabs, TextField, type EventItem } from "./design";
 import { messageOf } from "./launcher-ui";
 import type { Copy } from "./i18n";
 import type { Language, LogRecord } from "./types";
 import { humanEvent } from "./log-format";
+import { activityCopy } from "./activity-copy";
 import "./surfaces/activity.css";
 const api = window.codexWebLauncher;
 const ActivityUsage = memo(UsageDashboard);
 
 const eventLevel = (level: LogRecord["level"]): EventItem["level"] => level === "debug" ? "info" : level;
+const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+type ActivityView = "events" | "usage";
 
 export function ActivitySurface({
   copy,
@@ -26,16 +30,23 @@ export function ActivitySurface({
   logStore: LauncherLogStore;
   setError: (error: string | null) => void;
 }) {
+  const [view, setView] = useState<ActivityView>("events");
   const [query, setQuery] = useState("");
   const [level, setLevel] = useState("all");
   const levelId = useId();
+  const searchInput = useRef<HTMLInputElement>(null);
+  const text = activityCopy(language);
   const logs = useSyncExternalStore(logStore.subscribe, logStore.getSnapshot);
   const formatted = useMemo(() => {
-    const time = new Intl.DateTimeFormat(languages[language].locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const locale = languages[language]?.locale ?? language;
+    // Today's events show the time; older ones carry their date so a long-running log stays unambiguous.
+    const time = new Intl.DateTimeFormat(locale, { timeStyle: "short" });
+    const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
+    const now = new Date();
     return logs.map(({ id, record }) => {
       const event = humanEvent(record.event), detail = logDetail(record.detail), date = new Date(record.at);
       return { id, level: record.level, event, detail, at: record.at, search: `${event} ${detail}`.toLocaleLowerCase(),
-        time: Number.isNaN(date.getTime()) ? record.at : time.format(date) };
+        time: Number.isNaN(date.getTime()) ? record.at : (sameDay(date, now) ? time : dateTime).format(date) };
     });
   }, [logs, language]);
   const [exporting, setExporting] = useState(false);
@@ -49,7 +60,11 @@ export function ActivitySurface({
     dateTime: record.at,
     text: (
       <span className="activity-row">
-        <strong>{record.event}</strong>
+        {/* Errors and warnings share the alert icon; the level word keeps them apart without colour. */}
+        {record.level === "error" || record.level === "warning" ? <span className="activity-row__head">
+          <Badge tone={record.level}>{record.level === "error" ? text.levelError : text.levelWarning}</Badge>
+          <strong>{record.event}</strong>
+        </span> : <strong>{record.event}</strong>}
         {record.detail ? <span className="activity-row__detail">{record.detail}</span> : null}
       </span>
     ),
@@ -61,6 +76,7 @@ export function ActivitySurface({
     { value: "info", label: copy.infoEvents },
     { value: "debug", label: copy.debugEvents },
   ];
+  const clearFilters = () => { setQuery(""); setLevel("all"); searchInput.current?.focus(); };
   return (
     <Page className="activity-surface">
       <SurfaceHeader
@@ -81,13 +97,16 @@ export function ActivitySurface({
           </Button>
         )}
       />
-      <div className="activity-sections">
-        <ActivityUsage copy={copy} language={language} />
+      {/* The event log comes first (layouts.md "Activity"); usage statistics are the second view. */}
+      <Tabs className="activity-tabs" label={text.views} active={view} onSelect={id => setView(id as ActivityView)}
+        tabs={[{ id: "events", label: copy.recentActivity }, { id: "usage", label: copy.usageTitle }]} />
+      <div className="activity-view" hidden={view !== "events"}>
         <section className="activity-events" aria-labelledby="activity-events-title">
-          <h2 className="activity-section-title nk-type-heading" id="activity-events-title">{copy.recentActivity}</h2>
+          <h2 className="nk-visually-hidden" id="activity-events-title">{copy.recentActivity}</h2>
           <div className="activity-filters">
             <TextField
               className="activity-filters__search"
+              ref={searchInput}
               type="search"
               label={copy.searchActivity}
               value={query}
@@ -101,10 +120,16 @@ export function ActivitySurface({
           <Panel padding="flush" className="activity-log">
             <EventList
               items={items}
-              empty={<EmptyState centered title={logs.length ? copy.noMatchingEvents : copy.noLogs} />}
+              empty={logs.length
+                ? <EmptyState icon="logs" title={text.noMatchingEvents} action={<Button size="sm" onClick={clearFilters}>{text.clearFilters}</Button>} />
+                : <EmptyState icon="activity" title={copy.noLogs} />}
             />
           </Panel>
         </section>
+      </div>
+      {/* Kept mounted while hidden so its filters and last report survive switching views. */}
+      <div className="activity-view" hidden={view !== "usage"}>
+        <ActivityUsage copy={copy} language={language} />
       </div>
     </Page>
   );

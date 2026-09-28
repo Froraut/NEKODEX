@@ -1,11 +1,12 @@
-/* Settings surface layout: the narrow page (size-content-narrow) and, at 900px of workspace and wider, an
-   "On this page" contents rail to its right. Only places kit components; their look comes from the kit. */
+/* Settings surface layout: the narrow page (size-content-narrow) and, once the workspace fits it beside a full-width
+   page, an "On this page" contents rail to its right. Only places kit components; their look comes from the kit. */
 
 /* ---------- Page and contents rail ---------- */
 .settings-toc { display: none; }
 
-@container workspace (min-width: 900px) {
-  /* The page column keeps the kit Page's own gutters (space-8 each side), so the page stays 760 wide. */
+/* The rail shows only when the page keeps its full 760px next to it: page column (760 + the kit Page's space-8
+   gutters) + column gap (space-2) + rail (180) + end padding (space-8) = 1044px. Container queries take no var(). */
+@container workspace (min-width: 1044px) {
   .settings-layout {
     display: grid;
     grid-template-columns: minmax(0, calc(var(--size-content-narrow) + 2 * var(--space-8))) 180px;
@@ -13,6 +14,7 @@
     column-gap: var(--space-2);
     padding-inline-end: var(--space-8);
   }
+  /* The rail follows the page in the DOM (reading and Tab order); both share the first row. */
   .settings-layout > .settings-page { grid-column: 1; grid-row: 1; }
   .settings-toc {
     position: sticky;
@@ -52,11 +54,18 @@
 .settings-block > strong { display: block; }
 .settings-block > .nk-choice-group { margin: var(--space-3) 0 0; }
 
-/* Parallel agents: number field + Save, then the save state and the active/saved counts. */
-.settings-capacity { display: grid; justify-items: end; gap: var(--space-1); min-width: 0; text-align: end; }
-.settings-capacity > .nk-field__row { justify-content: flex-end; }
-.settings-capacity .nk-input { flex: 0 0 88px; width: 88px; font-variant-numeric: tabular-nums; }
-.settings-capacity > p { max-width: 260px; margin: 0; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+/* Parallel agents: number field + Save, then the unsaved/invalid line (only when it has something to say) and the
+   active/saved counts. The restart note sits in the row description, where it has room. */
+.settings-capacity { display: grid; justify-items: end; min-width: 0; text-align: end; }
+.settings-capacity .nk-field__row { justify-content: flex-end; }
+.settings-capacity .nk-field__row > .nk-input { flex: 0 0 88px; width: 88px; font-variant-numeric: tabular-nums; appearance: textfield; }
+.settings-capacity .nk-input::-webkit-inner-spin-button,
+.settings-capacity .nk-input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+/* Empty live regions stay in place (so later text is announced) without adding space. */
+.settings-capacity > p { max-width: 260px; margin: 0; font-variant-numeric: tabular-nums; }
+.settings-capacity > p:not(:empty) { margin-top: var(--space-1); }
+.settings-row-note { display: block; color: var(--text-warning); }
+.settings-row-note:not(:empty) { margin-top: var(--space-1); }
 
 /* A control with a status line above it (Language while a locale loads). */
 .settings-control-stack { display: grid; justify-items: end; gap: var(--space-2); min-width: 0; }
@@ -71,6 +80,8 @@
 
 /* ---------- Advanced ---------- */
 .settings-disclosure > .nk-disclosure__body { padding-top: 0; }
+/* Same inset as the other groups' panels (space-5), so Advanced rows line up with the rows above and below. */
+.settings-disclosure > summary, .settings-disclosure > .nk-disclosure__body { padding-inline: var(--space-5); }
 /* The title stays on one line; the hint wraps beside it (the kit lets both wrap). */
 @container workspace (min-width: 641px) { .settings-disclosure > summary > span:first-child { flex: none; } }
 .settings-rows { border-top: 1px solid var(--border-light); }
@@ -96,5 +107,5 @@
 @container workspace (max-width: 640px) {
   /* The kit drops a non-switch control under its text, left-aligned; its stacked parts follow. */
   .settings-capacity, .settings-control-stack, .settings-confirm { justify-items: start; text-align: start; }
-  .settings-capacity > .nk-field__row, .settings-confirm__actions { justify-content: flex-start; }
+  .settings-capacity .nk-field__row, .settings-confirm__actions { justify-content: flex-start; }
 }

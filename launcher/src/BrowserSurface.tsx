@@ -1,5 +1,5 @@
 import { useFeatureAction } from "./useFeatureAction";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { BrowserWorkspaceManager } from "./BrowserWorkspaceManager";
 import { ExistingChromeLoginGuide } from "./ExistingChromeLoginGuide";
 import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
@@ -34,6 +34,7 @@ export function BrowserSurface({
   setError,
   networkNoticeMuted = false,
   onMuteNetworkNotice,
+  onOpenConnections,
 }: {
   accountSetup?: ReactNode;
   browser: BrowserState | null;
@@ -49,6 +50,8 @@ export function BrowserSurface({
   setError: (error: string | null) => void;
   networkNoticeMuted?: boolean;
   onMuteNetworkNotice?: () => Promise<void>;
+  /** Opens Connections, where the Web transport is repaired (the web-recovery notice's action). */
+  onOpenConnections?: () => void;
 }) {
   const [passkeyStarting, setPasskeyStarting] = useState(false);
   const workflow = workflowCopy(language);
@@ -69,7 +72,55 @@ export function BrowserSurface({
     && tab.traceId === cancelTarget?.traceId && tab.status === "running");
   useEffect(() => { if (cancelTarget && !cancelTab) setCancelTarget(null); }, [cancelTarget, cancelTab]);
   const visible = browser?.visible === true;
+  const frameRef = useRef<HTMLElement>(null);
   const tabStrip = useRef<HTMLDivElement>(null);
+  const toolbarToggle = useRef<HTMLButtonElement>(null);
+  const idlePrimary = useRef<HTMLButtonElement>(null);
+  // The control that opened the cancel confirmation (a tab's stop button or the manual guide's Cancel turn).
+  const confirmOpener = useRef<HTMLElement | null>(null);
+  const lastFocused = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const remember = (event: FocusEvent) => { lastFocused.current = event.target instanceof HTMLElement ? event.target : null; };
+    frame.addEventListener("focusin", remember);
+    return () => frame.removeEventListener("focusin", remember);
+  }, []);
+  // When a state change removes the focused control (toolbar, idle state, guide, confirmation, tab, window row),
+  // focus moves to the next logical control instead of falling to <body>.
+  useLayoutEffect(() => {
+    const previous = lastFocused.current;
+    if (!previous || previous.isConnected) return;
+    lastFocused.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    const frame = frameRef.current;
+    if (!frame) return;
+    const find = (selector: string) => frame.querySelector<HTMLElement>(selector);
+    const selectedTab = () => find('.browser-tabs [role="tab"][aria-selected="true"]');
+    let target: HTMLElement | null = null;
+    const windowRow = previous.closest<HTMLElement>("li[data-window-row]");
+    if (windowRow) {
+      const rows = frame.querySelectorAll<HTMLElement>("li[data-window-row]");
+      const next = rows[Math.min(Number(windowRow.dataset.windowRow), rows.length - 1)];
+      target = next?.querySelector<HTMLElement>(".nk-icon-btn") ?? find(".browser-windows:not([hidden]) .browser-windows__actions > button");
+    } else if (previous.closest(".browser-confirm")) {
+      target = confirmOpener.current?.isConnected ? confirmOpener.current : selectedTab();
+    } else if (previous.closest(".browser-tabs__tab")) {
+      target = selectedTab();
+    } else if (previous.closest(".browser-manual")) {
+      target = find(".browser-manual__title");
+    }
+    target ??= find(".browser-guide__title")
+      ?? (visible ? toolbarToggle.current : idlePrimary.current)
+      ?? find("h1")
+      ?? selectedTab();
+    target?.focus();
+  });
+  const askToCancel = (tab: { id: string; traceId: string | null }, opener: HTMLElement | null) => {
+    confirmOpener.current = opener;
+    setCancelTarget({ id: tab.id, traceId: tab.traceId });
+  };
   const activeTabId = browser?.tabs.find(tab => tab.active)?.id;
   useEffect(() => {
     tabStrip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
@@ -216,12 +267,22 @@ export function BrowserSurface({
     }
   };
 
+  // On the idle slot a guide replaces the state (its title is the page's h1); above a visible page it is a section.
+  const guideHeadingLevel = visible ? 2 : 1;
   const externalLoginGuide = !manualInteraction && browser?.existingChromeLogin && browser.existingChromeLogin.phase !== "completed" ? (
-    <ExistingChromeLoginGuide transitionBusy={transitionBusy} progress={browser.existingChromeLogin} copy={copy} language={language} onRetry={openExistingChromeLogin} setError={setError} />
+    <ExistingChromeLoginGuide transitionBusy={transitionBusy} progress={browser.existingChromeLogin} copy={copy} language={language}
+      headingLevel={guideHeadingLevel} onRetry={openExistingChromeLogin} setError={setError} />
   ) : !manualInteraction && browser?.passkeyLogin && browser.passkeyLogin.phase !== "completed" ? (
     <PasskeyLoginGuide transitionBusy={transitionBusy} progress={browser.passkeyLogin} copy={copy} language={language}
-      onRetry={openPasskeyLogin} onContinue={continuePasskeyLogin} continuePending={passkeyRequestPending} setError={setError} />
+      headingLevel={guideHeadingLevel} onRetry={openPasskeyLogin} onContinue={continuePasskeyLogin}
+      continuePending={passkeyRequestPending} setError={setError} />
   ) : null;
+  // The existing-Chrome guide owns its import failure (message, retry): the same operation error is not repeated above it.
+  const errorOwnedByGuide = Boolean(error && browser?.existingChromeLogin && externalLoginGuide
+    && operation?.name === "existing-chrome-login" && operation.status === "failed" && operation.message === error);
+  const zoomLevel = `${Math.round((browser?.zoomFactor ?? 1) * 100)}%`;
+  const webRecoveryAction = readiness.action === "repair-web" ? workflow.recovery.repairAction
+    : readiness.action === "open-tools" ? copy.manageToolsConnection : null;
 
   const sessionRecovery = visible && !manualInteraction && browser?.authenticationStatus === "unavailable";
   const address = formatBrowserAddress(browser?.url, copy);
@@ -241,16 +302,22 @@ export function BrowserSurface({
   </span> : null;
 
   return (
-    <section className="browser-frame">
-      {accountSetup}
+    <section className="browser-frame" ref={frameRef}>
+      {/* The idle state and an idle sign-in guide carry the page's h1; a visible page gets a hidden one. */}
+      {visible ? <h1 className="nk-visually-hidden" tabIndex={-1}>{copy.browser}</h1> : null}
       {/* One bar for the task tabs, the account context and separate windows; an open window list wraps below it. */}
       <div className="browser-bar">
-        <div className="browser-tabs" ref={tabStrip} role="tablist" aria-label={windowCopy.taskTabs} title={copy.browserTabLimit}>
+        <div className="browser-tabs" ref={tabStrip} role="tablist" aria-label={windowCopy.taskTabs} title={copy.browserTabLimit}
+          onWheel={(event) => {
+            // A vertical mouse wheel scrolls the strip sideways when it overflows.
+            const strip = event.currentTarget;
+            if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && strip.scrollWidth > strip.clientWidth) strip.scrollLeft += event.deltaY;
+          }}>
           {(browser?.tabs ?? []).map((tab) => {
             const running = tab.status === "running";
             const closing = closingTabs.has(tab.id);
             return (
-              <div className={cx("browser-tabs__tab", tab.active && "is-active", running && "is-running")} key={tab.id}>
+              <div className={cx("browser-tabs__tab", tab.active && "is-active", running && "is-running", closing && "is-closing")} key={tab.id}>
                 <button
                   className="browser-tabs__select"
                   onClick={() => void selectTab(tab.id)}
@@ -289,8 +356,8 @@ export function BrowserSurface({
                     aria-label={`${running ? copy.manualPromptCancel : copy.hideTab}: ${browserTabTitleFromTitle(tab.title, copy)}`}
                     disabled={transitionBusy || closing}
                     className="nk-icon-btn nk-icon-btn--sm browser-tabs__close"
-                    onClick={() => {
-                      if (running) setCancelTarget({ id: tab.id, traceId: tab.traceId });
+                    onClick={(event) => {
+                      if (running) askToCancel(tab, event.currentTarget);
                       else void closeTab(tab.id, tab.traceId);
                     }}
                     title={running ? copy.manualPromptCancel : copy.hideTab}
@@ -339,9 +406,10 @@ export function BrowserSurface({
         </div>
         <div className="browser-nav__group">
           <IconButton icon="minus" label={copy.zoomOut} onClick={() => void zoom("out")} />
-          <Button variant="ghost" size="sm" className="browser-nav__zoom" aria-label={copy.zoomReset} title={copy.zoomReset}
+          {/* The spoken name starts with the visible level: "100% Reset zoom". */}
+          <Button variant="ghost" size="sm" className="browser-nav__zoom" title={copy.zoomReset}
             onClick={() => void zoom("reset")}>
-            {Math.round((browser?.zoomFactor ?? 1) * 100)}%
+            {zoomLevel}<span className="nk-visually-hidden"> {copy.zoomReset}</span>
           </Button>
           <IconButton icon="plus" label={copy.zoomIn} onClick={() => void zoom("in")} />
         </div>
@@ -359,7 +427,7 @@ export function BrowserSurface({
               {passkeyLabel}
             </Button>
           ) : null}
-          <Button variant="ghost" size="sm" disabled={transitionBusy && !visible} onClick={() => void toggle()}>
+          <Button variant="ghost" size="sm" ref={toolbarToggle} disabled={transitionBusy && !visible} onClick={() => void toggle()}>
             {visible ? copy.hideBrowser : copy.openChatgpt}
           </Button>
         </div>
@@ -367,7 +435,7 @@ export function BrowserSurface({
       </div> : null}
       {/* The native view paints above renderer overlays, so notices take layout space above the slot. */}
       <div className="browser-notices">
-        {error ? <Notice tone="error"
+        {error && !errorOwnedByGuide ? <Notice tone="error" className="browser-notices__error"
           action={<Button variant="ghost" size="sm" onClick={() => setError(null)}>{copy.dismiss}</Button>}>
           {localizeLauncherError(copy, error)}
         </Notice> : null}
@@ -392,7 +460,7 @@ export function BrowserSurface({
         ) : null}
         {sessionRecovery ? (
           <Notice data-testid="browser-session-recovery" tone="warning" title={workflow.session.verificationUnavailable}
-            meta={browser.lastVerifiedAt ? workflow.session.lastVerifiedAt.replace("{time}", new Date(browser.lastVerifiedAt).toLocaleString(language)) : undefined}
+            meta={browser.lastVerifiedAt ? workflow.session.lastVerifiedAt.replace("{time}", formatDateTime(browser.lastVerifiedAt, language)) : undefined}
             action={<>
               {recoverableBrowserTabs.length ? <Button variant="ghost" size="sm" disabled={transitionBusy}
                 onClick={() => void selectTab(recoverableBrowserTabs[0]!.id)}>{copy.openWorkspace}</Button> : null}
@@ -405,20 +473,22 @@ export function BrowserSurface({
           </Notice>
         ) : browser?.authenticated === true && (readiness.web === "degraded" || readiness.web === "unavailable") ? (
           <Notice data-testid="browser-web-recovery" tone="warning" title={workflow.recovery.webTransportTitle}
-            meta={readiness.native === "ready" ? workflow.recovery.nativePreserved : undefined}>
+            action={webRecoveryAction && onOpenConnections ? <Button size="sm" disabled={transitionBusy}
+              onClick={onOpenConnections}>{webRecoveryAction}</Button> : undefined}>
             {readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}
           </Notice>
         ) : null}
         <NetworkIssueNotice language={language} browser={browser} muted={networkNoticeMuted} onDontShowAgain={onMuteNetworkNotice} />
+        {accountSetup}
         {selectedManualTab
           && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
           <ManualTurnGuide
             copy={copy}
             confirmPending={confirmingTabs.has(selectedManualTab.id)}
             transitionBusy={transitionBusy}
-            onCancel={() => {
+            onCancel={(opener) => {
               // Match the tab strip: stopping a running turn asks for confirmation first.
-              if (selectedManualTab.status === "running") setCancelTarget({ id: selectedManualTab.id, traceId: selectedManualTab.traceId });
+              if (selectedManualTab.status === "running") askToCancel(selectedManualTab, opener);
               else void closeTab(selectedManualTab.id, selectedManualTab.traceId);
             }}
             onCopy={() => copyManualPrompt(selectedManualTab.id)}
@@ -433,7 +503,7 @@ export function BrowserSurface({
           <div className="browser-idle">
             <Mark size={56} />
             {externalLoginGuide ? externalLoginGuide : <div className="browser-idle__copy">
-              <h1 className="nk-type-title">{activeBrowserTabs.length ? `${activeBrowserTabs.length} · ${copy.overviewActiveRuns}` : manualInteraction
+              <h1 className="nk-type-title" tabIndex={-1}>{activeBrowserTabs.length ? `${activeBrowserTabs.length} · ${copy.overviewActiveRuns}` : manualInteraction
                 ? copy.browserReady
                 : browser?.authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
                   : browser?.authenticated ? copy.noActiveTask : copy.stepAccount}</h1>
@@ -444,8 +514,8 @@ export function BrowserSurface({
                 ? copy.noActiveTaskBody
                 : existingChromeWaiting ? copy.existingChromeBody : passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}</p>
               <div className="browser-idle__actions">
-                {activeBrowserTabs.length ? <Button variant="primary" disabled={transitionBusy} onClick={() => void selectTab(activeBrowserTabs[0].id)}>{copy.openWorkspace}</Button> :
-                  <Button variant="primary" disabled={transitionBusy || passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
+                {activeBrowserTabs.length ? <Button variant="primary" ref={idlePrimary} disabled={transitionBusy} onClick={() => void selectTab(activeBrowserTabs[0].id)}>{copy.openWorkspace}</Button> :
+                  <Button variant="primary" ref={idlePrimary} disabled={transitionBusy || passkeyWaiting || existingChromeWaiting} onClick={() => void toggle()}>
                     {manualInteraction || browser?.authenticated || browser?.authenticationStatus === "unavailable" ? copy.openChatgpt : copy.stepAccount}
                   </Button>}
                 {browser?.authenticationStatus === "unavailable" && !manualInteraction ? <Button
@@ -488,6 +558,11 @@ function browserTabTone(status: BrowserState["tabs"][number]["status"]): "idle" 
   if (status === "loading" || status === "running" || status === "testing") return "busy";
   if (status === "ready") return "ready";
   return "idle";
+}
+
+function formatDateTime(value: string, language: Language): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 function formatBrowserAddress(url: string | undefined, copy: Copy): string {

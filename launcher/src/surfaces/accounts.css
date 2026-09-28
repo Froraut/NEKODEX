@@ -5,21 +5,25 @@
 .accounts-surface p { margin: 0; }
 .accounts-loading { margin: 0; padding: var(--space-5) 0; color: var(--text-tertiary); }
 
+/* Headings (the page h1, a new account's name) and a sign-in flow's message take focus only from script,
+   after the control that had it is gone. The screen reader announces them; a control-like ring would not fit. */
+.accounts-page [tabindex="-1"]:focus-visible { outline: none; }
+
 /* Routing focal panel: copy left, select right; the select takes the row when the page is narrow. */
 .accounts-routing { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3) var(--space-4); }
 .accounts-routing__copy { flex: 1 1 280px; min-width: 0; }
 .accounts-routing__copy > label { display: block; color: var(--text-primary); }
 .accounts-routing__copy > p { margin-top: var(--space-1); }
 
-/* Allowance notice and the refresh-all summary under it. */
-.accounts-allowances { display: grid; gap: var(--space-2); }
-.quota-portfolio-summary { padding: 0 var(--space-4); color: var(--text-tertiary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* Allowance notice: the refresh-all result or a lasting reason sits in its meta line. */
+.accounts-allowances small { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 /* Cards (name headings are h2, sections inside a card h3/h4). The name heading is focused after an account is added. */
 .accounts-list { min-width: 0; }
 .accounts-list .nk-account__who > h2 { scroll-margin-top: var(--space-6); }
-.accounts-card__body { display: grid; gap: var(--space-5); min-width: 0; }
-.accounts-card__more { display: grid; gap: var(--space-2); min-width: 0; }
+.accounts-card__body { display: grid; gap: var(--space-4); min-width: 0; }
+/* Action row: "Use for new tasks" on the left, the buttons as one right-aligned group that wraps inside itself. */
+.accounts-card__buttons { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; margin-left: auto; }
 .accounts-card__hint { flex-basis: 100%; color: var(--text-tertiary); text-align: end; overflow-wrap: anywhere; }
 
 /* Codex allowance inside a card. */
@@ -39,22 +43,26 @@
 .accounts-bucket__meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4) var(--space-6); }
 .accounts-meter { min-width: 0; }
 
-/* Disclosure bodies (models, tools setup, Codex sign-in, pacing, proxy). */
-.accounts-disclosure { display: grid; gap: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+/* The card's one "Setup and settings" disclosure: a one-line summary, then sections split by rules. */
+.accounts-details > summary > span:first-child { flex: none; }
+.accounts-details > summary > small { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accounts-details__state.is-unsaved { color: var(--text-warning); }
+.accounts-details__state.is-failed { color: var(--text-error); }
+.accounts-details__body { display: grid; gap: var(--space-5); min-width: 0; overflow-wrap: anywhere; }
+.accounts-details__section { display: grid; gap: var(--space-3); min-width: 0; }
+.accounts-details__section + .accounts-details__section { padding-top: var(--space-5); border-top: 1px solid var(--border-light); }
+.accounts-details__section > h3 { margin: 0; color: var(--text-primary); }
 .accounts-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.accounts-hint.is-attention, .accounts-attention { color: var(--text-warning); }
+.accounts-attention { color: var(--text-warning); }
 .accounts-models__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-3) var(--space-4); margin: 0; }
 .accounts-models__grid dt { color: var(--text-primary); font-weight: 500; }
 .accounts-models__grid dd { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-1) 0 0; color: var(--text-secondary); }
 
-/* Pacing and proxy: two sections of one disclosure. */
-.accounts-controls__body { gap: var(--space-5); }
-.accounts-controls__section { display: grid; gap: var(--space-3); min-width: 0; }
-.accounts-controls__section + .accounts-controls__section { padding-top: var(--space-5); border-top: 1px solid var(--border-light); }
-.accounts-controls__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); }
-.accounts-controls__head > h3 { margin: 0; color: var(--text-primary); }
+/* Pacing and proxy forms. */
 .accounts-form { display: grid; gap: var(--space-3); min-width: 0; }
 .accounts-form fieldset { display: grid; gap: var(--space-4); min-width: 0; margin: 0; padding: 0; border: 0; }
+/* A checkbox label is as wide as its text, so a click on the empty rest of the row does not toggle it. */
+.accounts-form .nk-check { justify-self: start; }
 .accounts-form__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); align-items: end; gap: var(--space-3) var(--space-4); }
 .accounts-form__section { display: grid; gap: var(--space-2); padding-top: var(--space-4); border-top: 1px solid var(--border-light); }
 .accounts-form__section > h4 { margin: 0; color: var(--text-primary); }
@@ -64,8 +72,10 @@
 .accounts-proxy__fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
 .accounts-proxy__fields > .nk-field { flex: 1 1 260px; }
 
-/* Codex sign-in progress. */
-.accounts-login-progress { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--border-light); }
+/* A running Codex sign-in flow, in the card body. */
+.accounts-login-flow { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-4); border: 1px solid var(--border-accent); border-radius: var(--radius-md); }
+.accounts-login-flow > h3 { margin: 0; color: var(--text-primary); }
+.accounts-login-progress { display: grid; gap: var(--space-2); overflow-wrap: anywhere; }
 .accounts-login-progress__message strong { color: var(--text-primary); font-weight: 500; }
 .accounts-device-code { display: grid; gap: var(--space-1); padding: var(--space-3); border: 1px solid var(--border-heavy); border-radius: var(--radius-sm); background: var(--bg-control); }
 .accounts-device-code__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); }

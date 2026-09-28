@@ -3,10 +3,11 @@ import { ClientConnections } from "./ClientConnections";
 import { useRef, useState, type ReactNode } from "react";
 import { type Copy } from "./i18n";
 import { RouteDiagnostics } from "./RouteDiagnostics";
-import { type WorkspaceReadiness } from "./workspace-readiness";
+import { modelsTabConnection, type WorkspaceReadiness } from "./workspace-readiness";
+import { connectionTabStatus, connectionsCopy, connectionsSubtitle, workspaceHeadline } from "./connections-copy";
 import type { BrowserState, LauncherSnapshot, LauncherState, OperationState } from "./types";
-import { Badge, Button, Disclosure, Notice, Page, SettingRow, SetupRow, StateDot, SurfaceHeader } from "./design";
-import { ConnectionsTabs, ZeroRiskModelMenu, messageOf } from './launcher-ui';
+import { Badge, Button, Disclosure, Icon, Notice, Page, SettingRow, SetupRow, StateDot, SurfaceHeader } from "./design";
+import { ConnectionsTabs, ZeroRiskModelMenu, connectionsTabPanelProps, messageOf } from './launcher-ui';
 import { currentToolProof } from './launcher-readiness';
 import "./surfaces/connections.css";
 const api = window.codexWebLauncher;
@@ -43,6 +44,8 @@ export function SetupSurface({
   const [localBusy, setLocalBusy] = useState(false);
   const [hermesAdded, setHermesAdded] = useState(false);
   const verifiedAt = snapshot.state.setupVerifiedAt ? Date.parse(snapshot.state.setupVerifiedAt) : Number.NaN;
+  const language = snapshot.state.language ?? "en";
+  const words = connectionsCopy(language);
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
   const models = modelConnectionReadiness({ manual: manualInteraction,
     installed: snapshot.state.coreSetupComplete === true,
@@ -133,51 +136,28 @@ export function SetupSurface({
     row?.scrollIntoView({ block: "center" });
     row?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
   };
-  const readyTitle = manualInteraction ? copy.manualSetupReady
-    : toolsVerified ? copy.setupChecksPassed : copy.setupReadyModels;
-  const readyBody = manualInteraction ? copy.manualSetupReadyBody
-    : toolsVerified ? copy.connectorAvailableNotExecuted : copy.setupUseCodex;
-  const nextTitle = readiness.action === "retry-session" ? copy.connectionPending
-    : readiness.reason === "session-checking" ? copy.checkingSignIn
-      : readiness.reason === "catalog-unavailable" ? copy.catalogUnavailable
-      : readiness.action === "open-accounts" ? copy.stepAccount
-        : readiness.action === "repair-web" ? copy.localToolsUnavailable
-          : readiness.action === "open-tools" ? copy.localTools
-            : ({ "sign-in": copy.stepAccount, test: copy.stepSmoke, install: copy.stepInstall,
-    catalog: copy.setupCatalogTitle, confirm: copy.setupConfirmTitle, tools: copy.localTools,
-    ready: readyTitle }[nextStep]);
-  const nextBody = readiness.action === "retry-session" ? copy.stepAccountBody
-    : readiness.reason === "session-checking" ? copy.stepAccountBody
-      : readiness.reason === "catalog-unavailable" ? copy.catalogFailureKeptInstall
-      : readiness.action === "open-accounts" ? copy.stepAccountBody
-        : readiness.action === "repair-web" ? copy.localToolsUnavailableBody
-          : readiness.action === "open-tools" ? copy.mcpBody
-            : ({ "sign-in": copy.stepAccountBody, test: copy.stepSmokeBody, install: copy.stepInstallBody,
-    catalog: copy.setupCatalogBody, confirm: copy.setupConfirmBody, tools: copy.mcpBody,
-    ready: readyBody }[nextStep]);
-  const nextLabel = readiness.action === "retry-session" ? copy.retry
-    : readiness.reason === "catalog-unavailable" ? copy.diagnostics
-    : readiness.action === "open-accounts" ? copy.next
-      : readiness.action === "repair-web" || readiness.action === "open-tools" ? copy.configureMcp
-        : readiness.action === "wait" ? copy.loading
-          : ({ "sign-in": copy.next, test: copy.runSmoke, install: copy.install,
-    catalog: copy.diagnostics, confirm: copy.confirmPicker, tools: copy.configureMcp,
-    ready: copy.openWorkspace }[nextStep]);
-  const nextAction = () => {
-    if (readiness.action === "retry-session") void retrySession();
-    else if (readiness.reason === "catalog-unavailable") showTroubleshooting();
-    else if (readiness.action === "open-accounts") showAccountSignInChoices();
-    else if (readiness.action === "open-tools" || readiness.action === "repair-web") showMcp();
-    else if (readiness.action === "wait") return;
-    else if (nextStep === "sign-in") showAccountSignInChoices();
-    else if (nextStep === "test") void smoke();
-    else if (nextStep === "install") void install();
-    else if (nextStep === "confirm") void confirmModels();
-    else if (nextStep === "catalog") showTroubleshooting();
-    else if (nextStep === "tools") showMcp();
-    else void activateBrowser().catch(cause => setError(messageOf(cause)));
+  // Title, body and next step come from the same readiness headline as the Overview hero.
+  const headline = workspaceHeadline(readiness, { app: copy, language, development: devProfile, manual: manualInteraction,
+    authenticationIssue: browser?.authenticationIssue });
+  const runHeadlineStep = () => {
+    switch (headline.step) {
+      case "wait": return;
+      case "retry-session": void retrySession(); return;
+      case "sign-in": showAccountSignInChoices(); return;
+      case "routing-checks": showTroubleshooting(); return;
+      case "tools": case "repair": showMcp(); return;
+      case "activity": showActivity(); return;
+      case "open-workspace": void activateBrowser().catch(cause => setError(messageOf(cause))); return;
+      case "setup":
+        if (nextStep === "sign-in") showAccountSignInChoices();
+        else if (nextStep === "test") void smoke();
+        else if (nextStep === "install") void install();
+        else if (nextStep === "confirm") void confirmModels();
+        else if (nextStep === "catalog") showTroubleshooting();
+        else if (nextStep === "tools") showMcp();
+    }
   };
-  const nextDisabled = busy || readiness.action === "wait" || (nextStep === "confirm" && pendingContext);
+  const headlineDisabled = busy || (nextStep === "confirm" && pendingContext);
 
   // The derived next step is shown on its setup row (the one current row, with the primary button). States that
   // no row represents (session retry, waiting, catalog failure, everything ready) are a notice above the rows.
@@ -185,7 +165,8 @@ export function SetupSurface({
     account: browser?.authenticated === true,
     smoke: snapshot.smokePassed,
     install: pickerReady,
-    tools: toolsVerified,
+    // The same derived tools status as the tab and the Overview row (the connector proof alone is not enough).
+    tools: readiness.connections.tools.ready,
   };
   const nextRow: SetupStep | null = readiness.action === "retry-session" || readiness.reason === "catalog-unavailable"
     || readiness.action === "wait" ? null
@@ -196,35 +177,44 @@ export function SetupSurface({
   const currentRow = nextRow && !complete[nextRow] && !(manualInteraction && (nextRow === "account" || nextRow === "smoke"))
     ? nextRow : null;
   const catalogNotice = !manualInteraction && catalogFailure;
-  const statusNotice = currentRow === null && !(catalogNotice && readiness.reason === "catalog-unavailable");
-  const statusTone = readiness.action === "retry-session" || readiness.action === "repair-web" ? "warning"
-    : nextStep === "ready" && readiness.action !== "wait" ? "success" : "info";
+  // States no row represents (session retry, waiting, everything ready, runtime or Web problems) are one notice with
+  // the page's primary. A Web problem while a row is current is explained by the notice; the row keeps the primary.
+  const webProblem = readiness.reason === "web-repair-available" || readiness.reason === "web-degraded"
+    || readiness.reason === "web-unavailable";
+  const statusNotice = currentRow === null ? !(catalogNotice && readiness.reason === "catalog-unavailable") : webProblem;
+  const statusAction = currentRow === null && headline.step !== "wait";
+  // Manual mode installs the harness during the tools setup, so the model row waits for it.
+  const toolsFirst = manualInteraction && !snapshot.state.mcpRuntimeInstalled && !pickerReady;
   const variant = (row: SetupStep) => currentRow === row ? "primary" : "secondary";
   const optional = <Badge tone="outline">{copy.optional}</Badge>;
 
-  const installAction = confirmPending ? confirmModels : catalogPending ? showTroubleshooting
-    : manualInteraction && !snapshot.state.mcpRuntimeInstalled ? showMcp : install;
-  const installDisabled = busy || (confirmPending && pendingContext) || (!manualInteraction && !browser?.authenticated)
+  const installAction = confirmPending ? confirmModels : catalogPending ? showTroubleshooting : install;
+  const installDisabled = busy || toolsFirst || (confirmPending && pendingContext) || (!manualInteraction && !browser?.authenticated)
     || (!snapshot.state.coreSetupComplete && !snapshot.smokePassed && !manualInteraction);
   let installDescription: ReactNode = confirmPending ? copy.setupConfirmBody : catalogPending ? copy.setupCatalogBody
     : devProfile ? copy.devStepInstallBody : copy.stepInstallBody;
   if (confirmPending && pendingContext) {
     installDescription = <>{installDescription}<span className="nk-connections__row-note" role="status">
       <StateDot state="busy" />{copy.contextWaiting}</span></>;
+  } else if (toolsFirst) {
+    installDescription = <>{installDescription}<span className="nk-connections__row-note">{words.toolsFirst}</span></>;
   }
+  const dateTime = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
 
   return (
     <Page className="nk-connections">
+      {/* One header for both tabs: the tab strip never moves, and each tab reports its own status. */}
       <SurfaceHeader
-        eyebrow={nextStep === "ready" ? copy.connectionVerified : copy.required}
-        subtitle={devProfile
-          ? copy.devSetupSubtitle
-          : manualInteraction ? copy.manualInteractionBody : copy.setupSubtitle}
-        title={nextStep === "ready" ? copy.modelsConnectionTab : devProfile ? copy.devSetupTitle : copy.setupTitle}
+        subtitle={connectionsSubtitle(copy, language, { development: devProfile, manual: manualInteraction })}
+        title={copy.connectionsNav}
       />
-      <ConnectionsTabs active="models" copy={copy} modelsReady={pickerReady}
-        onModels={() => {}} onTools={showMcp} toolsReady={toolsVerified} />
-      <div className="nk-connections__content">
+      <ConnectionsTabs active="models" copy={copy}
+        modelsReady={modelsTabConnection(readiness.connections).ready}
+        modelsStatus={connectionTabStatus(modelsTabConnection(readiness.connections), copy, language)}
+        onModels={() => {}} onTools={showMcp}
+        toolsReady={readiness.connections.tools.ready}
+        toolsStatus={connectionTabStatus(readiness.connections.tools, copy, language)} />
+      <div className="nk-connections__content" {...connectionsTabPanelProps("models")}>
         {manualInteraction ? (
           // Outside DEV the subtitle already carries the Manual mode explanation.
           <Notice title={copy.manualInteraction}>{devProfile ? copy.manualInteractionBody : null}</Notice>
@@ -232,7 +222,7 @@ export function SetupSurface({
         {catalogNotice ? (
           <Notice
             action={<Button onClick={showTroubleshooting} size="sm"
-              variant={readiness.reason === "catalog-unavailable" && !nextDisabled ? "primary" : "secondary"}>
+              variant={readiness.reason === "catalog-unavailable" && !busy ? "primary" : "secondary"}>
               {copy.openRoutingChecks}
             </Button>}
             title={<span id="catalog-failure-title">{copy.catalogUnavailable}</span>}
@@ -243,17 +233,19 @@ export function SetupSurface({
         ) : null}
         {statusNotice ? (
           <Notice
-            action={<Button busy={readiness.action === "wait"} disabled={nextDisabled} onClick={nextAction} size="sm" variant="primary">
-              {nextLabel}
-            </Button>}
+            action={statusAction ? <Button busy={localBusy && headline.step === "retry-session"} disabled={headlineDisabled}
+              onClick={runHeadlineStep} size="sm" variant="primary">
+              {headline.action}
+            </Button> : undefined}
             className="nk-connections__next"
-            title={nextTitle}
-            tone={statusTone}
+            // While NEKODEX checks something there is nothing to press: a busy status line instead of a button.
+            meta={headline.step === "wait" ? <span className="nk-connections__row-note">
+              <StateDot state="busy" />{headline.action}</span> : undefined}
+            title={headline.title}
+            tone={headline.tone}
           >
-            {nextBody}
+            {headline.body}
           </Notice>
-        ) : currentRow === "tools" && readiness.action === "repair-web" ? (
-          <Notice title={copy.localToolsUnavailable} tone="warning">{copy.localToolsUnavailableBody}</Notice>
         ) : null}
 
         <div className="nk-connections__steps">
@@ -294,7 +286,7 @@ export function SetupSurface({
           </> : null}
           <SetupRow
             actions={<Button disabled={installDisabled || complete.install} onClick={installAction} size="sm" variant={variant("install")}>
-              {confirmPending ? copy.confirmPicker : catalogPending ? copy.diagnostics : pickerReady ? copy.done : devProfile ? copy.devInstall : copy.install}
+              {confirmPending ? copy.confirmPicker : catalogPending ? copy.openRoutingChecks : pickerReady ? copy.done : devProfile ? copy.devInstall : copy.install}
             </Button>}
             complete={complete.install}
             current={currentRow === "install"}
@@ -313,26 +305,27 @@ export function SetupSurface({
           <SetupRow
             actions={<Button disabled={!manualInteraction && !snapshot.state.codexCatalogVerified} iconEnd="chevron"
               onClick={showMcp} size="sm" variant={variant("tools")}>
-              {toolsVerified ? copy.mcpReady : copy.configureMcp}
+              {complete.tools ? copy.manageToolsConnection
+                : readiness.action === "repair-web" ? words.openRepair : copy.configureMcp}
             </Button>}
             complete={complete.tools}
             current={currentRow === "tools"}
             description={<>
               {devProfile ? copy.devMcpBody : copy.mcpBody}
               {Number.isFinite(verifiedAt) ? <span className="nk-connections__row-note">
-                {copy.lastConnectorVerification.replace("{time}", new Date(verifiedAt).toLocaleString(snapshot.state.language ?? "en"))}
+                {copy.lastConnectorVerification.replace("{time}", dateTime.format(new Date(verifiedAt)))}
               </span> : null}
             </>}
             index={manualInteraction ? 2 : 4}
             tag={manualInteraction ? undefined : optional}
-            title={devProfile ? copy.devMcpTitle : copy.mcpTitle}
+            title={devProfile ? copy.devMcpTitle : words.toolsTitle}
           />
         </div>
 
         <div className="nk-connections__more">
           <Disclosure ref={troubleshooting} title={copy.setupTroubleshooting}>
             <div className="nk-connections__stack">
-            <RouteDiagnostics disabled={busy} language={snapshot.state.language ?? "en"}
+            <RouteDiagnostics disabled={busy} language={language}
               onActionError={cause => setError(messageOf(cause))}
               onExport={() => api!.exportLogs()} onViewActivity={showActivity}
               readReport={() => api!.routeDiagnostics()} />
@@ -343,7 +336,7 @@ export function SetupSurface({
             ) : null}
             </div>
           </Disclosure>
-          {!manualInteraction ? <ClientConnections language={snapshot.state.language ?? "en"} busy={busy}
+          {!manualInteraction ? <ClientConnections language={language} busy={busy}
             configured={snapshot.state.coreSetupComplete === true} devProfile={devProfile} /> : null}
           {!devProfile && !manualInteraction ? (
             <Disclosure hint={copy.optional} title="Hermes">
@@ -357,10 +350,10 @@ export function SetupSurface({
               />
               <p className="nk-connections__status" role="status">
                 <StateDot state={hermesAdded ? "ready" : "idle"} />
-                {hermesAdded ? copy.hermesAdded : !toolsVerified ? copy.hermesPending : copy.hermesChoose}
+                {hermesAdded ? copy.hermesAdded : !complete.tools ? copy.hermesPending : copy.hermesChoose}
               </p>
               <details className="nk-connections__nested">
-                <summary>{copy.hermesDirectTitle}</summary>
+                <summary><Icon className="nk-icon" focusable="false" name="chevron" size={14} />{copy.hermesDirectTitle}</summary>
                 <p>{copy.hermesDirectBody}</p>
                 <Button disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes("codex_responses")} size="sm">
                   {copy.hermesDirectAdd}

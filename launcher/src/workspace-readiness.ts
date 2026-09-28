@@ -1,4 +1,6 @@
 import { modelConnectionReadiness, setupNextStep } from "./setup-progress";
+import { runtimeCapabilities } from "./launcher-readiness";
+import type { BrowserState, LauncherSnapshot } from "./types";
 
 export type WorkspaceAction =
   | "retry-session"
@@ -62,6 +64,46 @@ export interface WorkspaceReadiness {
   native: WorkspaceCapabilityStatus;
   web: WorkspaceCapabilityStatus;
   tools: WorkspaceCapabilityStatus;
+  /** One derived status per connection; every surface shows these (word, dot and action together). */
+  connections: WorkspaceConnections;
+}
+
+/**
+ * The status of one connection. The key picks the status word, `dot` the StateDot and `action` the row's action
+ * word, so the three can never disagree ("Verified" only ever appears with the ready dot).
+ */
+export type ConnectionStatusKey =
+  | "verified"                 // checked and ready
+  | "installed"                // Manual mode: the model side exists; NEKODEX does not check the catalog
+  | "manual"                   // Manual mode session: the user signs in and sends turns themselves
+  | "checking"                 // a check or a start is in progress
+  | "waiting-for-codex"        // installed; Codex has not requested the catalog yet
+  | "confirm-in-codex"         // the user still has to confirm the models in the Codex picker
+  | "needs-sign-in"
+  | "verification-unavailable" // the session could not be checked (not proof of sign-out)
+  | "catalog-unavailable"
+  | "needs-setup"              // a required connection is not set up
+  | "not-connected"            // an optional connection is not set up
+  | "needs-attention"          // set up, but degraded
+  | "unavailable";             // set up, but not available right now
+
+/** StateDot state: green ready, amber busy/attention, grey idle, rose error. */
+export type ConnectionDot = "ready" | "busy" | "idle" | "error";
+/** The short action cue of a connection row ("Manage ›"). */
+export type ConnectionAction = "manage" | "connect" | "sign-in" | "open" | "open-routing-checks";
+
+export interface ConnectionStatus {
+  key: ConnectionStatusKey;
+  dot: ConnectionDot;
+  action: ConnectionAction;
+  /** Nothing is needed here: the connection is verified (or, in Manual mode, not NEKODEX's to check). */
+  ready: boolean;
+}
+
+export interface WorkspaceConnections {
+  session: ConnectionStatus;
+  models: ConnectionStatus;
+  tools: ConnectionStatus;
 }
 
 const transitioning = new Set(["starting", "recovering", "stopping"]);
@@ -95,14 +137,52 @@ function toolsCapability(input: WorkspaceReadinessInput): WorkspaceCapabilitySta
   return "unknown";
 }
 
+const status = (key: ConnectionStatusKey, dot: ConnectionDot, action: ConnectionAction, ready = false): ConnectionStatus =>
+  ({ key, dot, action, ready });
+
+function sessionConnection(input: WorkspaceReadinessInput): ConnectionStatus {
+  if (input.manual) return status("manual", "idle", "manage", true);
+  if (input.authenticationStatus === "verified") return status("verified", "ready", "manage", true);
+  if (input.authenticationStatus === "unknown") return status("checking", "busy", "open");
+  if (input.authenticationStatus === "unavailable") return status("verification-unavailable", "busy", "open");
+  return status("needs-sign-in", "busy", "sign-in");
+}
+
+function modelsConnection(input: WorkspaceReadinessInput, native: WorkspaceCapabilityStatus): ConnectionStatus {
+  if (!input.manual && input.catalogUnavailable === true) return status("catalog-unavailable", "error", "open-routing-checks");
+  const models = modelConnectionReadiness(input);
+  if (models === "not-installed") return status("needs-setup", "idle", "connect");
+  if (models === "catalog-pending") return status("waiting-for-codex", "busy", "open");
+  if (models === "picker-pending") return status("confirm-in-codex", "busy", "open");
+  // The setup facts hold; whether the models can run right now is the native runtime's report.
+  if (native === "checking") return status("checking", "busy", "open");
+  if (native === "unavailable") return status("unavailable", "error", "open");
+  if (native === "degraded") return status("needs-attention", "busy", "open");
+  return input.manual ? status("installed", "ready", "manage", true) : status("verified", "ready", "manage", true);
+}
+
+function toolsConnection(input: WorkspaceReadinessInput, tools: WorkspaceCapabilityStatus): ConnectionStatus {
+  if (tools === "ready") return status("verified", "ready", "manage", true);
+  if (tools === "checking") return status("checking", "busy", "open");
+  if (tools === "degraded") return status("needs-attention", "busy", "open");
+  if (tools === "unavailable" && input.toolsInstalled) return status("unavailable", "error", "open");
+  // Not set up (or set up without a verified connector): required in Manual mode, optional otherwise.
+  return input.manual ? status("needs-setup", "idle", "connect") : status("not-connected", "idle", "connect");
+}
+
 export function deriveWorkspaceReadiness(input: WorkspaceReadinessInput): WorkspaceReadiness {
   const native = input.installed
     ? runtimeCapability(input.runtime?.nativeAvailability, input.runtime?.runtimeStatus)
     : "unavailable";
   const web = webCapability(input);
   const tools = toolsCapability(input);
+  const connections: WorkspaceConnections = {
+    session: sessionConnection(input),
+    models: modelsConnection(input, native),
+    tools: toolsConnection(input, tools),
+  };
   const result = (action: WorkspaceAction, reason: WorkspaceReason): WorkspaceReadiness => ({
-    action, reason, native, web, tools,
+    action, reason, native, web, tools, connections,
   });
 
   if (!input.manual) {
@@ -165,4 +245,40 @@ export function deriveWorkspaceReadiness(input: WorkspaceReadinessInput): Worksp
   if (native === "checking") return result("wait", "runtime-checking");
   if (native === "unavailable") return result("open-setup", "runtime-unavailable");
   return result("open-browser", "workspace-ready");
+}
+
+/**
+ * The Models and Codex route tab covers the ChatGPT session and the model route (its setup rows 1-3): it reports the
+ * session while the session needs something, then the model route.
+ */
+export function modelsTabConnection(connections: WorkspaceConnections): ConnectionStatus {
+  return connections.session.ready ? connections.models : connections.session;
+}
+
+/**
+ * The readiness input every surface derives from the same launcher facts, so Overview, Connections and the shell
+ * agree. `toolsVerified` is the current connector proof (launcher-readiness `currentToolProof`).
+ */
+export function workspaceReadinessInput({ snapshot, browser, catalogFailure, toolsVerified }: {
+  snapshot: LauncherSnapshot;
+  browser: BrowserState | null;
+  catalogFailure: string | null;
+  toolsVerified: boolean;
+}): WorkspaceReadinessInput {
+  const manual = snapshot.state.browserInteractionMode === "manual";
+  const authenticationStatus = browser?.authenticationStatus
+    ?? (browser?.authenticated ? "verified" : browser?.status === "signed-out" ? "signed-out" : "unknown");
+  return {
+    manual,
+    development: snapshot.profile === "development",
+    authenticationStatus: manual ? "verified" : authenticationStatus,
+    smokePassed: snapshot.smokePassed,
+    installed: snapshot.state.coreSetupComplete === true,
+    catalogUnavailable: Boolean(catalogFailure),
+    catalogVerified: snapshot.state.codexCatalogVerified === true,
+    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
+    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
+    toolsVerified,
+    runtime: { ...(runtimeCapabilities(snapshot) ?? {}), transitionActive: Boolean(snapshot.lifecycle?.transition) },
+  };
 }

@@ -1,10 +1,10 @@
 // NEKODEX design-system component kit. Styles: ../tokens.css + ./components.css (imported once in main.tsx).
 // Markup, class names and ARIA follow the system's reference bundle; props follow its index.d.ts.
 export { Icon, iconNames, type IconName, type IconProps } from "../icons";
-export { cx, type Status, type Tone } from "./shared";
+export { cx, useFocusSafeDisabled, type Status, type Tone } from "./shared";
 export { Mark, type CatReaction, type MarkProps } from "./Mark";
 export {
-  Button, Checkbox, IconButton, Select, Switch, Tabs, TextField,
+  Button, Checkbox, IconButton, Select, Switch, TabPanel, Tabs, TextField,
   type ButtonProps, type CheckboxProps, type IconButtonProps, type SelectOption, type SelectProps, type SwitchProps,
   type TabItem, type TabsProps, type TextFieldProps,
 } from "./controls";

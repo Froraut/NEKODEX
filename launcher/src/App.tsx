@@ -7,14 +7,14 @@ import { Onboarding } from "./Onboarding";
 import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
-import { IconButton, StateDot, ContentSurface, messageOf } from './launcher-ui';
+import { IconButton, ContentSurface, messageOf } from './launcher-ui';
 import { runtimeCapabilities, currentToolProof } from './launcher-readiness';
 
 import { taskCenterSubtitle, taskCenterTitle } from './task-center-copy';
 import { QueueControls } from './QueueControls';
 import type { CompactionModel } from "./types";
 import { modelConnectionReadiness } from "./setup-progress";
-import { Button, Mark, Notice } from "./design";
+import { Button, Mark, Notice, StateDot } from "./design";
 import { Overview } from "./Overview";
 import { AccountToolsHandoff } from "./AccountToolsOnboarding";
 
@@ -28,6 +28,7 @@ import { useNetworkIssueDismissalReset } from "./NetworkIssueNotice";
 import { ActionDot, BiggerContextRecommendation, COMPACT_SIDEBAR_QUERY, ErrorToast, FatalMessage, LaunchLoading, SidebarGroup, SidebarItem, TitleBar, useCompactSidebarDrawer } from "./AppShell";
 import { useUpdateControls } from "./useUpdateControls";
 import { useAppliedAppearance } from "./theme";
+import { shellCopy } from "./shell-copy";
 
 import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, Language, LauncherLifecycle as LifecycleProjection, LauncherSnapshot, LauncherState, LogRecord, OperationState, ProModelVersion, Surface } from "./types";
 
@@ -365,9 +366,10 @@ export function App() {
     setSnapshot((current) => current ? { ...current, compactionModel } : current);
   }, []);
 
-  if (!api) return <FatalMessage message="Launcher IPC is unavailable." />;
+  if (!api) return <FatalMessage language="en" message="Launcher IPC is unavailable." />;
   if (!snapshot && startupError) return (
     <FatalMessage
+      language={documentLanguage}
       message={localizeLauncherError(copyFor(documentLanguage), startupError)}
       retryLabel={copyFor(documentLanguage).retry}
       onRetry={() => {
@@ -376,7 +378,7 @@ export function App() {
       }}
     />
   );
-  if (!snapshot || (locale.pending && !hasPresentedLocale.current)) return <LaunchLoading />;
+  if (!snapshot || (locale.pending && !hasPresentedLocale.current)) return <LaunchLoading language={snapshot ? requestedLanguage : undefined} />;
   hasPresentedLocale.current = true;
 
   const language = locale.language;
@@ -511,6 +513,8 @@ function LauncherShell({
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
   const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(false);
   const [biggerContextRecommendationBusy, setBiggerContextRecommendationBusy] = useState(false);
+  // A failed save from the dialog is shown in it: the page's toast would sit behind the open dialog.
+  const [biggerContextRecommendationError, setBiggerContextRecommendationError] = useState<string | null>(null);
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
   const browserSurfaceActive = surface === "browser"
     && !(compactSidebar && sidebarOpen)
@@ -613,11 +617,17 @@ function LauncherShell({
     };
   }, [browserSlot, browserSurfaceActive, enqueueBrowserSurface, setError]);
 
+  // The rail's open/collapsed choice on wide windows, kept while the window is narrow (where the rail is a closed
+  // drawer) and restored when it widens again.
+  const desktopSidebarOpen = useRef(true);
   useEffect(() => {
     const media = window.matchMedia(COMPACT_SIDEBAR_QUERY);
     const apply = () => {
+      const open = !media.matches && desktopSidebarOpen.current;
+      // The focused toggle is replaced when the rail opens or closes: focus follows to its counterpart.
+      if (document.activeElement === sidebarToggle.current) toggleFocusPending.current = true;
       setCompactSidebar(media.matches);
-      setSidebarOpen(!media.matches);
+      setSidebarOpen(open);
     };
     apply();
     media.addEventListener("change", apply);
@@ -653,6 +663,7 @@ function LauncherShell({
       return;
     }
     toggleFocusPending.current = !compactSidebar && document.activeElement === sidebarToggle.current;
+    if (!compactSidebar) desktopSidebarOpen.current = next;
     setSidebarOpen(next);
   };
 
@@ -672,30 +683,75 @@ function LauncherShell({
 
   const navigateSurface = (next: Surface) => {
     if (next !== "browser") browserSurfaceIntent.current += 1;
+    // Closing the drawer returns focus to its toggle (useCompactSidebarDrawer); the page hand-off leaves it there.
+    drawerNavigation.current = compactSidebar && sidebarOpen;
     setSurface(next);
     if (compactSidebar) setSidebarOpen(false);
   };
 
+  // Each surface remounts its scroller (key={surface}). When the control that navigated was on the old page, focus
+  // fell to <body>: hand it to the new page's h1 (once a deferred page has rendered it), else the page region. A nav
+  // item, a tab that restores its own focus, or anything the user focused meanwhile keeps focus.
+  const workspace = useRef<HTMLElement>(null);
+  const drawerNavigation = useRef(false);
+  const shownSurface = useRef(surface);
+  useLayoutEffect(() => {
+    if (shownSurface.current === surface) return;
+    shownSurface.current = surface;
+    const fromDrawer = drawerNavigation.current;
+    drawerNavigation.current = false;
+    const region = workspace.current;
+    const dropped = () => !document.activeElement || document.activeElement === document.body;
+    if (fromDrawer || !region || !dropped()) return;
+    let observer: MutationObserver | null = null;
+    const settle = () => {
+      if (!dropped()) return true;
+      const heading = region.querySelector<HTMLElement>(".nk-shell__scroll h1");
+      const loading = region.querySelector(".nk-shell__scroll .surface-empty[role='status']");
+      if (!heading && loading) return false;
+      const target = heading ?? region;
+      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+      target.focus({ preventScroll: true });
+      return true;
+    };
+    if (settle()) return;
+    observer = new MutationObserver(() => { if (settle()) observer?.disconnect(); });
+    observer.observe(region, { childList: true, subtree: true });
+    const timer = window.setTimeout(() => observer?.disconnect(), 5000);
+    return () => { observer?.disconnect(); window.clearTimeout(timer); };
+  }, [surface]);
+
   const setRecommendedBiggerContext = async (enabled: boolean) => {
     if (biggerContextRecommendationBusy) return;
     setBiggerContextRecommendationBusy(true);
-    setError(null);
+    setBiggerContextRecommendationError(null);
     try {
       updateState(await api!.setBiggerContext(enabled));
     } catch (cause) {
-      setError(messageOf(cause));
+      setBiggerContextRecommendationError(messageOf(cause));
     } finally {
       setBiggerContextRecommendationBusy(false);
     }
   };
 
-  const sessionState = manualInteraction ? "idle" : browser?.authenticated ? "ready" : "idle";
-  const sessionLabel = manualInteraction ? copy.manualInteraction
-    : browserAuthenticationStatus === "unavailable" ? workflowCopy(language).session.verificationUnavailable
-      : browser?.authenticated ? copy.sessionConnected : browserAuthenticationStatus === "signed-out" ? copy.sessionDisconnected : copy.checkingSignIn;
+  // One derived state drives the session line's word and dot: signed in (ready), checking (busy, pulsing), and
+  // sign-in needed or verification unavailable (amber, steady: they need the user). Manual mode needs no session.
+  const sessionPhase = manualInteraction ? "manual"
+    : browserAuthenticationStatus === "unavailable" ? "unavailable"
+      : browser?.authenticated ? "ready" : browserAuthenticationStatus === "signed-out" ? "signed-out" : "checking";
+  const sessionState = sessionPhase === "ready" ? "ready" : sessionPhase === "manual" ? "idle" : "busy";
+  const sessionLabel = sessionPhase === "manual" ? copy.manualInteraction
+    : sessionPhase === "unavailable" ? workflowCopy(language).session.verificationUnavailable
+      : sessionPhase === "ready" ? copy.sessionConnected : sessionPhase === "signed-out" ? copy.sessionDisconnected : copy.checkingSignIn;
+  const shell = shellCopy(language);
+  // Live browser runs, as counted on Overview (Active browser runs).
+  const runningTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)).length ?? 0;
+  const browserAttention = needsBrowser ? "required" : browser?.status === "error" ? "error" : null;
+  const connectionsAttention = needsSetup ? "required" : mcpOptional ? "optional" : null;
+  const updateReady = snapshot.update.status === "available";
 
   return (
-    <main
+    <div
       className={`nk-shell${compactSidebar ? " is-compact" : !sidebarOpen ? " is-collapsed" : ""}${sidebarOpen ? " is-sidebar-open" : ""}`}
       data-surface={surface}
     >
@@ -711,7 +767,7 @@ function LauncherShell({
       ) : null}
 
       <aside
-        aria-label={compactSidebar ? copy.workspace : undefined}
+        aria-label={shell.navigation}
         aria-modal={compactSidebar && sidebarOpen ? "true" : undefined}
         inert={!sidebarOpen}
         id="app-sidebar"
@@ -736,20 +792,25 @@ function LauncherShell({
           <div className="nk-wordmark"><strong>{copy.product}</strong><small>{copy.localWorkspace}</small></div>
         </div>
 
-        <nav className="nk-sidebar__nav" aria-label={copy.workspace}>
+        {/* One nav landmark for every destination: the groups scroll, the footer items stay pinned below them. */}
+        <nav className="nk-sidebar__navigation">
+          <div className="nk-sidebar__nav">
           <SidebarGroup label={copy.workspace}>
             <SidebarItem active={surface === "overview"} icon="overview" label={copy.overview} onClick={() => navigateSurface("overview")} />
             <SidebarItem active={surface === "accounts"} icon="accounts" label={copy.accountsNav} onClick={() => navigateSurface("accounts")} />
             <SidebarItem
               active={surface === "browser"}
-              badge={needsBrowser
+              badge={browserAttention === "required"
                 ? <ActionDot pulse tone="required" />
-                : browser?.status === "error"
+                : browserAttention === "error"
                   ? <ActionDot tone="error" />
-                  : null}
+                  : runningTabs || null}
               icon="browser"
               label={copy.browser}
               onClick={() => navigateSurface("browser")}
+              status={browserAttention === "required" ? shell.notConnected
+                : browserAttention === "error" ? shell.needsAttention
+                  : runningTabs ? shell.running(runningTabs) : undefined}
             />
             <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
             <SidebarItem active={surface === 'tasks'} icon="logs" label={taskCenterTitle(language)} onClick={() => navigateSurface('tasks')} />
@@ -757,34 +818,40 @@ function LauncherShell({
           <SidebarGroup label={copy.configuration}>
             <SidebarItem
               active={surface === "setup" || surface === "mcp"}
-              badge={needsSetup
+              badge={connectionsAttention === "required"
                 ? <ActionDot pulse tone="required" />
-                : mcpOptional ? <ActionDot tone="optional" /> : null}
+                : connectionsAttention === "optional" ? <ActionDot tone="optional" /> : null}
               icon="setup"
               label={copy.connectionsNav}
               onClick={() => navigateSurface("setup")}
+              status={connectionsAttention === "required" ? shell.needsSetup
+                : connectionsAttention === "optional" ? shell.optionalSetup : undefined}
             />
           </SidebarGroup>
-        </nav>
+          </div>
 
-        <div className="nk-sidebar__footer">
-          <div className="nk-sidebar__session"><StateDot state={sessionState} /><span>{sessionLabel}</span></div>
-          <SidebarItem
-            active={surface === "updates"}
-            icon="update"
-            label={updateCopy.title}
-            badge={snapshot.update.status === "available" ? <ActionDot tone="optional" /> : null}
-            tone={snapshot.update.status === "available" ? "update" : undefined}
-            onClick={() => navigateSurface("updates")}
-          />
-          <SidebarItem
-            active={surface === "settings"}
-            icon="settings"
-            label={copy.settings}
-            onClick={() => navigateSurface("settings")}
-          />
-          <div className="nk-sidebar__version"><Mark label={null} size={20} /><span>v{snapshot.version}</span></div>
-        </div>
+          <div className="nk-sidebar__footer">
+            <div className="nk-sidebar__session" role="status">
+              <StateDot className={sessionPhase === "signed-out" || sessionPhase === "unavailable" ? "nk-action-dot is-static" : undefined} state={sessionState} />
+              <span>{sessionLabel}</span>
+            </div>
+            {/* A ready release renames the item (the update tone marks it) rather than adding a dot beside it. */}
+            <SidebarItem
+              active={surface === "updates"}
+              icon="update"
+              label={updateReady ? shell.updateAvailable : updateCopy.title}
+              tone={updateReady ? "update" : undefined}
+              onClick={() => navigateSurface("updates")}
+            />
+            <SidebarItem
+              active={surface === "settings"}
+              icon="settings"
+              label={copy.settings}
+              onClick={() => navigateSurface("settings")}
+            />
+            <div className="nk-sidebar__version"><Mark label={null} size={20} /><span>v{snapshot.version}</span></div>
+          </div>
+        </nav>
       </aside>
 
       <div className="nk-shell__main">
@@ -797,7 +864,7 @@ function LauncherShell({
           sidebarToggle={sidebarToggle}
           toggleSidebar={toggleSidebar}
         />
-        <section className="nk-shell__content workspace">
+        <main className="nk-shell__content workspace" ref={workspace}>
           {snapshot.state.launcherRestartRequired ? (
             <Notice
               action={(
@@ -953,7 +1020,7 @@ function LauncherShell({
               />
             ) : null}
           </div>
-        </section>
+        </main>
       </div>
 
       {error && surface !== "browser" ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
@@ -962,11 +1029,15 @@ function LauncherShell({
             busy={biggerContextRecommendationBusy || operation?.status === "running"}
             checked={snapshot.state.experimentalBiggerContext}
             copy={copy}
+            error={biggerContextRecommendationError ? localizeLauncherError(copy, biggerContextRecommendationError) : null}
             onChange={(enabled) => void setRecommendedBiggerContext(enabled)}
-            onClose={() => setBiggerContextRecommendationOpen(false)}
+            onClose={() => {
+              setBiggerContextRecommendationOpen(false);
+              setBiggerContextRecommendationError(null);
+            }}
           />
         ) : null}
 
-    </main>
+    </div>
   );
 }

@@ -53,8 +53,9 @@
 }
 .browser-bar__account > span:first-child { white-space: nowrap; }
 .browser-bar__account > strong { color: var(--text-secondary); font-size: 14px; line-height: 20px; font-weight: 500; }
-/* The small (32px) kit Select, so the bar's controls share one height; narrower than the kit default. */
-.nk-select.browser-bar__select { min-width: 0; width: clamp(128px, 14vw, 176px); }
+/* The small (32px) kit Select, so the bar's controls share one height; narrower than the kit default and sized by
+   the workspace (not the window), so one tab and the end group share one row down to the minimum window. */
+.nk-select.browser-bar__select { min-width: 0; width: clamp(128px, 20cqi, 176px); }
 
 /* ---------- Task tabs ---------- */
 .browser-tabs {
@@ -64,10 +65,28 @@
   height: var(--size-hit);
   overflow-x: auto;
   overflow-y: hidden;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
+  container-type: scroll-state;
 }
 .browser-tabs::-webkit-scrollbar { display: none; }
-/* Tabs keep their content width (full title, never truncated); the strip scrolls instead. */
+/* Overflow cue: an edge fade on each side that has more tabs to scroll to (the wheel scrolls the strip too). */
+.browser-tabs::before, .browser-tabs::after {
+  position: sticky;
+  z-index: 1;
+  flex: none;
+  align-self: stretch;
+  width: var(--space-8);
+  pointer-events: none;
+  content: "";
+  visibility: hidden;
+}
+.browser-tabs::before { left: 0; margin-right: calc(-1 * (var(--space-8) + var(--space-1))); background: linear-gradient(to right, var(--bg-surface), transparent); }
+.browser-tabs::after { right: 0; margin-left: calc(-1 * (var(--space-8) + var(--space-1))); background: linear-gradient(to left, var(--bg-surface), transparent); }
+@container scroll-state(scrollable: left) { .browser-tabs::before { visibility: visible; } }
+@container scroll-state(scrollable: right) { .browser-tabs::after { visibility: visible; } }
+/* Tabs keep their content width; inactive titles stop at a readable length (the full title is the tooltip) and the
+   strip scrolls beyond that. */
 .browser-tabs__tab {
   display: flex;
   flex: none;
@@ -95,17 +114,23 @@
   font-weight: 500;
   white-space: nowrap;
 }
+.browser-tabs__tab:not(.is-active) .browser-tabs__title { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .browser-tabs__tab:has(> .browser-tabs__close) > .browser-tabs__select { padding-right: var(--space-1); }
 /* The strip scrolls (overflow clips outer rings), so its controls draw their focus ring inside. */
 .browser-tabs__select:focus-visible, .browser-tabs__close:focus-visible { outline-offset: -2px; }
-/* The small (24px) kit icon button inside a 32px tab. Close shows on hover, focus and the active tab;
-   stopping a running turn stays visible. */
-.nk-icon-btn.browser-tabs__close { margin-right: var(--space-1); opacity: 0; }
-.browser-tabs__tab:hover > .browser-tabs__close,
-.browser-tabs__tab.is-active > .browser-tabs__close,
-.browser-tabs__tab.is-running > .browser-tabs__close,
-.browser-tabs__close:focus-visible,
-.browser-tabs__close:disabled { opacity: 1; }
+/* The small (24px) kit icon button inside a 32px tab, with a 32px hit area (the DS minimum) that stays inside the
+   tab. Close shows on the active tab, on hover and on focus; stopping a running turn and a closing spinner stay
+   visible. Hidden, it takes no space, so every inactive tab keeps the same padding as the ChatGPT tab. */
+.nk-icon-btn.browser-tabs__close { position: relative; margin-right: var(--space-1); }
+.nk-icon-btn.browser-tabs__close::before { position: absolute; inset: calc(-1 * var(--space-1)); content: ""; }
+.browser-tabs__tab:not(.is-active, .is-running, .is-closing, :hover, :focus-within) > .nk-icon-btn.browser-tabs__close {
+  width: 0;
+  margin-right: 0;
+  overflow: hidden;
+  opacity: 0;
+}
+.browser-tabs__tab:not(.is-active, .is-running, .is-closing, :hover, :focus-within) > .nk-icon-btn.browser-tabs__close::before { content: none; }
+.browser-tabs__tab:not(.is-active, .is-running, .is-closing, :hover, :focus-within) > .browser-tabs__select { padding-right: var(--space-3); }
 .browser-tabs__tab.is-running > .browser-tabs__close:hover:not(:disabled) { background: var(--bg-error); color: var(--text-error); }
 .browser-tabs__spinner {
   width: 10px;
@@ -125,18 +150,21 @@
 /* Kit addition: like IconButton, the expanded toggle keeps the pressed fill. */
 .nk-btn--ghost.browser-windows__toggle[aria-expanded="true"] { background: var(--bg-control-hover); color: var(--text-primary); }
 .browser-windows__toggle[aria-expanded="true"] > .nk-icon:last-child { transform: rotate(90deg); }
-.browser-windows__alert { display: inline-flex; color: var(--text-error); }
+.browser-windows__alert { position: relative; display: inline-flex; color: var(--text-error); }
 .browser-windows__alert > svg { width: 14px; height: 14px; }
 
-/* Opened, the directory takes its own full-width line under the bar (it pushes the slot down). */
+/* Opened, the directory takes its own full-width line under the bar (it pushes the slot down). It is the one
+   scroller (the list inside does not scroll), with a fade at the bottom while more rows are below. */
 .browser-windows {
   display: grid;
   flex: 1 0 100%;
   gap: var(--space-3);
-  max-height: min(40vh, 360px);
+  max-height: min(55vh, 480px);
   margin: 0 calc(-1 * var(--space-3)) 0 calc(-1 * var(--space-2));
   padding: var(--space-3) var(--space-4) var(--space-4);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  container-type: scroll-state;
   border-top: 1px solid var(--border-light);
   background: var(--bg-panel);
   color: var(--text-secondary);
@@ -144,6 +172,17 @@
   line-height: 20px;
 }
 .browser-windows[hidden] { display: none; }
+.browser-windows::after {
+  position: sticky;
+  bottom: calc(-1 * var(--space-4));
+  height: var(--space-8);
+  margin-top: calc(-1 * (var(--space-8) + var(--space-3)));
+  background: linear-gradient(to bottom, transparent, var(--bg-panel));
+  pointer-events: none;
+  content: "";
+  visibility: hidden;
+}
+@container scroll-state(scrollable: bottom) { .browser-windows::after { visibility: visible; } }
 .browser-windows p { margin: 0; }
 .browser-windows__footnotes { display: grid; gap: var(--space-1); }
 .browser-windows__footnotes:empty { display: none; }
@@ -156,10 +195,9 @@
 
 .browser-windows__list {
   display: grid;
-  max-height: 224px;
   margin: 0;
   padding: 0;
-  overflow-y: auto;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   list-style: none;
@@ -173,18 +211,19 @@
 }
 .browser-windows__list > li + li { border-top: 1px solid var(--border-light); }
 .browser-windows__list > li.is-active { background: var(--bg-accent-subtle); }
+/* Hover fills the whole row, like the active row, not just the button part of it. */
+.browser-windows__list > li:not(.is-active):has(> .browser-windows__item:hover:not(:disabled)) { background: var(--bg-control-hover); }
 .browser-windows__item {
   display: grid;
   gap: 2px;
   min-width: 0;
   padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   text-align: left;
 }
-.browser-windows__item:hover:not(:disabled) { background: var(--bg-control-hover); }
 .browser-windows__item:focus-visible { outline-offset: -2px; }
 .browser-windows__item-title { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .browser-windows__item-state { display: flex; align-items: center; gap: var(--space-2); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
@@ -240,16 +279,33 @@
 @keyframes browser-progress { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
 
 /* ---------- Notices, confirmations and guides above the slot ---------- */
+/* In normal flow: the slot (and the native page) gives up height first. The area scrolls only when it alone is
+   taller than the frame, with a fade at the bottom while more is below. */
 .browser-notices {
   display: grid;
-  flex: none;
+  flex: 0 1 auto;
   gap: var(--space-2);
-  max-height: 45vh;
+  min-height: 0;
   padding: var(--space-3) var(--space-4);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  container-type: scroll-state;
   border-bottom: 1px solid var(--border);
 }
 .browser-notices:empty { display: none; }
+.browser-notices::after {
+  position: sticky;
+  bottom: calc(-1 * var(--space-3));
+  height: var(--space-8);
+  margin-top: calc(-1 * (var(--space-8) + var(--space-2)));
+  background: linear-gradient(to bottom, transparent, var(--bg-surface));
+  pointer-events: none;
+  content: "";
+  visibility: hidden;
+}
+@container scroll-state(scrollable: bottom) { .browser-notices::after { visibility: visible; } }
+/* A long raw error scrolls inside its own text, so Dismiss and the guides below stay in view. */
+.browser-notices__error p { max-height: 20vh; overflow-y: auto; }
 
 .browser-confirm__panel {
   display: flex;
@@ -271,7 +327,7 @@
   align-items: start;
   gap: var(--space-3) var(--space-5);
 }
-.browser-manual__copy strong { display: block; font-size: 15px; line-height: 22px; font-weight: 500; }
+.browser-manual__title { margin: 0; font-size: 15px; line-height: 22px; font-weight: 500; }
 .browser-manual__copy p { max-width: 880px; margin: var(--space-1) 0 0; font-size: 14px; line-height: 20px; }
 .browser-manual__status { font-variant-numeric: tabular-nums; }
 .browser-manual__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); grid-column: 1 / -1; }
@@ -282,8 +338,9 @@
 .browser-guide > .nk-notice { justify-self: stretch; }
 .browser-guide p { margin: 0; overflow-wrap: anywhere; }
 .browser-guide__status { display: grid; gap: var(--space-1); }
-.browser-guide__title { color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
+.browser-guide__title { margin: 0; color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
 .browser-guide__meta { color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.browser-guide__address { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .browser-guide__address code { padding: 2px var(--space-2); border-radius: var(--radius-xs); background: var(--bg-control-active); color: var(--text-primary); overflow-wrap: anywhere; }
 .browser-guide__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .browser-guide__actions:empty { display: none; }
@@ -319,7 +376,10 @@
   overflow-y: auto;
   text-align: center;
 }
-.browser-idle__copy { display: grid; justify-items: center; gap: var(--space-2); max-width: 480px; }
+/* The title and sentence keep a 480px measure; the actions below take the width they need (all sign-in options
+   on one row when there is room). */
+.browser-idle__copy { display: grid; justify-items: center; gap: var(--space-2); max-width: 100%; }
+.browser-idle__copy > :is(h1, p) { max-width: 480px; text-wrap: balance; word-break: auto-phrase; }
 .browser-idle__copy h1 { margin: 0; color: var(--text-primary); }
 .browser-idle__copy p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
 .browser-idle__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-4); }
@@ -327,8 +387,13 @@
 .browser-idle > .browser-guide .browser-guide__title { font-size: 17px; line-height: 24px; font-weight: 600; }
 
 /* ---------- Compact workspace ---------- */
-@container workspace (max-width: 640px) {
+/* Narrow workspaces keep the bar on one row: the select's own name replaces the "Account" label and the windows
+   toggle shows its counts (its full name stays for assistive tech and in the tooltip). */
+@container workspace (max-width: 800px) {
   .browser-bar__account > span:first-child { display: none; }
+  .browser-windows__label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+@container workspace (max-width: 640px) {
   .browser-idle { padding: var(--space-8) var(--space-4); }
   .browser-idle > .browser-guide { padding: var(--space-4); }
   .browser-manual { grid-template-columns: minmax(0, 1fr); }

@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, type HTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useModalFocus, type FocusRestoreTarget } from "../modal-focus";
+import { focusFirstUsable, useModalFocus, type FocusRestoreTarget } from "../modal-focus";
 import { Button } from "./controls";
 import { cx } from "./shared";
 import { StateDot } from "./status";
@@ -12,8 +12,10 @@ interface ToastBaseProps {
   /** error (default, role="alert") · success · busy (role="status"). */
   tone?: "error" | "success" | "busy";
   /**
-   * Pins it bottom-right above the page: it portals into the shared toast stack on <body>, so several fixed
-   * toasts stack upwards with a gap instead of covering each other (newest at the bottom).
+   * Pins it bottom-right above the page and above dialogs: it portals into the shared toast stack on <body>, so
+   * several fixed toasts stack upwards with a gap instead of covering each other (newest at the bottom). While the
+   * stack shows, :root carries --toast-clearance (the stack's height plus its offsets) for scrollers to reserve, and
+   * the stack stays above an element marked [data-toast-floor] (a footer pinned to the window bottom).
    */
   fixed?: boolean;
   className?: string;
@@ -27,19 +29,58 @@ export type ToastProps = ToastBaseProps & (
 
 let toastStackElement: HTMLElement | null = null;
 
+/** Places the stack above a [data-toast-floor] element and publishes the room it takes (--toast-clearance). */
+function layoutToastStack() {
+  const stack = toastStackElement;
+  if (!stack?.isConnected) return;
+  const floor = document.querySelector<HTMLElement>("[data-toast-floor]");
+  const floorHeight = floor ? Math.max(0, window.innerHeight - floor.getBoundingClientRect().top) : 0;
+  stack.style.setProperty("--toast-floor", `${Math.round(floorHeight)}px`);
+  const box = stack.getBoundingClientRect();
+  // From the stack's top edge to the window bottom, plus a gap, so content can scroll clear of it.
+  const clearance = stack.childElementCount && box.height ? Math.ceil(window.innerHeight - box.top + 8) : 0;
+  document.documentElement.style.setProperty("--toast-clearance", `${clearance}px`);
+}
+
 /** The one bottom-right viewport that fixed toasts portal into (created on first use). */
 function toastStack(): HTMLElement {
   if (!toastStackElement?.isConnected) {
     toastStackElement = document.createElement("div");
     toastStackElement.className = "nk-toast-stack";
     document.body.append(toastStackElement);
+    if (typeof ResizeObserver === "function") new ResizeObserver(layoutToastStack).observe(toastStackElement);
+    window.addEventListener("resize", layoutToastStack);
   }
   return toastStackElement;
 }
 
 export function Toast({ title, children, tone, onDismiss, dismissLabel, fixed, className }: ToastProps) {
+  const root = useRef<HTMLDivElement>(null);
+  // Where focus was before it entered the toast: it goes back there when the toast leaves while focused.
+  const returnTo = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const node = root.current;
+    if (fixed) layoutToastStack();
+    return () => {
+      if (fixed) requestAnimationFrame(layoutToastStack);
+      if (!node?.contains(document.activeElement)) return;
+      const target = returnTo.current;
+      requestAnimationFrame(() => {
+        const current = document.activeElement;
+        if (!current || current === document.body) focusFirstUsable(target);
+      });
+    };
+  }, [fixed]);
   const toast = (
-    <div className={cx("nk-toast", fixed && "nk-toast--fixed", className)} role={tone === "error" || !tone ? "alert" : "status"}>
+    <div
+      className={cx("nk-toast", fixed && "nk-toast--fixed", className)}
+      onFocus={event => {
+        const from = event.relatedTarget;
+        if (from instanceof HTMLElement && !event.currentTarget.contains(from)) returnTo.current = from;
+      }}
+      ref={root}
+      role={tone === "error" || !tone ? "alert" : "status"}
+    >
       <StateDot state={tone === "success" ? "ready" : tone === "busy" ? "busy" : "error"} />
       <span><strong>{title}</strong>{children ? <p>{children}</p> : null}</span>
       {onDismiss ? <Button onClick={onDismiss} size="sm" variant="ghost">{dismissLabel}</Button> : null}

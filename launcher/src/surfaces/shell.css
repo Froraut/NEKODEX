@@ -105,7 +105,7 @@
 .nk-launch__line { width: 18px; height: 1px; margin-top: var(--space-4); overflow: hidden; background: var(--border-heavy); }
 .nk-launch__line::after { display: block; width: 8px; height: 1px; background: var(--text-primary); content: ""; animation: nk-launch-line 0.9s ease-in-out infinite alternate; }
 @keyframes nk-launch-line { to { transform: translateX(10px); } }
-.nk-launch h1 { margin: var(--space-4) 0 0; color: var(--text-primary); font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: 0.045em; }
+.nk-launch h1 { margin: var(--space-4) 0 0; color: var(--text-primary); font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; }
 .nk-launch p { max-width: 52ch; margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .nk-launch .nk-btn { margin-top: var(--space-5); }
 
@@ -163,9 +163,10 @@
   text-align: left;
   transition: border-color var(--duration-micro) ease, background-color var(--duration-micro) ease;
 }
-.nk-choice:hover:not(:disabled) { border-color: var(--border-heavy); background: var(--bg-control-hover); }
+/* Hover is for the unselected cards: the selected one keeps its accent border and raised fill. */
+.nk-choice:not(.is-selected):hover:not(:disabled, [aria-disabled="true"]) { border-color: var(--border-heavy); background: var(--bg-control-hover); }
 .nk-choice.is-selected { border-color: var(--border-accent); background: var(--bg-panel-raised); box-shadow: var(--shadow-panel); color: var(--text-primary); }
-.nk-choice:disabled { opacity: 0.55; }
+.nk-choice:is(:disabled, [aria-disabled="true"]) { opacity: 0.55; }
 .nk-choice__mark { display: grid; width: 20px; height: 20px; margin-top: 1px; place-items: center; border: 1px solid var(--border-control); border-radius: var(--radius-pill); }
 .nk-choice.is-selected .nk-choice__mark { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 .nk-choice__mark .nk-icon { width: 12px; height: 12px; }

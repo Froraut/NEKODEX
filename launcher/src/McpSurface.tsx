@@ -1,12 +1,12 @@
-import { modelConnectionReadiness } from "./setup-progress";
 import { accountToolsCopy } from "./account-tools-onboarding";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
-import { type WorkspaceReadiness } from "./workspace-readiness";
+import { modelsTabConnection, type WorkspaceReadiness } from "./workspace-readiness";
+import { connectionTabStatus, connectionsCopy, connectionsSubtitle } from "./connections-copy";
 import { workflowCopy } from "./workflow-copy";
 import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState } from "./types";
 import { Button, Disclosure, Icon, Notice, Page, Panel, PhaseSteps, StateDot, SurfaceHeader, TextField, cx } from "./design";
-import { ConnectionsTabs, messageOf, TutorialVideo, DoctorSummary } from './launcher-ui';
+import { ConnectionsTabs, connectionsTabPanelProps, messageOf, TutorialVideo, DoctorSummary } from './launcher-ui';
 import { connectorProofMismatch, runtimeCapabilities, currentToolProof } from './launcher-readiness';
 import "./surfaces/connections.css";
 const api = window.codexWebLauncher;
@@ -71,10 +71,16 @@ export function McpSurface({
   const [repairOutcome, setRepairOutcome] = useState<"recovered" | "unavailable" | "failed" | null>(null);
   const [repairOutcomeRevision, setRepairOutcomeRevision] = useState<number | null>(null);
   const workflow = workflowCopy(language);
+  const words = connectionsCopy(language);
   const currentRuntime = runtimeCapabilities(snapshot);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const wizardHeading = useRef<HTMLHeadingElement>(null);
+  const tunnelFieldId = useId();
+  const runtimeKeyFieldId = useId();
+  const replaceCredentialsId = useId();
+  // Replace / Keep saved credentials swap the controls: focus moves to the control that takes the removed one's place.
+  const credentialsFocus = useRef<string | null>(null);
   const previousStep = useRef(step);
   const verified = !configuringInactiveMode && currentToolProof(snapshot, operation);
   const manualInteraction = interactionMode === "manual";
@@ -128,6 +134,13 @@ export function McpSurface({
 
   const guide = useRef<HTMLDetailsElement>(null);
   const identityInputId = useId();
+
+  useEffect(() => {
+    const target = credentialsFocus.current;
+    if (!target) return;
+    credentialsFocus.current = null;
+    document.getElementById(target)?.focus();
+  }, [replacingCredentials]);
 
   useEffect(() => {
     if (previousStep.current === step) return;
@@ -225,7 +238,13 @@ export function McpSurface({
 
   const tunnelRepair = runtimeCapabilities(snapshot)?.tunnelRepair;
   const repairing = repairBusy || tunnelRepair?.active === true;
-  const stepComplete = (index: number) => index < step || (index === 2 && verified);
+  // An eligible repair is the next step: it takes the primary, and the wizard's own action steps back to secondary.
+  const repairIsNext = !configuringInactiveMode && tunnelRepair?.eligible === true && !repairing;
+  // The shown step is always the current one; steps before it are done, steps after it are still ahead (even when
+  // the connector was verified earlier, the wizard does not claim a later step while an earlier one is open).
+  const stepState = (index: number) => index === step ? "current" as const : index < step ? "complete" as const : "upcoming" as const;
+  const tunnelInvalid = Boolean(tunnelId && !tunnelId.trim());
+  const runtimeKeyInvalid = Boolean(runtimeKey && !runtimeKey.trim());
 
   return (
     <Page className="nk-connections">
@@ -233,18 +252,17 @@ export function McpSurface({
         actions={onReturnToAccount ? <Button disabled={busy} icon="back" onClick={onReturnToAccount} variant="ghost">
           {accountToolsCopy(language).back}
         </Button> : undefined}
-        eyebrow={verified ? copy.connectionVerified : manualInteraction ? copy.required : copy.optional}
-        subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
-        title={devProfile ? copy.devMcpTitle : copy.localTools}
+        subtitle={connectionsSubtitle(copy, language, { development: devProfile,
+          manual: snapshot.state.browserInteractionMode === "manual" })}
+        title={copy.connectionsNav}
       />
       <ConnectionsTabs active="tools" copy={copy}
-        modelsReady={modelConnectionReadiness({ manual: manualInteraction,
-          installed: snapshot.state.coreSetupComplete === true,
-          catalogVerified: snapshot.state.codexCatalogVerified === true,
-          pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-          development: devProfile }) === "available"}
-        onModels={showSetup} onTools={() => {}} toolsReady={verified} />
-      <div className="nk-connections__content">
+        modelsReady={modelsTabConnection(readiness.connections).ready}
+        modelsStatus={connectionTabStatus(modelsTabConnection(readiness.connections), copy, language)}
+        onModels={showSetup} onTools={() => {}}
+        toolsReady={readiness.connections.tools.ready}
+        toolsStatus={connectionTabStatus(readiness.connections.tools, copy, language)} />
+      <div className="nk-connections__content" {...connectionsTabPanelProps("tools")}>
         {accountSetupLabel ? (
           <Notice title={`${accountToolsCopy(language).target}: ${accountSetupLabel}`}>{accountToolsCopy(language).identity}</Notice>
         ) : null}
@@ -255,7 +273,7 @@ export function McpSurface({
           <Notice
             data-testid="web-route-repair"
             action={<Button busy={repairing} disabled={busy || tunnelRepair?.eligible !== true}
-              onClick={() => void repairWebRoute()} size="sm">
+              onClick={() => void repairWebRoute()} size="sm" variant={repairIsNext && !busy ? "primary" : "secondary"}>
               {repairing ? workflow.recovery.repairing : workflow.recovery.repairAction}
             </Button>}
             meta={repairOutcome ? <span role="status">{repairOutcome === "recovered" ? workflow.recovery.recovered
@@ -264,16 +282,15 @@ export function McpSurface({
             tone="warning"
           >
             {readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}
-            {readiness.native === "ready" ? <span className="nk-connections__line">{workflow.recovery.nativePreserved}</span> : null}
           </Notice>
         ) : null}
 
-        <div aria-label={`${copy.localTools}: ${step + 1} / 3`} className="nk-connections__wizard" role="group">
+        <div aria-label={`${devProfile ? copy.devMcpTitle : copy.toolsConnectionTab}: ${step + 1} / 3`} className="nk-connections__wizard" role="group">
           {/* Earlier steps (and the current one) are buttons that return to that step. */}
           <PhaseSteps disabled={busy} onSelect={index => void safeMove(index)}
             steps={steps.map((item, index) => ({
               label: item.title,
-              state: stepComplete(index) ? "complete" : index === step ? "current" : "upcoming",
+              state: stepState(index),
               current: index === step,
               selectable: index <= step,
             }))} />
@@ -307,7 +324,8 @@ export function McpSurface({
               <div className="nk-connections__step-body">
                 {credentialsConfigured && !replacingCredentials ? (
                   <Notice
-                    action={<Button disabled={busy} onClick={() => setReplacingCredentials(true)} size="sm" variant="ghost">
+                    action={<Button disabled={busy} id={replaceCredentialsId} size="sm" variant="ghost"
+                      onClick={() => { credentialsFocus.current = tunnelFieldId; setReplacingCredentials(true); }}>
                       {copy.replaceCredentials}
                     </Button>}
                     title={copy.credentialsConfigured}
@@ -318,10 +336,12 @@ export function McpSurface({
                 ) : (
                   <div className="nk-connections__fields">
                     <TextField
-                      aria-describedby="mcp-credentials-hint"
-                      aria-invalid={Boolean(tunnelId && !tunnelId.trim())}
+                      // The kit wires the error (id `${id}-hint`); the shared hint stays in the description.
+                      aria-describedby={tunnelInvalid ? `${tunnelFieldId}-hint mcp-credentials-hint` : "mcp-credentials-hint"}
                       autoCapitalize="none"
                       autoCorrect="off"
+                      error={tunnelInvalid ? words.tunnelIdRequired : undefined}
+                      id={tunnelFieldId}
                       label={copy.tunnelId}
                       onChange={(event) => setTunnelId(event.target.value)}
                       placeholder="tunnel_…"
@@ -329,10 +349,11 @@ export function McpSurface({
                       value={tunnelId}
                     />
                     <TextField
-                      aria-describedby="mcp-credentials-hint"
-                      aria-invalid={Boolean(runtimeKey && !runtimeKey.trim())}
+                      aria-describedby={runtimeKeyInvalid ? `${runtimeKeyFieldId}-hint mcp-credentials-hint` : "mcp-credentials-hint"}
                       autoCapitalize="none"
                       autoCorrect="off"
+                      error={runtimeKeyInvalid ? words.runtimeKeyRequired : undefined}
+                      id={runtimeKeyFieldId}
                       label={copy.runtimeKey}
                       onChange={(event) => setRuntimeKey(event.target.value)}
                       placeholder="sk-…"
@@ -347,6 +368,7 @@ export function McpSurface({
                           onClick={() => {
                             setTunnelId("");
                             setRuntimeKey("");
+                            credentialsFocus.current = replaceCredentialsId;
                             setReplacingCredentials(false);
                           }}
                           size="sm"
@@ -374,7 +396,8 @@ export function McpSurface({
                   <Notice tone="warning">
                     {native6CopyFor(language).body.replace("{connector}", snapshot.connectorNames[interactionMode])}
                   </Notice>
-                ) : <details className="nk-connections__nested"><summary>{copy.connectorUpgradeHelp}</summary>
+                ) : <details className="nk-connections__nested"><summary>
+                  <Icon className="nk-icon" focusable="false" name="chevron" size={14} />{copy.connectorUpgradeHelp}</summary>
                   <Notice tone="warning">
                     {manualInteraction ? copy.manualConnectorNotice : native6CopyFor(language).retained}
                   </Notice>
@@ -446,7 +469,7 @@ export function McpSurface({
                 {copy.previous}
               </Button>
               <span className="nk-connections__spacer" />
-              {step === 0 ? <Button disabled={busy} onClick={() => void safeMove(1)} variant="primary">{copy.next}</Button> : null}
+              {step === 0 ? <Button disabled={busy} onClick={() => void safeMove(1)} variant={repairIsNext ? "secondary" : "primary"}>{copy.next}</Button> : null}
               {step === 1 ? (
                 <Button
                   disabled={
@@ -455,7 +478,7 @@ export function McpSurface({
                     || ((!credentialsConfigured || replacingCredentials) && (!tunnelId.trim() || !runtimeKey.trim()))
                   }
                   onClick={() => void install()}
-                  variant="primary"
+                  variant={repairIsNext ? "secondary" : "primary"}
                 >
                   {busy ? copy.running : credentialsConfigured && !replacingCredentials
                     ? workflow.recovery.fullSetupAction : copy.connect}
@@ -471,7 +494,7 @@ export function McpSurface({
                   <Button
                     disabled={busy || !connectorConfiguredForTarget}
                     onClick={() => void (onReturnToAccount ? onReturnToAccount() : verified ? onDone() : verify())}
-                    variant={native6UpgradeAvailable ? "secondary" : "primary"}
+                    variant={native6UpgradeAvailable || repairIsNext ? "secondary" : "primary"}
                   >
                     {busy
                       ? operation?.name === "mcp-verification" && operation.status === "running"

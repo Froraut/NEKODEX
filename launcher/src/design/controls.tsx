@@ -1,6 +1,12 @@
-import { useId, useRef, useState, type ButtonHTMLAttributes, type ChangeEvent, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type Ref, type SelectHTMLAttributes } from "react";
-import { NkIcon, cx, type IconName, type Status } from "./shared";
+import { useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ChangeEvent, type InputHTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref, type SelectHTMLAttributes } from "react";
+import { NkIcon, cx, useFocusSafeDisabled, type IconName, type Status } from "./shared";
 import { StateDot } from "./status";
+
+/** A focused control that became disabled keeps focus (aria-disabled) but must not act, like a disabled one. */
+function blockActivation(event: MouseEvent<HTMLElement>) {
+  event.preventDefault();
+  event.stopPropagation();
+}
 
 /* ---------------- Actions ---------------- */
 
@@ -10,19 +16,27 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: "md" | "sm";
   icon?: IconName;
   iconEnd?: IconName;
-  /** Spinner, aria-busy="true" and disabled. A caller's own aria-busy is kept when busy is not set. */
+  /**
+   * Spinner, aria-busy="true" and disabled. A caller's own aria-busy is kept when busy is not set. A button that is
+   * focused when it turns busy or disabled keeps focus (aria-disabled, clicks ignored) until focus leaves it.
+   */
   busy?: boolean;
   block?: boolean;
   ref?: Ref<HTMLButtonElement>;
 }
 
-export function Button({ variant = "secondary", size = "md", icon, iconEnd, busy, block, className, children, type, disabled, ...rest }: ButtonProps) {
+export function Button({ variant = "secondary", size = "md", icon, iconEnd, busy, block, className, children, type, disabled, onClick, onFocus, onBlur, ...rest }: ButtonProps) {
+  const guard = useFocusSafeDisabled(Boolean(disabled || busy), { onFocus, onBlur });
   return (
     <button
       {...rest}
       aria-busy={busy ? "true" : rest["aria-busy"]}
+      aria-disabled={guard.soft ? "true" : rest["aria-disabled"]}
       className={cx("nk-btn", `nk-btn--${variant}`, size === "sm" && "nk-btn--sm", block && "nk-btn--block", className)}
-      disabled={disabled || busy}
+      disabled={guard.disabled}
+      onBlur={guard.onBlur}
+      onClick={guard.soft ? blockActivation : onClick}
+      onFocus={guard.onFocus}
       type={type || "button"}
     >
       {busy ? <span aria-hidden="true" className="nk-spinner" /> : icon ? <NkIcon name={icon} /> : null}
@@ -41,9 +55,22 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   buttonRef?: Ref<HTMLButtonElement>;
 }
 
-export function IconButton({ icon, label, size = "md", className, buttonRef, ...rest }: IconButtonProps) {
+export function IconButton({ icon, label, size = "md", className, buttonRef, disabled, onClick, onFocus, onBlur, ...rest }: IconButtonProps) {
+  const guard = useFocusSafeDisabled(Boolean(disabled), { onFocus, onBlur });
   return (
-    <button aria-label={label} className={cx("nk-icon-btn", size === "sm" && "nk-icon-btn--sm", className)} ref={buttonRef} title={label} type="button" {...rest}>
+    <button
+      aria-label={label}
+      className={cx("nk-icon-btn", size === "sm" && "nk-icon-btn--sm", className)}
+      ref={buttonRef}
+      title={label}
+      type="button"
+      {...rest}
+      aria-disabled={guard.soft ? "true" : rest["aria-disabled"]}
+      disabled={guard.disabled}
+      onBlur={guard.onBlur}
+      onClick={guard.soft ? blockActivation : onClick}
+      onFocus={guard.onFocus}
+    >
       <NkIcon name={icon} />
     </button>
   );
@@ -61,10 +88,11 @@ export interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   ref?: Ref<HTMLInputElement>;
 }
 
-export function TextField({ label, hint, error, action, id, type, className, ...rest }: TextFieldProps) {
+export function TextField({ label, hint, error, action, id, type, className, disabled, readOnly, onFocus, onBlur, ...rest }: TextFieldProps) {
   const autoId = useId();
   const fieldId = id || autoId;
   const hintId = `${fieldId}-hint`;
+  const guard = useFocusSafeDisabled(Boolean(disabled), { onFocus, onBlur });
   const input = (
     <input
       aria-describedby={error || hint ? hintId : undefined}
@@ -73,6 +101,11 @@ export function TextField({ label, hint, error, action, id, type, className, ...
       id={fieldId}
       type={type || "text"}
       {...rest}
+      aria-disabled={guard.soft ? "true" : rest["aria-disabled"]}
+      disabled={guard.disabled}
+      onBlur={guard.onBlur}
+      onFocus={guard.onFocus}
+      readOnly={readOnly || guard.soft}
     />
   );
   return (
@@ -97,10 +130,22 @@ export interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement
   ref?: Ref<HTMLSelectElement>;
 }
 
-export function Select({ options, className, label, onChange, size = "md", style, ...rest }: SelectProps) {
+export function Select({ options, className, label, onChange, size = "md", style, disabled, onFocus, onBlur, onKeyDown, onMouseDown, ...rest }: SelectProps) {
+  const guard = useFocusSafeDisabled(Boolean(disabled), { onFocus, onBlur });
   return (
     <span className={cx("nk-select", size === "sm" && "nk-select--sm", className)} style={style}>
-      <select aria-label={label} onChange={onChange ? event => onChange(event.target.value, event) : undefined} {...rest}>
+      <select
+        aria-label={label}
+        {...rest}
+        aria-disabled={guard.soft ? "true" : rest["aria-disabled"]}
+        disabled={guard.disabled}
+        onBlur={guard.onBlur}
+        // Soft-disabled: the list does not open and keys other than Tab do not change the value.
+        onChange={onChange ? event => { if (!guard.soft) onChange(event.target.value, event); } : undefined}
+        onFocus={guard.onFocus}
+        onKeyDown={guard.soft ? event => { if (event.key !== "Tab") event.preventDefault(); } : onKeyDown}
+        onMouseDown={guard.soft ? event => event.preventDefault() : onMouseDown}
+      >
         {options.map(option => {
           const item = typeof option === "string" ? { value: option, label: option } : option;
           return <option disabled={item.disabled} key={item.value} value={item.value}>{item.label}</option>;
@@ -118,25 +163,32 @@ export interface SwitchProps {
   /** Required accessible name. */
   label: string;
   disabled?: boolean;
+  /** The change is being saved: aria-busy, a pulsing thumb, and no further toggles (focus stays on the switch). */
+  busy?: boolean;
   id?: string;
   className?: string;
 }
 
-export function Switch({ checked, defaultChecked, onChange, label, disabled, id, className }: SwitchProps) {
+export function Switch({ checked, defaultChecked, onChange, label, disabled, busy, id, className }: SwitchProps) {
   const controlled = checked !== undefined;
   const [inner, setInner] = useState(Boolean(defaultChecked));
   const on = controlled ? Boolean(checked) : inner;
+  const guard = useFocusSafeDisabled<HTMLButtonElement>(Boolean(disabled || busy));
   return (
     <button
+      aria-busy={busy ? "true" : undefined}
       aria-checked={on ? "true" : "false"}
+      aria-disabled={guard.soft ? "true" : undefined}
       aria-label={label}
       className={cx("nk-switch", on && "is-on", className)}
-      disabled={disabled}
+      disabled={guard.disabled}
       id={id}
-      onClick={() => {
+      onBlur={guard.onBlur}
+      onClick={guard.soft ? blockActivation : () => {
         if (!controlled) setInner(!on);
         onChange?.(!on);
       }}
+      onFocus={guard.onFocus}
       role="switch"
       type="button"
     >
@@ -151,10 +203,21 @@ export interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement
   ref?: Ref<HTMLInputElement>;
 }
 
-export function Checkbox({ label, className, onChange, ...rest }: CheckboxProps) {
+export function Checkbox({ label, className, onChange, disabled, onClick, onFocus, onBlur, ...rest }: CheckboxProps) {
+  const guard = useFocusSafeDisabled(Boolean(disabled), { onFocus, onBlur });
   return (
     <label className={cx("nk-check", className)}>
-      <input type="checkbox" onChange={onChange ? event => onChange(event.target.checked, event) : undefined} {...rest} />
+      <input
+        type="checkbox"
+        {...rest}
+        aria-disabled={guard.soft ? "true" : rest["aria-disabled"]}
+        disabled={guard.disabled}
+        onBlur={guard.onBlur}
+        onChange={onChange ? event => { if (!guard.soft) onChange(event.target.checked, event); } : undefined}
+        // preventDefault on the click keeps the box as it was.
+        onClick={guard.soft ? event => event.preventDefault() : onClick}
+        onFocus={guard.onFocus}
+      />
       <span>{label}</span>
     </label>
   );
@@ -168,15 +231,29 @@ export interface TabsProps {
   tabs: TabItem[];
   active: string;
   onSelect?: (id: string) => void;
-  /** Accessible name of the nav. */
+  /** Accessible name of the tab list. */
   label?: string;
+  /** Tab element ids are `${idPrefix}-${tab.id}` (default: generated), e.g. for a TabPanel's labelledBy. */
+  idPrefix?: string;
+  /** id of the TabPanel that shows the active tab; the active tab points at it (aria-controls) while it exists. */
+  panelId?: string;
   className?: string;
 }
 
-/** Section tabs with a status line. Roving tabindex: Tab enters on the active tab; Left/Right/Home/End move and select. */
-export function Tabs({ tabs, active, onSelect, label, className }: TabsProps) {
+/**
+ * Section tabs with a status line (ARIA tabs). Roving tabindex: Tab enters on the active tab; Left/Right/Home/End move
+ * focus and select (selection follows focus). Put the active tab's content in a <TabPanel>.
+ */
+export function Tabs({ tabs, active, onSelect, label, idPrefix, panelId, className }: TabsProps) {
   const buttons = useRef<Array<HTMLButtonElement | null>>([]);
+  const autoPrefix = useId();
+  const prefix = idPrefix || `nk-tab${autoPrefix}`;
   const current = Math.max(0, tabs.findIndex(tab => tab.id === active));
+  // aria-controls must name an element in the document; the panel is rendered by the page after the tabs.
+  const [panelPresent, setPanelPresent] = useState(false);
+  useLayoutEffect(() => {
+    setPanelPresent(Boolean(panelId && document.getElementById(panelId)));
+  });
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let next = index;
     if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
@@ -189,14 +266,17 @@ export function Tabs({ tabs, active, onSelect, label, className }: TabsProps) {
     if (tabs[next] && tabs[next].id !== active) onSelect?.(tabs[next].id);
   };
   return (
-    <nav aria-label={label} className={cx("nk-tabs", className)}>
+    <div aria-label={label} className={cx("nk-tabs", className)} role="tablist">
       {tabs.map((tab, index) => (
         <button
-          aria-current={tab.id === active ? "page" : undefined}
+          aria-controls={index === current && panelPresent ? panelId : undefined}
+          aria-selected={index === current ? "true" : "false"}
+          id={`${prefix}-${tab.id}`}
           key={tab.id}
-          onClick={() => onSelect?.(tab.id)}
+          onClick={() => { if (tab.id !== active) onSelect?.(tab.id); }}
           onKeyDown={event => onKeyDown(event, index)}
           ref={element => { buttons.current[index] = element; }}
+          role="tab"
           tabIndex={index === current ? 0 : -1}
           type="button"
         >
@@ -204,6 +284,11 @@ export function Tabs({ tabs, active, onSelect, label, className }: TabsProps) {
           {tab.status ? <small><StateDot state={tab.state || "idle"} />{tab.status}</small> : null}
         </button>
       ))}
-    </nav>
+    </div>
   );
+}
+
+/** The content of the active tab: role="tabpanel", labelled by its tab (`${idPrefix}-${activeTabId}`). */
+export function TabPanel({ id, labelledBy, children, className }: { id: string; labelledBy: string; children?: ReactNode; className?: string }) {
+  return <div aria-labelledby={labelledBy} className={className} id={id} role="tabpanel">{children}</div>;
 }

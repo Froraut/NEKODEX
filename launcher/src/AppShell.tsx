@@ -1,9 +1,9 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Badge, Button, cx, Icon, Mark, SettingRow as KitSettingRow, StateDot, Switch as KitSwitch, Toast, type IconName } from "./design";
+import { Badge, Button, cx, Icon, Mark, Notice, SettingRow as KitSettingRow, StateDot, Switch as KitSwitch, Toast, type IconName } from "./design";
 import type { Copy } from "./i18n";
 import { IconButton, useModalFocus } from "./launcher-ui";
-import { shellCopy } from "./shell-copy";
+import { shellCopy, systemLanguage } from "./shell-copy";
 import { taskCenterTitle } from "./task-center-copy";
 import type { Language, Surface } from "./types";
 import { updateCopyFor } from "./update-copy";
@@ -123,20 +123,27 @@ export function TitleBar({
           <li aria-current={index === trail.length - 1 && index > 0 ? "page" : undefined} key={index}>{crumb}</li>
         ))}
       </ol>
-      {devProfile ? <span className="nk-dev-tag">{copy.devBadge}</span> : null}
-      <div className="nk-titlebar__end">
-        <Badge className="nk-titlebar__status" icon="globe" shape="pill" tone="outline">{copy.localWorkspace}</Badge>
-      </div>
+      {/* At most one quiet status: the DEV tag replaces the Local workspace pill. The pill gives way before the
+          location does (it ellipsizes down to its icon, surfaces/shell.css). */}
+      {devProfile ? <span className="nk-dev-tag">{copy.devBadge}</span> : (
+        <div className="nk-titlebar__end" title={copy.localWorkspace}>
+          <Badge className="nk-titlebar__status" icon="globe" shape="pill" tone="outline">
+            <span className="nk-titlebar__status-label">{copy.localWorkspace}</span>
+          </Badge>
+        </div>
+      )}
     </header>
   );
 }
 
+/** A group of nav items. The label is not a heading (the page's h1 comes first in the outline); it names the group. */
 export function SidebarGroup({ children, label }: { children: ReactNode; label: string }) {
+  const labelId = useId();
   return (
-    <section className="nk-nav-group">
-      <h2>{label}</h2>
+    <div aria-labelledby={labelId} className="nk-nav-group" role="group">
+      <span className="nk-nav-group__label" id={labelId}>{label}</span>
       <div>{children}</div>
-    </section>
+    </div>
   );
 }
 
@@ -146,27 +153,39 @@ export function SidebarItem({
   icon,
   label,
   onClick,
+  status,
   tone,
 }: {
   active: boolean;
+  /** An attention dot (ActionDot) or a count; give it words in `status`. */
   badge?: ReactNode;
   icon: IconName;
   label: string;
   onClick: () => void;
+  /** What the badge says, in words: the item's description (screen readers) and tooltip (pointer). */
+  status?: string;
   tone?: "update";
 }) {
+  const statusId = useId();
   return (
-    <button
-      aria-current={active ? "page" : undefined}
-      // sidebar-item: stable hook for the measure-* scripts; the look comes from nk-nav-item.
-      className={cx("nk-nav-item", "sidebar-item", tone === "update" && "is-update")}
-      onClick={onClick}
-      type="button"
-    >
-      <Icon className="nk-icon" name={icon} />
-      <span>{label}</span>
-      {!badge ? null : typeof badge === "string" || typeof badge === "number" ? <i className="nk-nav-item__badge">{badge}</i> : badge}
-    </button>
+    <>
+      <button
+        aria-current={active ? "page" : undefined}
+        aria-describedby={status ? statusId : undefined}
+        // sidebar-item: stable hook for the measure-* scripts; the look comes from nk-nav-item.
+        className={cx("nk-nav-item", "sidebar-item", tone === "update" && "is-update")}
+        onClick={onClick}
+        title={status ? `${label}: ${status}` : undefined}
+        type="button"
+      >
+        <Icon className="nk-icon" name={icon} />
+        <span>{label}</span>
+        {!badge ? null : typeof badge === "string" || typeof badge === "number"
+          ? <i aria-hidden={status ? "true" : undefined} className="nk-nav-item__badge">{badge}</i> : badge}
+      </button>
+      {/* Outside the button, so the status describes the item without changing its name. */}
+      {status ? <span className="nk-visually-hidden" id={statusId}>{status}</span> : null}
+    </>
   );
 }
 
@@ -192,20 +211,24 @@ export function BiggerContextRecommendation({
   busy,
   checked,
   copy,
+  error,
   onChange,
   onClose,
 }: {
   busy: boolean;
   checked: boolean;
   copy: Copy;
+  /** A failed save, shown in the dialog (the page's toast would sit behind it). */
+  error?: string | null;
   onChange: (checked: boolean) => void;
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLElement>(null);
   useModalFocus(true, dialog, onClose, { closeAllowed: !busy });
   // The design system's Dialog markup, kept here so the dialog keeps its ids, aria-describedby and aria-busy.
+  // Like the kit Dialog, Escape and a press on the backdrop close it (not while the change is saving).
   return createPortal(
-    <div className="nk-dialog-backdrop">
+    <div className="nk-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
       <section
         aria-busy={busy}
         aria-describedby="bigger-context-recommendation-body"
@@ -224,10 +247,11 @@ export function BiggerContextRecommendation({
           <p id="bigger-context-recommendation-body">{copy.biggerContextRecommendationBody}</p>
           <KitSettingRow
             className="nk-dialog__setting"
-            control={<KitSwitch checked={checked} disabled={busy} label={copy.biggerContext} onChange={onChange} />}
+            control={<KitSwitch busy={busy} checked={checked} label={copy.biggerContext} onChange={onChange} />}
             description={copy.biggerContextRecommendationToggleBody}
             title={copy.biggerContext}
           />
+          {error ? <Notice className="nk-dialog__error" title={copy.error} tone="error">{error}</Notice> : null}
           {checked ? <p className="nk-dialog__note">{copy.contextClientRefreshBody}</p> : null}
         </div>
         <footer>
@@ -239,18 +263,21 @@ export function BiggerContextRecommendation({
   );
 }
 
-export function LaunchLoading() {
+/** Before the first snapshot. `language`: the saved language when known, else the system language. */
+export function LaunchLoading({ language = systemLanguage() }: { language?: Language }) {
   return (
-    <main className="nk-launch" role="status" aria-busy="true">
+    <main aria-busy="true" className="nk-launch">
       <span aria-hidden="true" className="nk-launch__drag" />
       <Mark size={48} />
       <span aria-hidden="true" className="nk-launch__line" />
-      <span className="nk-visually-hidden">Loading…</span>
+      <span className="nk-visually-hidden" role="status">{shellCopy(language).loading}</span>
     </main>
   );
 }
 
-export function FatalMessage({ message, onRetry, retryLabel }: {
+/** The launcher could not start: what failed (the heading), the cause, and a retry. */
+export function FatalMessage({ language = systemLanguage(), message, onRetry, retryLabel }: {
+  language?: Language;
   message: string;
   onRetry?: () => void;
   retryLabel?: string;
@@ -259,7 +286,7 @@ export function FatalMessage({ message, onRetry, retryLabel }: {
     <main className="nk-launch">
       <span aria-hidden="true" className="nk-launch__drag" />
       <Mark size={48} />
-      <h1>NEKODEX</h1>
+      <h1>{shellCopy(language).startupFailed}</h1>
       <p role="alert">{message}</p>
       {onRetry ? <Button onClick={onRetry} variant="primary">{retryLabel}</Button> : null}
     </main>

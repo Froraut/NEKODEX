@@ -10,7 +10,9 @@ export interface TaskCenterCopy {
   retrySafe: string;
   inspectFirst: string;
   observationStopped: string;
-  cancelWarning: string;
+  /** Confirmation dialog titles are the question; bodies give the consequence. */
+  cancelTitle: string;
+  cancelBody: string;
   keepWorking: string;
   documentUnavailable: string;
   search: string;
@@ -24,10 +26,17 @@ export interface TaskCenterCopy {
   clearFilters: string;
   noMatches: string;
   recordCount: string;
-  dismissWarning: string;
+  dismissTitle: string;
+  dismissBody: string;
   keepRecord: string;
   confirmDismiss: string;
   historyUnavailable: string;
+  emptyBody: string;
+  emptyUnavailable: string;
+  queueEmptyBody: string;
+  cancelFailed: string;
+  dismissFailed: string;
+  pauseScope: string;
   phases: Record<BrowserTaskState["phase"], string>;
 }
 const copy: Record<Language, TaskCenterCopy> = {
@@ -57,7 +66,8 @@ const copy: Record<Language, TaskCenterCopy> = {
       "cancelled": "Observation cancelled",
       "interrupted": "Interrupted by restart"
     },
-    "cancelWarning": "Stop observing this task? Completed external actions cannot be undone.",
+    "cancelTitle": "Stop observing this task?",
+    "cancelBody": "Completed external actions cannot be undone.",
     "keepWorking": "Keep working",
     "documentUnavailable": "The browser document is no longer available. Check the original Codex task; do not resend an uncertain submission.",
     "search": "Search trace, account or model",
@@ -71,10 +81,17 @@ const copy: Record<Language, TaskCenterCopy> = {
     "clearFilters": "Clear filters",
     "noMatches": "No matching tasks",
     "recordCount": "{shown} of {total} available records",
-    "dismissWarning": "Close the retained browser page and remove this record? Check the conversation before retrying; do not resend an uncertain submission. This does not delete provider chat history.",
+    "dismissTitle": "Close the retained browser page and remove this record?",
+    "dismissBody": "Check the conversation before retrying; do not resend an uncertain submission. This does not delete provider chat history.",
     "keepRecord": "Keep record",
     "confirmDismiss": "Close page and remove record",
-    "historyUnavailable": "Task history unavailable for this account. Available records may be incomplete."
+    "historyUnavailable": "Task history unavailable for this account. Available records may be incomplete.",
+    "emptyBody": "Browser tasks from Codex appear here while they run and after they finish.",
+    "emptyUnavailable": "No available records",
+    "queueEmptyBody": "Codex tasks wait here when accounts are busy or new tasks are paused.",
+    "cancelFailed": "Couldn't cancel this task",
+    "dismissFailed": "Couldn't close the page or remove the record",
+    "pauseScope": "Pause applies to"
   },
   "ru": {
     "title": "Центр задач",
@@ -102,7 +119,8 @@ const copy: Record<Language, TaskCenterCopy> = {
       "cancelled": "Наблюдение отменено",
       "interrupted": "Прервано перезапуском"
     },
-    "cancelWarning": "Остановить наблюдение за этой задачей? Выполненные внешние действия не откатываются.",
+    "cancelTitle": "Остановить наблюдение за этой задачей?",
+    "cancelBody": "Выполненные внешние действия не откатываются.",
     "keepWorking": "Продолжить работу",
     "documentUnavailable": "Браузерная страница больше недоступна. Проверьте исходную задачу Codex; не повторяйте отправку с неопределённым результатом.",
     "search": "Поиск по trace ID, аккаунту или модели",
@@ -114,12 +132,19 @@ const copy: Record<Language, TaskCenterCopy> = {
     "account": "Аккаунт",
     "allAccounts": "Все аккаунты",
     "clearFilters": "Сбросить фильтры",
-    "noMatches": "Совпадений нет",
+    "noMatches": "Подходящих задач нет",
     "recordCount": "{shown} из {total} доступных записей",
-    "dismissWarning": "Закрыть сохранённую страницу браузера и убрать запись? Проверьте беседу перед повтором; не повторяйте отправку с неопределённым результатом. История бесед у провайдера не удаляется.",
+    "dismissTitle": "Закрыть сохранённую страницу браузера и убрать запись?",
+    "dismissBody": "Проверьте беседу перед повтором; не повторяйте отправку с неопределённым результатом. История бесед у провайдера не удаляется.",
     "keepRecord": "Оставить запись",
     "confirmDismiss": "Закрыть страницу и убрать запись",
-    "historyUnavailable": "История задач этого аккаунта недоступна. Доступные записи могут быть неполными."
+    "historyUnavailable": "История задач этого аккаунта недоступна. Доступные записи могут быть неполными.",
+    "emptyBody": "Здесь появятся браузерные задачи Codex — во время работы и после завершения.",
+    "emptyUnavailable": "Доступных записей нет",
+    "queueEmptyBody": "Задачи Codex ждут здесь, когда аккаунты заняты или новые задачи приостановлены.",
+    "cancelFailed": "Не удалось отменить задачу",
+    "dismissFailed": "Не удалось закрыть страницу и убрать запись",
+    "pauseScope": "Пауза для"
   },
   "zh-CN": {
     "title": "任务中心",
@@ -147,24 +172,32 @@ const copy: Record<Language, TaskCenterCopy> = {
       "cancelled": "观察已取消",
       "interrupted": "重启导致中断"
     },
-    "cancelWarning": "停止观察此任务？已完成的外部操作无法撤销。",
+    "cancelTitle": "停止观察此任务？",
+    "cancelBody": "已完成的外部操作无法撤销。",
     "keepWorking": "继续工作",
     "documentUnavailable": "浏览器页面已不可用。检查原 Codex 任务；不要重复发送状态不确定的请求。",
-    "search": "搜索跟踪 ID、账号或模型",
+    "search": "搜索跟踪 ID、账户或模型",
     "status": "状态",
     "all": "全部",
     "active": "进行中",
     "attention": "需要关注",
     "completed": "已完成",
-    "account": "账号",
-    "allAccounts": "全部账号",
+    "account": "账户",
+    "allAccounts": "所有账户",
     "clearFilters": "清除筛选",
     "noMatches": "没有匹配的任务",
     "recordCount": "{shown} / {total} 条可用记录",
-    "dismissWarning": "关闭保留的浏览器页面并移除此记录？重试前请检查对话；不要重新发送状态不确定的请求。这不会删除提供方的聊天历史。",
+    "dismissTitle": "关闭保留的浏览器页面并移除此记录？",
+    "dismissBody": "重试前请检查对话；不要重新发送状态不确定的请求。这不会删除提供方的聊天历史。",
     "keepRecord": "保留记录",
     "confirmDismiss": "关闭页面并移除记录",
-    "historyUnavailable": "此账号的任务历史不可用。可用记录可能不完整。"
+    "historyUnavailable": "此账户的任务历史不可用。可用记录可能不完整。",
+    "emptyBody": "Codex 的浏览器任务在运行时和完成后都会显示在这里。",
+    "emptyUnavailable": "没有可用记录",
+    "queueEmptyBody": "当账户繁忙或新任务已暂停时，Codex 任务会在此等待。",
+    "cancelFailed": "无法取消此任务",
+    "dismissFailed": "无法关闭页面或移除记录",
+    "pauseScope": "暂停适用于"
   },
   "zh-TW": {
     "title": "任務中心",
@@ -192,24 +225,32 @@ const copy: Record<Language, TaskCenterCopy> = {
       "cancelled": "觀察已取消",
       "interrupted": "重新啟動導致中斷"
     },
-    "cancelWarning": "停止觀察此任務？已完成的外部操作無法復原。",
+    "cancelTitle": "停止觀察此任務？",
+    "cancelBody": "已完成的外部操作無法復原。",
     "keepWorking": "繼續工作",
     "documentUnavailable": "瀏覽器頁面已無法使用。檢查原 Codex 任務；不要重複傳送狀態不確定的請求。",
-    "search": "搜尋追蹤 ID、帳號或模型",
+    "search": "搜尋追蹤 ID、帳戶或模型",
     "status": "狀態",
     "all": "全部",
     "active": "進行中",
     "attention": "需要關注",
     "completed": "已完成",
-    "account": "帳號",
-    "allAccounts": "全部帳號",
+    "account": "帳戶",
+    "allAccounts": "所有帳戶",
     "clearFilters": "清除篩選",
     "noMatches": "沒有符合的任務",
     "recordCount": "{shown} / {total} 筆可用記錄",
-    "dismissWarning": "關閉保留的瀏覽器頁面並移除此記錄？重試前請檢查對話；不要重新傳送狀態不確定的請求。這不會刪除提供方的聊天歷史。",
+    "dismissTitle": "關閉保留的瀏覽器頁面並移除此記錄？",
+    "dismissBody": "重試前請檢查對話；不要重新傳送狀態不確定的請求。這不會刪除提供方的聊天歷史。",
     "keepRecord": "保留記錄",
     "confirmDismiss": "關閉頁面並移除記錄",
-    "historyUnavailable": "此帳號的任務歷史無法使用。可用記錄可能不完整。"
+    "historyUnavailable": "此帳戶的任務歷史無法使用。可用記錄可能不完整。",
+    "emptyBody": "Codex 的瀏覽器任務在執行時和完成後都會顯示在這裡。",
+    "emptyUnavailable": "沒有可用記錄",
+    "queueEmptyBody": "當帳戶忙碌或新任務已暫停時，Codex 任務會在此等待。",
+    "cancelFailed": "無法取消此任務",
+    "dismissFailed": "無法關閉頁面或移除記錄",
+    "pauseScope": "暫停適用於"
   },
   "ja": {
     "title": "タスクセンター",
@@ -237,7 +278,8 @@ const copy: Record<Language, TaskCenterCopy> = {
       "cancelled": "観測キャンセル済み",
       "interrupted": "再起動により中断"
     },
-    "cancelWarning": "このタスクの観測を停止しますか？完了した外部操作は元に戻せません。",
+    "cancelTitle": "このタスクの観測を停止しますか？",
+    "cancelBody": "完了した外部操作は元に戻せません。",
     "keepWorking": "作業を続ける",
     "documentUnavailable": "ブラウザーページは利用できません。元の Codex タスクを確認し、送信状態が不明な要求を再送しないでください。",
     "search": "トレース ID・アカウント・モデルを検索",
@@ -251,10 +293,17 @@ const copy: Record<Language, TaskCenterCopy> = {
     "clearFilters": "絞り込みを解除",
     "noMatches": "該当するタスクなし",
     "recordCount": "利用可能な {total} 件中 {shown} 件",
-    "dismissWarning": "保持されたブラウザーページを閉じて記録を削除しますか？再試行前に会話を確認し、送信状態が不明な要求を再送しないでください。提供元のチャット履歴は削除されません。",
+    "dismissTitle": "保持されたブラウザーページを閉じて記録を削除しますか？",
+    "dismissBody": "再試行前に会話を確認し、送信状態が不明な要求を再送しないでください。提供元のチャット履歴は削除されません。",
     "keepRecord": "記録を残す",
     "confirmDismiss": "ページを閉じて記録を削除",
-    "historyUnavailable": "このアカウントのタスク履歴は利用できません。表示できる記録が不完全な可能性があります。"
+    "historyUnavailable": "このアカウントのタスク履歴は利用できません。表示できる記録が不完全な可能性があります。",
+    "emptyBody": "Codex のブラウザータスクは、実行中と完了後にここに表示されます。",
+    "emptyUnavailable": "利用可能な記録なし",
+    "queueEmptyBody": "アカウントが使用中、または新しいタスクが一時停止中のとき、Codex のタスクはここで待機します。",
+    "cancelFailed": "このタスクをキャンセルできませんでした",
+    "dismissFailed": "ページを閉じて記録を削除できませんでした",
+    "pauseScope": "一時停止の対象"
   },
   "ko": {
     "title": "작업 센터",
@@ -282,7 +331,8 @@ const copy: Record<Language, TaskCenterCopy> = {
       "cancelled": "관찰 취소됨",
       "interrupted": "재시작으로 중단됨"
     },
-    "cancelWarning": "이 작업의 관찰을 중지할까요? 완료된 외부 작업은 되돌릴 수 없습니다.",
+    "cancelTitle": "이 작업의 관찰을 중지할까요?",
+    "cancelBody": "완료된 외부 작업은 되돌릴 수 없습니다.",
     "keepWorking": "계속 작업",
     "documentUnavailable": "브라우저 페이지를 사용할 수 없습니다. 원래 Codex 작업을 확인하고 전송 상태가 불확실한 요청을 다시 보내지 마세요.",
     "search": "추적 ID, 계정 또는 모델 검색",
@@ -296,10 +346,17 @@ const copy: Record<Language, TaskCenterCopy> = {
     "clearFilters": "필터 지우기",
     "noMatches": "일치하는 작업 없음",
     "recordCount": "사용 가능한 {total}개 기록 중 {shown}개",
-    "dismissWarning": "보관된 브라우저 페이지를 닫고 기록을 삭제할까요? 재시도 전에 대화를 확인하고 전송 상태가 불확실한 요청을 다시 보내지 마세요. 제공자의 대화 기록은 삭제되지 않습니다.",
+    "dismissTitle": "보관된 브라우저 페이지를 닫고 기록을 삭제할까요?",
+    "dismissBody": "재시도 전에 대화를 확인하고 전송 상태가 불확실한 요청을 다시 보내지 마세요. 제공자의 대화 기록은 삭제되지 않습니다.",
     "keepRecord": "기록 유지",
     "confirmDismiss": "페이지 닫기 및 기록 삭제",
-    "historyUnavailable": "이 계정의 작업 기록을 사용할 수 없습니다. 표시되는 기록이 불완전할 수 있습니다."
+    "historyUnavailable": "이 계정의 작업 기록을 사용할 수 없습니다. 표시되는 기록이 불완전할 수 있습니다.",
+    "emptyBody": "Codex의 브라우저 작업은 실행 중과 완료 후에 여기에 표시됩니다.",
+    "emptyUnavailable": "사용 가능한 기록 없음",
+    "queueEmptyBody": "계정이 사용 중이거나 새 작업이 일시 중지되면 Codex 작업이 여기서 대기합니다.",
+    "cancelFailed": "이 작업을 취소하지 못했습니다",
+    "dismissFailed": "페이지를 닫거나 기록을 삭제하지 못했습니다",
+    "pauseScope": "일시 중지 대상"
   }
 };
 export const taskCenterCopy = (language: Language): TaskCenterCopy => copy[language] ?? copy.en;

@@ -11,7 +11,6 @@
   overflow: hidden;
   background: var(--bg-surface);
   color: var(--text-primary);
-  container: onboarding / inline-size;
 }
 
 /* ---------- Top bar: window drag area with the brand and the version ---------- */
@@ -73,24 +72,33 @@
 .nk-onboarding__feature-copy strong { color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
 .nk-onboarding__feature-copy small { color: var(--text-secondary); font-size: 14px; line-height: 20px; }
 
-/* The locale loading notice sits on the page column above the footer. */
-.nk-onboarding__locale { flex: none; width: min(var(--size-content-narrow), calc(100% - 2 * var(--space-8))); margin: 0 auto var(--space-2); color: var(--text-secondary); }
+/* Notices about this page (a language still loading, a save that failed) sit on the page column above the
+   footer, outside the scroll area, so they stay in view and never cover the footer's buttons. */
+.nk-onboarding__notices {
+  display: grid;
+  flex: none;
+  gap: var(--space-2);
+  width: min(var(--size-content-narrow), calc(100% - 2 * var(--space-8)));
+  margin: 0 auto var(--space-3);
+  color: var(--text-secondary);
+}
 
-/* ---------- Footer: Back, progress, the next step ---------- */
+/* ---------- Footer: progress, then Back and the next step ---------- */
+/* The rule spans the window; the progress and the buttons line up with the page column above. One row would
+   not fit that column in Russian (about 860px), so the progress always takes its own row. */
 .nk-onboarding__footer {
   display: grid;
   flex: none;
-  grid-template-areas: "back steps next";
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-areas: "steps steps" "back next";
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3) var(--space-6);
-  padding: var(--space-4) var(--space-8);
+  padding: var(--space-3) max(var(--space-8), calc((100% - var(--size-content-narrow)) / 2));
   border-top: 1px solid var(--border-light);
 }
 .nk-onboarding__back { grid-area: back; justify-self: start; }
 .nk-onboarding__steps { grid-area: steps; justify-self: center; }
 .nk-onboarding__next { grid-area: next; justify-self: end; }
-/* Below 960px the progress takes its own row above the actions (Russian needs about 920px for one row). */
-@container onboarding (max-width: 960px) {
-  .nk-onboarding__footer { grid-template-areas: "steps steps" "back next"; grid-template-columns: minmax(0, 1fr) auto; padding-block: var(--space-3); }
-}
+
+/* Korean wraps between words, not inside them. */
+.nk-onboarding:lang(ko) { word-break: keep-all; overflow-wrap: break-word; }

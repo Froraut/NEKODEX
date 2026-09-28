@@ -34,17 +34,14 @@
   cursor: default;
 }
 .nk-connections__nested > summary::-webkit-details-marker { display: none; }
-.nk-connections__nested > summary::before {
-  width: 6px;
-  height: 6px;
-  margin: 0 2px 0 1px;
-  border-right: 1.7px solid currentColor;
-  border-bottom: 1.7px solid currentColor;
-  content: "";
-  transform: rotate(-45deg);
+/* The kit chevron (as in Disclosure): it turns 90° when open and stays centred on the text line. */
+.nk-connections__nested > summary > .nk-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
   transition: transform var(--duration-control) var(--ease-enter);
 }
-.nk-connections__nested[open] > summary::before { transform: rotate(45deg); }
+.nk-connections__nested[open] > summary > .nk-icon { transform: rotate(90deg); }
 .nk-connections__nested > summary:hover { color: var(--text-primary); }
 .nk-connections__nested > :not(summary) { margin: var(--space-2) 0 0 var(--space-4); }
 .nk-connections__nested > p { max-width: 62ch; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }

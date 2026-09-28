@@ -5,7 +5,7 @@ import { browserSurfaceCopy } from "./browser-surface-copy";
 import { passkeyFailureText } from "./passkey-copy";
 import type { PasskeyLoginProgress, Language } from "./types";
 
-export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continuePending, setError, transitionBusy = false, language = 'en' }: {
+export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continuePending, setError, transitionBusy = false, language = 'en', headingLevel = 2 }: {
   language?: Language;
   progress: PasskeyLoginProgress;
   copy: Copy;
@@ -14,6 +14,8 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
   continuePending: boolean;
   setError: (error: string | null) => void;
   transitionBusy?: boolean;
+  /** 1 when the guide replaces the idle state (it is the page's heading), 2 above a visible page. */
+  headingLevel?: 1 | 2;
 }) {
   const [now, setNow] = useState(Date.now());
   const [pending, setPending] = useState(false);
@@ -27,8 +29,10 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
   const seconds = Math.max(0, Math.ceil((Date.parse(progress.deadlineAt) - now) / 1000));
   const remaining = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   const terminal = !progress.active && progress.phase !== "completed";
+  // A failed or timed-out flow: the heading names the flow and one error Notice says what failed.
+  const failed = terminal && (progress.phase === "failed" || progress.phase === "timed-out");
   const chromeWaiting = progress.active && ["discovering", "waiting-for-chrome"].includes(progress.chromePhase ?? "");
-  const title = chromeWaiting ? copy.existingChromeWaiting
+  const phaseTitle = chromeWaiting ? copy.existingChromeWaiting
     : progress.active && progress.chromePhase === "reading-session" ? copy.existingChromeReading
     : progress.phase === "waiting" ? copy.passkeyWindowTitle
     : progress.phase === "starting" ? copy.passkeyStarting
@@ -38,6 +42,9 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
     : progress.phase === "timed-out" ? copy.passkeyTimedOut
     : progress.phase === "failed" ? copy.passkeyFailed
     : copy.passkeyImporting;
+  const title = failed ? browserSurfaceCopy(language).passkeyGuideTitle : phaseTitle;
+  const failureText = progress.error ? passkeyFailureText(progress.error, copy, language) : null;
+  const Heading = headingLevel === 1 ? "h1" : "h2";
   const steps = passkeySteps(progress, language);
   const act = async (action: () => Promise<unknown>, allowedDuringTransition = false, failure: string = copy.passkeyFailed) => {
     if (inFlight.current || (transitionBusy && !allowedDuringTransition)) return;
@@ -49,15 +56,17 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
   };
   return <Panel as="div" padding="compact" className="browser-guide">
     <div className="browser-guide__status" role="status" aria-live="polite">
-      <strong className="browser-guide__title">{title}</strong>
-      <p>{chromeWaiting ? copy.existingChromeSteps : terminal ? copy.passkeyRecoveryBody : ["starting", "waiting"].includes(progress.phase) ? copy.passkeyContinueBody : copy.passkeyImportingBody}</p>
+      {/* Focus lands here when the guide opens or its focused control goes away. */}
+      <Heading className="browser-guide__title" tabIndex={-1}>{title}</Heading>
+      {failed ? null : <p>{chromeWaiting ? copy.existingChromeSteps : terminal ? copy.passkeyRecoveryBody : ["starting", "waiting"].includes(progress.phase) ? copy.passkeyContinueBody : copy.passkeyImportingBody}</p>}
     </div>
+    {failed ? <Notice tone="error" title={phaseTitle}>{failureText && failureText !== phaseTitle ? failureText : null}</Notice>
+      : failureText && failureText !== title ? <Notice tone="error">{failureText}</Notice> : null}
+    {failed ? <p>{copy.passkeyRecoveryBody}</p> : null}
     {steps ? <PhaseSteps className="browser-guide__steps" label={browserSurfaceCopy(language).signInProgress} steps={steps} /> : null}
     {progress.active && (chromeWaiting || ["starting", "waiting"].includes(progress.phase)) ? (
       <p className="browser-guide__meta">{copy.passkeyTimeRemaining.replace("{time}", remaining)}</p>
     ) : null}
-    {progress.error && passkeyFailureText(progress.error, copy, language) !== title
-      ? <Notice tone="error">{passkeyFailureText(progress.error, copy, language)}</Notice> : null}
     {progress.revealError ? <Notice tone="error">{passkeyFailureText(progress.revealError, copy, language)}</Notice> : null}
     <div className="browser-guide__actions">
       {progress.canImport ? <Button variant="primary" disabled={pending || continuePending || transitionBusy}
