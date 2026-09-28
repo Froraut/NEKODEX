@@ -46,7 +46,7 @@ test.serial("mixed mode points Codex at a picker catalog with native and Web row
   const models = slugs(pickerCatalogPath());
   expect(models[0]).toMatchObject({ slug: "native-model", visibility: "list" });
   expect(models.filter(model => model.visibility === "list").map(model => model.slug))
-    .toContain("chatgpt-web/gpt-5.6-sol");
+    .toContain("chatgpt-web/gpt-5.6-sol-high");
   // Saved fixed-mode tasks keep metadata, but never appear in the picker.
   expect(models.find(model => model.slug === "chatgpt-web/high")?.visibility).toBe("hide");
   expect(inspectCodexIntegration().errors).toEqual([]);
@@ -156,4 +156,23 @@ test.serial("an explicit opt-in explains a user-owned catalog and picker changes
   expect(() => installCodexIntegration(f.config, { pickerCatalog: true })).toThrow("its own model_catalog_json");
   expect(f.read().model_catalog_json).toBe(own);
   uninstallCodexIntegration();
+}));
+
+test.serial("a model-list change that alters the visible Web rows is reported for a Codex restart", () => isolated(f => {
+  installCodexIntegration(f.config);
+  const native = { models: [nativeRow("native-model", 1)] };
+  const evidence = (families: Record<string, string[]>) => ({ ...f.config, solAvailable: true, extraHighAvailable: true, proAvailable: true,
+    modelCapabilities: { observedAt: 1, families, names: { "5.6": "Sol" } } });
+  const sol = { "6": ["max"], "5.6": ["low", "medium", "high", "xhigh", "max"] };
+  refreshPickerCatalog(native, evidence(sol));
+  expect(refreshPickerCatalog(native, evidence(sol))).toMatchObject({ changed: false, visibleChanged: false });
+  // A native-only change rewrites the file but leaves the Web picker contract alone.
+  expect(refreshPickerCatalog({ models: [nativeRow("native-model", 1), nativeRow("native-two", 2)] }, evidence(sol)))
+    .toMatchObject({ changed: true, visibleChanged: false });
+  // An older model the picker also offers changes nothing Codex shows.
+  expect(refreshPickerCatalog(native, evidence({ ...sol, "5.5": ["low", "high"] })))
+    .toMatchObject({ visibleChanged: false, webModels: 5 });
+  // Losing Extra High removes a visible row.
+  expect(refreshPickerCatalog(native, evidence({ ...sol, "5.6": ["low", "medium", "high", "max"] })))
+    .toMatchObject({ changed: true, visibleChanged: true });
 }));

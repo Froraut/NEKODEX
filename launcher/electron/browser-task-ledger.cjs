@@ -11,16 +11,17 @@ const MAX_RECORDS = 2048;
 const taskModels = new Set(['chatgpt-web/light', 'chatgpt-web/medium', 'chatgpt-web/high',
   'chatgpt-web/extra-high', 'chatgpt-web/pro', 'chatgpt-web/luna', 'chatgpt-web/think',
   'chatgpt-web/zero-risk', 'chatgpt-web/zero-risk-pro', 'chatgpt-web/gpt-5.6-sol-instant',
+  'chatgpt-web/gpt-5.6-sol-medium', 'chatgpt-web/gpt-5.6-sol-high', 'chatgpt-web/gpt-5.6-sol-extra-high',
   'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro', 'chatgpt-web/gpt-6-pro', 'chatgpt-web/gpt-5.6-luna',
   'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant']);
+// GPT-5.6 Sol runs every level below Pro, including the retired Astra identities; GPT-6 only Pro.
+const solTaskModels = new Set(['chatgpt-web/gpt-5.6-sol-instant', 'chatgpt-web/gpt-5.6-sol-medium',
+  'chatgpt-web/gpt-5.6-sol-high', 'chatgpt-web/gpt-5.6-sol-extra-high', 'chatgpt-web/gpt-5.6-sol',
+  'chatgpt-web/gpt-5.6-pro', 'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant']);
 function isTaskModel(model) { return typeof model === 'string' && taskModels.has(model); }
 function taskModelFamily(model) {
-  if (!isTaskModel(model)) return undefined;
   if (model === 'chatgpt-web/gpt-6-pro') return '6';
-  // The retired Astra identities always ran GPT-5.6 Sol below Pro.
-  if (['chatgpt-web/gpt-5.6-sol-instant', 'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro',
-    'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant'].includes(model)) return '5.6';
-  return undefined;
+  return solTaskModels.has(model) ? '5.6' : undefined;
 }
 function taskModelForRequirement(requirement) {
   return isTaskModel(requirement?.requestedModel) ? requirement.requestedModel : null;
@@ -30,7 +31,7 @@ function validRecord(row) {
   return row && typeof row === 'object' && !Array.isArray(row)
     && (Object.keys(row).length === fields.length || (Object.keys(row).length === fields.length + 1 && Object.hasOwn(row, 'model')))
     && fields.every(key => Object.hasOwn(row, key))
-    && (!Object.hasOwn(row, 'model') || row.model === null || taskModels.has(row.model))
+    && (!Object.hasOwn(row, 'model') || row.model === null || isTaskModel(row.model))
     && /^[a-f0-9]{32}$/.test(row.id) && /^[A-Za-z0-9_-]{6,128}$/.test(row.traceId)
     && /^[A-Za-z0-9_-]{6,128}$/.test(row.tabId)
     && Number.isSafeInteger(row.createdAt) && row.createdAt >= 0

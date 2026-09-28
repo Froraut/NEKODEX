@@ -1,0 +1,41 @@
+<!-- Synthetic English power picker for model discovery: Latest runs GPT-5.6 Sol below Pro and GPT-6 at Pro, GPT-5.5 locks Pro. -->
+<form><div id="prompt-textarea" contenteditable="true">Draft to keep</div>
+      <button type="button" data-tone="neutral" aria-haspopup="menu" aria-controls="picker" aria-expanded="false">High</button></form>
+      <div id="picker" role="menu" hidden><div data-model-picker-view="simple">
+      <div role="menuitem" data-model-picker-view-toggle="true" aria-hidden="false" tabindex="0">Select model</div>
+      <div id="power" role="menuitem" aria-describedby="status hint" tabindex="0"><div data-model-picker-power-slider style="height:30px;width:250px"></div></div>
+      <div id="radios"></div>
+      <span id="status"></span><span id="hint">Use left and right arrow keys to adjust effort</span></div></div>
+      <script>
+      const rows = {
+        latest: { label: 'Latest', describe: value => value === 4 ? '6 Pro' : '5.6 Sol ' + efforts[value], locked: [] },
+        '5.6': { label: 'GPT-5.6 Sol', describe: value => '5.6 Sol ' + efforts[value], locked: [] },
+        '5.5': { label: 'GPT-5.5<span>Leaving on October 14</span>', describe: value => '5.5 ' + efforts[value], locked: [4] },
+      };
+      const efforts = ['Instant', 'Medium', 'High', 'Extra High', 'Pro'];
+      let family = 'latest', value = 2; const control = document.querySelector('button'), menu = document.querySelector('#picker'), view = document.querySelector('[data-model-picker-view]');
+      window.pickerState = () => ({ family, value });
+      function render() {
+        const advanced = view.dataset.modelPickerView === 'advanced';
+        document.querySelector('#radios').innerHTML = advanced ? Object.entries(rows).map(([id, row]) => '<div role="menuitemradio" data-family="' + id + '">' + row.label + '</div>').join('') : '';
+        document.querySelector('#power').style.display = advanced ? 'none' : 'block';
+        for (const radio of document.querySelectorAll('[data-family]')) radio.setAttribute('aria-checked', String(radio.dataset.family === family));
+        document.querySelector('[data-model-picker-power-slider]').innerHTML = '<span data-orientation="horizontal" aria-disabled="false">'
+          + efforts.map((_, index) => '<span data-selected="' + (index <= value) + '"' + (rows[family].locked.includes(index) ? ' data-locked="true"' : '') + '></span>').join('')
+          + '<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="4" aria-valuenow="' + value + '"></span></span>';
+        document.querySelector('#status').textContent = rows[family].describe(value) + ', ' + (value + 1) + ' of 5.';
+        control.textContent = efforts[value];
+      }
+      control.onclick = () => { menu.hidden = false; control.setAttribute('aria-expanded', 'true'); view.dataset.modelPickerView = 'simple'; render(); };
+      document.querySelector('[data-model-picker-view-toggle]').onclick = () => { view.dataset.modelPickerView = 'advanced'; render(); };
+      document.querySelector('#radios').onclick = event => { const radio = event.target.closest('[data-family]'); if (radio) { family = radio.dataset.family; value = 0; view.dataset.modelPickerView = 'simple'; render(); } };
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') { setTimeout(() => { menu.hidden = true; control.setAttribute('aria-expanded', 'false'); }, 75); }
+        else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+          const next = Math.max(0, Math.min(4, value + (event.key === 'ArrowRight' ? 1 : -1)));
+          if (!rows[family].locked.includes(next)) value = next;
+          render(); event.preventDefault();
+        }
+      });
+      render();
+      </script>

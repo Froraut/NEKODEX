@@ -613,7 +613,8 @@ export function SettingsSurface({
                   : codexStatus === "removed" ? copy.integrationRemoved : copy.codexSettingsSaved}
                 action={<Button size="sm" onClick={showModelSetup}>{copy.openModelSettings}</Button>}
               >
-                {codexStatus === "picker" ? copy.setupConfirmBody
+                {codexStatus === "picker"
+                  ? snapshot.state.codexRestartRequired === true ? copy.setupConfirmRestartBody : copy.setupConfirmBody
                   : codexStatus === "catalog-error" ? copy.catalogFailureKeptInstall
                   : codexStatus === "removed" ? copy.codexIntegrationRemovedBody
                   : codexStatus === "manual-refresh" ? copy.codexManualRefreshBody : copy.setupCatalogBody}

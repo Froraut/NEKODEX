@@ -5,24 +5,12 @@ import {
   chatGptWebRouteEfforts,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   CHATGPT_WEB_MODEL_PREFIX,
+  compareChatGptWebModelRoutes,
   resolveChatGptWebContextLimits,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
 
 type JsonObject = Record<string, unknown>;
-
-const WEB_CATALOG_ORDER = [
-  "chatgpt-web/gpt-6-pro",
-  "chatgpt-web/gpt-5.6-pro",
-  "chatgpt-web/gpt-5.6-sol",
-  "chatgpt-web/gpt-5.6-sol-instant",
-  "chatgpt-web/gpt-5.6-luna",
-] as const;
-
-function webCatalogRank(route: ChatGptWebModelRoute): number {
-  const index = WEB_CATALOG_ORDER.findIndex(slug => slug === route.slug);
-  return index < 0 ? WEB_CATALOG_ORDER.length : index;
-}
 
 function object(value: unknown, label: string): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -211,7 +199,7 @@ export function augmentNativeModelCatalog(
   }
   const priority = webCatalogPriority(nativeModels, template);
   const webModels = availableChatGptWebModelRoutes(config)
-    .toSorted((left, right) => webCatalogRank(left) - webCatalogRank(right))
+    .toSorted(compareChatGptWebModelRoutes)
     .map(route => buildChatGptWebModel(template, route, config, priority));
   return {
     ...structuredClone(catalog),

@@ -21,7 +21,7 @@ import {
 } from "./driver";
 import {
   createDevContextFiller,
-  DEV_CHAT_MODELS,
+  isDevChatModel,
   DevChatStore,
   type DevChatModel,
   type DevChatState,
@@ -35,7 +35,7 @@ import {
 } from "./profile";
 import { DEV_CONFIG_PURPOSE, DEV_LAUNCHER_PROFILE } from "./constants";
 import { runCompactionModelConfigCommand } from "../compaction-model-config";
-import { runProModelVersionConfigCommand } from "../pro-model-config";
+import { runModelCapabilitiesConfigCommand, runProModelVersionConfigCommand } from "../pro-model-config";
 import { takeFlag, takeOption } from "../lib/cli-args";
 import { isJsonRecord } from "../lib/json-record";
 
@@ -182,10 +182,10 @@ function modelFromCli(value: string | undefined): DevChatModel | undefined {
   if (!value) return undefined;
   const normalized = value.trim().toLowerCase();
   const slug = normalized.startsWith("chatgpt-web/") ? normalized : `chatgpt-web/${normalized}`;
-  if (!(DEV_CHAT_MODELS as readonly string[]).includes(slug)) {
-    throw new Error(`Unknown DEV model ${JSON.stringify(value)}; choose zero-risk, gpt-5.6-luna, gpt-5.6-sol-instant, gpt-5.6-sol, gpt-5.6-pro, or gpt-6-pro`);
+  if (!isDevChatModel(slug)) {
+    throw new Error(`Unknown DEV model ${JSON.stringify(value)}; choose zero-risk, gpt-5.6-luna, gpt-5.6-sol-instant, gpt-5.6-sol-medium, gpt-5.6-sol-high, gpt-5.6-sol-extra-high, or gpt-6-pro`);
   }
-  return slug as DevChatModel;
+  return slug;
 }
 
 function statusLine(status: DevContextStatus): string {
@@ -459,6 +459,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
   if (action === "config") {
     activateDevProfileEnvironment(paths);
     if (args[0] === "compaction-model") await runCompactionModelConfigCommand(args);
+    else if (args[0] === "model-capabilities") await runModelCapabilitiesConfigCommand(args);
     else await runProModelVersionConfigCommand(args);
     return;
   }

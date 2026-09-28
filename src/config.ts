@@ -3,7 +3,7 @@ import { CHATGPT_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME, ZERO_RISK_CHATGPT
 export { atomicWriteFile } from "./file-transactions";
 import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import {
@@ -295,6 +295,30 @@ export function loadConfigWithSnapshot(): { config: AppConfig; snapshot: FileSna
 }
 
 export function loadConfig(): AppConfig { return loadConfigWithSnapshot().config; }
+
+/** Account evidence the launcher refreshes while the daemon keeps serving with its startup config. */
+export type AccountCapabilityFields = Pick<AppConfig, "solAvailable" | "extraHighAvailable" | "proAvailable" | "modelCapabilities">;
+
+export function accountCapabilityFields(config: AppConfig): AccountCapabilityFields {
+  return {
+    solAvailable: config.solAvailable,
+    extraHighAvailable: config.extraHighAvailable,
+    proAvailable: config.proAvailable,
+    modelCapabilities: config.modelCapabilities,
+  };
+}
+
+let cachedAccountCapabilities: { text: string; fields: AccountCapabilityFields } | undefined;
+
+/** The saved account evidence, reparsed only when the configuration file changes. */
+export function readAccountCapabilityFields(): AccountCapabilityFields {
+  const path = getConfigPath();
+  const text = readFileSync(path, "utf8");
+  if (cachedAccountCapabilities?.text !== text) {
+    cachedAccountCapabilities = { text, fields: accountCapabilityFields(parseConfig(JSON.parse(stripUtf8Bom(text)), path)) };
+  }
+  return cachedAccountCapabilities.fields;
+}
 
 export function loadConfigForSetup(): AppConfig {
   const read = readConfigForSetup();

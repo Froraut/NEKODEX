@@ -24,11 +24,13 @@ launcher-owned codex-chatgpt-web daemon
 
 ### `browser-only`
 
-- Advertises named Web rows for GPT-5.6 Sol Instant, GPT-5.6 Sol, GPT-5.6 Sol Pro,
-  GPT-6 Pro, or GPT-5.6 Luna according to the checked browser controls. They mirror
-  ChatGPT's five thinking levels: Sol runs Instant through Extra High, and the Pro
-  level runs Sol Pro or GPT-6 Pro. Codex's Effort selector exposes only the supported
-  levels for each row. Previous `chatgpt-web/light`, `medium`, `high`, `extra-high`,
+- Advertises ChatGPT's five thinking levels as they run, one row and one immutable
+  effort each: GPT-5.6 Sol Instant, GPT-5.6 Sol Medium, GPT-5.6 Sol High, GPT-5.6 Sol
+  Extra High and GPT-6 Astra Pro. The account's picker evidence decides which are
+  listed; each level counts only for the model its slider description names, so
+  Latest's lower levels (GPT-5.6 Sol) never count as GPT-6. Luna-only accounts get
+  GPT-5.6 Luna. The generic `gpt-5.6-sol` and `gpt-5.6-pro` (Sol Pro) IDs stay
+  resolvable for saved tasks but are no longer listed. Previous `chatgpt-web/light`, `medium`, `high`, `extra-high`,
   `pro`, `luna`, and `think` IDs, and the retired `gpt-6-astra` and
   `gpt-6-astra-instant` IDs (which always ran GPT-5.6 Sol), remain resolvable for
   saved tasks but are absent from the picker.

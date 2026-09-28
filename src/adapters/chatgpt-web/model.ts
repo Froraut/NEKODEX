@@ -2,7 +2,9 @@ import {
   CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   chatGptExtraHighAvailable,
+  isChatGptWebModelVersion,
   parseChatGptWebProModelVersion,
+  type ChatGptWebModelFamily,
   type ChatGptWebProModelVersion,
 } from "../../chatgpt-web-models";
 
@@ -17,11 +19,13 @@ export interface ChatGptWebCapabilities {
   proModelVersion?: ChatGptWebProModelVersion;
 }
 
-export type ChatGptWebCompactionModelVersion = ChatGptWebProModelVersion;
+export type ChatGptWebCompactionModelVersion = ChatGptWebModelFamily;
 
 export interface ChatGptWebModelMode {
   modelId: string;
-  modelVersion?: ChatGptWebProModelVersion;
+  modelVersion?: ChatGptWebModelFamily;
+  /** The effort the pinned version is requested at; lower multipart stages use the same row. */
+  modelVersionEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   effort: "low" | "medium" | "high" | "xhigh" | "max";
   displayLabel: "Luna" | "Think" | "Instant" | "Medium" | "High" | "Extra High" | "Pro";
   uiEffortIndex: 0 | 1 | 2 | 3 | 4 | null;
@@ -85,12 +89,13 @@ export function resolveChatGptWebModelMode(
   reasoning: string | undefined,
   capabilities: ChatGptWebCapabilities,
   modelVersionOverride?: ChatGptWebCompactionModelVersion,
+  modelVersionEffort?: ChatGptWebModelMode["effort"],
 ): ChatGptWebModelMode {
   const mode = resolveBaseChatGptWebModelMode(modelId, reasoning, capabilities);
   if (modelVersionOverride === undefined) return mode;
   if (modelId !== CHATGPT_WEB_MODEL_ID) throw new Error("Only the ChatGPT model selector supports a pinned model family");
-  if (modelVersionOverride !== "5.5" && modelVersionOverride !== "5.6" && modelVersionOverride !== "6") {
+  if (!isChatGptWebModelVersion(modelVersionOverride)) {
     throw new Error("Unsupported ChatGPT compaction model family");
   }
-  return { ...mode, modelVersion: modelVersionOverride };
+  return { ...mode, modelVersion: modelVersionOverride, ...(modelVersionEffort ? { modelVersionEffort } : {}) };
 }

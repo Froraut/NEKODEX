@@ -30,7 +30,7 @@ const validNativeModelId = value => typeof value === 'string' && NATIVE_MODEL_ID
   && value.split('/').every(segment => segment && segment !== '.' && segment !== '..');
 const validClassification = row => validAccountId(row.accountId)
   && ['luna', 'low', 'medium', 'high', 'xhigh', 'max', 'unknown'].includes(row.effort)
-  && ['5.5', '5.6', '6', 'unknown'].includes(row.modelVersion)
+  && (row.modelVersion === 'unknown' || (typeof row.modelVersion === 'string' && /^\d{1,2}(?:\.\d{1,2})?$/.test(row.modelVersion)))
   && MODEL_VERSION_SOURCES.has(row.modelVersionSource) && ['automatic', 'manual'].includes(row.mode)
   && MESSAGE_KINDS.has(row.messageKind);
 const validCounters = row => COUNTERS.every(field => isCounter(row[field]))

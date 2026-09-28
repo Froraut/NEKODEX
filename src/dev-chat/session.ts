@@ -15,6 +15,9 @@ export const DEV_CHAT_MODELS = [
   "chatgpt-web/pro",
   "chatgpt-web/gpt-5.6-luna",
   "chatgpt-web/gpt-5.6-sol-instant",
+  "chatgpt-web/gpt-5.6-sol-medium",
+  "chatgpt-web/gpt-5.6-sol-high",
+  "chatgpt-web/gpt-5.6-sol-extra-high",
   "chatgpt-web/gpt-5.6-sol",
   "chatgpt-web/gpt-5.6-pro",
   "chatgpt-web/gpt-6-pro",
@@ -23,6 +26,10 @@ export const DEV_CHAT_MODELS = [
 ] as const;
 
 export type DevChatModel = typeof DEV_CHAT_MODELS[number];
+
+export function isDevChatModel(value: string): value is DevChatModel {
+  return (DEV_CHAT_MODELS as readonly string[]).includes(value);
+}
 
 const usageSchema = z.object({
   inputTokens: z.number().int().nonnegative(),

@@ -135,6 +135,7 @@
   "setupNext": "次のステップ",
   "setupConfirmTitle": "Codex でモデルを確認",
   "setupConfirmBody": "インストールは保存済みで、Codex はモデル一覧を読み込みました。モデル選択画面に NEKODEX が表示されることを確認してください。再インストールは不要です。",
+  "setupConfirmRestartBody": "NEKODEX のモデル一覧が変更されました。Codex は起動時にのみ一覧を読み込みます。作業を終えたら Codex を完全に終了してから開き直し、モデルピッカーで NEKODEX のモデルを確認してください。",
   "setupCatalogTitle": "Codex のモデル読み込みを待機中",
   "setupCatalogBody": "設定は保存済みですが、モデル一覧の取得成功はまだ確認できていません。Codex のモデル選択画面を開き、下の接続先情報を確認してください。モデルが表示されない場合は、作業完了後に Codex を再起動してください。",
   "setupRepair": "インストールを修復",

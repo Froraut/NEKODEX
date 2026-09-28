@@ -26,7 +26,8 @@ test("one family's Pro limit does not hide another family's Pro or alter native 
   const catalog = augmentNativeModelCatalog({ models: [native] }, { ...config, subagentProtocol: "native" });
   const models = catalog.models as typeof native[];
   expect(models.find(model => model.slug === native.slug)).toEqual(native);
-  expect(models.some(model => model.slug === "chatgpt-web/gpt-5.6-pro")).toBe(true);
+  // GPT-5.6 Sol Pro stays resolvable for saved tasks but is not listed; Pro is GPT-6 Astra Pro.
+  expect(models.some(model => model.slug === "chatgpt-web/gpt-5.6-pro")).toBe(false);
   expect(models.some(model => model.slug === "chatgpt-web/gpt-6-pro")).toBe(false);
   // Below Pro ChatGPT runs GPT-5.6 Sol; the retired Astra rows are never advertised, and
   // saved tasks that name them keep resolving to GPT-5.6 Sol.
@@ -41,7 +42,8 @@ test("one family's Pro limit does not hide another family's Pro or alter native 
   expect(requireChatGptWebModelRoute("chatgpt-web/gpt-6-pro", refreshed).adapterEffort).toBe("max");
   const listed = (augmentNativeModelCatalog({ models: [native] }, { ...refreshed, subagentProtocol: "native" }).models as Array<{ slug: string; display_name: string }>)
     .filter(model => model.slug.startsWith("chatgpt-web/")).map(model => model.display_name);
-  expect(listed).toEqual(["GPT-6 Pro (Web)", "GPT-5.6 Sol Pro (Web)", "GPT-5.6 Sol (Web)", "GPT-5.6 Sol Instant (Web)"]);
+  expect(listed).toEqual(["GPT-5.6 Sol Instant (Web)", "GPT-5.6 Sol Medium (Web)", "GPT-5.6 Sol High (Web)",
+    "GPT-5.6 Sol Extra High (Web)", "GPT-6 Astra Pro (Web)"]);
   expect(requireChatGptWebModelRoute("chatgpt-web/high", config).adapterEffort).toBe("high");
 });
 
@@ -104,7 +106,9 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("family discovery restores th
     const page = await browser.newPage();
     await page.setContent(readFileSync(join(import.meta.dir, "fixtures/french-model-picker.html"), "utf8"));
     const capabilities = await detectChatGptAccountCapabilities(page, { selectorTimeoutMs: 3_000 });
-    expect(capabilities.modelCapabilities?.families).toEqual(evidence.families);
+    // Latest has no Pro level here, so the picker offers no GPT-6 level at all.
+    expect(capabilities.modelCapabilities?.families).toEqual({ "5.6": evidence.families["5.6"] });
+    expect(capabilities.modelCapabilities?.names).toEqual({ "5.6": "Sol" });
     expect(await page.locator('#picker').isVisible()).toBe(false);
     expect(await page.locator("#status").innerText()).toBe("Pro, 5 sur 5.");
     expect(await page.locator('[role="slider"]').getAttribute("aria-valuenow")).toBe("4");

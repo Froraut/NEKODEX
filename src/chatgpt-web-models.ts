@@ -26,7 +26,31 @@ export type ChatGptWebZeroRiskBackendModel =
 
 export type ChatGptWebCodexEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type ChatGptWebAdapterEffort = "low" | "medium" | "high" | "xhigh" | "max";
-export type ChatGptWebModelFamily = "5.6" | "6";
+/** A ChatGPT model version as its picker names it, such as "5.6" in "GPT-5.6 Sol". */
+export type ChatGptWebModelFamily = string;
+
+const CHATGPT_WEB_MODEL_VERSION = /^\d{1,2}(?:\.\d{1,2})?$/;
+// A model name ChatGPT shows next to a version ("Sol" in "GPT-5.6 Sol"). Effort words never qualify.
+const CHATGPT_WEB_MODEL_NAME = /^(?!(?:Instant|Light|Medium|High|Extra|Pro|Thinking|Moyen)$)[A-Z][A-Za-z]{1,19}$/;
+
+export function isChatGptWebModelVersion(value: unknown): value is ChatGptWebModelFamily {
+  return typeof value === "string" && CHATGPT_WEB_MODEL_VERSION.test(value);
+}
+
+export function isChatGptWebModelName(value: unknown): value is string {
+  return typeof value === "string" && CHATGPT_WEB_MODEL_NAME.test(value);
+}
+
+/** Newest first, comparing each numeric component ("6" > "5.6" > "5.5"). */
+export function compareChatGptWebModelVersions(left: string, right: string): number {
+  const a = left.split(".").map(Number);
+  const b = right.split(".").map(Number);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (b[index] ?? 0) - (a[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
 
 /**
  * Measured Plus browser transport windows, including the fixed hidden ChatGPT platform reserve.
@@ -257,31 +281,82 @@ export type ChatGptWebModelRoute = ChatGptWebAutomaticModelRoute | ChatGptWebZer
 /** Observed selectability, not a subscription or a promise of remaining quota. */
 export interface ChatGptWebModelCapabilities {
   observedAt: number;
-  families: Partial<Record<ChatGptWebProModelVersion, readonly ChatGptWebAdapterEffort[]>>;
+  /** Each model version the picker offers, with the thinking levels that actually run it. */
+  families: Partial<Record<ChatGptWebModelFamily, readonly ChatGptWebAdapterEffort[]>>;
+  /**
+   * The name ChatGPT shows with a version ("Sol" for GPT-5.6 Sol). Present, possibly empty, on
+   * every observation that read the picker's own model descriptions; absent on older ones.
+   */
+  names?: Partial<Record<ChatGptWebModelFamily, string>>;
 }
+
+const MAX_OBSERVED_FAMILIES = 12;
 
 export function parseChatGptWebModelCapabilities(value: unknown): ChatGptWebModelCapabilities | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid ChatGPT model capabilities");
   const candidate = value as ChatGptWebModelCapabilities;
   if (!Number.isSafeInteger(candidate.observedAt) || candidate.observedAt <= 0
-    || !candidate.families || typeof candidate.families !== "object" || Array.isArray(candidate.families)) {
+    || !candidate.families || typeof candidate.families !== "object" || Array.isArray(candidate.families)
+    || Object.keys(candidate.families).length > MAX_OBSERVED_FAMILIES) {
     throw new Error("Invalid ChatGPT model capability observation");
   }
   const families: ChatGptWebModelCapabilities["families"] = {};
   for (const [family, efforts] of Object.entries(candidate.families)) {
-    if (!["5.5", "5.6", "6"].includes(family) || !Array.isArray(efforts)
+    if (!isChatGptWebModelVersion(family) || !Array.isArray(efforts)
       || efforts.some(effort => !["low", "medium", "high", "xhigh", "max"].includes(effort))
       || new Set(efforts).size !== efforts.length) throw new Error("Invalid ChatGPT model effort capabilities");
-    families[family as ChatGptWebProModelVersion] = [...efforts];
+    families[family] = [...efforts];
   }
-  return { observedAt: candidate.observedAt, families };
+  if (candidate.names === undefined) {
+    // Observations before model names were read attributed every Latest level to GPT-6. ChatGPT
+    // runs GPT-5.6 Sol below Pro even with Latest selected, so only their Pro level is GPT-6.
+    if (families["6"]) families["6"] = families["6"].filter(effort => effort === "max");
+    return { observedAt: candidate.observedAt, families };
+  }
+  if (!candidate.names || typeof candidate.names !== "object" || Array.isArray(candidate.names)) {
+    throw new Error("Invalid ChatGPT model names");
+  }
+  const names: NonNullable<ChatGptWebModelCapabilities["names"]> = {};
+  for (const [family, name] of Object.entries(candidate.names)) {
+    if (!Object.hasOwn(families, family) || !isChatGptWebModelName(name)) throw new Error("Invalid ChatGPT model names");
+    names[family] = name;
+  }
+  return { observedAt: candidate.observedAt, families, names };
 }
 
-export function chatGptModelOptionName(version: ChatGptWebProModelVersion): RegExp {
-  if (version === "5.6") return /^GPT[-\s]?5\.6\s+Sol(?:\s+Pro)?$/i;
-  if (version === "5.5") return /^GPT[-\s]?5\.5(?:\s+Pro)?$/i;
-  return /^(?:Latest|Le plus récent|最新|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i;
+/** Localized names of ChatGPT's Latest row, preferred when several rows name no version. */
+const CHATGPT_LATEST_MODEL_OPTION = /^(?:Latest|Newest|Le plus récent|Neueste(?:s)?|Más reciente|Mais recente|Più recente|Последняя|Новейшая|最新|최신)$/i;
+
+/**
+ * The picker row that runs a model version: the one row naming that version, else the one
+ * unversioned (Latest) row when the version is newer than every named row. Discovery and turn
+ * selection share this rule, so an observed family is always selected through the same row.
+ */
+export function chatGptModelRowForVersion(
+  labels: readonly string[],
+  version: ChatGptWebModelFamily,
+): { index: number; latest: boolean } | undefined {
+  const named = labels.map(label => chatGptModelOptionVersion(label)?.version);
+  const explicit = named.flatMap((candidate, index) => candidate === version ? [index] : []);
+  if (explicit.length === 1) return { index: explicit[0]!, latest: false };
+  if (explicit.length > 1) return undefined;
+  let unversioned = named.flatMap((candidate, index) => candidate === undefined ? [index] : []);
+  // Another unversioned row (a legacy or "Auto" entry) must not hide Latest behind ambiguity.
+  if (unversioned.length > 1) unversioned = unversioned.filter(index => CHATGPT_LATEST_MODEL_OPTION.test(labels[index]!.trim()));
+  if (unversioned.length !== 1) return undefined;
+  const newest = named.every(candidate => candidate === undefined || compareChatGptWebModelVersions(version, candidate) < 0);
+  return newest ? { index: unversioned[0]!, latest: true } : undefined;
+}
+
+/** The version a picker row names, if any. */
+export function chatGptModelOptionVersion(label: string): { version: ChatGptWebModelFamily; name?: string } | undefined {
+  // ChatGPT may write the hyphen as a non-breaking or other Unicode hyphen ("GPT‑5.6").
+  const match = /^\s*GPT[-\u2010-\u2013\s]?(\d{1,2}(?:\.\d{1,2})?)(?![\d.])(?:\s+([A-Z][A-Za-z]{1,19}))?(\s+Pro)?\s*$/i.exec(label)
+    ?? /^\s*GPT[-\u2010-\u2013\s]?(\d{1,2}(?:\.\d{1,2})?)(?![\d.])/i.exec(label);
+  if (!match) return undefined;
+  const name = match[2];
+  return { version: match[1]!, ...(isChatGptWebModelName(name) ? { name } : {}) };
 }
 
 export interface ChatGptWebAccountCapabilities {
@@ -413,37 +488,38 @@ export const CHATGPT_WEB_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] 
   },
 ];
 
+const SOL = { interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6", requiresPro: false } as const;
+
 /**
- * Advertise explicit model identities while keeping saved fixed-mode tasks resolvable. They mirror
- * ChatGPT's five thinking levels: GPT-5.6 Sol runs Instant, Medium, High and Extra High, and the
- * Pro level runs GPT-5.6 Sol Pro or, where the plan includes it, GPT-6 Pro (powered by GPT-6 Astra).
+ * The Codex picker lists ChatGPT's five thinking levels as they run: GPT-5.6 Sol runs Instant,
+ * Medium, High and Extra High, and the Pro level runs GPT-6 Pro, powered by GPT-6 Astra. Each row
+ * has one immutable effort and its own context budget; account evidence decides which are listed.
  */
 export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
-    slug: "chatgpt-web/gpt-5.6-sol-instant",
-    displayName: "GPT-5.6 Sol Instant (Web)",
-    description: "GPT-5.6 Sol at ChatGPT's Instant level, with its own context and compaction budget.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"], requiresPro: false,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-instant", displayName: "GPT-5.6 Sol Instant (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's Instant level.",
+    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"],
   },
   {
-    slug: "chatgpt-web/gpt-5.6-sol",
-    displayName: "GPT-5.6 Sol (Web)",
-    description: "GPT-5.6 Sol at ChatGPT's Medium, High, or account-supported Extra High thinking level.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"], requiresPro: false,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-medium", displayName: "GPT-5.6 Sol Medium (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's Medium thinking level.",
+    codexEffort: "medium", adapterEffort: "medium", supportedCodexEfforts: ["medium"],
   },
   {
-    slug: "chatgpt-web/gpt-5.6-pro",
-    displayName: "GPT-5.6 Sol Pro (Web)",
-    description: "GPT-5.6 Sol Pro at ChatGPT's Pro thinking level.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-high", displayName: "GPT-5.6 Sol High (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's High thinking level.",
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["high"],
+  },
+  {
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-extra-high", displayName: "GPT-5.6 Sol Extra High (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's account-gated Extra High thinking level.",
+    codexEffort: "xhigh", adapterEffort: "xhigh", supportedCodexEfforts: ["xhigh"], requiresExtraHigh: true,
   },
   {
     slug: "chatgpt-web/gpt-6-pro",
-    displayName: "GPT-6 Pro (Web)",
-    description: "GPT-6 Pro, powered by GPT-6 Astra, at ChatGPT's Pro thinking level.",
+    displayName: "GPT-6 Astra Pro (Web)",
+    description: "GPT-6 Pro, powered by GPT-6 Astra, at ChatGPT's account-gated Pro level.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6",
     codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
   },
@@ -457,24 +533,32 @@ export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRo
 ];
 
 /**
- * 6.1.1 advertised "GPT-6 Astra" rows below Pro. ChatGPT runs GPT-5.6 Sol at every level below
- * Pro, including with Latest selected, so those rows only ever reached Sol. Saved tasks keep
- * resolving them as GPT-5.6 Sol; they are never advertised again.
+ * Identities earlier releases advertised. Saved tasks keep resolving them, as hidden catalog rows:
+ * GPT-5.6 Sol with a selectable Medium/High/Extra High effort, GPT-5.6 Sol Pro, and the 6.1.1
+ * "GPT-6 Astra" rows, which selected Latest below Pro and therefore always ran GPT-5.6 Sol.
  */
 export const CHATGPT_WEB_RETIRED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
-    slug: "chatgpt-web/gpt-6-astra-instant",
-    displayName: "GPT-5.6 Sol Instant (Web)",
-    description: "Saved-task alias of GPT-5.6 Sol Instant.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"], requiresPro: false,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol", displayName: "GPT-5.6 Sol (Web)",
+    description: "Saved-task identity of GPT-5.6 Sol with a selectable thinking level.",
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"],
   },
   {
-    slug: "chatgpt-web/gpt-6-astra",
-    displayName: "GPT-5.6 Sol (Web)",
-    description: "Saved-task alias of GPT-5.6 Sol.",
+    slug: "chatgpt-web/gpt-5.6-pro",
+    displayName: "GPT-5.6 Sol Pro (Web)",
+    description: "Saved-task identity of GPT-5.6 Sol Pro.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"], requiresPro: false,
+    codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
+  },
+  {
+    ...SOL, slug: "chatgpt-web/gpt-6-astra-instant", displayName: "GPT-5.6 Sol Instant (Web)",
+    description: "Saved-task alias of GPT-5.6 Sol Instant.",
+    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"],
+  },
+  {
+    ...SOL, slug: "chatgpt-web/gpt-6-astra", displayName: "GPT-5.6 Sol (Web)",
+    description: "Saved-task alias of GPT-5.6 Sol.",
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"],
   },
 ];
 
@@ -499,6 +583,15 @@ const routesBySlug = new Map(
 
 export function isChatGptWebModelSlug(modelId: string): boolean {
   return modelId.startsWith(CHATGPT_WEB_MODEL_PREFIX);
+}
+
+/** The picker order: the five ChatGPT levels as listed, then Luna. */
+export function compareChatGptWebModelRoutes(left: ChatGptWebModelRoute, right: ChatGptWebModelRoute): number {
+  const rank = (route: ChatGptWebModelRoute) => {
+    const index = CHATGPT_WEB_NAMED_MODEL_ROUTES.findIndex(candidate => candidate.slug === route.slug);
+    return index < 0 ? CHATGPT_WEB_NAMED_MODEL_ROUTES.length : index;
+  };
+  return rank(left) - rank(right);
 }
 
 export function availableChatGptWebModelRoutes(
@@ -557,6 +650,12 @@ export function requireChatGptWebModelRoute(
   if (!capabilities.solAvailable) {
     throw new Error(`${route.displayName} is not available for this Luna-only account`);
   }
+  // Fixed Instant through Extra High always meant GPT-5.6 Sol. Once discovery lists other rows,
+  // pin that row so a previous turn on another model cannot silently change what they run.
+  if ((CHATGPT_WEB_MODEL_ROUTES as readonly ChatGptWebModelRoute[]).includes(route) && route.adapterEffort !== "max"
+    && capabilities.modelCapabilities?.names && capabilities.modelCapabilities.families["5.6"]) {
+    return resolveRouteEffort({ ...route, modelFamily: "5.6" }, capabilities, reasoning);
+  }
   if (route.requiresModelObservation && !capabilities.modelCapabilities) {
     throw new Error(`${route.displayName} needs a verified model observation; run Repair to refresh capabilities`);
   }
@@ -598,4 +697,17 @@ function resolveRouteEffort(
   }
   if (effort === route.codexEffort) return route;
   return { ...route, codexEffort: effort as ChatGptWebCodexEffort, adapterEffort: effort as ChatGptWebAdapterEffort };
+}
+
+/**
+ * "Follow ChatGPT" Pro without a pinned version: the newest discovered version that offers Pro,
+ * which is what ChatGPT's Latest row runs at Pro. Undefined when discovery has no names.
+ */
+export function newestChatGptWebProFamily(
+  capabilities: Pick<ChatGptWebAccountCapabilities, "modelCapabilities">,
+): ChatGptWebModelFamily | undefined {
+  const observed = capabilities.modelCapabilities;
+  if (!observed?.names) return undefined;
+  return Object.keys(observed.families).filter(isChatGptWebModelVersion).toSorted(compareChatGptWebModelVersions)
+    .find(version => observed.families[version]?.includes("max"));
 }

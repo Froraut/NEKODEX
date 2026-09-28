@@ -61,6 +61,12 @@ class AccountBrowserPool {
     this.workspaceRegistrations = new Map();
     this.traceOwners = new Map();
     this.capabilities = new Map();
+    this.capabilityObservedAt = new Map();
+    this.capabilityRefresh = null;
+    this.capabilitySave = null;
+    this.capabilitySaveAgain = false;
+    this.capabilitySavePending = false;
+    this.capabilitySaveRetry = null;
     this.connectors = new Map();
     this.evidenceEpochs = new Map();
     this.publishedAuthentication = new Map();
@@ -574,6 +580,8 @@ class AccountBrowserPool {
     }
     this.selectionRevision++;
     this.syncVisibility(); this.publish();
+    // Codex lists the selected account's models; switch them with the account.
+    if (previous !== id) void this.saveSelectedCapabilities();
     return this.accountSnapshot();
   }
   setAccountEnabled(id, enabled) {
@@ -613,7 +621,7 @@ class AccountBrowserPool {
       if (!this.evidenceIsCurrent(id, epoch)) {
         throw new Error('ChatGPT account readiness changed while checking it');
       }
-      this.capabilities.set(id, evidence);
+      this.recordCapabilityEvidence(id, evidence);
       if (connector) {
         await host.verifyConnector(host.connectorName());
         if (!this.evidenceIsCurrent(id, epoch)) {
@@ -707,7 +715,7 @@ class AccountBrowserPool {
         if (!this.inspectionsPaused && host.state.authenticated && this.evidenceIsCurrent(account.id, epoch)) {
           const evidence = await host.inspectSession(true);
           if (this.evidenceIsCurrent(account.id, epoch)) {
-            this.capabilities.set(account.id, evidence);
+            this.recordCapabilityEvidence(account.id, evidence);
             if (!this.inspectionsPaused && account.id === 'default' && this.options.bootstrapPrimaryConnector?.() === true) {
               await host.verifyConnector(host.connectorName());
               if (!this.evidenceIsCurrent(account.id, epoch)) {
@@ -723,6 +731,84 @@ class AccountBrowserPool {
     this.publish();
     return this.snapshot();
   }
+  /** Keep fresh browser evidence and let the runtime list the models it shows. */
+  recordCapabilityEvidence(id, evidence) {
+    this.capabilities.set(id, evidence);
+    this.capabilityObservedAt.set(id, Date.now());
+    if (id === this.registry.snapshot().selectedId) this.saveSelectedCapabilities();
+  }
+  /**
+   * Hand the selected account's evidence to the runtime. A save the runtime defers (another
+   * launcher operation is running) stays pending and is retried by the refresh timer.
+   */
+  saveSelectedCapabilities() {
+    const id = this.registry.snapshot().selectedId;
+    const evidence = this.capabilities.get(id);
+    if (!evidence || !this.options.onCapabilityEvidence) return Promise.resolve(false);
+    if (this.capabilitySave) {
+      this.capabilitySaveAgain = true;
+      return this.capabilitySave;
+    }
+    this.capabilitySave = (async () => {
+      try {
+        const result = await this.options.onCapabilityEvidence(id, evidence);
+        this.capabilitySavePending = result?.reason === 'busy' || result?.reason === 'failed';
+        this.capabilitySaveBusy = result?.reason === 'busy';
+        return result?.saved === true;
+      } catch (error) {
+        this.capabilitySavePending = true;
+        this.capabilitySaveBusy = false;
+        this.logger.warn('browser.capability_evidence_not_saved', { accountId: id, message: error instanceof Error ? error.message : String(error) });
+        return false;
+      } finally {
+        this.capabilitySave = null;
+        if (this.capabilitySaveAgain) {
+          this.capabilitySaveAgain = false;
+          void this.saveSelectedCapabilities();
+        } else if (this.capabilitySaveBusy && !this.capabilitySaveRetry && !this.destroyed) {
+          // Startup and upgrades hold the launcher operation lock briefly; try again soon.
+          this.capabilitySaveRetry = setTimeout(() => {
+            this.capabilitySaveRetry = null;
+            if (!this.destroyed) void this.saveSelectedCapabilities();
+          }, 60_000);
+          this.capabilitySaveRetry.unref?.();
+        }
+      }
+    })();
+    return this.capabilitySave;
+  }
+  /**
+   * ChatGPT changes its model lineup without a NEKODEX release. While the selected account is
+   * idle and its browser is out of view, re-read its picker when the saved evidence is old. The
+   * previous evidence stays in effect during the check, so admission is never interrupted.
+   */
+  async refreshSelectedCapabilitiesIfIdle(maxAgeMs) {
+    if (this.capabilitySavePending && !this.capabilitySave) void this.saveSelectedCapabilities();
+    if (this.inspectionsPaused || this.destroyed || this.capabilityRefresh || this.options.isBrowserInView?.() !== false) return false;
+    if (this.options.getBrowserInteractionMode?.() !== 'automatic') return false;
+    const id = this.registry.snapshot().selectedId;
+    const host = this.hosts.get(id);
+    if (!host || host.state.authenticated !== true || !this.capabilities.has(id)) return false;
+    if (Date.now() - (this.capabilityObservedAt.get(id) ?? 0) < maxAgeMs) return false;
+    // A turn being admitted re-checks the account and must not find it busy with this check.
+    if (this.accountOperationLabel(id) || host.activeTraceId || host.readOnlyInspection
+      || [...this.reservations.values()].includes(id) || (this.admissionQueue?.ordered?.().length ?? 0) > 0
+      || [...host.turnTabs.values()].some(tab => tab.status === 'running')) return false;
+    const epoch = this.evidenceEpoch(id);
+    this.capabilityRefresh = (async () => {
+      try {
+        const evidence = await host.inspectSession(true);
+        if (this.evidenceEpoch(id) !== epoch || this.registry.snapshot().selectedId !== id) return false;
+        this.recordCapabilityEvidence(id, evidence);
+        this.publish();
+        return true;
+      } catch (error) {
+        this.logger.warn('browser.capability_refresh_failed', { accountId: id, message: error instanceof Error ? error.message : String(error) });
+        return false;
+      } finally { this.capabilityRefresh = null; }
+    })();
+    return this.capabilityRefresh;
+  }
   async inspectSession(detectCapabilities, accountId) {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const id = accountId ?? this.registry.snapshot().selectedId;
@@ -734,7 +820,7 @@ class AccountBrowserPool {
         if (!this.evidenceIsCurrent(id, epoch)) {
           throw new Error('ChatGPT account readiness changed while inspecting it');
         }
-        this.capabilities.set(id, evidence);
+        this.recordCapabilityEvidence(id, evidence);
       }
       return evidence;
     } catch (error) {
@@ -1481,6 +1567,7 @@ class AccountBrowserPool {
   }
   destroy() {
     this.destroyed = true;
+    if (this.capabilitySaveRetry) clearTimeout(this.capabilitySaveRetry);
     this.snapshotPublisher?.dispose();
     this.admissionQueue?.close();
     for (const coordinator of this.workspaceSessionMutations?.values() ?? []) {

@@ -1,10 +1,10 @@
 import type { Page, Locator } from "playwright-core";
 import type { ChatGptWebModelMode } from "./model";
-import type { ChatGptWebProModelVersion } from "../../chatgpt-web-models";
+import type { ChatGptWebModelFamily } from "../../chatgpt-web-models";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { stabilizeEffortSlider } from "./effort-stabilization";
 import { chatGptProUsageLimitTooltip } from "./pro-retry-hint";
-import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, readChatGptEffortSnapshot, chatGptModelStateMatches, chatGptUnversionedEffortMatches, selectChatGptModelFamily, assertSelectedChatGptModelFamily } from "../../chatgpt-session";
+import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, readChatGptEffortSnapshot, readChatGptEffortDescriptions, chatGptModelStateMatches, chatGptUnversionedEffortMatches, parseChatGptDescribedModelState, selectChatGptModelFamily, assertSelectedChatGptModelFamily } from "../../chatgpt-session";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
 
 interface ModelSelectionDependencies {
@@ -59,40 +59,41 @@ export function chatGptProUnavailableAdapterError(
   });
 }
 
-function chatGptPinnedModelError(version: ChatGptWebProModelVersion, cause?: unknown): ChatGptWebAdapterError {
+function chatGptPinnedModelError(version: ChatGptWebModelFamily, cause?: unknown): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(
-    `ChatGPT Pro model version ${version} could not be selected and verified. The pending prompt was not sent; check that this version is available in ChatGPT.`,
+    `ChatGPT model version ${version} could not be selected and verified. The pending prompt was not sent; check that this version is available in ChatGPT.`,
     { status: 400, errorType: "invalid_request_error", code: "model_version_unavailable", retryable: false, cause },
   );
+}
+
+/**
+ * A pinned version is proven at the effort it was requested for. Lower multipart stages of the
+ * same turn stay on the same checked row; on the unversioned Latest row ChatGPT may run an older
+ * model at those levels (GPT-5.6 Sol below GPT-6 Pro), so only the effort is proven there.
+ */
+function stageMayRunOtherVersion(
+  activation: { latestModelRow?: boolean },
+  mode: Pick<ChatGptWebModelMode, "effort" | "modelVersionEffort">,
+): boolean {
+  return activation.latestModelRow === true && mode.modelVersionEffort !== undefined && mode.modelVersionEffort !== mode.effort;
 }
 
 async function assertChatGptSelectedModelVersion(
   page: Page,
   slider: Locator,
-  version: ChatGptWebProModelVersion,
+  version: ChatGptWebModelFamily,
   requirePro = false,
   expectedEffort?: ChatGptWebModelMode["effort"],
   settleMs = 0,
+  anyVersion = false,
 ): Promise<void> {
-  // The numeric slider is aria-hidden. Its keyboard menuitem owns the live spoken
-  // version/effort through aria-describedby, not aria-valuetext on the slider.
   const deadline = Date.now() + settleMs;
   for (;;) {
-    const keyboardControl = slider.locator("xpath=ancestor::*[@role='menuitem'][1]");
-    const descriptionIds = (await keyboardControl.getAttribute("aria-describedby"))?.trim().split(/\s+/).filter(Boolean) ?? [];
-    const descriptions = await page.evaluate(
-      ids => ids
-        .map(id => document.getElementById(id)?.textContent?.trim() ?? "")
-        .filter(Boolean),
-      descriptionIds,
-    );
-    // "Latest" is not a version. Its slider must still prove 6; a future 7 fails closed.
-    // Version and Pro must come from the same described state node: unrelated instructions
-    // mentioning Pro are not proof that the selected effort is actually Pro.
-    // Latest uses 5.6 for its lower efforts and 6 for Pro. The checked radio
-    // is verified separately, so 5.6 in this description alone is not family proof.
-    const describedVersion = version === "6" && expectedEffort !== "max" ? "5.6" : version;
-    if (chatGptModelStateMatches(descriptions, describedVersion, requirePro, expectedEffort)
+    const descriptions = await readChatGptEffortDescriptions(page, slider);
+    // "Latest" is not a version. Its slider must still prove the pinned version at the pinned
+    // effort; a future Latest version fails closed. Version and Pro must come from the same
+    // described state node: unrelated instructions mentioning Pro are not proof.
+    if (chatGptModelStateMatches(descriptions, version, requirePro, expectedEffort, anyVersion)
       || (expectedEffort && chatGptUnversionedEffortMatches(descriptions, expectedEffort))) return;
     if (Date.now() >= deadline) break;
     await new Promise(resolveSettle => setTimeout(resolveSettle, 50));
@@ -183,17 +184,20 @@ export async function setChatGptThinkMode(
 export class ChatGptModelSelectionController {
   constructor(private readonly dependencies: ModelSelectionDependencies) {}
   private readonly effortSelections = new WeakMap<Page, { label: string; url: string; effort: ChatGptWebModelMode["effort"] }>();
-  private readonly observedProVersions = new WeakMap<Page, ChatGptWebProModelVersion>();
-  private readonly validatedPinnedVersions = new WeakMap<Page, ChatGptWebProModelVersion>();
+  private readonly observedProVersions = new WeakMap<Page, ChatGptWebModelFamily>();
+  private readonly validatedPinnedVersions = new WeakMap<Page, ChatGptWebModelFamily>();
 
   private async observeSelectedProVersion(page: Page, slider: Locator): Promise<void> {
     this.observedProVersions.delete(page);
     try {
-      const control = slider.locator("xpath=ancestor::*[@role='menuitem'][1]");
-      const ids = (await control.getAttribute("aria-describedby", { timeout: 1_000 }))?.trim().split(/\s+/).filter(Boolean) ?? [];
-      const descriptions = await this.dependencies.withChatGptBrowserObservationTimeout(page.evaluate(ids => ids.map(id => document.getElementById(id)?.textContent?.trim() ?? "").filter(Boolean), ids), 1_000);
-      const matches = (["5.5", "5.6", "6"] as const).filter(version => chatGptModelStateMatches(descriptions, version, true, "max"));
-      if (matches.length === 1) this.observedProVersions.set(page, matches[0]!);
+      const descriptions = await this.dependencies.withChatGptBrowserObservationTimeout(readChatGptEffortDescriptions(page, slider), 1_000);
+      const versions = new Set(descriptions.flatMap(text => {
+        const state = parseChatGptDescribedModelState(text);
+        return state?.effort === "max" ? [state.version] : [];
+      }));
+      if (versions.size === 1 && chatGptModelStateMatches(descriptions, [...versions][0]!, true, "max")) {
+        this.observedProVersions.set(page, [...versions][0]!);
+      }
     } catch { /* Missing or ambiguous live metadata stays unknown; telemetry cannot fail a turn. */ }
   }
 
@@ -216,7 +220,7 @@ export class ChatGptModelSelectionController {
     page: Page,
     mode: ChatGptWebModelMode,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
-    stageModelVersion?: ChatGptWebProModelVersion,
+    stageModelVersion?: ChatGptWebModelFamily,
     abortSignal?: AbortSignal,
   ): Promise<ChatGptWebModelMode> {
     throwIfPromptAttachmentAborted(abortSignal);
@@ -364,7 +368,8 @@ export class ChatGptModelSelectionController {
     }
     if (modelVersion) {
       activation = await assertSelectedChatGptModelFamily(page, currentEffort, activation, modelVersion, abortSignal);
-      await assertChatGptSelectedModelVersion(page, effortSlider, modelVersion, mode.effort === "max", mode.effort, 1_000);
+      await assertChatGptSelectedModelVersion(page, effortSlider, modelVersion, mode.effort === "max", mode.effort, 1_000,
+        stageMayRunOtherVersion(activation, mode));
     }
     await captureDiagnostic?.("effort-selected");
     await page.keyboard.press("Escape");
@@ -380,7 +385,8 @@ export class ChatGptModelSelectionController {
       }
       if (modelVersion) {
         confirmation = await assertSelectedChatGptModelFamily(page, currentEffort, confirmation, modelVersion, abortSignal);
-        await assertChatGptSelectedModelVersion(page, confirmation.slider, modelVersion, mode.effort === "max", mode.effort, 1_000);
+        await assertChatGptSelectedModelVersion(page, confirmation.slider, modelVersion, mode.effort === "max", mode.effort, 1_000,
+          stageMayRunOtherVersion(confirmation, mode));
       }
     } finally { await page.keyboard.press("Escape"); }
     await this.dependencies.settleChatGptUi();
@@ -388,7 +394,7 @@ export class ChatGptModelSelectionController {
     return mode;
   }
 
-  async verifyBeforeSend(page: Page, composer: Locator, expectedMode: Pick<ChatGptWebModelMode, "modelVersion" | "effort" | "uiEffortIndex" | "thinkEnabled">, abortSignal?: AbortSignal): Promise<void> {
+  async verifyBeforeSend(page: Page, composer: Locator, expectedMode: Pick<ChatGptWebModelMode, "modelVersion" | "modelVersionEffort" | "effort" | "uiEffortIndex" | "thinkEnabled">, abortSignal?: AbortSignal): Promise<void> {
     if (expectedMode && expectedMode.uiEffortIndex !== null) {
       await this.assertEffortSurface(page, expectedMode.effort);
       // Connector attachment, file handling or a user action can reset the picker after selection.
@@ -399,7 +405,8 @@ export class ChatGptModelSelectionController {
         let activation = await activateChatGptEffortMenu(page, control);
         if (expectedMode.modelVersion) {
           activation = await assertSelectedChatGptModelFamily(page, control, activation, expectedMode.modelVersion, abortSignal);
-          await assertChatGptSelectedModelVersion(page, activation.slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort);
+          await assertChatGptSelectedModelVersion(page, activation.slider, expectedMode.modelVersion, expectedMode.effort === "max", expectedMode.effort,
+            0, stageMayRunOtherVersion(activation, expectedMode));
           this.validatedPinnedVersions.set(page, expectedMode.modelVersion);
         } else {
           this.validatedPinnedVersions.delete(page);
@@ -449,7 +456,7 @@ export class ChatGptModelSelectionController {
       }
     }
   }
-  acceptedUsage(page?: Page): { modelVersion: ChatGptWebProModelVersion | "unknown"; modelVersionSource: "observed" | "pinned" | "unknown" } {
+  acceptedUsage(page?: Page): { modelVersion: ChatGptWebModelFamily | "unknown"; modelVersionSource: "observed" | "pinned" | "unknown" } {
     const selected = page && this.effortSelections.get(page);
     if (selected && page) selected.url = page.url();
     const observed = page ? this.observedProVersions.get(page) : undefined;

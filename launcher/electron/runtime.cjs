@@ -137,6 +137,33 @@ function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = fal
   return result;
 }
 
+
+const CAPABILITY_WRITE_TIMEOUT_MS = 30_000;
+
+/** Run one short runtime CLI command without publishing a launcher operation; resolves its stdout. */
+function runQuietRuntimeCommand(invocation, environment, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(invocation.executable, invocation.args, {
+      cwd: invocation.cwd, detached: DETACH_OWNED_CHILD, env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", chunk => { stdout = `${stdout}${chunk}`.slice(-8_000); });
+    child.stderr.on("data", chunk => { stderr = `${stderr}${chunk}`.slice(-2_000); });
+    const timer = setTimeout(() => {
+      try { terminateOwnedProcessTree(child, "SIGKILL"); } catch {}
+      reject(new Error(`Runtime command timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once("error", error => { clearTimeout(timer); reject(error); });
+    // "close" fires after stdout and stderr are drained, so the receipt is complete.
+    child.once("close", (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`Runtime command failed (${signal ?? code}): ${redactText(stderr.trim().split("\n").at(-1) ?? "")}`));
+    });
+  });
+}
+
 class RuntimeHost {
   constructor({
     app,
@@ -680,6 +707,8 @@ class RuntimeHost {
   }
 
   async run(name, args, options = {}) {
+    // A background model-list write is short; operations start after it instead of racing it.
+    if (this.capabilityWrite) await this.capabilityWrite.catch(() => {});
     if (options.privateControlMessage !== undefined && (!options.privateOutput || !options.controlStdin
       || typeof options.privateControlMessage !== "string" || Buffer.byteLength(options.privateControlMessage) > 4096)) {
       throw new Error("Private runtime control message is invalid");
@@ -1307,6 +1336,70 @@ class RuntimeHost {
       throw new Error("Runtime configuration did not persist the requested Pro model version");
     }
     return { proModelVersion: saved };
+  }
+
+  /**
+   * Save the selected account's latest ChatGPT picker evidence. The daemon reads it per request
+   * and the command rebuilds Codex's picker catalog, so new models appear without a Repair.
+   * This background write never takes the launcher's operation lock: it is skipped while another
+   * operation runs (the account pool retries it), and `run()` waits for it to finish.
+   */
+  async saveModelCapabilities(evidence) {
+    const current = this.runtimeConfigSnapshot();
+    const config = current.config;
+    if (!current.configured || config?.browserHost !== "launcher" || config?.browserInteractionMode === "manual") {
+      return { saved: false, reason: "not-configured" };
+    }
+    if (!evidence || typeof evidence.solAvailable !== "boolean" || typeof evidence.proAvailable !== "boolean") {
+      return { saved: false, reason: "incomplete" };
+    }
+    const payload = {
+      solAvailable: evidence.solAvailable,
+      proAvailable: evidence.proAvailable,
+      ...(typeof evidence.extraHighAvailable === "boolean" ? { extraHighAvailable: evidence.extraHighAvailable } : {}),
+      ...(evidence.modelCapabilities ? { modelCapabilities: evidence.modelCapabilities } : {}),
+    };
+    const comparable = value => JSON.stringify({
+      solAvailable: value?.solAvailable === true,
+      extraHighAvailable: (value?.extraHighAvailable ?? value?.proAvailable) === true,
+      proAvailable: value?.proAvailable === true,
+      families: value?.modelCapabilities?.families ?? null,
+      names: value?.modelCapabilities?.names ?? null,
+    });
+    // A newer timestamp alone does not change which models Codex lists.
+    if (comparable(config) === comparable(payload)) return { saved: false, reason: "unchanged" };
+    // A check that read no model rows never replaces a discovered list; Repair still can.
+    if (config?.modelCapabilities?.names && !payload.modelCapabilities) return { saved: false, reason: "incomplete" };
+    if (this.currentOperation() || this.capabilityWrite) return { saved: false, reason: "busy" };
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev"] : []),
+      "config", "model-capabilities", Buffer.from(JSON.stringify(payload), "utf8").toString("base64url"), "--launcher-control",
+    ];
+    this.capabilityWrite = (async () => {
+      const invocation = development
+        ? embeddedRuntimeInvocation({ app: this.app, sourceRoot: this.sourceRoot, args })
+        : this.command(args);
+      const environment = {
+        ...(development ? this.devSetupEnvironment() : process.env),
+        CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
+        ...this.launcherControlEnvironment(),
+      };
+      return runQuietRuntimeCommand(invocation, environment, CAPABILITY_WRITE_TIMEOUT_MS);
+    })();
+    try {
+      const output = await this.capabilityWrite;
+      let receipt = null;
+      try { receipt = JSON.parse(String(output).trim().split("\n").at(-1)); } catch {}
+      const pickerChanged = receipt?.pickerChanged === true;
+      this.logger.info("runtime.model_capabilities_saved", { pickerChanged, webModels: receipt?.webModels ?? null });
+      return { saved: true, pickerChanged };
+    } catch (error) {
+      this.logger.warn("runtime.model_capabilities_not_saved", { message: error instanceof Error ? error.message : String(error) });
+      return { saved: false, reason: "failed" };
+    } finally {
+      this.capabilityWrite = null;
+    }
   }
 
   async setSkillAttachments(enabled) {

@@ -108,7 +108,7 @@ import {
   notifyLauncherTurn,
 } from "../../launcher-browser-host";
 import {
-  type ChatGptWebProModelVersion,
+  type ChatGptWebModelFamily,
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { acquireChatGptResponseArtifacts, chatGptArtifactMarkdown } from "./artifacts";
@@ -242,7 +242,7 @@ export interface BrowserTurn {
   traceId: string;
   modelId: string;
   reasoning?: string;
-  modelFamily?: "5.6" | "6";
+  modelFamily?: ChatGptWebModelFamily;
   capabilities: ChatGptWebCapabilities;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
@@ -445,11 +445,11 @@ export class ChatGptBrowserWorker {
 
   private async selectModelAndEffort(
     page: Page, modelId: string, reasoning: string | undefined, capabilities: ChatGptWebCapabilities,
-    captureDiagnostic?: (checkpoint: string) => Promise<void>, stageModelVersion?: ChatGptWebProModelVersion,
-    abortSignal?: AbortSignal,
+    captureDiagnostic?: (checkpoint: string) => Promise<void>, stageModelVersion?: ChatGptWebModelFamily,
+    abortSignal?: AbortSignal, stageModelVersionEffort?: ChatGptWebModelMode["effort"],
   ): Promise<ChatGptWebModelMode> {
     return this.modelSelectionController().select(page,
-      resolveChatGptWebModelMode(modelId, reasoning, capabilities, stageModelVersion),
+      resolveChatGptWebModelMode(modelId, reasoning, capabilities, stageModelVersion, stageModelVersionEffort),
       captureDiagnostic, stageModelVersion, abortSignal);
   }
 
@@ -1595,7 +1595,7 @@ export class ChatGptBrowserWorker {
     completionTracker?: ChatGptCompletionTracker,
     recoverObservation?: ChatGptObservationRecovery,
     recoverableObservation?: ChatGptObservationRecoverability,
-    expectedMode?: Pick<ChatGptWebModelMode, "modelVersion" | "effort" | "uiEffortIndex" | "thinkEnabled">,
+    expectedMode?: Pick<ChatGptWebModelMode, "modelVersion" | "modelVersionEffort" | "effort" | "uiEffortIndex" | "thinkEnabled">,
     submissionRejection?: ChatGptSubmissionRejectionObserver,
   ): Promise<ChatGptSubmissionEvidence> {
     const composer = await this.activeComposer(page);
@@ -2183,10 +2183,11 @@ export class ChatGptBrowserWorker {
     if (turn.modelFamily && turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID && turn.modelFamily !== "5.6") {
       throw new Error("ChatGPT Luna does not support the requested model family");
     }
-    const requestedMode = resolveChatGptWebModelMode(
+    const resolvedMode = resolveChatGptWebModelMode(
       turn.modelId, turn.reasoning, browserCapabilities,
       turn.compactionExecution?.modelVersion ?? (turn.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? undefined : turn.modelFamily),
     );
+    const requestedMode = resolvedMode.modelVersion ? { ...resolvedMode, modelVersionEffort: resolvedMode.effort } : resolvedMode;
     const prepare = reuseConversation ? turn.prepareResume : turn.prepare;
     if (!prepare) throw new Error("The retained ChatGPT conversation has no continuation prompt");
     const prepared = await prepare();
@@ -2460,6 +2461,7 @@ export class ChatGptBrowserWorker {
           checkpoint => diagnostics.capture(page, checkpoint),
           requestedMode.modelVersion,
           browserStageAbortSignal(abortSignal, turn.abortSignal),
+          requestedMode.effort,
         )
       ));
       await diagnostics.capture(page, "effort-selection-complete");
@@ -2492,6 +2494,7 @@ export class ChatGptBrowserWorker {
                 checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
                 requestedMode.modelVersion,
                 browserStageAbortSignal(stageSignal, turn.abortSignal),
+                requestedMode.effort,
               ),
             );
             await diagnostics.capture(page, `multipart-stage-${index + 1}-effort-selected`);
@@ -2534,7 +2537,7 @@ export class ChatGptBrowserWorker {
                 }
                 : undefined,
               recoverableLauncherObservation,
-              { ...stagingMode, modelVersion: requestedMode.modelVersion },
+              { ...stagingMode, modelVersion: requestedMode.modelVersion, modelVersionEffort: requestedMode.effort },
               submissionRejection,
             ),
           );
@@ -2605,6 +2608,7 @@ export class ChatGptBrowserWorker {
               checkpoint => diagnostics.capture(page, `final-part-${checkpoint}`),
               requestedMode.modelVersion,
               browserStageAbortSignal(abortSignal, turn.abortSignal),
+              requestedMode.effort,
             ),
           );
           await diagnostics.capture(page, "final-part-effort-selected");
@@ -2671,6 +2675,7 @@ export class ChatGptBrowserWorker {
                 checkpoint => diagnostics.capture(page, checkpoint),
                 requestedMode.modelVersion,
                 refreshSignal,
+                requestedMode.effort,
               );
               submissionBaseline = await this.captureSubmissionBaseline(page, finalPrompt, refreshSignal);
             },

@@ -7,6 +7,7 @@ const { showChromeProfilePicker } = require("./chrome-profile-picker.cjs");
 const { createProfileFirstLogin } = require("./profile-first-login.cjs");
 const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
+const { currentPickerContract, pickerReconciliationPatch } = require("./codex-picker-contract.cjs");
 const { syncConversationPreferences, changeConversationPreference } = require("./conversation-preferences.cjs");
 const { createCodexAccountTools } = require("./codex-account-tools.cjs");
 const { MANUAL_CONNECTOR_NAME, automaticConnectorName, isLegacyConnectorName } = require("./connector-identity.cjs");
@@ -72,6 +73,25 @@ const {
   readWindowState,
   trackWindowState,
 } = require("./window-state.cjs");
+
+// Picker evidence older than this is re-read while the account is idle; checked every half hour.
+const MODEL_CAPABILITY_REFRESH_MS = 6 * 60 * 60_000;
+const MODEL_CAPABILITY_REFRESH_CHECK_MS = 30 * 60_000;
+// The Codex picker catalog can be rewritten by the daemon, the model-list command or setup.
+const CODEX_PICKER_CHECK_MS = 30_000;
+
+function codexPickerContract() {
+  return IS_DEV_PROFILE ? null : currentPickerContract({ coreHome: CORE_HOME, codexHome: LAUNCHER_PROFILE.codexHome });
+}
+
+/** Ask for a Codex restart and a fresh picker confirmation when the catalog Codex loads changed. */
+function reconcileCodexPicker(stateStore, logger) {
+  const patch = pickerReconciliationPatch(stateStore.read(), codexPickerContract());
+  if (!patch) return;
+  const state = stateStore.update(patch);
+  logger?.info("codex.picker_catalog_changed", {});
+  send("launcher:state-changed", state);
+}
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const FOREGROUND_RELAUNCH_ENV = "CODEX_WEB_GPT_FOREGROUND_RELAUNCH";
@@ -323,7 +343,8 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
         if (identity === reportedFailure) return;
         reportedFailure = identity;
         // Receipt proves Codex reached this runtime; generic restart guidance must not mask failure.
-        const state = stateStore.update({ codexRestartRequired: false });
+        // A changed picker catalog still needs a restart: Codex reads it only at startup.
+        const state = stateStore.update({ codexRestartRequired: codexPickerContract() !== null && latest.codexRestartRequired === true });
         send("launcher:state-changed", state);
         const reason = result.failure.code ? `${result.failure.stage}/${result.failure.code}` : result.failure.stage;
         logger.warn("codex.model_catalog_failed", result);
@@ -340,9 +361,11 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
         || health.successful_model_catalog_requests < 1) return;
       // A malformed new-style receipt must not authorize success from a stale counter.
       if (health.last_model_catalog_result != null && (!result || result.status >= 300)) return;
+      // A served catalog request does not show what the Codex picker loaded from its catalog file;
+      // only confirming the picker clears a restart request while that file is in use.
       const state = stateStore.update({
         codexCatalogVerified: true,
-        codexRestartRequired: false,
+        codexRestartRequired: codexPickerContract() !== null && latest.codexRestartRequired === true,
       });
       logger.info("codex.model_catalog_served", {
         requests: health.successful_model_catalog_requests,
@@ -1374,6 +1397,7 @@ function registerIpc({ logger, stateStore }) {
       throw new Error("Wait for the configured model catalog before confirming the Codex picker");
     }
     const state = stateStore.update({ codexPickerConfirmed: true, codexRestartRequired: false,
+      codexPickerContract: codexPickerContract(),
       setupContract: SETUP_CONTRACT, pickerVerifiedAt: new Date().toISOString(),
       setupIdentityHash: setupIdentity(runtimeHost.runtimeConfigSnapshot().config, browserHost.snapshot().accountLabel),
       setupRuntimeIdentity: currentRuntimeIdentity() });
@@ -1924,6 +1948,14 @@ async function start() {
         && runtime.configured && runtime.config?.mode === "full"
         && runtime.config?.browserInteractionMode === "automatic";
     },
+    // The selected account's picker evidence decides which Web models Codex lists.
+    onCapabilityEvidence: async (_accountId, evidence) => {
+      const result = await runtimeHost.saveModelCapabilities(evidence);
+      reconcileCodexPicker(stateStore, logger);
+      return result;
+    },
+    isBrowserInView: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+      && !mainWindow.isMinimized() && browserHost?.surfaceActive),
   });
   await browserHost.ready();
   if (!IS_DEV_PROFILE) contextChangeQueue.start();
@@ -1958,6 +1990,23 @@ async function start() {
         ...navigationErrorForLog(error),
       });
     });
+  }
+  if (!launcherSmokeTest && !IS_DEV_PROFILE) {
+    reconcileCodexPicker(stateStore, logger);
+    const pickerCheckTimer = setInterval(() => {
+      if (shutdownInProgress || quitting || exitCommitted) return;
+      try { reconcileCodexPicker(stateStore, logger); }
+      catch (error) { logger.warn("codex.picker_catalog_check_failed", { message: error instanceof Error ? error.message : String(error) }); }
+    }, CODEX_PICKER_CHECK_MS);
+    pickerCheckTimer.unref?.();
+  }
+  if (!launcherSmokeTest) {
+    // Re-read the model picker every few hours so new or retired ChatGPT models reach Codex.
+    const capabilityRefreshTimer = setInterval(() => {
+      if (lifecycleAdmission.busy() || shutdownInProgress || quitting || exitCommitted) return;
+      void browserHost?.refreshSelectedCapabilitiesIfIdle(MODEL_CAPABILITY_REFRESH_MS);
+    }, MODEL_CAPABILITY_REFRESH_CHECK_MS);
+    capabilityRefreshTimer.unref?.();
   }
   void startupAuthenticationRefresh.then(() => {
     if (!lifecycleAdmission.busy() && !shutdownInProgress && !quitting && !exitCommitted) ensureRuntimeProofCurrent(stateStore);

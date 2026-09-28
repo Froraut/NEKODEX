@@ -143,13 +143,19 @@ function readState(filePath) {
     }
     // A received catalog and a user's picker confirmation are separate facts.
     // Older launchers recreated the refresh flag on every launch until the user
-    // confirmed the picker, even after the live catalog monitor had cleared it.
-    if (state.coreSetupComplete === true && state.codexCatalogVerified === true) {
+    // confirmed the picker. A pending restart (a changed model list) stays until
+    // the user confirms the picker, which also clears it.
+    if (state.coreSetupComplete === true && state.codexCatalogVerified === true && state.codexPickerConfirmed === true) {
       state.codexRestartRequired = false;
+    }
+    if (state.codexPickerContract !== undefined && state.codexPickerContract !== null
+      && (typeof state.codexPickerContract !== "string" || !/^[a-f0-9]{64}$/.test(state.codexPickerContract))) {
+      delete state.codexPickerContract;
     }
     if (state.coreSetupComplete === false) {
       state.codexCatalogVerified = false;
       state.codexPickerConfirmed = false;
+      state.codexPickerContract = null;
       state.mcpSetupComplete = false;
     }
     if (state.setupConnectorName != null
@@ -216,14 +222,14 @@ function createStateStore(filePath) {
       if (next.coreSetupComplete === false) {
         next.codexCatalogVerified = false;
         next.codexPickerConfirmed = false;
+        next.codexPickerContract = null;
         next.mcpSetupComplete = false;
         next.experimentalAsyncToolOperations = false;
       } else if (patch.codexCatalogVerified === false) {
         next.codexPickerConfirmed = false;
       }
-      if (next.coreSetupComplete === true && next.codexCatalogVerified === true) {
-        next.codexRestartRequired = false;
-      }
+      // The restart request changes only explicitly: a served catalog request is not proof of
+      // what the Codex picker loaded, and confirming the picker clears it.
       if (next.browserInteractionMode === "manual" || next.coreSetupComplete === false) {
         next.pendingBiggerContext = null;
         next.contextChangeError = null;

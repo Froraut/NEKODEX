@@ -150,7 +150,7 @@ export function SetupSurface({
   };
   // Title, body and next step come from the same readiness headline as the Overview hero.
   const headline = workspaceHeadline(readiness, { app: copy, language, development: devProfile, manual: manualInteraction,
-    authenticationIssue: browser?.authenticationIssue });
+    authenticationIssue: browser?.authenticationIssue, codexRestartRequired: snapshot.state.codexRestartRequired === true });
   const runHeadlineStep = () => {
     switch (headline.step) {
       case "wait": return;
@@ -203,7 +203,9 @@ export function SetupSurface({
   const installAction = confirmPending ? confirmModels : catalogPending ? showTroubleshooting : install;
   const installDisabled = busy || toolsFirst || (confirmPending && pendingContext) || (!manualInteraction && !browser?.authenticated)
     || (!snapshot.state.coreSetupComplete && !snapshot.smokePassed && !manualInteraction);
-  let installDescription: ReactNode = confirmPending ? copy.setupConfirmBody : catalogPending ? copy.setupCatalogBody
+  // Codex reads the catalog only at startup; until the picker is confirmed, a changed list needs a restart.
+  const confirmBody = snapshot.state.codexRestartRequired === true ? copy.setupConfirmRestartBody : copy.setupConfirmBody;
+  let installDescription: ReactNode = confirmPending ? confirmBody : catalogPending ? copy.setupCatalogBody
     : devProfile ? copy.devStepInstallBody : copy.stepInstallBody;
   if (confirmPending && pendingContext) {
     installDescription = <>{installDescription}<span className="nk-connections__row-note" role="status">

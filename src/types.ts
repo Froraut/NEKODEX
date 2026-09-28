@@ -1,4 +1,4 @@
-import type { ChatGptWebProModelVersion } from "./chatgpt-web-models";
+import type { ChatGptWebModelFamily, ChatGptWebProModelVersion } from "./chatgpt-web-models";
 
 import type { ChatGptWebCompactionModel } from "./chatgpt-web-compaction-policy";
 
@@ -12,7 +12,7 @@ export interface CodexParsedRequest {
   options: CodexRequestOptions;
   _rawBody?: unknown;
   /** Set by validated Web route selection; never accepted from caller model metadata. */
-  _chatgptModelFamily?: "5.6" | "6";
+  _chatgptModelFamily?: ChatGptWebModelFamily;
   /** In-process only, set by the authenticated Hermes endpoint; never parsed from HTTP JSON. */
   _hermesContext?: { threadId: string; turnId: string; root: string };
   /** Server-owned external client identity; conveys no local filesystem authority. */

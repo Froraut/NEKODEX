@@ -307,12 +307,14 @@ export interface WorkspaceHeadline {
 }
 
 /** Title, body and next step for every WorkspaceReason: the Overview hero and the Connections status notice. */
-export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language, development, manual, authenticationIssue }: {
+export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language, development, manual, authenticationIssue, codexRestartRequired }: {
   app: Copy;
   language: Language;
   development: boolean;
   manual: boolean;
   authenticationIssue?: BrowserState["authenticationIssue"];
+  /** A changed model list: Codex has not loaded it yet, so the picker needs a Codex restart first. */
+  codexRestartRequired?: boolean;
 }): WorkspaceHeadline {
   const words = connectionsCopy(language);
   const workflow = workflowCopy(language);
@@ -344,7 +346,8 @@ export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language
     case "catalog-waiting":
       return { title: app.setupCatalogTitle, body: app.setupCatalogBody, tone: "info", step: "routing-checks", action: app.openRoutingChecks };
     case "picker-confirmation-required":
-      return { title: app.setupConfirmTitle, body: app.setupConfirmBody, tone: "info", step: "setup", action: app.finishSetup };
+      return { title: app.setupConfirmTitle, body: codexRestartRequired ? app.setupConfirmRestartBody : app.setupConfirmBody,
+        tone: "info", step: "setup", action: app.finishSetup };
     case "tools-not-installed":
       return { title: development ? app.devMcpTitle : words.toolsTitle, body: development ? app.devMcpBody : app.mcpSubtitle,
         tone: "info", step: "tools", action: app.configureMcp };
