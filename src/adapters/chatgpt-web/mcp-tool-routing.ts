@@ -261,7 +261,10 @@ function execGatewayResultProgram(invocation: string[], toolName: string): strin
     "if (hasStructuredContent || hasMeta) {",
     "  const content = result && typeof result === \"object\" && Array.isArray(result.content) ? result.content : [];",
     "  emitMedia(content);",
-    "  const envelope = { content, ...(hasStructuredContent ? { structuredContent: result.structuredContent } : {}), ...(hasMeta ? { _meta: result._meta } : {}) };",
+    // Media was already emitted above; repeating its base64 inside the JSON envelope only multiplies tokens.
+    "  const isMedia = item => item && typeof item === \"object\" && (item.type === \"image\" || item.type === \"audio\" || typeof item.image_url === \"string\" || typeof item.audio_url === \"string\");",
+    "  const envelopeContent = content.map(item => isMedia(item) ? { type: typeof item.type === \"string\" ? item.type : (typeof item.audio_url === \"string\" ? \"audio\" : \"image\"), ...(typeof item.mimeType === \"string\" ? { mimeType: item.mimeType } : {}), omitted: \"emitted as separate content\" } : item);",
+    "  const envelope = { content: envelopeContent, ...(hasStructuredContent ? { structuredContent: result.structuredContent } : {}), ...(hasMeta ? { _meta: result._meta } : {}) };",
     "  text(JSON.stringify(envelope));",
     "} else {",
     "  emit(result);",

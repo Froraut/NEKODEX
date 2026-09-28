@@ -28,6 +28,28 @@ export type BrokerOwnedOperationSnapshot =
 export type BrokerOwnedOperationStartResult = BrokerOwnedOperationSnapshot
   | { state: "control"; result: BrokerToolResult };
 
+/**
+ * A synchronous invocation that outlived its soft deadline, or whose MCP request disconnected.
+ * The native call keeps running (or queued) in Codex; its result is retained as an owned operation
+ * instead of revoking the whole turn.
+ */
+export interface BrokerPromotedInvocation {
+  promoted: {
+    operationId: string;
+    reason: "deadline" | "disconnected";
+    dispatched: boolean;
+  };
+}
+
+export type BrokerInvokeResult = BrokerToolResult | BrokerPromotedInvocation;
+
+export function isBrokerPromotedInvocation(value: unknown): value is BrokerPromotedInvocation {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("promoted" in value)) return false;
+  const promoted = (value as { promoted: unknown }).promoted;
+  return Boolean(promoted) && typeof promoted === "object" && !Array.isArray(promoted)
+    && typeof (promoted as { operationId?: unknown }).operationId === "string";
+}
+
 export interface BrokerOwnedOperationStatus {
   operations: Array<{
     operation_id: string;
@@ -67,6 +89,7 @@ interface BrokerRequestFields {
   operationId?: string;
   deliveryId?: string;
   waitMs?: number;
+  softDeadlineMs?: number;
 }
 
 export interface BrokerResponse {
@@ -125,7 +148,7 @@ const requestFields = {
   claim: ["token", "contract", "activityId"],
   resolve: ["bindingId"],
   release: ["bindingId"],
-  invoke: ["bindingId", "wireName", "freeform", "arguments", "input"],
+  invoke: ["bindingId", "wireName", "freeform", "arguments", "input", "softDeadlineMs"],
   invoke_async: ["bindingId", "wireName", "freeform", "arguments", "input", "operationId"],
   operation_status: ["token"],
   operation_poll: ["token", "operationId", "deliveryId", "waitMs"],
@@ -172,7 +195,7 @@ export function decodeBrokerRequest(value: unknown): BrokerRequest {
   for (const [field, entry] of Object.entries(packet)) {
     if (entry === undefined || field === "id" || field === "method") continue;
     const expected = field === "freeform" ? "boolean"
-      : ["ttlMs", "revision", "waitMs"].includes(field) ? "number"
+      : ["ttlMs", "revision", "waitMs", "softDeadlineMs"].includes(field) ? "number"
       : ["arguments", "environment", "toolResult"].includes(field) ? "object" : "string";
     // Ignore extension fields as before; validate recognized fields before method narrowing.
     if (!Object.values(requestFields).some(fields => fields.some(name => name === field))) continue;

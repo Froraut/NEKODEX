@@ -73,12 +73,16 @@ export async function callTurnBroker<T>(
     socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`));
     socket.on("data", chunk => {
       if (settled || response) return;
+      // Scan only the new chunk: a large owned result arrives in many small chunks, and rescanning
+      // the whole buffer each time can outlast a short poll deadline.
+      const scannedBefore = buffered.length;
       buffered += chunk;
-      if (buffered.length > MAX_BROKER_LINE_CHARS) {
+      const chunkNewline = chunk.indexOf("\n");
+      const newline = chunkNewline < 0 ? -1 : scannedBefore + chunkNewline;
+      if (newline < 0 && buffered.length > MAX_BROKER_LINE_CHARS) {
         finishError(new Error("ChatGPT web turn broker response exceeds size limit"));
         return;
       }
-      const newline = buffered.indexOf("\n");
       if (newline < 0) return;
       let parsed: BrokerResponse;
       try {

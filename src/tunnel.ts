@@ -511,6 +511,11 @@ export function mcpCommand(config: AppConfig): string {
       || config.appName === DEV_CHATGPT_ASYNC_CONNECTOR_NAME
       || config.appName === PREVIOUS_ASYNC_CONNECTOR_NAME
       || config.appName === PREVIOUS_ASYNC_DEV_CONNECTOR_NAME);
+  if (config.experimentalAsyncToolOperations === true && config.browserInteractionMode === "automatic"
+    && config.mode === "full" && !asyncConnector) {
+    // Never fall back to the synchronous schema under an async identity's cached App ID.
+    throw new Error(`Async tool operations require a Codex Native5 or Native6 connector identity, not ${JSON.stringify(config.appName)}`);
+  }
   const command = [
     ...config.runtimeCommand,
     "mcp",

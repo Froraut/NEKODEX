@@ -38,6 +38,11 @@ export function observeMcpTransport(
   const observed: Transport = {
     async start() {
       transport.onmessage = (message, extra) => {
+        // The SDK never answers a cancelled request, so its receipt must not stay tracked forever.
+        if ("method" in message && message.method === "notifications/cancelled" && !("id" in message)) {
+          const requestId = (message.params as { requestId?: unknown } | undefined)?.requestId;
+          if (typeof requestId === "string" || typeof requestId === "number") pending.delete(requestId);
+        }
         if ("method" in message && message.method === "tools/call" && "id" in message) {
           const name = message.params?.name;
           const receipt = { call: ++nextCall, tool: typeof name === "string" && toolNames.has(name) ? name : "unrecognized", started: performance.now() };

@@ -380,10 +380,12 @@ export function compileChatGptWebPrompt(
         ? "Use codex_tool_inventory to discover the supplied client functions and codex_tool_call to invoke their exact structured schemas. Use terminal, file, memory or delegation functions only when advertised by this client. Do not use Codex-specific command, thread or compaction shortcuts. The bridge's read-only transport root is not the client workspace or its permission policy."
         : "For reading a referenced Codex task, use codex_read_thread with the task ID. It can only invoke the current outer read_thread tool; report an unavailable-tool error instead of trying a different action to bypass that limit.",
       ...(asyncToolOperations ? [
-        "For a tool that can legitimately run longer than one MCP transport window, use codex_tool_start once with a stable operation_key, then call codex_tool_poll with bounded waits until it returns a terminal delivery_id.",
-        "If codex_tool_status is available, use it to recover this turn's operation IDs and states after context or transport loss. Status returns metadata without delivery IDs and does not acknowledge results: poll recovered operations to receive their results and delivery IDs before acknowledging. If status is truncated, omitted counts older acknowledged guards that remain protected from replay; never replace an omitted guard with a new operation key. Never rerun side effects to recover an expired or lost result.",
-        "After consuming a terminal owned-operation result, call codex_tool_poll once more with its exact ack_delivery_id. A poll timeout or disconnect never authorizes restarting codex_tool_start with a different operation_key.",
-        "codex_tool_cancel cancels a queued invocation before dispatch. After dispatch it cancels only observation; the external tool and side effects may continue even if this turn later finishes, and the cancellation never promises external undo.",
+        "Codex runs one batch of native tool calls at a time. Each Codex Native call has about 90 seconds before the MCP transport deadline, including time Codex spends waiting for the user's approval or for an earlier call to finish.",
+        "A call that has not finished near that deadline returns state=running with an operation_id instead of an error. It was not cancelled and must not be called again: continue with codex_tool_poll (wait_ms up to 30000) until it returns a terminal result.",
+        "For work expected to outlast that window, such as approval-gated commands, long app or MCP tools, or agent waits, use codex_tool_start. Give every execution its own new operation_key and reuse a key only to retry the identical start after a transport failure; a reused key never runs the tool again. Continue a long-running codex_exec command through its session_id with codex_write_stdin instead.",
+        "Right after reading a terminal owned-operation result, call codex_tool_poll once more with its exact ack_delivery_id, before writing the final answer. Do not end the response while an operation is still running. A poll timeout or disconnect never authorizes restarting work under a different operation_key.",
+        "If codex_tool_status is available, use it after context or transport loss to recover this turn's operation IDs and states. It never returns results or delivery IDs: poll a recovered operation to receive them. Never rerun side effects to recover an expired or lost result.",
+        "codex_tool_cancel withdraws a call that has not been dispatched yet. After dispatch it only stops observing the call; the tool may still complete or cause side effects.",
       ] : []),
       "A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
@@ -460,7 +462,7 @@ export function compileChatGptWebPrompt(
     : mode.localTools
     ? [
       "<codex_transport_resume>",
-      `The task context is complete. Pass turn_token ${turnToken} unchanged to every Codex Native call in this response, including continuations after tool results; do not expose it in the answer. Execute the latest active user request now.`,
+      `The task context is complete. Pass turn_token ${turnToken} unchanged to every Codex Native call in this response, including continuations after tool results; do not expose it in the answer. Tokens from earlier messages belong to finished requests. Execute the latest active user request now.`,
       "</codex_transport_resume>",
     ]
     : [
