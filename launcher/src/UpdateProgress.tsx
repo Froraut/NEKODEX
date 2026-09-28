@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ProgressMeter } from "./design";
 import { updateCopyFor } from "./update-copy";
 import type { Language, UpdateState } from "./types";
 
@@ -58,7 +59,7 @@ export function UpdateProgress({ state, label, language = "en" }: { state: Updat
   const eta = remaining === undefined ? undefined : updateCopyFor(language).downloadRemaining.replace("{duration}",
     new Intl.NumberFormat(language, { style: "unit", unit, unitDisplay: "short" }).format(Math.ceil(remaining / divisor)));
   const reading = useTransferReading({ bytes, speed }, downloading);
-  // No reported total is not evidence that part of the file has arrived.
+  // No reported total is not evidence that part of the file has arrived: the meter stays indeterminate.
   const fraction = total ? Math.min(1, reading.bytes / total) : 0;
   const decimal = new Intl.NumberFormat(language, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const percent = new Intl.NumberFormat(language, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -68,15 +69,20 @@ export function UpdateProgress({ state, label, language = "en" }: { state: Updat
     `${mib(bytes)}${total ? ` / ${mib(total)} (${percent.format(bytes / total)})` : ""}`,
     hasSpeed ? `${mib(speed)}/s` : undefined, eta,
   ].filter(Boolean).join("; ") : undefined;
-  return <div className="updates-download">
-    <div className="updates-meter"
-      role="progressbar" aria-label={label} aria-valuetext={valueText} aria-valuemin={0} aria-valuemax={100}
-      aria-valuenow={total ? Math.min(100, bytes / total * 100) : undefined}>
-      <span aria-hidden="true" className="updates-meter-fill" style={{ transform: `scaleX(${fraction})` }} />
-    </div>
-    {downloading ? <div className="updates-transfer"><span>{mib(reading.bytes)}{total ? ` / ${mib(total)}` : ""}</span>
-      {total ? <strong>{percent.format(fraction ?? 0)}</strong> : null}</div> : null}
-    {eta ? <small className="updates-eta">{eta}</small> : null}
-    {downloading ? <small className="updates-speed">{hasSpeed ? `${mib(reading.speed)}/s` : "—"}</small> : null}
+  // The kit ProgressMeter has no aria-valuetext prop; keep the transfer figures on its progressbar.
+  const meter = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const bar = meter.current?.querySelector('[role="progressbar"]');
+    if (!bar) return;
+    if (valueText) bar.setAttribute("aria-valuetext", valueText);
+    else bar.removeAttribute("aria-valuetext");
+  });
+  const figures = downloading ? [
+    `${mib(reading.bytes)}${total ? ` / ${mib(total)}` : ""}`, hasSpeed ? `${mib(reading.speed)}/s` : "— MiB/s", eta,
+  ].filter(Boolean).join(" · ") : undefined;
+  // The bar follows telemetry (the kit fill transitions its width); the figures interpolate between readings.
+  return <div className="updates-download" ref={meter}>
+    <ProgressMeter label={label} value={total ? Math.min(1, bytes / total) : null}
+      valueLabel={total ? percent.format(fraction) : undefined} note={figures} />
   </div>;
 }

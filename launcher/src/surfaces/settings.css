@@ -1,0 +1,103 @@
+/* Settings surface layout: the narrow page (size-content-narrow) and, at 900px of workspace and wider, an
+   "On this page" contents rail to its right. Only places kit components; their look comes from the kit. */
+
+/* ---------- Page and contents rail ---------- */
+.settings-toc { display: none; }
+
+@container workspace (min-width: 900px) {
+  /* The page column keeps the kit Page's own gutters (space-8 each side), so the page stays 760 wide. */
+  .settings-layout {
+    display: grid;
+    grid-template-columns: minmax(0, calc(var(--size-content-narrow) + 2 * var(--space-8))) 180px;
+    justify-content: center;
+    column-gap: var(--space-2);
+    padding-inline-end: var(--space-8);
+  }
+  .settings-layout > .settings-page { grid-column: 1; grid-row: 1; }
+  .settings-toc {
+    position: sticky;
+    top: var(--space-6);
+    display: grid;
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+    gap: var(--space-2);
+    /* Level with the first group title: page top padding + SurfaceHeader (36 + 8 + 22) + its bottom margin. */
+    margin-top: calc(var(--space-6) + 66px + var(--space-6));
+    padding-bottom: var(--space-6);
+  }
+}
+
+.settings-toc > small { padding: 0 var(--space-3); color: var(--text-tertiary); font-weight: 500; }
+.settings-toc ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.settings-toc a {
+  display: block;
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: background-color var(--duration-micro) ease, color var(--duration-micro) ease;
+}
+.settings-toc a:hover { background: var(--bg-control-hover); color: var(--text-primary); }
+.settings-toc a[aria-current] { background: var(--bg-accent-subtle); color: var(--text-accent); }
+
+/* Rail links land the group title below the scroller's top edge; focus follows to the title (kit ring, sized to
+   the words rather than the column). */
+.settings-page .nk-settings-group { scroll-margin-top: var(--space-6); }
+.settings-page .nk-settings-group > header h2 { width: fit-content; max-width: 100%; }
+
+/* ---------- Rows that are not a single control ---------- */
+/* Interaction mode: a titled block with the two choice cards under it, in the Agent behaviour panel. */
+.settings-block { padding: var(--space-4) 0 var(--space-5); border-bottom: 1px solid var(--border-light); }
+.settings-block > strong { display: block; }
+.settings-block > .nk-choice-group { margin: var(--space-3) 0 0; }
+
+/* Parallel agents: number field + Save, then the save state and the active/saved counts. */
+.settings-capacity { display: grid; justify-items: end; gap: var(--space-1); min-width: 0; text-align: end; }
+.settings-capacity > .nk-field__row { justify-content: flex-end; }
+.settings-capacity .nk-input { flex: 0 0 88px; width: 88px; font-variant-numeric: tabular-nums; }
+.nk-setting-row .settings-capacity > p { max-width: 260px; margin: 0; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.nk-setting-row .settings-capacity > .nk-field__error { color: var(--text-error); }
+
+/* A control with a status line above it (Language while a locale loads). */
+.settings-control-stack { display: grid; justify-items: end; gap: var(--space-2); min-width: 0; }
+
+/* Bigger Context: the Details link sits before its switch. */
+.settings-control-inline { display: flex; align-items: center; gap: var(--space-2); }
+
+/* Log out confirms inline in its row. */
+.settings-confirm { display: grid; justify-items: end; gap: var(--space-3); max-width: 340px; }
+.nk-setting-row .settings-confirm > p { justify-self: stretch; max-width: none; margin: 0; color: var(--text-secondary); }
+.settings-confirm__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+
+/* ---------- Advanced ---------- */
+.settings-disclosure > .nk-disclosure__body { padding-top: 0; }
+/* The title stays on one line; the hint wraps beside it (the kit lets both wrap). */
+@container workspace (min-width: 641px) { .settings-disclosure > summary > span:first-child { flex: none; } }
+.settings-rows { border-top: 1px solid var(--border-light); }
+.settings-context-status { margin: var(--space-4) 0 0; color: var(--text-tertiary); }
+.settings-disclosure .nk-budget-table { margin-bottom: 0; }
+.settings-context-change { margin-top: var(--space-4); }
+.settings-notice-detail { display: block; }
+.settings-notice-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+
+/* ---------- Diagnostics ---------- */
+.settings-codex-status { margin-bottom: var(--space-3); }
+/* Run doctor's report reads as part of its row. */
+.nk-setting-row.settings-row--with-result { border-bottom: 0; }
+.settings-row-result { padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-light); }
+.settings-row-result:last-child { border-bottom: 0; }
+.settings-row-result > .nk-doctor { margin-top: 0; }
+
+/* ---------- About ---------- */
+.settings-about { display: flex; align-items: center; gap: var(--space-3); min-height: 72px; padding: var(--space-4) 0; }
+.settings-about > div { min-width: 0; }
+.settings-about strong { display: block; }
+.settings-about p { margin: 2px 0 0; color: var(--text-tertiary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+/* ---------- Compact ---------- */
+@container workspace (max-width: 640px) {
+  /* The kit drops a non-switch control under its text, left-aligned; its stacked parts follow. */
+  .settings-capacity, .settings-control-stack, .settings-confirm { justify-items: start; text-align: start; }
+  .settings-capacity > .nk-field__row, .settings-confirm__actions { justify-content: flex-start; }
+}

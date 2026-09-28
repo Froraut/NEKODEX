@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { AccountProxy, Language } from "./types";
 import type { Copy } from "./i18n";
 import { normalizeAccountProxy } from "./account-proxy-validation";
-import "./account-forms.css";
+import { Button, Select, TextField, cx } from "./design";
 
 const restoreSavedProxyCopy: Record<Language, string> = {
   en: "Restore saved proxy",
@@ -13,9 +13,19 @@ const restoreSavedProxyCopy: Record<Language, string> = {
   ko: "저장된 프록시 복원",
 };
 
-export function AccountProxySettings({ proxy, language, disabled, blockedReason, copy, save }: {
+export function proxyModeOptions(copy: Copy) {
+  return [
+    { value: "system", label: copy.proxySystem }, { value: "direct", label: copy.proxyDirect },
+    { value: "http", label: "HTTP" }, { value: "https", label: "HTTPS" },
+    { value: "socks5", label: "SOCKS5" }, { value: "pac", label: "PAC (HTTPS)" },
+  ];
+}
+
+export function AccountProxySettings({ proxy, language, disabled, blockedReason, copy, save, onStateChange }: {
   proxy: AccountProxy; language: Language; disabled: boolean; blockedReason?: string; copy: Copy;
   save: (value: AccountProxy) => Promise<boolean>;
+  /** Reports "Saving…" / "Could not save…" / "Unsaved changes" (or null) for the enclosing disclosure summary. */
+  onStateChange?: (state: string | null) => void;
 }) {
   const [draft, setDraft] = useState(proxy);
   const [touched, setTouched] = useState(false);
@@ -56,35 +66,38 @@ export function AccountProxySettings({ proxy, language, disabled, blockedReason,
     if (disabled || inFlight.current || !draftChanged) return;
     setDraft({ ...proxy }); setTouched(false); setFailed(false);
   };
-  return <details className="account-form-panel account-proxy">
-    <summary><span>{copy.accountProxy}</span>
-      {saving || failed || draftChanged ? <span className="account-form-state">{saving ? copy.accountFormSaving
-        : failed ? copy.accountFormFailed : copy.accountFormUnsaved}</span> : null}
-    </summary>
+  const modeOptions = proxyModeOptions(copy);
+  const formState = saving ? copy.accountFormSaving : failed ? copy.accountFormFailed : draftChanged ? copy.accountFormUnsaved : null;
+  useEffect(() => { onStateChange?.(formState); }, [formState, onStateChange]);
+  return <section className="accounts-controls__section" aria-labelledby={`${statusId}-title`}>
+    <header className="accounts-controls__head">
+      <h4 id={`${statusId}-title`} className="nk-type-label">{copy.accountProxy}</h4>
+      {formState ? <span className="accounts-hint is-attention nk-type-caption">{formState}</span> : null}
+    </header>
     <p>{copy.accountProxyBody}</p>
-    <form onSubmit={event => { event.preventDefault(); void submit(); }}>
+    <form className="accounts-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
       <fieldset disabled={disabled || saving} aria-describedby={statusId}>
-        <select className="settings-select" aria-label={copy.accountProxy} value={draft.mode}
-          onChange={event => { setTouched(false); setFailed(false); setDraft({ mode: event.target.value as AccountProxy["mode"], url: "" }); }}>
-          <option value="system">{copy.proxySystem}</option><option value="direct">{copy.proxyDirect}</option>
-          <option value="http">HTTP</option><option value="https">HTTPS</option>
-          <option value="socks5">SOCKS5</option><option value="pac">PAC (HTTPS)</option>
-        </select>
-        {needsUrl ? <label>{copy.proxyUrl}<input ref={input} type="url" required maxLength={2048}
-          aria-invalid={Boolean(invalid)} aria-describedby={statusId}
-          value={draft.url ?? ""} placeholder={draft.mode === "pac" ? "https://example.com/proxy.pac" : `${draft.mode}://127.0.0.1:8080`}
-          autoComplete="off" spellCheck={false} onBlur={() => setTouched(true)}
-          onChange={event => { setFailed(false); setDraft({ ...draft, url: event.target.value }); }} /></label> : null}
-        <button type="submit" className="button-secondary" disabled={!changed || !normalized.value || saving}>
-          {saving ? copy.accountFormSaving : copy.proxySave}
-        </button>
-        <button type="button" className="button-secondary" disabled={!draftChanged || saving}
-          onClick={restoreSaved}>{restoreSavedProxyCopy[language]}</button>
+        <div className="accounts-proxy__fields">
+          <Select label={copy.accountProxy} value={draft.mode} options={modeOptions}
+            onChange={value => { setTouched(false); setFailed(false); setDraft({ mode: value as AccountProxy["mode"], url: "" }); }} />
+          {needsUrl ? <TextField ref={input} label={copy.proxyUrl} type="url" required maxLength={2048}
+            aria-invalid={Boolean(invalid)} aria-describedby={statusId}
+            value={draft.url ?? ""} placeholder={draft.mode === "pac" ? "https://example.com/proxy.pac" : `${draft.mode}://127.0.0.1:8080`}
+            autoComplete="off" spellCheck={false} onBlur={() => setTouched(true)}
+            onChange={event => { setFailed(false); setDraft({ ...draft, url: event.target.value }); }} /> : null}
+        </div>
+        <div className="accounts-inline-actions">
+          <Button type="submit" size="sm" busy={saving} disabled={!changed || !normalized.value}>
+            {saving ? copy.accountFormSaving : copy.proxySave}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={!draftChanged || saving}
+            onClick={restoreSaved}>{restoreSavedProxyCopy[language]}</Button>
+        </div>
       </fieldset>
-      <p id={statusId} className={invalid || failed ? "field-error" : "field-hint"} role={invalid || failed ? "alert" : "status"}>
+      <p id={statusId} className={cx("accounts-form__status nk-type-caption", (invalid || failed) && "is-error")} role={invalid || failed ? "alert" : "status"}>
         {blockedReason || (invalid ? errorText : failed ? copy.accountFormFailed : saving ? copy.accountFormSaving
           : changed ? copy.accountFormUnsaved : copy.accountFormSaved)}
       </p>
     </form>
-  </details>;
+  </section>;
 }

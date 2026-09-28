@@ -286,21 +286,5 @@
 /* The browser zoom pill is 28px tall; its kit icon buttons shrink to fit it. */
 .browser-zoom-controls > .nk-icon-btn { width: 26px; height: 26px; }
 /* Primary/SecondaryButton are kit buttons now; these keep their 6.1.5 placement in grid rows. */
-.welcome-footer > .nk-btn { justify-self: end; min-width: 130px; }
 .setup-next > .nk-btn { justify-self: end; }
 @container workspace (max-width: 760px) { .setup-next > .nk-btn { justify-self: start; } }
-/* The onboarding header still uses the 6.1.5 DEV badge class; it takes the system's DEV tag look. */
-.dev-profile-badge {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: var(--radius-xs);
-  background: var(--bg-accent-subtle);
-  color: var(--text-accent);
-  font-size: 13px;
-  font-style: normal;
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}

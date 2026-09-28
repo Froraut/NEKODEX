@@ -1,10 +1,9 @@
 import { useFeatureAction } from "./useFeatureAction";
-import { useState } from "react";
-import { Icon } from "./icons";
+import { useId, useState, type ReactNode } from "react";
+import { Button, Icon, IconButton, Notice, StateDot } from "./design";
 import type { BrowserWorkspaceDirectorySnapshot, BrowserWorkspaceItem, Language } from "./types";
 import { browserWindowCopy } from "./browser-window-copy";
 import { stripIpcErrorPrefix } from "./ipc-error";
-import "./browser-workspace-manager.css";
 
 type Props = {
   language: Language;
@@ -15,6 +14,8 @@ type Props = {
   onRestore(accountId: string): Promise<unknown>;
   onFocus(accountId: string, workspaceId: string): Promise<unknown>;
   onClose(accountId: string, workspaceId: string): Promise<unknown>;
+  /** Controls that lead the bar's end group (the account selector). */
+  children?: ReactNode;
 };
 
 function locationLabel(item: BrowserWorkspaceItem) {
@@ -28,6 +29,11 @@ function locationLabel(item: BrowserWorkspaceItem) {
   }
 }
 
+/**
+ * Separate ChatGPT windows for the selected account. Renders into the browser bar: the end group (children, the
+ * always-visible "New window" button and the disclosure toggle), then the disclosure panel, which takes its own
+ * full-width line under the bar.
+ */
 export function BrowserWorkspaceManager({
   language,
   snapshot,
@@ -37,8 +43,11 @@ export function BrowserWorkspaceManager({
   onRestore,
   onFocus,
   onClose,
+  children,
 }: Props) {
   const copy = browserWindowCopy(language);
+  const panelId = useId();
+  const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<{ accountId: string; message: string } | null>(null);
   const { pending, run: runAction } = useFeatureAction<{ accountId: string; action: string }>(disabled, (cause, identity) => {
     setError({ accountId: identity.accountId, message: stripIpcErrorPrefix(cause instanceof Error ? cause.message : String(cause)) });
@@ -54,49 +63,52 @@ export function BrowserWorkspaceManager({
     });
   };
 
-  if (!account) return null;
+  if (!account) return <div className="browser-bar__end">{children}</div>;
   const saved = account.items.filter(item => item.state === "saved").length;
   const open = account.items.filter(item => item.state === "open").length;
   const busy = disabled || pending !== null;
   const restoreVisible = saved > 0 || (account.manifestStatus === "uninitialized" && !account.restoreAttempted);
   const restoreBlocked = busy || snapshot.total >= snapshot.maximum || Boolean(account.sessionMutation)
     || (saved > 0 && !account.items.some(item => item.state === "saved" && item.restorable));
+  const accountError = error?.accountId === account.accountId ? error : null;
 
   const newWindowBlocked = busy || Boolean(account.sessionMutation) || snapshot.total >= snapshot.maximum;
   const openNewWindow = () => void run("new-window", () => onOpen(account.accountId, false));
   return <>
-  <button type="button" className="browser-workspace-quick-new" disabled={newWindowBlocked}
-    title={copy.newWindow} aria-label={copy.newWindow} onClick={openNewWindow}>
-    <Icon name="plus" /><span>{copy.newWindowShort}</span>
-  </button>
-  <details className="browser-workspace-manager">
-    <summary>
-      <span>{copy.windows}</span>{" "}
-      <span className="browser-workspace-count">{copy.openCount(open)}{saved > 0 ? ` · ${copy.savedCount(saved)}` : ""}</span>
-      {account.persistenceFailed || error?.accountId === account.accountId ? <span className="browser-workspace-error" role="status"
-        aria-label={account.persistenceFailed ? copy.saveFailed : error?.message}
-        title={account.persistenceFailed ? copy.saveFailed : error?.message}> !</span> : null}
-    </summary>
-    <div className="browser-workspace-content">
-      <p className="browser-workspace-platform-note">{copy.scope}</p>
-      <p className="browser-workspace-platform-note">{copy.totalCapacity(snapshot.total, snapshot.maximum)}</p>
-
-      {error?.accountId === account.accountId ? <p className="browser-workspace-error" role="alert">{error.message}</p> : null}
-      {account.persistenceFailed ? <p className="browser-workspace-error" role="status">{copy.saveFailed}</p> : null}
-      {account.sessionMutation ? <p className="browser-workspace-platform-note" role="status">{copy.identityChanging}</p> : null}
-      {!snapshot.nativeTabs ? <p className="browser-workspace-platform-note">{copy.tabsMacOnly}</p> : null}
-
-      <div className="browser-workspace-manager-actions">
-        <button type="button" className="button-secondary" disabled={newWindowBlocked}
-          onClick={openNewWindow}>{copy.newWindow}</button>
-        {snapshot.nativeTabs ? <button type="button" className="button-secondary" title={open === 0 ? copy.openFirst : undefined}
-          disabled={busy || open === 0 || Boolean(account.sessionMutation) || snapshot.total >= snapshot.maximum}
-          onClick={() => void run("new-tab", () => onOpen(account.accountId, true))}>{copy.newTab}</button> : null}
-        {restoreVisible ? <button type="button" className="button-secondary" disabled={restoreBlocked}
-          onClick={() => void run("restore", () => onRestore(account.accountId))}>{copy.restore}{saved > 0 ? ` (${saved})` : ""}</button> : null}
+    <div className="browser-bar__end">
+      {children}
+      <Button size="sm" icon="plus" className="browser-windows__new" disabled={newWindowBlocked}
+        title={copy.newWindow} aria-label={copy.newWindow} onClick={openNewWindow}>{copy.newWindowShort}</Button>
+      <Button variant="ghost" size="sm" iconEnd="chevron" className="browser-windows__toggle"
+        aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpanded(value => !value)}>
+        <span className="browser-windows__label">{copy.windows}</span>{" "}
+        <span className="browser-windows__count">{copy.openCount(open)}{saved > 0 ? ` · ${copy.savedCount(saved)}` : ""}</span>
+        {account.persistenceFailed || accountError ? <span className="browser-windows__alert" role="status"
+          aria-label={account.persistenceFailed ? copy.saveFailed : accountError?.message}
+          title={account.persistenceFailed ? copy.saveFailed : accountError?.message}><Icon name="alert" /></span> : null}
+      </Button>
+    </div>
+    <div className="browser-windows" id={panelId} hidden={!expanded}>
+      <div className="browser-windows__notes">
+        <p>{copy.scope}</p>
+        <p className="browser-windows__capacity">{copy.totalCapacity(snapshot.total, snapshot.maximum)}</p>
       </div>
 
-      {account.restoreResult ? <div className="browser-workspace-restore-result" role="status">
+      {accountError ? <Notice tone="error">{accountError.message}</Notice> : null}
+      {account.persistenceFailed ? <Notice tone="warning">{copy.saveFailed}</Notice> : null}
+      {account.sessionMutation ? <p className="browser-windows__note" role="status"><StateDot state="busy" />{copy.identityChanging}</p> : null}
+      {!snapshot.nativeTabs ? <p className="browser-windows__note">{copy.tabsMacOnly}</p> : null}
+
+      <div className="browser-windows__actions">
+        <Button size="sm" disabled={newWindowBlocked} onClick={openNewWindow}>{copy.newWindow}</Button>
+        {snapshot.nativeTabs ? <Button size="sm" title={open === 0 ? copy.openFirst : undefined}
+          disabled={busy || open === 0 || Boolean(account.sessionMutation) || snapshot.total >= snapshot.maximum}
+          onClick={() => void run("new-tab", () => onOpen(account.accountId, true))}>{copy.newTab}</Button> : null}
+        {restoreVisible ? <Button size="sm" disabled={restoreBlocked}
+          onClick={() => void run("restore", () => onRestore(account.accountId))}>{copy.restore}{saved > 0 ? ` (${saved})` : ""}</Button> : null}
+      </div>
+
+      {account.restoreResult ? <div className="browser-windows__result" role="status">
         <span>{copy.restored(account.restoreResult.opened)}</span>
         {account.restoreResult.skippedTemporary > 0
           ? <span>{copy.skippedTemporary(account.restoreResult.skippedTemporary)}</span> : null}
@@ -106,24 +118,28 @@ export function BrowserWorkspaceManager({
           ? <span>{copy.skippedIdentity(account.restoreResult.skippedIdentity)}</span> : null}
       </div> : null}
 
-      {account.items.length === 0 ? <p className="browser-workspace-empty">{copy.empty}</p> : <ul>
+      {account.items.length === 0 ? <p className="browser-windows__note">{copy.empty}</p> : <ul className="browser-windows__list">
         {account.items.map(item => <li className={item.active ? "is-active" : undefined} key={item.id}>
-          <button type="button" className="browser-workspace-open" disabled={busy || item.state !== "open"}
+          <button type="button" className="browser-windows__item" disabled={busy || item.state !== "open"}
             onClick={() => void run(`focus-${item.id}`, () => onFocus(account.accountId, item.id))}>
-            <span className="browser-workspace-item-title" title={item.title || locationLabel(item)}>{item.title || locationLabel(item)}</span>
-            <span>{item.state === "open" ? copy.current : item.needsOriginalAccount
-              ? copy.needsOriginalAccount : item.temporary ? copy.temporary : copy.saved}</span>
+            <span className="browser-windows__item-title" title={item.title || locationLabel(item)}>{item.title || locationLabel(item)}</span>
+            <span className="browser-windows__item-state">
+              <StateDot state={item.state === "open" ? "ready" : "idle"} />
+              {item.state === "open" ? copy.current : item.needsOriginalAccount
+                ? copy.needsOriginalAccount : item.temporary ? copy.temporary : copy.saved}
+            </span>
           </button>
-          <button type="button" className="browser-workspace-close" disabled={busy}
-            aria-label={`${item.state === "saved" ? copy.forget : copy.close}: ${item.title || locationLabel(item)}`}
+          <IconButton icon="close" disabled={busy}
+            label={`${item.state === "saved" ? copy.forget : copy.close}: ${item.title || locationLabel(item)}`}
             title={item.state === "saved" ? copy.forget : copy.close}
-            onClick={() => void run(`close-${item.id}`, () => onClose(account.accountId, item.id))}>×</button>
+            onClick={() => void run(`close-${item.id}`, () => onClose(account.accountId, item.id))} />
         </li>)}
       </ul>}
-      {snapshot.nativeTabs && open === 0 ? <p className="browser-workspace-platform-note">{copy.openFirst}</p> : null}
-      {snapshot.nativeTabs && open > 0 ? <p className="browser-workspace-platform-note">{copy.hint}</p> : null}
-      {account.items.some(item => item.temporary) ? <p className="browser-workspace-temporary-note">{copy.temporary}</p> : null}
+      <div className="browser-windows__footnotes">
+        {snapshot.nativeTabs && open === 0 ? <p className="browser-windows__note">{copy.openFirst}</p> : null}
+        {snapshot.nativeTabs && open > 0 ? <p className="browser-windows__note">{copy.hint}</p> : null}
+        {account.items.some(item => item.temporary) ? <p className="browser-windows__note">{copy.temporary}</p> : null}
+      </div>
     </div>
-  </details>
   </>;
 }

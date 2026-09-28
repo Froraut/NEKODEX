@@ -6,7 +6,7 @@ const en = {
   cancellingBody: "Stopping preparation. Your installed app stays in place; downloaded data is kept for retry.",
   cancelTooLate: "Installation has already started. Wait for NEKODEX to reopen.",
 
-  stageDownload: "Download", stageVerify: "Verify", stageRestart: "Restart",
+  stageDownload: "Download", stageVerify: "Verify", stageInstall: "Install", stageRestart: "Restart",
   title: "Updates", subtitle: "Keep NEKODEX up to date, right here.", current: "Installed version",
   available: "An update is ready", latest: "You're up to date", idle: "Check for a new version",
   checking: "Checking GitHub…", downloading: "Downloading update…", verifying: "Checking the update package…",
@@ -29,7 +29,7 @@ const copies: Record<Language, UpdateCopy> = {
   cancellingBody: "Останавливаем подготовку. Установленное приложение остаётся на месте; загруженные данные сохраняются для повтора.",
   cancelTooLate: "Установка уже началась. Дождитесь повторного открытия NEKODEX.",
 
-  stageDownload: "Загрузка", stageVerify: "Проверка", stageRestart: "Перезапуск",
+  stageDownload: "Загрузка", stageVerify: "Проверка", stageInstall: "Установка", stageRestart: "Перезапуск",
     title: "Обновления", subtitle: "Обновляйте NEKODEX прямо здесь.", current: "Установленная версия",
     available: "Доступно обновление", latest: "Установлена последняя версия", idle: "Проверить новую версию",
     checking: "Проверка GitHub…", downloading: "Загрузка обновления…", verifying: "Проверка пакета обновления…",
@@ -51,7 +51,7 @@ const copies: Record<Language, UpdateCopy> = {
   cancellingBody: "正在停止准备。已安装的应用保持不变；已下载的数据将保留以便重试。",
   cancelTooLate: "安装已开始。请等待 NEKODEX 重新打开。",
 
-  stageDownload: "下载", stageVerify: "验证", stageRestart: "重启",
+  stageDownload: "下载", stageVerify: "验证", stageInstall: "安装", stageRestart: "重启",
     title: "更新", subtitle: "直接在这里更新 NEKODEX。", current: "已安装版本",
     available: "有新版本可用", latest: "已是最新版本", idle: "检查新版本", checking: "正在检查 GitHub…",
     downloading: "正在下载更新…", verifying: "正在验证更新包…", installing: "正在重启以完成更新…",
@@ -70,7 +70,7 @@ const copies: Record<Language, UpdateCopy> = {
   cancellingBody: "正在停止準備。已安裝的應用程式保持不變；已下載的資料會保留以便重試。",
   cancelTooLate: "安裝已開始。請等待 NEKODEX 重新開啟。",
 
-  stageDownload: "下載", stageVerify: "驗證", stageRestart: "重新啟動",
+  stageDownload: "下載", stageVerify: "驗證", stageInstall: "安裝", stageRestart: "重新啟動",
     title: "更新", subtitle: "直接在這裡更新 NEKODEX。", current: "已安裝版本",
     available: "有新版本可用", latest: "已是最新版本", idle: "檢查新版本", checking: "正在檢查 GitHub…",
     downloading: "正在下載更新…", verifying: "正在驗證更新套件…", installing: "正在重新啟動以完成更新…",
@@ -89,7 +89,7 @@ const copies: Record<Language, UpdateCopy> = {
   cancellingBody: "準備を停止しています。インストール済みアプリは変更されず、ダウンロード済みデータは再試行のために保持されます。",
   cancelTooLate: "インストールはすでに開始されています。NEKODEX が再び開くまでお待ちください。",
 
-  stageDownload: "ダウンロード", stageVerify: "検証", stageRestart: "再起動",
+  stageDownload: "ダウンロード", stageVerify: "検証", stageInstall: "インストール", stageRestart: "再起動",
     title: "アップデート", subtitle: "NEKODEX をこの画面から更新できます。", current: "インストール済みバージョン",
     available: "新しいバージョンがあります", latest: "最新の状態です", idle: "新しいバージョンを確認",
     checking: "GitHub を確認中…", downloading: "更新をダウンロード中…", verifying: "更新パッケージを検証中…",
@@ -110,7 +110,7 @@ const copies: Record<Language, UpdateCopy> = {
   cancellingBody: "준비를 중지하고 있습니다. 설치된 앱은 유지되며 다운로드한 데이터는 재시도를 위해 보관됩니다.",
   cancelTooLate: "설치가 이미 시작되었습니다. NEKODEX가 다시 열릴 때까지 기다려 주세요.",
 
-  stageDownload: "다운로드", stageVerify: "검증", stageRestart: "다시 시작",
+  stageDownload: "다운로드", stageVerify: "검증", stageInstall: "설치", stageRestart: "다시 시작",
     title: "업데이트", subtitle: "여기에서 NEKODEX를 최신 상태로 유지하세요.", current: "설치된 버전",
     available: "새 업데이트가 있습니다", latest: "최신 버전입니다", idle: "새 버전 확인",
     checking: "GitHub 확인 중…", downloading: "업데이트 다운로드 중…", verifying: "업데이트 패키지 확인 중…",

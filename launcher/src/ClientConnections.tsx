@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ClientConnectionAction, ClientConnectionsSnapshot, Language } from "./types";
-import { Icon } from "./icons";
+import { Badge, Button, Checkbox, Disclosure, Notice, Select } from "./design";
+import "./surfaces/connections.css";
 
 const words = {
   en: {
@@ -85,58 +86,83 @@ export function ClientConnections({ language, busy, configured, devProfile }: {
     finally { inFlight.current = false; if (mounted.current) setPending(false); }
   };
   const locked = busy || pending || devProfile;
-  return <details className="setup-troubleshooting client-connections">
-    <summary>{copy.title}<Icon name="chevron" /></summary>
-    <div className="setup-overview">
+  return <Disclosure className="nk-clients" hint={`${copy.claude}, ${copy.api}`} title={copy.title}>
+    <div className="nk-connections__stack">
+    <div className="nk-clients__intro">
       <p>{copy.body}</p>
-      {!configured || devProfile ? <p>{devProfile ? copy.dev : copy.setup}</p> : <>
-        {pending && !status ? <p role="status">{copy.loading}</p> : null}
-        {error ? <p role="alert">{error}</p> : null}
-        <button type="button" className="text-button" disabled={locked} onClick={() => void load()}>{copy.retry}</button>
-        {status ? <>
-          <section aria-label={copy.api}>
-            <strong>{copy.api} · {status.api.enabled ? copy.enabled : copy.disabled}</strong>
-            <p>{copy.apiBody}</p>
-            {status.api.enabled ? <p><code>{status.api.baseUrl}</code></p> : null}
-            <div className="browser-empty-actions">
-              <button type="button" className="button-secondary" disabled={locked} onClick={() => void act(status.api.enabled ? "api-disable" : "api-enable")}>{status.api.enabled ? copy.disable : copy.enable}</button>
-              {status.api.enabled ? <button type="button" className="button-secondary" disabled={locked} onClick={() => void copyKey()}>{copy.copy}</button> : null}
-            </div>
-            {status.api.enabled ? <details><summary>{copy.rotate}</summary><p>{copy.rotateBody}</p>
-              <button type="button" className="button-secondary" disabled={locked} onClick={() => void act("api-rotate")}>{copy.rotate}</button></details> : null}
-          </section>
-          <section aria-label={copy.claude}>
-            <strong>{copy.claude} · {status.claude.installed ? copy.configured : copy.missing}</strong>
-            <p>{copy.claudeBody}</p>
-            {status.claude.issue ? <p role="status">{status.claude.issue}</p> : null}
-            <div className="browser-empty-actions">
-              <button type="button" className="button-secondary" disabled={locked} onClick={() => void act("claude-connect")}>{status.claude.installed ? copy.reconnect : copy.connect}</button>
-              {status.claude.installed ? <button type="button" className="text-button" disabled={locked} onClick={() => void act("claude-disconnect")}>{copy.disconnect}</button> : null}
-            </div>
-          </section>
-          {status.provider.issue && (!status.provider.installed || !status.provider.active) ? <p role="alert">{status.provider.issue}</p> : null}
-          {status.provider.installed && status.provider.active ? <section aria-label={copy.provider}>
-            <label htmlFor={modeId}>{copy.provider}</label>
-            <p>{copy.providerBody}</p>
-            {status.provider.issue ? <p role="alert">{status.provider.issue}</p> : null}
-            <div className="browser-empty-actions">
-              <select id={modeId} className="settings-select" disabled={locked} value={mode ?? status.provider.mode}
-                onChange={event => setMode(event.target.value as "mixed" | "web-only")}>
-                <option value="mixed">{copy.mixed}</option><option value="web-only">{copy.web}</option>
-              </select>
-              <button type="button" className="button-secondary" disabled={locked || !mode || mode === status.provider.mode}
-                onClick={() => void act(mode === "web-only" ? "provider-web-only" : "provider-mixed")}>{copy.apply}</button>
-            </div>
-            {status.provider.mode === "mixed" && status.provider.picker ? <>
-              <label className="account-policy-enabled"><span><input type="checkbox" disabled={locked}
-                checked={status.provider.picker === "on"}
-                onChange={event => void act(event.target.checked ? "provider-picker-on" : "provider-picker-off")} /> {copy.picker}</span></label>
-              <p>{copy.pickerBody}</p>
-            </> : null}
-          </section> : null}
-        </> : null}
-      </>}
-      {notice ? <p role="status">{notice}</p> : null}
+      {configured && !devProfile ? <Button busy={pending} disabled={locked} icon="reload" onClick={() => void load()} size="sm" variant="ghost">
+        {copy.retry}
+      </Button> : null}
     </div>
-  </details>;
+    {!configured || devProfile ? <Notice>{devProfile ? copy.dev : copy.setup}</Notice> : <>
+      {pending && !status ? <p className="nk-connections__status" role="status">{copy.loading}</p> : null}
+      {error ? <Notice tone="error">{error}</Notice> : null}
+      {status ? <>
+        <ClientRow
+          actions={<>
+            <Button disabled={locked} onClick={() => void act(status.api.enabled ? "api-disable" : "api-enable")} size="sm">
+              {status.api.enabled ? copy.disable : copy.enable}
+            </Button>
+            {status.api.enabled ? <Button disabled={locked} onClick={() => void copyKey()} size="sm">{copy.copy}</Button> : null}
+          </>}
+          body={copy.apiBody}
+          label={copy.api}
+          ready={status.api.enabled}
+          status={status.api.enabled ? copy.enabled : copy.disabled}
+        >
+          {status.api.enabled ? <p><code className="nk-clients__code">{status.api.baseUrl}</code></p> : null}
+          {status.api.enabled ? <details className="nk-connections__nested"><summary>{copy.rotate}</summary><p>{copy.rotateBody}</p>
+            <Button disabled={locked} onClick={() => void act("api-rotate")} size="sm" variant="danger">{copy.rotate}</Button></details> : null}
+        </ClientRow>
+        <ClientRow
+          actions={<>
+            <Button disabled={locked} onClick={() => void act("claude-connect")} size="sm">{status.claude.installed ? copy.reconnect : copy.connect}</Button>
+            {status.claude.installed ? <Button disabled={locked} onClick={() => void act("claude-disconnect")} size="sm" variant="ghost">{copy.disconnect}</Button> : null}
+          </>}
+          body={copy.claudeBody}
+          label={copy.claude}
+          ready={status.claude.installed}
+          status={status.claude.installed ? copy.configured : copy.missing}
+        >
+          {status.claude.issue ? <p className="nk-clients__issue" role="status">{status.claude.issue}</p> : null}
+        </ClientRow>
+        {status.provider.issue && (!status.provider.installed || !status.provider.active) ? <Notice tone="error">{status.provider.issue}</Notice> : null}
+        {status.provider.installed && status.provider.active ? <section aria-label={copy.provider} className="nk-clients__row">
+          <div className="nk-clients__copy">
+            <label className="nk-clients__label" htmlFor={modeId}>{copy.provider}</label>
+            <p>{copy.providerBody}</p>
+            {status.provider.issue ? <p className="nk-clients__issue" role="alert">{status.provider.issue}</p> : null}
+          </div>
+          <div className="nk-clients__actions">
+            <Select disabled={locked} id={modeId} onChange={value => setMode(value as "mixed" | "web-only")}
+              options={[{ value: "mixed", label: copy.mixed }, { value: "web-only", label: copy.web }]}
+              value={mode ?? status.provider.mode} />
+            <Button disabled={locked || !mode || mode === status.provider.mode} size="sm"
+              onClick={() => void act(mode === "web-only" ? "provider-web-only" : "provider-mixed")}>{copy.apply}</Button>
+          </div>
+          {status.provider.mode === "mixed" && status.provider.picker ? <div className="nk-clients__picker">
+            <Checkbox checked={status.provider.picker === "on"} disabled={locked} label={copy.picker}
+              onChange={checked => void act(checked ? "provider-picker-on" : "provider-picker-off")} />
+            <p>{copy.pickerBody}</p>
+          </div> : null}
+        </section> : null}
+      </> : null}
+    </>}
+    {notice ? <Notice tone="success">{notice}</Notice> : null}
+    </div>
+  </Disclosure>;
+}
+
+/** One client: name with its status badge and explanation on the left, its actions right-aligned. */
+function ClientRow({ actions, body, children, label, ready, status }: {
+  actions: ReactNode; body: string; children?: ReactNode; label: string; ready: boolean; status: string;
+}) {
+  return <section aria-label={label} className="nk-clients__row">
+    <div className="nk-clients__copy">
+      <strong className="nk-clients__label">{label}<Badge dot={ready ? "ready" : "idle"} tone={ready ? "success" : undefined}>{status}</Badge></strong>
+      <p>{body}</p>
+      {children}
+    </div>
+    <div className="nk-clients__actions">{actions}</div>
+  </section>;
 }

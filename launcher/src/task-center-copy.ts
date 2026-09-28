@@ -1,6 +1,8 @@
 import type { BrowserTaskState, Language } from "./types";
 export interface TaskCenterCopy {
   title: string;
+  subtitle: string;
+  history: string;
   empty: string;
   open: string;
   dismiss: string;
@@ -31,6 +33,8 @@ export interface TaskCenterCopy {
 const copy: Record<Language, TaskCenterCopy> = {
   "en": {
     "title": "Task center",
+    "subtitle": "Waiting, running and recorded browser tasks from Codex.",
+    "history": "Recorded tasks",
     "empty": "No recorded tasks",
     "open": "Open conversation",
     "dismiss": "Dismiss",
@@ -74,6 +78,8 @@ const copy: Record<Language, TaskCenterCopy> = {
   },
   "ru": {
     "title": "Центр задач",
+    "subtitle": "Ожидающие, выполняемые и записанные браузерные задачи из Codex.",
+    "history": "Записанные задачи",
     "empty": "Записанных задач нет",
     "open": "Открыть беседу",
     "dismiss": "Убрать запись",
@@ -117,6 +123,8 @@ const copy: Record<Language, TaskCenterCopy> = {
   },
   "zh-CN": {
     "title": "任务中心",
+    "subtitle": "来自 Codex 的等待中、运行中和已记录的浏览器任务。",
+    "history": "已记录的任务",
     "empty": "暂无任务记录",
     "open": "打开对话",
     "dismiss": "移除记录",
@@ -160,6 +168,8 @@ const copy: Record<Language, TaskCenterCopy> = {
   },
   "zh-TW": {
     "title": "任務中心",
+    "subtitle": "來自 Codex 的等待中、執行中和已記錄的瀏覽器任務。",
+    "history": "已記錄的任務",
     "empty": "暫無任務記錄",
     "open": "開啟對話",
     "dismiss": "移除記錄",
@@ -203,6 +213,8 @@ const copy: Record<Language, TaskCenterCopy> = {
   },
   "ja": {
     "title": "タスクセンター",
+    "subtitle": "Codex から送られた待機中・実行中・記録済みのブラウザータスク。",
+    "history": "記録されたタスク",
     "empty": "記録されたタスクなし",
     "open": "会話を開く",
     "dismiss": "記録を閉じる",
@@ -246,6 +258,8 @@ const copy: Record<Language, TaskCenterCopy> = {
   },
   "ko": {
     "title": "작업 센터",
+    "subtitle": "Codex에서 보낸 대기 중, 실행 중, 기록된 브라우저 작업입니다.",
+    "history": "기록된 작업",
     "empty": "기록된 작업 없음",
     "open": "대화 열기",
     "dismiss": "기록 닫기",
@@ -290,3 +304,4 @@ const copy: Record<Language, TaskCenterCopy> = {
 };
 export const taskCenterCopy = (language: Language): TaskCenterCopy => copy[language] ?? copy.en;
 export const taskCenterTitle = (language: Language) => taskCenterCopy(language).title;
+export const taskCenterSubtitle = (language: Language) => taskCenterCopy(language).subtitle;

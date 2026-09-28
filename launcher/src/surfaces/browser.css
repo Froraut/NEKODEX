@@ -1,0 +1,340 @@
+/*
+ * Browser surface: the slot for the native ChatGPT view and the chrome around it (task tabs, account,
+ * separate windows, history/zoom toolbar, notices, sign-in guides). Places kit components with tokens only;
+ * imported by BrowserSurface.tsx. The native view covers .browser-slot exactly and paints above HTML, so
+ * everything else takes layout space above the slot and nothing may overlap it.
+ */
+
+.browser-frame {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-surface);
+}
+
+/* ---------- Bar: task tabs · account · separate windows ---------- */
+.browser-bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-2);
+  min-height: var(--size-hit);
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+/* Tabs keep their content width beside the end group; when both do not fit, the end group wraps to its own
+   right-aligned line and the strip takes the full width (it scrolls beyond that). */
+.browser-bar > .browser-tabs { flex: 1 1 auto; min-width: 0; }
+.browser-bar__end {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  max-width: 100%;
+  min-height: var(--size-hit);
+  margin-left: auto;
+}
+.browser-bar__end:empty { display: none; }
+
+.browser-bar__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 18px;
+}
+.browser-bar__account > span:first-child { white-space: nowrap; }
+.browser-bar__account > strong { color: var(--text-secondary); font-size: 14px; line-height: 20px; font-weight: 500; }
+/* Kit addition: a 32px select, so the bar's controls share one height (size-control-sm). */
+.nk-select.browser-bar__select { min-width: 0; width: clamp(128px, 14vw, 176px); }
+.nk-select.browser-bar__select select { height: var(--size-control-sm); }
+
+/* ---------- Task tabs ---------- */
+.browser-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--size-hit);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.browser-tabs::-webkit-scrollbar { display: none; }
+/* Tabs keep their content width (full title, never truncated); the strip scrolls instead. */
+.browser-tabs__tab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: var(--size-control-sm);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition: background-color var(--duration-micro) ease, color var(--duration-micro) ease;
+  -webkit-app-region: no-drag;
+}
+.browser-tabs__tab:hover { background: var(--bg-control-hover); color: var(--text-primary); }
+.browser-tabs__tab.is-active { background: var(--bg-control-active); color: var(--text-primary); }
+.browser-tabs__select {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 100%;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.browser-tabs__tab:has(> .browser-tabs__close) > .browser-tabs__select { padding-right: var(--space-1); }
+/* The strip scrolls (overflow clips outer rings), so its controls draw their focus ring inside. */
+.browser-tabs__select:focus-visible, .browser-tabs__close:focus-visible { outline-offset: -2px; }
+/* Kit addition: a 24px icon button inside a 32px tab. Close shows on hover, focus and the active tab;
+   stopping a running turn stays visible. */
+.nk-icon-btn.browser-tabs__close { width: 24px; height: 24px; margin-right: var(--space-1); border-radius: var(--radius-xs); opacity: 0; }
+.nk-icon-btn.browser-tabs__close .nk-icon { width: 14px; height: 14px; }
+.browser-tabs__tab:hover > .browser-tabs__close,
+.browser-tabs__tab.is-active > .browser-tabs__close,
+.browser-tabs__tab.is-running > .browser-tabs__close,
+.browser-tabs__close:focus-visible,
+.browser-tabs__close:disabled { opacity: 1; }
+.browser-tabs__tab.is-running > .browser-tabs__close:hover:not(:disabled) { background: var(--bg-error); color: var(--text-error); }
+.browser-tabs__spinner {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border: 1.5px solid var(--border-heavy);
+  border-top-color: var(--icon-secondary);
+  border-radius: var(--radius-pill);
+  animation: nk-spin 800ms linear infinite;
+}
+.browser-tabs__drag { flex: 1 0 var(--space-5); align-self: stretch; }
+
+/* ---------- Separate windows (BrowserWorkspaceManager) ---------- */
+.browser-windows__toggle .browser-windows__count { color: var(--text-tertiary); font-weight: 400; font-variant-numeric: tabular-nums; }
+.browser-windows__toggle > span { display: inline-flex; align-items: center; gap: var(--space-2); }
+.browser-windows__toggle > .nk-icon:last-child { transition: transform var(--duration-control) var(--ease-enter); }
+/* Kit addition: like IconButton, the expanded toggle keeps the pressed fill. */
+.nk-btn--ghost.browser-windows__toggle[aria-expanded="true"] { background: var(--bg-control-hover); color: var(--text-primary); }
+.browser-windows__toggle[aria-expanded="true"] > .nk-icon:last-child { transform: rotate(90deg); }
+.browser-windows__alert { display: inline-flex; color: var(--text-error); }
+.browser-windows__alert > svg { width: 14px; height: 14px; }
+
+/* Opened, the directory takes its own full-width line under the bar (it pushes the slot down). */
+.browser-windows {
+  display: grid;
+  flex: 1 0 100%;
+  gap: var(--space-3);
+  max-height: min(40vh, 360px);
+  margin: 0 calc(-1 * var(--space-3)) 0 calc(-1 * var(--space-2));
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  overflow-y: auto;
+  border-top: 1px solid var(--border-light);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+}
+.browser-windows[hidden] { display: none; }
+.browser-windows p { margin: 0; }
+.browser-windows__footnotes { display: grid; gap: var(--space-1); }
+.browser-windows__footnotes:empty { display: none; }
+.browser-windows__notes { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1) var(--space-6); }
+.browser-windows__capacity, .browser-windows__note, .browser-windows__result { color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+.browser-windows__capacity { font-variant-numeric: tabular-nums; }
+.browser-windows__note { display: flex; align-items: center; gap: var(--space-2); }
+.browser-windows__actions, .browser-windows__result { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.browser-windows__result { gap: var(--space-1) var(--space-4); }
+
+.browser-windows__list {
+  display: grid;
+  max-height: 224px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  list-style: none;
+}
+.browser-windows__list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+}
+.browser-windows__list > li + li { border-top: 1px solid var(--border-light); }
+.browser-windows__list > li.is-active { background: var(--bg-accent-subtle); }
+.browser-windows__item {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.browser-windows__item:hover:not(:disabled) { background: var(--bg-control-hover); }
+.browser-windows__item:disabled { opacity: 1; }
+.browser-windows__item:focus-visible { outline-offset: -2px; }
+.browser-windows__item-title { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.browser-windows__item-state { display: flex; align-items: center; gap: var(--space-2); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+
+/* ---------- Toolbar: history · location · zoom · sign-in and visibility ---------- */
+.browser-nav {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--size-hit);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.browser-nav__group { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+.browser-nav__location {
+  display: flex;
+  flex: 1 1 200px;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  user-select: text;
+}
+.browser-nav__location > .nk-icon { width: 14px; height: 14px; color: var(--icon-tertiary); }
+/* The address is the one truncated line of the toolbar; its full value is the tooltip. */
+.browser-nav__location > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-nav__zoom { min-width: 56px; padding: 0 var(--space-2); font-variant-numeric: tabular-nums; }
+.browser-nav__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--space-1); margin-left: auto; }
+.browser-nav__progress {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  background: var(--bg-accent-subtle);
+}
+.browser-nav__progress::after {
+  display: block;
+  width: 32%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  content: "";
+  animation: browser-progress 1.25s var(--ease-enter) infinite;
+}
+@keyframes browser-progress { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
+
+/* ---------- Notices, confirmations and guides above the slot ---------- */
+.browser-notices {
+  display: grid;
+  flex: none;
+  gap: var(--space-2);
+  max-height: 45vh;
+  padding: var(--space-3) var(--space-4);
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+.browser-notices:empty { display: none; }
+.browser-notices__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+
+.browser-confirm__panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+}
+.browser-confirm__copy { flex: 1 1 320px; min-width: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.browser-confirm__copy strong { display: block; color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
+.browser-confirm__copy p { margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.browser-confirm__target { color: var(--text-primary); }
+.browser-confirm__actions { display: flex; flex: none; flex-wrap: wrap; gap: var(--space-2); margin-left: auto; }
+
+/* Manual turn: the one focal panel while a turn waits for you (text left, status right, actions below). */
+.browser-manual {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3) var(--space-5);
+}
+.browser-manual__copy strong { display: block; font-size: 15px; line-height: 22px; font-weight: 500; }
+.browser-manual__copy p { max-width: 880px; margin: var(--space-1) 0 0; font-size: 14px; line-height: 20px; }
+.browser-manual__status { font-variant-numeric: tabular-nums; }
+.browser-manual__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); grid-column: 1 / -1; }
+
+/* Sign-in guides (passkey, existing Chrome): a compact panel above the page, or a card on the idle slot. */
+.browser-guide { display: grid; justify-items: start; gap: var(--space-3); color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.browser-guide > * { max-width: 100%; }
+.browser-guide > .nk-notice { justify-self: stretch; }
+.browser-guide p { margin: 0; overflow-wrap: anywhere; }
+.browser-guide__status { display: grid; gap: var(--space-1); }
+.browser-guide__title { color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
+.browser-guide__meta { color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.browser-guide__address code { padding: 2px var(--space-2); border-radius: var(--radius-xs); background: var(--bg-control-active); color: var(--text-primary); overflow-wrap: anywhere; }
+.browser-guide__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.browser-guide__actions:empty { display: none; }
+
+/* ---------- Slot: native view placeholder, idle state ---------- */
+.browser-slot {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.browser-slot__underlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 20px;
+}
+/* Hidden page: the cat, then either the state (title, one sentence, one primary action) or a sign-in guide. */
+.browser-idle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  gap: var(--space-5);
+  padding: var(--space-10) var(--space-8);
+  overflow-y: auto;
+  text-align: center;
+}
+.browser-idle__copy { display: grid; justify-items: center; gap: var(--space-2); max-width: 480px; }
+.browser-idle__copy h1 { margin: 0; color: var(--text-primary); }
+.browser-idle__copy p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.browser-idle__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-4); }
+.browser-idle > .browser-guide { width: min(100%, 640px); padding: var(--space-6); text-align: left; }
+.browser-idle > .browser-guide .browser-guide__title { font-size: 17px; line-height: 24px; font-weight: 600; }
+
+/* ---------- Compact workspace ---------- */
+@container workspace (max-width: 640px) {
+  .browser-bar__account > span:first-child { display: none; }
+  .browser-idle { padding: var(--space-8) var(--space-4); }
+  .browser-idle > .browser-guide { padding: var(--space-4); }
+  .browser-manual { grid-template-columns: minmax(0, 1fr); }
+  .browser-manual__actions, .browser-notices__actions, .browser-nav__actions { justify-content: flex-start; }
+}

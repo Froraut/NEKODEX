@@ -1,16 +1,6 @@
-.account-tools-onboarding {
-  margin-top: 16px;
-  padding: 16px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-background-control);
-}
-.account-tools-onboarding h3 { margin: 0; font-size: var(--text-sm); }
-.account-tools-onboarding p,
+/* Browser surface: "Continue account setup" strip (AccountToolsHandoff). The per-account setup
+   on the Accounts surface is laid out by surfaces/accounts.css. */
 .account-tools-handoff p { margin: 8px 0; font-size: var(--text-xs); line-height: 1.6; color: var(--color-text-secondary); }
-.account-tools-onboarding .inline-actions { margin-top: 12px; flex-wrap: wrap; }
-.account-tools-identity { display: grid; gap: 6px; font-size: var(--text-xs); }
-.account-tools-identity input { min-width: 0; width: 100%; }
 .account-tools-handoff {
   flex: none;
   display: flex;

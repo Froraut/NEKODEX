@@ -1,0 +1,99 @@
+/* Task center and Updates: layout only. Components come from the kit (design/components.css). */
+
+/* ---------- Task center (size-content) ---------- */
+.task-queue { margin-bottom: var(--space-6); }
+.task-queue__scope { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; }
+.task-queue__state { margin-right: var(--space-2); vertical-align: 1px; }
+.task-queue__notices, .task-history-notices { display: grid; gap: var(--space-3); padding: var(--space-2) var(--space-5) var(--space-4); }
+
+.task-history-count { color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.task-history-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 180px) minmax(0, 200px) auto;
+  align-items: end;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5) var(--space-4);
+}
+.task-history-filters .nk-select { width: 100%; min-width: 0; }
+.task-history-notices + .task-history-filters { padding-top: 0; }
+
+/* Rows: queue entries and recorded tasks share one list pattern (title, status word + dot, meta, actions). */
+.task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-light);
+}
+.task-row--empty { display: block; padding-block: 0; }
+.task-row__main { display: grid; gap: 2px; min-width: 0; }
+.task-row__title { font-size: 15px; line-height: 22px; font-weight: 500; overflow-wrap: anywhere; }
+.task-row__status { display: flex; align-items: flex-start; gap: var(--space-2); color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+.task-row__status > .nk-dot { margin-top: 6px; }
+.task-row__status > span { min-width: 0; overflow-wrap: anywhere; }
+.task-row__status.is-ready { color: var(--text-success); }
+.task-row__status.is-busy { color: var(--text-warning); }
+.task-row__status.is-error { color: var(--text-error); }
+.task-row__meta { margin: 2px 0 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.task-row__meta code { color: var(--text-secondary); font-family: var(--font-mono); font-size: 13px; line-height: 18px; }
+.task-row__note { max-width: 62ch; margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.task-row__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+
+.task-confirm__trace { color: var(--text-tertiary); overflow-wrap: anywhere; }
+.task-confirm__trace code { font-family: var(--font-mono); font-size: 13px; line-height: 20px; }
+
+@container workspace (max-width: 860px) {
+  .task-history-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .task-history-filters > .task-history-search { grid-column: 1 / -1; }
+}
+/* One column under 760px of workspace: row actions move below the text instead of squeezing it. */
+@container workspace (max-width: 760px) {
+  .task-row { grid-template-columns: minmax(0, 1fr); }
+  .task-row__actions { justify-content: flex-start; }
+}
+@container workspace (max-width: 480px) {
+  .task-history-filters { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- Updates (size-content-narrow): one panel ---------- */
+.updates-current {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+}
+.updates-current strong { color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.updates-body { display: grid; gap: var(--space-5); padding-top: var(--space-5); }
+.updates-status { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.updates-status > div { min-width: 0; }
+.updates-tile {
+  display: grid;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-md);
+  background: var(--bg-brand);
+}
+.updates-status h2 { margin: 0; font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.updates-status p { margin: 2px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.updates-note { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.updates-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.updates-cooldown { color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+.updates-preserved {
+  margin: var(--space-5) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-light);
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 20px;
+}
+.updates-source { margin: var(--space-4) 0 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; }

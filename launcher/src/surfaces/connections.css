@@ -1,0 +1,192 @@
+/*
+ * Connections surface (SetupSurface: Models and Codex route, McpSurface: Local tools connector), plus the two
+ * pieces it shares with Settings: RouteDiagnostics and ClientConnections. Layout only: kit components are
+ * placed, not restyled; the few app-only pieces (wizard step buttons, nested option lists, fact lists) use
+ * tokens and the system's type styles.
+ */
+
+/* ---------- Page ---------- */
+.nk-connections__content { display: grid; gap: var(--space-6); }
+.nk-connections__content > * { min-width: 0; }
+.nk-connections__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.nk-connections__spacer { flex: 1 1 auto; }
+.nk-connections__line { display: block; margin-top: var(--space-1); }
+.nk-connections__hint { margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+
+/* A status line: StateDot + words (Hermes, connector verification, loading). */
+.nk-connections__status { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.nk-connections__status > .nk-dot { margin-top: 6px; }
+.nk-connections__status.is-ready { color: var(--text-success); }
+
+/* Secondary options inside a disclosure body (experimental Hermes runtime, API key replacement, connector
+   upgrade help): a quiet summary with a small chevron; the content indents under it. */
+.nk-connections__nested > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-control-sm);
+  border-radius: var(--radius-xs);
+  color: var(--text-accent);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  list-style: none;
+  cursor: default;
+}
+.nk-connections__nested > summary::-webkit-details-marker { display: none; }
+.nk-connections__nested > summary::before {
+  width: 6px;
+  height: 6px;
+  margin: 0 2px 0 1px;
+  border-right: 1.7px solid currentColor;
+  border-bottom: 1.7px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+  transition: transform var(--duration-control) var(--ease-enter);
+}
+.nk-connections__nested[open] > summary::before { transform: rotate(45deg); }
+.nk-connections__nested > summary:hover { color: var(--text-primary); }
+.nk-connections__nested > :not(summary) { margin: var(--space-2) 0 0 var(--space-4); }
+.nk-connections__nested > p { max-width: 62ch; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+
+/* Content placed inside a kit Disclosure body. */
+.nk-connections__stack { display: grid; gap: var(--space-3); min-width: 0; }
+
+/* ---------- Models and Codex route ---------- */
+/* Kit SetupRows between hairlines; the current row carries the page's primary button. */
+.nk-connections__steps { border-top: 1px solid var(--border); }
+/* Directly under the tabs, their own rule is the list's top edge. */
+.nk-connections__steps:first-child { border-top: 0; }
+/* The Pro model menu trigger (32px) sits in the title line without growing it. */
+.nk-connections__steps .nk-setup-row strong > .nk-menu { margin-block: -5px; }
+.nk-connections__row-note { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-1); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+.nk-connections__row-note > .nk-dot { flex: none; }
+
+/* Troubleshooting, other clients and Hermes: disclosures at the end of the page. */
+.nk-connections__more { display: grid; gap: var(--space-3); }
+
+/* ---------- Local tools connector ---------- */
+/* Wizard steps: the kit PhaseSteps look; each step title is a button that returns to that step. */
+.nk-connections__wizard .nk-steps li > button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.nk-connections__wizard .nk-steps li > button:hover:not(:disabled) { color: var(--text-primary); }
+.nk-connections__wizard .nk-steps li > button:disabled { opacity: 1; }
+
+.nk-connections__stage { display: grid; gap: var(--space-3); }
+.nk-connections__step-head small { display: block; margin-bottom: var(--space-1); color: var(--text-tertiary); font-family: var(--font-mono); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.nk-connections__step-head h2 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
+.nk-connections__step-head h2:focus { outline: none; }
+.nk-connections__step-head h2:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.nk-connections__step-head > p { max-width: 68ch; margin: var(--space-2) 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.nk-connections__instructions { max-width: 68ch; margin-top: var(--space-2); color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.nk-connections__instructions ol { display: grid; gap: var(--space-2); margin: 0; padding-left: var(--space-5); }
+.nk-connections__instructions p { margin: var(--space-3) 0 0; color: var(--text-tertiary); }
+
+.nk-connections__step-body { display: grid; gap: var(--space-4); margin-top: var(--space-5); }
+.nk-connections__step-body > p { max-width: 68ch; margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.nk-connections__step-body > .nk-connections__hint { color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+.nk-connections__fields { display: grid; gap: var(--space-4); max-width: 520px; }
+.nk-connections__fields > .nk-connections__actions { margin-top: calc(-1 * var(--space-2)); }
+
+/* Connector identity: the saved and the new connector name, the naming warning and the verification. */
+.nk-connections__identity { display: grid; gap: var(--space-3); }
+.nk-connections__identity dl { margin: 0; border-top: 1px solid var(--border-light); }
+.nk-connections__identity dl > div {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.45fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-height: var(--size-list-row);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.nk-connections__identity dt { color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.nk-connections__identity dd { min-width: 0; margin: 0; }
+.nk-connections__identity code {
+  display: inline-block;
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--bg-control);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.nk-connections__warning { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; color: var(--text-warning); font-size: 14px; line-height: 20px; }
+.nk-connections__warning > .nk-icon { width: 16px; height: 16px; margin-top: 2px; }
+
+.nk-connections__step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-light);
+}
+
+@container workspace (max-width: 640px) {
+  .nk-connections__identity dl > div { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- Route diagnostics (also in Settings) ---------- */
+.nk-route-check { min-width: 0; }
+.nk-route-check:not(:last-child) { border-bottom: 1px solid var(--border-light); }
+.nk-route-check > .nk-notice { margin-bottom: var(--space-4); }
+.nk-route-check__result { display: grid; gap: var(--space-3); padding: var(--space-4) 0; }
+.nk-route-check:last-child > .nk-route-check__result { padding-bottom: 0; }
+.nk-route-check__result > p { max-width: 72ch; margin: 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+.nk-route-check__facts { margin: 0; border-top: 1px solid var(--border-light); }
+.nk-route-check__facts > div {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.4fr) minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-light);
+}
+/* When the facts end the result, the section's own rule closes them. */
+.nk-route-check__facts:last-child > div:last-child { border-bottom: 0; }
+.nk-route-check__facts dt { color: var(--text-tertiary); font-size: 13px; line-height: 20px; }
+.nk-route-check__facts dd { min-width: 0; margin: 0; color: var(--text-primary); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.nk-route-check__facts dd.is-path { font-family: var(--font-mono); font-size: 13px; }
+.nk-route-check__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+@container workspace (max-width: 640px) {
+  .nk-route-check__facts > div { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- Other clients (Local API, Claude Code, Codex provider) ---------- */
+.nk-clients__intro { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
+.nk-clients__intro > p { max-width: 62ch; margin: 0; }
+.nk-clients__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: start;
+  gap: var(--space-3) var(--space-6);
+  padding: var(--space-4) 0 0;
+  border-top: 1px solid var(--border-light);
+}
+.nk-clients__copy { min-width: 0; }
+.nk-clients__copy > p { max-width: 62ch; margin: 2px 0 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+.nk-clients__copy > p + p { margin-top: var(--space-2); }
+.nk-clients__copy > .nk-connections__nested { margin-top: var(--space-2); }
+.nk-clients__label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
+.nk-clients__code { padding: 2px var(--space-2); border-radius: var(--radius-xs); background: var(--bg-control); color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.nk-clients__copy > .nk-clients__issue { color: var(--text-warning); }
+.nk-clients__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.nk-clients__picker { grid-column: 1 / -1; }
+.nk-clients__picker > p { max-width: 62ch; margin: var(--space-1) 0 0 var(--space-6); color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+/* Client rows carry wide controls (a select and a button), so they stack at the one-column width. */
+@container workspace (max-width: 760px) {
+  .nk-clients__row { grid-template-columns: minmax(0, 1fr); }
+  .nk-clients__actions { justify-content: flex-start; }
+}

@@ -1,0 +1,96 @@
+/*
+ * Onboarding (first run): a full-window page outside the shell. Layout only: it places kit components
+ * (Mark, Page, SurfaceHeader, Panel, Badge, PhaseSteps, Button) and the shared choice cards, with tokens only.
+ * Imported by Onboarding.tsx.
+ */
+.nk-onboarding {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  container: onboarding / inline-size;
+}
+
+/* ---------- Top bar: window drag area with the brand and the version ---------- */
+.nk-onboarding__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-6);
+  height: var(--size-titlebar);
+  padding: 0 var(--space-8) 0 var(--space-4);
+  user-select: none;
+}
+/* macOS draws the traffic lights (three 12px buttons, 8px apart) over this reserve. */
+.nk-onboarding__controls { width: calc(3 * 12px + 2 * var(--space-2)); height: 12px; flex: none; }
+.app-root:not([data-platform="darwin"]) .nk-onboarding__controls { display: none; }
+/* Windows and Linux draw the window controls at the right end (titleBarOverlay), as in the shell titlebar. */
+.app-root:not([data-platform="darwin"]) .nk-onboarding__bar {
+  padding-left: var(--space-8);
+  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + var(--space-4));
+}
+.nk-onboarding__brand { display: flex; min-width: 0; align-items: center; gap: var(--space-3); }
+.nk-onboarding__version { min-width: 0; margin-left: auto; overflow-wrap: anywhere; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+/* ---------- Step content ---------- */
+/* The page scrolls when a step is taller than the window; titles keep one position across steps. */
+.nk-onboarding__scroll {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.nk-onboarding__scroll > .nk-page { padding-top: clamp(var(--space-6), calc(24vh - 120px), calc(2 * var(--space-10))); padding-bottom: var(--space-6); }
+
+/* Language choices: radio mark, label, then the language marker as a tag at the end. */
+.nk-choice.nk-onboarding__language { grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; }
+.nk-onboarding__language > .nk-choice__mark { grid-row: 1; grid-column: 1; margin-top: 0; }
+.nk-onboarding__language > .nk-choice__copy { grid-row: 1; grid-column: 2; }
+.nk-onboarding__language > .nk-onboarding__marker { grid-row: 1; grid-column: 3; }
+
+/* Final step: what the workspace brings, one row per area. */
+.nk-onboarding__features { margin: 0; list-style: none; }
+.nk-onboarding__features > li { display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-4) var(--space-5); }
+.nk-onboarding__features > li + li { border-top: 1px solid var(--border-light); }
+.nk-onboarding__feature-icon {
+  display: grid;
+  width: var(--size-control);
+  height: var(--size-control);
+  flex: none;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--bg-accent-subtle);
+  color: var(--text-accent);
+}
+.nk-onboarding__feature-icon > .nk-icon { width: 18px; height: 18px; }
+.nk-onboarding__feature-copy { display: grid; min-width: 0; gap: 2px; }
+.nk-onboarding__feature-copy strong { color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
+.nk-onboarding__feature-copy small { color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+
+/* The locale loading notice sits on the page column above the footer. */
+.nk-onboarding__locale { flex: none; width: min(var(--size-content-narrow), calc(100% - 2 * var(--space-8))); margin: 0 auto var(--space-2); color: var(--text-secondary); }
+
+/* ---------- Footer: Back, progress, the next step ---------- */
+.nk-onboarding__footer {
+  display: grid;
+  flex: none;
+  grid-template-areas: "back steps next";
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  padding: var(--space-4) var(--space-8);
+  border-top: 1px solid var(--border-light);
+}
+.nk-onboarding__back { grid-area: back; justify-self: start; }
+.nk-onboarding__steps { grid-area: steps; justify-self: center; }
+.nk-onboarding__next { grid-area: next; justify-self: end; }
+/* Below 960px the progress takes its own row above the actions (Russian needs about 920px for one row). */
+@container onboarding (max-width: 960px) {
+  .nk-onboarding__footer { grid-template-areas: "steps steps" "back next"; grid-template-columns: minmax(0, 1fr) auto; padding-block: var(--space-3); }
+}

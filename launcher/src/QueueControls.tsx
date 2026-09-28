@@ -1,5 +1,7 @@
 import { useFeatureAction } from "./useFeatureAction";
-import { useState } from 'react';
+import './surfaces/tasks-updates.css';
+import { useId, useState } from 'react';
+import { Badge, Button, EmptyState, Notice, Panel, Select, StateDot, type Status } from './design';
 import type { BrowserQueueState, Language } from './types';
 
 const copy = {
@@ -29,6 +31,12 @@ const inspectionTabsCopy: Record<Language, string> = {
   ko: '보관된 작업 페이지가 브라우저 슬롯을 차지하고 있습니다. 작업 센터에서 실패하거나 중단된 대화를 확인한 뒤 “기록 닫기”를 선택하고 페이지 닫기를 확인하여 슬롯을 확보하세요.',
 };
 
+type QueueEntry = BrowserQueueState['entries'][number];
+const attentionReasons = new Set(['owner-reconnect-required', 'previous-submission-needs-review', 'task-history-unavailable', 'inspection-tabs']);
+/** Work in motion or waiting on the user is amber; failures are rose; plain waiting and cancelled entries stay quiet. */
+const entryState = (row: QueueEntry): Status => row.status === 'failed' || row.status === 'interrupted' ? 'error'
+  : row.status === 'admitting' || row.status === 'cancelling' || (row.reason !== null && attentionReasons.has(row.reason)) ? 'busy' : 'idle';
+
 const historyUnavailableCopy = {
   en: 'Task history unavailable for this account; new tasks are blocked.',
   ru: 'История задач этого аккаунта недоступна; запуск новых задач заблокирован.',
@@ -47,6 +55,7 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
   const { pending: pendingAction, run: act } = useFeatureAction<string>(disabled, onError);
   const pending = pendingAction !== null;
   const [selectedAccount, setAccount] = useState('all');
+  const titleId = useId();
   const text = copy[language] ?? copy.en;
   const pauseText = pauseCopy[language] ?? pauseCopy.en;
   const cancellingText = { en: 'Cancelling before sending', ru: 'Отмена до отправки', 'zh-CN': '正在取消，尚未发送', 'zh-TW': '正在取消，尚未傳送', ja: '送信前にキャンセル中', ko: '전송 전 취소 중' }[language];
@@ -59,44 +68,50 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
   const scopeLabel = account === 'all' ? text[12] : labels.get(account) ?? account;
   const entries = [...queue.entries].sort((a, b) => Number(a.canDismiss) - Number(b.canDismiss)
     || (a.position || 0) - (b.position || 0) || a.createdAt - b.createdAt);
-  return <section className="task-queue" aria-label={text[0]}>
-    <h2>{text[0]}</h2>
-    <div className="task-center-actions">
-      <select aria-label={text[12]} value={account} disabled={disabled || pending} onChange={event => setAccount(event.target.value)}>
-        <option value="all">{text[12]}</option>
-        {queue.accounts.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
-      </select>
-      <button type="button" className="button-secondary" disabled={disabled || pending || !!queue.storageIssue}
-        onClick={() => void act(`pause:${account}`, () => pause(account === 'all' ? null : account, !paused))}>{paused ? text[2] : text[1]} · {scopeLabel}</button>
-    </div>
-    <p>{text[3]}</p>
-    {queue.paused ? <div>
-      <p role="status">{pauseText.global}</p>
-      {account !== 'all' ? <button type="button" className="text-button" disabled={disabled || pending}
-        onClick={() => setAccount('all')}>{pauseText.controls}</button> : null}
+  // Only observed pause states get a badge; an unpaused scope makes no claim about admission.
+  const pausedBadge = queue.paused ? pauseText.globalReason : account !== 'all' && paused ? pauseText.accountReason : null;
+  return <Panel className="task-queue" padding="flush" title={text[0]} titleId={titleId}
+    actions={<div className="task-queue__scope">
+      <Select label={text[12]} value={account} disabled={disabled || pending} onChange={value => setAccount(value)}
+        options={[{ value: 'all', label: text[12] }, ...queue.accounts.map(row => ({ value: row.id, label: row.label }))]} />
+      <Button disabled={disabled || pending || !!queue.storageIssue}
+        onClick={() => void act(`pause:${account}`, () => pause(account === 'all' ? null : account, !paused))}>{paused ? text[2] : text[1]} · {scopeLabel}</Button>
+    </div>}
+    description={<>{pausedBadge ? <Badge tone="warning" className="task-queue__state">{pausedBadge}</Badge> : null}{text[3]}</>}>
+    {queue.paused || queue.storageIssue ? <div className="task-queue__notices">
+      {queue.paused ? <Notice tone="warning" action={account !== 'all' ? <Button size="sm" disabled={disabled || pending}
+        onClick={() => setAccount('all')}>{pauseText.controls}</Button> : null}>{pauseText.global}</Notice> : null}
+      {queue.storageIssue ? <Notice tone="error">{text[11]}</Notice> : null}
     </div> : null}
-    {queue.storageIssue ? <p role="alert">{text[11]}</p> : null}
-    {!queue.entries.length ? <p>{text[13]}</p> : null}
-    {entries.map(row => {
-      const reason = row.status === 'cancelling' ? cancellingText : row.reason === 'owner-reconnect-required' ? text[9]
-        : row.reason === 'previous-submission-needs-review' ? text[10]
-          : row.status === 'cancelled' ? text[17] : row.status === 'failed' ? text[18] : row.status === 'interrupted' ? text[19]
-            : row.status === 'admitting' ? text[15]
-              : row.reason === 'task-history-unavailable' ? (historyUnavailableCopy[language] ?? historyUnavailableCopy.en)
-              : row.reason === 'inspection-tabs' ? (inspectionTabsCopy[language] ?? inspectionTabsCopy.en)
-              : row.reason === 'paused-global' ? pauseText.globalReason : row.reason === 'paused-account' ? pauseText.accountReason
-                : row.status === 'paused' || row.reason?.startsWith('paused') ? text[16] : text[14];
-      return <article key={row.id}>
-        <header><strong>{row.position > 0 ? `${row.position}. ` : ''}{row.accountId ? labels.get(row.accountId) : text[12]}</strong><span>{reason}</span></header>
-        <p><code>{row.traceId}</code>{['waiting', 'paused', 'admitting', 'cancelling', 'cancelled', 'failed'].includes(row.status) ? ` · ${text[4]}` : ''}</p>
-        {row.retryAt ? <p><time dateTime={new Date(row.retryAt).toISOString()}>{new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'medium' }).format(row.retryAt)}</time></p> : null}
-        <div className="task-center-actions">
-          {row.canCancel ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(`cancel:${row.id}`, () => action(row.id, 'cancel'))}>{text[5]}</button> : null}
-          {row.canPrioritize ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(`prioritize:${row.id}`, () => action(row.id, 'prioritize'))}>{text[6]}</button> : null}
-          {row.canResume ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(`resume:${row.id}`, () => action(row.id, 'resume'))}>{text[7]}</button> : null}
-          {row.canDismiss ? <button className="text-button" type="button" disabled={disabled || pending} onClick={() => void act(`dismiss:${row.id}`, () => action(row.id, 'dismiss'))}>{text[8]}</button> : null}
-        </div>
-      </article>;
-    })}
-  </section>;
+    <div className="task-queue__list">
+      {!queue.entries.length ? <div className="task-row task-row--empty"><EmptyState icon="logs" title={text[13]} /></div> : null}
+      {entries.map(row => {
+        const reason = row.status === 'cancelling' ? cancellingText : row.reason === 'owner-reconnect-required' ? text[9]
+          : row.reason === 'previous-submission-needs-review' ? text[10]
+            : row.status === 'cancelled' ? text[17] : row.status === 'failed' ? text[18] : row.status === 'interrupted' ? text[19]
+              : row.status === 'admitting' ? text[15]
+                : row.reason === 'task-history-unavailable' ? (historyUnavailableCopy[language] ?? historyUnavailableCopy.en)
+                : row.reason === 'inspection-tabs' ? (inspectionTabsCopy[language] ?? inspectionTabsCopy.en)
+                : row.reason === 'paused-global' ? pauseText.globalReason : row.reason === 'paused-account' ? pauseText.accountReason
+                  : row.status === 'paused' || row.reason?.startsWith('paused') ? text[16] : text[14];
+        const state = entryState(row);
+        const notSent = ['waiting', 'paused', 'admitting', 'cancelling', 'cancelled', 'failed'].includes(row.status);
+        const actions = row.canPrioritize || row.canResume || row.canCancel || row.canDismiss;
+        return <article className="task-row" key={row.id}>
+          <div className="task-row__main">
+            <strong className="task-row__title">{row.position > 0 ? `${row.position}. ` : ''}{row.accountId ? labels.get(row.accountId) : text[12]}</strong>
+            <span className={`task-row__status is-${state}`}><StateDot state={state} /><span>{reason}</span></span>
+            <p className="task-row__meta"><code>{row.traceId}</code>{notSent ? ` · ${text[4]}` : ''}
+              {row.retryAt ? <> · <time dateTime={new Date(row.retryAt).toISOString()}>{new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'medium' }).format(row.retryAt)}</time></> : null}</p>
+          </div>
+          {actions ? <div className="task-row__actions">
+            {row.canPrioritize ? <Button size="sm" disabled={disabled || pending} onClick={() => void act(`prioritize:${row.id}`, () => action(row.id, 'prioritize'))}>{text[6]}</Button> : null}
+            {row.canResume ? <Button size="sm" disabled={disabled || pending} onClick={() => void act(`resume:${row.id}`, () => action(row.id, 'resume'))}>{text[7]}</Button> : null}
+            {row.canCancel ? <Button size="sm" variant="ghost" disabled={disabled || pending} onClick={() => void act(`cancel:${row.id}`, () => action(row.id, 'cancel'))}>{text[5]}</Button> : null}
+            {row.canDismiss ? <Button size="sm" variant="ghost" disabled={disabled || pending} onClick={() => void act(`dismiss:${row.id}`, () => action(row.id, 'dismiss'))}>{text[8]}</Button> : null}
+          </div> : null}
+        </article>;
+      })}
+    </div>
+  </Panel>;
 }

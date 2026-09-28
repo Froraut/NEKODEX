@@ -1,7 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Icon } from "./icons";
+import { Button, Notice, cx } from "./design";
 import { workflowCopy } from "./workflow-copy";
 import type { BrowserState, Language } from "./types";
+import "./surfaces/overview.css";
 
 type NetworkIssue = NonNullable<BrowserState["networkIssue"]>;
 
@@ -18,8 +19,10 @@ function setDismissed(issue: NetworkIssue | null) {
 }
 
 /** Explains repeated Cloudflare checks caused by a network whose public address changes. */
-export function NetworkIssueNotice({ language, browser, className = "browser-recovery-notice", muted = false, onDontShowAgain }: {
-  language: Language; browser: BrowserState | null; className?: string;
+export function NetworkIssueNotice({ language, browser, className, muted = false, onDontShowAgain }: {
+  language: Language; browser: BrowserState | null;
+  /** Layout class for the wrapper (the notice itself is the kit Notice). */
+  className?: string;
   /** The user chose "Don't show again" (persisted as `showNetworkIssueNotice: false`). */
   muted?: boolean;
   onDontShowAgain?: () => Promise<void>;
@@ -33,22 +36,21 @@ export function NetworkIssueNotice({ language, browser, className = "browser-rec
     setSaving(true);
     try { await onDontShowAgain(); } finally { setSaving(false); }
   } : null;
-  return <section className={className} role="status" aria-live="polite" data-testid="network-issue-notice">
-    <Icon name="alert" />
-    <div>
-      <strong>{copy.title}</strong>
-      <p>{issue === "egress-unstable" ? copy.egressUnstable : copy.challengeRoute}</p>
-      {browser?.networkIssueCheckedAt
-        ? <small>{copy.checkedAt.replace("{time}", new Date(browser.networkIssueCheckedAt).toLocaleString(language))}</small>
-        : null}
-    </div>
-    <div className="browser-recovery-actions network-issue-actions">
-      <button className="text-button" type="button" disabled={saving} onClick={() => setDismissed(issue)}>{copy.dismiss}</button>
-      {dontShowAgain
-        ? <button className="button-secondary" type="button" disabled={saving} onClick={() => void dontShowAgain()}>{copy.dontShowAgain}</button>
-        : null}
-    </div>
-  </section>;
+  return <div className={cx("network-notice", className)} data-testid="network-issue-notice">
+    <Notice tone="warning" title={copy.title}
+      meta={browser?.networkIssueCheckedAt
+        ? copy.checkedAt.replace("{time}", new Date(browser.networkIssueCheckedAt)
+          .toLocaleString(language, { dateStyle: "medium", timeStyle: "short" }))
+        : undefined}
+      action={<div className="network-notice__actions">
+        <Button variant="ghost" size="sm" disabled={saving} onClick={() => setDismissed(issue)}>{copy.dismiss}</Button>
+        {dontShowAgain
+          ? <Button size="sm" disabled={saving} onClick={() => void dontShowAgain()}>{copy.dontShowAgain}</Button>
+          : null}
+      </div>}>
+      {issue === "egress-unstable" ? copy.egressUnstable : copy.challengeRoute}
+    </Notice>
+  </div>;
 }
 
 /** Call once where browser state is always observed: a cleared verdict ends the dismissal. */

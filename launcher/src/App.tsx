@@ -10,7 +10,7 @@ import { McpSurface } from './McpSurface';
 import { IconButton, StateDot, ContentSurface, messageOf } from './launcher-ui';
 import { runtimeCapabilities, currentToolProof } from './launcher-readiness';
 
-import { taskCenterTitle } from './task-center-copy';
+import { taskCenterSubtitle, taskCenterTitle } from './task-center-copy';
 import { QueueControls } from './QueueControls';
 import type { CompactionModel } from "./types";
 import { modelConnectionReadiness } from "./setup-progress";
@@ -830,20 +830,18 @@ function LauncherShell({
             {surface === "overview" ? <Overview copy={copy} browser={browser} catalogFailure={catalogFailure}
               snapshot={snapshot} toolsReady={toolProof} logStore={logStore} navigate={navigateSurface}
               openTab={(tabId) => void openBrowserTab(tabId)} onMuteNetworkNotice={muteNetworkNotice} /> : null}
-            {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
-              <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
-                setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
-                focusAccountId={accountToolsTargetId}
-                toolsSetup={{ runtimeConfigured: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
-                  connectorName: snapshot.connectorNames[snapshot.state.browserInteractionMode], urls: snapshot.urls }}
-                onSetupTools={(accountId, accountLabel) => {
-                  setMcpReturnAccountId(accountId);
-                  setMcpReturnAccountLabel(accountLabel);
-                  setMcpTargetMode(null);
-                  navigateSurface("mcp");
-                }} />
-            </ContentSurface> : null}
-            {surface === 'tasks' ? <ContentSurface title={taskCenterTitle(language)}>
+            {surface === "accounts" ? <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
+              setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
+              focusAccountId={accountToolsTargetId}
+              toolsSetup={{ runtimeConfigured: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
+                connectorName: snapshot.connectorNames[snapshot.state.browserInteractionMode], urls: snapshot.urls }}
+              onSetupTools={(accountId, accountLabel) => {
+                setMcpReturnAccountId(accountId);
+                setMcpReturnAccountLabel(accountLabel);
+                setMcpTargetMode(null);
+                navigateSurface("mcp");
+              }} /> : null}
+            {surface === 'tasks' ? <ContentSurface title={taskCenterTitle(language)} subtitle={taskCenterSubtitle(language)}>
               <QueueControls queue={browser?.queue} language={language} disabled={transitionBusy}
                 action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
                 onError={cause => setError(messageOf(cause))} />

@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
 import extraLocales from "./route-diagnostics-locales.json";
-import { Icon } from "./icons";
+import { Button, EventList, Notice, SettingRow } from "./design";
 import { copyFor } from "./i18n";
 import type { Language, RouteDiagnosticsReport } from "./types";
+import "./surfaces/connections.css";
 
 const en = {
   title: "Check Codex routing", body: "Read the configured provider, Codex home, and observed model-catalog requests.",
@@ -125,10 +126,10 @@ function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language
   const catalogValue = failureValue ?? (malformedReceipt ? copy.unavailable
     : catalogStatus === "observed" ? `${copy.observed} (${report.catalog.successfulRequests})`
     : catalogStatus === "waiting" ? copy.waiting : copy.unavailable);
-  const rows = [
-    { label: copy.home, value: path(report.codexHome) },
-    { label: copy.file, value: path(report.configPath) },
-    ...(report.profilePath ? [{ label: copy.profileFile, value: path(report.profilePath) }] : []),
+  const rows: Array<{ label: string; value: string; path?: boolean }> = [
+    { label: copy.home, value: path(report.codexHome), path: true },
+    { label: copy.file, value: path(report.configPath), path: true },
+    ...(report.profilePath ? [{ label: copy.profileFile, value: path(report.profilePath), path: true }] : []),
     { label: copy.config, value: copy[report.configStatus] },
     { label: copy.profile, value: report.profile ? name(report.profile) : knownConfiguration && !report.issueCodes.includes("profile-unavailable") ? copy.none : copy.unknown },
     { label: copy.provider, value: knownConfiguration ? name(report.provider) : copy.unknown },
@@ -166,20 +167,24 @@ function RouteDiagnosticsResult({ report, language, onActionError, onExport, onV
   const appCopy = copyFor(language);
   const view = routeDiagnosticsView(report, language);
   return (
-    <div className="route-diagnostics-result" aria-live="polite">
-      {view.catalogFailed ? <section className="route-diagnostics-summary" aria-labelledby="route-catalog-failure">
-        <Icon name="alert" />
-        <div><strong id="route-catalog-failure">{appCopy.catalogUnavailable}</strong><p>{view.catalogBody}</p></div>
-        <div className="route-diagnostics-actions">
-          {onViewActivity ? <button className="button-secondary" onClick={onViewActivity} type="button">{appCopy.viewActivity}</button> : null}
-          {onExport ? <button className="button-secondary" onClick={() => void onExport().catch(error => onActionError?.(error))}
-            type="button">{appCopy.exportSafeLog}</button> : null}
-        </div>
-      </section> : null}
+    <div className="nk-route-check__result" aria-live="polite">
+      {view.catalogFailed ? (
+        <Notice title={<span id="route-catalog-failure">{appCopy.catalogUnavailable}</span>} tone="error">
+          {view.catalogBody}
+          {onViewActivity || onExport ? <span className="nk-route-check__actions">
+            {onViewActivity ? <Button onClick={onViewActivity} size="sm">{appCopy.viewActivity}</Button> : null}
+            {onExport ? <Button onClick={() => void onExport().catch(error => onActionError?.(error))} size="sm">
+              {appCopy.exportSafeLog}
+            </Button> : null}
+          </span> : null}
+        </Notice>
+      ) : null}
       <p>{copy.scope}</p>
-      <dl>{view.rows.map(row => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
+      <dl className="nk-route-check__facts">
+        {view.rows.map(row => <div key={row.label}><dt>{row.label}</dt><dd className={row.path ? "is-path" : undefined}>{row.value}</dd></div>)}
+      </dl>
       {!view.catalogFailed ? <p>{view.catalogBody}</p> : null}
-      {view.guidance.length ? <ul>{view.guidance.map(message => <li key={message}>{message}</li>)}</ul> : null}
+      {view.guidance.length ? <EventList items={view.guidance.map(message => ({ id: message, level: "warning" as const, text: message }))} /> : null}
     </div>
   );
 }
@@ -208,13 +213,15 @@ export function RouteDiagnostics({ language, disabled = false, onActionError, on
     finally { pending.current = false; setBusy(false); }
   };
   return (
-    <section className="route-diagnostics" aria-label={copy.title}>
-      <button className="diagnostic-row" disabled={disabled || busy} onClick={() => void check()} type="button">
-        <Icon name="activity" />
-        <span><strong>{busy ? copy.checking : report ? copy.refresh : copy.title}</strong><small>{copy.body}</small></span>
-        <Icon name="chevron" />
-      </button>
-      {failed ? <p className="route-diagnostics-error" role="alert">{copy.failed}</p> : null}
+    <section className="nk-route-check" aria-label={copy.title}>
+      <SettingRow
+        control={<Button busy={busy} disabled={disabled} icon="activity" onClick={() => void check()}>
+          {busy ? copy.checking : report ? copy.refresh : copy.title}
+        </Button>}
+        description={copy.body}
+        title={copy.title}
+      />
+      {failed ? <Notice tone="error">{copy.failed}</Notice> : null}
       {report ? <RouteDiagnosticsResult report={report} language={language}
         onActionError={onActionError} onExport={onExport} onViewActivity={onViewActivity} /> : null}
     </section>

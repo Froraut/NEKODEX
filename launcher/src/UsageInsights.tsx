@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import type { Language, UsageAccountOption, UsageDiagnosticGroup, UsageFailureCode } from "./types";
 import { rankUsageDiagnosticGroups, usageAttentionFacts } from "./usage-diagnostics";
 import { formatUsageDuration, formatUsageRate } from "./usage-statistics";
-import "./usage-insights.css";
+import { Button, EmptyState } from "./design";
+import { UsagePanel } from "./usage-panel";
 
 export interface UsageInsightsCopy {
   title: string;
@@ -21,6 +22,9 @@ export interface UsageInsightsCopy {
 
 const replace = (value: string, fields: Record<string, string | number>) =>
   Object.entries(fields).reduce((text, [key, field]) => text.replaceAll(`{${key}}`, String(field)), value);
+
+/** A "{label}: {count}" template as a column header ("Observed sample coverage"). */
+const columnLabel = (template: string) => template.replace(/\s*[:：]\s*\{count\}\s*$/, "");
 
 export interface UsageInsightsLabels {
   /** Short placeholder for one unreported identity field; the full explanation is shown once per group. */
@@ -98,13 +102,10 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
     if (next) requestAnimationFrame(() => detailsRef.current?.focus());
   };
 
-  return <section className="usage-diagnostic-insights" aria-labelledby="usage-diagnostic-title">
-    <div className="usage-diagnostic-heading">
-      <div><h3 id="usage-diagnostic-title">{copy.title}</h3><p>{copy.body}</p></div>
-      {ranked.length ? <button className="text-button" type="button" aria-expanded={open}
-        aria-controls="usage-diagnostic-details" onClick={toggle}>{open ? hideDetailsLabel : detailsLabel}</button> : null}
-    </div>
-    {!ranked.length ? <p className="usage-diagnostic-empty">{copy.noComparison}</p> : <>
+  return <UsagePanel titleId="usage-diagnostic-title" title={copy.title} description={copy.body} className="usage-diagnostic-insights"
+    actions={ranked.length ? <Button variant="ghost" size="sm" aria-expanded={open}
+      aria-controls="usage-diagnostic-details" onClick={toggle}>{open ? hideDetailsLabel : detailsLabel}</Button> : null}>
+    {!ranked.length ? <EmptyState icon="activity" title={copy.noComparison} /> : <>
       {facts.length ? <div className="usage-diagnostic-facts">{facts.map(({ group, eligibility, kind }) => {
         const insufficient = kind === "failures" && !eligibility.eligible.failureRate;
         return <article key={`${groupKey(group)}:${kind}`} className={insufficient ? "is-insufficient" : undefined}>
@@ -117,13 +118,13 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
             : <><small>{replace(copy.durationSamples, { count: eligibility.observedSamples })}</small>
               <small>{replace(copy.coverage, { observed: eligibility.observedSamples, eligible: eligibility.eligibleSamples, count: `${eligibility.observedSamples}/${eligibility.eligibleSamples}` })}</small></>}
         </article>;
-      })}</div> : hasComparableGroups ? null : <p className="usage-diagnostic-empty">{copy.noComparison}</p>}
+      })}</div> : hasComparableGroups ? null : <EmptyState icon="activity" title={copy.noComparison} />}
       {open ? <div id="usage-diagnostic-details" className="usage-diagnostic-details" ref={detailsRef} tabIndex={-1}>
         <p>{copy.notBestModel}</p>
-        <div className="usage-table-scroll"><table className="usage-diagnostic-table">
-          <caption className="visually-hidden">{copy.title}</caption>
+        <div className="usage-table-scroll"><table className="usage-table usage-diagnostic-table">
+          <caption className="nk-visually-hidden">{copy.title}</caption>
           <thead><tr><th scope="col">{text.group}</th><th scope="col">{copy.completionRate}</th>
-            <th scope="col">{copy.median}</th><th scope="col">{copy.p95}</th><th scope="col">{copy.coverage}</th></tr></thead>
+            <th scope="col">{copy.median}</th><th scope="col">{copy.p95}</th><th scope="col">{columnLabel(copy.coverage)}</th></tr></thead>
           <tbody>{ranked.map(({ group, eligibility }) => {
             const insufficient = !eligibility.eligible.failureRate && !eligibility.eligible.median && !eligibility.eligible.p95;
             return <tr key={groupKey(group)} className={insufficient ? "is-insufficient" : undefined}>
@@ -140,5 +141,5 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
         </table></div>
       </div> : null}
     </>}
-  </section>;
+  </UsagePanel>;
 }

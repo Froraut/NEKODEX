@@ -7,7 +7,6 @@ import "./design/components.css";
 import { App } from "./App";
 import "./styles.css";
 import "./nekodex.css";
-import "./overview.css";
 import "./browser-actions.css";
 import "./settings-polish.css";
 import "./theme-boot";

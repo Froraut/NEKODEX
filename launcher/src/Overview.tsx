@@ -1,20 +1,20 @@
 import type { LauncherLogStore } from './launcher-log-store';
 import { sessionIssueCopy } from "./session-issue-copy";
-import { CatTail } from "./CatTail";
 import { browserTabTitleFromTitle } from "./BrowserSurface";
 import { humanEvent } from "./log-format";
-import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
-import { useId, useSyncExternalStore, type CSSProperties } from "react";
-import { Icon, type IconName } from "./icons";
+import { useId, useSyncExternalStore } from "react";
 import type { Copy } from "./i18n";
 import { deriveWorkspaceReadiness, type WorkspaceAction } from "./workspace-readiness";
 import { modelConnectionReadiness } from "./setup-progress";
 import { workflowCopy } from "./workflow-copy";
+import { overviewCopy } from "./overview-copy";
 import { NetworkIssueNotice } from "./NetworkIssueNotice";
+import {
+  Button, ConnectionRow, EmptyState, EventList, Hero, Page, Panel, Stat, StatGroup, SurfaceHeader,
+  type EventItem, type IconName,
+} from "./design";
 import type { BrowserState, LauncherSnapshot, Surface } from "./types";
-
-const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
-const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
+import "./surfaces/overview.css";
 
 export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logStore, navigate, openTab, onMuteNetworkNotice }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
@@ -109,123 +109,67 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
           : readiness.action === "open-browser" ? copy.openWorkspace
             : readiness.action === "open-setup" ? copy.finishSetup
               : readiness.reason === "web-repair-active" ? workflow.recovery.repairing : copy.loading;
-  return <section className="content-surface overview-surface is-page-scroll">
-    <div className="content-scroll overview-scroll">
-      <header className="overview-heading"><div><h1>{copy.overview}</h1><p>{copy.overviewSubtitle}</p></div><span className="workspace-location"><Icon name="globe" />{copy.localWorkspace}</span></header>
-      <section className="workspace-intro" aria-labelledby="overview-intro-heading">
-        <div className="intro-copy"><h2 id="overview-intro-heading">{heroTitle}</h2>
-          <p>{heroBody}</p>
-          <button className="button-primary" type="button" disabled={!heroSurface}
-            onClick={() => { if (heroSurface) navigate(heroSurface); }}>{heroAction}<Icon name="forward" /></button>
-        </div>
-        <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>
-      </section>
-      <NetworkIssueNotice language={snapshot.state.language ?? "en"} browser={browser} className="connection-recovery-card overview-network-notice"
+  const heroRecovery = catalogIsNext || readiness.reason === "session-unavailable" || toolsPending;
+  const showActivityAction = heroRecovery || readiness.action === "open-browser";
+  const language = snapshot.state.language ?? "en";
+  const overview = overviewCopy(language);
+  const modeValue = manual ? copy.manualShort : copy.automaticShort;
+  const events: EventItem[] = logs.slice(-8).reverse().map(({ id, record: log }) => {
+    const text = humanEvent(log.event);
+    return {
+      id: String(id),
+      text: text.charAt(0).toUpperCase() + text.slice(1),
+      time: new Date(log.at).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" }),
+      dateTime: log.at,
+      level: log.level === "error" ? "error" : log.level === "warning" ? "warning" : "info",
+    };
+  });
+  return <Page width="wide" className="overview-page">
+    <div className="nk-stack">
+      <SurfaceHeader title={copy.overview} subtitle={copy.overviewSubtitle} />
+      <Hero eyebrow={heroSurface ? copy.setupNext : undefined} title={heroTitle}
+        actions={<>
+          <Button variant="primary" iconEnd="forward" disabled={!heroSurface}
+            onClick={() => { if (heroSurface) navigate(heroSurface); }}>{heroAction}</Button>
+          {showActivityAction ? <Button variant="ghost" onClick={() => navigate("activity")}>{copy.viewActivity}</Button> : null}
+        </>}>
+        {heroBody}
+      </Hero>
+      <NetworkIssueNotice language={language} browser={browser}
         muted={snapshot.state.showNetworkIssueNotice === false} onDontShowAgain={onMuteNetworkNotice} />
-      <section className="overview-work" aria-labelledby={`${overviewId}-runs`} aria-describedby={`${overviewId}-runs-description`}>
-        <div className="overview-work-header">
-          <div className="overview-work-summary">
-            <strong className="overview-work-count">{active}</strong>
-            <div className="overview-work-copy">
-              <h2 id={`${overviewId}-runs`} title={copy.overviewActiveRunsBody}>{copy.overviewActiveRuns}</h2>
-            </div>
-          </div>
-          <div className="overview-work-preferences">
-            <div className="overview-work-actions">
-              <div className="overview-capacity-control">
-                <button className="overview-preference" type="button" title={copy.capacityHint}
-                  aria-label={`${copy.configuredLimit}: ${snapshot.browserCapacity.active}. ${copy.capacityLink}`}
-                  aria-describedby={`${overviewId}-capacity`} onClick={() => navigate("settings")}>
-                  <span>{copy.configuredLimit}</span><strong>{snapshot.browserCapacity.active}</strong><Icon name="chevron" />
-                </button>
-                <p className="overview-capacity-note" id={`${overviewId}-capacity`}>{copy.capacityNotMeasured}</p>
-              </div>
-              <button className="overview-preference" type="button" title={copy.modeLink}
-                aria-label={`${copy.modeLabel}: ${manual ? copy.manualShort : copy.automaticShort}. ${copy.modeLink}`}
-                onClick={() => navigate("settings")}>
-                <span>{copy.modeLabel}</span><strong>{manual ? copy.manualShort : copy.automaticShort}</strong><Icon name="chevron" />
-              </button>
-            </div>
-          </div>
+      <StatGroup label={copy.overviewActiveRuns}>
+        <Stat label={copy.overviewActiveRuns} value={active} note={copy.overviewActiveRunsBody} />
+        <Stat label={copy.configuredLimit} value={snapshot.browserCapacity.active} onClick={() => navigate("settings")}
+          note={<>{copy.capacityNotMeasured}<span className="nk-visually-hidden">. {copy.capacityLink}</span></>} />
+        <Stat label={copy.modeLabel} value={modeValue} note={copy.modeLink} onClick={() => navigate("settings")} />
+      </StatGroup>
+      <div className="nk-columns">
+        <div className="nk-stack">
+          {activeTabs.length ? <Panel title={overview.runningNow} titleId={`${overviewId}-runs`} padding="compact" className="overview-panel"
+            actions={<Button variant="link" size="sm" iconEnd="chevron" onClick={() => navigate("browser")}>{overview.openBrowser}</Button>}>
+            <div className="nk-conn-list">{activeTabs.map(tab => {
+              const mode = tab.interactionMode === "manual" ? copy.manualShort
+                : tab.interactionMode === "automatic" ? copy.automaticShort : copy.usageUnknown;
+              return <ConnectionRow key={tab.id} icon="browser" label={browserTabTitleFromTitle(tab.title, copy)}
+                status={`${runStatus(tab.status)} · ${mode}`} state="busy" action={copy.overviewOpenRun}
+                onClick={() => openTab(tab.id)} />;
+            })}</div>
+          </Panel> : null}
+          <Panel title={copy.connectionsShort} titleId={`${overviewId}-connections`} padding="compact" className="overview-panel">
+            <p className="nk-visually-hidden">{copy.connectionsBody}</p>
+            <div className="nk-conn-list">{connections.map(connection => <ConnectionRow key={connection.surface}
+              icon={connection.icon} label={connection.label} status={connection.status}
+              state={connection.error ? "error" : connection.ready ? "ready" : "idle"}
+              action={connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.openRoutingChecks : copy.connectShort}
+              onClick={() => navigate(connection.surface)} />)}</div>
+          </Panel>
         </div>
-        <p className="visually-hidden" id={`${overviewId}-runs-description`}>{copy.overviewActiveRunsBody}</p>
-        {activeTabs.length ? <ul className="overview-live-runs">{activeTabs.map(tab => {
-          const status = runStatus(tab.status);
-          const mode = tab.interactionMode === "manual" ? copy.manualShort
-            : tab.interactionMode === "automatic" ? copy.automaticShort : copy.usageUnknown;
-          const title = browserTabTitleFromTitle(tab.title, copy);
-          return <li key={tab.id}><button type="button" onClick={() => openTab(tab.id)} aria-label={`${title}. ${status}. ${mode}. ${copy.overviewOpenRun}`}>
-            <i className="state-dot is-busy" aria-hidden="true" />
-            <span><strong title={title}>{title}</strong><small>{status} · {mode}</small></span>
-            <span className="overview-run-action" aria-hidden="true">{copy.overviewOpenRun}<Icon name="chevron" /></span>
-          </button></li>;
-        })}</ul> : null}
-      </section>
-      <div className="overview-grid">
-        <div className="overview-main-column">
-          <section className="connection-section" aria-labelledby="connection-heading" aria-describedby={`${overviewId}-connections-description`}>
-            <div className="overview-section-heading"><h2 id="connection-heading">{copy.connectionsShort}</h2></div>
-            <p className="visually-hidden" id={`${overviewId}-connections-description`}>{copy.connectionsBody}</p>
-            <div className="connection-list">{connections.map(connection => <button type="button" key={connection.surface} aria-label={`${connection.label}: ${connection.status}. ${connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.openRoutingChecks : copy.connectShort}`} onClick={() => navigate(connection.surface)}>
-              <Icon name={connection.icon} />
-              <span className="overview-connection-copy"><strong>{connection.label}</strong><span className={`connection-status${connection.ready ? " is-ready" : ""}${connection.error ? " is-error" : ""}`} aria-live="polite" aria-atomic="true"><i className={`state-dot is-${connection.error ? "error" : connection.ready ? "ready" : "idle"}`} aria-hidden="true" />{connection.status}</span></span>
-              <span className="connection-action" aria-hidden="true">{connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.openRoutingChecks : copy.connectShort}<Icon name="chevron" /></span>
-            </button>)}</div>
-          </section>
-          <section className="overview-activity">
-            <div className="overview-section-heading"><h2>{copy.recentActivity}</h2><button className="text-button" type="button" onClick={() => navigate("activity")}>{copy.viewAllShort}<Icon name="chevron" /></button></div>
-            {logs.length ? <ul>{logs.slice(-8).reverse().map(({ id, record: log }) => <li key={id}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{humanEvent(log.event)}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
-              : <div className="overview-empty"><Icon name="logs" /><div><strong>{copy.activityEmpty}</strong><p>{copy.activityEmptyBody}</p></div></div>}
-          </section>
-        </div>
-        <aside className="workspace-art-card">
-          <div className="art-card-copy"><h2>{copy.artCardTitle}</h2><p>{copy.artCardBody}</p></div>
-          <WorkspaceIllustration />
-        </aside>
+        <Panel title={copy.recentActivity} titleId={`${overviewId}-events`} padding="compact" className="overview-panel overview-activity"
+          actions={<Button variant="link" size="sm" iconEnd="chevron" onClick={() => navigate("activity")}>{copy.viewAllShort}</Button>}>
+          <EventList items={events}
+            empty={<EmptyState title={copy.activityEmpty} icon="logs">{copy.activityEmptyBody}</EmptyState>} />
+        </Panel>
       </div>
     </div>
-  </section>;
-}
-
-function WorkspaceIllustration() {
-  const id = `coding-cat-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const { reaction, play, follow, reset } = useCatReaction();
-  const pawReaction = reaction === "happy" || reaction === "surprised" || reaction === "stretch" ? 2
-    : reaction === "wink" || reaction === "playful" || reaction === "peek" ? 1 : 0;
-  return <div className={`workspace-illustration-stage${reaction === null ? "" : ` is-playing reaction-${reaction} illustration-reaction-${pawReaction}`}`}
-    role="img" aria-label="NEKODEX" tabIndex={0}
-    onPointerEnter={play} onPointerMove={follow} onPointerLeave={event => reset(event.currentTarget)} onPointerCancel={event => reset(event.currentTarget)} onFocus={play} onBlur={event => reset(event.currentTarget)}>
-    <svg className="workspace-illustration" viewBox="0 0 1536 1024" aria-hidden="true">
-      <defs>
-        <mask id={`${id}-stationary`} maskUnits="userSpaceOnUse" x="0" y="0" width="1536" height="1024">
-          <rect width="1536" height="1024" fill="white" />
-          <rect x="590" y="260" width="356" height="267" fill="black" />
-          <ellipse cx="644" cy="514" rx="43" ry="33" fill="black" />
-          <ellipse cx="894" cy="514" rx="43" ry="33" fill="black" />
-        </mask>
-        <clipPath id={`${id}-left-paw`}><ellipse cx="644" cy="514" rx="43" ry="33" /></clipPath>
-        <clipPath id={`${id}-right-paw`}><ellipse cx="894" cy="514" rx="43" ry="33" /></clipPath>
-        <clipPath id={`${id}-tail-behind`}><rect x="220" y="300" width="295" height="450" /></clipPath>
-      </defs>
-      {/* The scene and paws retain the original pixels; the head shares the main cat rig. */}
-      <image href={workspaceBase} width="1536" height="1024" mask={`url(#${id}-stationary)`} />
-      <g clipPath={`url(#${id}-tail-behind)`}>
-        <CatTail reaction={reaction} id={id} />
-      </g>
-      {/* Restore the stationary laptop edge behind lifted paws using its own pixels. */}
-      <svg x="590" y="511" width="356" height="16" viewBox="540 511 50 16" preserveAspectRatio="none" overflow="hidden">
-        <image href={workspaceArt} width="1536" height="1024" />
-      </svg>
-      <g className="coding-cat-head" transform="translate(548 207) scale(6.8 5.3)"
-        style={{ color: "#343245", "--brand-ink": "#c6bdff" } as CSSProperties}>
-        <CatHead reaction={reaction} />
-      </g>
-      <g className="coding-cat-paw coding-cat-paw-left">
-        <image href={workspaceArt} width="1536" height="1024" clipPath={`url(#${id}-left-paw)`} />
-      </g>
-      <g className="coding-cat-paw coding-cat-paw-right">
-        <image href={workspaceArt} width="1536" height="1024" clipPath={`url(#${id}-right-paw)`} />
-      </g>
-    </svg>
-  </div>;
+  </Page>;
 }

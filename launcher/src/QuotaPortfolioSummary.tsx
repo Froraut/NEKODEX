@@ -31,7 +31,7 @@ export function QuotaPortfolioSummary({ copy, pending = 0, rows }: {
     .replace("{retained}", String(counts.retained))
     .replace("{unavailable}", String(counts.unavailable))
     .replace("{skipped}", String(counts.skipped));
-  return <section className="quota-portfolio-summary" aria-live="polite" aria-atomic="true">
+  return <section className="quota-portfolio-summary nk-type-caption" aria-live="polite" aria-atomic="true">
     <span>{pending > 0 ? copy.refreshing : summary}</span>
   </section>;
 }

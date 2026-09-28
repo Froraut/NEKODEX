@@ -1,14 +1,17 @@
 import { modelConnectionReadiness, setupNextStep } from "./setup-progress";
 import { ClientConnections } from "./ClientConnections";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { type Copy } from "./i18n";
-import { Icon } from "./icons";
 import { RouteDiagnostics } from "./RouteDiagnostics";
 import { type WorkspaceReadiness } from "./workspace-readiness";
 import type { BrowserState, LauncherSnapshot, LauncherState, OperationState } from "./types";
-const api = window.codexWebLauncher;
-import { ConnectionsTabs, ContentSurface, SetupRow, ZeroRiskModelMenu, SectionHeading, NoticeRow, PrimaryButton, McpMark, messageOf } from './launcher-ui';
+import { Badge, Button, Disclosure, Notice, Page, SettingRow, SetupRow, StateDot, SurfaceHeader } from "./design";
+import { ConnectionsTabs, ZeroRiskModelMenu, messageOf } from './launcher-ui';
 import { currentToolProof } from './launcher-readiness';
+import "./surfaces/connections.css";
+const api = window.codexWebLauncher;
+
+type SetupStep = "account" | "smoke" | "install" | "tools";
 
 export function SetupSurface({
   activateBrowser,
@@ -50,8 +53,9 @@ export function SetupSurface({
   const pickerReady = models === "available";
   const confirmPending = models === "picker-pending";
   const pendingContext = typeof snapshot.state.pendingBiggerContext === "boolean";
-  const troubleshooting = useRef<HTMLDetailsElement>(null);
-  const accountSignInChoices = useRef<HTMLDivElement>(null);
+  // The disclosures and setup rows are looked up by class: kit components do not forward refs.
+  const disclosures = useRef<HTMLDivElement>(null);
+  const setupSteps = useRef<HTMLDivElement>(null);
   const toolsVerified = currentToolProof(snapshot, operation);
   const nextStep = setupNextStep({ manual: manualInteraction, signedIn: browser?.authenticated === true,
     smokePassed: snapshot.smokePassed, installed: snapshot.state.coreSetupComplete === true,
@@ -118,14 +122,16 @@ export function SetupSurface({
     await api!.refreshAccountAuthentication(browser.accountId);
   });
   const showTroubleshooting = () => {
-    if (!troubleshooting.current) return;
-    troubleshooting.current.open = true;
-    troubleshooting.current.scrollIntoView({ block: "start" });
-    troubleshooting.current.querySelector<HTMLButtonElement>("button")?.focus();
+    const troubleshooting = disclosures.current?.querySelector<HTMLDetailsElement>(".nk-connections__troubleshooting");
+    if (!troubleshooting) return;
+    troubleshooting.open = true;
+    troubleshooting.scrollIntoView({ block: "start" });
+    troubleshooting.querySelector<HTMLButtonElement>("button")?.focus();
   };
   const showAccountSignInChoices = () => {
-    accountSignInChoices.current?.scrollIntoView({ block: "center" });
-    accountSignInChoices.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    const row = setupSteps.current?.querySelector<HTMLElement>(".nk-connections__sign-in");
+    row?.scrollIntoView({ block: "center" });
+    row?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
   };
   const readyTitle = manualInteraction ? copy.manualSetupReady
     : toolsVerified ? copy.setupChecksPassed : copy.setupReadyModels;
@@ -171,126 +177,200 @@ export function SetupSurface({
     else if (nextStep === "tools") showMcp();
     else void activateBrowser().catch(cause => setError(messageOf(cause)));
   };
+  const nextDisabled = busy || readiness.action === "wait" || (nextStep === "confirm" && pendingContext);
+
+  // The derived next step is shown on its setup row (the one current row, with the primary button). States that
+  // no row represents (session retry, waiting, catalog failure, everything ready) are a notice above the rows.
+  const complete: Record<SetupStep, boolean> = {
+    account: browser?.authenticated === true,
+    smoke: snapshot.smokePassed,
+    install: pickerReady,
+    tools: toolsVerified,
+  };
+  const nextRow: SetupStep | null = readiness.action === "retry-session" || readiness.reason === "catalog-unavailable"
+    || readiness.action === "wait" ? null
+    : readiness.action === "open-accounts" ? "account"
+      : readiness.action === "open-tools" || readiness.action === "repair-web" ? "tools"
+        : ({ "sign-in": "account", test: "smoke", install: "install", catalog: "install", confirm: "install",
+          tools: "tools", ready: null } as const)[nextStep];
+  const currentRow = nextRow && !complete[nextRow] && !(manualInteraction && (nextRow === "account" || nextRow === "smoke"))
+    ? nextRow : null;
+  const catalogNotice = !manualInteraction && catalogFailure;
+  const statusNotice = currentRow === null && !(catalogNotice && readiness.reason === "catalog-unavailable");
+  const statusTone = readiness.action === "retry-session" || readiness.action === "repair-web" ? "warning"
+    : nextStep === "ready" && readiness.action !== "wait" ? "success" : "info";
+  const variant = (row: SetupStep) => currentRow === row ? "primary" : "secondary";
+  const optional = <Badge tone="outline">{copy.optional}</Badge>;
+
+  const installAction = confirmPending ? confirmModels : catalogPending ? showTroubleshooting
+    : manualInteraction && !snapshot.state.mcpRuntimeInstalled ? showMcp : install;
+  const installDisabled = busy || (confirmPending && pendingContext) || (!manualInteraction && !browser?.authenticated)
+    || (!snapshot.state.coreSetupComplete && !snapshot.smokePassed && !manualInteraction);
+  let installDescription: ReactNode = confirmPending ? copy.setupConfirmBody : catalogPending ? copy.setupCatalogBody
+    : devProfile ? copy.devStepInstallBody : copy.stepInstallBody;
+  if (confirmPending && pendingContext) {
+    installDescription = <>{installDescription}<span className="nk-connections__row-note" role="status">
+      <StateDot state="busy" />{copy.contextWaiting}</span></>;
+  }
 
   return (
-    <ContentSurface
-      eyebrow={nextStep === "ready" ? copy.connectionVerified : copy.required}
-      subtitle={devProfile
-        ? copy.devSetupSubtitle
-        : manualInteraction ? copy.manualInteractionBody : copy.setupSubtitle}
-      title={nextStep === "ready" ? copy.modelsConnectionTab : devProfile ? copy.devSetupTitle : copy.setupTitle}
-    >
+    <Page className="nk-connections">
+      <SurfaceHeader
+        eyebrow={nextStep === "ready" ? copy.connectionVerified : copy.required}
+        subtitle={devProfile
+          ? copy.devSetupSubtitle
+          : manualInteraction ? copy.manualInteractionBody : copy.setupSubtitle}
+        title={nextStep === "ready" ? copy.modelsConnectionTab : devProfile ? copy.devSetupTitle : copy.setupTitle}
+      />
       <ConnectionsTabs active="models" copy={copy} modelsReady={pickerReady}
         onModels={() => {}} onTools={showMcp} toolsReady={toolsVerified} />
-      {manualInteraction ? <NoticeRow icon="info" tone="success">{copy.manualInteractionBody}</NoticeRow> : null}
-      {!manualInteraction && catalogFailure ? (
-        <section className="connection-inline-failure" aria-labelledby="catalog-failure-title">
-          <Icon name="alert" />
-          <div><strong id="catalog-failure-title">{copy.catalogUnavailable}</strong><p>{copy.catalogFailureKeptInstall}</p></div>
-          <button className="button-secondary" onClick={showTroubleshooting} type="button">{copy.openRoutingChecks}</button>
-        </section>
-      ) : null}
-      <section className="setup-overview setup-next" aria-label={copy.setupNext}>
-        <div><small>{copy.setupNext}</small><h2>{nextTitle}</h2><p>{nextBody}</p>
-          {confirmPending && pendingContext ? <p role="status">{copy.contextWaiting}</p> : null}
-        </div>
-        <PrimaryButton disabled={busy || readiness.action === "wait" || (nextStep === "confirm" && pendingContext)} onClick={nextAction}>{nextLabel}</PrimaryButton>
-      </section>
-      <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} />
-      <div className="setup-list">
-        {!manualInteraction ? <>
-          <SetupRow
-            action={browser?.authenticated
-              ? copy.signedIn
-              : browser?.status === "loading" ? copy.checkingSignIn : copy.stepAccount}
-            complete={browser?.authenticated === true}
-            description={browser?.authenticated && browser.accountLabel
-              ? `${copy.signedIn}: ${browser.accountLabel}`
-              : copy.stepAccountBody}
-            disabled={busy}
-            index={1}
-            onAction={openLogin}
-            secondaryAction={useExistingChrome && !browser?.authenticated ? copy.existingChromeSignIn : undefined}
-            onSecondaryAction={openExistingChromeLogin}
-            rowRef={accountSignInChoices}
-            secondaryDisabled={busy}
-            title={copy.stepAccount}
-          />
-          <SetupRow
-            action={snapshot.smokePassed ? copy.smokePassed : copy.runSmoke}
-            complete={snapshot.smokePassed}
-            description={snapshot.state.coreSetupComplete ? copy.setupOptionalCheck : copy.stepSmokeBody}
-            titleAction={snapshot.state.coreSetupComplete ? <small className="setup-optional">{copy.optional}</small> : undefined}
-            disabled={busy || !browser?.authenticated}
-            index={2}
-            onAction={smoke}
-            title={copy.stepSmoke}
-          />
-        </> : null}
-        <SetupRow
-          action={confirmPending ? copy.confirmPicker : catalogPending ? copy.diagnostics : pickerReady ? copy.done : devProfile ? copy.devInstall : copy.install}
-          complete={pickerReady}
-          description={confirmPending ? copy.setupConfirmBody : catalogPending ? copy.setupCatalogBody : devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
-          disabled={busy || (confirmPending && pendingContext) || (!manualInteraction && !browser?.authenticated)
-            || (!snapshot.state.coreSetupComplete && !snapshot.smokePassed && !manualInteraction)}
-          index={manualInteraction ? 1 : 3}
-          onAction={confirmPending ? confirmModels : catalogPending ? showTroubleshooting : manualInteraction && !snapshot.state.mcpRuntimeInstalled ? showMcp : install}
-          title={confirmPending ? copy.setupConfirmTitle : catalogPending ? copy.setupCatalogTitle : snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : devProfile ? copy.devStepInstall : copy.stepInstall}
-          titleAction={manualInteraction ? (
-            <ZeroRiskModelMenu
-              busy={busy || snapshot.state.coreSetupComplete !== true}
-              copy={copy}
-              proEnabled={snapshot.state.zeroRiskProEnabled}
-              onChange={(enabled) => void setZeroRiskPro(enabled)}
+      <div className="nk-connections__content">
+        {manualInteraction ? (
+          // Outside DEV the subtitle already carries the Manual mode explanation.
+          <Notice title={copy.manualInteraction}>{devProfile ? copy.manualInteractionBody : null}</Notice>
+        ) : null}
+        {catalogNotice ? (
+          <Notice
+            action={<Button onClick={showTroubleshooting} size="sm"
+              variant={readiness.reason === "catalog-unavailable" && !nextDisabled ? "primary" : "secondary"}>
+              {copy.openRoutingChecks}
+            </Button>}
+            title={<span id="catalog-failure-title">{copy.catalogUnavailable}</span>}
+            tone="error"
+          >
+            {copy.catalogFailureKeptInstall}
+          </Notice>
+        ) : null}
+        {statusNotice ? (
+          <Notice
+            action={<Button busy={readiness.action === "wait"} disabled={nextDisabled} onClick={nextAction} size="sm" variant="primary">
+              {nextLabel}
+            </Button>}
+            className="nk-connections__next"
+            title={nextTitle}
+            tone={statusTone}
+          >
+            {nextBody}
+          </Notice>
+        ) : currentRow === "tools" && readiness.action === "repair-web" ? (
+          <Notice title={copy.localToolsUnavailable} tone="warning">{copy.localToolsUnavailableBody}</Notice>
+        ) : null}
+
+        <div className="nk-connections__steps" ref={setupSteps}>
+          {!manualInteraction ? <>
+            <SetupRow
+              actions={<>
+                {useExistingChrome && !browser?.authenticated ? (
+                  <Button disabled={busy || complete.account} onClick={openExistingChromeLogin} size="sm">
+                    {copy.existingChromeSignIn}
+                  </Button>
+                ) : null}
+                <Button disabled={busy || complete.account} onClick={openLogin} size="sm" variant={variant("account")}>
+                  {browser?.authenticated
+                    ? copy.signedIn
+                    : browser?.status === "loading" ? copy.checkingSignIn : copy.stepAccount}
+                </Button>
+              </>}
+              className="nk-connections__sign-in"
+              complete={complete.account}
+              current={currentRow === "account"}
+              description={browser?.authenticated && browser.accountLabel
+                ? `${copy.signedIn}: ${browser.accountLabel}`
+                : copy.stepAccountBody}
+              index={1}
+              title={copy.stepAccount}
             />
-          ) : undefined}
-        />
-      </div>
-
-      <details className="setup-troubleshooting" ref={troubleshooting}>
-        <summary>{copy.setupTroubleshooting}<Icon name="chevron" /></summary>
-        <RouteDiagnostics disabled={busy} language={snapshot.state.language ?? "en"}
-          onActionError={cause => setError(messageOf(cause))}
-          onExport={() => api!.exportLogs()} onViewActivity={showActivity}
-          readReport={() => api!.routeDiagnostics()} />
-        {snapshot.state.coreSetupComplete ? <button className="button-secondary" type="button" disabled={busy} onClick={() => void install()}>{copy.setupRepair}</button> : null}
-      </details>
-
-      <SectionHeading label={copy.localTools} meta={manualInteraction ? copy.required : copy.optional} spaced />
-      {Number.isFinite(verifiedAt) ? (
-        <p>{copy.lastConnectorVerification.replace("{time}", new Date(verifiedAt).toLocaleString(snapshot.state.language ?? "en"))}</p>
-      ) : null}
-      <button
-        className="next-surface-row"
-        disabled={!manualInteraction && !snapshot.state.codexCatalogVerified}
-        onClick={showMcp}
-        type="button"
-      >
-        <McpMark />
-        <span>
-          <strong>{devProfile ? copy.devMcpTitle : copy.mcpTitle}</strong>
-          <small>{devProfile ? copy.devMcpBody : copy.mcpBody}</small>
-        </span>
-        <em>{toolsVerified ? copy.mcpReady : copy.configureMcp}</em>
-        <Icon name="chevron" />
-      </button>
-      {!manualInteraction ? <ClientConnections language={snapshot.state.language ?? "en"} busy={busy}
-        configured={snapshot.state.coreSetupComplete === true} devProfile={devProfile} /> : null}
-      {!devProfile && !manualInteraction ? <>
-        <details className="setup-troubleshooting"><summary>Hermes <small>{copy.optional}</small><Icon name="chevron" /></summary>
-        <div className="setup-overview">
-          <strong>{copy.hermesTitle}</strong>
-          <p>{copy.hermesBody}</p>
-          <PrimaryButton disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes()}>{hermesAdded ? copy.hermesUpdate : copy.hermesAdd}</PrimaryButton>
-          <p role="status">{hermesAdded ? copy.hermesAdded : !toolsVerified ? copy.hermesPending : copy.hermesChoose}</p>
-          <details>
-            <summary>{copy.hermesDirectTitle}</summary>
-            <p>{copy.hermesDirectBody}</p>
-            <button className="button-secondary" disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes("codex_responses")} type="button">{copy.hermesDirectAdd}</button>
-          </details>
+            <SetupRow
+              actions={<Button disabled={busy || !browser?.authenticated || complete.smoke} onClick={smoke} size="sm" variant={variant("smoke")}>
+                {snapshot.smokePassed ? copy.smokePassed : copy.runSmoke}
+              </Button>}
+              complete={complete.smoke}
+              current={currentRow === "smoke"}
+              description={snapshot.state.coreSetupComplete ? copy.setupOptionalCheck : copy.stepSmokeBody}
+              index={2}
+              tag={snapshot.state.coreSetupComplete ? optional : undefined}
+              title={copy.stepSmoke}
+            />
+          </> : null}
+          <SetupRow
+            actions={<Button disabled={installDisabled || complete.install} onClick={installAction} size="sm" variant={variant("install")}>
+              {confirmPending ? copy.confirmPicker : catalogPending ? copy.diagnostics : pickerReady ? copy.done : devProfile ? copy.devInstall : copy.install}
+            </Button>}
+            complete={complete.install}
+            current={currentRow === "install"}
+            description={installDescription}
+            index={manualInteraction ? 1 : 3}
+            tag={manualInteraction ? (
+              <ZeroRiskModelMenu
+                busy={busy || snapshot.state.coreSetupComplete !== true}
+                copy={copy}
+                proEnabled={snapshot.state.zeroRiskProEnabled}
+                onChange={(enabled) => void setZeroRiskPro(enabled)}
+              />
+            ) : undefined}
+            title={confirmPending ? copy.setupConfirmTitle : catalogPending ? copy.setupCatalogTitle : snapshot.state.coreSetupComplete ? copy.setupInstalledTitle : devProfile ? copy.devStepInstall : copy.stepInstall}
+          />
+          <SetupRow
+            actions={<Button disabled={!manualInteraction && !snapshot.state.codexCatalogVerified} iconEnd="chevron"
+              onClick={showMcp} size="sm" variant={variant("tools")}>
+              {toolsVerified ? copy.mcpReady : copy.configureMcp}
+            </Button>}
+            complete={complete.tools}
+            current={currentRow === "tools"}
+            description={<>
+              {devProfile ? copy.devMcpBody : copy.mcpBody}
+              {Number.isFinite(verifiedAt) ? <span className="nk-connections__row-note">
+                {copy.lastConnectorVerification.replace("{time}", new Date(verifiedAt).toLocaleString(snapshot.state.language ?? "en"))}
+              </span> : null}
+            </>}
+            index={manualInteraction ? 2 : 4}
+            tag={manualInteraction ? undefined : optional}
+            title={devProfile ? copy.devMcpTitle : copy.mcpTitle}
+          />
         </div>
-        </details>
-      </> : null}
-    </ContentSurface>
+
+        <div className="nk-connections__more" ref={disclosures}>
+          <Disclosure className="nk-connections__troubleshooting" title={copy.setupTroubleshooting}>
+            <div className="nk-connections__stack">
+            <RouteDiagnostics disabled={busy} language={snapshot.state.language ?? "en"}
+              onActionError={cause => setError(messageOf(cause))}
+              onExport={() => api!.exportLogs()} onViewActivity={showActivity}
+              readReport={() => api!.routeDiagnostics()} />
+            {snapshot.state.coreSetupComplete ? (
+              <div className="nk-connections__actions">
+                <Button disabled={busy} icon="reload" onClick={() => void install()} size="sm" variant="ghost">{copy.setupRepair}</Button>
+              </div>
+            ) : null}
+            </div>
+          </Disclosure>
+          {!manualInteraction ? <ClientConnections language={snapshot.state.language ?? "en"} busy={busy}
+            configured={snapshot.state.coreSetupComplete === true} devProfile={devProfile} /> : null}
+          {!devProfile && !manualInteraction ? (
+            <Disclosure hint={copy.optional} title="Hermes">
+              <div className="nk-connections__stack">
+              <SettingRow
+                control={<Button disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes()}>
+                  {hermesAdded ? copy.hermesUpdate : copy.hermesAdd}
+                </Button>}
+                description={copy.hermesBody}
+                title={copy.hermesTitle}
+              />
+              <p className="nk-connections__status" role="status">
+                <StateDot state={hermesAdded ? "ready" : "idle"} />
+                {hermesAdded ? copy.hermesAdded : !toolsVerified ? copy.hermesPending : copy.hermesChoose}
+              </p>
+              <details className="nk-connections__nested">
+                <summary>{copy.hermesDirectTitle}</summary>
+                <p>{copy.hermesDirectBody}</p>
+                <Button disabled={localBusy || !snapshot.state.mcpRuntimeInstalled} onClick={() => void addHermes("codex_responses")} size="sm">
+                  {copy.hermesDirectAdd}
+                </Button>
+              </details>
+              </div>
+            </Disclosure>
+          ) : null}
+        </div>
+      </div>
+    </Page>
   );
 }
