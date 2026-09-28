@@ -1,4 +1,4 @@
-import { createElement, isValidElement, useState, type DetailsHTMLAttributes, type HTMLAttributes, type JSX, type ReactElement, type ReactNode, type Ref } from "react";
+import { createElement, isValidElement, useLayoutEffect, useRef, useState, type DetailsHTMLAttributes, type HTMLAttributes, type JSX, type ReactElement, type ReactNode, type Ref } from "react";
 import { Switch } from "./controls";
 import { Mark } from "./Mark";
 import { NkIcon, cx, type IconName, type Status, type Tone } from "./shared";
@@ -193,11 +193,27 @@ export interface SetupRowProps extends Omit<HTMLAttributes<HTMLDivElement>, "tit
   current?: boolean;
   /** Inline after the title, e.g. <Badge tone="outline">Optional</Badge>. */
   tag?: ReactNode;
+  /**
+   * App: the outcome of a completed step ("Signed in"), shown as status text with a ready dot in place of the
+   * actions; a result is not a disabled button, whose faint text would be its only statement.
+   */
+  result?: ReactNode;
   className?: string;
   ref?: Ref<HTMLDivElement>;
 }
 
-export function SetupRow({ index, title, description, actions, complete, current, tag, className, ref, ...rest }: SetupRowProps) {
+export function SetupRow({ index, title, description, actions, complete, current, tag, result, className, ref, ...rest }: SetupRowProps) {
+  const showResult = Boolean(complete && result);
+  const resultRef = useRef<HTMLSpanElement>(null);
+  // The action that completed the step is replaced by its result: when it had focus, the result takes it.
+  const blurred = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    const lost = blurred.current;
+    blurred.current = null;
+    if (!showResult || !lost || lost.isConnected) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    resultRef.current?.focus({ preventScroll: true });
+  }, [showResult]);
   return (
     <div {...rest} className={cx("nk-setup-row", complete && "is-complete", current && "is-current", className)} ref={ref}>
       <span className="nk-setup-row__index">{complete ? <NkIcon name="check" /> : index}</span>
@@ -205,7 +221,11 @@ export function SetupRow({ index, title, description, actions, complete, current
         <strong>{title}{tag || null}</strong>
         {description ? <p>{description}</p> : null}
       </div>
-      {actions ? <div className="nk-setup-row__actions">{actions}</div> : null}
+      {showResult || actions ? (
+        <div className="nk-setup-row__actions" onBlur={event => { if (!event.relatedTarget) blurred.current = event.target; }}>
+          {showResult ? <span className="nk-setup-row__result" ref={resultRef} tabIndex={-1}><StateDot state="ready" />{result}</span> : actions}
+        </div>
+      ) : null}
     </div>
   );
 }

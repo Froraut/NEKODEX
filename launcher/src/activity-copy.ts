@@ -7,6 +7,8 @@ export interface ActivityCopy {
   levelError: string;
   levelWarning: string;
   noMatchingEvents: string;
+  /** Body under the shared "No runtime events yet." title: what will appear here. */
+  noEventsBody: string;
   clearFilters: string;
   usageUnavailableBody: string;
   retryUsage: string;
@@ -37,6 +39,7 @@ const copy: Record<Language, ActivityCopy> = {
     levelError: "Error",
     levelWarning: "Warning",
     noMatchingEvents: "No matching events",
+    noEventsBody: "Events appear here as NEKODEX starts, signs in and runs browser tasks.",
     clearFilters: "Clear filters",
     usageUnavailableBody: "The local usage report could not be read. Try again, or check Recent events for the cause.",
     retryUsage: "Retry usage report",
@@ -61,6 +64,7 @@ const copy: Record<Language, ActivityCopy> = {
     levelError: "Ошибка",
     levelWarning: "Предупреждение",
     noMatchingEvents: "Подходящих событий нет",
+    noEventsBody: "События появятся здесь, когда NEKODEX запустится, выполнит вход и начнёт выполнять браузерные задачи.",
     clearFilters: "Сбросить фильтры",
     usageUnavailableBody: "Не удалось прочитать локальный отчёт о статистике. Повторите попытку или найдите причину в разделе «Последние события».",
     retryUsage: "Повторить загрузку статистики",
@@ -85,6 +89,7 @@ const copy: Record<Language, ActivityCopy> = {
     levelError: "错误",
     levelWarning: "警告",
     noMatchingEvents: "没有匹配的事件",
+    noEventsBody: "NEKODEX 启动、登录并运行浏览器任务时，事件会显示在这里。",
     clearFilters: "清除筛选",
     usageUnavailableBody: "无法读取本地使用统计报告。请重试，或在“最近事件”中查看原因。",
     retryUsage: "重新加载使用统计报告",
@@ -109,6 +114,7 @@ const copy: Record<Language, ActivityCopy> = {
     levelError: "錯誤",
     levelWarning: "警告",
     noMatchingEvents: "沒有符合的事件",
+    noEventsBody: "NEKODEX 啟動、登入並執行瀏覽器任務時，事件會顯示在這裡。",
     clearFilters: "清除篩選",
     usageUnavailableBody: "無法讀取本機使用統計報告。請重試，或在「最近事件」中查看原因。",
     retryUsage: "重新載入使用統計報告",
@@ -133,6 +139,7 @@ const copy: Record<Language, ActivityCopy> = {
     levelError: "エラー",
     levelWarning: "警告",
     noMatchingEvents: "該当するイベントなし",
+    noEventsBody: "NEKODEX の起動、サインイン、ブラウザータスクの実行に伴って、イベントがここに表示されます。",
     clearFilters: "絞り込みを解除",
     usageUnavailableBody: "ローカル使用状況のレポートを読み取れませんでした。再試行するか、「最近のイベント」で原因を確認してください。",
     retryUsage: "使用状況レポートを再読み込み",
@@ -157,6 +164,7 @@ const copy: Record<Language, ActivityCopy> = {
     levelError: "오류",
     levelWarning: "경고",
     noMatchingEvents: "일치하는 이벤트 없음",
+    noEventsBody: "NEKODEX가 시작되고 로그인하며 브라우저 작업을 실행하면 여기에 이벤트가 표시됩니다.",
     clearFilters: "필터 지우기",
     usageUnavailableBody: "로컬 사용량 보고서를 읽을 수 없습니다. 다시 시도하거나 ‘최근 이벤트’에서 원인을 확인하세요.",
     retryUsage: "사용량 보고서 다시 불러오기",

@@ -451,6 +451,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   });
   const refreshAllDisabledReason = transitionReason ?? (loadFailed ? copy.accountsRefreshFailed
     : manual ? codexCopy.quotaManualUnavailable
+    : state.accounts.length === 0 ? text.refreshNeedsAccount
     : authenticatedAccounts.length === 0 ? codexCopy.quotaSignedOut
       : refreshAllBusy || quotaInFlight.current.size > 0 ? codexCopy.quotaChecking
       : refreshableAccounts.length === 0 ? (loginLockedId
@@ -665,8 +666,9 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           facts.push(account.checked
             ? { label: `${copy.accountsChecked}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
             : { label: `${copy.accountsChecked}: ${copy.connectionPending}`, dot: "idle" });
-          // The same evidence as the tools setup's "verified" step (and the Check connector button's weight).
-          facts.push(account.checked && account.connectorReady
+          // The same derived step as the tools setup section: a verified connector without the shared runtime
+          // still needs setup (the page notice names that step), so the badge never says Verified next to it.
+          facts.push(toolsStep === "verified"
             ? { label: `${copy.toolConnection}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
             : { label: `${copy.toolConnection}: ${copy.connectionPending}`, dot: "idle" });
           if (pacing && (pacing.held || !account.safety)) {

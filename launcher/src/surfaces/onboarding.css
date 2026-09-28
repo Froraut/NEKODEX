@@ -47,6 +47,10 @@
 }
 .nk-onboarding__scroll > .nk-page { padding-top: clamp(var(--space-6), calc(24vh - 120px), calc(2 * var(--space-10))); padding-bottom: var(--space-6); }
 
+/* Continue moves focus to the new step's title (tabindex -1) so the step change is announced; like the other
+   surfaces' focused titles, it takes no focus ring. */
+.nk-onboarding__scroll h1[tabindex="-1"]:focus { outline: none; }
+
 /* Language choices: radio mark, label, then the language marker as a tag at the end. */
 .nk-choice.nk-onboarding__language { grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; }
 .nk-onboarding__language > .nk-choice__mark { grid-row: 1; grid-column: 1; margin-top: 0; }

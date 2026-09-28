@@ -2,8 +2,7 @@ import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
 import type { Copy } from './i18n';
 import type { AccountPoolSnapshot, BrowserState, Language, LauncherSnapshot } from './types';
 import { accountToolsCopy, accountToolsHandoffAccount, accountToolsStep } from './account-tools-onboarding';
-import { Button, TextField } from './design';
-import './account-tools-onboarding.css';
+import { Button, Notice, TextField } from './design';
 
 type Account = AccountPoolSnapshot['accounts'][number];
 
@@ -64,8 +63,9 @@ export function AccountToolsHandoff({ browser, language, disabled, onContinue }:
   const account = pool ? accountToolsHandoffAccount(browser, pool) : null;
   if (!account) return null;
   const text = accountToolsCopy(language);
-  return <aside className="account-tools-handoff" aria-label={text.title}>
-    <div><strong>{account.accountLabel || account.label}</strong><p>{text.connector}</p></div>
-    <Button size="sm" disabled={disabled} onClick={() => onContinue(account.id)}>{text.continue}</Button>
-  </aside>;
+  // A kit Notice among the Browser surface's notices: the account and its next step, and the way back to Accounts.
+  return <Notice data-testid="account-tools-handoff" title={text.title}
+    action={<Button size="sm" disabled={disabled} onClick={() => onContinue(account.id)}>{text.continue}</Button>}>
+    {account.accountLabel || account.label} · {text.connector}
+  </Notice>;
 }

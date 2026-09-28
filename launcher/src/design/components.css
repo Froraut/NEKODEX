@@ -63,6 +63,11 @@ body {
 .nk-btn:active:not(:disabled, [aria-disabled="true"]) { transform: scale(0.985); }
 .nk-btn:is(:disabled, [aria-disabled="true"]) { opacity: 0.38; }
 .nk-btn[aria-busy="true"]:is(:disabled, [aria-disabled="true"]) { opacity: 0.72; }
+/* App: busy keeps the width. Without a leading icon to replace, the spinner covers the unchanged label, which stays
+   the accessible name. */
+.nk-btn.is-busy-cover { position: relative; }
+.nk-btn.is-busy-cover > :not(.nk-spinner) { color: transparent; }
+.nk-btn.is-busy-cover > .nk-spinner { position: absolute; inset: 0; margin: auto; }
 .nk-btn--sm { height: var(--size-control-sm); padding: 0 var(--space-3); gap: var(--space-1); font-size: 13px; line-height: 18px; }
 .nk-btn--sm .nk-icon { width: 14px; height: 14px; }
 .nk-btn--block { width: 100%; }
@@ -163,7 +168,8 @@ body {
 .nk-notice strong { display: block; color: var(--text-primary); font-weight: 500; }
 .nk-notice p { margin: 0; overflow-wrap: anywhere; }
 .nk-notice strong + p { margin-top: 2px; }
-.nk-notice small { display: block; margin-top: var(--space-1); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+/* App: the meta line uses text-secondary: tertiary text falls just under 4.5:1 on the tinted (warning) fills. */
+.nk-notice small { display: block; margin-top: var(--space-1); color: var(--text-secondary); font-size: 13px; line-height: 18px; }
 .nk-notice__action { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; margin-inline-start: auto; align-self: center; }
 .nk-notice.is-plain { align-items: center; }
 .nk-notice.is-plain > .nk-icon { margin-top: 0; }
@@ -216,7 +222,7 @@ body {
 /* ---------- PhaseSteps ---------- */
 .nk-steps { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); margin: 0; padding: 0; list-style: none; }
 .nk-steps li { display: flex; align-items: center; gap: var(--space-2); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
-.nk-steps li > span, .nk-steps li > button > span { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border: 1px solid var(--border-heavy); border-radius: var(--radius-pill); font-variant-numeric: tabular-nums; }
+.nk-steps li > span:not(.nk-visually-hidden), .nk-steps li > button > span { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border: 1px solid var(--border-heavy); border-radius: var(--radius-pill); font-variant-numeric: tabular-nums; }
 .nk-steps li > span .nk-icon, .nk-steps li > button > span .nk-icon { width: 14px; height: 14px; }
 .nk-steps li.is-current { color: var(--text-primary); font-weight: 500; }
 .nk-steps li.is-current > span, .nk-steps li.is-current > button > span { border-color: var(--accent); background: var(--bg-brand); }
@@ -225,7 +231,7 @@ body {
 .nk-steps li.is-error { color: var(--text-error); }
 .nk-steps li.is-error > span, .nk-steps li.is-error > button > span { border-color: currentColor; }
 /* App: PhaseSteps onSelect makes each step a button (marker + label) that returns to that phase. */
-.nk-steps li > button { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: left; }
+.nk-steps li > button { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--size-control-sm); padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: left; }
 .nk-steps li > button:hover:not(:disabled, [aria-disabled="true"]) { color: var(--text-primary); }
 
 /* ---------- Switch ---------- */
@@ -286,6 +292,19 @@ body {
 .nk-input { padding: 0 var(--space-3); }
 .nk-input::placeholder { color: var(--text-tertiary); }
 .nk-input[aria-invalid="true"] { border-color: var(--text-error); }
+/* App: a search field's clear button is the system's close icon (1.7 stroke, icon tokens) instead of Chromium's
+   glyph; Escape clears the field from the keyboard. */
+.nk-input[type="search"]::-webkit-search-cancel-button {
+  width: 16px;
+  height: 16px;
+  margin: 0 calc(-1 * var(--space-1)) 0 var(--space-2);
+  background: var(--icon-tertiary);
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='m6 6 12 12M18 6 6 18'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='m6 6 12 12M18 6 6 18'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+}
+.nk-input[type="search"]::-webkit-search-cancel-button:hover { background: var(--icon-primary); }
 .nk-field { display: grid; gap: var(--space-1); min-width: 0; }
 .nk-field > label { font-size: 14px; line-height: 20px; font-weight: 500; }
 .nk-field__row { display: flex; gap: var(--space-2); }
@@ -379,9 +398,12 @@ body {
 .nk-wordmark { display: grid; min-width: 0; }
 .nk-wordmark strong { font-size: 16px; line-height: 20px; font-weight: 600; letter-spacing: 0.045em; }
 .nk-wordmark small { overflow: hidden; color: var(--text-tertiary); font-size: 13px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+/* App: one <nav> landmark holds the scrolling groups and the pinned footer items. */
+.nk-sidebar__navigation { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .nk-sidebar__nav { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .nk-nav-group + .nk-nav-group { margin-top: var(--space-5); }
-.nk-nav-group > h2 { margin: 0; padding: 0 var(--space-3) var(--space-1); color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-weight: 500; }
+/* App: the group label is a plain label (role="group" + aria-labelledby), not an h2 before the page's h1. */
+.nk-nav-group__label { display: block; margin: 0; padding: 0 var(--space-3) var(--space-1); color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-weight: 500; }
 .nk-nav-group > div { display: grid; gap: 2px; }
 .nk-nav-item {
   position: relative;
@@ -436,9 +458,21 @@ body {
 .nk-panel--flush > .nk-panel__header { margin: 0; padding: var(--space-4) var(--space-5) var(--space-2); }
 .nk-panel__header :is(h2, h3, h4) { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
 .nk-panel__header p { flex-basis: 100%; margin: 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+/* App: in a narrow workspace the actions wrap under the description, not between the title and its description. */
+@container workspace (max-width: 640px) {
+  .nk-panel__header > p { order: 1; }
+  .nk-panel__header > :not(h2, h3, h4, p) { order: 2; }
+}
 
 /* ---------- Stat ---------- */
-.nk-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-panel); }
+.nk-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); overflow: clip; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-panel); }
+/* App: a group of two to four stats stays on one line (never 2 + 1), then stacks in a narrow workspace. :where keeps
+   the base specificity, so a surface's own column rules still win. The group clips the cells' hover fill to its
+   rounded border, and the cell buttons draw their focus ring inside. */
+.nk-stats:where(:has(> :nth-child(2):last-child)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.nk-stats:where(:has(> :nth-child(3):last-child)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.nk-stats:where(:has(> :nth-child(4):last-child)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@container workspace (max-width: 560px) { .nk-stats { grid-template-columns: minmax(0, 1fr); } }
 /* (The bundle's hairline below is reset by ".nk-stat { border: 0 }" further down, so the reference renders show
    no dividers; kept as it is to match them.) */
 .nk-stats > * + * { border-left: 1px solid var(--border-light); }
@@ -448,8 +482,7 @@ body {
 .nk-stat { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding: var(--space-4) var(--space-5); border: 0; background: transparent; color: inherit; text-align: left; }
 button.nk-stat { border-radius: 0; transition: background-color var(--duration-micro) ease; }
 button.nk-stat:hover { background: var(--bg-control-hover); }
-.nk-stats > button.nk-stat:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
-.nk-stats > button.nk-stat:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+.nk-stats > button.nk-stat:focus-visible { outline-offset: -2px; }
 .nk-stat__label { display: flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); font-size: 14px; line-height: 20px; }
 .nk-stat__label .nk-icon { width: 14px; height: 14px; color: var(--icon-tertiary); }
 button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
@@ -481,10 +514,15 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 .nk-setup-row__index .nk-icon { width: 14px; height: 14px; }
 .nk-setup-row.is-complete .nk-setup-row__index { border-color: transparent; background: var(--bg-success); color: var(--text-success); }
 .nk-setup-row.is-current .nk-setup-row__index { border-color: var(--accent); background: var(--bg-brand); color: var(--text-primary); }
-.nk-setup-row strong { display: flex; align-items: center; gap: var(--space-2); font-size: 15px; line-height: 22px; font-weight: 500; }
+.nk-setup-row strong { display: block; font-size: 15px; line-height: 22px; font-weight: 500; }
+/* App: the tag (Optional badge, a menu) follows the title's last word instead of holding a column of its own. */
+.nk-setup-row strong > * { display: inline-flex; margin-left: var(--space-2); vertical-align: middle; }
 .nk-setup-row p { max-width: 62ch; margin: 2px 0 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
 .nk-setup-row__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
-@container workspace (max-width: 640px) {
+/* App: SetupRow result, a completed step's outcome as status text (not a disabled button). */
+.nk-setup-row__result { display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--size-control-sm); color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+/* App: the actions move under the text at 760px, where two buttons would squeeze the description. */
+@container workspace (max-width: 760px) {
   .nk-setup-row { grid-template-columns: 28px minmax(0, 1fr); }
   .nk-setup-row__actions { grid-column: 2; justify-content: flex-start; }
 }
@@ -577,6 +615,11 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 .nk-hero h2 { margin: 0; font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.035em; text-wrap: balance; }
 .nk-hero p { max-width: 56ch; margin: var(--space-2) 0 var(--space-5); font-size: 15px; line-height: 22px; }
 .nk-hero__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+/* App: between 641 and 760px the art column shrinks, so the copy keeps a readable measure. */
+@container workspace (max-width: 760px) {
+  .nk-hero { grid-template-columns: minmax(0, 1fr) minmax(120px, 160px); gap: var(--space-5); padding: var(--space-6); }
+  .nk-hero > .nk-hero__art { height: 128px; }
+}
 @container workspace (max-width: 640px) {
   .nk-hero { grid-template-columns: minmax(0, 1fr); padding: var(--space-5); }
   .nk-hero > .nk-hero__art { display: none; }
@@ -701,7 +744,10 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 
 /* Hero art: the coding-cat raster is drawn on graphite, so the light theme shows the vector mark instead. */
 .nk-hero__art { position: relative; display: grid; place-items: center; height: 168px; border-radius: var(--radius-md); mix-blend-mode: lighten; background-repeat: no-repeat; background-position: 50% 58%; background-size: 175%; }
-.nk-hero__art > .nk-mark { display: none; --mark-size: 96px; transform: rotate(-7deg); }
+/* App: the tilt is on the drawing, so the focusable mark's focus ring stays upright (and rounded). The Dark hero is a
+   still raster by design; the vector cat that reacts to hover and focus shows in Light and without the raster. */
+.nk-hero__art > .nk-mark { display: none; --mark-size: 96px; border-radius: var(--radius-md); }
+.nk-hero__art > .nk-mark > svg { transform: rotate(-7deg); }
 [data-theme="light"] .nk-hero__art { background-image: none !important; mix-blend-mode: normal; }
 [data-theme="light"] .nk-hero__art > .nk-mark { display: block; }
 .nk-hero__art:not([style*="background-image"]) > .nk-mark { display: block; }

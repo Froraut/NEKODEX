@@ -27,6 +27,8 @@ export type ConnectionsCopy = {
   runtimeCheckingBody: string;
   runtimeUnavailableTitle: string;
   runtimeUnavailableBody: string;
+  runtimeAttentionTitle: string;
+  runtimeAttentionBody: string;
   webCheckingTitle: string;
   webCheckingBody: string;
   webUnavailableTitle: string;
@@ -62,6 +64,8 @@ const copy: Record<Language, ConnectionsCopy> = {
     runtimeCheckingBody: "NEKODEX is waiting for the local runtime to report that it is ready.",
     runtimeUnavailableTitle: "Local runtime unavailable",
     runtimeUnavailableBody: "Models cannot run until the local runtime is available. Activity shows the latest runtime events.",
+    runtimeAttentionTitle: "Local runtime needs attention",
+    runtimeAttentionBody: "The local runtime reported a problem, so model requests may fail until it recovers. Activity shows the latest runtime events.",
     webCheckingTitle: "Checking Web transport",
     webCheckingBody: "NEKODEX is waiting for the Web route to report that it is ready.",
     webUnavailableTitle: "Web transport unavailable",
@@ -91,6 +95,8 @@ const copy: Record<Language, ConnectionsCopy> = {
     runtimeCheckingBody: "NEKODEX ждёт, пока локальная среда сообщит о готовности.",
     runtimeUnavailableTitle: "Локальная среда недоступна",
     runtimeUnavailableBody: "Модели не смогут работать, пока локальная среда недоступна. Последние события среды показаны в разделе «События».",
+    runtimeAttentionTitle: "Локальная среда требует внимания",
+    runtimeAttentionBody: "Локальная среда сообщила о проблеме, поэтому запросы к моделям могут завершаться ошибкой, пока она не восстановится. Последние события среды показаны в разделе «События».",
     webCheckingTitle: "Проверка Web-транспорта",
     webCheckingBody: "NEKODEX ждёт, пока Web-маршрут сообщит о готовности.",
     webUnavailableTitle: "Web-транспорт недоступен",
@@ -120,6 +126,8 @@ const copy: Record<Language, ConnectionsCopy> = {
     runtimeCheckingBody: "NEKODEX 正在等待本地运行时报告已就绪。",
     runtimeUnavailableTitle: "本地运行时不可用",
     runtimeUnavailableBody: "本地运行时可用之前，模型无法运行。活动中会显示最近的运行时事件。",
+    runtimeAttentionTitle: "本地运行时需要处理",
+    runtimeAttentionBody: "本地运行时报告了问题，恢复之前模型请求可能会失败。活动中会显示最近的运行时事件。",
     webCheckingTitle: "正在检查 Web 传输",
     webCheckingBody: "NEKODEX 正在等待 Web 路由报告已就绪。",
     webUnavailableTitle: "Web 传输不可用",
@@ -149,6 +157,8 @@ const copy: Record<Language, ConnectionsCopy> = {
     runtimeCheckingBody: "NEKODEX 正在等待本機執行環境回報已就緒。",
     runtimeUnavailableTitle: "本機執行環境無法使用",
     runtimeUnavailableBody: "本機執行環境可用之前，模型無法執行。活動中會顯示最近的執行環境事件。",
+    runtimeAttentionTitle: "本機執行環境需要處理",
+    runtimeAttentionBody: "本機執行環境回報了問題，恢復之前模型請求可能會失敗。活動中會顯示最近的執行環境事件。",
     webCheckingTitle: "正在檢查 Web 傳輸",
     webCheckingBody: "NEKODEX 正在等待 Web 路由回報已就緒。",
     webUnavailableTitle: "Web 傳輸無法使用",
@@ -178,6 +188,8 @@ const copy: Record<Language, ConnectionsCopy> = {
     runtimeCheckingBody: "NEKODEX はローカルランタイムの準備完了の報告を待っています。",
     runtimeUnavailableTitle: "ローカルランタイムを利用できません",
     runtimeUnavailableBody: "ローカルランタイムが利用可能になるまでモデルは実行できません。最新のランタイムイベントはアクティビティで確認できます。",
+    runtimeAttentionTitle: "ローカルランタイムの確認が必要",
+    runtimeAttentionBody: "ローカルランタイムで問題が報告されました。回復するまでモデルへのリクエストが失敗する場合があります。最新のランタイムイベントはアクティビティで確認できます。",
     webCheckingTitle: "Web 通信を確認中",
     webCheckingBody: "NEKODEX は Web ルートの準備完了の報告を待っています。",
     webUnavailableTitle: "Web 通信を利用できません",
@@ -207,6 +219,8 @@ const copy: Record<Language, ConnectionsCopy> = {
     runtimeCheckingBody: "NEKODEX가 로컬 런타임의 준비 완료 보고를 기다리고 있습니다.",
     runtimeUnavailableTitle: "로컬 런타임을 사용할 수 없음",
     runtimeUnavailableBody: "로컬 런타임을 사용할 수 있을 때까지 모델을 실행할 수 없습니다. 최근 런타임 이벤트는 활동에서 확인할 수 있습니다.",
+    runtimeAttentionTitle: "로컬 런타임 확인 필요",
+    runtimeAttentionBody: "로컬 런타임에서 문제가 보고되었습니다. 복구될 때까지 모델 요청이 실패할 수 있습니다. 최근 런타임 이벤트는 활동에서 확인할 수 있습니다.",
     webCheckingTitle: "Web 전송 확인 중",
     webCheckingBody: "NEKODEX가 Web 경로의 준비 완료 보고를 기다리고 있습니다.",
     webUnavailableTitle: "Web 전송을 사용할 수 없음",
@@ -264,6 +278,8 @@ export function connectionActionWord(action: ConnectionAction, app: Copy, langua
     case "manage": return app.manageShort;
     case "connect": return app.connectShort;
     case "sign-in": return connectionsCopy(language).signIn;
+    // Runs the check in place (Overview) rather than naming a page.
+    case "retry": return workflowCopy(language).session.retryVerification;
     case "open": return app.overviewOpenRun;
     case "open-routing-checks": return app.openRoutingChecks;
   }
@@ -283,8 +299,11 @@ export interface WorkspaceHeadline {
   step: HeadlineStep;
   /** Verb-first label of the step's button; while waiting, the busy label ("Checking…"). */
   action: string;
-  /** An optional low-emphasis follow-up next to the step. */
-  secondary?: "activity" | "tools";
+  /**
+   * An optional low-emphasis follow-up next to the step: Activity, or the tools connection ("connect-tools" while it
+   * is not set up, "tools" to manage it).
+   */
+  secondary?: "activity" | "tools" | "connect-tools";
 }
 
 /** Title, body and next step for every WorkspaceReason: the Overview hero and the Connections status notice. */
@@ -298,7 +317,9 @@ export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language
   const words = connectionsCopy(language);
   const workflow = workflowCopy(language);
   const checking = workflow.session.checkingVerification;
-  const withNative = (body: string) => readiness.native === "ready" ? `${body} ${words.nativeAvailable}` : body;
+  // Chinese and Japanese sentences follow each other without a space.
+  const sentenceGap = language === "ja" || language === "zh-CN" || language === "zh-TW" ? "" : " ";
+  const withNative = (body: string) => readiness.native === "ready" ? `${body}${sentenceGap}${words.nativeAvailable}` : body;
   const webRepairBody = readiness.native === "ready" ? workflow.recovery.webTransportBody : app.localToolsUnavailableBody;
   // A Web problem without an eligible repair: the tools connection when it is installed, otherwise routing checks.
   const webStep: Pick<WorkspaceHeadline, "step" | "action"> = readiness.action === "open-tools"
@@ -351,13 +372,19 @@ export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language
       break;
   }
   const ready = { step: "open-workspace", action: app.openWorkspace, secondary: "activity" } as const;
+  // The runtime answers but reports a problem: the models row says Needs attention, so the headline explains it.
+  if (readiness.native === "degraded") {
+    return { title: words.runtimeAttentionTitle, body: words.runtimeAttentionBody, tone: "warning", step: "activity",
+      action: app.viewActivity };
+  }
   if (manual) return { title: app.manualSetupReady, body: app.manualSetupReadyBody, tone: "success", ...ready };
   if (readiness.tools === "ready") {
     return { title: app.setupChecksPassed, body: app.connectorAvailableNotExecuted, tone: "success", ...ready };
   }
   if (readiness.tools === "checking") return { title: words.toolsCheckingTitle, body: words.toolsCheckingBody, tone: "info", ...ready };
-  if (readiness.tools === "degraded") {
+  if (readiness.tools === "degraded" || readiness.connections.tools.key === "unavailable") {
     return { title: words.toolsAttentionTitle, body: app.localToolsUnavailableBody, tone: "warning", ...ready, secondary: "tools" };
   }
-  return { title: app.setupReadyModels, body: app.setupUseCodex, tone: "success", ...ready };
+  // Tools are optional in Automatic mode: the workspace is ready, and connecting them is the follow-up.
+  return { title: app.setupReadyModels, body: app.setupUseCodex, tone: "success", ...ready, secondary: "connect-tools" };
 }

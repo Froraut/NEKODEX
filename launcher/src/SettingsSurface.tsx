@@ -3,6 +3,7 @@ import taskControlCopy from "../electron/task-control-copy.json";
 import type { CompactionModel } from "./types";
 import { codexSettingsStatus } from "./setup-progress";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { type Copy } from "./i18n";
 import { LocaleNotice } from "./LocaleNotice";
 import { RouteDiagnostics } from "./RouteDiagnostics";
@@ -302,6 +303,16 @@ export function SettingsSurface({
   const contextChangePending = typeof pendingContext === "boolean";
   const [advancedOpen, setAdvancedOpen] = useState(contextChangePending);
   useEffect(() => { if (contextChangePending) setAdvancedOpen(true); }, [contextChangePending]);
+  // The pending-change notice leaves once the change is cancelled or applied. When its Cancel or Retry button had
+  // focus, focus moves to the Bigger Context switch it was about instead of falling to <body>.
+  const contextNoticeFocused = useRef(false);
+  const contextSwitchRow = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (contextChangePending || !contextNoticeFocused.current) return;
+    contextNoticeFocused.current = false;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    contextSwitchRow.current?.querySelector<HTMLElement>('[role="switch"]')?.focus({ preventScroll: true });
+  }, [contextChangePending]);
   const seconds = new Intl.NumberFormat(language, { style: "unit", unit: "second", unitDisplay: "short" });
   const sectionTitles: Record<SectionId, string> = {
     "settings-agent": settings.agent,
@@ -311,6 +322,7 @@ export function SettingsSurface({
     "settings-about": settings.about,
   };
   const capacityFeedback = !capacityValid ? copy.capacityInvalid.replace("{max}", String(capacity.maximum))
+    : saving("capacity") ? settings.capacitySaving
     : capacityValue !== capacity.configured ? copy.unsavedChanges : "";
 
   return (
@@ -362,7 +374,7 @@ export function SettingsSurface({
             title={copy.manualSubmitTime}
             description={copy.manualSubmitTimeBody}
             control={(
-              <Select label={copy.manualSubmitTime} disabled={locked || saving("manualSubmit")}
+              <Select label={copy.manualSubmitTime} aria-busy={saving("manualSubmit") || undefined} disabled={locked || saving("manualSubmit")}
                 value={String(snapshot.state.manualSubmitTimeoutSec ?? 120)}
                 onChange={value => void savePreference("manualSubmit", () => api!.setPreference("manualSubmitTimeoutSec", Number(value)))}
                 options={[30, 60, 120, 180, 300, 600].map(value => ({ value: String(value), label: seconds.format(value) }))} />
@@ -384,14 +396,14 @@ export function SettingsSurface({
             title={copy.webSubagents}
             description={copy.webSubagentsBody}
             control={<Switch label={copy.webSubagents} checked={snapshot.state.allowWebSubagents}
-              disabled={locked || saving("webSubagents") || tasksRunning || !snapshot.state.coreSetupComplete}
+              busy={saving("webSubagents")} disabled={locked || tasksRunning || !snapshot.state.coreSetupComplete}
               onChange={enabled => void savePreference("webSubagents", () => api!.setWebSubagents(enabled))} />}
           />
           <SettingRow
             title={copy.savedChats}
             description={copy.savedChatsBody}
             control={<Switch label={copy.savedChats} checked={snapshot.state.useSavedChats}
-              disabled={locked || saving("savedChats") || !snapshot.state.coreSetupComplete}
+              busy={saving("savedChats")} disabled={locked || !snapshot.state.coreSetupComplete}
               onChange={enabled => void savePreference("savedChats", () => api!.setUseSavedChats(enabled))} />}
           />
         </SettingsGroup>
@@ -401,7 +413,8 @@ export function SettingsSurface({
             title={appearance.title}
             description={appearance.body}
             control={(
-              <Select label={appearance.title} value={snapshot.state.appearance ?? "dark"} disabled={locked || saving("appearance")}
+              <Select label={appearance.title} value={snapshot.state.appearance ?? "dark"} aria-busy={saving("appearance") || undefined}
+                disabled={locked || saving("appearance")}
                 onChange={value => void savePreference("appearance", () => api!.setPreference("appearance", value as Appearance))}
                 options={APPEARANCE_OPTIONS.map(option => ({ value: option, label: appearance.options[option] }))} />
             )}
@@ -420,35 +433,35 @@ export function SettingsSurface({
             <SettingRow
               title={copy.launchAtLogin}
               description={copy.launchAtLoginBody}
-              control={<Switch label={copy.launchAtLogin} checked={snapshot.state.autoStart} disabled={locked || saving("autoStart")}
+              control={<Switch label={copy.launchAtLogin} checked={snapshot.state.autoStart} busy={saving("autoStart")} disabled={locked}
                 onChange={(checked) => void savePreference("autoStart", async () => (await api!.setAutostart(checked)).state)} />}
             />
           ) : null}
           <SettingRow
             title={copy.keepRunningOnClose}
             description={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody}
-            control={<Switch label={copy.keepRunningOnClose} checked={snapshot.state.keepRunningOnClose} disabled={locked || saving("keepRunning")}
+            control={<Switch label={copy.keepRunningOnClose} checked={snapshot.state.keepRunningOnClose} busy={saving("keepRunning")} disabled={locked}
               onChange={(checked) => void savePreference("keepRunning", () => api!.setPreference("keepRunningOnClose", checked))} />}
           />
           <SettingRow
             title={copy.showDuringTurns}
             description={copy.showDuringTurnsBody}
             control={<Switch label={copy.showDuringTurns} checked={snapshot.state.showBrowserDuringTurns}
-              disabled={locked || saving("showDuringTurns") || manual}
+              busy={saving("showDuringTurns")} disabled={locked || manual}
               onChange={(checked) => void savePreference("showDuringTurns", () => api!.setPreference("showBrowserDuringTurns", checked))} />}
           />
           <SettingRow
             title={network.settingTitle}
             description={network.settingBody}
             control={<Switch label={network.settingTitle} checked={snapshot.state.showNetworkIssueNotice !== false}
-              disabled={locked || saving("networkNotice")}
+              busy={saving("networkNotice")} disabled={locked}
               onChange={(checked) => void savePreference("networkNotice", () => api!.setPreference("showNetworkIssueNotice", checked))} />}
           />
           <SettingRow
             title={copy.passkeyBrowser}
             description={copy.passkeyBrowserBody}
             control={(
-              <Select label={copy.passkeyBrowser} value={snapshot.state.passkeyBrowser ?? "chrome"}
+              <Select label={copy.passkeyBrowser} value={snapshot.state.passkeyBrowser ?? "chrome"} aria-busy={saving("passkeyBrowser") || undefined}
                 disabled={locked || saving("passkeyBrowser") || operation?.status === "running"}
                 onChange={value => void savePreference("passkeyBrowser", () => api!.setPreference("passkeyBrowser", value as "chrome" | "firefox"))}
                 options={[{ value: "chrome", label: "Google Chrome" }, { value: "firefox", label: "Firefox" }]} />
@@ -482,7 +495,10 @@ export function SettingsSurface({
                     </Button>
                     <Button variant="danger" disabled={locked}
                       onClick={() => {
-                        setLogoutAccountId(null);
+                        // The confirmation gives way to the Log out button: focus moves onto it before the save marks
+                        // it busy, so it keeps focus (a focused busy button stays focusable) and the reader their place.
+                        flushSync(() => setLogoutAccountId(null));
+                        logoutTrigger.current?.focus();
                         void savePreference("logout", async () => (await api!.logoutChatGpt()).state);
                       }}>
                       {copy.logOut}
@@ -512,7 +528,7 @@ export function SettingsSurface({
                 title={copy.compactionModel}
                 description={copy.compactionModelBody}
                 control={(
-                  <Select label={copy.compactionModel}
+                  <Select label={copy.compactionModel} aria-busy={saving("compaction") || undefined}
                     disabled={locked || saving("compaction") || tasksRunning || !snapshot.state.coreSetupComplete || manual}
                     value={snapshot.compactionModel ?? "follow"}
                     onChange={next => void setCompactionModel(next === "follow" ? null : next as CompactionModel)}
@@ -528,14 +544,14 @@ export function SettingsSurface({
                 title={copy.biggerContext}
                 description={manual ? copy.manualBiggerContextUnavailable : copy.biggerContextBody}
                 control={(
-                  <div className="settings-control-inline">
+                  <div className="settings-control-inline" ref={contextSwitchRow}>
                     <Button variant="link" size="sm" onClick={showBiggerContextInfo} disabled={manual || saving("biggerContext")}>
                       {copy.setupDetails}
                     </Button>
                     <Switch
                       label={copy.biggerContext}
                       checked={pendingContext ?? snapshot.state.experimentalBiggerContext}
-                      disabled={locked || saving("biggerContext") || manual || snapshot.state.coreSetupComplete !== true}
+                      busy={saving("biggerContext")} disabled={locked || manual || snapshot.state.coreSetupComplete !== true}
                       onChange={(checked) => void setBiggerContext(checked)}
                     />
                   </div>
@@ -545,14 +561,14 @@ export function SettingsSurface({
                 title={copy.skillAttachments}
                 description={manual ? copy.manualSkillAttachmentsUnavailable : copy.skillAttachmentsBody}
                 control={<Switch label={copy.skillAttachments} checked={snapshot.state.experimentalSkillAttachments}
-                  disabled={locked || saving("skills") || manual || !snapshot.state.coreSetupComplete}
+                  busy={saving("skills")} disabled={locked || manual || !snapshot.state.coreSetupComplete}
                   onChange={(checked) => void savePreference("skills", () => api!.setSkillAttachments(checked))} />}
               />
               <SettingRow
                 title={copy.freshConversation}
                 description={copy.freshConversationBody}
                 control={<Switch label={copy.freshConversation} checked={snapshot.state.experimentalFreshConversationPerTurn}
-                  disabled={locked || saving("fresh") || manual || !snapshot.state.coreSetupComplete}
+                  busy={saving("fresh")} disabled={locked || manual || !snapshot.state.coreSetupComplete}
                   onChange={enabled => void savePreference("fresh", () => api!.setFreshConversation(enabled))} />}
               />
             </div>
@@ -563,6 +579,8 @@ export function SettingsSurface({
             {typeof pendingContext === "boolean" ? (
               <Notice
                 className="settings-context-change"
+                onFocus={() => { contextNoticeFocused.current = true; }}
+                onBlur={event => { if (event.relatedTarget) contextNoticeFocused.current = false; }}
                 tone={snapshot.state.contextChangeError ? "warning" : "info"}
                 title={snapshot.state.contextChangeApplying ? copy.contextApplying
                   : snapshot.state.contextChangeError ? copy.contextFailed : copy.contextWaiting}

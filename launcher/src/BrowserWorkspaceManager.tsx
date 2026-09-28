@@ -1,5 +1,5 @@
 import { useFeatureAction } from "./useFeatureAction";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import { Button, Icon, IconButton, Notice, StateDot } from "./design";
 import type { BrowserWorkspaceDirectorySnapshot, BrowserWorkspaceItem, Language } from "./types";
 import { browserWindowCopy } from "./browser-window-copy";
@@ -56,6 +56,35 @@ export function BrowserWorkspaceManager({
   });
 
   const account = snapshot.accounts.find(candidate => candidate.accountId === selectedAccountId);
+  const busy = disabled || pending !== null;
+
+  // When the focused panel control goes away (a closed or forgotten row, a Restore button that is no longer offered),
+  // focus moves to the row now in that place, else the panel's first available action, else the toggle, once the
+  // panel's controls are enabled again, instead of falling to <body>.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const lastFocused = useRef<{ element: HTMLElement; row: number | null } | null>(null);
+  const rememberFocus = (event: FocusEvent<HTMLDivElement>) => {
+    const element = event.target as HTMLElement;
+    const row = element.closest<HTMLElement>(".browser-windows__list > li");
+    lastFocused.current = { element, row: row && element.matches(".nk-icon-btn")
+      ? Array.prototype.indexOf.call(row.parentElement!.children, row) : null };
+  };
+  useLayoutEffect(() => {
+    const last = lastFocused.current;
+    if (!last || last.element.isConnected) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) { lastFocused.current = null; return; }
+    if (busy) return;
+    lastFocused.current = null;
+    const panel = panelRef.current;
+    const rows = panel?.querySelectorAll<HTMLElement>(".browser-windows__list > li") ?? [];
+    const row = last.row === null ? undefined : rows[Math.min(last.row, rows.length - 1)];
+    const target = row?.querySelector<HTMLElement>(".nk-icon-btn:not(:disabled)")
+      ?? (panel && !panel.hidden ? panel.querySelector<HTMLElement>(".browser-windows__actions > button:not(:disabled)") : null)
+      ?? toggleRef.current;
+    target?.focus();
+  });
 
   const run = (key: string, action: () => Promise<unknown>) => {
     if (!account) return;
@@ -68,7 +97,6 @@ export function BrowserWorkspaceManager({
   if (!account) return <div className="browser-bar__end">{children}</div>;
   const saved = account.items.filter(item => item.state === "saved").length;
   const open = account.items.filter(item => item.state === "open").length;
-  const busy = disabled || pending !== null;
   const restoreVisible = saved > 0 || (account.manifestStatus === "uninitialized" && !account.restoreAttempted);
   const restoreBlocked = busy || snapshot.total >= snapshot.maximum || Boolean(account.sessionMutation)
     || (saved > 0 && !account.items.some(item => item.state === "saved" && item.restorable));
@@ -82,7 +110,7 @@ export function BrowserWorkspaceManager({
       {/* The visible label is the accessible name; the tooltip says where it opens. */}
       <Button size="sm" icon="plus" className="browser-windows__new" disabled={newWindowBlocked}
         title={copy.newWindow} onClick={openNewWindow}>{copy.newWindowShort}</Button>
-      <Button variant="ghost" size="sm" iconEnd="chevron" className="browser-windows__toggle" title={copy.windows}
+      <Button variant="ghost" size="sm" iconEnd="chevron" className="browser-windows__toggle" title={copy.windows} ref={toggleRef}
         aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpanded(value => !value)}>
         <span className="browser-windows__label">{copy.windows}</span>{" "}
         <span className="browser-windows__count">{copy.openCount(open)}{saved > 0 ? ` · ${copy.savedCount(saved)}` : ""}</span>
@@ -94,7 +122,7 @@ export function BrowserWorkspaceManager({
         </span> : null}
       </Button>
     </div>
-    <div className="browser-windows" id={panelId} hidden={!expanded}>
+    <div className="browser-windows" id={panelId} hidden={!expanded} ref={panelRef} onFocus={rememberFocus}>
       <div className="browser-windows__notes">
         <p>{copy.scope}</p>
         <p className="browser-windows__capacity">{copy.totalCapacity(snapshot.total, snapshot.maximum)}</p>
@@ -125,7 +153,7 @@ export function BrowserWorkspaceManager({
       </div> : null}
 
       {account.items.length === 0 ? <p className="browser-windows__note">{copy.empty}</p> : <ul className="browser-windows__list">
-        {account.items.map((item, index) => <li className={item.active ? "is-active" : undefined} key={item.id} data-window-row={index}>
+        {account.items.map(item => <li className={item.active ? "is-active" : undefined} key={item.id}>
           <button type="button" className="browser-windows__item" disabled={busy || item.state !== "open"}
             onClick={() => void run(`focus-${item.id}`, () => onFocus(account.accountId, item.id))}>
             <span className="browser-windows__item-title" title={item.title || locationLabel(item)}>{item.title || locationLabel(item)}</span>
@@ -144,7 +172,9 @@ export function BrowserWorkspaceManager({
       <div className="browser-windows__footnotes">
         {snapshot.nativeTabs && open === 0 ? <p className="browser-windows__note">{copy.openFirst}</p> : null}
         {snapshot.nativeTabs && open > 0 ? <p className="browser-windows__note">{copy.hint}</p> : null}
-        {account.items.some(item => item.temporary) ? <p className="browser-windows__note">{copy.temporary}</p> : null}
+        {/* A saved Temporary Chat row already says this; an open one shows "Open now", so the note says it here. */}
+        {account.items.some(item => item.temporary && item.state === "open")
+          ? <p className="browser-windows__note">{copy.temporary}</p> : null}
       </div>
     </div>
   </>;

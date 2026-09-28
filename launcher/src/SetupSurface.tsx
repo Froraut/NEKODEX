@@ -1,6 +1,6 @@
 import { modelConnectionReadiness, setupNextStep } from "./setup-progress";
 import { ClientConnections } from "./ClientConnections";
-import { useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { type Copy } from "./i18n";
 import { RouteDiagnostics } from "./RouteDiagnostics";
 import { modelsTabConnection, type WorkspaceReadiness } from "./workspace-readiness";
@@ -13,6 +13,13 @@ import "./surfaces/connections.css";
 const api = window.codexWebLauncher;
 
 type SetupStep = "account" | "smoke" | "install" | "tools";
+
+// "Open routing checks" elsewhere (the Overview hero and Models row) opens this page: a one-shot request that the
+// page opens Troubleshooting and focuses the routing check when it mounts, so the button does what it says.
+let pendingRoutingChecks = false;
+export function requestRoutingChecks() {
+  pendingRoutingChecks = true;
+}
 
 export function SetupSurface({
   activateBrowser,
@@ -131,6 +138,11 @@ export function SetupSurface({
     // The routing check is the first control in the troubleshooting body.
     details.querySelector<HTMLButtonElement>("button")?.focus();
   };
+  useLayoutEffect(() => {
+    if (!pendingRoutingChecks) return;
+    pendingRoutingChecks = false;
+    showTroubleshooting();
+  }, []);
   const showAccountSignInChoices = () => {
     const row = signInRow.current;
     row?.scrollIntoView({ block: "center" });
@@ -257,13 +269,12 @@ export function SetupSurface({
                     {copy.existingChromeSignIn}
                   </Button>
                 ) : null}
-                <Button disabled={busy || complete.account} onClick={openLogin} size="sm" variant={variant("account")}>
-                  {browser?.authenticated
-                    ? copy.signedIn
-                    : browser?.status === "loading" ? copy.checkingSignIn : copy.stepAccount}
+                <Button disabled={busy} onClick={openLogin} size="sm" variant={variant("account")}>
+                  {browser?.status === "loading" ? copy.checkingSignIn : copy.stepAccount}
                 </Button>
               </>}
               complete={complete.account}
+              result={copy.signedIn}
               current={currentRow === "account"}
               description={browser?.authenticated && browser.accountLabel
                 ? `${copy.signedIn}: ${browser.accountLabel}`
@@ -273,10 +284,11 @@ export function SetupSurface({
               title={copy.stepAccount}
             />
             <SetupRow
-              actions={<Button disabled={busy || !browser?.authenticated || complete.smoke} onClick={smoke} size="sm" variant={variant("smoke")}>
-                {snapshot.smokePassed ? copy.smokePassed : copy.runSmoke}
+              actions={<Button disabled={busy || !browser?.authenticated} onClick={smoke} size="sm" variant={variant("smoke")}>
+                {copy.runSmoke}
               </Button>}
               complete={complete.smoke}
+              result={copy.smokePassed}
               current={currentRow === "smoke"}
               description={snapshot.state.coreSetupComplete ? copy.setupOptionalCheck : copy.stepSmokeBody}
               index={2}
@@ -285,10 +297,11 @@ export function SetupSurface({
             />
           </> : null}
           <SetupRow
-            actions={<Button disabled={installDisabled || complete.install} onClick={installAction} size="sm" variant={variant("install")}>
-              {confirmPending ? copy.confirmPicker : catalogPending ? copy.openRoutingChecks : pickerReady ? copy.done : devProfile ? copy.devInstall : copy.install}
+            actions={<Button disabled={installDisabled} onClick={installAction} size="sm" variant={variant("install")}>
+              {confirmPending ? copy.confirmPicker : catalogPending ? copy.openRoutingChecks : devProfile ? copy.devInstall : copy.install}
             </Button>}
             complete={complete.install}
+            result={copy.done}
             current={currentRow === "install"}
             description={installDescription}
             index={manualInteraction ? 1 : 3}
@@ -325,7 +338,7 @@ export function SetupSurface({
         <div className="nk-connections__more">
           <Disclosure ref={troubleshooting} title={copy.setupTroubleshooting}>
             <div className="nk-connections__stack">
-            <RouteDiagnostics disabled={busy} language={language}
+            <RouteDiagnostics disabled={busy} language={language} showDoctorLocation
               onActionError={cause => setError(messageOf(cause))}
               onExport={() => api!.exportLogs()} onViewActivity={showActivity}
               readReport={() => api!.routeDiagnostics()} />

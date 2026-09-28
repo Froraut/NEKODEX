@@ -1,9 +1,9 @@
-import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Badge, Button, cx, Icon, Mark, Notice, SettingRow as KitSettingRow, StateDot, Switch as KitSwitch, Toast, type IconName } from "./design";
 import type { Copy } from "./i18n";
 import { IconButton, useModalFocus } from "./launcher-ui";
-import { shellCopy, systemLanguage } from "./shell-copy";
+import { shellCopy, startupLanguage } from "./shell-copy";
 import { taskCenterTitle } from "./task-center-copy";
 import type { Language, Surface } from "./types";
 import { updateCopyFor } from "./update-copy";
@@ -103,8 +103,10 @@ export function TitleBar({
   // Nested surfaces add one crumb: Connections / Models and Codex route · Local tools connector.
   const nested = surface === "setup" ? copy.modelsConnectionTab : surface === "mcp" ? copy.toolsConnectionTab : null;
   const trail = [copy.product, surfaceLabel, ...(nested ? [nested] : [])];
+  const header = useRef<HTMLElement>(null);
+  useStatusPillFit(header, `${language}|${trail.join("/")}|${devProfile}|${sidebarOpen}`);
   return (
-    <header className="nk-titlebar">
+    <header className="nk-titlebar" ref={header}>
       {sidebarOpen ? null : (
         <div className="nk-titlebar__lead">
           <WindowControlsReserve className="nk-titlebar__controls" />
@@ -134,6 +136,40 @@ export function TitleBar({
       )}
     </header>
   );
+}
+
+/**
+ * The Local workspace pill gives way before the location: once the current crumb or the pill's own label would be
+ * cut, the pill shows only its globe (the label stays in the DOM as its text and in the tooltip); it shows the
+ * label again only when there is room for all of it, so it never flickers between the two.
+ */
+function useStatusPillFit(header: RefObject<HTMLElement | null>, content: string) {
+  useLayoutEffect(() => {
+    const bar = header.current;
+    const pill = bar?.querySelector<HTMLElement>(".nk-titlebar__status");
+    const label = pill?.querySelector<HTMLElement>(".nk-titlebar__status-label");
+    const trail = bar?.querySelector<HTMLElement>(".nk-titlebar__trail");
+    if (!bar || !pill || !label || !trail) return;
+    const clipped = (element: Element | null) => Boolean(element && element.scrollWidth > element.clientWidth);
+    const fit = () => {
+      const current = trail.querySelector('li[aria-current="page"]');
+      if (!pill.classList.contains("is-icon-only")) {
+        if (clipped(current) || clipped(label)) pill.classList.add("is-icon-only");
+        return;
+      }
+      // Icon only: the pill takes the label back when the free room before it holds the label, the label's gap and
+      // the pill's wider padding (2 x 5px), with a pixel to spare.
+      const room = pill.getBoundingClientRect().left - trail.getBoundingClientRect().right - 12;
+      if (!clipped(current) && room >= label.scrollWidth + 8 + 10 + 1) pill.classList.remove("is-icon-only");
+    };
+    // Start from the full pill for new content (another page, language or window state).
+    pill.classList.remove("is-icon-only");
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(bar);
+    observer.observe(trail);
+    return () => observer.disconnect();
+  }, [content]);
 }
 
 /** A group of nav items. The label is not a heading (the page's h1 comes first in the outline); it names the group. */
@@ -264,9 +300,9 @@ export function BiggerContextRecommendation({
 }
 
 /** Before the first snapshot. `language`: the saved language when known, else the system language. */
-export function LaunchLoading({ language = systemLanguage() }: { language?: Language }) {
+export function LaunchLoading({ language = startupLanguage() }: { language?: Language }) {
   return (
-    <main aria-busy="true" className="nk-launch">
+    <main aria-busy="true" className="nk-launch" lang={language}>
       <span aria-hidden="true" className="nk-launch__drag" />
       <Mark size={48} />
       <span aria-hidden="true" className="nk-launch__line" />
@@ -276,14 +312,14 @@ export function LaunchLoading({ language = systemLanguage() }: { language?: Lang
 }
 
 /** The launcher could not start: what failed (the heading), the cause, and a retry. */
-export function FatalMessage({ language = systemLanguage(), message, onRetry, retryLabel }: {
+export function FatalMessage({ language = startupLanguage(), message, onRetry, retryLabel }: {
   language?: Language;
   message: string;
   onRetry?: () => void;
   retryLabel?: string;
 }) {
   return (
-    <main className="nk-launch">
+    <main className="nk-launch" lang={language}>
       <span aria-hidden="true" className="nk-launch__drag" />
       <Mark size={48} />
       <h1>{shellCopy(language).startupFailed}</h1>

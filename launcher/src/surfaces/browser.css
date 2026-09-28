@@ -88,6 +88,7 @@
 /* Tabs keep their content width; inactive titles stop at a readable length (the full title is the tooltip) and the
    strip scrolls beyond that. */
 .browser-tabs__tab {
+  position: relative;
   display: flex;
   flex: none;
   align-items: center;
@@ -119,18 +120,28 @@
 /* The strip scrolls (overflow clips outer rings), so its controls draw their focus ring inside. */
 .browser-tabs__select:focus-visible, .browser-tabs__close:focus-visible { outline-offset: -2px; }
 /* The small (24px) kit icon button inside a 32px tab, with a 32px hit area (the DS minimum) that stays inside the
-   tab. Close shows on the active tab, on hover and on focus; stopping a running turn and a closing spinner stay
-   visible. Hidden, it takes no space, so every inactive tab keeps the same padding as the ChatGPT tab. */
+   tab. The active tab, a running turn (stop) and a closing spinner keep it in the row. On other tabs it takes no
+   space, so every tab keeps the ChatGPT tab's padding: it appears over the tab's trailing edge on hover and focus
+   (the title fades out under it) without moving the tabs after it. */
 .nk-icon-btn.browser-tabs__close { position: relative; margin-right: var(--space-1); }
 .nk-icon-btn.browser-tabs__close::before { position: absolute; inset: calc(-1 * var(--space-1)); content: ""; }
-.browser-tabs__tab:not(.is-active, .is-running, .is-closing, :hover, :focus-within) > .nk-icon-btn.browser-tabs__close {
-  width: 0;
-  margin-right: 0;
-  overflow: hidden;
+.browser-tabs__tab:not(.is-active, .is-running, .is-closing) > .browser-tabs__select { padding-right: var(--space-3); }
+.browser-tabs__tab:not(.is-active, .is-running, .is-closing) > .nk-icon-btn.browser-tabs__close {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  margin: 0;
   opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-micro) ease;
 }
-.browser-tabs__tab:not(.is-active, .is-running, .is-closing, :hover, :focus-within) > .nk-icon-btn.browser-tabs__close::before { content: none; }
-.browser-tabs__tab:not(.is-active, .is-running, .is-closing, :hover, :focus-within) > .browser-tabs__select { padding-right: var(--space-3); }
+.browser-tabs__tab:not(.is-active, .is-running, .is-closing):is(:hover, :focus-within) > .nk-icon-btn.browser-tabs__close {
+  opacity: 1;
+  pointer-events: auto;
+}
+.browser-tabs__tab:has(> .browser-tabs__close):not(.is-active, .is-running, .is-closing):is(:hover, :focus-within) > .browser-tabs__select {
+  mask-image: linear-gradient(to left, transparent var(--space-8), #000 calc(var(--space-8) + var(--space-4)));
+}
 .browser-tabs__tab.is-running > .browser-tabs__close:hover:not(:disabled) { background: var(--bg-error); color: var(--text-error); }
 .browser-tabs__spinner {
   width: 10px;
@@ -357,8 +368,10 @@
 .browser-slot__underlay {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   color: var(--text-tertiary);
   font-size: 14px;
   line-height: 20px;

@@ -191,7 +191,8 @@ export function Onboarding({
           {failure ? <Notice title={localized.error} tone="error">{localizeLauncherError(localized, failure)}</Notice> : null}
         </div>
       ) : null}
-      <footer className="nk-onboarding__footer" ref={footerRef}>
+      {/* data-toast-floor: a launcher toast raised meanwhile stacks above this footer instead of covering Continue. */}
+      <footer className="nk-onboarding__footer" data-toast-floor="" ref={footerRef}>
         <div className="nk-onboarding__back">
           {!isLanguage ? (
             <Button

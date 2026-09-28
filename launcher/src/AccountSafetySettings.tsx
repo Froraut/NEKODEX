@@ -102,6 +102,8 @@ export function AccountSafetySettings({ id, language, safety, resumeRequired = f
   useEffect(() => { onStateChange?.(formState); }, [formState, onStateChange]);
   // Controls are disabled one by one (not through <fieldset disabled>) so a focused control keeps focus while saving.
   const locked = disabled || saving;
+  // A blocked form says why it is blocked; the error styling belongs to the error text only.
+  const showError = !blockedReason && (!valid || failed);
   // The pacing line already names the hold's end time; print "Paused until" only for a different deadline.
   const cooldownShown = pacingStatus?.retryAt != null && Math.abs(pacingStatus.retryAt - safety.cooldownUntil) < 60_000;
   return <section className="accounts-details__section accounts-controls__section" aria-labelledby={`${statusId}-title`}>
@@ -152,7 +154,7 @@ export function AccountSafetySettings({ id, language, safety, resumeRequired = f
             onClick={() => { if (!disabled && !savingRef.current) resume(); }}>{copy.pacingResume}</Button> : null}
         </div>
       </fieldset>
-      <p id={statusId} className={cx("accounts-form__status nk-type-caption", (!valid || failed) && "is-error")} role={!valid || failed ? "alert" : "status"}>
+      <p id={statusId} className={cx("accounts-form__status nk-type-caption", showError && "is-error")} role={showError ? "alert" : "status"}>
         {blockedReason || (!valid ? copy.accountSafetyInvalid : failed ? copy.accountFormFailed
           : saving ? copy.accountFormSaving : dirty ? copy.accountFormUnsaved : copy.accountFormSaved)}
       </p>

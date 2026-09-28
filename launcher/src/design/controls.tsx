@@ -19,6 +19,9 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   /**
    * Spinner, aria-busy="true" and disabled. A caller's own aria-busy is kept when busy is not set. A button that is
    * focused when it turns busy or disabled keeps focus (aria-disabled, clicks ignored) until focus leaves it.
+   * The button keeps its width: the spinner takes the leading icon's place, or, when there is no icon and the label
+   * stays the same, covers the label (still the accessible name). A caller that switches to a progress label
+   * ("Checking…") gets the spinner beside it.
    */
   busy?: boolean;
   block?: boolean;
@@ -27,12 +30,16 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 export function Button({ variant = "secondary", size = "md", icon, iconEnd, busy, block, className, children, type, disabled, onClick, onFocus, onBlur, ...rest }: ButtonProps) {
   const guard = useFocusSafeDisabled(Boolean(disabled || busy), { onFocus, onBlur });
+  // The label the button had before it turned busy (none when it mounted busy).
+  const idleLabel = useRef<ReactNode>(busy ? undefined : children);
+  if (!busy) idleLabel.current = children;
+  const coverLabel = Boolean(busy) && !icon && typeof children === "string" && children === idleLabel.current;
   return (
     <button
       {...rest}
       aria-busy={busy ? "true" : rest["aria-busy"]}
       aria-disabled={guard.soft ? "true" : rest["aria-disabled"]}
-      className={cx("nk-btn", `nk-btn--${variant}`, size === "sm" && "nk-btn--sm", block && "nk-btn--block", className)}
+      className={cx("nk-btn", `nk-btn--${variant}`, size === "sm" && "nk-btn--sm", block && "nk-btn--block", coverLabel && "is-busy-cover", className)}
       disabled={guard.disabled}
       onBlur={guard.onBlur}
       onClick={guard.soft ? blockActivation : onClick}

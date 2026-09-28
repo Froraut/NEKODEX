@@ -26,7 +26,7 @@ const en = {
   restartMac: "No DMG installation is needed.",
   downloadRemaining: "About {duration} remaining in download",
   transferred: "{done} of {total}",
-  progress: "Download progress", verifyProgress: "Verification progress", steps: "Update steps",
+  progress: "Download progress", verifyProgress: "Verification progress", steps: "Update steps", stepComplete: "completed", stepFailed: "failed",
   source: "Source: Froraut/NEKODEX on GitHub",
 };
 type UpdateCopy = { [K in keyof typeof en]: string };
@@ -55,7 +55,7 @@ const copies: Record<Language, UpdateCopy> = {
     restartMac: "Устанавливать DMG вручную не нужно.",
     downloadRemaining: "До конца загрузки примерно {duration}",
     transferred: "{done} из {total}",
-    progress: "Ход загрузки", verifyProgress: "Ход проверки", steps: "Этапы обновления",
+    progress: "Ход загрузки", verifyProgress: "Ход проверки", steps: "Этапы обновления", stepComplete: "выполнено", stepFailed: "ошибка",
     source: "Источник: Froraut/NEKODEX на GitHub",
   },
   en,
@@ -81,7 +81,7 @@ const copies: Record<Language, UpdateCopy> = {
     restartMac: "无需手动安装 DMG。",
     downloadRemaining: "下载预计还需 {duration}",
     transferred: "{done} / {total}",
-    progress: "下载进度", verifyProgress: "验证进度", steps: "更新步骤",
+    progress: "下载进度", verifyProgress: "验证进度", steps: "更新步骤", stepComplete: "已完成", stepFailed: "失败",
     source: "来源：GitHub 上的 Froraut/NEKODEX",
   },
   "zh-TW": {
@@ -106,7 +106,7 @@ const copies: Record<Language, UpdateCopy> = {
     restartMac: "無需手動安裝 DMG。",
     downloadRemaining: "下載預計還需 {duration}",
     transferred: "{done} / {total}",
-    progress: "下載進度", verifyProgress: "驗證進度", steps: "更新步驟",
+    progress: "下載進度", verifyProgress: "驗證進度", steps: "更新步驟", stepComplete: "已完成", stepFailed: "失敗",
     source: "來源：GitHub 上的 Froraut/NEKODEX",
   },
   ja: {
@@ -133,7 +133,7 @@ const copies: Record<Language, UpdateCopy> = {
     restartMac: "DMG の手動インストールは不要です。",
     downloadRemaining: "ダウンロード完了まで約 {duration}",
     transferred: "{done} / {total}",
-    progress: "ダウンロードの進行状況", verifyProgress: "検証の進行状況", steps: "アップデートの手順",
+    progress: "ダウンロードの進行状況", verifyProgress: "検証の進行状況", steps: "アップデートの手順", stepComplete: "完了", stepFailed: "失敗",
     source: "配信元：GitHub の Froraut/NEKODEX",
   },
   ko: {
@@ -160,7 +160,7 @@ const copies: Record<Language, UpdateCopy> = {
     restartMac: "DMG를 직접 설치할 필요는 없습니다.",
     downloadRemaining: "다운로드 완료까지 약 {duration} 남음",
     transferred: "{total} 중 {done}",
-    progress: "다운로드 진행률", verifyProgress: "검증 진행률", steps: "업데이트 단계",
+    progress: "다운로드 진행률", verifyProgress: "검증 진행률", steps: "업데이트 단계", stepComplete: "완료됨", stepFailed: "실패",
     source: "출처: GitHub의 Froraut/NEKODEX",
   },
 };

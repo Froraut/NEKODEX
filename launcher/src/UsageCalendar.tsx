@@ -130,7 +130,7 @@ export function UsageCalendar({ report: visible, copy, text, language }: { repor
   const totalLabel = web ? copy.usageWebTotal : copy.usageNativeTotal;
   // The toggle sits with the legend, right under the grid it tabulates (not in the header, where it would wrap
   // between the title and the summary in a narrow workspace).
-  const toggle = <Button variant="ghost" size="sm" aria-expanded={showTable} aria-controls={showTable ? tableId : undefined}
+  const toggle = <Button variant="ghost" size="sm" className="usage-toggle" iconEnd="chevron" aria-expanded={showTable} aria-controls={showTable ? tableId : undefined}
     onClick={() => setShowTable(value => !value)}>{showTable ? text.hideDailyTable : text.showDailyTable}</Button>;
   return <Panel headingLevel={3} titleId="usage-calendar-title" title={copy.usageCalendar} className="usage-calendar"
     description={usageCalendarSummary(text, web, number(visible.metrics.total, language), number(activeDays, language), visible.period.days, number(visible.period.days, language))}>

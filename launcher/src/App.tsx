@@ -8,7 +8,7 @@ import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
 import { IconButton, ContentSurface, messageOf } from './launcher-ui';
-import { runtimeCapabilities, currentToolProof } from './launcher-readiness';
+import { currentToolProof } from './launcher-readiness';
 
 import { taskCenterSubtitle, taskCenterTitle } from './task-center-copy';
 import { QueueControls } from './QueueControls';
@@ -22,13 +22,14 @@ import { updateCopyFor } from "./update-copy";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { copyFor, localizeLauncherError, type Copy } from "./i18n";
 
-import { deriveWorkspaceReadiness } from "./workspace-readiness";
+import { deriveWorkspaceReadiness, workspaceReadinessInput } from "./workspace-readiness";
+import { connectionStatusWord } from "./connections-copy";
 import { workflowCopy } from "./workflow-copy";
 import { useNetworkIssueDismissalReset } from "./NetworkIssueNotice";
 import { ActionDot, BiggerContextRecommendation, COMPACT_SIDEBAR_QUERY, ErrorToast, FatalMessage, LaunchLoading, SidebarGroup, SidebarItem, TitleBar, useCompactSidebarDrawer } from "./AppShell";
 import { useUpdateControls } from "./useUpdateControls";
 import { useAppliedAppearance } from "./theme";
-import { shellCopy } from "./shell-copy";
+import { rememberLanguage, shellCopy, startupLanguage } from "./shell-copy";
 
 import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, Language, LauncherLifecycle as LifecycleProjection, LauncherSnapshot, LauncherState, LogRecord, OperationState, ProModelVersion, Surface } from "./types";
 
@@ -73,6 +74,9 @@ export function App() {
   const locale = useLocaleCopy(requestedLanguage);
   const documentLanguage = locale.language;
   const hasPresentedLocale = useRef(false);
+  // Onboarding hands over to the workspace: its first page takes the focus the Finish button had.
+  const sawOnboarding = useRef(false);
+  if (snapshot && !snapshot.state.onboardingComplete) sawOnboarding.current = true;
   const currentLanguage = useRef(documentLanguage);
   currentLanguage.current = documentLanguage;
   // Clears only the catalog alert this code raised; a later unrelated error stays visible.
@@ -169,7 +173,9 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.lang = documentLanguage;
-  }, [documentLanguage]);
+    // The next launch (and its startup-failure screen) opens in the language presented now.
+    if (snapshot?.state.language && !locale.pending) rememberLanguage(documentLanguage);
+  }, [documentLanguage, snapshot?.state.language, locale.pending]);
 
   useEffect(() => {
     if (!api) return;
@@ -304,7 +310,9 @@ export function App() {
         setError(latestOperation.message);
       } else if (latestOperation?.status === "failed"
         && latestOperation.name !== "mcp-verification"
-        && latestOperation.name !== "catalog-verification") {
+        && latestOperation.name !== "catalog-verification"
+        // As in the live listener: the sign-in guide owns terminal import errors and their retry actions.
+        && latestOperation.name !== "existing-chrome-login") {
         setError(latestOperation.message);
       }
       initialized = true;
@@ -369,9 +377,9 @@ export function App() {
   if (!api) return <FatalMessage language="en" message="Launcher IPC is unavailable." />;
   if (!snapshot && startupError) return (
     <FatalMessage
-      language={documentLanguage}
-      message={localizeLauncherError(copyFor(documentLanguage), startupError)}
-      retryLabel={copyFor(documentLanguage).retry}
+      language={startupLanguage()}
+      message={localizeLauncherError(copyFor(startupLanguage()), startupError)}
+      retryLabel={shellCopy(startupLanguage()).tryAgain}
       onRetry={() => {
         setStartupError(null);
         setStartupAttempt((attempt) => attempt + 1);
@@ -406,6 +414,7 @@ export function App() {
         ) : (
           <LauncherShell
             browser={browser}
+            focusPageOnMount={sawOnboarding.current}
             catalogFailure={catalogFailure}
             error={error}
             copy={copy}
@@ -430,6 +439,7 @@ export function App() {
 
 function LauncherShell({
   browser,
+  focusPageOnMount,
   catalogFailure,
   error,
   copy,
@@ -446,6 +456,8 @@ function LauncherShell({
   updatePanelRequest,
 }: {
   browser: BrowserState | null;
+  /** Focus the first page's heading once it renders (the shell replaces onboarding, which had the focus). */
+  focusPageOnMount: boolean;
   catalogFailure: string | null;
   error: string | null;
   copy: Copy;
@@ -480,19 +492,8 @@ function LauncherShell({
   const browserAuthenticationStatus = browser?.authenticationStatus
     ?? (browser?.authenticated ? "verified"
       : browser?.status === "signed-out" ? "signed-out" : "unknown");
-  const readiness = deriveWorkspaceReadiness({
-    manual: manualInteraction,
-    development: devProfile,
-    authenticationStatus: manualInteraction ? "verified" : browserAuthenticationStatus,
-    smokePassed: snapshot.smokePassed,
-    installed: snapshot.state.coreSetupComplete === true,
-    catalogUnavailable: Boolean(catalogFailure),
-    catalogVerified: snapshot.state.codexCatalogVerified === true,
-    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
-    toolsVerified: toolProof,
-    runtime: { ...(runtimeCapabilities(snapshot) ?? {}), transitionActive: Boolean(snapshot.lifecycle?.transition) },
-  });
+  // The same readiness input as Overview and Connections, so the sidebar, the rows and the tabs agree.
+  const readiness = deriveWorkspaceReadiness(workspaceReadinessInput({ snapshot, browser, catalogFailure, toolsVerified: toolProof }));
   const interactionSetupComplete = modelReadiness === "available" && (!manualInteraction || toolProof);
   const firstRunZeroRiskSetup = snapshot.state.browserInteractionMode === "manual"
     && snapshot.state.coreSetupComplete !== true;
@@ -618,14 +619,23 @@ function LauncherShell({
   }, [browserSlot, browserSurfaceActive, enqueueBrowserSurface, setError]);
 
   // The rail's open/collapsed choice on wide windows, kept while the window is narrow (where the rail is a closed
-  // drawer) and restored when it widens again.
+  // drawer) and restored when it widens again; a drawer that is open when the window widens stays open as the rail.
   const desktopSidebarOpen = useRef(true);
+  const railState = useRef({ compact: compactSidebar, open: sidebarOpen });
+  railState.current = { compact: compactSidebar, open: sidebarOpen };
   useEffect(() => {
     const media = window.matchMedia(COMPACT_SIDEBAR_QUERY);
     const apply = () => {
-      const open = !media.matches && desktopSidebarOpen.current;
-      // The focused toggle is replaced when the rail opens or closes: focus follows to its counterpart.
-      if (document.activeElement === sidebarToggle.current) toggleFocusPending.current = true;
+      const wide = !media.matches;
+      if (wide && railState.current.compact && railState.current.open) desktopSidebarOpen.current = true;
+      const open = wide && desktopSidebarOpen.current;
+      // The focused toggle is replaced when the rail opens or closes, and a rail that closes takes its focused item
+      // with it: focus follows to the toggle that shows it again.
+      const active = document.activeElement;
+      if (open !== railState.current.open
+        && (active === sidebarToggle.current || (!open && active instanceof Node && sidebar.current?.contains(active)))) {
+        toggleFocusPending.current = true;
+      }
       setCompactSidebar(media.matches);
       setSidebarOpen(open);
     };
@@ -691,10 +701,11 @@ function LauncherShell({
 
   // Each surface remounts its scroller (key={surface}). When the control that navigated was on the old page, focus
   // fell to <body>: hand it to the new page's h1 (once a deferred page has rendered it), else the page region. A nav
-  // item, a tab that restores its own focus, or anything the user focused meanwhile keeps focus.
+  // item, a tab that restores its own focus, or anything the user focused meanwhile keeps focus. The same hand-off
+  // runs once on mount when the shell replaces onboarding.
   const workspace = useRef<HTMLElement>(null);
   const drawerNavigation = useRef(false);
-  const shownSurface = useRef(surface);
+  const shownSurface = useRef<Surface | null>(focusPageOnMount ? null : surface);
   useLayoutEffect(() => {
     if (shownSurface.current === surface) return;
     shownSurface.current = surface;
@@ -746,7 +757,12 @@ function LauncherShell({
   const shell = shellCopy(language);
   // Live browser runs, as counted on Overview (Active browser runs).
   const runningTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)).length ?? 0;
-  const browserAttention = needsBrowser ? "required" : browser?.status === "error" ? "error" : null;
+  // The Browser item reports the session with the Overview row's word and tone: sign-in needed (pulsing) and
+  // verification unavailable (amber, steady; not an error), else a browser error, else the running count.
+  const sessionConnection = readiness.connections.session;
+  const browserAttention = needsBrowser ? "required"
+    : sessionConnection.key === "verification-unavailable" ? "warning"
+      : browser?.status === "error" ? "error" : null;
   const connectionsAttention = needsSetup ? "required" : mcpOptional ? "optional" : null;
   const updateReady = snapshot.update.status === "available";
 
@@ -802,13 +818,15 @@ function LauncherShell({
               active={surface === "browser"}
               badge={browserAttention === "required"
                 ? <ActionDot pulse tone="required" />
-                : browserAttention === "error"
-                  ? <ActionDot tone="error" />
-                  : runningTabs || null}
+                : browserAttention === "warning" ? <ActionDot tone="required" />
+                  : browserAttention === "error"
+                    ? <ActionDot tone="error" />
+                    : runningTabs || null}
               icon="browser"
               label={copy.browser}
               onClick={() => navigateSurface("browser")}
-              status={browserAttention === "required" ? shell.notConnected
+              status={browserAttention === "required" || browserAttention === "warning"
+                ? connectionStatusWord(sessionConnection, copy, language)
                 : browserAttention === "error" ? shell.needsAttention
                   : runningTabs ? shell.running(runningTabs) : undefined}
             />
@@ -866,6 +884,7 @@ function LauncherShell({
         />
         <main className="nk-shell__content workspace" ref={workspace}>
           {snapshot.state.launcherRestartRequired ? (
+            <div className="nk-shell__notice-row">
             <Notice
               action={(
                 <Button busy={restartPending} disabled={updateBusy || transitionBusy}
@@ -887,6 +906,7 @@ function LauncherShell({
             >
               {copy.launcherRuntimeRestartBody}
             </Notice>
+            </div>
           ) : null}
           <div
             className="nk-shell__scroll"
@@ -937,6 +957,11 @@ function LauncherShell({
                 setError={setError}
                 networkNoticeMuted={networkNoticeMuted}
                 onMuteNetworkNotice={muteNetworkNotice}
+                onOpenConnections={() => {
+                  setMcpTargetMode(null);
+                  setMcpReturnAccountId(null);
+                  navigateSurface("mcp");
+                }}
               />
             ) : null}
             {surface === "setup" ? (
@@ -995,7 +1020,7 @@ function LauncherShell({
               state={snapshot.update} busy={updateBusy} blocked={updateBlocked} checking={updateCheckBusy}
               cooldown={updateCheckCooldown} error={updateError} transitionBusy={transitionBusy}
               onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()}
-              cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} /> : null}
+              cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} platform={snapshot.platform} /> : null}
             {surface === "settings" ? (
               <SettingsSurface loadCopy={copy}
                 browser={browser}
@@ -1016,6 +1041,7 @@ function LauncherShell({
                 updateProModelVersion={updateProModelVersion}
                 updateCompactionModel={updateCompactionModel}
                 showBiggerContextInfo={() => setBiggerContextRecommendationOpen(true)}
+                showActivity={() => navigateSurface("activity")}
                 updateState={updateState}
               />
             ) : null}

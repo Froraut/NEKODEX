@@ -42,7 +42,7 @@ function useTransferReading(target: Reading, enabled: boolean): Reading {
   return reading;
 }
 
-/** Decimal byte units (as macOS and Windows Explorer show sizes), formatted and localized by Intl. */
+/** Decimal (SI) byte units, as macOS shows file sizes; Intl formats and localizes the number and the unit. */
 const byteUnits = [["gigabyte", 1e9], ["megabyte", 1e6], ["kilobyte", 1e3]] as const;
 
 /** "31 kB", "84.1 MB", "1.25 GB" (or per second): the unit follows the size, so small transfers never read 0.0. */

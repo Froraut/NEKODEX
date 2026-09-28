@@ -140,7 +140,7 @@ function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language
   ];
   if (!failureValue && !malformedReceipt && catalogStatus === "observed" && report.catalog.lastSuccessfulAt) {
     const date = new Date(report.catalog.lastSuccessfulAt);
-    if (Number.isFinite(date.getTime())) rows.push({ label: copy.last, value: new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "medium" }).format(date) });
+    if (Number.isFinite(date.getTime())) rows.push({ label: copy.last, value: new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(date) });
   }
   const messages: Record<string, string> = {
     "custom-provider": copy.custom, "catalog-override": copy.override, "route-mismatch": copy.routeMismatch,
@@ -150,15 +150,25 @@ function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language
     "provider-invalid": copy.providerProblem, "integration-unreadable": copy.integrationProblem,
     "integration-recovery-pending": copy.recoveryPending,
   };
-  return { rows, catalogFailed: Boolean(failureValue),
-    guidance: [...new Set(report.issueCodes.filter(code => Object.hasOwn(messages, code)).map(code => messages[code]!))],
-    catalogBody: failureValue ? failureCopy.routingCatalogFailureBody : malformedReceipt ? copy.unavailableBody
-      : catalogStatus === "observed" ? copy.observedBody : catalogStatus === "waiting" ? copy.waitingBody : copy.unavailableBody };
+  const guidance = [...new Set(report.issueCodes.filter(code => Object.hasOwn(messages, code)).map(code => messages[code]!))];
+  const catalogBody = failureValue ? failureCopy.routingCatalogFailureBody : malformedReceipt ? copy.unavailableBody
+    : catalogStatus === "observed" ? copy.observedBody : catalogStatus === "waiting" ? copy.waitingBody : copy.unavailableBody;
+  // Messages whose next step is Doctor (which lives in Settings, not next to this check on Connections).
+  const doctorMessages = new Set([copy.unavailableBody, copy.routeMismatch, copy.drift, copy.integrationProblem]);
+  return { rows, catalogFailed: Boolean(failureValue), guidance, catalogBody,
+    mentionsDoctor: doctorMessages.has(catalogBody) || guidance.some(message => doctorMessages.has(message)) };
 }
 
-function RouteDiagnosticsResult({ report, language, onActionError, onExport, onViewActivity }: {
+/** Where Doctor lives, for places that show this check away from it: "Run doctor: Settings → Diagnostics". */
+function doctorLocation(language: Language) {
+  const app = copyFor(language);
+  return `${app.runDoctor}: ${app.settings} → ${app.diagnostics}`;
+}
+
+function RouteDiagnosticsResult({ report, language, showDoctorLocation, onActionError, onExport, onViewActivity }: {
   report: RouteDiagnosticsReport;
   language: Language;
+  showDoctorLocation: boolean;
   onActionError?: (error: unknown) => void;
   onExport?: () => Promise<unknown>;
   onViewActivity?: () => void;
@@ -166,8 +176,13 @@ function RouteDiagnosticsResult({ report, language, onActionError, onExport, onV
   const copy = routeDiagnosticsCopy(language);
   const appCopy = copyFor(language);
   const view = routeDiagnosticsView(report, language);
+  // The facts come first: the failure notice and the guidance below them refer to "the routing details above".
   return (
     <div className="nk-route-check__result" aria-live="polite">
+      <p>{copy.scope}</p>
+      <dl className="nk-route-check__facts">
+        {view.rows.map(row => <div key={row.label}><dt>{row.label}</dt><dd className={row.path ? "is-path" : undefined}>{row.value}</dd></div>)}
+      </dl>
       {view.catalogFailed ? (
         <Notice title={<span id="route-catalog-failure">{appCopy.catalogUnavailable}</span>} tone="error">
           {view.catalogBody}
@@ -178,20 +193,18 @@ function RouteDiagnosticsResult({ report, language, onActionError, onExport, onV
             </Button> : null}
           </span> : null}
         </Notice>
-      ) : null}
-      <p>{copy.scope}</p>
-      <dl className="nk-route-check__facts">
-        {view.rows.map(row => <div key={row.label}><dt>{row.label}</dt><dd className={row.path ? "is-path" : undefined}>{row.value}</dd></div>)}
-      </dl>
-      {!view.catalogFailed ? <p>{view.catalogBody}</p> : null}
+      ) : <p>{view.catalogBody}</p>}
       {view.guidance.length ? <EventList items={view.guidance.map(message => ({ id: message, level: "warning" as const, text: message }))} /> : null}
+      {showDoctorLocation && view.mentionsDoctor ? <p>{doctorLocation(language)}</p> : null}
     </div>
   );
 }
 
-export function RouteDiagnostics({ language, disabled = false, onActionError, onExport, onViewActivity, readReport }: {
+export function RouteDiagnostics({ language, disabled = false, showDoctorLocation = false, onActionError, onExport, onViewActivity, readReport }: {
   language: Language;
   disabled?: boolean;
+  /** Name where Doctor lives when a message points to it (the check is shown away from Settings). */
+  showDoctorLocation?: boolean;
   onActionError?: (error: unknown) => void;
   onExport?: () => Promise<unknown>;
   onViewActivity?: () => void;
@@ -221,8 +234,9 @@ export function RouteDiagnostics({ language, disabled = false, onActionError, on
         description={copy.body}
         title={copy.title}
       />
-      {failed ? <Notice tone="error">{copy.failed}</Notice> : null}
-      {report ? <RouteDiagnosticsResult report={report} language={language}
+      {failed ? <Notice tone="error">{copy.failed}{showDoctorLocation
+        ? <span className="nk-connections__line">{doctorLocation(language)}</span> : null}</Notice> : null}
+      {report ? <RouteDiagnosticsResult report={report} language={language} showDoctorLocation={showDoctorLocation}
         onActionError={onActionError} onExport={onExport} onViewActivity={onViewActivity} /> : null}
     </section>
   );

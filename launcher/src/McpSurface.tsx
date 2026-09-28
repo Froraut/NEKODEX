@@ -509,11 +509,13 @@ export function McpSurface({
 
           {guideMedia ? <Disclosure ref={guide} title={copy.guideVideo}
             onToggle={open => { if (!open) guide.current?.querySelector("video")?.pause(); }}>
-            <TutorialVideo
-              copy={copy}
-              label={`${copy.guideVideo}: ${steps[step]!.title}`}
-              src={guideMedia}
-            />
+            <div className="nk-connections__disclosure-content">
+              <TutorialVideo
+                copy={copy}
+                label={`${copy.guideVideo}: ${steps[step]!.title}`}
+                src={guideMedia}
+              />
+            </div>
           </Disclosure> : null}
         </div>
       </div>

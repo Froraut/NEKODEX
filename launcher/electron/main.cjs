@@ -635,12 +635,17 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
   return window;
 }
 
+// The renderer paints its first frame in the theme the window background already has (?theme=), until it
+// remembers the appearance it applied itself (renderer theme-boot.ts). The query is not part of the trusted URL.
 async function loadRenderer(window) {
+  const theme = resolvedAppTheme();
   if (isDev) {
-    await window.loadURL(process.env.VITE_DEV_SERVER_URL);
+    const url = new URL(process.env.VITE_DEV_SERVER_URL);
+    url.searchParams.set("theme", theme);
+    await window.loadURL(url.href);
     return;
   }
-  await window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+  await window.loadFile(path.join(__dirname, "..", "dist", "index.html"), { query: { theme } });
 }
 
 function reloadOwnedRenderer(window) {

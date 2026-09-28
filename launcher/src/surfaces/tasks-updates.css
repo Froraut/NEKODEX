@@ -90,6 +90,8 @@
   background: var(--bg-brand);
 }
 .updates-status h2 { margin: 0; font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+/* Focus lands on the status title when the focused action leaves (tabindex -1); like other focused titles, no ring. */
+.updates-status h2:focus { outline: none; }
 .updates-status p { margin: 2px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .updates-note { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .updates-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }

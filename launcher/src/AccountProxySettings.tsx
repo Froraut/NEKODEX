@@ -72,6 +72,8 @@ export function AccountProxySettings({ proxy, language, disabled, blockedReason,
   useEffect(() => { onStateChange?.(formState); }, [formState, onStateChange]);
   // Controls are disabled one by one (not through <fieldset disabled>) so a focused control keeps focus while saving.
   const locked = disabled || saving;
+  // A blocked form says why it is blocked; the error styling belongs to the error text only.
+  const showError = !blockedReason && Boolean(invalid || failed);
   return <section className="accounts-details__section accounts-controls__section" aria-labelledby={`${statusId}-title`}>
     <h3 id={`${statusId}-title`} className="nk-type-label">{copy.accountProxy}</h3>
     <p>{copy.accountProxyBody}</p>
@@ -94,7 +96,7 @@ export function AccountProxySettings({ proxy, language, disabled, blockedReason,
             onClick={restoreSaved}>{restoreSavedProxyCopy[language]}</Button>
         </div>
       </fieldset>
-      <p id={statusId} className={cx("accounts-form__status nk-type-caption", (invalid || failed) && "is-error")} role={invalid || failed ? "alert" : "status"}>
+      <p id={statusId} className={cx("accounts-form__status nk-type-caption", showError && "is-error")} role={showError ? "alert" : "status"}>
         {blockedReason || (invalid ? errorText : failed ? copy.accountFormFailed : saving ? copy.accountFormSaving
           : changed ? copy.accountFormUnsaved : copy.accountFormSaved)}
       </p>

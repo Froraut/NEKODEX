@@ -31,6 +31,25 @@ export function applyTheme(theme: ResolvedTheme) {
   if (meta.content !== theme) meta.content = theme;
 }
 
+export function isResolvedTheme(value: unknown): value is ResolvedTheme {
+  return value === "dark" || value === "light";
+}
+
+/**
+ * The theme of the first frame, before the snapshot arrives: the appearance this renderer last applied; before
+ * one is remembered (the first launch of this build), the theme the main process resolved from the saved
+ * appearance, which also painted the window background (?theme=); without either, the system appearance.
+ */
+export function initialTheme(): ResolvedTheme {
+  const remembered = rememberedAppearance();
+  if (remembered) return resolveTheme(remembered);
+  try {
+    const fromMain = new URLSearchParams(window.location.search).get("theme");
+    if (isResolvedTheme(fromMain)) return fromMain;
+  } catch {}
+  return systemTheme();
+}
+
 /** Last applied preference, so the next launch paints its first frame in the same theme. */
 export function rememberedAppearance(): Appearance | null {
   try {

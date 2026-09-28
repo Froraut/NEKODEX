@@ -90,7 +90,7 @@ export type ConnectionStatusKey =
 /** StateDot state: green ready, amber busy/attention, grey idle, rose error. */
 export type ConnectionDot = "ready" | "busy" | "idle" | "error";
 /** The short action cue of a connection row ("Manage ›"). */
-export type ConnectionAction = "manage" | "connect" | "sign-in" | "open" | "open-routing-checks";
+export type ConnectionAction = "manage" | "connect" | "sign-in" | "retry" | "open" | "open-routing-checks";
 
 export interface ConnectionStatus {
   key: ConnectionStatusKey;
@@ -144,20 +144,30 @@ function sessionConnection(input: WorkspaceReadinessInput): ConnectionStatus {
   if (input.manual) return status("manual", "idle", "manage", true);
   if (input.authenticationStatus === "verified") return status("verified", "ready", "manage", true);
   if (input.authenticationStatus === "unknown") return status("checking", "busy", "open");
-  if (input.authenticationStatus === "unavailable") return status("verification-unavailable", "busy", "open");
+  // Not proof of sign-out: the next step is to check the session again, not to sign in.
+  if (input.authenticationStatus === "unavailable") return status("verification-unavailable", "busy", "retry");
   return status("needs-sign-in", "busy", "sign-in");
 }
 
-function modelsConnection(input: WorkspaceReadinessInput, native: WorkspaceCapabilityStatus): ConnectionStatus {
+function modelsConnection(input: WorkspaceReadinessInput, native: WorkspaceCapabilityStatus,
+  web: WorkspaceCapabilityStatus): ConnectionStatus {
   if (!input.manual && input.catalogUnavailable === true) return status("catalog-unavailable", "error", "open-routing-checks");
   const models = modelConnectionReadiness(input);
   if (models === "not-installed") return status("needs-setup", "idle", "connect");
   if (models === "catalog-pending") return status("waiting-for-codex", "busy", "open");
   if (models === "picker-pending") return status("confirm-in-codex", "busy", "open");
-  // The setup facts hold; whether the models can run right now is the native runtime's report.
+  // The setup facts hold; whether the models can run right now is the runtime's report: the native route (the DEV
+  // profile has none, so its "unavailable" is expected) and, in Automatic mode, the ChatGPT Web route.
   if (native === "checking") return status("checking", "busy", "open");
-  if (native === "unavailable") return status("unavailable", "error", "open");
+  if (native === "unavailable" && !input.development) return status("unavailable", "error", "open");
   if (native === "degraded") return status("needs-attention", "busy", "open");
+  if (!input.manual && input.authenticationStatus === "verified") {
+    if (input.runtime?.tunnelRepair?.active || input.runtime?.webAvailability === "unknown" || web === "checking") {
+      return status("checking", "busy", "open");
+    }
+    // Web models cannot run (native ones may): the same problem the headline reports as the Web transport.
+    if (web === "degraded" || web === "unavailable") return status("needs-attention", "busy", "open");
+  }
   return input.manual ? status("installed", "ready", "manage", true) : status("verified", "ready", "manage", true);
 }
 
@@ -178,7 +188,7 @@ export function deriveWorkspaceReadiness(input: WorkspaceReadinessInput): Worksp
   const tools = toolsCapability(input);
   const connections: WorkspaceConnections = {
     session: sessionConnection(input),
-    models: modelsConnection(input, native),
+    models: modelsConnection(input, native, web),
     tools: toolsConnection(input, tools),
   };
   const result = (action: WorkspaceAction, reason: WorkspaceReason): WorkspaceReadiness => ({
@@ -243,7 +253,8 @@ export function deriveWorkspaceReadiness(input: WorkspaceReadinessInput): Worksp
   });
   if (models !== "available") return result("open-setup", "core-not-installed");
   if (native === "checking") return result("wait", "runtime-checking");
-  if (native === "unavailable") return result("open-setup", "runtime-unavailable");
+  // The DEV profile has no native route; its runtime always reports native as unavailable.
+  if (native === "unavailable" && !input.development) return result("open-setup", "runtime-unavailable");
   return result("open-browser", "workspace-ready");
 }
 

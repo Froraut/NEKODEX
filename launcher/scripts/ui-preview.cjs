@@ -13,8 +13,10 @@
 // Add &no-animation-frames=true to keep requestAnimationFrame callbacks permanently paused.
 // Add &appearance=system|dark|light to choose the saved launcher appearance (default dark).
 // Add &context-capabilities=true to report Sol/Pro context capabilities (Settings context budget table).
-// Every method in electron/preload.cjs has a mock that resolves like its IPC handler (state changes are
-// emitted as the main process would); onLifecycle exists only in benefits-astra and browser-ui-ready.
+// Every method in electron/preload.cjs (and nothing else) has a mock that resolves or refuses like its IPC handler,
+// including the DEV-profile refusals and the active-turn guards, and emits state changes as the main process
+// would; onLifecycle exists only in benefits-astra and browser-ui-ready. The first routing check on a page
+// reports a catalog redirect failure; later checks pass.
 // Page hooks: window.fixtureCalls, fixtureSetBrowser/Accounts/Update/State/Operation, fixtureEmitLog(record),
 // fixtureOpenUpdates() (native "Check for Updates…" menu), fixtureCompleteCodexLogin() (finish the device code
 // sign-in); set window.fixtureCancelExport / fixtureCancelUninstall / fixtureCancelTurns to simulate a cancelled
@@ -35,7 +37,8 @@ function installMockLauncher() {
     window.cancelAnimationFrame = () => {};
   }
   // Every language in electron/languages.json.
-  const language = ["en", "ru", "zh-CN", "zh-TW", "ja", "ko"].includes(parameters.get("language")) ? parameters.get("language") : "en";
+  const languages = ["en", "ru", "zh-CN", "zh-TW", "ja", "ko"];
+  const language = languages.includes(parameters.get("language")) ? parameters.get("language") : "en";
   const appearances = ["system", "dark", "light"];
   const appearance = appearances.includes(parameters.get("appearance")) ? parameters.get("appearance") : "dark";
   const browserUiScenario = scenario.startsWith("browser-ui-");
@@ -184,12 +187,19 @@ function installMockLauncher() {
     if (fixtureLogs.length > 300) fixtureLogs.shift();
     emit("log", record);
   };
-  // Browser tabs of the tasks that can be opened: a running turn's tab, or the tab kept after it ended.
+  // Browser tabs of the tasks that can be opened: a running turn's tab, or the tab kept after it ended. Like
+  // electron/account-browser-snapshot.cjs, every account's turn tabs are listed with their owner and label.
   const taskTabTitles = { "task-running": "Review launcher logs | ChatGPT", "task-failed": "Draft release notes | ChatGPT",
     "task-uncertain": "Summarize the pull request | ChatGPT", "task-active": "Update the changelog | ChatGPT" };
   const taskTabs = (tasks) => tasks.filter(task => task.canOpen).map(task => ({ id: task.tabId, traceId: task.traceId,
-    title: taskTabTitles[task.id] ?? "ChatGPT", status: task.terminal ? "error" : "running", loading: false,
-    active: false, closable: true, interactionMode: "automatic" }));
+    accountId: task.accountId, title: `${task.accountName} · ${taskTabTitles[task.id] ?? "ChatGPT"}`,
+    status: task.terminal ? "error" : "running", loading: false, active: false, closable: true, interactionMode: "automatic" }));
+  // browser-turn-lifecycle.cjs taskSnapshot(): the actions follow the task's live tab.
+  const withTaskControls = (tasks, tabs) => tasks.map(task => {
+    const tab = tabs.find(candidate => candidate.id === task.tabId);
+    return { ...task, canOpen: Boolean(tab), canCancel: tab?.status === "running",
+      canDismiss: task.terminal && tab?.status !== "running" };
+  });
   if (scenario === "benefits-portfolio-mixed") {
     // Task center: recorded tasks (running, completed, needs attention) and a queue with one row per action kind.
     const time = (value) => Date.parse(at(value));
@@ -341,6 +351,11 @@ function installMockLauncher() {
   }
   const contextCapabilities = parameters.get("context-capabilities") === "true"
     ? { solAvailable: true, proAvailable: true, extraHighAvailable: true } : null;
+  // The main process's external links (electron/main.cjs); openExternal accepts exactly these.
+  const externalUrls = { github: "https://github.com/Froraut/NEKODEX", x: "", connectors: "https://chatgpt.com/plugins",
+    developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode",
+    tunnels: "https://platform.openai.com/settings/organization/tunnels", keys: "https://platform.openai.com/settings/organization/api-keys" };
+  const allowedExternalUrls = new Set(Object.values(externalUrls).filter(Boolean));
   // Runtime configuration owned by the main process; the setting mocks below change it.
   const connectorNames = { automatic: "Fixture connector", manual: "Fixture manual" };
   let mcpCredentialsConfigured = scenario === "tools-pending";
@@ -353,7 +368,7 @@ function installMockLauncher() {
     profile: devProfile ? "development" : "production", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
     connectorNames: { ...connectorNames }, mcpCredentialsConfigured, proModelVersion, compactionModel,
-    logs: fixtureLogs.slice(), urls: { github: "https://github.com/Froraut/NEKODEX", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
+    logs: fixtureLogs.slice(), urls: { ...externalUrls },
     browserCapacity: { ...browserCapacity },
     platform: "darwin", packaged: false, version: "fixture", smokePassed: state.browserSmokePassed, operation, update,
     ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
@@ -369,8 +384,9 @@ function installMockLauncher() {
       { id: "task-uncertain", traceId: "trace-review-uncertain", accountId: "fixture-primary", accountName: "Primary", model: "Pro", phase: "send-uncertain", submission: "uncertain", terminal: true, canOpen: true, canCancel: false, canDismiss: true, retrySafe: false },
       { id: "task-active", traceId: "trace-active", accountId: "fixture-secondary", accountName: "Secondary", model: "Medium", phase: "responding", submission: "accepted", terminal: false, canOpen: true, canCancel: true, canDismiss: false, retrySafe: false },
     ].map((task, index) => ({ ...task, tabId: `tab-${task.id}`, createdAt: Date.now() - 60000, updatedAt: Date.now(), sequence: index + 1 }));
-    // browser-ui-ready keeps only its home tab (its screenshots); there "Open conversation" reports the missing tab.
+    // browser-ui-ready keeps only its home tab (its screenshots), so its tasks have no live tab to open or cancel.
     if (scenario === "benefits-astra") browser.tabs = [...browser.tabs, ...taskTabs(browser.tasks)];
+    else browser.tasks = withTaskControls(browser.tasks, browser.tabs);
     browser.queue = { paused: true, pausedAccounts: ["fixture-primary"], storageIssue: null,
       accounts: [{ id: "fixture-primary", label: "Primary" }, { id: "fixture-secondary", label: "Secondary" }],
       entries: [{ id: 'queued-history', traceId: 'trace-waiting-for-history', accountId: 'fixture-primary', status: 'waiting', reason: 'task-history-unavailable', createdAt: Date.now(), position: 1, retryAt: null, ownerConnected: true, canCancel: false, canPrioritize: false, canResume: false, canDismiss: false }] };
@@ -381,6 +397,9 @@ function installMockLauncher() {
           { id: "workspace-live", groupId: "group-1", state: "open", kind: "window", title: "Current conversation", location: "https://chatgpt.com/c/live", restorable: true, needsOriginalAccount: false, temporary: false, active: true },
           { id: "workspace-saved", groupId: "group-1", state: "saved", kind: "tab", title: "Saved conversation", location: "https://chatgpt.com/c/saved", restorable: true, needsOriginalAccount: false, temporary: false, active: false },
         ] },
+      // Every account has a directory row (the account picker lists them), even with no windows.
+      ...accountSnapshot.accounts.filter(account => account.id !== "fixture-primary").map(account => ({ accountId: account.id,
+        label: account.label, nativeTabs: true, restoreAttempted: true, restoreResult: null, manifestStatus: "ready", items: [] })),
     ] };
   }
   if (browserUiScenario) {
@@ -415,6 +434,12 @@ function installMockLauncher() {
     browser.status = "loading"; browser.loading = true; browser.tabs[0].status = "loading"; browser.tabs[0].loading = true;
   }
   if (accountsUiScenario) Object.assign(browser, { accountId: "fixture-primary", accountName: "Primary", accountLabel: "primary@example.test" });
+  // The account pool names its selected account in every browser state (electron/account-browser-snapshot.cjs), so
+  // Retry verification has an account to refresh. Single-account scenarios keep the unnamed default account.
+  if (benefitsScenario && !browser.accountId) {
+    const selected = accountSnapshot.accounts.find(account => account.id === accountSnapshot.selectedId);
+    Object.assign(browser, { accountId: selected.id, accountName: selected.label });
+  }
   let accountSequence = 0;
   const accountFailures = new Set();
   const accountMutation = async (kind) => {
@@ -574,8 +599,21 @@ function installMockLauncher() {
     openBrowserWindow: async asTab => { calls.push(["browser-window", asTab]); return {count:1}; },
     showBrowser: async () => { browser.visible = true; emit("browser", { ...browser }); return { ...browser }; },
     hideBrowser: async () => { browser.visible = false; emit("browser", { ...browser }); return { ...browser }; },
-    navigateBrowser: async (action) => { calls.push(["navigate", action]); return { ...browser }; },
-    setupHermes: async () => { calls.push(["hermes"]); return { provider: "codex-web", defaultChanged: false }; },
+    navigateBrowser: async (action) => {
+      calls.push(["navigate", action]);
+      if (!["back", "forward", "reload"].includes(action)) throw new Error(`Unknown browser navigation action: ${action}`);
+      if (activeTurn()) throw new Error("Browser navigation is locked while ChatGPT is running a Codex turn");
+      if (browser.loginInProgress) throw new Error("Browser navigation is locked during ChatGPT login");
+      return { ...browser };
+    },
+    setupHermes: async (input) => {
+      calls.push(["hermes", input]);
+      if (devProfile) throw new Error("Add Hermes from the production app profile.");
+      if (input?.runtime !== undefined && !["codex_responses", "codex_app_server"].includes(input.runtime)) throw new Error("Invalid Hermes runtime");
+      await delay(200);
+      return { provider: "nekodex", configPath: "/fixture/.hermes/config.yaml", backupPath: "/fixture/.hermes/config.yaml.bak",
+        baseUrl: "http://127.0.0.1:8765/v1", defaultChanged: input?.makeDefault === true };
+    },
     openPasskeyLogin: async () => {
       calls.push(["passkey"]);
       if (scenario === "passkey-secondary-error") throw new Error("passkey-capture-failed");
@@ -612,7 +650,15 @@ function installMockLauncher() {
     copyExistingChromeSettingsAddress: async () => { calls.push(["existing-chrome-settings-copy"]); return true; },
     selectBrowserTab: async (tabId) => {
       calls.push(["tab", tabId]);
-      if (!browser.tabs.some(tab => tab.id === tabId)) throw new Error("Browser tab does not exist");
+      const target = browser.tabs.find(tab => tab.id === tabId);
+      if (!target) throw new Error("Browser tab does not exist");
+      // Opening another account's turn tab selects that account (electron/account-pool.cjs selectTab).
+      const owner = target.accountId && accountSnapshot.accounts.find(account => account.id === target.accountId);
+      if (owner && owner.id !== accountSnapshot.selectedId) {
+        accountSnapshot = { ...accountSnapshot, selectedId: owner.id };
+        Object.assign(browser, { accountId: owner.id, accountName: owner.label, accountLabel: owner.accountLabel ?? null,
+          authenticated: owner.authenticated, authenticationStatus: owner.authenticationStatus });
+      }
       browser.tabs = browser.tabs.map((tab) => ({ ...tab, active: tab.id === tabId }));
       browser.activeTabId = tabId;
       emit("browser", { ...browser }); return { ...browser };
@@ -672,9 +718,14 @@ function installMockLauncher() {
     },
     uninstallIntegration: async () => {
       calls.push(["uninstall-integration"]);
+      if (devProfile) throw new Error("DEV profile has no Codex integration to remove");
       if (window.fixtureCancelUninstall) return { cancelled: true };
-      state.coreSetupComplete = false; state.codexCatalogVerified = false; state.codexPickerConfirmed = false;
-      emit("state", { ...state }); return { cancelled: false, state: { ...state } };
+      await delay(200);
+      updateState({ coreSetupComplete: false, codexCatalogVerified: false, mcpSetupComplete: false, mcpRuntimeInstalled: false,
+        mcpGuideStep: 0, codexRestartRequired: true, browserInteractionMode: "automatic", experimentalAsyncToolOperations: false,
+        experimentalBiggerContext: false, experimentalSkillAttachments: false, experimentalFreshConversationPerTurn: false,
+        zeroRiskProEnabled: false });
+      return { cancelled: false, state: publishState() };
     },
     refreshAccountAuthentication: async (id) => {
       calls.push(["account-auth-refresh", id]);
@@ -694,8 +745,11 @@ function installMockLauncher() {
       calls.push(["quota-refresh", id]); quotaFailed = false; return { ...quota, accountId: id };
     },
     codexLoginSnapshot: async () => codexLoginView(),
-    onCodexLogin: listen("codex-login"),
-    setAccountMode: async (mode) => { accountSnapshot = { ...accountSnapshot, mode }; return accountSnapshot; },
+    setAccountMode: async (mode) => {
+      calls.push(["account-mode", mode]);
+      if (mode !== "selected" && mode !== "balanced") throw new Error("Account routing mode must be selected or balanced");
+      accountSnapshot = { ...accountSnapshot, mode }; return accountSnapshot;
+    },
     setAccountEnabled: async (id, enabled) => {
       calls.push(["account-enabled", id, enabled]);
       if (typeof enabled !== "boolean") throw new Error("Account enabled state must be a boolean");
@@ -732,7 +786,6 @@ function installMockLauncher() {
       emit("browser", { ...browser });
       return accountSnapshot;
     },
-    removeAccount: async () => accountSnapshot,
     setAccountProxy: async (id, proxy) => {
       await accountMutation("save-proxy");
       accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(account => account.id === id ? { ...account, proxy } : account) };
@@ -744,7 +797,14 @@ function installMockLauncher() {
         ? { ...account, safety: { ...account.safety, policy } } : account) };
       return accountSnapshot;
     },
-    resumeAccount: async () => accountSnapshot,
+    // Resuming clears a safety stop and its cooldown; the pacing policy stays.
+    resumeAccount: async (id) => {
+      calls.push(["account-resume", id]);
+      if (!accountSnapshot.accounts.some(account => account.id === id)) throw new Error("ChatGPT account does not exist");
+      accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(account => account.id === id
+        ? { ...account, safety: { ...account.safety, stopped: false, cooldownUntil: 0 } } : account) };
+      emit("browser", { ...browser }); return accountSnapshot;
+    },
     refreshAccountCodexQuotas: async () => ({ generatedAt: "2026-09-21T10:10:00.000Z", rows: [
       { accountId: "fixture-primary", evidenceEpoch: 1, status: "updated", snapshot: quota, reason: null },
       { accountId: "fixture-secondary", evidenceEpoch: 1, status: "retained", snapshot: retainedQuota, reason: "quota-refresh-unavailable" },
@@ -858,7 +918,11 @@ function installMockLauncher() {
       update = { status: "installing", version: "9.9.9" }; emit("update", update);
       return { status: "too-late", reason: "worker-handoff", version: "9.9.9" };
     },
-    setLanguage: async (next) => { state.language = next; emit("state", { ...state }); return { ...state }; },
+    setLanguage: async (next) => {
+      calls.push(["language", next]);
+      if (!languages.includes(next)) throw new Error("Unsupported launcher language");
+      state.language = next; emit("state", { ...state }); return { ...state };
+    },
     openSocial: async (target) => { calls.push(["social", target]); state[target === "github" ? "githubOpened" : "xOpened"] = true; return { ...state }; },
     completeOnboarding: async (nextLanguage, browserInteractionMode) => {
       calls.push(["onboarding"]); Object.assign(state, { language: nextLanguage, browserInteractionMode, onboardingComplete: true });
@@ -867,7 +931,7 @@ function installMockLauncher() {
     // The rest of electron/preload.cjs, each resolving like its handler in electron/main.cjs or electron/ipc/.
     openExternal: async (url) => {
       calls.push(["open-external", url]);
-      if (typeof url !== "string" || !url.startsWith("https://")) throw new Error("External URL is not allowlisted");
+      if (!allowedExternalUrls.has(url)) throw new Error("External URL is not allowlisted");
       return true;
     },
     zoomBrowser: async (action) => {
@@ -980,6 +1044,7 @@ function installMockLauncher() {
     },
     cancelTurns: async () => {
       calls.push(["cancel-turns"]);
+      if (devProfile) throw new Error("DEV chat turns are owned by the repository CLI process");
       if (window.fixtureCancelTurns) return { cancelled: true }; // the confirmation dialog was dismissed
       const running = browser.tabs.filter(tab => tab.status === "running");
       browser.tabs = browser.tabs.map(tab => tab.status === "running" ? { ...tab, status: "aborted" } : tab);
@@ -1032,20 +1097,22 @@ function installMockLauncher() {
     },
     setAutostart: async (enabled) => {
       calls.push(["autostart", enabled]);
+      if (devProfile) throw new Error("The isolated DEV launcher is started explicitly from the repository CLI");
       const desired = enabled === true;
       return { state: updateState({ autoStart: desired }), supported: true, enabled: desired };
     },
     setBiggerContext: async (enabled) => {
       calls.push(["bigger-context", enabled]);
       if (typeof enabled !== "boolean") throw new Error("Context mode must be a boolean");
-      if (!state.coreSetupComplete || state.browserInteractionMode === "manual") {
-        throw new Error("Install the automatic model route before changing Bigger Context");
-      }
       if (devProfile) { // The DEV harness applies it at once.
+        if (!state.coreSetupComplete) throw new Error("Initialize the runtime before changing Bigger Context");
         await runSetup("bigger-context", "Updating Bigger Context", "Bigger Context updated");
         invalidateAccountProof();
         updateState({ experimentalBiggerContext: enabled, codexCatalogVerified: true, codexRestartRequired: false });
         return publishState();
+      }
+      if (!state.coreSetupComplete || state.browserInteractionMode === "manual") {
+        throw new Error("Install the automatic model route before changing Bigger Context");
       }
       // Queued until the runtime is idle; a choice equal to the saved mode clears the queue.
       if (!state.contextChangeApplying && state.experimentalBiggerContext === enabled) {

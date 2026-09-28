@@ -13,13 +13,13 @@ export type AccountsCopy = {
   pacingOff: string;
   proxyMode: string;
   notSaved: string;
-  /** Tools-setup state when only the shared runtime is missing (the account itself may be verified). */
-  toolsRuntimeNeeded: string;
   /** Page-level notice shown once when the shared tunnel runtime is not configured. */
   runtimeNotice: string;
   /** Reasons next to disabled card actions. */
   selectNeedsCheck: string;
   waitForSessionCheck: string;
+  /** Why "Refresh all allowances" is disabled while the list is empty. */
+  refreshNeedsAccount: string;
   /** First read of the account list failed (nothing to show yet). */
   loadFailed: string;
   /** Hydration read of one account's allowance failed. */
@@ -44,10 +44,10 @@ const copy: Record<Language, AccountsCopy> = {
     pacingOff: "Pacing off",
     proxyMode: "Proxy: {mode}",
     notSaved: "Not saved",
-    toolsRuntimeNeeded: "Shared runtime needed",
     runtimeNotice: "Local tools need the shared tunnel runtime. Set it up once; every account in this interaction mode uses it.",
     selectNeedsCheck: "Check this account before selecting it.",
     waitForSessionCheck: "Wait for the session check to finish.",
+    refreshNeedsAccount: "Add an account first.",
     loadFailed: "Accounts could not be loaded.",
     quotaReadFailed: "Allowance could not be read. Refresh to try again.",
     quotaRefreshFailed: "Allowance could not be refreshed.",
@@ -66,10 +66,10 @@ const copy: Record<Language, AccountsCopy> = {
     pacingOff: "Темп работы выключен",
     proxyMode: "Прокси: {mode}",
     notSaved: "Не сохранено",
-    toolsRuntimeNeeded: "Нужен общий туннель",
     runtimeNotice: "Локальным инструментам нужен общий туннель. Он настраивается один раз и используется всеми аккаунтами этого режима работы.",
     selectNeedsCheck: "Проверьте этот аккаунт, прежде чем выбрать его.",
     waitForSessionCheck: "Дождитесь окончания проверки сеанса.",
+    refreshNeedsAccount: "Сначала добавьте аккаунт.",
     loadFailed: "Не удалось загрузить аккаунты.",
     quotaReadFailed: "Не удалось прочитать лимит. Обновите, чтобы повторить.",
     quotaRefreshFailed: "Не удалось обновить лимит.",
@@ -88,10 +88,10 @@ const copy: Record<Language, AccountsCopy> = {
     pacingOff: "节奏控制已关闭",
     proxyMode: "代理：{mode}",
     notSaved: "未保存",
-    toolsRuntimeNeeded: "需要共享运行时",
     runtimeNotice: "本地工具需要共享隧道运行时。只需设置一次，此交互模式下的所有账户都会使用它。",
     selectNeedsCheck: "请先检查此账户，再选择它。",
     waitForSessionCheck: "请等待会话检查完成。",
+    refreshNeedsAccount: "请先添加账户。",
     loadFailed: "无法加载账户。",
     quotaReadFailed: "无法读取使用额度。请刷新重试。",
     quotaRefreshFailed: "无法刷新使用额度。",
@@ -110,10 +110,10 @@ const copy: Record<Language, AccountsCopy> = {
     pacingOff: "節奏控制已關閉",
     proxyMode: "代理：{mode}",
     notSaved: "未儲存",
-    toolsRuntimeNeeded: "需要共用執行環境",
     runtimeNotice: "本機工具需要共用通道執行環境。只需設定一次，此互動模式下的所有帳號都會使用它。",
     selectNeedsCheck: "請先檢查此帳號，再選擇它。",
     waitForSessionCheck: "請等待工作階段檢查完成。",
+    refreshNeedsAccount: "請先新增帳號。",
     loadFailed: "無法載入帳號。",
     quotaReadFailed: "無法讀取使用額度。請重新整理再試一次。",
     quotaRefreshFailed: "無法重新整理使用額度。",
@@ -132,10 +132,10 @@ const copy: Record<Language, AccountsCopy> = {
     pacingOff: "実行間隔: オフ",
     proxyMode: "プロキシ: {mode}",
     notSaved: "保存されていません",
-    toolsRuntimeNeeded: "共有実行環境が必要",
     runtimeNotice: "ローカルツールには共有トンネルの実行環境が必要です。一度設定すると、この操作モードのすべてのアカウントで使用されます。",
     selectNeedsCheck: "選択する前にこのアカウントを確認してください。",
     waitForSessionCheck: "セッションの確認が終わるまでお待ちください。",
+    refreshNeedsAccount: "先にアカウントを追加してください。",
     loadFailed: "アカウントを読み込めませんでした。",
     quotaReadFailed: "利用枠を読み取れませんでした。更新して再試行してください。",
     quotaRefreshFailed: "利用枠を更新できませんでした。",
@@ -154,10 +154,10 @@ const copy: Record<Language, AccountsCopy> = {
     pacingOff: "실행 간격 꺼짐",
     proxyMode: "프록시: {mode}",
     notSaved: "저장되지 않음",
-    toolsRuntimeNeeded: "공유 런타임 필요",
     runtimeNotice: "로컬 도구에는 공유 터널 런타임이 필요합니다. 한 번 설정하면 이 상호작용 모드의 모든 계정이 사용합니다.",
     selectNeedsCheck: "선택하기 전에 이 계정을 확인하세요.",
     waitForSessionCheck: "세션 확인이 끝날 때까지 기다리세요.",
+    refreshNeedsAccount: "먼저 계정을 추가하세요.",
     loadFailed: "계정을 불러올 수 없습니다.",
     quotaReadFailed: "사용 한도를 읽을 수 없습니다. 새로 고쳐 다시 시도하세요.",
     quotaRefreshFailed: "사용 한도를 새로 고칠 수 없습니다.",

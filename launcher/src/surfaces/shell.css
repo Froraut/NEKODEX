@@ -9,21 +9,48 @@
 .nk-shell > .nk-sidebar { grid-row: 1; grid-column: 1; }
 .nk-shell > .nk-shell__main { grid-row: 1; grid-column: 2; }
 /* The browser surface places a native view; do not animate its bounds. */
-.nk-shell[data-surface="browser"] { transition: none; }
+.nk-shell[data-surface="browser"], .nk-shell[data-surface="browser"] > .nk-sidebar { transition: none; }
 
 /* ---------- Sidebar ---------- */
 /* Rows keep the rail width while the column collapses, so the rail is clipped rather than squeezed. */
 .nk-sidebar > * { width: calc(var(--size-sidebar) - 2 * var(--space-3) - 1px); }
-.nk-shell > .nk-sidebar { transition: visibility 0s linear 0s; }
-.nk-shell.is-collapsed > .nk-sidebar { transition-delay: var(--duration-panel); }
+/* The rail's padding and border collapse with its column, so no sliver of it is left over the page while the
+   column closes (a padded box cannot be narrower than its padding) or once it is closed. */
+.nk-shell > .nk-sidebar {
+  transition:
+    padding var(--duration-panel) var(--ease-enter),
+    border-right-width var(--duration-panel) var(--ease-enter),
+    visibility 0s linear 0s;
+}
+.nk-shell.is-collapsed > .nk-sidebar {
+  padding-inline: 0;
+  border-right-width: 0;
+  transition:
+    padding var(--duration-panel) var(--ease-enter),
+    border-right-width var(--duration-panel) var(--ease-enter),
+    visibility 0s linear var(--duration-panel);
+}
 /* macOS draws the traffic lights over this reserve (76px from the window edge); other platforms hide it. */
 .nk-sidebar__controls, .nk-titlebar__controls { width: 52px; height: 12px; flex: none; }
 .app-root:not([data-platform="darwin"]) :is(.nk-sidebar__controls, .nk-titlebar__controls) { display: none; }
 .nk-sidebar__chrome > .nk-icon-btn { margin-left: auto; }
 /* The subtitle wraps instead of truncating (Russian runs longer than the rail). */
 .nk-wordmark small { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
-.nk-sidebar__session > span { min-width: 0; overflow-wrap: anywhere; }
+/* At the shortest windows the subtitle gives its lines to the nav, so every item stays visible (the titlebar
+   pill says Local workspace too). */
+@media (max-height: 680px) {
+  .nk-sidebar__brand { padding-bottom: var(--space-3); }
+  .nk-wordmark small { display: none; }
+}
+/* The session line wraps under its first line: the dot stays level with the first line, and CJK phrases break
+   between words rather than leaving a single character on a line. */
+.nk-sidebar__session { align-items: flex-start; }
+.nk-sidebar__session > .nk-dot { margin-top: 5px; }
+.nk-sidebar__session > span { min-width: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+:is(:lang(ja), :lang(zh), :lang(ko)) .nk-sidebar__session > span { word-break: keep-all; }
 .nk-sidebar__version > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Korean breaks between words (eojeol), not inside them, on every surface; a word longer than its line still wraps. */
+.nk-root:lang(ko) { word-break: keep-all; overflow-wrap: break-word; }
 
 /* The nav list scrolls (overflow clips outer rings), so nav items draw their focus ring inside. */
 .nk-sidebar .nk-nav-item:focus-visible { outline-offset: -2px; }
@@ -56,8 +83,17 @@
 .nk-shell__scrim { position: fixed; z-index: var(--z-scrim); inset: 0; padding: 0; border: 0; background: var(--bg-scrim); }
 
 /* ---------- Titlebar ---------- */
+/* The location keeps its room: the Local workspace pill gives way first, down to its globe (AppShell
+   useStatusPillFit; the label stays as its text and tooltip), and only then does the current crumb ellipsize.
+   The flex weights keep that order while a resize is being measured. */
+.nk-titlebar__trail { flex: 0 1 auto; }
 .nk-titlebar__trail li[aria-current="page"] { min-width: 0; }
-.nk-titlebar__status { flex: none; }
+.nk-titlebar__end { flex: 0 1000 auto; min-width: 28px; }
+.nk-titlebar__status { min-width: 0; max-width: 100%; }
+.nk-titlebar__status-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nk-titlebar__status.is-icon-only { gap: 0; padding: 0 7px; }
+.nk-titlebar__status.is-icon-only > .nk-titlebar__status-label { max-width: 0; }
+.nk-dev-tag { flex: none; }
 /* Windows and Linux draw the window controls at the right end of the titlebar (titleBarOverlay). */
 .app-root:not([data-platform="darwin"]) .nk-titlebar {
   padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + var(--space-4));
@@ -67,18 +103,39 @@
 /* The workspace is the container for container queries; the keyed surface inside it is the scroller, so every
    surface opens at the top and the runtime notice stays in view. */
 .nk-shell__content { display: flex; flex-direction: column; overflow: hidden; scrollbar-gutter: auto; }
-.nk-shell__notice { flex: none; width: min(var(--size-content), calc(100% - 2 * var(--space-8))); margin: var(--space-4) auto 0; }
-.nk-shell[data-surface="browser"] .nk-shell__notice { margin-bottom: var(--space-4); }
+/* The runtime-restart notice sits above the scroller, in a row that reserves the scroller's scrollbar gutter, and
+   takes the width of the page below it (Page: wide on Overview, narrow on Updates and Settings). */
+.nk-shell__notice-row { flex: none; padding-top: var(--space-4); overflow: hidden; scrollbar-gutter: stable; }
+.nk-shell__notice { width: min(var(--size-content), calc(100% - 2 * var(--space-8))); margin: 0 auto; }
+.nk-shell[data-surface="overview"] .nk-shell__notice { width: min(var(--size-content-wide), calc(100% - 2 * var(--space-8))); }
+.nk-shell:is([data-surface="updates"], [data-surface="settings"]) .nk-shell__notice { width: min(var(--size-content-narrow), calc(100% - 2 * var(--space-8))); }
+.nk-shell[data-surface="browser"] .nk-shell__notice-row { padding-bottom: var(--space-4); scrollbar-gutter: auto; }
+/* Settings sets its narrow page beside an "On this page" rail once the workspace fits both (surfaces/settings.css
+   .settings-layout): the notice takes the page's column of that grid. */
+@container workspace (min-width: 1044px) {
+  .nk-shell[data-surface="settings"] .nk-shell__notice-row {
+    display: grid;
+    grid-template-columns: minmax(0, calc(var(--size-content-narrow) + 2 * var(--space-8))) 180px;
+    justify-content: center;
+    column-gap: var(--space-2);
+    padding-inline-end: var(--space-8);
+  }
+}
+/* Fixed toasts (design/overlays) publish --toast-clearance while they show: the page can scroll its end clear of
+   them (the page's own bottom padding counts). Keyboard focus scrolls controls in with room for the focus ring,
+   and clear of a toast. */
 .nk-shell__scroll {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  padding-bottom: max(0px, var(--toast-clearance, 0px) - var(--space-12));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-block: var(--space-6) max(var(--space-6), var(--toast-clearance, 0px));
   scrollbar-gutter: stable;
 }
-.nk-shell[data-surface="browser"] .nk-shell__scroll { overflow: hidden; scrollbar-gutter: auto; }
+.nk-shell[data-surface="browser"] .nk-shell__scroll { padding-bottom: 0; overflow: hidden; scrollbar-gutter: auto; }
 
 /* ---------- Overlays ---------- */
 /* Overlays cover the titlebar; a press on them must not start a window drag. */
@@ -86,6 +143,8 @@
 .nk-dialog__body > .nk-dialog__setting { min-height: 0; margin: var(--space-2) 0 0; border-top: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); }
 .nk-dialog__setting strong { color: var(--text-primary); }
 .nk-dialog__note { margin: var(--space-3) 0 0; color: var(--text-warning); font-size: 14px; line-height: 20px; }
+/* A failed save from the dialog is shown in it, under the setting it concerns. */
+.nk-dialog__error { margin-top: var(--space-3); }
 
 /* ---------- Launch and fatal screens ---------- */
 .nk-launch {
@@ -127,8 +186,6 @@
 
 /* SetupRow: the title line can carry a tag or a small menu. */
 .nk-setup-row > div { min-width: 0; }
-.nk-setup-row__heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
-.nk-setup-row__heading > .nk-menu { margin-block: -5px; }
 
 /* SettingRow */
 .nk-setting-row.is-flush-after { border-bottom: 0; }
@@ -233,9 +290,11 @@
 /* DoctorSummary: a tinted result panel (error until every check passes). */
 .nk-doctor { margin-top: var(--space-4); overflow: hidden; border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-error); }
 .nk-doctor.is-healthy { background: var(--bg-success); }
+.nk-doctor.is-warning { background: var(--bg-warning); }
 .nk-doctor > header { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 var(--space-4); border-bottom: 1px solid var(--border-light); }
 .nk-doctor > header .nk-icon { width: 16px; height: 16px; color: var(--text-error); }
 .nk-doctor.is-healthy > header .nk-icon { color: var(--text-success); }
+.nk-doctor.is-warning > header .nk-icon { color: var(--text-warning); }
 .nk-doctor > header strong { color: var(--text-primary); font-size: 14px; line-height: 20px; font-weight: 500; }
 .nk-doctor > div { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-4) var(--space-3); }
 .nk-doctor p { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }

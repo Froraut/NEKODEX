@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useState } from "react";
 import type { Language, UsageAccountOption, UsageDiagnosticGroup, UsageFailureCode } from "./types";
 import { rankUsageDiagnosticGroups, usageAttentionFacts } from "./usage-diagnostics";
 import { formatUsageDuration, formatUsageRate } from "./usage-statistics";
@@ -109,21 +109,15 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
   const note = (group: UsageDiagnosticGroup) => text.unknown !== copy.unknownIdentity && identityIncomplete(group, accounts)
     ? <small className="usage-identity-note">{copy.unknownIdentity}</small> : null;
   const [open, setOpen] = useState(false);
-  const detailsRef = useRef<HTMLDivElement>(null);
   const source = groups[0]?.source;
   const scoped = source ? groups.filter(group => group.source === source) : [];
   const ranked = source ? rankUsageDiagnosticGroups(scoped, source) : [];
   const facts = source ? usageAttentionFacts(scoped, source) : [];
   const hasComparableGroups = ranked.some(({ eligibility }) =>
     eligibility.eligible.failureRate || eligibility.eligible.median || eligibility.eligible.p95);
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    if (next) requestAnimationFrame(() => detailsRef.current?.focus());
-  };
 
   // The table toggle sits under the facts, just above the table it opens (in the header it would wrap between the
-  // title and the description in a narrow workspace).
+  // title and the description in a narrow workspace). Like the calendar's toggle, focus stays on it.
   return <Panel headingLevel={3} titleId="usage-diagnostic-title" title={copy.title} description={copy.body} className="usage-diagnostic-insights">
     {!ranked.length ? <EmptyState icon="activity" title={copy.noComparison} /> : <>
       {facts.length ? <div className="usage-diagnostic-facts">{facts.map(({ group, eligibility, kind }) => {
@@ -140,10 +134,10 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
         </article>;
       })}</div> : hasComparableGroups ? null : <EmptyState icon="activity" title={copy.noComparison} />}
       <div className="usage-diagnostic-toggle">
-        <Button variant="ghost" size="sm" aria-expanded={open} aria-controls={open ? "usage-diagnostic-details" : undefined}
-          onClick={toggle}>{open ? hideDetailsLabel : detailsLabel}</Button>
+        <Button variant="ghost" size="sm" className="usage-toggle" iconEnd="chevron" aria-expanded={open}
+          aria-controls={open ? "usage-diagnostic-details" : undefined} onClick={() => setOpen(value => !value)}>{open ? hideDetailsLabel : detailsLabel}</Button>
       </div>
-      {open ? <div id="usage-diagnostic-details" className="usage-diagnostic-details" ref={detailsRef} tabIndex={-1}>
+      {open ? <div id="usage-diagnostic-details" className="usage-diagnostic-details">
         <p>{copy.notBestModel}</p>
         <div className="usage-table-scroll"><table className="usage-table usage-diagnostic-table">
           <caption className="nk-visually-hidden">{copy.title}</caption>

@@ -2,7 +2,7 @@ import { useUsageReport, type UsageLoader } from "./useUsageReport";
 import { UsageCalendar, completeCalendar, dateLabel, dateRangeLabel } from "./UsageCalendar";
 import languages from "../electron/languages.json";
 import { activityCopy, usageIdentityWords } from "./activity-copy";
-import { useId, useMemo } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef } from "react";
 import type { Copy } from "./i18n";
 import type {
   UsageFailureCode,
@@ -65,6 +65,23 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const { filters, visible, visibleError, refreshing, knownAccounts, changeFilters, retry } = useUsageReport(loadUsage, copy.usageUnavailable);
   const sourceId = useId(), accountId = useId(), rangeId = useId();
   const text = activityCopy(language);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const retryButton = useRef<HTMLButtonElement>(null);
+  const retryHadFocus = useRef(false);
+  useEffect(() => {
+    // focusin does not fire when the focused button is removed, so this still holds when the notice goes away.
+    const track = (event: FocusEvent) => { retryHadFocus.current = retryButton.current !== null && event.target === retryButton.current; };
+    document.addEventListener("focusin", track);
+    return () => document.removeEventListener("focusin", track);
+  }, []);
+  // A report that loads (after Retry or a background refresh) removes the notice with its focused Retry button:
+  // continue from this view's heading.
+  useLayoutEffect(() => {
+    if (visibleError || !retryHadFocus.current) return;
+    retryHadFocus.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) heading.current?.focus();
+  }, [visibleError]);
   const locale = languages[language]?.locale ?? language;
   const words = useMemo<UsageIdentityWords>(() => ({ ...usageIdentityWords(activityCopy(language)),
     mode: value => value === "automatic" ? copy.automaticShort : value === "manual" ? copy.manualShort : value }), [language, copy]);
@@ -118,7 +135,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   return <section className="usage-dashboard" aria-labelledby="usage-title">
     <header className="usage-header">
       <div>
-        <h2 className="nk-visually-hidden" id="usage-title">{copy.usageTitle}</h2>
+        <h2 className="nk-visually-hidden" id="usage-title" ref={heading} tabIndex={-1}>{copy.usageTitle}</h2>
         <p>{sourceBody}</p>
       </div>
       {exportable ? <Button size="sm" icon="external" onClick={() => visible && exportReport({ ...visible, calendar })}>{copy.usageExportCsv}</Button> : null}
@@ -153,7 +170,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
     </div>
 
     {visibleError ? <Notice tone={stale ? "warning" : "error"} title={stale ? copy.usageStaleTitle : copy.usageUnavailable}
-      action={<Button size="sm" busy={refreshing} onClick={retry}>{text.retryUsage}</Button>}>
+      action={<Button size="sm" busy={refreshing} ref={retryButton} onClick={retry}>{text.retryUsage}</Button>}>
       {errorBody}
     </Notice> : null}
 

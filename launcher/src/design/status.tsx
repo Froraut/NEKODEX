@@ -124,28 +124,36 @@ export interface PhaseStepsProps extends Omit<HTMLAttributes<HTMLOListElement>, 
   onSelect?: (index: number) => void;
   /** Disables every step button (e.g. while the flow is busy). */
   disabled?: boolean;
+  /**
+   * Localized state words for screen readers ("completed", "failed"), read after a complete or error step's label;
+   * the check and cross markers alone are not announced.
+   */
+  stateLabels?: { complete?: string; error?: string };
   className?: string;
 }
 
-export function PhaseSteps({ steps, label, onSelect, disabled = false, className, ...rest }: PhaseStepsProps) {
+export function PhaseSteps({ steps, label, onSelect, disabled = false, stateLabels, className, ...rest }: PhaseStepsProps) {
   return (
     <ol aria-label={label} {...rest} className={cx("nk-steps", className)}>
       {steps.map((step, index) => {
         const state = step.state || "upcoming";
         const current = step.current ?? state === "current";
         const marker = state === "complete" ? <NkIcon name="check" /> : state === "error" ? <NkIcon name="close" /> : index + 1;
+        const stateWord = state === "complete" ? stateLabels?.complete : state === "error" ? stateLabels?.error : undefined;
         if (!onSelect) {
           return (
             <li aria-current={current ? "step" : undefined} className={`is-${state}`} key={index}>
               <span>{marker}</span>
               {step.label}
+              {stateWord ? <span className="nk-visually-hidden">, {stateWord}</span> : null}
             </li>
           );
         }
         const selectable = step.selectable ?? (state === "complete" || state === "error");
         return (
           <li className={`is-${state}`} key={index}>
-            <StepButton current={current} disabled={disabled || !selectable} label={`${index + 1}. ${step.label}`} onSelect={() => onSelect(index)}>
+            <StepButton current={current} disabled={disabled || !selectable}
+              label={`${index + 1}. ${step.label}${stateWord ? `, ${stateWord}` : ""}`} onSelect={() => onSelect(index)}>
               <span aria-hidden="true">{marker}</span>
               {step.label}
             </StepButton>

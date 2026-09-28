@@ -20,7 +20,14 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
   platform?: string;
 }) {
   const copy = updateCopyFor(language);
-  const feedback: UpdateFeedback | null = typeof error === "string" ? { tone: "error", source: "check", message: error } : error;
+  // An action's outcome describes the updater report it arrived with. A later report (another status) supersedes
+  // it, e.g. a background check that finds an update after a manual check failed, so the title never contradicts
+  // the current state.
+  const [feedbackSeen, setFeedbackSeen] = useState({ error, status: state.status });
+  if (feedbackSeen.error !== error) setFeedbackSeen({ error, status: state.status });
+  const superseded = feedbackSeen.error === error && feedbackSeen.status !== state.status;
+  const feedback: UpdateFeedback | null = !error || superseded ? null
+    : typeof error === "string" ? { tone: "error", source: "check", message: error } : error;
   const actionFailure = feedback?.tone === "error" ? feedback : null;
   const failure = actionFailure?.message || (state.status === "error" ? state.message : null);
   // Whether the updater was last seen preparing an install, so an "error" state that follows it is titled as a
@@ -52,11 +59,15 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
     : installPending ? copy.preparing : failure ? failureTitle : statusTitle;
   const reaction: CatReaction | undefined = failure && phase < 0 ? "surprised" : state.status === "up-to-date" ? "happy" : undefined;
   const checkBusy = checking || state.status === "checking";
-  const showCancel = Boolean(onCancel) && (["downloading", "verifying", "cancelling"].includes(state.status) || cancellationPending);
+  // Once the updater answered that installation already started, cancelling is no longer possible.
+  const cancelTooLate = feedback?.source === "cancel" && feedback.tone === "info";
+  const showCancel = Boolean(onCancel) && !cancelTooLate
+    && (["downloading", "verifying", "cancelling"].includes(state.status) || cancellationPending);
   // Installing hands over to the worker: no action is possible, so the empty action row is left out.
   const showActions = showCancel || state.status === "available" || !busy;
   const showWait = (blocked || transitionBusy) && state.status === "available";
   const waitId = useId();
+  const cooldownId = useId();
   const restart = platform === "darwin" ? `${copy.restart} ${copy.restartMac}` : copy.restart;
 
   // The action row changes with the updater state: "Download and restart" and "Check for updates" leave when a
@@ -80,7 +91,8 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
           <span className="updates-tile" aria-hidden="true"><Mark label={null} size={32} reaction={reaction} /></span>
           <div><h2 ref={heading} tabIndex={-1}>{title}</h2>{candidate ? <p>NEKODEX {candidate}</p> : null}</div>
         </div>
-        {phase >= 0 ? <PhaseSteps label={copy.steps} steps={steps} /> : null}
+        {phase >= 0 ? <PhaseSteps label={copy.steps} steps={steps}
+          stateLabels={{ complete: copy.stepComplete, error: copy.stepFailed }} /> : null}
         {busy && phase < 1 && !cancellationPending ? <UpdateProgress key={candidate ?? "pending"} state={state} label={copy.progress} language={language} /> : null}
         {/* Verification has no measurable size, so its meter stays indeterminate. */}
         {phase === 1 && !cancellationPending ? <ProgressMeter className="updates-download" label={copy.verifyProgress} value={null} /> : null}
@@ -106,10 +118,10 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
               aria-describedby={showWait ? waitId : undefined} disabled={blocked || transitionBusy || busy || checking}
               onClick={onInstall}>{copy.install}</Button> : null}
             {!busy ? <Button variant={state.status === "available" ? "secondary" : "primary"} icon="reload" busy={checkBusy}
-              disabled={transitionBusy || cooldown} onClick={onCheck}>
+              aria-describedby={cooldown ? cooldownId : undefined} disabled={transitionBusy || cooldown} onClick={onCheck}>
               {checkBusy ? copy.checkBusy : failureSource === "check" ? copy.retryCheck : copy.check}
             </Button> : null}
-            {cooldown && !busy ? <span className="updates-cooldown">{copy.cooldown}</span> : null}
+            {cooldown && !busy ? <span className="updates-cooldown" id={cooldownId}>{copy.cooldown}</span> : null}
           </div> : null}
         </>}
       </div>

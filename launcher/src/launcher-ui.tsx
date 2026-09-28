@@ -116,76 +116,6 @@ export function ContentSurface({
   );
 }
 
-export function SetupRow({
-  action,
-  complete,
-  current = false,
-  description,
-  disabled,
-  index,
-  onAction,
-  onSecondaryAction,
-  repeatable = false,
-  rowRef,
-  secondaryAction,
-  secondaryDisabled = false,
-  title,
-  titleAction,
-}: {
-  action: string;
-  complete: boolean;
-  /** The derived next step: accent index and the primary action. */
-  current?: boolean;
-  description: string;
-  disabled: boolean;
-  index: number;
-  onAction: () => void;
-  onSecondaryAction?: () => void;
-  repeatable?: boolean;
-  rowRef?: RefObject<HTMLDivElement | null>;
-  secondaryAction?: string;
-  secondaryDisabled?: boolean;
-  title: string;
-  titleAction?: ReactNode;
-}) {
-  return (
-    <div className={cx("nk-setup-row", complete && "is-complete", current && !complete && "is-current")} ref={rowRef}>
-      <span className="nk-setup-row__index">{complete ? <Icon className="nk-icon" name="check" /> : index}</span>
-      <div>
-        <div className="nk-setup-row__heading">
-          <strong>{title}</strong>
-          {titleAction}
-        </div>
-        <p>{description}</p>
-      </div>
-      <div className="nk-setup-row__actions">
-        {secondaryAction && onSecondaryAction ? (
-          <SecondaryButton disabled={secondaryDisabled || complete} onClick={onSecondaryAction}>
-            {secondaryAction}
-          </SecondaryButton>
-        ) : null}
-        <Button disabled={disabled || (complete && !repeatable)} onClick={onAction} variant={current && !complete ? "primary" : "secondary"}>
-          {action}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-export function SecondaryButton({
-  children,
-  disabled = false,
-  icon,
-  onClick,
-}: {
-  children: ReactNode;
-  disabled?: boolean;
-  icon?: IconName;
-  onClick: () => void;
-}) {
-  return <Button disabled={disabled} icon={icon} onClick={onClick}>{children}</Button>;
-}
-
 export function ZeroRiskModelMenu({
   busy,
   copy,
@@ -427,13 +357,15 @@ export function FieldRow({ children, label }: { children: ReactNode; label: stri
 
 export function DoctorSummary({ copy, language, report }: { copy: Copy; language: Language; report: DoctorReport }) {
   const healthy = report.ok && report.checks.every(check => check.status === "ok");
+  // Warnings without a failed check get the warning tone; the error tint is kept for real failures.
+  const warningOnly = !healthy && report.ok && report.checks.every(check => check.status !== "error");
   const visibleChecks = healthy
     ? report.checks.slice(-6)
     : report.checks.filter((check) => check.status !== "ok");
   return (
-    <div className={cx("nk-doctor", healthy && "is-healthy")}>
+    <div className={cx("nk-doctor", healthy && "is-healthy", warningOnly && "is-warning")}>
       <header>
-        <Icon className="nk-icon" name={healthy ? "check" : "activity"} />
+        <Icon className="nk-icon" name={healthy ? "check" : "alert"} />
         <strong>{healthy ? copy.healthy : copy.needsAttention}</strong>
       </header>
       <div>

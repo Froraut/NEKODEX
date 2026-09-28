@@ -1,6 +1,6 @@
 import { taskCenterCopy, type TaskCenterCopy } from "./task-center-copy";
 import { filterTasks, taskKey, eligibleTaskConfirmation, requiresDismissConfirmation, type HistoryStatus, type TaskConfirmationTarget } from "./task-center-model";
-import { rowFocusMemory, rowFocusTarget, useRowFocusRecovery, type RowFocusMemory } from "./task-center-focus";
+import { focusableHeading, rowFocusMemory, rowFocusTarget, useRowFocusRecovery, type RowFocusMemory } from "./task-center-focus";
 import { TaskActionConfirmation } from "./TaskActionConfirmation";
 import { stripIpcErrorPrefix } from "./ipc-error";
 import languages from "../electron/languages.json";
@@ -72,13 +72,15 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
   const visible = filterTasks(tasks, { account, status, query, language });
   const confirmation = eligibleTaskConfirmation(visible, target);
   const confirmationTask = confirmation ? visible.find(task => taskKey(task) === confirmation.taskKey) : undefined;
-  // A dismissed row takes its focused button with it: continue from the neighbouring row, else the search field.
-  useRowFocusRecovery(listRef, { busy: pending !== null, fallback: () => searchInput.current });
+  // A dismissed row takes its focused button with it: continue from the neighbouring row, else the search field
+  // (hidden once no records are left; then the panel heading).
+  const listFallback = () => searchInput.current ?? focusableHeading(historyTitleId);
+  useRowFocusRecovery(listRef, { busy: pending !== null, fallback: listFallback });
   // After the confirmation closes, focus returns to the row control that opened it. A cancelled or dismissed task
-  // removes or disables that control; continue from the neighbouring row, then the search field.
+  // removes or disables that control; continue from the neighbouring row, then the search field or heading.
   const confirmationFocus = () => {
     const trigger = confirmationTrigger.current;
-    return (trigger ? rowFocusTarget(listRef.current, trigger) : null) ?? searchInput.current;
+    return (trigger ? rowFocusTarget(listRef.current, trigger) : null) ?? listFallback();
   };
   const clearConfirmations = () => { setTarget(null); setConfirmError(null); };
   const openConfirmation = (kind: TaskConfirmationTarget['kind'], task: BrowserTaskState, trigger: HTMLButtonElement) => {
@@ -112,7 +114,7 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
         }} />);
   return <div className="task-center">
     <Panel padding="flush" className="task-history" title={text.history} titleId={historyTitleId}
-      actions={<span className="task-history-count">{text.recordCount!.replace('{shown}', String(visible.length)).replace('{total}', String(tasks.length))}</span>}>
+      actions={tasks.length ? <span className="task-history-count">{text.recordCount!.replace('{shown}', String(visible.length)).replace('{total}', String(tasks.length))}</span> : undefined}>
       {historyHealth.length ? <div className="task-history-notices">
         {historyHealth.map(health => <Notice tone="warning" key={health.accountId} title={health.accountName}>{text.historyUnavailable}</Notice>)}
       </div> : null}

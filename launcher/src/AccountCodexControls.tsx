@@ -66,9 +66,16 @@ export function AccountCodexAllowance({
   const reasonId = quotaDisabledReason ? quotaReasonId ?? ids.quotaReason : undefined;
   const reported = quota && quota.availability === "available" && quota.coverage === "reported_buckets";
   const updatedAt = reported ? quota.fetchedAt ?? quota.checkedAt ?? null : null;
+  // The account-wide bucket is the allowance itself: its state sits beside the title and its meters follow
+  // directly, instead of a second "General Codex allowance" heading row.
+  const accountState = reported ? bucketTone[quotaAvailability(quota.accountBucket)] : null;
   return <section className="accounts-allowance" aria-labelledby={ids.quotaTitle}>
     <header className="accounts-allowance__header">
-      <h3 id={ids.quotaTitle} className="nk-type-label">{copy.quotaTitle}</h3>
+      <div className="accounts-allowance__title">
+        <h3 id={ids.quotaTitle} className="nk-type-label">{copy.quotaTitle}</h3>
+        {reported && accountState ? <Badge {...accountState}>
+          {accountAvailabilityCopy(language)[quotaAvailability(quota.accountBucket)]}</Badge> : null}
+      </div>
       {updatedAt ? <p className="accounts-caption nk-type-caption">{copy.quotaUpdated.replace("{time}", formatDateTime(updatedAt, language, copy.quotaUnknown))}</p> : null}
       <Button size="sm" icon="reload" id={ids.quotaRefresh}
         busy={quotaBusy}
@@ -242,7 +249,7 @@ function QuotaContent({ copy, disabledReason, failed, freshnessCopy, language, n
   return <div className="accounts-allowance__content">
     {freshnessCopy ? <QuotaFreshness copy={freshnessCopy} failed={failed} language={language}
       now={now} quota={quota} updatedAt={updatedAt} /> : null}
-    <QuotaBucketView bucket={quota.accountBucket} copy={copy} language={language} fallbackName={copy.quotaGeneral} />
+    <QuotaBucketMeters bucket={quota.accountBucket} copy={copy} language={language} />
     {quota.additionalBuckets.length ? <Disclosure className="accounts-allowance__more"
       title={copy.quotaAdditional.replace("{count}", String(quota.additionalBuckets.length))}>
       <div className="accounts-allowance__buckets">
@@ -287,6 +294,7 @@ const bucketTone: Record<ReturnType<typeof quotaAvailability>, { tone?: Tone; do
   unknown: { dot: "idle" },
 };
 
+/** A model-specific bucket: its name and state, then its meters. */
 function QuotaBucketView({ bucket, copy, fallbackName, language }: {
   bucket: AccountQuotaBucket;
   copy: AccountCodexCopy;
@@ -300,11 +308,19 @@ function QuotaBucketView({ bucket, copy, fallbackName, language }: {
       <h4 className="nk-type-label">{name}</h4>
       <Badge {...bucketTone[availability]}>{accountAvailabilityCopy(language)[availability]}</Badge>
     </header>
-    <div className="accounts-bucket__meters">
-      <QuotaWindowMeter label={copy.quotaPrimary} value={bucket.primary} copy={copy} language={language} />
-      <QuotaWindowMeter label={copy.quotaSecondary} value={bucket.secondary} copy={copy} language={language} />
-    </div>
+    <QuotaBucketMeters bucket={bucket} copy={copy} language={language} />
   </article>;
+}
+
+function QuotaBucketMeters({ bucket, copy, language }: {
+  bucket: AccountQuotaBucket;
+  copy: AccountCodexCopy;
+  language: Language;
+}) {
+  return <div className="accounts-bucket__meters">
+    <QuotaWindowMeter label={copy.quotaPrimary} value={bucket.primary} copy={copy} language={language} />
+    <QuotaWindowMeter label={copy.quotaSecondary} value={bucket.secondary} copy={copy} language={language} />
+  </div>;
 }
 
 function QuotaWindowMeter({ copy, label, language, value }: {

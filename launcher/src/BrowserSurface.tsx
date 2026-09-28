@@ -9,8 +9,10 @@ import { messageOf } from "./launcher-ui";
 import { localizeLauncherError, type Copy } from "./i18n";
 import { browserControls } from "./browser-controls";
 import { browserWindowCopy } from "./browser-window-copy";
+import { connectionsCopy } from "./connections-copy";
 import { passkeyFailureText } from "./passkey-copy";
 import { sessionIssueCopy } from "./session-issue-copy";
+import { shellCopy } from "./shell-copy";
 import { workflowCopy } from "./workflow-copy";
 import { NetworkIssueNotice } from "./NetworkIssueNotice";
 import type { WorkspaceReadiness } from "./workspace-readiness";
@@ -82,12 +84,29 @@ export function BrowserSurface({
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame) return;
-    const remember = (event: FocusEvent) => { lastFocused.current = event.target instanceof HTMLElement ? event.target : null; };
+    // The separate windows panel (BrowserWorkspaceManager) hands off focus for its own controls.
+    const remember = (event: FocusEvent) => {
+      const target = event.target;
+      lastFocused.current = target instanceof HTMLElement && !target.closest(".browser-windows") ? target : null;
+    };
+    // Focus that leaves a control which is still on the page (a click on empty space, another view) is not a removal:
+    // forget it, so a later unrelated removal does not pull focus back.
+    const release = (event: FocusEvent) => {
+      const target = event.target;
+      if (event.relatedTarget || target !== lastFocused.current) return;
+      window.setTimeout(() => {
+        if (lastFocused.current === target && target instanceof HTMLElement && target.isConnected) lastFocused.current = null;
+      });
+    };
     frame.addEventListener("focusin", remember);
-    return () => frame.removeEventListener("focusin", remember);
+    frame.addEventListener("focusout", release);
+    return () => {
+      frame.removeEventListener("focusin", remember);
+      frame.removeEventListener("focusout", release);
+    };
   }, []);
-  // When a state change removes the focused control (toolbar, idle state, guide, confirmation, tab, window row),
-  // focus moves to the next logical control instead of falling to <body>.
+  // When a state change removes the focused control (toolbar, idle state, guide, confirmation, tab), focus moves to
+  // the next logical control instead of falling to <body>. The separate windows panel handles its own rows.
   useLayoutEffect(() => {
     const previous = lastFocused.current;
     if (!previous || previous.isConnected) return;
@@ -99,12 +118,7 @@ export function BrowserSurface({
     const find = (selector: string) => frame.querySelector<HTMLElement>(selector);
     const selectedTab = () => find('.browser-tabs [role="tab"][aria-selected="true"]');
     let target: HTMLElement | null = null;
-    const windowRow = previous.closest<HTMLElement>("li[data-window-row]");
-    if (windowRow) {
-      const rows = frame.querySelectorAll<HTMLElement>("li[data-window-row]");
-      const next = rows[Math.min(Number(windowRow.dataset.windowRow), rows.length - 1)];
-      target = next?.querySelector<HTMLElement>(".nk-icon-btn") ?? find(".browser-windows:not([hidden]) .browser-windows__actions > button");
-    } else if (previous.closest(".browser-confirm")) {
+    if (previous.closest(".browser-confirm")) {
       target = confirmOpener.current?.isConnected ? confirmOpener.current : selectedTab();
     } else if (previous.closest(".browser-tabs__tab")) {
       target = selectedTab();
@@ -142,6 +156,8 @@ export function BrowserSurface({
     : browser?.passkeyLogin?.phase === "verifying" ? copy.passkeyVerifying
     : browser?.passkeyLogin?.phase === "cancelling" ? copy.passkeyCancelling
     : copy.passkeyImporting;
+  // Starting, importing, verifying and cancelling are progress states: the button shows a spinner, not only faint text.
+  const passkeyBusy = passkeyLabel !== copy.passkeySignIn && passkeyLabel !== copy.passkeyContinue;
   const passkeyActionDisabled = transitionBusy || passkeyBlocked || passkeyRequestPending
     || (passkeyWaiting ? !passkeyCanImport : passkeyStarting);
   useEffect(() => {
@@ -281,7 +297,8 @@ export function BrowserSurface({
   const errorOwnedByGuide = Boolean(error && browser?.existingChromeLogin && externalLoginGuide
     && operation?.name === "existing-chrome-login" && operation.status === "failed" && operation.message === error);
   const zoomLevel = `${Math.round((browser?.zoomFactor ?? 1) * 100)}%`;
-  const webRecoveryAction = readiness.action === "repair-web" ? workflow.recovery.repairAction
+  // The notice's action opens Connections (it does not repair by itself), worded like the Setup row's.
+  const webRecoveryAction = readiness.action === "repair-web" ? connectionsCopy(language).openRepair
     : readiness.action === "open-tools" ? copy.manageToolsConnection : null;
 
   const sessionRecovery = visible && !manualInteraction && browser?.authenticationStatus === "unavailable";
@@ -420,7 +437,7 @@ export function BrowserSurface({
               onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</Button>
           ) : null}
           {passkeyAvailable && !externalLoginGuide ? (
-            <Button variant="ghost" size="sm"
+            <Button variant="ghost" size="sm" busy={passkeyBusy}
               disabled={passkeyActionDisabled}
               onClick={() => void (passkeyWaiting ? continuePasskeyLogin() : openPasskeyLogin())}
             >
@@ -527,7 +544,7 @@ export function BrowserSurface({
                   disabled={transitionBusy || existingChromeBlocked || existingChromeStarting || existingChromeWaiting}
                   onClick={() => void openExistingChromeLogin()}>{copy.existingChromeSignIn}</Button> : null}
                 {passkeyAvailable && browser?.authenticationStatus !== "unavailable" ? (
-                  <Button
+                  <Button busy={passkeyBusy}
                     disabled={passkeyActionDisabled}
                     onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
                   >
@@ -539,7 +556,8 @@ export function BrowserSurface({
           </div>
         ) : (
           <div className="browser-slot__underlay" aria-hidden="true">
-            <span>{copy.loading}</span>
+            {/* The launch screen's loading treatment: a spinner and the localized "Loading…". */}
+            <span className="nk-spinner" /><span>{shellCopy(language).loading}</span>
           </div>
         )}
       </div>

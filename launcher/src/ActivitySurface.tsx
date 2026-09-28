@@ -16,6 +16,10 @@ const eventLevel = (level: LogRecord["level"]): EventItem["level"] => level === 
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
 type ActivityView = "events" | "usage";
+const TAB_PREFIX = "activity-tab";
+const PANEL_PREFIX = "activity-panel";
+/** Both views stay mounted (filters and the last usage report survive switching); the inactive one is hidden. */
+const viewPanel = (id: ActivityView) => ({ id: `${PANEL_PREFIX}-${id}`, role: "tabpanel", "aria-labelledby": `${TAB_PREFIX}-${id}` } as const);
 
 export function ActivitySurface({
   copy,
@@ -44,8 +48,9 @@ export function ActivitySurface({
     const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
     const now = new Date();
     return logs.map(({ id, record }) => {
-      const event = humanEvent(record.event), detail = logDetail(record.detail), date = new Date(record.at);
-      return { id, level: record.level, event, detail, at: record.at, search: `${event} ${detail}`.toLocaleLowerCase(),
+      const event = humanEvent(record.event, language), detail = logDetail(record.detail), date = new Date(record.at);
+      // The raw event id stays searchable next to its readable title (support asks for ids such as browser.turn_ended).
+      return { id, level: record.level, event, detail, at: record.at, search: `${event} ${record.event} ${detail}`.toLocaleLowerCase(),
         time: Number.isNaN(date.getTime()) ? record.at : (sameDay(date, now) ? time : dateTime).format(date) };
     });
   }, [logs, language]);
@@ -63,6 +68,7 @@ export function ActivitySurface({
         {/* Errors and warnings share the alert icon; the level word keeps them apart without colour. */}
         {record.level === "error" || record.level === "warning" ? <span className="activity-row__head">
           <Badge tone={record.level}>{record.level === "error" ? text.levelError : text.levelWarning}</Badge>
+          <span className="nk-visually-hidden">: </span>
           <strong>{record.event}</strong>
         </span> : <strong>{record.event}</strong>}
         {record.detail ? <span className="activity-row__detail">{record.detail}</span> : null}
@@ -99,11 +105,14 @@ export function ActivitySurface({
       />
       {/* The event log comes first (layouts.md "Activity"); usage statistics are the second view. */}
       <Tabs className="activity-tabs" label={text.views} active={view} onSelect={id => setView(id as ActivityView)}
+        idPrefix={TAB_PREFIX} panelId={`${PANEL_PREFIX}-${view}`}
         tabs={[{ id: "events", label: copy.recentActivity }, { id: "usage", label: copy.usageTitle }]} />
-      <div className="activity-view" hidden={view !== "events"}>
-        <section className="activity-events" aria-labelledby="activity-events-title">
-          <h2 className="nk-visually-hidden" id="activity-events-title">{copy.recentActivity}</h2>
-          <div className="activity-filters">
+      <div className="activity-view" {...viewPanel("events")} hidden={view !== "events"}>
+        {/* The tab panel names this view; the hidden heading keeps it in heading navigation. */}
+        <div className="activity-events">
+          <h2 className="nk-visually-hidden">{copy.recentActivity}</h2>
+          {/* Filters only help when there are events to narrow down. */}
+          {logs.length ? <div className="activity-filters">
             <TextField
               className="activity-filters__search"
               ref={searchInput}
@@ -116,19 +125,19 @@ export function ActivitySurface({
               <label htmlFor={levelId}>{copy.eventLevel}</label>
               <Select id={levelId} options={levels} value={level} onChange={value => setLevel(value)} />
             </div>
-          </div>
+          </div> : null}
           <Panel padding="flush" className="activity-log">
             <EventList
               items={items}
               empty={logs.length
                 ? <EmptyState icon="logs" title={text.noMatchingEvents} action={<Button size="sm" onClick={clearFilters}>{text.clearFilters}</Button>} />
-                : <EmptyState icon="activity" title={copy.noLogs} />}
+                : <EmptyState icon="activity" title={copy.noLogs}>{text.noEventsBody}</EmptyState>}
             />
           </Panel>
-        </section>
+        </div>
       </div>
       {/* Kept mounted while hidden so its filters and last report survive switching views. */}
-      <div className="activity-view" hidden={view !== "usage"}>
+      <div className="activity-view" {...viewPanel("usage")} hidden={view !== "usage"}>
         <ActivityUsage copy={copy} language={language} />
       </div>
     </Page>

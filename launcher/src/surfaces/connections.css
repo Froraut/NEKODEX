@@ -48,6 +48,9 @@
 
 /* Content placed inside a kit Disclosure body. */
 .nk-connections__stack { display: grid; gap: var(--space-3); min-width: 0; }
+/* The kit Disclosure body has no top padding; content that does not start with a SettingRow (whose own padding
+   sets the gap in Troubleshooting and Hermes) keeps the same distance from the summary. */
+.nk-connections__disclosure-content { padding-top: var(--space-4); }
 
 /* ---------- Models and Codex route ---------- */
 /* Kit SetupRows between hairlines; the current row carries the page's primary button. */
@@ -148,7 +151,8 @@
 }
 
 /* ---------- Other clients (Local API, Claude Code, Codex provider) ---------- */
-.nk-clients__intro { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
+/* The explanation wraps beside Refresh status; the button stays on the intro line, right-aligned. */
+.nk-clients__intro { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-2) var(--space-4); }
 .nk-clients__intro > p { max-width: 62ch; margin: 0; }
 .nk-clients__row {
   display: grid;
@@ -160,13 +164,14 @@
 }
 .nk-clients__copy { min-width: 0; }
 .nk-clients__copy > p { max-width: 62ch; margin: 2px 0 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
-.nk-clients__copy > p + p { margin-top: var(--space-2); }
-.nk-clients__copy > .nk-connections__nested { margin-top: var(--space-2); }
+/* Row details (base URL, key replacement, the last change's outcome) span the row under the name and actions. */
+.nk-clients__extra { display: grid; grid-column: 1 / -1; gap: var(--space-2); min-width: 0; margin-top: calc(-1 * var(--space-1)); }
+.nk-clients__extra > p { max-width: 62ch; margin: 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+.nk-clients__extra > .nk-clients__issue { color: var(--text-warning); }
 .nk-clients__label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
 .nk-clients__code { padding: 2px var(--space-2); border-radius: var(--radius-xs); background: var(--bg-control); color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
-.nk-clients__copy > .nk-clients__issue { color: var(--text-warning); }
+.nk-clients__copy > .nk-clients__issue { margin-top: var(--space-2); color: var(--text-warning); }
 .nk-clients__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); }
-.nk-clients__picker { grid-column: 1 / -1; }
 .nk-clients__picker > p { max-width: 62ch; margin: var(--space-1) 0 0 var(--space-6); color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
 /* Client rows carry wide controls (a select and a button), so they stack at the one-column width. */
 @container workspace (max-width: 760px) {

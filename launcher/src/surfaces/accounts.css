@@ -29,7 +29,8 @@
 /* Codex allowance inside a card. */
 .accounts-allowance { display: grid; gap: var(--space-3); min-width: 0; }
 .accounts-allowance__header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
-.accounts-allowance__header > h3 { flex: 1 1 auto; margin: 0; color: var(--text-primary); }
+.accounts-allowance__title { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.accounts-allowance__title > h3 { margin: 0; color: var(--text-primary); }
 .accounts-allowance__content, .accounts-allowance__buckets { display: grid; gap: var(--space-4); min-width: 0; }
 .accounts-allowance__status { display: grid; gap: var(--space-1); }
 .accounts-allowance__message { color: var(--text-secondary); overflow-wrap: anywhere; }

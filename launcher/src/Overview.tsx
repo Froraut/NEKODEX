@@ -8,6 +8,7 @@ import { connectionActionWord, connectionStatusWord, connectionsCopy, workspaceH
 import { overviewCopy } from "./overview-copy";
 import { NetworkIssueNotice } from "./NetworkIssueNotice";
 import { messageOf } from "./launcher-ui";
+import { requestRoutingChecks } from "./SetupSurface";
 import {
   Button, ConnectionRow, EmptyState, EventList, Hero, Notice, Page, Panel, Stat, StatGroup, SurfaceHeader,
   type EventItem, type IconName,
@@ -63,15 +64,21 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const runStep = () => {
     if (headline.step === "wait") return;
     if (headline.step === "retry-session") void retrySession();
-    else navigate(stepSurface[headline.step]);
+    else {
+      if (headline.step === "routing-checks") requestRoutingChecks();
+      navigate(stepSurface[headline.step]);
+    }
   };
 
   const activeTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
+  // While the retry runs, the session row reports the check it is waiting for.
+  const sessionStatus: ConnectionStatus = retrying ? { key: "checking", dot: "busy", action: "retry", ready: false }
+    : readiness.connections.session;
   const connections: Array<{ icon: IconName; label: string; surface: Surface; status: ConnectionStatus }> = [
-    { icon: "accounts", label: copy.accountConnection, surface: "accounts", status: readiness.connections.session },
+    { icon: "accounts", label: copy.accountConnection, surface: "accounts", status: sessionStatus },
     { icon: "setup", label: copy.modelsConnectionTab, surface: "setup", status: readiness.connections.models },
     { icon: "mcp", label: copy.toolsConnectionTab, surface: "mcp", status: readiness.connections.tools },
   ];
@@ -80,7 +87,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const timeFormat = useMemo(() => new Intl.DateTimeFormat(language, { timeStyle: "short" }), [language]);
   // Debug records (process output) stay in Activity; Overview lists launcher events.
   const events: EventItem[] = logs.filter(({ record }) => record.level !== "debug").slice(-8).reverse().map(({ id, record: log }) => {
-    const text = humanEvent(log.event);
+    const text = humanEvent(log.event, language);
     const at = new Date(log.at);
     return {
       id: String(id),
@@ -99,8 +106,10 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
             onClick={runStep}>{headline.action}</Button>
           {headline.secondary === "activity"
             ? <Button variant="ghost" onClick={() => navigate("activity")}>{copy.viewActivity}</Button>
-            : headline.secondary === "tools"
-              ? <Button variant="ghost" onClick={() => navigate("mcp")}>{copy.manageToolsConnection}</Button>
+            : headline.secondary === "tools" || headline.secondary === "connect-tools"
+              ? <Button variant="ghost" onClick={() => navigate("mcp")}>
+                {headline.secondary === "tools" ? copy.manageToolsConnection : connectionsCopy(language).toolsTitle}
+              </Button>
               : null}
         </>}>
         {headline.body}
@@ -135,7 +144,12 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
             <div className="nk-conn-list">{connections.map(connection => <ConnectionRow key={connection.surface}
               icon={connection.icon} label={connection.label} status={connectionStatusWord(connection.status, copy, language)}
               state={connection.status.dot} action={connectionActionWord(connection.status.action, copy, language)}
-              onClick={() => navigate(connection.surface)} />)}</div>
+              // "Retry verification" checks the session here, like the hero; every other action opens the page.
+              onClick={() => {
+                if (connection.status.action === "retry") { void retrySession(); return; }
+                if (connection.status.action === "open-routing-checks") requestRoutingChecks();
+                navigate(connection.surface);
+              }} />)}</div>
           </Panel>
         </div>
         <Panel title={copy.recentActivity} titleId={`${overviewId}-events`} padding="compact" className="overview-activity"
