@@ -140,13 +140,15 @@ function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = fal
 
 const CAPABILITY_WRITE_TIMEOUT_MS = 30_000;
 
-/** Run one short runtime CLI command without publishing a launcher operation. */
+/** Run one short runtime CLI command without publishing a launcher operation; resolves its stdout. */
 function runQuietRuntimeCommand(invocation, environment, timeoutMs) {
   return new Promise((resolve, reject) => {
     const child = spawn(invocation.executable, invocation.args, {
-      cwd: invocation.cwd, detached: DETACH_OWNED_CHILD, env: environment, stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
+      cwd: invocation.cwd, detached: DETACH_OWNED_CHILD, env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
     });
+    let stdout = "";
     let stderr = "";
+    child.stdout.on("data", chunk => { stdout = `${stdout}${chunk}`.slice(-8_000); });
     child.stderr.on("data", chunk => { stderr = `${stderr}${chunk}`.slice(-2_000); });
     const timer = setTimeout(() => {
       try { terminateOwnedProcessTree(child, "SIGKILL"); } catch {}
@@ -155,7 +157,7 @@ function runQuietRuntimeCommand(invocation, environment, timeoutMs) {
     child.once("error", error => { clearTimeout(timer); reject(error); });
     child.once("exit", (code, signal) => {
       clearTimeout(timer);
-      if (code === 0) resolve();
+      if (code === 0) resolve(stdout);
       else reject(new Error(`Runtime command failed (${signal ?? code}): ${redactText(stderr.trim().split("\n").at(-1) ?? "")}`));
     });
   });
@@ -1382,12 +1384,15 @@ class RuntimeHost {
         CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
         ...this.launcherControlEnvironment(),
       };
-      await runQuietRuntimeCommand(invocation, environment, CAPABILITY_WRITE_TIMEOUT_MS);
+      return runQuietRuntimeCommand(invocation, environment, CAPABILITY_WRITE_TIMEOUT_MS);
     })();
     try {
-      await this.capabilityWrite;
-      this.logger.info("runtime.model_capabilities_saved", {});
-      return { saved: true };
+      const output = await this.capabilityWrite;
+      let receipt = null;
+      try { receipt = JSON.parse(String(output).trim().split("\n").at(-1)); } catch {}
+      const pickerChanged = receipt?.pickerChanged === true;
+      this.logger.info("runtime.model_capabilities_saved", { pickerChanged, webModels: receipt?.webModels ?? null });
+      return { saved: true, pickerChanged };
     } catch (error) {
       this.logger.warn("runtime.model_capabilities_not_saved", { message: error instanceof Error ? error.message : String(error) });
       return { saved: false, reason: "failed" };

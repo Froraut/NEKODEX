@@ -143,8 +143,9 @@ function readState(filePath) {
     }
     // A received catalog and a user's picker confirmation are separate facts.
     // Older launchers recreated the refresh flag on every launch until the user
-    // confirmed the picker, even after the live catalog monitor had cleared it.
-    if (state.coreSetupComplete === true && state.codexCatalogVerified === true) {
+    // confirmed the picker. A pending restart (a changed model list) stays until
+    // the user confirms the picker, which also clears it.
+    if (state.coreSetupComplete === true && state.codexCatalogVerified === true && state.codexPickerConfirmed === true) {
       state.codexRestartRequired = false;
     }
     if (state.coreSetupComplete === false) {
@@ -221,7 +222,9 @@ function createStateStore(filePath) {
       } else if (patch.codexCatalogVerified === false) {
         next.codexPickerConfirmed = false;
       }
-      if (next.coreSetupComplete === true && next.codexCatalogVerified === true) {
+      // Observing the served catalog clears the restart request, unless the same update asks for one.
+      if (next.coreSetupComplete === true && next.codexCatalogVerified === true && state.codexCatalogVerified !== true
+        && !Object.prototype.hasOwnProperty.call(patch, "codexRestartRequired")) {
         next.codexRestartRequired = false;
       }
       if (next.browserInteractionMode === "manual" || next.coreSetupComplete === false) {

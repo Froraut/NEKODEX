@@ -1929,7 +1929,16 @@ async function start() {
         && runtime.config?.browserInteractionMode === "automatic";
     },
     // The selected account's picker evidence decides which Web models Codex lists.
-    onCapabilityEvidence: (_accountId, evidence) => runtimeHost.saveModelCapabilities(evidence),
+    onCapabilityEvidence: async (_accountId, evidence) => {
+      const result = await runtimeHost.saveModelCapabilities(evidence);
+      // Codex reads its model catalog only at startup. A changed visible Web list needs a Codex
+      // restart and a fresh picker confirmation; an unchanged one keeps the confirmation.
+      if (result?.pickerChanged === true && !IS_DEV_PROFILE && stateStore.read().coreSetupComplete === true) {
+        const state = stateStore.update({ codexPickerConfirmed: false, codexRestartRequired: true });
+        send("launcher:state-changed", state);
+      }
+      return result;
+    },
     isBrowserInView: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
       && !mainWindow.isMinimized() && browserHost?.surfaceActive),
   });

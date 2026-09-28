@@ -4,6 +4,7 @@
   "setupNext": "下一步",
   "setupConfirmTitle": "在 Codex 中確認模型",
   "setupConfirmBody": "安裝已儲存，Codex 已讀取模型列表。開啟模型選擇器並確認 NEKODEX 模型可見，無需重新安裝。",
+  "setupConfirmRestartBody": "NEKODEX 模型清單已變更。Codex 只在啟動時讀取此清單：完成工作後，請完全結束並重新開啟 Codex，再開啟其模型選擇器確認 NEKODEX 模型。",
   "setupCatalogTitle": "等待 Codex 讀取模型",
   "setupCatalogBody": "設定已儲存，但尚未觀察到成功的模型列表請求。請開啟 Codex 模型選擇器並檢查下方路由。如果仍未顯示模型，請在完成工作後重新啟動 Codex。",
   "setupRepair": "修復安裝",

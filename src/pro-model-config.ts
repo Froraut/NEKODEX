@@ -134,15 +134,19 @@ export async function runModelCapabilitiesConfigCommand(args: string[]): Promise
   else delete config.modelCapabilities;
   saveConfig(config, snapshot);
   let webModels: number | null = null;
+  let pickerChanged = false;
   const native = pickerCatalogInUse() ? initialNativeCatalog() : undefined;
   if (native) {
     try {
       const catalogConfig = { ...config, subagentProtocol: readCodexSubagentProtocol(config.subagentProtocol) };
-      webModels = refreshPickerCatalog(native, catalogConfig, readCodexModelContextOverride())?.webModels ?? null;
+      const refreshed = refreshPickerCatalog(native, catalogConfig, readCodexModelContextOverride());
+      webModels = refreshed?.webModels ?? null;
+      pickerChanged = refreshed?.visibleChanged === true;
     } catch (error) {
       // The saved evidence stands; the next catalog request rebuilds the picker from live data.
       process.stderr.write(`Codex picker catalog was not rebuilt: ${error instanceof Error ? error.message : String(error)}\n`);
     }
   }
-  process.stdout.write(`${JSON.stringify({ saved: true, webModels })}\n`);
+  // Codex reads the catalog only when it starts, so a changed visible list needs a Codex restart.
+  process.stdout.write(`${JSON.stringify({ saved: true, webModels, pickerChanged })}\n`);
 }

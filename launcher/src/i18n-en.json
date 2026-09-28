@@ -135,6 +135,7 @@
   "setupNext": "Next step",
   "setupConfirmTitle": "Confirm your models in Codex",
   "setupConfirmBody": "The installation is saved and Codex has loaded the catalog. Open its model picker and confirm that the NEKODEX models are visible. Reinstalling is not needed.",
+  "setupConfirmRestartBody": "The NEKODEX model list changed. Codex reads it only when it starts: finish your work, fully quit and reopen Codex, then open its model picker and confirm the NEKODEX models.",
   "setupCatalogTitle": "Waiting for Codex to load the models",
   "setupCatalogBody": "The settings are saved, but a successful catalog request has not been observed yet. Open the Codex model picker and check the routing below. If models are still missing, restart Codex after finishing your work.",
   "setupRepair": "Repair installation",

@@ -135,6 +135,7 @@
   "setupNext": "下一步",
   "setupConfirmTitle": "在 Codex 中确认模型",
   "setupConfirmBody": "安装已保存，Codex 已读取模型列表。打开模型选择器并确认 NEKODEX 模型可见，无需重新安装。",
+  "setupConfirmRestartBody": "NEKODEX 模型列表已更改。Codex 仅在启动时读取该列表：完成工作后，完全退出并重新打开 Codex，然后打开其模型选择器并确认 NEKODEX 模型。",
   "setupCatalogTitle": "等待 Codex 读取模型",
   "setupCatalogBody": "设置已保存，但尚未观察到成功的模型列表请求。请打开 Codex 模型选择器并检查下方路由。如果仍未显示模型，请在完成工作后重启 Codex。",
   "setupRepair": "修复安装",

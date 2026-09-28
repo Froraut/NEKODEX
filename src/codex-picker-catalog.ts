@@ -92,6 +92,21 @@ export function initialNativeCatalog(codexModelsCachePath?: string): unknown | u
 export interface PickerCatalogRefresh {
   changed: boolean;
   webModels: number;
+  /** The Web rows Codex shows, or the efforts they offer, changed: Codex must be restarted. */
+  visibleChanged: boolean;
+}
+
+/** What the Codex picker shows for Web models: each visible row's ID, name and efforts. */
+export function visiblePickerContract(text: string | undefined): string {
+  if (!text) return "[]";
+  try {
+    const models = (JSON.parse(text) as { models?: Array<Record<string, unknown>> }).models ?? [];
+    return JSON.stringify(models
+      .filter(model => typeof model.slug === "string" && model.slug.startsWith(CHATGPT_WEB_MODEL_PREFIX) && model.visibility === "list")
+      .map(model => [model.slug, model.display_name, model.default_reasoning_level,
+        (Array.isArray(model.supported_reasoning_levels) ? model.supported_reasoning_levels : [])
+          .map(level => (level as { effort?: unknown }).effort)]));
+  } catch { return "unreadable"; }
 }
 
 /**
@@ -110,9 +125,10 @@ export function refreshPickerCatalog(
   const data = buildPickerCatalog(native, config, contextOverride);
   const webModels = (JSON.parse(data).models as Array<{ slug: string; visibility?: string }>)
     .filter(model => model.slug.startsWith(CHATGPT_WEB_MODEL_PREFIX) && model.visibility === "list").length;
-  if (readFileSync(path, "utf8") === data) return { changed: false, webModels };
+  const previous = readFileSync(path, "utf8");
+  if (previous === data) return { changed: false, webModels, visibleChanged: false };
   atomicWriteFile(path, data);
-  return { changed: true, webModels };
+  return { changed: true, webModels, visibleChanged: visiblePickerContract(previous) !== visiblePickerContract(data) };
 }
 
 export function pickerCatalogAgeMs(now = Date.now()): number | undefined {

@@ -4,6 +4,7 @@
   "setupNext": "다음 단계",
   "setupConfirmTitle": "Codex에서 모델 확인",
   "setupConfirmBody": "설치가 저장되었고 Codex가 모델 목록을 불러왔습니다. 모델 선택기를 열어 NEKODEX 모델이 표시되는지 확인하세요. 다시 설치할 필요는 없습니다.",
+  "setupConfirmRestartBody": "NEKODEX 모델 목록이 변경되었습니다. Codex는 시작할 때만 목록을 읽습니다. 작업을 마친 뒤 Codex를 완전히 종료했다가 다시 열고, 모델 선택기에서 NEKODEX 모델을 확인하세요.",
   "setupCatalogTitle": "Codex가 모델을 불러오기를 기다리는 중",
   "setupCatalogBody": "설정은 저장되었지만 모델 목록 요청이 성공했는지 아직 확인되지 않았습니다. Codex 모델 선택기를 열고 아래 연결 경로를 확인하세요. 모델이 계속 없다면 작업을 마친 후 Codex를 다시 시작하세요.",
   "setupRepair": "설치 복구",

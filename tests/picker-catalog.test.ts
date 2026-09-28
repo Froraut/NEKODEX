@@ -157,3 +157,18 @@ test.serial("an explicit opt-in explains a user-owned catalog and picker changes
   expect(f.read().model_catalog_json).toBe(own);
   uninstallCodexIntegration();
 }));
+
+test.serial("a model-list change that alters the visible Web rows is reported for a Codex restart", () => isolated(f => {
+  installCodexIntegration(f.config);
+  const native = { models: [nativeRow("native-model", 1)] };
+  const evidence = (families: Record<string, string[]>) => ({ ...f.config, solAvailable: true, extraHighAvailable: true, proAvailable: true,
+    modelCapabilities: { observedAt: 1, families, names: { "5.6": "Sol" } } });
+  const sol = { "6": ["max"], "5.6": ["low", "medium", "high", "xhigh", "max"] };
+  refreshPickerCatalog(native, evidence(sol));
+  expect(refreshPickerCatalog(native, evidence(sol))).toMatchObject({ changed: false, visibleChanged: false });
+  // A native-only change rewrites the file but leaves the Web picker contract alone.
+  expect(refreshPickerCatalog({ models: [nativeRow("native-model", 1), nativeRow("native-two", 2)] }, evidence(sol)))
+    .toMatchObject({ changed: true, visibleChanged: false });
+  expect(refreshPickerCatalog(native, evidence({ ...sol, "5.5": ["low", "high"] })))
+    .toMatchObject({ changed: true, visibleChanged: true });
+}));
