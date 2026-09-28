@@ -7,6 +7,7 @@
 // browser-ui-home-loading, browser-ui-manual (a Manual mode turn waiting for the user to send its prompt),
 // picker-refresh (the Web model list changed: restart Codex, then confirm its picker again).
 // passkey-retry-pending (Retry waits for a host operation; Cancel must still settle that operation).
+// startup-loading (the first snapshot waits; Try again recovers), startup-slow (a delayed successful launch).
 // Account forms: accounts-ui-ready, accounts-ui-error (first add/save attempt fails).
 // benefits-portfolio-mixed also has launcher log events (Overview "Recent events", Activity), recorded
 // tasks with their browser tabs and a waiting queue (Task center); benefits-insights has the same events and
@@ -43,6 +44,11 @@ function installMockLauncher() {
   const language = languages.includes(parameters.get("language")) ? parameters.get("language") : "en";
   const appearances = ["system", "dark", "light"];
   const appearance = appearances.includes(parameters.get("appearance")) ? parameters.get("appearance") : "dark";
+  if (scenario.startsWith("startup-")) {
+    // The production shell remembers these before its next launch too.
+    localStorage.setItem("nekodex.language", language);
+    localStorage.setItem("nekodex.appearance", appearance);
+  }
   const browserUiScenario = scenario.startsWith("browser-ui-");
   const accountsUiScenario = scenario.startsWith("accounts-ui-");
   const benefitsScenario = scenario.startsWith("benefits-") || browserUiScenario || accountsUiScenario;
@@ -574,6 +580,8 @@ function installMockLauncher() {
     },
     copyClientApiKey: async () => { calls.push(['api-key-copy']); return { copied: true }; },
     snapshot: async () => {
+      if (scenario === "startup-loading" && startupAttempts++ === 0) return await new Promise(() => {});
+      if (scenario === "startup-slow" && startupAttempts++ === 0) await delay(2_000);
       if (scenario === "startup-error" && startupAttempts++ === 0) throw new Error("Error invoking remote method 'launcher:snapshot': Error: Fixture runtime unavailable");
       return snapshot();
     },

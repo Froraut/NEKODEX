@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Badge, Button, cx, Icon, Mark, Notice, SettingRow as KitSettingRow, StateDot, Switch as KitSwitch, Toast, type IconName } from "./design";
 import type { Copy } from "./i18n";
@@ -299,14 +299,41 @@ export function BiggerContextRecommendation({
   );
 }
 
-/** Before the first snapshot. `language`: the saved language when known, else the system language. */
-export function LaunchLoading({ language = startupLanguage() }: { language?: Language }) {
+function LaunchBrand() {
+  return <div className="nk-launch__brand" aria-label="NEKODEX">
+    <span className="nk-launch__emblem"><Mark size={64} label={null} interactive={false} /></span>
+    <span className="nk-launch__wordmark" aria-hidden="true">NEKODEX</span>
+  </div>;
+}
+
+/** Indeterminate startup feedback; the phase reflects actual snapshot/locale readiness, never a fake percentage. */
+export function LaunchLoading({ language = startupLanguage(), phase = "workspace", onRetry }: {
+  language?: Language;
+  phase?: "workspace" | "language";
+  onRetry?: () => void;
+}) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    const timer = window.setTimeout(() => setSlow(true), 15_000);
+    return () => window.clearTimeout(timer);
+  }, [phase]);
+  const words = shellCopy(language);
   return (
-    <main aria-busy="true" className="nk-launch" lang={language}>
+    <main className="nk-launch nk-launch--loading" lang={language}>
       <span aria-hidden="true" className="nk-launch__drag" />
-      <Mark size={48} />
-      <span aria-hidden="true" className="nk-launch__line" />
-      <span className="nk-visually-hidden" role="status">{shellCopy(language).loading}</span>
+      <div className="nk-launch__content">
+        <LaunchBrand />
+        <h1>{words.loadingTitle}</h1>
+        <p className="nk-launch__status" role="status">{phase === "language" ? words.loadingLanguage : words.loadingWorkspace}</p>
+        <div className="nk-launch__meter" role="progressbar" aria-label={words.loading} />
+        <div className="nk-launch__recovery">
+          {slow ? <>
+            <p role="status">{onRetry ? words.loadingSlow : words.loadingLanguage}</p>
+            {onRetry ? <Button variant="secondary" onClick={onRetry}>{words.tryAgain}</Button> : null}
+          </> : null}
+        </div>
+      </div>
     </main>
   );
 }
@@ -319,14 +346,20 @@ export function FatalMessage({ language = startupLanguage(), message, onRetry, r
   retryLabel?: string;
   retryRef?: RefObject<HTMLButtonElement | null>;
 }) {
+  const words = shellCopy(language);
   return (
-    <main className="nk-launch" lang={language}>
+    <main className="nk-launch nk-launch--error" lang={language}>
       <span aria-hidden="true" className="nk-launch__drag" />
-      <Mark size={48} />
-      <h1>{shellCopy(language).startupFailed}</h1>
-      <p role="alert">{message}</p>
-      {onRetry ? <Button onClick={onRetry} ref={retryRef} variant="primary">{retryLabel}</Button> : null}
+      <div className="nk-launch__content">
+        <LaunchBrand />
+        <h1>{words.startupFailed}</h1>
+        <p role="alert">{onRetry ? words.startupRecovery : words.startupRestart}</p>
+        {onRetry ? <Button onClick={onRetry} ref={retryRef} variant="primary">{retryLabel ?? words.tryAgain}</Button> : null}
+        <details className="nk-launch__details">
+          <summary>{words.showDetails}</summary>
+          <p>{message}</p>
+        </details>
+      </div>
     </main>
   );
 }
-

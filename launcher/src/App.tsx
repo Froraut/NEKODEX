@@ -397,6 +397,12 @@ export function App() {
     heading.focus({ preventScroll: true });
   });
 
+  const retryStartup = () => {
+    startupRetried.current = true;
+    startupRetryFocus.current = true;
+    setStartupError(null);
+    setStartupAttempt((attempt) => attempt + 1);
+  };
   if (!api) return <FatalMessage language="en" message="Launcher IPC is unavailable." />;
   if (!snapshot && startupError) return (
     <FatalMessage
@@ -404,15 +410,12 @@ export function App() {
       message={localizeLauncherError(copyFor(startupLanguage()), startupError)}
       retryLabel={shellCopy(startupLanguage()).tryAgain}
       retryRef={retryButton}
-      onRetry={() => {
-        startupRetried.current = true;
-        startupRetryFocus.current = true;
-        setStartupError(null);
-        setStartupAttempt((attempt) => attempt + 1);
-      }}
+      onRetry={retryStartup}
     />
   );
-  if (!snapshot || (locale.pending && !hasPresentedLocale.current)) return <LaunchLoading language={snapshot ? requestedLanguage : undefined} />;
+  if (!snapshot || (locale.pending && !hasPresentedLocale.current)) return <LaunchLoading
+    key={startupAttempt} language={snapshot ? requestedLanguage : undefined}
+    phase={snapshot ? "language" : "workspace"} onRetry={snapshot ? undefined : retryStartup} />;
   hasPresentedLocale.current = true;
 
   const language = locale.language;
