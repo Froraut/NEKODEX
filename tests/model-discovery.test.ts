@@ -19,7 +19,6 @@ import {
   availableChatGptWebModelRoutes,
   CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES,
   chatGptModelRowForVersion,
-  chatGptWebModelSlugVersion,
   newestChatGptWebProFamily,
   parseChatGptWebModelCapabilities,
   requireChatGptWebModelRoute,
@@ -69,51 +68,58 @@ test("each version is served by the row naming it, or by Latest only when it is 
   expect(chatGptModelRowForVersion(["GPT-5.6 Sol", "GPT-5.6 Luna"], "5.6")).toBeUndefined();
 });
 
-test("the observed picker lists every current model under the identities Codex already uses", () => {
+test("the Codex picker lists exactly ChatGPT's five levels, each with one effort", () => {
   expect(observed).toEqual({ observedAt: 1_790_000_000_000, names: { "5.6": "Sol" }, families: {
     "6": ["max"], "5.6": ["low", "medium", "high", "xhigh", "max"], "5.5": ["low", "medium", "high", "xhigh"],
   } });
   expect(parseChatGptWebModelCapabilities(JSON.parse(JSON.stringify(observed)))).toEqual(observed);
-  const routes = availableChatGptWebModelRoutes(config);
-  expect(routes.map(route => [route.slug, route.displayName])).toEqual([
-    ["chatgpt-web/gpt-6-pro", "GPT-6 Pro (Web)"],
-    ["chatgpt-web/gpt-5.6-pro", "GPT-5.6 Sol Pro (Web)"],
-    ["chatgpt-web/gpt-5.6-sol", "GPT-5.6 Sol (Web)"],
-    ["chatgpt-web/gpt-5.6-sol-instant", "GPT-5.6 Sol Instant (Web)"],
-    ["chatgpt-web/gpt-5.5", "GPT-5.5 (Web)"],
-    ["chatgpt-web/gpt-5.5-instant", "GPT-5.5 Instant (Web)"],
-  ]);
+  const five = [
+    ["chatgpt-web/gpt-5.6-sol-instant", "GPT-5.6 Sol Instant (Web)", "low"],
+    ["chatgpt-web/gpt-5.6-sol-medium", "GPT-5.6 Sol Medium (Web)", "medium"],
+    ["chatgpt-web/gpt-5.6-sol-high", "GPT-5.6 Sol High (Web)", "high"],
+    ["chatgpt-web/gpt-5.6-sol-extra-high", "GPT-5.6 Sol Extra High (Web)", "xhigh"],
+    ["chatgpt-web/gpt-6-pro", "GPT-6 Astra Pro (Web)", "max"],
+  ];
   const native = { slug: "gpt-6-astra", visibility: "list", priority: 1, tool_mode: "code_mode_only",
     supported_reasoning_levels: [{ effort: "high" }] };
   const catalog = augmentNativeModelCatalog({ models: [native] }, { ...config, subagentProtocol: "native" });
-  const web = (catalog.models as Array<{ slug: string; supported_reasoning_levels: Array<{ effort: string }> }>)
-    .filter(model => model.slug.startsWith("chatgpt-web/"));
-  expect(web.map(model => model.slug)).toEqual(routes.map(route => route.slug));
-  expect(web.find(model => model.slug === "chatgpt-web/gpt-5.5")!.supported_reasoning_levels.map(level => level.effort))
-    .toEqual(["medium", "high", "xhigh"]);
-  const pinned = requireChatGptWebModelRoute("chatgpt-web/gpt-5.5", config, "xhigh");
-  expect(pinned.interactionMode === "automatic" && [pinned.modelFamily, pinned.adapterEffort]).toEqual(["5.5", "xhigh"]);
-  expect(() => requireChatGptWebModelRoute("chatgpt-web/gpt-5.5-pro", config)).toThrow("not currently offered");
-  // Saved fixed-mode and retired identities keep resolving.
+  const web = (catalog.models as Array<{ slug: string; display_name: string; supported_reasoning_levels: Array<{ effort: string }>;
+    context_window: number }>).filter(model => model.slug.startsWith("chatgpt-web/"));
+  expect(web.map(model => [model.slug, model.display_name, model.supported_reasoning_levels.map(level => level.effort).join(",")]))
+    .toEqual(five);
+  // Each level keeps its own context budget; Pro keeps the larger Pro-model window.
+  expect(web.find(model => model.slug === "chatgpt-web/gpt-6-pro")!.context_window)
+    .toBeGreaterThan(web.find(model => model.slug === "chatgpt-web/gpt-5.6-sol-high")!.context_window);
+  const astra = requireChatGptWebModelRoute("chatgpt-web/gpt-6-pro", config);
+  expect(astra.interactionMode === "automatic" && [astra.modelFamily, astra.adapterEffort]).toEqual(["6", "max"]);
+  const medium = requireChatGptWebModelRoute("chatgpt-web/gpt-5.6-sol-medium", config);
+  expect(medium.interactionMode === "automatic" && [medium.modelFamily, medium.adapterEffort]).toEqual(["5.6", "medium"]);
+  expect(() => requireChatGptWebModelRoute("chatgpt-web/gpt-5.6-sol-medium", config, "high")).toThrow("does not support effort");
+  expect(() => requireChatGptWebModelRoute("chatgpt-web/gpt-5.5", config)).toThrow("not enabled");
+  // Saved tasks keep resolving the fixed-mode, generic Sol, Sol Pro and retired Astra identities.
   expect(requireChatGptWebModelRoute("chatgpt-web/high", config).adapterEffort).toBe("high");
-  const astra = requireChatGptWebModelRoute("chatgpt-web/gpt-6-astra", config);
-  expect(astra.interactionMode === "automatic" && astra.modelFamily).toBe("5.6");
+  expect(requireChatGptWebModelRoute("chatgpt-web/gpt-5.6-sol", config, "xhigh").adapterEffort).toBe("xhigh");
+  const solPro = requireChatGptWebModelRoute("chatgpt-web/gpt-5.6-pro", config);
+  expect(solPro.interactionMode === "automatic" && [solPro.modelFamily, solPro.adapterEffort]).toEqual(["5.6", "max"]);
+  const alias = requireChatGptWebModelRoute("chatgpt-web/gpt-6-astra", config);
+  expect(alias.interactionMode === "automatic" && alias.modelFamily).toBe("5.6");
 });
 
-test("a new ChatGPT model and a retired one change the Codex list without a release", () => {
-  const later = aggregateChatGptModelObservation([
-    { label: "Latest", positions: Object.fromEntries(levels.map(effort => [effort, described("6.5", "Nova")])) },
-    { label: "GPT-6 Astra", positions: { max: described("6", "Astra") } },
-    { label: "GPT-5.6 Sol", positions: Object.fromEntries(levels.map(effort => [effort, described("5.6", "Sol")])) },
+test("the account's picker decides which of the five levels are listed", () => {
+  const plus = aggregateChatGptModelObservation([
+    { label: "Latest", positions: { low: described("5.6", "Sol"), medium: described("5.6", "Sol"), high: described("5.6", "Sol") } },
+    { label: "GPT-5.6 Sol", positions: { low: described("5.6", "Sol"), medium: described("5.6", "Sol"), high: described("5.6", "Sol") } },
   ]);
-  const routes = availableChatGptWebModelRoutes({ ...config, modelCapabilities: later });
-  expect(routes.map(route => route.displayName)).toEqual([
-    "GPT-6.5 Nova Pro (Web)", "GPT-6.5 Nova (Web)", "GPT-6.5 Nova Instant (Web)",
-    "GPT-6 Astra Pro (Web)",
-    "GPT-5.6 Sol Pro (Web)", "GPT-5.6 Sol (Web)", "GPT-5.6 Sol Instant (Web)",
+  expect(availableChatGptWebModelRoutes({ ...config, extraHighAvailable: false, proAvailable: false, modelCapabilities: plus })
+    .map(route => route.slug)).toEqual(["chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-5.6-sol-medium", "chatgpt-web/gpt-5.6-sol-high"]);
+  // A newer model at Pro does not become GPT-6 Astra Pro; that row needs GPT-6 at Pro.
+  const newer = aggregateChatGptModelObservation([
+    { label: "Latest", positions: { high: described("5.6", "Sol"), max: described("6.5", "Nova") } },
+    { label: "GPT-5.6 Sol", positions: { high: described("5.6", "Sol"), max: described("5.6", "Sol") } },
   ]);
-  expect(routes.map(route => route.slug)).toContain("chatgpt-web/gpt-6.5-nova");
-  expect(() => requireChatGptWebModelRoute("chatgpt-web/gpt-5.5", { ...config, modelCapabilities: later })).toThrow("not currently offered");
+  expect(availableChatGptWebModelRoutes({ ...config, modelCapabilities: newer }).map(route => route.slug))
+    .toEqual(["chatgpt-web/gpt-5.6-sol-high"]);
+  expect(() => requireChatGptWebModelRoute("chatgpt-web/gpt-6-pro", { ...config, modelCapabilities: newer })).toThrow("unavailable");
 });
 
 test("pickers that describe only the effort keep GPT-6 Pro on Latest and the named rows' versions", () => {
@@ -125,31 +131,31 @@ test("pickers that describe only the effort keep GPT-6 Pro on Latest and the nam
   expect(unversioned.names).toEqual({ "5.6": "Sol" });
 });
 
-test("observations saved before model names keep their fixed identities", () => {
+test("observations saved before model names keep GPT-6 only at Pro", () => {
   const legacy = parseChatGptWebModelCapabilities({ observedAt: 1, families: { "6": ["low", "medium", "max"], "5.6": ["low", "max"] } })!;
   expect(legacy.families["6"]).toEqual(["max"]);
-  expect(availableChatGptWebModelRoutes({ ...config, modelCapabilities: legacy }).map(route => route.slug).toSorted())
-    .toEqual(["chatgpt-web/gpt-5.6-pro", "chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-6-pro"]);
+  expect(availableChatGptWebModelRoutes({ ...config, modelCapabilities: legacy }).map(route => route.slug))
+    .toEqual(["chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-6-pro"]);
   expect(() => parseChatGptWebModelCapabilities({ observedAt: 1, families: { "gpt-6": ["max"] } })).toThrow();
   expect(() => parseChatGptWebModelCapabilities({ observedAt: 1, families: { "6": ["max"] }, names: { "6": "pro" } })).toThrow();
 });
 
-test("the launcher admits, records and routes discovered models by their version", () => {
-  for (const slug of ["chatgpt-web/gpt-5.5", "chatgpt-web/gpt-6.5-nova-instant", "chatgpt-web/gpt-7-pro", "chatgpt-web/gpt-5.6-sol"]) {
+test("the launcher admits, records and routes the five models by family", () => {
+  const families: Record<string, string> = { "chatgpt-web/gpt-5.6-sol-instant": "5.6", "chatgpt-web/gpt-5.6-sol-medium": "5.6",
+    "chatgpt-web/gpt-5.6-sol-high": "5.6", "chatgpt-web/gpt-5.6-sol-extra-high": "5.6", "chatgpt-web/gpt-6-pro": "6",
+    "chatgpt-web/gpt-5.6-pro": "5.6", "chatgpt-web/gpt-6-astra": "5.6" };
+  for (const [slug, family] of Object.entries(families)) {
     expect(isTaskModel(slug)).toBe(true);
-    expect(taskModelFamily(slug)).toBe(chatGptWebModelSlugVersion(slug));
+    expect(taskModelFamily(slug)).toBe(family);
   }
-  expect(taskModelFamily("chatgpt-web/gpt-6-astra")).toBe("5.6");
   expect(taskModelFamily("chatgpt-web/gpt-5.6-luna")).toBeUndefined();
-  for (const slug of ["chatgpt-web/gpt-5.5 ", "chatgpt-web/gpt-x", "chatgpt-web/gpt-5.5-instant-pro", "chatgpt-web/../pro"]) {
-    expect(isTaskModel(slug)).toBe(false);
-  }
+  for (const slug of ["chatgpt-web/gpt-5.5", "chatgpt-web/gpt-5.6-sol-high ", "chatgpt-web/../pro"]) expect(isTaskModel(slug)).toBe(false);
   const dir = mkdtempSync(join(tmpdir(), "nekodex-model-discovery-"));
   try {
     const ledger = new BrowserTaskLedger(join(dir, "tasks.json"));
-    ledger.end(ledger.start("trace-discovered", "tab-discovered", 1, "chatgpt-web/gpt-5.5"), "completed");
+    ledger.end(ledger.start("trace-five", "tab-five", 1, "chatgpt-web/gpt-5.6-sol-extra-high"), "completed");
     const restored = new BrowserTaskLedger(join(dir, "tasks.json"));
-    expect(restored.snapshot().map((row: { model: string }) => row.model)).toEqual(["chatgpt-web/gpt-5.5"]);
+    expect(restored.snapshot().map((row: { model: string }) => row.model)).toEqual(["chatgpt-web/gpt-5.6-sol-extra-high"]);
     expect(restored.storageIssue).toBeNull();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -199,21 +205,11 @@ test("Latest stays reachable beside other unversioned rows, and its unversioned 
   expect(mixed.families).toEqual({ "6": ["max"], "5.6": ["high", "max"] });
 });
 
-test("a real model never takes a retired alias, and saved names keep catalog rows", () => {
-  const astra = aggregateChatGptModelObservation([
-    { label: "Latest", positions: Object.fromEntries(levels.map(effort => [effort, described("6", "Astra")])) },
-    { label: "GPT-5.6 Sol", positions: { high: described("5.6", "Sol") } },
-  ]);
-  const routes = availableChatGptWebModelRoutes({ ...config, modelCapabilities: astra });
-  expect(routes.map(route => [route.slug, route.displayName])).toEqual([
-    ["chatgpt-web/gpt-6-pro", "GPT-6 Astra Pro (Web)"],
-    ["chatgpt-web/gpt-6", "GPT-6 Astra (Web)"],
-    ["chatgpt-web/gpt-6-instant", "GPT-6 Astra Instant (Web)"],
-    ["chatgpt-web/gpt-5.6-sol", "GPT-5.6 Sol (Web)"],
-  ]);
-  const alias = requireChatGptWebModelRoute("chatgpt-web/gpt-6-astra", { ...config, modelCapabilities: astra });
-  expect(alias.interactionMode === "automatic" && alias.modelFamily).toBe("5.6");
-  expect(CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES.map(route => route.slug)).toContain("chatgpt-web/gpt-5.6-sol");
+test("retired identities stay available to saved tasks as hidden catalog rows", () => {
+  const saved = CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES.map(route => route.slug);
+  for (const slug of ["chatgpt-web/gpt-5.6-sol", "chatgpt-web/gpt-5.6-pro", "chatgpt-web/gpt-6-astra", "chatgpt-web/high"]) {
+    expect(saved).toContain(slug);
+  }
 });
 
 test("fixed levels and unpinned Pro no longer depend on the row an earlier turn left selected", () => {
@@ -223,10 +219,10 @@ test("fixed levels and unpinned Pro no longer depend on the row an earlier turn 
   expect(newestChatGptWebProFamily({ modelCapabilities: { observedAt: 1, families: { "6": ["max"] } } })).toBeUndefined();
 });
 
-test("external clients may request discovered models", () => {
+test("external clients may request the five models", () => {
   const turns = new ClientTurns("hermes");
-  const prepared = turns.prepare({ prompt_cache_key: "session-1", model: "chatgpt-web/gpt-5.5", input: "Hello" });
-  expect(prepared.body.model).toBe("chatgpt-web/gpt-5.5");
+  const prepared = turns.prepare({ prompt_cache_key: "session-1", model: "chatgpt-web/gpt-5.6-sol-medium", input: "Hello" });
+  expect(prepared.body.model).toBe("chatgpt-web/gpt-5.6-sol-medium");
   prepared.release();
   expect(() => turns.prepare({ prompt_cache_key: "session-2", model: "gpt-6-astra", input: "Hello" })).toThrow("Choose a ChatGPT Web model");
 });

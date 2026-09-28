@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { getConfigDir } from "./config";
-import { CHATGPT_WEB_NAMED_MODEL_ROUTES, CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES, isDiscoveredChatGptWebModelSlug } from "./chatgpt-web-models";
+import { CHATGPT_WEB_NAMED_MODEL_ROUTES, CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES } from "./chatgpt-web-models";
 import type { ExternalClientContext } from "./external-client-context";
 
 type Obj = Record<string, any>;
@@ -29,8 +29,7 @@ export class ClientTurns {
   prepare(raw: unknown): { body: Obj; context: ExternalClientContext; complete: (value: Obj) => void; release: () => void } {
     if (!object(raw) || typeof raw.prompt_cache_key !== "string" || !raw.prompt_cache_key.trim()
       || raw.prompt_cache_key.length > 256) throw new Error("External client must supply its session-scoped prompt_cache_key. Update External client and start a new session.");
-    // Discovered model IDs follow the account's picker; route resolution checks current availability.
-    if (typeof raw.model !== "string" || !(CLIENT_WEB_MODEL_IDS.has(raw.model) || isDiscoveredChatGptWebModelSlug(raw.model))) {
+    if (typeof raw.model !== "string" || !CLIENT_WEB_MODEL_IDS.has(raw.model)) {
       throw new Error("Choose a ChatGPT Web model from the External client provider; native/API models are not forwarded.");
     }
     if (raw.previous_response_id || raw.context_management || raw.client_metadata) {

@@ -171,13 +171,13 @@ isolated Electron shell crash check verify their separate boundaries.
 ## Model and conversation state
 
 Web model identities are resolved in `chatgpt-web-models.ts` before browser
-dispatch. The picker advertises one Instant, thinking and Pro row per discovered
-model version (`gpt-<version>[-<name>][-instant]`, `gpt-<version>-pro`), so new
-and retired ChatGPT models need no release; observations saved before model
-names keep the fixed named rows. Old fixed-mode IDs remain resolvable for saved
-tasks. A version is always selected through the row that names it, or through
-the one unversioned Latest row when it is newer than every named row. Explicit family routes add native effort choices only when their
-context and compaction budgets are equal; Instant and Pro retain separate rows.
+dispatch. The picker lists ChatGPT's five levels as they run, one immutable
+effort and context budget per row: GPT-5.6 Sol Instant, Medium, High and Extra
+High, and GPT-6 Astra Pro (family 6). Picker evidence decides which of them the
+account offers. Generic GPT-5.6 Sol, GPT-5.6 Sol Pro, fixed-mode and retired
+Astra IDs remain resolvable, as hidden rows, for saved tasks only. A version is
+always selected through the row that names it, or through the one unversioned
+Latest row when it is newer than every named row.
 The validated family travels with the turn and conversation identity, and the
 browser proves both the selected family and effort before sending. Native model
 rows and account entitlements are not inferred from these browser routes.

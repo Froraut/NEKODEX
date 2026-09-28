@@ -488,37 +488,38 @@ export const CHATGPT_WEB_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] 
   },
 ];
 
+const SOL = { interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6", requiresPro: false } as const;
+
 /**
- * Advertise explicit model identities while keeping saved fixed-mode tasks resolvable. They mirror
- * ChatGPT's five thinking levels: GPT-5.6 Sol runs Instant, Medium, High and Extra High, and the
- * Pro level runs GPT-5.6 Sol Pro or, where the plan includes it, GPT-6 Pro (powered by GPT-6 Astra).
+ * The Codex picker lists ChatGPT's five thinking levels as they run: GPT-5.6 Sol runs Instant,
+ * Medium, High and Extra High, and the Pro level runs GPT-6 Pro, powered by GPT-6 Astra. Each row
+ * has one immutable effort and its own context budget; account evidence decides which are listed.
  */
 export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
-    slug: "chatgpt-web/gpt-5.6-sol-instant",
-    displayName: "GPT-5.6 Sol Instant (Web)",
-    description: "GPT-5.6 Sol at ChatGPT's Instant level, with its own context and compaction budget.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"], requiresPro: false,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-instant", displayName: "GPT-5.6 Sol Instant (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's Instant level.",
+    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"],
   },
   {
-    slug: "chatgpt-web/gpt-5.6-sol",
-    displayName: "GPT-5.6 Sol (Web)",
-    description: "GPT-5.6 Sol at ChatGPT's Medium, High, or account-supported Extra High thinking level.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"], requiresPro: false,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-medium", displayName: "GPT-5.6 Sol Medium (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's Medium thinking level.",
+    codexEffort: "medium", adapterEffort: "medium", supportedCodexEfforts: ["medium"],
   },
   {
-    slug: "chatgpt-web/gpt-5.6-pro",
-    displayName: "GPT-5.6 Sol Pro (Web)",
-    description: "GPT-5.6 Sol Pro at ChatGPT's Pro thinking level.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-high", displayName: "GPT-5.6 Sol High (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's High thinking level.",
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["high"],
+  },
+  {
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol-extra-high", displayName: "GPT-5.6 Sol Extra High (Web)",
+    description: "GPT-5.6 Sol at ChatGPT's account-gated Extra High thinking level.",
+    codexEffort: "xhigh", adapterEffort: "xhigh", supportedCodexEfforts: ["xhigh"], requiresExtraHigh: true,
   },
   {
     slug: "chatgpt-web/gpt-6-pro",
-    displayName: "GPT-6 Pro (Web)",
-    description: "GPT-6 Pro, powered by GPT-6 Astra, at ChatGPT's Pro thinking level.",
+    displayName: "GPT-6 Astra Pro (Web)",
+    description: "GPT-6 Pro, powered by GPT-6 Astra, at ChatGPT's account-gated Pro level.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "6",
     codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
   },
@@ -532,24 +533,32 @@ export const CHATGPT_WEB_NAMED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRo
 ];
 
 /**
- * 6.1.1 advertised "GPT-6 Astra" rows below Pro. ChatGPT runs GPT-5.6 Sol at every level below
- * Pro, including with Latest selected, so those rows only ever reached Sol. Saved tasks keep
- * resolving them as GPT-5.6 Sol; they are never advertised again.
+ * Identities earlier releases advertised. Saved tasks keep resolving them, as hidden catalog rows:
+ * GPT-5.6 Sol with a selectable Medium/High/Extra High effort, GPT-5.6 Sol Pro, and the 6.1.1
+ * "GPT-6 Astra" rows, which selected Latest below Pro and therefore always ran GPT-5.6 Sol.
  */
 export const CHATGPT_WEB_RETIRED_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
-    slug: "chatgpt-web/gpt-6-astra-instant",
-    displayName: "GPT-5.6 Sol Instant (Web)",
-    description: "Saved-task alias of GPT-5.6 Sol Instant.",
-    interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"], requiresPro: false,
+    ...SOL, slug: "chatgpt-web/gpt-5.6-sol", displayName: "GPT-5.6 Sol (Web)",
+    description: "Saved-task identity of GPT-5.6 Sol with a selectable thinking level.",
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"],
   },
   {
-    slug: "chatgpt-web/gpt-6-astra",
-    displayName: "GPT-5.6 Sol (Web)",
-    description: "Saved-task alias of GPT-5.6 Sol.",
+    slug: "chatgpt-web/gpt-5.6-pro",
+    displayName: "GPT-5.6 Sol Pro (Web)",
+    description: "Saved-task identity of GPT-5.6 Sol Pro.",
     interactionMode: "automatic", backendModel: CHATGPT_WEB_BACKEND_MODEL, modelFamily: "5.6",
-    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"], requiresPro: false,
+    codexEffort: "max", adapterEffort: "max", supportedCodexEfforts: ["max"], requiresPro: true,
+  },
+  {
+    ...SOL, slug: "chatgpt-web/gpt-6-astra-instant", displayName: "GPT-5.6 Sol Instant (Web)",
+    description: "Saved-task alias of GPT-5.6 Sol Instant.",
+    codexEffort: "low", adapterEffort: "low", supportedCodexEfforts: ["low"],
+  },
+  {
+    ...SOL, slug: "chatgpt-web/gpt-6-astra", displayName: "GPT-5.6 Sol (Web)",
+    description: "Saved-task alias of GPT-5.6 Sol.",
+    codexEffort: "high", adapterEffort: "high", supportedCodexEfforts: ["medium", "high", "xhigh"],
   },
 ];
 
@@ -558,8 +567,6 @@ export const CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES: readonly ChatGptWebModelRoute[
   ...CHATGPT_WEB_MODEL_ROUTES,
   ...CHATGPT_WEB_LUNA_MODEL_ROUTES,
   ...CHATGPT_WEB_RETIRED_MODEL_ROUTES,
-  // Named rows stay resolvable when discovery later names the same model differently.
-  ...CHATGPT_WEB_NAMED_MODEL_ROUTES,
 ];
 
 const routesBySlug = new Map(
@@ -578,102 +585,13 @@ export function isChatGptWebModelSlug(modelId: string): boolean {
   return modelId.startsWith(CHATGPT_WEB_MODEL_PREFIX);
 }
 
-/**
- * ChatGPT's five thinking levels become at most three Codex rows per model version, because
- * Codex keeps one context window per row: Instant, the thinking levels, and Pro.
- */
-const DISCOVERED_ROUTE_GROUPS = [
-  { kind: "pro", efforts: ["max"], preferred: "max", slugSuffix: "-pro", nameSuffix: " Pro", requiresPro: true },
-  { kind: "thinking", efforts: ["medium", "high", "xhigh"], preferred: "high", slugSuffix: "", nameSuffix: "", requiresPro: false },
-  { kind: "instant", efforts: ["low"], preferred: "low", slugSuffix: "-instant", nameSuffix: " Instant", requiresPro: false },
-] as const;
-
-const EFFORT_LEVEL_NAMES: Record<ChatGptWebAdapterEffort, string> = {
-  low: "Instant", medium: "Medium", high: "High", xhigh: "Extra High", max: "Pro",
-};
-
-/** `chatgpt-web/gpt-<version>[-<name>][-instant]` or `chatgpt-web/gpt-<version>-pro`. */
-const DISCOVERED_ROUTE_SLUG = /^chatgpt-web\/gpt-(\d{1,2}(?:\.\d{1,2})?)(?:-(?!(?:instant|pro)(?:-|$))([a-z][a-z0-9]{1,19}))?(-instant|-pro)?$/;
-
-function discoveredRouteSlug(version: string, name: string | undefined, group: typeof DISCOVERED_ROUTE_GROUPS[number]): string {
-  // Pro rows are named by version alone, matching the existing GPT-5.6 Pro and GPT-6 Pro identities.
-  const namePart = name && group.kind !== "pro" ? `-${name.toLowerCase()}` : "";
-  const slug = `${CHATGPT_WEB_MODEL_PREFIX}gpt-${version}${namePart}${group.slugSuffix}`;
-  // Saved tasks that name a retired alias keep running GPT-5.6 Sol, so a real model never takes it.
-  return CHATGPT_WEB_RETIRED_MODEL_ROUTES.some(route => route.slug === slug)
-    ? `${CHATGPT_WEB_MODEL_PREFIX}gpt-${version}${group.slugSuffix}` : slug;
-}
-
-function levelList(efforts: readonly ChatGptWebAdapterEffort[]): string {
-  const names = efforts.map(effort => EFFORT_LEVEL_NAMES[effort]);
-  return names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0]!;
-}
-
-/**
- * Codex rows for the models this account's ChatGPT picker offers, generated from the latest
- * observation so new, renamed and retired ChatGPT models need no NEKODEX release.
- */
-export function discoveredChatGptWebModelRoutes(
-  capabilities: Pick<ChatGptWebAccountCapabilities, "modelCapabilities">,
-): ChatGptWebAutomaticModelRoute[] {
-  const observed = capabilities.modelCapabilities;
-  // Observations without model names predate discovery; their fixed identities stay in effect.
-  if (!observed?.names) return [];
-  const versions = Object.keys(observed.families).filter(isChatGptWebModelVersion)
-    .toSorted(compareChatGptWebModelVersions);
-  const routes: ChatGptWebAutomaticModelRoute[] = [];
-  for (const version of versions) {
-    const available = observed.families[version] ?? [];
-    const name = observed.names[version];
-    const model = `GPT-${version}${name ? ` ${name}` : ""}`;
-    for (const group of DISCOVERED_ROUTE_GROUPS) {
-      const efforts = group.efforts.filter(effort => available.includes(effort));
-      if (efforts.length === 0) continue;
-      const codexEffort = efforts.includes(group.preferred as never) ? group.preferred : efforts[0]!;
-      routes.push({
-        slug: discoveredRouteSlug(version, name, group),
-        displayName: `${model}${group.nameSuffix} (Web)`,
-        description: group.kind === "thinking"
-          ? `${model} at ChatGPT's ${levelList(efforts)} thinking level, as this account's model picker offers it.`
-          : `${model} at ChatGPT's ${EFFORT_LEVEL_NAMES[efforts[0]!]} level, as this account's model picker offers it.`,
-        interactionMode: "automatic",
-        backendModel: CHATGPT_WEB_BACKEND_MODEL,
-        modelFamily: version,
-        codexEffort,
-        adapterEffort: codexEffort,
-        supportedCodexEfforts: efforts,
-        requiresPro: group.requiresPro,
-      });
-    }
-  }
-  return routes;
-}
-
-/** Newest version first, then Pro, the thinking levels and Instant; Luna rows last. */
+/** The picker order: the five ChatGPT levels as listed, then Luna. */
 export function compareChatGptWebModelRoutes(left: ChatGptWebModelRoute, right: ChatGptWebModelRoute): number {
-  const rank = (route: ChatGptWebModelRoute) => route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL ? 1 : 0;
-  if (rank(left) !== rank(right)) return rank(left) - rank(right);
-  const leftVersion = left.interactionMode === "automatic" ? left.modelFamily : undefined;
-  const rightVersion = right.interactionMode === "automatic" ? right.modelFamily : undefined;
-  if (leftVersion && rightVersion && leftVersion !== rightVersion) return compareChatGptWebModelVersions(leftVersion, rightVersion);
-  if (Boolean(leftVersion) !== Boolean(rightVersion)) return leftVersion ? -1 : 1;
-  const group = (route: ChatGptWebModelRoute) => {
-    const efforts = route.supportedCodexEfforts ?? [route.codexEffort];
-    return efforts.some(effort => effort === "max" || effort === "ultra") ? 0 : efforts.includes("low") ? 2 : 1;
+  const rank = (route: ChatGptWebModelRoute) => {
+    const index = CHATGPT_WEB_NAMED_MODEL_ROUTES.findIndex(candidate => candidate.slug === route.slug);
+    return index < 0 ? CHATGPT_WEB_NAMED_MODEL_ROUTES.length : index;
   };
-  return group(left) - group(right);
-}
-
-/** Whether a slug has the shape of a discovered model, including one this account no longer offers. */
-export function isDiscoveredChatGptWebModelSlug(modelId: string): boolean {
-  return DISCOVERED_ROUTE_SLUG.test(modelId);
-}
-
-/** The model version a discovered or named slug selects, without consulting any observation. */
-export function chatGptWebModelSlugVersion(modelId: string): ChatGptWebModelFamily | undefined {
-  const known = routesBySlug.get(modelId);
-  if (known) return known.interactionMode === "automatic" ? known.modelFamily : undefined;
-  return DISCOVERED_ROUTE_SLUG.exec(modelId)?.[1];
+  return rank(left) - rank(right);
 }
 
 export function availableChatGptWebModelRoutes(
@@ -691,8 +609,6 @@ export function availableChatGptWebModelRoutes(
   if (!capabilities.solAvailable) return CHATGPT_WEB_NAMED_MODEL_ROUTES.filter(
     route => route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL,
   );
-  // A picker observation that read model names is authoritative, including when it offers nothing.
-  if (capabilities.modelCapabilities?.names) return discoveredChatGptWebModelRoutes(capabilities);
   return CHATGPT_WEB_NAMED_MODEL_ROUTES.filter(route => (
     route.backendModel !== CHATGPT_WEB_LUNA_BACKEND_MODEL
     && (!route.requiresModelObservation || capabilities.modelCapabilities)
@@ -711,17 +627,8 @@ export function requireChatGptWebModelRoute(
   if (capabilities.browserInteractionMode === "manual" && capabilities.experimentalBiggerContext) {
     throw new Error("Manual mode does not support Bigger Context");
   }
-  if (capabilities.browserInteractionMode !== "manual" && capabilities.solAvailable) {
-    const discovered = discoveredChatGptWebModelRoutes(capabilities).find(route => route.slug === modelId);
-    if (discovered) return resolveRouteEffort(discovered, capabilities, reasoning);
-  }
   const route = routesBySlug.get(modelId);
-  if (!route) {
-    if (capabilities.browserInteractionMode !== "manual" && isDiscoveredChatGptWebModelSlug(modelId)) {
-      throw new Error(`${modelId} is not currently offered by this account's ChatGPT model picker; run Repair to refresh capabilities`);
-    }
-    throw new Error(`ChatGPT web model is not enabled: ${modelId}`);
-  }
+  if (!route) throw new Error(`ChatGPT web model is not enabled: ${modelId}`);
   if (capabilities.browserInteractionMode === "manual") {
     if (route.interactionMode !== "manual") {
       throw new Error(`${route.displayName} is not available while Manual mode is enabled`);

@@ -46,7 +46,7 @@ test.serial("mixed mode points Codex at a picker catalog with native and Web row
   const models = slugs(pickerCatalogPath());
   expect(models[0]).toMatchObject({ slug: "native-model", visibility: "list" });
   expect(models.filter(model => model.visibility === "list").map(model => model.slug))
-    .toContain("chatgpt-web/gpt-5.6-sol");
+    .toContain("chatgpt-web/gpt-5.6-sol-high");
   // Saved fixed-mode tasks keep metadata, but never appear in the picker.
   expect(models.find(model => model.slug === "chatgpt-web/high")?.visibility).toBe("hide");
   expect(inspectCodexIntegration().errors).toEqual([]);
@@ -169,6 +169,10 @@ test.serial("a model-list change that alters the visible Web rows is reported fo
   // A native-only change rewrites the file but leaves the Web picker contract alone.
   expect(refreshPickerCatalog({ models: [nativeRow("native-model", 1), nativeRow("native-two", 2)] }, evidence(sol)))
     .toMatchObject({ changed: true, visibleChanged: false });
+  // An older model the picker also offers changes nothing Codex shows.
   expect(refreshPickerCatalog(native, evidence({ ...sol, "5.5": ["low", "high"] })))
+    .toMatchObject({ visibleChanged: false, webModels: 5 });
+  // Losing Extra High removes a visible row.
+  expect(refreshPickerCatalog(native, evidence({ ...sol, "5.6": ["low", "medium", "high", "max"] })))
     .toMatchObject({ changed: true, visibleChanged: true });
 }));

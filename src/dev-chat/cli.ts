@@ -183,7 +183,7 @@ function modelFromCli(value: string | undefined): DevChatModel | undefined {
   const normalized = value.trim().toLowerCase();
   const slug = normalized.startsWith("chatgpt-web/") ? normalized : `chatgpt-web/${normalized}`;
   if (!isDevChatModel(slug)) {
-    throw new Error(`Unknown DEV model ${JSON.stringify(value)}; choose zero-risk, gpt-5.6-luna, or a model listed for the DEV account such as gpt-5.6-sol or gpt-6-pro`);
+    throw new Error(`Unknown DEV model ${JSON.stringify(value)}; choose zero-risk, gpt-5.6-luna, gpt-5.6-sol-instant, gpt-5.6-sol-medium, gpt-5.6-sol-high, gpt-5.6-sol-extra-high, or gpt-6-pro`);
   }
   return slug;
 }

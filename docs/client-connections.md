@@ -86,11 +86,12 @@ In the default **Native and Web models** mode NEKODEX gives Codex its own
 holds every native row from the account's live catalog, the named Web rows, and
 hidden fixed-mode rows for saved tasks. Codex then lists all non-hidden rows.
 
-The Web rows follow the account's ChatGPT model picker. NEKODEX reads the picker
-at each browser check (startup, **Check account**, Repair) and again every six
-hours while the account is idle and the NEKODEX browser is out of view. When
-ChatGPT adds, renames or retires a model, the saved evidence and the picker
-catalog are updated without a Repair. Confirming the models in Codex records which Web rows
+The Web rows are ChatGPT's five levels (GPT-5.6 Sol Instant, Medium, High, Extra
+High and GPT-6 Astra Pro), listed as far as the account's ChatGPT model picker
+offers them. NEKODEX reads the picker at each browser check (startup, **Check
+account**, Repair) and again every six hours while the account is idle and the
+NEKODEX browser is out of view, so a level that becomes available or unavailable
+updates the picker catalog without a Repair. Confirming the models in Codex records which Web rows
 were confirmed; whenever the catalog Codex would load differs from that, the
 launcher asks you to fully quit and reopen Codex and confirm the picker again.
 A served catalog request alone never clears that request.

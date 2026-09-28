@@ -10,18 +10,18 @@ const MAX_RECORDS = 2048;
 // Only catalog identifiers, never prompts or other caller-supplied free text.
 const taskModels = new Set(['chatgpt-web/light', 'chatgpt-web/medium', 'chatgpt-web/high',
   'chatgpt-web/extra-high', 'chatgpt-web/pro', 'chatgpt-web/luna', 'chatgpt-web/think',
-  'chatgpt-web/zero-risk', 'chatgpt-web/zero-risk-pro', 'chatgpt-web/gpt-5.6-luna',
+  'chatgpt-web/zero-risk', 'chatgpt-web/zero-risk-pro', 'chatgpt-web/gpt-5.6-sol-instant',
+  'chatgpt-web/gpt-5.6-sol-medium', 'chatgpt-web/gpt-5.6-sol-high', 'chatgpt-web/gpt-5.6-sol-extra-high',
+  'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro', 'chatgpt-web/gpt-6-pro', 'chatgpt-web/gpt-5.6-luna',
   'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant']);
-// Models discovered in the account's ChatGPT picker: gpt-<version>[-<name>][-instant], gpt-<version>-pro.
-const discoveredTaskModel = /^chatgpt-web\/gpt-(\d{1,2}(?:\.\d{1,2})?)(?:-(?!(?:instant|pro)(?:-|$))[a-z][a-z0-9]{1,19})?(?:-instant|-pro)?$/;
-function isTaskModel(model) {
-  return typeof model === 'string' && (taskModels.has(model) || discoveredTaskModel.test(model));
-}
+// GPT-5.6 Sol runs every level below Pro, including the retired Astra identities; GPT-6 only Pro.
+const solTaskModels = new Set(['chatgpt-web/gpt-5.6-sol-instant', 'chatgpt-web/gpt-5.6-sol-medium',
+  'chatgpt-web/gpt-5.6-sol-high', 'chatgpt-web/gpt-5.6-sol-extra-high', 'chatgpt-web/gpt-5.6-sol',
+  'chatgpt-web/gpt-5.6-pro', 'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant']);
+function isTaskModel(model) { return typeof model === 'string' && taskModels.has(model); }
 function taskModelFamily(model) {
-  if (!isTaskModel(model) || model === 'chatgpt-web/gpt-5.6-luna') return undefined;
-  // The retired Astra identities always ran GPT-5.6 Sol below Pro.
-  if (model === 'chatgpt-web/gpt-6-astra' || model === 'chatgpt-web/gpt-6-astra-instant') return '5.6';
-  return discoveredTaskModel.exec(model)?.[1];
+  if (model === 'chatgpt-web/gpt-6-pro') return '6';
+  return solTaskModels.has(model) ? '5.6' : undefined;
 }
 function taskModelForRequirement(requirement) {
   return isTaskModel(requirement?.requestedModel) ? requirement.requestedModel : null;
