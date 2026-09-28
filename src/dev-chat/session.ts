@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import * as z from "zod/v4";
 import { atomicWriteFile } from "../config";
+import { isDiscoveredChatGptWebModelSlug } from "../chatgpt-web-models";
 
 export const DEV_CHAT_MODELS = [
   "chatgpt-web/zero-risk",
@@ -22,7 +23,12 @@ export const DEV_CHAT_MODELS = [
   "chatgpt-web/gpt-6-astra-instant",
 ] as const;
 
-export type DevChatModel = typeof DEV_CHAT_MODELS[number];
+/** A fixed DEV model, or any model the DEV account's ChatGPT picker was observed to offer. */
+export type DevChatModel = typeof DEV_CHAT_MODELS[number] | `chatgpt-web/gpt-${string}`;
+
+export function isDevChatModel(value: string): value is DevChatModel {
+  return (DEV_CHAT_MODELS as readonly string[]).includes(value) || isDiscoveredChatGptWebModelSlug(value);
+}
 
 const usageSchema = z.object({
   inputTokens: z.number().int().nonnegative(),
@@ -35,7 +41,7 @@ const stateSchema = z.object({
   name: z.string(),
   cwd: z.string(),
   threadId: z.string().min(1),
-  model: z.enum(DEV_CHAT_MODELS),
+  model: z.string().refine(isDevChatModel),
   input: z.array(z.unknown()),
   turns: z.number().int().nonnegative(),
   compactions: z.number().int().nonnegative(),

@@ -124,10 +124,17 @@ layout; the existing bounds observer remains responsible for native view placeme
 ## State and persistence
 
 `modelCapabilities` stores timestamped, family-specific selectable efforts through
-config/login/helper boundaries. The shared picker helpers restore the selected
-family, effort and draft after inspection, including menus whose rows unmount.
-Catalog and account admission use that family evidence; the older aggregate
-flags remain compatibility data. Setup refreshes missing or stale observations.
+config/login/helper boundaries. Discovery in `chatgpt-session.ts` visits every
+picker row and every unlocked level, and attributes each level to the model
+version its slider description names (a Latest row's lower levels describe
+GPT-5.6 Sol); `names` keeps the model name shown with a version. The shared picker
+helpers restore the selected row, effort and draft after inspection, including
+menus whose rows unmount. Catalog and account admission use that family
+evidence; the older aggregate flags remain compatibility data. Setup refreshes
+missing or stale observations; the launcher also saves the selected account's
+evidence after each browser check and re-reads an idle, out-of-view picker every
+six hours through `config model-capabilities`. The daemon reads the saved
+evidence per request, so no restart or Repair is needed.
 Chrome profile bindings can retain the observed Chrome user agent for compatible
 session handoff; it never replaces endpoint/principal verification. Sign-in
 mutation receipts are published after the owning lease is released.
@@ -161,8 +168,12 @@ isolated Electron shell crash check verify their separate boundaries.
 ## Model and conversation state
 
 Web model identities are resolved in `chatgpt-web-models.ts` before browser
-dispatch. The picker advertises named Web models; old fixed-mode IDs remain
-resolvable for saved tasks. Explicit family routes add native effort choices only when their
+dispatch. The picker advertises one Instant, thinking and Pro row per discovered
+model version (`gpt-<version>[-<name>][-instant]`, `gpt-<version>-pro`), so new
+and retired ChatGPT models need no release; observations saved before model
+names keep the fixed named rows. Old fixed-mode IDs remain resolvable for saved
+tasks. A version is always selected through the row that names it, or through
+the one unversioned Latest row when it is newer than every named row. Explicit family routes add native effort choices only when their
 context and compaction budgets are equal; Instant and Pro retain separate rows.
 The validated family travels with the turn and conversation identity, and the
 browser proves both the selected family and effort before sending. Native model

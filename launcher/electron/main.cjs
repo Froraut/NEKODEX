@@ -73,6 +73,10 @@ const {
   trackWindowState,
 } = require("./window-state.cjs");
 
+// Picker evidence older than this is re-read while the account is idle; checked every half hour.
+const MODEL_CAPABILITY_REFRESH_MS = 6 * 60 * 60_000;
+const MODEL_CAPABILITY_REFRESH_CHECK_MS = 30 * 60_000;
+
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const FOREGROUND_RELAUNCH_ENV = "CODEX_WEB_GPT_FOREGROUND_RELAUNCH";
 const foregroundRelaunchRequested = process.env[FOREGROUND_RELAUNCH_ENV] === "1";
@@ -1924,6 +1928,10 @@ async function start() {
         && runtime.configured && runtime.config?.mode === "full"
         && runtime.config?.browserInteractionMode === "automatic";
     },
+    // The selected account's picker evidence decides which Web models Codex lists.
+    onCapabilityEvidence: (_accountId, evidence) => runtimeHost.saveModelCapabilities(evidence),
+    isBrowserInView: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+      && !mainWindow.isMinimized() && browserHost?.surfaceActive),
   });
   await browserHost.ready();
   if (!IS_DEV_PROFILE) contextChangeQueue.start();
@@ -1958,6 +1966,14 @@ async function start() {
         ...navigationErrorForLog(error),
       });
     });
+  }
+  if (!launcherSmokeTest) {
+    // Re-read the model picker every few hours so new or retired ChatGPT models reach Codex.
+    const capabilityRefreshTimer = setInterval(() => {
+      if (lifecycleAdmission.busy() || shutdownInProgress || quitting || exitCommitted) return;
+      void browserHost?.refreshSelectedCapabilitiesIfIdle(MODEL_CAPABILITY_REFRESH_MS);
+    }, MODEL_CAPABILITY_REFRESH_CHECK_MS);
+    capabilityRefreshTimer.unref?.();
   }
   void startupAuthenticationRefresh.then(() => {
     if (!lifecycleAdmission.busy() && !shutdownInProgress && !quitting && !exitCommitted) ensureRuntimeProofCurrent(stateStore);

@@ -86,6 +86,12 @@ In the default **Native and Web models** mode NEKODEX gives Codex its own
 holds every native row from the account's live catalog, the named Web rows, and
 hidden fixed-mode rows for saved tasks. Codex then lists all non-hidden rows.
 
+The Web rows follow the account's ChatGPT model picker. NEKODEX reads the picker
+at each browser check (startup, **Check account**, Repair) and again every six
+hours while the account is idle and the NEKODEX browser is out of view. When
+ChatGPT adds, renames or retires a model, the saved evidence and the picker
+catalog are updated without a Repair.
+
 Codex reads this file once per start and stops requesting `/v1/models` while
 it is set. The runtime refreshes the file from authenticated Codex traffic at
 most every ten minutes, and on any `/v1/models` request. Fully quit and reopen

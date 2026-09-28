@@ -104,7 +104,9 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("family discovery restores th
     const page = await browser.newPage();
     await page.setContent(readFileSync(join(import.meta.dir, "fixtures/french-model-picker.html"), "utf8"));
     const capabilities = await detectChatGptAccountCapabilities(page, { selectorTimeoutMs: 3_000 });
-    expect(capabilities.modelCapabilities?.families).toEqual(evidence.families);
+    // Latest has no Pro level here, so the picker offers no GPT-6 level at all.
+    expect(capabilities.modelCapabilities?.families).toEqual({ "5.6": evidence.families["5.6"] });
+    expect(capabilities.modelCapabilities?.names).toEqual({ "5.6": "Sol" });
     expect(await page.locator('#picker').isVisible()).toBe(false);
     expect(await page.locator("#status").innerText()).toBe("Pro, 5 sur 5.");
     expect(await page.locator('[role="slider"]').getAttribute("aria-valuenow")).toBe("4");

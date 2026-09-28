@@ -12,7 +12,7 @@ import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } f
 import { createPasskeyLoginControl } from "./passkey-login-control";
 import { createExistingChromeLoginControl } from "./existing-chrome-login-control";
 import { captureExistingChromeLoginToFile, ExistingChromeLoginError } from "./existing-chrome-login";
-import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
+import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup, readAccountCapabilityFields } from "./config";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
@@ -36,7 +36,7 @@ import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopT
 import { VERSION } from "./version";
 import { runDevCommand } from "./dev-chat/cli";
 import { runCompactionModelConfigCommand } from "./compaction-model-config";
-import { authorizeLauncherControl, runProModelVersionConfigCommand } from "./pro-model-config";
+import { authorizeLauncherControl, runModelCapabilitiesConfigCommand, runProModelVersionConfigCommand } from "./pro-model-config";
 import { readCodexRouteDiagnostics } from "./route-diagnostics";
 import { takeFlag, takeOption } from "./lib/cli-args";
 
@@ -642,6 +642,7 @@ async function main(): Promise<void> {
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "config") {
     if (args[0] === "compaction-model") await runCompactionModelConfigCommand(args);
+    else if (args[0] === "model-capabilities") await runModelCapabilitiesConfigCommand(args);
     else await runProModelVersionConfigCommand(args);
   }
   else if (command === "browser") {
@@ -667,6 +668,7 @@ async function main(): Promise<void> {
     const server = startServer(config, {
       readProModelVersion: () => loadConfig().proModelVersion,
       readCompactionModel: () => loadConfig().compactionModel,
+      readAccountCapabilities: readAccountCapabilityFields,
     });
     stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
     await new Promise<void>(() => {});

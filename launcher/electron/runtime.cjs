@@ -1309,6 +1309,53 @@ class RuntimeHost {
     return { proModelVersion: saved };
   }
 
+  /**
+   * Save the selected account's latest ChatGPT picker evidence. The daemon reads it per request
+   * and the command rebuilds Codex's picker catalog, so new models appear without a Repair.
+   */
+  async saveModelCapabilities(evidence) {
+    const current = this.runtimeConfigSnapshot();
+    const config = current.config;
+    if (!current.configured || config?.browserHost !== "launcher" || config?.browserInteractionMode === "manual") {
+      return { saved: false, reason: "not-configured" };
+    }
+    if (!evidence || typeof evidence.solAvailable !== "boolean" || typeof evidence.proAvailable !== "boolean") {
+      return { saved: false, reason: "incomplete" };
+    }
+    const payload = {
+      solAvailable: evidence.solAvailable,
+      proAvailable: evidence.proAvailable,
+      ...(typeof evidence.extraHighAvailable === "boolean" ? { extraHighAvailable: evidence.extraHighAvailable } : {}),
+      ...(evidence.modelCapabilities ? { modelCapabilities: evidence.modelCapabilities } : {}),
+    };
+    const comparable = value => JSON.stringify({
+      solAvailable: value?.solAvailable === true,
+      extraHighAvailable: (value?.extraHighAvailable ?? value?.proAvailable) === true,
+      proAvailable: value?.proAvailable === true,
+      families: value?.modelCapabilities?.families ?? null,
+      names: value?.modelCapabilities?.names ?? null,
+    });
+    // A newer timestamp alone does not change which models Codex lists.
+    if (comparable(config) === comparable(payload)) return { saved: false, reason: "unchanged" };
+    // Never contend with setup, Repair or another launcher operation; the next check retries.
+    if (this.active || this.lifecycleOperation) return { saved: false, reason: "busy" };
+    const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+    await this.run("model-capabilities", [
+      ...(this.launcherProfile === "development" ? ["dev"] : []),
+      "config", "model-capabilities", encoded, "--launcher-control",
+    ], {
+      ...(this.launcherProfile === "development" ? {
+        embedded: true,
+        environment: this.devSetupEnvironment(),
+      } : {}),
+      env: this.launcherControlEnvironment(),
+      message: "Updating the ChatGPT model list",
+      successMessage: "ChatGPT model list updated",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    });
+    return { saved: true };
+  }
+
   async setSkillAttachments(enabled) {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) throw new Error("Initialize the runtime before changing Skills as files");

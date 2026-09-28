@@ -31,7 +31,7 @@ import {
 import { rememberCompactionContinuation } from "./adapters/chatgpt-web/compaction-continuation";
 import { clearRetryableTurnHandoff, rememberRetryableTurnFailure } from "./adapters/chatgpt-web/retry-continuation";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
-import type { AppConfig } from "./config";
+import type { AccountCapabilityFields, AppConfig } from "./config";
 import { providerConfig } from "./config";
 import { parseChatGptWebProModelVersion, type ChatGptWebProModelVersion } from "./chatgpt-web-models";
 import { AsyncEventQueue } from "./event-queue";
@@ -743,6 +743,8 @@ export function startServer(
     adapterFactory?: ChatGptWebAdapterFactory;
     readProModelVersion?: () => ChatGptWebProModelVersion | undefined;
     readCompactionModel?: () => ChatGptWebCompactionModel | undefined;
+    /** The account's current ChatGPT capability evidence, which the launcher refreshes while running. */
+    readAccountCapabilities?: () => AccountCapabilityFields;
   } = {},
 ): Bun.Server<undefined> & { disposeSignalHandlers(): void } {
   if (config.purpose === "dev-harness") {
@@ -750,6 +752,17 @@ export function startServer(
   }
   startNativeUsageDelivery();
   const startedAt = Date.now();
+  // Model discovery runs in the launcher while this daemon serves Codex. Each catalog build and
+  // each request resolves its routes from the capability evidence saved at that moment.
+  const liveConfig = (): AppConfig => {
+    if (!dependencies.readAccountCapabilities) return config;
+    try {
+      return { ...config, ...dependencies.readAccountCapabilities() };
+    } catch (error) {
+      console.error(`[chatgpt-web] saved account capabilities are unreadable; using the startup evidence: ${error instanceof Error ? error.message : String(error)}`);
+      return config;
+    }
+  };
   const instanceId = randomUUID();
   const backgroundRuntime = process.env.CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME === "1";
   let launcherDetached = false;
@@ -815,7 +828,8 @@ export function startServer(
     for (const name of ["content-type", "content-length", "content-encoding", "transfer-encoding", "accept"]) headers.delete(name);
     const probe = new Request(new URL("/v1/models", req.url), { method: "GET", headers });
     void (async () => {
-      const catalogConfig = { ...config, subagentProtocol: readCodexSubagentProtocol(config.subagentProtocol) };
+      const current = liveConfig();
+      const catalogConfig = { ...current, subagentProtocol: readCodexSubagentProtocol(current.subagentProtocol) };
       await modelsRequest(probe, catalogConfig, dependencies.fetchUpstream, readCodexModelContextOverride);
     })().catch(error => {
       console.error(`[chatgpt-web] Codex picker catalog background refresh failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -901,24 +915,24 @@ export function startServer(
         const guard = chatCompletionRequestGuard(req, url.pathname, key, server.port!, server.requestIP(req)?.address);
         if (guard) return guard;
         if (url.pathname === "/v1/models" || url.pathname === "/claude/v1/models") return isClaudeGatewayModelsRequest(req)
-          ? claudeGatewayModelsResponse(config) : chatCompletionModels(config);
+          ? claudeGatewayModelsResponse(liveConfig()) : chatCompletionModels(liveConfig());
         if (url.pathname.endsWith("/messages/count_tokens")) return claude.countTokens(req);
         if (!acceptingTurns()) return admissionFailure();
         return httpTurns.track((signal, _identity, bindWeb) => {
           bindWeb();
-          if (url.pathname.endsWith("/messages")) return claude.respond(new Request(req, { signal }), config);
-          return chatCompletionRequest(req, config, signal, dependencies.chatCompletionExecutor, apiTools);
+          if (url.pathname.endsWith("/messages")) return claude.respond(new Request(req, { signal }), liveConfig());
+          return chatCompletionRequest(req, liveConfig(), signal, dependencies.chatCompletionExecutor, apiTools);
         }, req.signal, process.platform, "responses");
       }
       if (url.pathname.startsWith("/hermes/")) {
         if (!hermes.authorized(req)) return formatErrorResponse(401, "authentication_error", "Add the Hermes provider from Setup to authorize this local connection.");
-        if (req.method === "GET" && url.pathname === "/hermes/v1/models") return hermes.models(config);
+        if (req.method === "GET" && url.pathname === "/hermes/v1/models") return hermes.models(liveConfig());
         if (req.method === "POST" && url.pathname === "/hermes/v1/responses") {
           if (!acceptingTurns()) return admissionFailure();
           return httpTurns.track((signal, _bindIdentity, bindWeb) => {
             bindWeb();
-            return hermes.respond(new Request(req, { signal }), config,
-            (request, hermesContext, onCompletedResponse) => responseRequest(request, config, dependencies.adapterFactory, {
+            return hermes.respond(new Request(req, { signal }), liveConfig(),
+            (request, hermesContext, onCompletedResponse) => responseRequest(request, liveConfig(), dependencies.adapterFactory, {
               hermesContext, onCompletedResponse, rememberState: false,
               ...modelPreferenceReaders(),
             }));
@@ -1187,7 +1201,7 @@ export function startServer(
           let catalogConfig: AppConfig;
           try {
             catalogConfig = {
-              ...config,
+              ...liveConfig(),
               subagentProtocol: readCodexSubagentProtocol(config.subagentProtocol),
             };
           } catch (error) {
@@ -1222,7 +1236,7 @@ export function startServer(
         refreshPickerCatalogFromTraffic(req);
         const handler = policy.endpoint === "responses" ? responseRequest : compactRequest;
         return trackInference(req, policy, (signal, bindIdentity, bindWeb) => handler(
-          new Request(req, { signal }), config, dependencies.adapterFactory,
+          new Request(req, { signal }), liveConfig(), dependencies.adapterFactory,
           responseOptions(bindIdentity, bindWeb),
         ));
       }

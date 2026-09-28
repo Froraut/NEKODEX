@@ -63,6 +63,22 @@ const {
 } = require("./browser-navigation-policy.cjs");
 const { AUTH_PROBE_TIMEOUT_MS, authenticationProbeScript, unavailableAuthenticationProbe } = require("./browser-auth-probe.cjs");
 
+// Model versions ChatGPT's picker offers ("5.6", "6"), the levels that run each, and the name
+// shown with a version ("Sol"). Discovery reports whatever the picker currently lists.
+const MODEL_VERSION = /^\d{1,2}(?:\.\d{1,2})?$/;
+const MODEL_NAME = /^[A-Z][A-Za-z]{1,19}$/;
+function validModelCapabilityEvidence(caps) {
+  const plain = value => value && typeof value === "object" && !Array.isArray(value);
+  if (!plain(caps) || !Number.isSafeInteger(caps.observedAt) || caps.observedAt <= 0 || !plain(caps.families)) return false;
+  const families = Object.entries(caps.families);
+  if (families.length > 12 || families.some(([family, efforts]) => !MODEL_VERSION.test(family)
+    || !Array.isArray(efforts) || new Set(efforts).size !== efforts.length
+    || efforts.some(effort => !["low", "medium", "high", "xhigh", "max"].includes(effort)))) return false;
+  if (caps.names === undefined) return true;
+  return plain(caps.names) && Object.entries(caps.names)
+    .every(([family, name]) => Object.hasOwn(caps.families, family) && typeof name === "string" && MODEL_NAME.test(name));
+}
+
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ENEKODEX%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
@@ -3242,15 +3258,9 @@ class BrowserHost {
       || inspected.proAvailable && inspected.extraHighAvailable === false)) {
       throw new Error("Browser helper returned contradictory ChatGPT capability evidence");
     }
-    if (detectCapabilities && inspected.modelCapabilities !== undefined) {
-      const caps = inspected.modelCapabilities;
-      if (!caps || !Number.isSafeInteger(caps.observedAt) || caps.observedAt <= 0
-        || !caps.families || typeof caps.families !== 'object' || Array.isArray(caps.families)
-        || Object.entries(caps.families).some(([family, efforts]) => !['5.5', '5.6', '6'].includes(family)
-          || !Array.isArray(efforts) || new Set(efforts).size !== efforts.length
-          || efforts.some(effort => !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)))) {
-        throw new Error("Browser helper returned invalid model-specific capability evidence");
-      }
+    if (detectCapabilities && inspected.modelCapabilities !== undefined
+      && !validModelCapabilityEvidence(inspected.modelCapabilities)) {
+      throw new Error("Browser helper returned invalid model-specific capability evidence");
     }
     if (startedIdle) await awaitInspection(this.returnToIdle(), signal);
     else this.setState({ status: "ready", message: "ChatGPT is ready", loading: false });

@@ -78,8 +78,8 @@ function readJson(path: string): unknown {
 }
 
 /** Native source at setup: Codex's own cache, else the runtime's last live catalog. */
-export function initialNativeCatalog(codexModelsCachePath: string): unknown | undefined {
-  for (const path of [codexModelsCachePath, nativeCatalogPath()]) {
+export function initialNativeCatalog(codexModelsCachePath?: string): unknown | undefined {
+  for (const path of [...(codexModelsCachePath ? [codexModelsCachePath] : []), nativeCatalogPath()]) {
     if (!existsSync(path)) continue;
     try {
       const value = readJson(path) as { models?: unknown };

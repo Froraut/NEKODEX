@@ -26,7 +26,31 @@ export type ChatGptWebZeroRiskBackendModel =
 
 export type ChatGptWebCodexEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type ChatGptWebAdapterEffort = "low" | "medium" | "high" | "xhigh" | "max";
-export type ChatGptWebModelFamily = "5.6" | "6";
+/** A ChatGPT model version as its picker names it, such as "5.6" in "GPT-5.6 Sol". */
+export type ChatGptWebModelFamily = string;
+
+const CHATGPT_WEB_MODEL_VERSION = /^\d{1,2}(?:\.\d{1,2})?$/;
+// A model name ChatGPT shows next to a version ("Sol" in "GPT-5.6 Sol"). Effort words never qualify.
+const CHATGPT_WEB_MODEL_NAME = /^(?!(?:Instant|Light|Medium|High|Extra|Pro|Thinking|Moyen)$)[A-Z][A-Za-z]{1,19}$/;
+
+export function isChatGptWebModelVersion(value: unknown): value is ChatGptWebModelFamily {
+  return typeof value === "string" && CHATGPT_WEB_MODEL_VERSION.test(value);
+}
+
+export function isChatGptWebModelName(value: unknown): value is string {
+  return typeof value === "string" && CHATGPT_WEB_MODEL_NAME.test(value);
+}
+
+/** Newest first, comparing each numeric component ("6" > "5.6" > "5.5"). */
+export function compareChatGptWebModelVersions(left: string, right: string): number {
+  const a = left.split(".").map(Number);
+  const b = right.split(".").map(Number);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (b[index] ?? 0) - (a[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
 
 /**
  * Measured Plus browser transport windows, including the fixed hidden ChatGPT platform reserve.
@@ -257,31 +281,77 @@ export type ChatGptWebModelRoute = ChatGptWebAutomaticModelRoute | ChatGptWebZer
 /** Observed selectability, not a subscription or a promise of remaining quota. */
 export interface ChatGptWebModelCapabilities {
   observedAt: number;
-  families: Partial<Record<ChatGptWebProModelVersion, readonly ChatGptWebAdapterEffort[]>>;
+  /** Each model version the picker offers, with the thinking levels that actually run it. */
+  families: Partial<Record<ChatGptWebModelFamily, readonly ChatGptWebAdapterEffort[]>>;
+  /**
+   * The name ChatGPT shows with a version ("Sol" for GPT-5.6 Sol). Present, possibly empty, on
+   * every observation that read the picker's own model descriptions; absent on older ones.
+   */
+  names?: Partial<Record<ChatGptWebModelFamily, string>>;
 }
+
+const MAX_OBSERVED_FAMILIES = 12;
 
 export function parseChatGptWebModelCapabilities(value: unknown): ChatGptWebModelCapabilities | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid ChatGPT model capabilities");
   const candidate = value as ChatGptWebModelCapabilities;
   if (!Number.isSafeInteger(candidate.observedAt) || candidate.observedAt <= 0
-    || !candidate.families || typeof candidate.families !== "object" || Array.isArray(candidate.families)) {
+    || !candidate.families || typeof candidate.families !== "object" || Array.isArray(candidate.families)
+    || Object.keys(candidate.families).length > MAX_OBSERVED_FAMILIES) {
     throw new Error("Invalid ChatGPT model capability observation");
   }
   const families: ChatGptWebModelCapabilities["families"] = {};
   for (const [family, efforts] of Object.entries(candidate.families)) {
-    if (!["5.5", "5.6", "6"].includes(family) || !Array.isArray(efforts)
+    if (!isChatGptWebModelVersion(family) || !Array.isArray(efforts)
       || efforts.some(effort => !["low", "medium", "high", "xhigh", "max"].includes(effort))
       || new Set(efforts).size !== efforts.length) throw new Error("Invalid ChatGPT model effort capabilities");
-    families[family as ChatGptWebProModelVersion] = [...efforts];
+    families[family] = [...efforts];
   }
-  return { observedAt: candidate.observedAt, families };
+  if (candidate.names === undefined) {
+    // Observations before model names were read attributed every Latest level to GPT-6. ChatGPT
+    // runs GPT-5.6 Sol below Pro even with Latest selected, so only their Pro level is GPT-6.
+    if (families["6"]) families["6"] = families["6"].filter(effort => effort === "max");
+    return { observedAt: candidate.observedAt, families };
+  }
+  if (!candidate.names || typeof candidate.names !== "object" || Array.isArray(candidate.names)) {
+    throw new Error("Invalid ChatGPT model names");
+  }
+  const names: NonNullable<ChatGptWebModelCapabilities["names"]> = {};
+  for (const [family, name] of Object.entries(candidate.names)) {
+    if (!Object.hasOwn(families, family) || !isChatGptWebModelName(name)) throw new Error("Invalid ChatGPT model names");
+    names[family] = name;
+  }
+  return { observedAt: candidate.observedAt, families, names };
 }
 
-export function chatGptModelOptionName(version: ChatGptWebProModelVersion): RegExp {
-  if (version === "5.6") return /^GPT[-\s]?5\.6\s+Sol(?:\s+Pro)?$/i;
-  if (version === "5.5") return /^GPT[-\s]?5\.5(?:\s+Pro)?$/i;
-  return /^(?:Latest|Le plus récent|最新|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i;
+/**
+ * The picker row that runs a model version: the one row naming that version, else the one
+ * unversioned (Latest) row when the version is newer than every named row. Discovery and turn
+ * selection share this rule, so an observed family is always selected through the same row.
+ */
+export function chatGptModelRowForVersion(
+  labels: readonly string[],
+  version: ChatGptWebModelFamily,
+): { index: number; latest: boolean } | undefined {
+  const named = labels.map(label => chatGptModelOptionVersion(label)?.version);
+  const explicit = named.flatMap((candidate, index) => candidate === version ? [index] : []);
+  if (explicit.length === 1) return { index: explicit[0]!, latest: false };
+  if (explicit.length > 1) return undefined;
+  const unversioned = named.flatMap((candidate, index) => candidate === undefined ? [index] : []);
+  if (unversioned.length !== 1) return undefined;
+  const newest = named.every(candidate => candidate === undefined || compareChatGptWebModelVersions(version, candidate) < 0);
+  return newest ? { index: unversioned[0]!, latest: true } : undefined;
+}
+
+/** The version a picker row names, if any. */
+export function chatGptModelOptionVersion(label: string): { version: ChatGptWebModelFamily; name?: string } | undefined {
+  // ChatGPT may write the hyphen as a non-breaking or other Unicode hyphen ("GPT‑5.6").
+  const match = /^\s*GPT[-\u2010-\u2013\s]?(\d{1,2}(?:\.\d{1,2})?)(?![\d.])(?:\s+([A-Z][A-Za-z]{1,19}))?(\s+Pro)?\s*$/i.exec(label)
+    ?? /^\s*GPT[-\u2010-\u2013\s]?(\d{1,2}(?:\.\d{1,2})?)(?![\d.])/i.exec(label);
+  if (!match) return undefined;
+  const name = match[2];
+  return { version: match[1]!, ...(isChatGptWebModelName(name) ? { name } : {}) };
 }
 
 export interface ChatGptWebAccountCapabilities {
@@ -501,6 +571,101 @@ export function isChatGptWebModelSlug(modelId: string): boolean {
   return modelId.startsWith(CHATGPT_WEB_MODEL_PREFIX);
 }
 
+/**
+ * ChatGPT's five thinking levels become at most three Codex rows per model version, because
+ * Codex keeps one context window per row: Instant, the thinking levels, and Pro.
+ */
+const DISCOVERED_ROUTE_GROUPS = [
+  { kind: "pro", efforts: ["max"], preferred: "max", slugSuffix: "-pro", nameSuffix: " Pro", requiresPro: true },
+  { kind: "thinking", efforts: ["medium", "high", "xhigh"], preferred: "high", slugSuffix: "", nameSuffix: "", requiresPro: false },
+  { kind: "instant", efforts: ["low"], preferred: "low", slugSuffix: "-instant", nameSuffix: " Instant", requiresPro: false },
+] as const;
+
+const EFFORT_LEVEL_NAMES: Record<ChatGptWebAdapterEffort, string> = {
+  low: "Instant", medium: "Medium", high: "High", xhigh: "Extra High", max: "Pro",
+};
+
+/** `chatgpt-web/gpt-<version>[-<name>][-instant]` or `chatgpt-web/gpt-<version>-pro`. */
+const DISCOVERED_ROUTE_SLUG = /^chatgpt-web\/gpt-(\d{1,2}(?:\.\d{1,2})?)(?:-(?!(?:instant|pro)(?:-|$))([a-z][a-z0-9]{1,19}))?(-instant|-pro)?$/;
+
+function discoveredRouteSlug(version: string, name: string | undefined, group: typeof DISCOVERED_ROUTE_GROUPS[number]): string {
+  // Pro rows are named by version alone, matching the existing GPT-5.6 Pro and GPT-6 Pro identities.
+  const namePart = name && group.kind !== "pro" ? `-${name.toLowerCase()}` : "";
+  return `${CHATGPT_WEB_MODEL_PREFIX}gpt-${version}${namePart}${group.slugSuffix}`;
+}
+
+function levelList(efforts: readonly ChatGptWebAdapterEffort[]): string {
+  const names = efforts.map(effort => EFFORT_LEVEL_NAMES[effort]);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0]!;
+}
+
+/**
+ * Codex rows for the models this account's ChatGPT picker offers, generated from the latest
+ * observation so new, renamed and retired ChatGPT models need no NEKODEX release.
+ */
+export function discoveredChatGptWebModelRoutes(
+  capabilities: Pick<ChatGptWebAccountCapabilities, "modelCapabilities">,
+): ChatGptWebAutomaticModelRoute[] {
+  const observed = capabilities.modelCapabilities;
+  // Observations without model names predate discovery; their fixed identities stay in effect.
+  if (!observed?.names) return [];
+  const versions = Object.keys(observed.families).filter(isChatGptWebModelVersion)
+    .toSorted(compareChatGptWebModelVersions);
+  const routes: ChatGptWebAutomaticModelRoute[] = [];
+  for (const version of versions) {
+    const available = observed.families[version] ?? [];
+    const name = observed.names[version];
+    const model = `GPT-${version}${name ? ` ${name}` : ""}`;
+    for (const group of DISCOVERED_ROUTE_GROUPS) {
+      const efforts = group.efforts.filter(effort => available.includes(effort));
+      if (efforts.length === 0) continue;
+      const codexEffort = efforts.includes(group.preferred as never) ? group.preferred : efforts[0]!;
+      routes.push({
+        slug: discoveredRouteSlug(version, name, group),
+        displayName: `${model}${group.nameSuffix} (Web)`,
+        description: group.kind === "thinking"
+          ? `${model} at ChatGPT's ${levelList(efforts)} thinking level, as this account's model picker offers it.`
+          : `${model} at ChatGPT's ${EFFORT_LEVEL_NAMES[efforts[0]!]} level, as this account's model picker offers it.`,
+        interactionMode: "automatic",
+        backendModel: CHATGPT_WEB_BACKEND_MODEL,
+        modelFamily: version,
+        codexEffort,
+        adapterEffort: codexEffort,
+        supportedCodexEfforts: efforts,
+        requiresPro: group.requiresPro,
+      });
+    }
+  }
+  return routes;
+}
+
+/** Newest version first, then Pro, the thinking levels and Instant; Luna rows last. */
+export function compareChatGptWebModelRoutes(left: ChatGptWebModelRoute, right: ChatGptWebModelRoute): number {
+  const rank = (route: ChatGptWebModelRoute) => route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL ? 1 : 0;
+  if (rank(left) !== rank(right)) return rank(left) - rank(right);
+  const leftVersion = left.interactionMode === "automatic" ? left.modelFamily : undefined;
+  const rightVersion = right.interactionMode === "automatic" ? right.modelFamily : undefined;
+  if (leftVersion && rightVersion && leftVersion !== rightVersion) return compareChatGptWebModelVersions(leftVersion, rightVersion);
+  if (Boolean(leftVersion) !== Boolean(rightVersion)) return leftVersion ? -1 : 1;
+  const group = (route: ChatGptWebModelRoute) => {
+    const efforts = route.supportedCodexEfforts ?? [route.codexEffort];
+    return efforts.some(effort => effort === "max" || effort === "ultra") ? 0 : efforts.includes("low") ? 2 : 1;
+  };
+  return group(left) - group(right);
+}
+
+/** Whether a slug has the shape of a discovered model, including one this account no longer offers. */
+export function isDiscoveredChatGptWebModelSlug(modelId: string): boolean {
+  return DISCOVERED_ROUTE_SLUG.test(modelId);
+}
+
+/** The model version a discovered or named slug selects, without consulting any observation. */
+export function chatGptWebModelSlugVersion(modelId: string): ChatGptWebModelFamily | undefined {
+  const known = routesBySlug.get(modelId);
+  if (known) return known.interactionMode === "automatic" ? known.modelFamily : undefined;
+  return DISCOVERED_ROUTE_SLUG.exec(modelId)?.[1];
+}
+
 export function availableChatGptWebModelRoutes(
   capabilities: ChatGptWebAccountCapabilities,
 ): readonly ChatGptWebModelRoute[] {
@@ -516,6 +681,8 @@ export function availableChatGptWebModelRoutes(
   if (!capabilities.solAvailable) return CHATGPT_WEB_NAMED_MODEL_ROUTES.filter(
     route => route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL,
   );
+  // A picker observation that read model names is authoritative, including when it offers nothing.
+  if (capabilities.modelCapabilities?.names) return discoveredChatGptWebModelRoutes(capabilities);
   return CHATGPT_WEB_NAMED_MODEL_ROUTES.filter(route => (
     route.backendModel !== CHATGPT_WEB_LUNA_BACKEND_MODEL
     && (!route.requiresModelObservation || capabilities.modelCapabilities)
@@ -534,8 +701,17 @@ export function requireChatGptWebModelRoute(
   if (capabilities.browserInteractionMode === "manual" && capabilities.experimentalBiggerContext) {
     throw new Error("Manual mode does not support Bigger Context");
   }
+  if (capabilities.browserInteractionMode !== "manual" && capabilities.solAvailable) {
+    const discovered = discoveredChatGptWebModelRoutes(capabilities).find(route => route.slug === modelId);
+    if (discovered) return resolveRouteEffort(discovered, capabilities, reasoning);
+  }
   const route = routesBySlug.get(modelId);
-  if (!route) throw new Error(`ChatGPT web model is not enabled: ${modelId}`);
+  if (!route) {
+    if (capabilities.browserInteractionMode !== "manual" && isDiscoveredChatGptWebModelSlug(modelId)) {
+      throw new Error(`${modelId} is not currently offered by this account's ChatGPT model picker; run Repair to refresh capabilities`);
+    }
+    throw new Error(`ChatGPT web model is not enabled: ${modelId}`);
+  }
   if (capabilities.browserInteractionMode === "manual") {
     if (route.interactionMode !== "manual") {
       throw new Error(`${route.displayName} is not available while Manual mode is enabled`);

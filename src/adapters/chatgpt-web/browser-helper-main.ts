@@ -18,7 +18,7 @@ import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-sele
 import { isChatGptWebMultipartPartCount, type CompiledChatGptWebPrompt } from "./prompt";
 import { ChatGptMirroredTurnProgress } from "./turn-progress";
 import type { ChatGptExternalTurnProgressSnapshot } from "./turn-progress";
-import { CHATGPT_WEB_BACKEND_MODEL } from "../../chatgpt-web-models";
+import { CHATGPT_WEB_BACKEND_MODEL, type ChatGptWebModelFamily } from "../../chatgpt-web-models";
 import {
   parseChatGptWebCompactionExecution,
   type ChatGptWebCompactionExecution,
@@ -40,7 +40,7 @@ interface RunMessage {
     modelId: string;
     requestedModel?: string;
     reasoning?: string;
-    modelFamily?: "5.6" | "6";
+    modelFamily?: ChatGptWebModelFamily;
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
     resumeAvailable?: boolean;

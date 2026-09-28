@@ -10,17 +10,18 @@ const MAX_RECORDS = 2048;
 // Only catalog identifiers, never prompts or other caller-supplied free text.
 const taskModels = new Set(['chatgpt-web/light', 'chatgpt-web/medium', 'chatgpt-web/high',
   'chatgpt-web/extra-high', 'chatgpt-web/pro', 'chatgpt-web/luna', 'chatgpt-web/think',
-  'chatgpt-web/zero-risk', 'chatgpt-web/zero-risk-pro', 'chatgpt-web/gpt-5.6-sol-instant',
-  'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro', 'chatgpt-web/gpt-6-pro', 'chatgpt-web/gpt-5.6-luna',
+  'chatgpt-web/zero-risk', 'chatgpt-web/zero-risk-pro', 'chatgpt-web/gpt-5.6-luna',
   'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant']);
-function isTaskModel(model) { return typeof model === 'string' && taskModels.has(model); }
+// Models discovered in the account's ChatGPT picker: gpt-<version>[-<name>][-instant], gpt-<version>-pro.
+const discoveredTaskModel = /^chatgpt-web\/gpt-(\d{1,2}(?:\.\d{1,2})?)(?:-(?!(?:instant|pro)(?:-|$))[a-z][a-z0-9]{1,19})?(?:-instant|-pro)?$/;
+function isTaskModel(model) {
+  return typeof model === 'string' && (taskModels.has(model) || discoveredTaskModel.test(model));
+}
 function taskModelFamily(model) {
-  if (!isTaskModel(model)) return undefined;
-  if (model === 'chatgpt-web/gpt-6-pro') return '6';
+  if (!isTaskModel(model) || model === 'chatgpt-web/gpt-5.6-luna') return undefined;
   // The retired Astra identities always ran GPT-5.6 Sol below Pro.
-  if (['chatgpt-web/gpt-5.6-sol-instant', 'chatgpt-web/gpt-5.6-sol', 'chatgpt-web/gpt-5.6-pro',
-    'chatgpt-web/gpt-6-astra', 'chatgpt-web/gpt-6-astra-instant'].includes(model)) return '5.6';
-  return undefined;
+  if (model === 'chatgpt-web/gpt-6-astra' || model === 'chatgpt-web/gpt-6-astra-instant') return '5.6';
+  return discoveredTaskModel.exec(model)?.[1];
 }
 function taskModelForRequirement(requirement) {
   return isTaskModel(requirement?.requestedModel) ? requirement.requestedModel : null;
@@ -30,7 +31,7 @@ function validRecord(row) {
   return row && typeof row === 'object' && !Array.isArray(row)
     && (Object.keys(row).length === fields.length || (Object.keys(row).length === fields.length + 1 && Object.hasOwn(row, 'model')))
     && fields.every(key => Object.hasOwn(row, key))
-    && (!Object.hasOwn(row, 'model') || row.model === null || taskModels.has(row.model))
+    && (!Object.hasOwn(row, 'model') || row.model === null || isTaskModel(row.model))
     && /^[a-f0-9]{32}$/.test(row.id) && /^[A-Za-z0-9_-]{6,128}$/.test(row.traceId)
     && /^[A-Za-z0-9_-]{6,128}$/.test(row.tabId)
     && Number.isSafeInteger(row.createdAt) && row.createdAt >= 0
