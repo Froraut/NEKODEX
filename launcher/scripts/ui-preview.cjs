@@ -368,7 +368,7 @@ function installMockLauncher() {
   let proModelVersion = null;
   let compactionModel = null;
   // The DEV profile verifies its catalog while installing (IS_DEV_PROFILE in electron/main.cjs).
-  const devProfile = !(scenario === "models-ready" || scenario === "tools-pending" || benefitsScenario);
+  const devProfile = !(scenario === "models-ready" || scenario === "tools-pending" || scenario === "picker-refresh" || benefitsScenario);
   const snapshot = () => ({
     profile: devProfile ? "development" : "production", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
