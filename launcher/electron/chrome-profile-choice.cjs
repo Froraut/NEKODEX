@@ -142,6 +142,9 @@ function openProfile(executable, id, url = 'https://chatgpt.com/?temporary-chat=
 
 function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, executable, language, dialog, getWorkArea,
   launch = openProfile, picker = showChromeProfilePicker, bindingStore = createChromeProfileBindingStore(coreHome) }) {
+  // A retry remembers what the user chose, independently of the last verified account binding.
+  // Keep only profile IDs for this launcher session; failed imports never persist a new binding.
+  const lastChoices = new Map();
   return async ({ accountId, signal }) => {
     validateAccountId(accountId);
     signal?.throwIfAborted();
@@ -157,16 +160,20 @@ function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, exec
       });
     }
     const saved = bindingStore.read(accountId);
+    const confirmedId = selectMatch(profiles, null, saved)?.id ?? null;
+    const lastAttemptId = profiles.find(profile => profile.id === lastChoices.get(accountId))?.id ?? null;
     let selection;
     try {
       selection = await picker({ BrowserWindow, parent: window(), profiles,
-        selectedId: selectMatch(profiles, null, saved)?.id ?? null, language: language(), signal, workArea: getWorkArea?.() });
+        selectedId: lastAttemptId ?? confirmedId, confirmedId, lastAttemptId,
+        language: language(), signal, workArea: getWorkArea?.() });
     } catch (error) { throw Object.assign(error, { profileChoiceStage: 'picker' }); }
     signal?.throwIfAborted();
     if (!selection || selection.kind === 'cancel') return { kind: 'cancel' };
     if (selection.kind === 'new') return { kind: 'new' };
     const selected = profiles.find(profile => profile.id === selection.profile?.id);
     if (!selected) throw new Error('Selected Chrome profile is no longer available');
+    lastChoices.set(accountId, selected.id);
     const binding = bindingStore.begin(accountId, selected);
     try { await launch(executable(), selected.id, 'https://chatgpt.com/?temporary-chat=true'); }
     catch (error) { binding.rollback(); throw Object.assign(error, { profileChoiceStage: 'launch' }); }

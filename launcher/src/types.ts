@@ -160,6 +160,7 @@ export interface ExistingChromeLoginProgress {
 }
 
 export interface PasskeyLoginProgress {
+  chromeProfileLabel?: string | null;
   chromePhase?: "discovering" | "waiting-for-chrome" | "reading-session" | "verifying" | null;
   phase: "starting" | "waiting" | "importing" | "verifying" | "cancelling" | "cancelled" | "timed-out" | "failed" | "completed";
   startedAt: string;

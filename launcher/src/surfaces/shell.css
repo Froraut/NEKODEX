@@ -159,17 +159,39 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-8);
+  padding-top: calc(var(--size-titlebar) + var(--space-8));
+  overflow: auto;
   background: var(--bg-surface);
   color: var(--text-secondary);
   text-align: center;
 }
 .nk-launch__drag { position: absolute; top: 0; right: 0; left: 0; height: var(--size-titlebar); -webkit-app-region: drag; }
-.nk-launch__line { width: 18px; height: 1px; margin-top: var(--space-4); overflow: hidden; background: var(--border-heavy); }
-.nk-launch__line::after { display: block; width: 8px; height: 1px; background: var(--text-primary); content: ""; animation: nk-launch-line 0.9s ease-in-out infinite alternate; }
-@keyframes nk-launch-line { to { transform: translateX(10px); } }
-.nk-launch h1 { margin: var(--space-4) 0 0; color: var(--text-primary); font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; }
-.nk-launch p { max-width: 52ch; margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
-.nk-launch .nk-btn { margin-top: var(--space-5); }
+.nk-launch__content { display: flex; width: min(100%, 440px); flex: 0 0 auto; flex-direction: column; align-items: center; margin: auto; }
+.nk-launch__brand { display: flex; flex-direction: column; align-items: center; gap: var(--space-5); }
+.nk-launch__emblem { display: grid; width: 96px; height: 96px; place-items: center; border: 1px solid var(--border-accent); border-radius: var(--radius-lg); background: var(--bg-accent-subtle); }
+.nk-launch__wordmark { color: var(--text-primary); font-size: 23px; line-height: 30px; font-weight: 600; letter-spacing: 0.14em; padding-left: 0.14em; }
+.nk-launch h1 { margin: var(--space-8) 0 0; color: var(--text-primary); font-size: 20px; line-height: 28px; font-weight: 500; letter-spacing: -0.02em; }
+.nk-launch p { max-width: 38ch; margin: var(--space-2) 0 0; color: var(--text-secondary); font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.nk-launch__meter { width: 176px; height: 4px; margin-top: var(--space-6); overflow: hidden; border-radius: var(--radius-pill); background: var(--bg-control-active); }
+.nk-launch__meter::after { display: block; width: 40%; height: 100%; border-radius: inherit; background: var(--accent); content: ""; animation: nk-launch-loading 1.4s ease-in-out infinite alternate; }
+@keyframes nk-launch-loading { to { transform: translateX(150%); } }
+.nk-launch__recovery { display: flex; min-height: 116px; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: var(--space-6); }
+.nk-launch__recovery p { color: var(--text-tertiary); font-size: 13px; line-height: 20px; }
+.nk-launch .nk-btn { margin-top: var(--space-5); -webkit-app-region: no-drag; }
+.nk-launch__details { width: 100%; max-width: 420px; margin-top: var(--space-6); text-align: left; }
+.nk-launch__details summary { width: fit-content; margin-inline: auto; padding: var(--space-2); color: var(--text-tertiary); font-size: 13px; cursor: pointer; -webkit-app-region: no-drag; }
+.nk-launch__details summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-xs); }
+.nk-launch__details p { max-width: none; max-height: 160px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-panel); font-family: var(--font-mono); font-size: 12px; line-height: 18px; }
+@media (prefers-reduced-motion: reduce) {
+  .nk-launch__meter::after { width: 100%; animation: none; transform: none; opacity: .45; }
+}
+@media (max-height: 480px) {
+  .nk-launch { padding: calc(var(--size-titlebar) + var(--space-4)) var(--space-5) var(--space-5); }
+  .nk-launch__brand { gap: var(--space-3); }
+  .nk-launch__emblem { width: 72px; height: 72px; }
+  .nk-launch h1 { margin-top: var(--space-5); }
+  .nk-launch__recovery { min-height: 88px; padding-top: var(--space-3); }
+}
 
 /* =====================================================================================================
  * Shared launcher-ui pieces without a system component. Tokens and type styles only.

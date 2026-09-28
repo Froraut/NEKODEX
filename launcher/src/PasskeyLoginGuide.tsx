@@ -20,6 +20,8 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
   const [now, setNow] = useState(Date.now());
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
+  const [cancelPending, setCancelPending] = useState(false);
+  const cancelInFlight = useRef(false);
   useEffect(() => {
     setNow(Date.now());
     if (!progress.active) return;
@@ -54,10 +56,21 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
       setError(failure);
     } finally { inFlight.current = false; setPending(false); }
   };
+  // Retry/Continue await the whole host operation. Cancellation must remain usable while that
+  // promise is pending, and the host still owns cancellation, rollback and operation settlement.
+  const cancel = async () => {
+    if (cancelInFlight.current || !progress.canCancel) return;
+    cancelInFlight.current = true;
+    setCancelPending(true);
+    try { await window.codexWebLauncher!.cancelPasskeyLogin(); }
+    catch { setError(copy.passkeyFailed); }
+    finally { cancelInFlight.current = false; setCancelPending(false); }
+  };
   return <Panel as="div" padding="compact" className="browser-guide">
     <div className="browser-guide__status" role="status" aria-live="polite">
       {/* Focus lands here when the guide opens or its focused control goes away. */}
       <Heading className="browser-guide__title" tabIndex={-1}>{title}</Heading>
+      {progress.chromeProfileLabel ? <p className="browser-guide__meta">Chrome: {progress.chromeProfileLabel}</p> : null}
       {failed ? null : <p>{chromeWaiting ? copy.existingChromeSteps : terminal ? copy.passkeyRecoveryBody : ["starting", "waiting"].includes(progress.phase) ? copy.passkeyContinueBody : copy.passkeyImportingBody}</p>}
     </div>
     {failed ? <Notice tone="error" title={phaseTitle}>{failureText && failureText !== phaseTitle ? failureText : null}</Notice>
@@ -73,8 +86,8 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
         onClick={() => void act(onContinue)}>{copy.passkeyContinue}</Button> : null}
       {progress.canReveal ? <Button disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.revealPasskeyLogin(), false, copy.passkeyRevealFailed)}>{copy.passkeyReveal}</Button> : null}
-      {progress.canCancel ? <Button variant="ghost" disabled={pending}
-        onClick={() => void act(() => window.codexWebLauncher!.cancelPasskeyLogin(), true)}>{copy.passkeyCancel}</Button> : null}
+      {progress.canCancel ? <Button variant="ghost" disabled={cancelPending}
+        onClick={() => void cancel()}>{copy.passkeyCancel}</Button> : null}
       {terminal ? <Button variant="primary" disabled={pending || transitionBusy}
         onClick={() => void act(onRetry)}>{copy.retry}</Button> : null}
       {terminal ? <Button disabled={pending || transitionBusy}

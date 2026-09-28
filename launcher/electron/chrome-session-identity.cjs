@@ -81,7 +81,17 @@ async function verifyCapturedAccount(sessionApi, transfer, { expectedPrincipalFi
     try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { throw new Error('Session verification unavailable'); }
     const identity = sessionIdentity(payload);
-    if (!identity) throw Object.assign(new Error('Chrome returned an unverified ChatGPT account'), { code: 'chrome-account-unverified' });
+    if (!identity) {
+      const reason = !payload || typeof payload !== 'object' || Array.isArray(payload) ? 'invalid-response'
+        : payload.error ? 'provider-error'
+          : !payload.user || typeof payload.user !== 'object' || Object.keys(payload.user).length === 0 ? 'missing-user'
+            : payload.expires != null && (typeof payload.expires !== 'string' || !Number.isFinite(Date.parse(payload.expires))) ? 'invalid-expiry'
+              : payload.expires != null && Date.parse(payload.expires) <= Date.now() ? 'expired-session' : 'missing-principal';
+      throw Object.assign(new Error('Chrome returned an unverified ChatGPT account'), {
+        code: 'chrome-account-unverified', verificationReason: reason, httpStatus: response.status,
+        authCookieCount: state.cookies.filter(cookie => /^__Secure-(?:next-auth|authjs)\.session-token(?:\.\d+)?$/.test(cookie.name)).length,
+      });
+    }
     if (expectedPrincipalFingerprint && identity.principalFingerprint !== expectedPrincipalFingerprint) {
       throw Object.assign(new Error('Chrome returned a different ChatGPT account'), { code: 'chrome-account-mismatch' });
     }

@@ -69,6 +69,7 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
     }
     const ru=language()==='ru';
     const profileName=choice.profile.name || choice.profile.id;
+    onProgress({ chromeProfileLabel: `${profileName} · ${choice.profile.googleEmail || choice.profile.id}` });
     const googleMetadata=choice.profile.googleEmail
       ? (ru?`Аккаунт Google в метаданных: ${choice.profile.googleEmail}`:`Google account in profile metadata: ${choice.profile.googleEmail}`)
       : (ru?'В метаданных профиля нет почты Google. Это не мешает отдельно проверить аккаунт ChatGPT.':'This profile has no Google email metadata. NEKODEX can still verify the ChatGPT account separately.');
@@ -93,6 +94,7 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
           ...(patch.deadlineAt ? {deadlineAt:patch.deadlineAt} : {})}) });
       signal?.throwIfAborted();
       const previous=choice.previousBinding;
+      onProgress({ phase:'verifying', chromePhase:'verifying' });
       // The binding dialog runs for an identity verified before installation or, when Cloudflare
       // challenged that check, for the identity the installed ChatGPT page reports.
       const confirmBinding=async identity=>{
@@ -122,6 +124,13 @@ function createProfileFirstLogin({choose, runtime, session, dialog, window, lang
         identity=await verifyCapturedAccount(session,capture,{signal,accountId:context.accountId,
           configureSession:context.configureVerificationSession});
       } catch(error) {
+        runtime.logger?.warn?.('runtime.chrome_capture_verification_failed', {
+          code: error?.code === 'chrome-account-unverified' ? error.code : 'verification-unavailable',
+          reason: ['invalid-response', 'provider-error', 'missing-user', 'invalid-expiry', 'expired-session', 'missing-principal'].includes(error?.verificationReason)
+            ? error.verificationReason : null,
+          httpStatus: Number.isInteger(error?.httpStatus) ? error.httpStatus : null,
+          authCookieCount: Number.isInteger(error?.authCookieCount) ? error.authCookieCount : null,
+        });
         if(!isCloudflareChallengedVerification(error)) throw error;
         return deferredCaptureTransfer(capture,{resolveIdentityIntent:confirmBinding,
           commit:(_receipt,adopted)=>commitBinding(adopted),rollback:()=>choice.rollbackBinding()});

@@ -26,7 +26,7 @@ const text = {
     intro: 'Google profile details are shown below. Your ChatGPT account is verified separately before connecting.',
     search: 'Search profiles', placeholder: 'Name, Google email, or profile', cancel: 'Cancel',
     createNew: 'New isolated sign-in', connect: 'Continue', noEmail: 'No Google email in profile metadata',
-    count: count => `${count} profile${count === 1 ? '' : 's'} shown`, selected: 'Previously connected profile',
+    count: count => `${count} profile${count === 1 ? '' : 's'} shown`, selected: 'Previously connected profile', lastAttempt: 'Last selected for sign-in',
     noMatches: query => `No profiles match “${query}”`, noMatchesBody: 'Try another name or email, or clear the search.',
     clear: 'Clear search', none: 'No Chrome profiles found',
     noneBody: 'Google Chrome Stable has no profiles to connect. Use New isolated sign-in to sign in with a separate profile.',
@@ -36,7 +36,7 @@ const text = {
     intro: 'Ниже указаны данные профилей Google. Перед подключением NEKODEX отдельно проверит аккаунт ChatGPT.',
     search: 'Поиск профилей', placeholder: 'Имя, почта Google или профиль', cancel: 'Отмена',
     createNew: 'Новый изолированный вход', connect: 'Продолжить', noEmail: 'В метаданных нет почты Google',
-    count: count => `Показано профилей: ${count}`, selected: 'Ранее подключённый профиль',
+    count: count => `Показано профилей: ${count}`, selected: 'Ранее подключённый профиль', lastAttempt: 'Последний выбор для входа',
     noMatches: query => `Нет профилей по запросу «${query}»`, noMatchesBody: 'Попробуйте другое имя или почту либо очистите поиск.',
     clear: 'Очистить поиск', none: 'Профили Chrome не найдены',
     noneBody: 'В Google Chrome Stable нет профилей для подключения. Выберите «Новый изолированный вход», чтобы войти в отдельном профиле.',
@@ -46,7 +46,7 @@ const text = {
     intro: '下方显示 Google 资料详情。连接前，NEKODEX 会单独验证你的 ChatGPT 账号。',
     search: '搜索资料', placeholder: '名称、Google 邮箱或资料', cancel: '取消',
     createNew: '新的隔离登录', connect: '继续', noEmail: '资料元数据中没有 Google 邮箱',
-    count: count => `显示 ${count} 个资料`, selected: '之前连接的资料',
+    count: count => `显示 ${count} 个资料`, selected: '之前连接的资料', lastAttempt: '上次选择的登录资料',
     noMatches: query => `没有与“${query}”匹配的资料`, noMatchesBody: '请尝试其他名称或邮箱，或清除搜索。',
     clear: '清除搜索', none: '未找到 Chrome 资料',
     noneBody: 'Google Chrome Stable 中没有可连接的资料。使用“新的隔离登录”在单独的资料中登录。',
@@ -56,7 +56,7 @@ const text = {
     intro: '下方顯示 Google 設定檔詳細資料。連線前，NEKODEX 會另外驗證您的 ChatGPT 帳號。',
     search: '搜尋設定檔', placeholder: '名稱、Google 電子郵件或設定檔', cancel: '取消',
     createNew: '新的隔離登入', connect: '繼續', noEmail: '設定檔中繼資料沒有 Google 電子郵件',
-    count: count => `顯示 ${count} 個設定檔`, selected: '先前連線的設定檔',
+    count: count => `顯示 ${count} 個設定檔`, selected: '先前連線的設定檔', lastAttempt: '上次選擇的登入設定檔',
     noMatches: query => `沒有符合「${query}」的設定檔`, noMatchesBody: '請嘗試其他名稱或電子郵件，或清除搜尋。',
     clear: '清除搜尋', none: '找不到 Chrome 設定檔',
     noneBody: 'Google Chrome Stable 中沒有可連線的設定檔。使用「新的隔離登入」以獨立的設定檔登入。',
@@ -66,7 +66,7 @@ const text = {
     intro: '以下に Google プロファイルの詳細を表示しています。接続前に、NEKODEX が ChatGPT アカウントを別途確認します。',
     search: 'プロファイルを検索', placeholder: '名前、Google メール、またはプロファイル', cancel: 'キャンセル',
     createNew: '新しい分離ログイン', connect: '続ける', noEmail: 'プロファイル情報に Google メールがありません',
-    count: count => `${count} 件のプロファイルを表示中`, selected: '以前に接続したプロファイル',
+    count: count => `${count} 件のプロファイルを表示中`, selected: '以前に接続したプロファイル', lastAttempt: '前回ログイン用に選択',
     noMatches: query => `「${query}」に一致するプロファイルはありません`, noMatchesBody: '別の名前やメールで検索するか、検索をクリアしてください。',
     clear: '検索をクリア', none: 'Chrome プロファイルが見つかりません',
     noneBody: 'Google Chrome Stable に接続できるプロファイルがありません。「新しい分離ログイン」を使うと、別のプロファイルでログインできます。',
@@ -76,7 +76,7 @@ const text = {
     intro: '아래에 Google 프로필 정보가 표시됩니다. 연결하기 전에 NEKODEX가 ChatGPT 계정을 별도로 확인합니다.',
     search: '프로필 검색', placeholder: '이름, Google 이메일 또는 프로필', cancel: '취소',
     createNew: '새 격리 로그인', connect: '계속', noEmail: '프로필 메타데이터에 Google 이메일이 없습니다',
-    count: count => `프로필 ${count}개 표시됨`, selected: '이전에 연결한 프로필',
+    count: count => `프로필 ${count}개 표시됨`, selected: '이전에 연결한 프로필', lastAttempt: '마지막으로 선택한 로그인 프로필',
     noMatches: query => `‘${query}’ 검색 결과가 없습니다`, noMatchesBody: '다른 이름이나 이메일로 검색하거나 검색어를 지우세요.',
     clear: '검색어 지우기', none: 'Chrome 프로필을 찾을 수 없습니다',
     noneBody: 'Google Chrome Stable에 연결할 프로필이 없습니다. ‘새 격리 로그인’을 사용해 별도 프로필로 로그인하세요.',
@@ -110,6 +110,7 @@ function createOption(profile) {
   const directory = document.createElement('span'); directory.className = 'profile-id'; directory.textContent = profile.id;
   option.append(name, metadata, directory);
   if (profile.saved) { const saved = document.createElement('span'); saved.className = 'saved'; saved.textContent = copy.selected; option.append(saved); }
+  else if (profile.lastAttempt) { const recent = document.createElement('span'); recent.className = 'saved'; recent.textContent = copy.lastAttempt; option.append(recent); }
   option.addEventListener('click', () => choose(profile.id));
   option.addEventListener('dblclick', () => api.select(profile.id));
   return option;
@@ -174,7 +175,9 @@ api.receive(payload => {
   elements.cancel.textContent = copy.cancel;
   elements.createNew.textContent = copy.createNew;
   elements.connect.textContent = copy.connect;
-  profiles = payload.profiles.map(profile => ({ ...profile, saved: profile.id === payload.selectedId }));
+  profiles = payload.profiles.map(profile => ({ ...profile,
+    saved: profile.id === (payload.confirmedId === undefined ? payload.selectedId : payload.confirmedId),
+    lastAttempt: profile.id === payload.lastAttemptId }));
   selectedId = profiles.some(profile => profile.id === payload.selectedId) ? payload.selectedId : null;
   options.clear();
   for (const profile of profiles) options.set(profile.id, createOption(profile));

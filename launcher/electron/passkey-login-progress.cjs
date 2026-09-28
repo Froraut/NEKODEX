@@ -35,6 +35,8 @@ function publicPasskeyProgress(progress) {
     error: PUBLIC_ERROR_CODES.has(progress.error) || isExistingChromeErrorCode(progress.error)
       ? progress.error : progress.error ? "passkey-import-failed" : null,
     chromePhase: CHROME_PHASES.has(progress.chromePhase) && ACTIVE_PHASES.has(progress.phase) ? progress.chromePhase : null,
+    chromeProfileLabel: typeof progress.chromeProfileLabel === 'string'
+      ? progress.chromeProfileLabel.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 340) : null,
     revealError: progress.revealError === "passkey-reveal-failed" ? progress.revealError : null,
     active: ACTIVE_PHASES.has(progress.phase),
     canImport: progress.phase === "waiting",

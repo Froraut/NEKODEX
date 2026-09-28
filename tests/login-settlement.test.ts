@@ -1,14 +1,41 @@
 import { expect, test } from "bun:test";
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const require = createRequire(import.meta.url);
 const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
 const { createChromeProfileBindingStore } = require("../launcher/electron/chrome-profile-binding.cjs");
 const { publicPasskeyProgress, passkeyLoginFailure } = require("../launcher/electron/passkey-login-progress.cjs");
-const { readProfilesWithPermission } = require("../launcher/electron/chrome-profile-choice.cjs");
+const { createChromeProfileChoice, readProfilesWithPermission } = require("../launcher/electron/chrome-profile-choice.cjs");
 const { captureProfileSession } = require("../launcher/electron/profile-first-login.cjs");
+
+test("retry keeps the user's last profile choice without changing the verified binding or another account", async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'nekodex-profile-retry-'));
+  try {
+    const root = join(directory, 'Chrome'); mkdirSync(root);
+    for (const id of ['Default', 'Profile 2']) mkdirSync(join(root, id));
+    writeFileSync(join(root, 'Local State'), JSON.stringify({ profile: { info_cache: {
+      Default: { name: 'Confirmed' }, 'Profile 2': { name: 'Requested' },
+    } } }));
+    const store = createChromeProfileBindingStore(directory);
+    store.begin('default', { id: 'Default', name: 'Confirmed' }).commit({ principalFingerprint: 'a'.repeat(64) });
+    const selections: any[] = [];
+    const choose = createChromeProfileChoice({ root, coreHome: directory, window: () => null,
+      executable: () => '/unused/chrome', language: () => 'en', launch: async () => {}, bindingStore: store,
+      picker: async (options: any) => {
+        selections.push(options);
+        return selections.length === 1 ? { kind: 'existing', profile: options.profiles[1] } : { kind: 'cancel' };
+      } });
+    const attempt = await choose({ accountId: 'default' });
+    attempt.rollbackBinding(); // Capture or verification failed; the existing account stays authoritative.
+    await choose({ accountId: 'default' });
+    expect(selections[1]).toMatchObject({ selectedId: 'Profile 2', lastAttemptId: 'Profile 2', confirmedId: 'Default' });
+    expect(store.read('default').profileId).toBe('Default');
+    await choose({ accountId: '00000000-0000-4000-8000-000000000002' });
+    expect(selections[2]).toMatchObject({ selectedId: null, lastAttemptId: null, confirmedId: null });
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 test("successful sign-in returns the settled pool receipt instead of a stale locked host snapshot", async () => {
   let held = false, published = false;

@@ -141,6 +141,11 @@ restart request until the picker is confirmed again.
 Chrome profile bindings can retain the observed Chrome user agent for compatible
 session handoff; it never replaces endpoint/principal verification. Sign-in
 mutation receipts are published after the owning lease is released.
+The profile chooser keeps the last attempted profile ID per account in memory for
+retries, separately from the verified binding on disk. The picker labels these
+states separately; capture progress identifies the selected Chrome profile.
+Cancelling remains independent of the renderer's pending Retry/Continue request;
+the host still owns cancellation, rollback and final settlement.
 
 ## Optional client connections
 
