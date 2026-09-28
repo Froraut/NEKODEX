@@ -148,9 +148,14 @@ function readState(filePath) {
     if (state.coreSetupComplete === true && state.codexCatalogVerified === true && state.codexPickerConfirmed === true) {
       state.codexRestartRequired = false;
     }
+    if (state.codexPickerContract !== undefined && state.codexPickerContract !== null
+      && (typeof state.codexPickerContract !== "string" || !/^[a-f0-9]{64}$/.test(state.codexPickerContract))) {
+      delete state.codexPickerContract;
+    }
     if (state.coreSetupComplete === false) {
       state.codexCatalogVerified = false;
       state.codexPickerConfirmed = false;
+      state.codexPickerContract = null;
       state.mcpSetupComplete = false;
     }
     if (state.setupConnectorName != null
@@ -217,16 +222,14 @@ function createStateStore(filePath) {
       if (next.coreSetupComplete === false) {
         next.codexCatalogVerified = false;
         next.codexPickerConfirmed = false;
+        next.codexPickerContract = null;
         next.mcpSetupComplete = false;
         next.experimentalAsyncToolOperations = false;
       } else if (patch.codexCatalogVerified === false) {
         next.codexPickerConfirmed = false;
       }
-      // Observing the served catalog clears the restart request, unless the same update asks for one.
-      if (next.coreSetupComplete === true && next.codexCatalogVerified === true && state.codexCatalogVerified !== true
-        && !Object.prototype.hasOwnProperty.call(patch, "codexRestartRequired")) {
-        next.codexRestartRequired = false;
-      }
+      // The restart request changes only explicitly: a served catalog request is not proof of
+      // what the Codex picker loaded, and confirming the picker clears it.
       if (next.browserInteractionMode === "manual" || next.coreSetupComplete === false) {
         next.pendingBiggerContext = null;
         next.contextChangeError = null;

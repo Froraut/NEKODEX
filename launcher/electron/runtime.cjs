@@ -155,7 +155,8 @@ function runQuietRuntimeCommand(invocation, environment, timeoutMs) {
       reject(new Error(`Runtime command timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     child.once("error", error => { clearTimeout(timer); reject(error); });
-    child.once("exit", (code, signal) => {
+    // "close" fires after stdout and stderr are drained, so the receipt is complete.
+    child.once("close", (code, signal) => {
       clearTimeout(timer);
       if (code === 0) resolve(stdout);
       else reject(new Error(`Runtime command failed (${signal ?? code}): ${redactText(stderr.trim().split("\n").at(-1) ?? "")}`));

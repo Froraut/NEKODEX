@@ -134,7 +134,10 @@ evidence; the older aggregate flags remain compatibility data. Setup refreshes
 missing or stale observations; the launcher also saves the selected account's
 evidence after each browser check and re-reads an idle, out-of-view picker every
 six hours through `config model-capabilities`. The daemon reads the saved
-evidence per request, so no restart or Repair is needed.
+evidence per request, so no restart or Repair is needed. `codex-picker-contract.cjs`
+compares the visible Web rows of the catalog Codex loads with the digest the user
+confirmed (`codexPickerContract`), whoever rewrote the file, and keeps the Codex
+restart request until the picker is confirmed again.
 Chrome profile bindings can retain the observed Chrome user agent for compatible
 session handoff; it never replaces endpoint/principal verification. Sign-in
 mutation receipts are published after the owning lease is released.

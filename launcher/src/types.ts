@@ -40,6 +40,8 @@ export interface LauncherState {
   coreSetupComplete?: boolean;
   codexCatalogVerified?: boolean;
   codexPickerConfirmed?: boolean;
+  /** Digest of the visible Web rows the user confirmed in the Codex picker. */
+  codexPickerContract?: string | null;
   setupContract?: number;
   setupVerifiedAt?: string;
   setupConnectorName?: string | null;
