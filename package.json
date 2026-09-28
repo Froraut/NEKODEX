@@ -1,6 +1,7 @@
 {
   "name": "codex-chatgpt-web",
-  "version": "6.1.7-nekodex.1",
+  "version": "6.1.8-nekodex.1",
+  "publishedReleaseVersion": "6.1.7-nekodex.1",
   "private": true,
   "description": "NEKODEX \u2014 a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",

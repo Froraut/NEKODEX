@@ -183,7 +183,9 @@ export function AccountCodexLoginProgress({
   useEffect(() => {
     const active = document.activeElement;
     const lost = !active || active === document.body || !active.isConnected;
-    if (claimFocus) {
+    // The start button is removed only once the new flow runs. A settled earlier flow of this account is
+    // already shown here while the (busy) start button keeps focus, so the claim waits for the running flow.
+    if (claimFocus && (login.active || login.settling)) {
       onFocusClaimed?.();
       if (lost) moveFocus(region.current);
       return;

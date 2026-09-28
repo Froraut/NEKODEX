@@ -1,5 +1,5 @@
 import { accountToolsCopy } from "./account-tools-onboarding";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { modelsTabConnection, type WorkspaceReadiness } from "./workspace-readiness";
 import { connectionTabStatus, connectionsCopy, connectionsSubtitle } from "./connections-copy";
@@ -118,10 +118,34 @@ export function McpSurface({
       : snapshot.state.experimentalAsyncToolOperations !== true);
   const connectorConfiguredForTarget = connectorIdentityAvailable && !native6UpgradeAvailable;
 
+  // A pressed control that a state change removes while it has focus hands focus on instead of dropping it to <body>:
+  // "Upgrade to Native6" and "Use Native4 (compatibility)" replace each other once the connector identity changes, and
+  // the Web transport repair notice goes once the route has recovered. Focus moves to the control that took the
+  // pressed one's place, else (none, or folded away in its closed details) to the step heading.
+  const upgradeButton = useRef<HTMLButtonElement>(null);
+  const compatibilityButton = useRef<HTMLButtonElement>(null);
+  const repairButton = useRef<HTMLButtonElement>(null);
+  const removalFocus = useRef<{ pressed: HTMLElement | null; next: RefObject<HTMLElement | null> | null } | null>(null);
+  useLayoutEffect(() => {
+    const pending = removalFocus.current;
+    if (!pending) return;
+    if (pending.pressed?.isConnected) {
+      if (document.activeElement !== pending.pressed) removalFocus.current = null;
+      return;
+    }
+    removalFocus.current = null;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const next = pending.next?.current;
+    (next && !next.closest("details:not([open])") ? next : wizardHeading.current)?.focus();
+  });
+
   const setAsyncConnectorIdentity = async (enabled: boolean) => {
     if (busy) return;
     setLocalBusy(true);
     setError(null);
+    removalFocus.current = enabled
+      ? { pressed: upgradeButton.current, next: compatibilityButton }
+      : { pressed: compatibilityButton.current, next: upgradeButton };
     try {
       updateState(await api!.setAsyncToolOperations(enabled));
       await updateSnapshot();
@@ -217,6 +241,7 @@ export function McpSurface({
     const repair = runtimeCapabilities(snapshot)?.tunnelRepair;
     if (repairInFlight.current || repair?.eligible !== true || repair.active || busy) return;
     repairInFlight.current = true;
+    removalFocus.current = { pressed: repairButton.current, next: null };
     setRepairBusy(true);
     setRepairOutcome(null);
     setRepairOutcomeRevision(null);
@@ -269,10 +294,11 @@ export function McpSurface({
         {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
           <Notice icon="setup" tone="warning">{copy.mcpCatalogRequired}</Notice>
         ) : null}
-        {!configuringInactiveMode && (tunnelRepair?.eligible === true || tunnelRepair?.active === true || repairOutcome) ? (
+        {/* Kept while the repair runs: a snapshot read before the outcome is set must not remove the focused button. */}
+        {!configuringInactiveMode && (repairing || tunnelRepair?.eligible === true || repairOutcome) ? (
           <Notice
             data-testid="web-route-repair"
-            action={<Button busy={repairing} disabled={busy || tunnelRepair?.eligible !== true}
+            action={<Button busy={repairing} disabled={busy || tunnelRepair?.eligible !== true} ref={repairButton}
               onClick={() => void repairWebRoute()} size="sm" variant={repairIsNext && !busy ? "primary" : "secondary"}>
               {repairing ? workflow.recovery.repairing : workflow.recovery.repairAction}
             </Button>}
@@ -402,7 +428,7 @@ export function McpSurface({
                     {manualInteraction ? copy.manualConnectorNotice : native6CopyFor(language).retained}
                   </Notice>
                   {!manualInteraction && snapshot.state.experimentalAsyncToolOperations ? (
-                    <Button disabled={busy} onClick={() => void setAsyncConnectorIdentity(false)} size="sm">
+                    <Button disabled={busy} onClick={() => void setAsyncConnectorIdentity(false)} ref={compatibilityButton} size="sm">
                       {native6CopyFor(language).compatibility}
                     </Button>
                   ) : null}
@@ -411,7 +437,8 @@ export function McpSurface({
                   ? <Notice tone="warning">{native6CopyFor(language).mismatch}</Notice> : null}
                 {native6UpgradeAvailable ? (
                   <Notice
-                    action={<Button disabled={busy} onClick={() => void setAsyncConnectorIdentity(true)} size="sm" variant="primary">
+                    action={<Button disabled={busy} onClick={() => void setAsyncConnectorIdentity(true)} ref={upgradeButton} size="sm"
+                      variant="primary">
                       {native6CopyFor(language).upgrade}
                     </Button>}
                     icon="update"
