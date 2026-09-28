@@ -20,28 +20,6 @@
 .updates-card .updates-wait { color: var(--color-text-warning); }
 .updates-card .updates-preserved { margin: 24px 0 0; padding-top: 20px; border-top: 1px solid var(--color-border-light); font-size: var(--text-sm); }
 .updates-source { font-size: var(--text-xs); margin-top: 18px; }
-.app-titlebar { background: var(--color-background-surface); border-bottom: 1px solid var(--color-border-light); }
-.titlebar-location { display: flex; gap: 14px; align-items: center; margin-left: 244px; font-size: var(--text-xs); color: var(--color-text-tertiary); }
-.titlebar-location > span:first-child { font-weight: 600; letter-spacing: .06em; font-size: var(--text-xs); }
-.titlebar-location strong { font-weight: 500; color: var(--color-text-secondary); }
-.app-sidebar { border-right: 1px solid var(--color-border-light); }
-.sidebar-brand-row { padding: 4px 4px 20px; }
-.sidebar-brand-row .sidebar-brand-identity > .brand-mark { width: 38px; height: 38px; color: var(--brand-accent); }
-.brand-wordmark { display: grid; gap: 3px; }
-.brand-wordmark strong { letter-spacing: .045em; }
-.brand-wordmark small { color: var(--color-text-tertiary); font-size: var(--text-xs); }
-.sidebar-brand-identity { gap: 10px; }
-.sidebar-brand-identity .dev-profile-badge { display: none; }
-.sidebar-group { margin-top: 22px; }
-.sidebar-group h2 { font-size: var(--text-xs); padding: 0 11px 8px; }
-.sidebar-group > div { display: grid; gap: 3px; }
-.sidebar-item { padding: 0 12px; gap: 12px; }
-.sidebar-item.is-active { box-shadow: inset 2px 0 var(--brand-accent); font-weight: 600; }
-.sidebar-item.is-active > svg, .sidebar-item.is-active > .mcp-mark { color: var(--brand-accent); }
-.sidebar-session { display: flex; align-items: center; gap: 9px; padding: 13px 11px; color: var(--color-text-tertiary); font-size: var(--text-xs); }
-.sidebar-version { display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 10px 4px; color: var(--color-text-tertiary); font-size: var(--text-xs); }
-.sidebar-version .brand-mark.is-small { flex: 0 0 24px; width: 24px; height: 24px; }
-.sidebar-version > span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .brand-mark { color: var(--brand-accent); }
 .brand-mark { --neko-x: 0px; --neko-y: 0px; --neko-tilt: 0deg; user-select: none; }
 .brand-mark > svg { overflow: visible; }
@@ -139,8 +117,6 @@
 @keyframes neko-wink { 0%, 100% { transform: scaleX(1); } 45% { transform: scaleX(1.25) rotate(-9deg); } }
 @keyframes neko-smile { 0% { transform: scale(.6); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
 @keyframes neko-wide-eyes { 0%, 100% { transform: scaleY(1); } 30%, 65% { transform: scaleY(1.25); } }
-.browser-surface { padding-top: var(--height-titlebar); }
-.app-shell:not(.is-sidebar-open) .browser-tab-strip { padding-left: 8px; }
 .browser-account-label { padding: 9px 16px; color: var(--color-text-secondary); font-size: var(--text-xs); background: var(--color-background-sidebar); border-bottom: 1px solid var(--color-border-light); }
 .browser-toolbar { background: var(--color-background-surface); }
 .browser-empty, .browser-underlay { background: var(--color-background-surface); }
@@ -184,7 +160,6 @@
 .diagnostic-row { padding: 10px 12px; border-radius: 9px; margin: 4px 0; }
 
 /* ImageGen reference: compact Overview with direct connection actions. */
-.workspace { container-name: workspace; container-type: inline-size; }
 .overview-scroll { display: block; width: calc(100% - clamp(32px, 4vw, 80px)); max-width: 1640px; padding: 20px 0 28px; }
 .overview-heading { display: flex; flex: 0 0 54px; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 14px; }
 .overview-heading h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.035em; line-height: 34px; }
@@ -287,11 +262,6 @@
 .welcome-option.is-active { border-color: #c6bdff55; background: var(--color-background-brand); }
 .welcome-footer > .button-primary { min-width: 130px; }
 
-@media (max-width: 860px) {
-  .titlebar-location { margin-left: 180px; }
-  .app-root:not([data-platform="darwin"]) .titlebar-location { margin-left: 90px; }
-  .app-shell.is-compact .app-sidebar { padding-top: 0; box-shadow: 20px 0 60px #0005; }
-}
 @container workspace (min-width: 1150px) {
   .overview-grid { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(260px, .8fr); gap: 18px; }
   .overview-main-column { display: contents; }
@@ -390,15 +360,6 @@
   .brand-mark .neko-tracking, .brand-mark .neko-face { transform: none; }
 }
 
-@media (max-height: 760px) {
-  .sidebar-brand-row { padding-bottom: 10px; }
-  .sidebar-group { margin-top: 12px; }
-  .sidebar-group h2 { padding-bottom: 4px; }
-  .sidebar-nav { padding-top: 4px; padding-bottom: 8px; }
-  .sidebar-session { padding-top: 8px; padding-bottom: 8px; }
-  .sidebar-version { padding-top: 8px; }
-}
-
 /* NEKODEX form language: shared surfaces, clear focus and readable feedback. */
 .account-add input,
 .field-row input,
@@ -440,8 +401,6 @@
 .overview-activity li { min-height: 52px; padding: 10px 0; }
 .overview-activity li > span { white-space: normal; overflow-wrap: anywhere; }
 .overview-activity time { font-size: var(--text-xs); }
-.sidebar-group h2 { line-height: 1.5; }
-.sidebar-session { line-height: 1.5; }
 @container workspace (max-width: 480px) {
   .connection-list > button { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 6px 10px; }
   .connection-status { grid-column: 2; grid-row: 2; margin-left: 0; white-space: normal; }

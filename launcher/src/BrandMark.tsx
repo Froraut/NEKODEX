@@ -118,6 +118,8 @@ export function BrandMark({ small = false }: { small?: boolean }) {
   </span>;
 }
 
+// The face strokes with --brand-ink where a caller sets it (the Overview illustration); marks set it to
+// --mark-face (.nk-mark in design/components.css, .brand-mark in surfaces/shell.css).
 export function CatHead({ reaction }: { reaction: CatReaction | null }) {
   const happy = reaction === "happy" || reaction === "purr" || reaction === "playful";
   const sleepy = reaction === "sleepy" || reaction === "yawn" || reaction === "stretch";
@@ -132,11 +134,11 @@ export function CatHead({ reaction }: { reaction: CatReaction | null }) {
         <path className="neko-ear neko-ear-left" d="M12 34V12l17 12Z" fill="currentColor" />
         <path className="neko-ear neko-ear-right" d="M35 24 52 12v22Z" fill="currentColor" />
         <path d="M12 30c4-7 11-9 20-9s16 2 20 9c4 5 5 10 2 16-4 8-13 12-22 12S14 54 10 46c-3-6-2-11 2-16Z" fill="currentColor" />
-        <g className="neko-face" fill="none" stroke="var(--brand-ink, #26243e)" strokeLinecap="round" strokeLinejoin="round">
+        <g className="neko-face" fill="none" stroke="var(--brand-ink, var(--mark-face))" strokeLinecap="round" strokeLinejoin="round">
           <path className="neko-eye neko-eye-left" d={happy ? "M17 40q3-6 6 0" : closedEyes || reaction === "wink" ? "M17 38q3 2 7 0" : "m23 33-6 5 6 5"} strokeWidth="3.5" />
           <path className="neko-eye neko-eye-right" d={happy ? "M41 40q3-6 6 0" : closedEyes ? "M40 38q3 2 7 0" : "m41 33 6 5-6 5"} strokeWidth="3.5" />
           <path className="neko-mouth" d={mouth} strokeWidth="2.5" />
-          {reaction === "playful" ? <path className="neko-tongue" d="M28.5 48.5v4a3.5 3.5 0 0 0 7 0v-4" fill="#ef9da9" strokeWidth="1.4" /> : null}
+          {reaction === "playful" ? <path className="neko-tongue" d="M28.5 48.5v4a3.5 3.5 0 0 0 7 0v-4" fill="var(--rose-300)" strokeWidth="1.4" /> : null}
         </g>
       </g></g>
   );

@@ -1,11 +1,23 @@
 import languages from "../electron/languages.json";
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import {
+  Button, cx, Icon, IconButton as KitIconButton, Notice, Page, Select, StateDot as KitStateDot, SurfaceHeader, Switch, Tabs,
+  type IconName, type Status,
+} from "./design";
 import { localizeRuntimeMessage, type Copy } from "./i18n";
 import { stripIpcErrorPrefix } from "./ipc-error";
-import { Icon, type IconName } from "./icons";
 import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits, resolveChatGptWebTransportLimits } from "../../src/chatgpt-web-models";
 import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, ProModelVersion } from "./types";
+
+// Shared launcher pieces, drawn with the design-system kit (./design). Names and props are the 6.1.5 API so
+// surfaces keep compiling; the look comes from design/components.css and surfaces/shell.css (nk-* classes).
+
+export { Switch };
+
+// ConnectionsTabs switches surfaces (setup <-> mcp), which remounts the tabs. A tab chosen while focus was in
+// the tabs gets focus back after the switch, so the kit's arrow-key model keeps working across surfaces.
+let pendingConnectionsTab: "models" | "tools" | null = null;
 
 export function ConnectionsTabs({
   active,
@@ -22,26 +34,39 @@ export function ConnectionsTabs({
   onTools: () => void;
   toolsReady: boolean;
 }) {
-  const tab = (id: "models" | "tools", label: string, ready: boolean, onClick: () => void) => (
-    <button aria-current={active === id ? "page" : undefined}
-      className={active === id ? "is-active" : ""} onClick={onClick} type="button">
-      <span>{label}</span>
-      <small><StateDot state={ready ? "ready" : "idle"} />
-        {ready ? copy.connectionVerified : copy.connectionPending}</small>
-    </button>
-  );
+  useLayoutEffect(() => {
+    if (pendingConnectionsTab !== active) return;
+    pendingConnectionsTab = null;
+    const tabs = [...document.querySelectorAll<HTMLElement>("nav.nk-tabs")].find(nav => nav.getAttribute("aria-label") === copy.connectionsNav);
+    tabs?.querySelector<HTMLElement>('button[aria-current="page"]')?.focus();
+  }, [active]);
+  const select = (id: string) => {
+    if (id !== "models" && id !== "tools") return;
+    if (id !== active && document.activeElement?.closest(".nk-tabs")) {
+      pendingConnectionsTab = id;
+      requestAnimationFrame(() => { pendingConnectionsTab = null; });
+    }
+    (id === "models" ? onModels : onTools)();
+  };
   return (
-    <nav aria-label={copy.connectionsNav} className="connections-tabs">
-      {tab("models", copy.modelsConnectionTab, modelsReady, onModels)}
-      {tab("tools", copy.toolsConnectionTab, toolsReady, onTools)}
-    </nav>
+    <Tabs
+      active={active}
+      className="nk-connections-tabs"
+      label={copy.connectionsNav}
+      onSelect={select}
+      tabs={[
+        { id: "models", label: copy.modelsConnectionTab, state: modelsReady ? "ready" : "idle", status: modelsReady ? copy.connectionVerified : copy.connectionPending },
+        { id: "tools", label: copy.toolsConnectionTab, state: toolsReady ? "ready" : "idle", status: toolsReady ? copy.connectionVerified : copy.connectionPending },
+      ]}
+    />
   );
 }
 
-export function StateDot({ state }: { state: "idle" | "ready" | "busy" | "error" }) {
-  return <i aria-hidden="true" className={`state-dot is-${state}`} />;
+export function StateDot({ state }: { state: Status }) {
+  return <KitStateDot state={state} />;
 }
 
+/** A surface page: the design system's Page (960, or 760 when narrow) with its SurfaceHeader. */
 export function ContentSurface({
   children,
   eyebrow,
@@ -52,28 +77,24 @@ export function ContentSurface({
 }: {
   children: ReactNode;
   eyebrow?: string;
+  /** Kept for API compatibility: pages scroll with the workspace. */
   fit?: boolean;
   narrow?: boolean;
   subtitle?: string;
   title: string;
 }) {
   return (
-    <section className={`content-surface${fit ? " is-fit-surface" : " is-page-scroll"}`}>
-      <div className={`content-scroll${narrow ? " is-narrow" : ""}${fit ? " is-fit" : ""}`}>
-        <header className="surface-header">
-          {eyebrow ? <span>{eyebrow}</span> : null}
-          <h1>{title}</h1>
-          {subtitle ? <p>{subtitle}</p> : null}
-        </header>
-        {children}
-      </div>
-    </section>
+    <Page className={cx("nk-surface", fit && "is-fit")} width={narrow ? "narrow" : undefined}>
+      <SurfaceHeader eyebrow={eyebrow} subtitle={subtitle} title={title} />
+      {children}
+    </Page>
   );
 }
 
 export function SetupRow({
   action,
   complete,
+  current = false,
   description,
   disabled,
   index,
@@ -88,6 +109,8 @@ export function SetupRow({
 }: {
   action: string;
   complete: boolean;
+  /** The derived next step: accent index and the primary action. */
+  current?: boolean;
   description: string;
   disabled: boolean;
   index: number;
@@ -101,24 +124,24 @@ export function SetupRow({
   titleAction?: ReactNode;
 }) {
   return (
-    <div className={`setup-row${complete ? " is-complete" : ""}`} ref={rowRef}>
-      <span className="setup-index">{complete ? <Icon name="check" /> : index}</span>
-      <div className="setup-row-copy">
-        <div className="setup-row-heading">
+    <div className={cx("nk-setup-row", complete && "is-complete", current && !complete && "is-current")} ref={rowRef}>
+      <span className="nk-setup-row__index">{complete ? <Icon className="nk-icon" name="check" /> : index}</span>
+      <div>
+        <div className="nk-setup-row__heading">
           <strong>{title}</strong>
           {titleAction}
         </div>
         <p>{description}</p>
       </div>
-      <div className="setup-actions">
+      <div className="nk-setup-row__actions">
         {secondaryAction && onSecondaryAction ? (
           <SecondaryButton disabled={secondaryDisabled || complete} onClick={onSecondaryAction}>
             {secondaryAction}
           </SecondaryButton>
         ) : null}
-        <SecondaryButton disabled={disabled || (complete && !repeatable)} onClick={onAction}>
+        <Button disabled={disabled || (complete && !repeatable)} onClick={onAction} variant={current && !complete ? "primary" : "secondary"}>
           {action}
-        </SecondaryButton>
+        </Button>
       </div>
     </div>
   );
@@ -135,12 +158,7 @@ export function SecondaryButton({
   icon?: IconName;
   onClick: () => void;
 }) {
-  return (
-    <button className="button-secondary" disabled={disabled} onClick={onClick} type="button">
-      {icon ? <Icon name={icon} /> : null}
-      <span>{children}</span>
-    </button>
-  );
+  return <Button disabled={disabled} icon={icon} onClick={onClick}>{children}</Button>;
 }
 
 export function ZeroRiskModelMenu({
@@ -173,87 +191,72 @@ export function ZeroRiskModelMenu({
     closeMenu();
     if (enabled !== proEnabled) onChange(enabled);
   };
+  const option = (enabled: boolean, title: string, body: string) => (
+    <button
+      aria-checked={proEnabled === enabled}
+      className={cx("nk-choice", "nk-choice--compact", proEnabled === enabled && "is-selected")}
+      disabled={busy}
+      onClick={() => choose(enabled)}
+      ref={proEnabled === enabled ? selectedRadio : undefined}
+      role="radio"
+      tabIndex={proEnabled === enabled ? 0 : -1}
+      type="button"
+    >
+      <ChoiceMark selected={proEnabled === enabled} />
+      <span className="nk-choice__copy">
+        <strong>{title}</strong>
+        <small>{body}</small>
+      </span>
+    </button>
+  );
 
   return (
     <div
-      className={`zero-risk-model-menu${open ? " is-open" : ""}`}
+      className={cx("nk-menu", open && "is-open")}
       onKeyDown={(event) => {
         if (event.key === "Escape") closeMenu();
       }}
     >
-      <button
-        aria-expanded={open}
+      <KitIconButton
         aria-controls={open ? panelId : undefined}
-        aria-label={copy.zeroRiskModelSettings}
-        className="zero-risk-model-trigger"
+        aria-expanded={open}
+        buttonRef={trigger}
+        className="nk-menu__trigger"
         disabled={busy}
+        icon="settings"
+        label={copy.zeroRiskModelSettings}
         onClick={() => setOpen((current) => !current)}
-        ref={trigger}
-        title={copy.zeroRiskModelSettings}
-        type="button"
-      >
-        <Icon name="settings" />
-      </button>
+      />
       {open ? (
         <>
           <button
             aria-label={`${copy.close}: ${copy.zeroRiskModelSettings}`}
-            className="zero-risk-model-scrim"
+            className="nk-menu__scrim"
             onClick={closeMenu}
             tabIndex={-1}
             type="button"
           />
           <div
             aria-label={copy.zeroRiskModelSettings}
-            className="zero-risk-model-panel"
+            className="nk-menu__panel"
             id={panelId}
             onKeyDown={handleRadioGroupKeys}
             role="radiogroup"
           >
             <p>{copy.zeroRiskModelSettingsBody}</p>
-            <div className="zero-risk-model-option-row">
-              <button
-                aria-checked={!proEnabled}
-                className={!proEnabled ? "is-selected" : ""}
-                disabled={busy}
-                onClick={() => choose(false)}
-                ref={!proEnabled ? selectedRadio : undefined}
-                role="radio"
-                tabIndex={!proEnabled ? 0 : -1}
-                type="button"
-              >
-                {!proEnabled ? <span className="zero-risk-model-radio"><Icon name="check" /></span> : null}
-                <span>
-                  <strong>{copy.zeroRiskDefaultProfile}</strong>
-                  <small>{copy.zeroRiskDefaultProfileBody}</small>
-                </span>
-              </button>
+            <div className="nk-menu__option">
+              {option(false, copy.zeroRiskDefaultProfile, copy.zeroRiskDefaultProfileBody)}
             </div>
-            <div className="zero-risk-model-option-row has-info">
-              <button
-                aria-checked={proEnabled}
-                className={proEnabled ? "is-selected" : ""}
-                disabled={busy}
-                onClick={() => choose(true)}
-                ref={proEnabled ? selectedRadio : undefined}
-                role="radio"
-                tabIndex={proEnabled ? 0 : -1}
-                type="button"
-              >
-                {proEnabled ? <span className="zero-risk-model-radio"><Icon name="check" /></span> : null}
-                <span>
-                  <strong>{copy.zeroRiskProProfile}</strong>
-                  <small>{copy.zeroRiskProProfileBody}</small>
-                </span>
-              </button>
+            <div className="nk-menu__option has-info">
+              {option(true, copy.zeroRiskProProfile, copy.zeroRiskProProfileBody)}
               <span
                 aria-label={copy.zeroRiskProProfileInfo}
-                className="zero-risk-model-info"
+                className="nk-menu__info"
                 role="img"
                 tabIndex={0}
               >
-                <Icon name="info" />
-                <span className="zero-risk-model-tooltip" role="tooltip">
+                <Icon className="nk-icon" name="info" />
+                <span className="nk-tooltip" role="tooltip">
                   {copy.zeroRiskProProfileInfo}
                 </span>
               </span>
@@ -283,15 +286,17 @@ export function handleRadioGroupKeys(event: ReactKeyboardEvent<HTMLElement>) {
   radios[next]?.click();
 }
 
+/** A section heading inside a page (heading style), with an optional caption on the right. */
 export function SectionHeading({ label, meta, spaced = false }: { label: string; meta?: string; spaced?: boolean }) {
   return (
-    <div className={`section-heading${spaced ? " is-spaced" : ""}`}>
+    <div className={cx("nk-section-heading", spaced && "is-spaced")}>
       <span>{label}</span>
       {meta ? <small>{meta}</small> : null}
     </div>
   );
 }
 
+/** An inline notice (the design system's Notice) for warnings and confirmations inside a flow. */
 export function NoticeRow({
   children,
   icon,
@@ -301,12 +306,7 @@ export function NoticeRow({
   icon: IconName;
   tone: "warning" | "success";
 }) {
-  return (
-    <div className={`notice-row tone-${tone}`}>
-      <Icon name={icon} />
-      <span>{children}</span>
-    </div>
-  );
+  return <Notice className="nk-notice-row" icon={icon} tone={tone}>{children}</Notice>;
 }
 
 export function PrimaryButton({
@@ -318,13 +318,10 @@ export function PrimaryButton({
   disabled?: boolean;
   onClick: () => void;
 }) {
-  return (
-    <button className="button-primary" disabled={disabled} onClick={onClick} type="button">
-      {children}
-    </button>
-  );
+  return <Button disabled={disabled} onClick={onClick} variant="primary">{children}</Button>;
 }
 
+/** The official Model Context Protocol mark, drawn in currentColor. */
 export function McpMark() {
   return <i aria-hidden="true" className="mcp-mark" />;
 }
@@ -351,26 +348,24 @@ export function TutorialVideo({ copy, label, src }: { copy: Copy; label: string;
 
   return (
     <>
-      <div className="guide-media">
+      <div className="nk-media">
         <video aria-label={label} controls preload="metadata" muted playsInline ref={inlineVideo} src={src} />
-        <button
-          aria-label={copy.expandGuideVideo}
-          className="guide-media-expand"
+        <KitIconButton
+          className="nk-media__expand"
+          icon="expand"
+          label={copy.expandGuideVideo}
           onClick={() => {
             expandedAt.current = inlineVideo.current?.currentTime ?? 0;
             inlineVideo.current?.pause();
             setExpanded(true);
           }}
-          type="button"
-        >
-          <Icon name="expand" />
-        </button>
+        />
       </div>
       {expanded ? createPortal(
         <div
           aria-label={label}
           aria-modal="true"
-          className="guide-media is-expanded"
+          className="nk-media is-expanded"
           ref={expandedDialog}
           role="dialog"
           tabIndex={-1}
@@ -387,15 +382,13 @@ export function TutorialVideo({ copy, label, src }: { copy: Copy; label: string;
             ref={expandedVideo}
             src={src}
           />
-          <button
-            aria-label={copy.closeGuideVideo}
-            className="guide-media-close"
+          <KitIconButton
+            className="nk-media__close"
             data-modal-autofocus
+            icon="close"
+            label={copy.closeGuideVideo}
             onClick={closeExpanded}
-            type="button"
-          >
-            <Icon name="close" />
-          </button>
+          />
         </div>,
         document.body,
       ) : null}
@@ -472,18 +465,23 @@ export function useModalFocus(
       requestAnimationFrame(() => {
         const target = restore?.isConnected && !restore.closest("[inert]") && !restore.matches(":disabled")
           ? restore
-          : document.querySelector<HTMLElement>('.sidebar-item[aria-current="page"]:not(:disabled)');
+          : document.querySelector<HTMLElement>('.nk-nav-item[aria-current="page"]:not(:disabled)');
         target?.focus();
       });
     };
   }, [active, container, restoreFocus]);
 }
 
+/** A labelled input row; a plain <input>, <select> or <textarea> child gets the kit's field styling. */
 export function FieldRow({ children, label }: { children: ReactNode; label: string }) {
+  const control = isValidElement<{ className?: string }>(children)
+    && (children.type === "input" || children.type === "select" || children.type === "textarea")
+    ? cloneElement(children, { className: cx("nk-input", children.props.className) })
+    : children;
   return (
-    <label className="field-row">
+    <label className="nk-field-row">
       <span>{label}</span>
-      {children}
+      {control}
     </label>
   );
 }
@@ -494,9 +492,9 @@ export function DoctorSummary({ copy, language, report }: { copy: Copy; language
     ? report.checks.slice(-6)
     : report.checks.filter((check) => check.status !== "ok");
   return (
-    <div className={`doctor-summary${healthy ? " is-healthy" : ""}`}>
+    <div className={cx("nk-doctor", healthy && "is-healthy")}>
       <header>
-        <Icon name={healthy ? "check" : "activity"} />
+        <Icon className="nk-icon" name={healthy ? "check" : "activity"} />
         <strong>{healthy ? copy.healthy : copy.needsAttention}</strong>
       </header>
       <div>
@@ -513,6 +511,10 @@ export function DoctorSummary({ copy, language, report }: { copy: Copy; language
   );
 }
 
+function ChoiceMark({ selected }: { selected: boolean }) {
+  return <span aria-hidden="true" className="nk-choice__mark">{selected ? <Icon className="nk-icon" name="check" /> : null}</span>;
+}
+
 export function InteractionModePicker({
   className,
   copy,
@@ -526,47 +528,32 @@ export function InteractionModePicker({
   mode: BrowserInteractionMode;
   onChange: (mode: BrowserInteractionMode) => void;
 }) {
+  const choice = (value: BrowserInteractionMode, title: string, body: string) => (
+    <button
+      aria-checked={mode === value}
+      className={cx("nk-choice", mode === value && "is-selected")}
+      disabled={disabled}
+      onClick={() => onChange(value)}
+      role="radio"
+      tabIndex={mode === value ? 0 : -1}
+      type="button"
+    >
+      <ChoiceMark selected={mode === value} />
+      <span className="nk-choice__copy">
+        <strong>{title}</strong>
+        <small>{body}</small>
+      </span>
+    </button>
+  );
   return (
     <div
       aria-label={copy.interactionMode}
-      className={`interaction-mode-picker${className ? ` ${className}` : ""}`}
+      className={cx("nk-choice-group", className)}
       onKeyDown={handleRadioGroupKeys}
       role="radiogroup"
     >
-      <button
-        aria-checked={mode === "automatic"}
-        className={mode === "automatic" ? "is-selected" : ""}
-        disabled={disabled}
-        onClick={() => onChange("automatic")}
-        role="radio"
-        tabIndex={mode === "automatic" ? 0 : -1}
-        type="button"
-      >
-        {mode === "automatic" ? (
-          <span className="interaction-mode-check"><Icon name="check" /></span>
-        ) : null}
-        <span>
-          <strong>{copy.automaticInteraction}</strong>
-          <small>{copy.automaticInteractionBody}</small>
-        </span>
-      </button>
-      <button
-        aria-checked={mode === "manual"}
-        className={mode === "manual" ? "is-selected" : ""}
-        disabled={disabled}
-        onClick={() => onChange("manual")}
-        role="radio"
-        tabIndex={mode === "manual" ? 0 : -1}
-        type="button"
-      >
-        {mode === "manual" ? (
-          <span className="interaction-mode-check"><Icon name="check" /></span>
-        ) : null}
-        <span>
-          <strong>{copy.manualInteraction}</strong>
-          <small>{copy.manualInteractionBody}</small>
-        </span>
-      </button>
+      {choice("automatic", copy.automaticInteraction, copy.automaticInteractionBody)}
+      {choice("manual", copy.manualInteraction, copy.manualInteractionBody)}
     </div>
   );
 }
@@ -576,7 +563,7 @@ export function ContextBudgetTable({ snapshot, copy }: { snapshot: LauncherSnaps
   const capabilities = { ...snapshot.contextCapabilities, browserInteractionMode: snapshot.state.browserInteractionMode,
     experimentalBiggerContext: snapshot.state.experimentalBiggerContext, zeroRiskProEnabled: snapshot.state.zeroRiskProEnabled };
   const routes = availableChatGptWebModelRoutes(capabilities);
-  return <div className="context-budget-table">
+  return <div className="nk-budget-table">
     <table>
       <caption>{copy.contextBudgetCaption}</caption>
       <thead><tr><th scope="col">{copy.contextBudgetModel}</th><th scope="col">{copy.contextBudgetHistory}</th><th scope="col">{copy.contextBudgetMessage}</th></tr></thead>
@@ -595,6 +582,7 @@ export function ContextBudgetTable({ snapshot, copy }: { snapshot: LauncherSnaps
   </div>;
 }
 
+/** A setting: title and one-sentence consequence on the left, the control right-aligned (kit SettingRow markup). */
 export function SettingRow({
   body,
   children,
@@ -606,53 +594,22 @@ export function SettingRow({
   flushAfter?: boolean;
   label: string;
 }) {
+  const hasSwitch = isValidElement(children) && children.type === Switch;
   return (
-    <div className={`setting-row${flushAfter ? " is-flush-after" : ""}`}>
+    <div className={cx("nk-setting-row", hasSwitch && "has-switch", flushAfter && "is-flush-after")}>
       <div>
         <strong>{label}</strong>
         <p>{body}</p>
       </div>
-      {children}
+      <div className="nk-setting-row__control">{children}</div>
     </div>
-  );
-}
-
-export function Switch({
-  label,
-  checked,
-  disabled = false,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <button
-      aria-label={label}
-      aria-checked={checked}
-      className={`switch${checked ? " is-on" : ""}`}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span />
-    </button>
   );
 }
 
 export function LanguageMenu({ copy, language, onChange, disabled = false }: { disabled?: boolean; copy: Copy; language: Language; onChange: (language: Language) => void }) {
   const options: Array<{ label: string; value: Language }> =
     (Object.entries(languages) as Array<[Language, { label: string }]>).map(([value, { label }]) => ({ label, value }));
-  return <label className="language-menu">
-    <span className="visually-hidden">{copy.language}</span>
-    <select disabled={disabled} aria-label={copy.language} className="language-menu-trigger" value={language}
-      onChange={event => onChange(event.target.value as Language)}>
-      {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-    </select>
-  </label>;
+  return <Select disabled={disabled} label={copy.language} onChange={value => onChange(value as Language)} options={options} value={language} />;
 }
 
 export function ProModelVersionMenu({
@@ -667,20 +624,18 @@ export function ProModelVersionMenu({
   value: ProModelVersion | null;
 }) {
   return (
-    <select
-      aria-label={copy.proModelVersion}
-      className="settings-select"
+    <Select
       disabled={disabled}
-      onChange={(event) => onChange(event.target.value === ""
-        ? null
-        : event.target.value as ProModelVersion)}
+      label={copy.proModelVersion}
+      onChange={(next) => onChange(next === "" ? null : next as ProModelVersion)}
+      options={[
+        { value: "", label: copy.proModelFollow },
+        { value: "5.6", label: copy.proModel56 },
+        ...(value === "5.5" ? [{ value: "5.5", label: copy.legacySavedModel, disabled: true }] : []),
+        { value: "6", label: copy.proModel6 },
+      ]}
       value={value ?? ""}
-    >
-      <option value="">{copy.proModelFollow}</option>
-      <option value="5.6">{copy.proModel56}</option>
-      {value === "5.5" ? <option value="5.5" disabled>{copy.legacySavedModel}</option> : null}
-      <option value="6">{copy.proModel6}</option>
-    </select>
+    />
   );
 }
 
@@ -706,18 +661,14 @@ export function IconButton({
   onClick: () => void;
 }) {
   return (
-    <button
+    <KitIconButton
       aria-controls={controls}
       aria-expanded={expanded}
-      aria-label={label}
-      className="icon-button"
+      buttonRef={buttonRef}
       disabled={disabled}
+      icon={icon}
+      label={label}
       onClick={onClick}
-      ref={buttonRef}
-      title={label}
-      type="button"
-    >
-      <Icon name={icon} />
-    </button>
+    />
   );
 }

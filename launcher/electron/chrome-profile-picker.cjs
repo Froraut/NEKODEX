@@ -1,12 +1,15 @@
 const path = require('node:path');
 
 const PICKER_CHANNEL = 'nekodex:chrome-profile-picker';
+// bg-surface of each launcher theme; the page reads the same theme from its query.
+const PICKER_BACKGROUND = Object.freeze({ dark: '#1b1b24', light: '#f8f7fc' });
 
-function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId = null, language = 'en', signal, workArea }) {
+function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId = null, language = 'en', theme = 'dark', signal, workArea }) {
   if (typeof BrowserWindow !== 'function') throw new Error('Chrome profile picker window is unavailable');
   if (!Array.isArray(profiles) || profiles.some(profile => !profile || typeof profile.id !== 'string')) {
     throw new Error('Chrome profile picker received an invalid profile list');
   }
+  const pickerTheme = theme === 'light' ? 'light' : 'dark';
   return new Promise((resolve, reject) => {
     let settled = false;
     const picker = new BrowserWindow({
@@ -19,7 +22,7 @@ function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId =
       show: false,
       resizable: true,
       title: language === 'ru' ? 'Профиль Chrome' : 'Chrome profile',
-      backgroundColor: '#1b1b24',
+      backgroundColor: PICKER_BACKGROUND[pickerTheme],
       webPreferences: {
         preload: path.join(__dirname, 'chrome-profile-picker-preload.cjs'),
         contextIsolation: true,
@@ -56,7 +59,8 @@ function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId =
     });
     picker.once('closed', () => finish({ kind: 'cancel' }));
     picker.once('ready-to-show', () => picker.show());
-    picker.loadFile(path.join(__dirname, 'chrome-profile-picker.html')).catch(error => finish(null, error));
+    picker.loadFile(path.join(__dirname, 'chrome-profile-picker.html'), { query: { theme: pickerTheme } })
+      .catch(error => finish(null, error));
     if (signal?.aborted) aborted();
   });
 }

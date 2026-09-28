@@ -1,19 +1,20 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { BrandMark } from "./BrandMark";
+import { Badge, Button, cx, Icon, Mark, SettingRow as KitSettingRow, StateDot, Switch as KitSwitch, Toast, type IconName } from "./design";
 import type { Copy } from "./i18n";
-import { Icon, type IconName } from "./icons";
-import { IconButton, PrimaryButton, StateDot, Switch, useModalFocus } from "./launcher-ui";
+import { IconButton, useModalFocus } from "./launcher-ui";
+import { shellCopy } from "./shell-copy";
 import { taskCenterTitle } from "./task-center-copy";
 import type { Language, Surface } from "./types";
 import { updateCopyFor } from "./update-copy";
+import "./surfaces/shell.css";
 
-// Presentational shell chrome for App: title bar, sidebar pieces, dialogs and the
-// compact-drawer focus trap. App keeps shell state, navigation and IPC.
+// Presentational shell chrome for App (design-system AppShell, Sidebar and TitleBar markup): title bar,
+// sidebar pieces, dialogs and the compact-drawer focus trap. App keeps shell state, navigation and IPC.
 
 export const COMPACT_SIDEBAR_QUERY = "(max-width: 860px)";
 
-/** Compact-sidebar drawer: makes the workspace inert, traps focus and closes on Escape. */
+/** Compact-sidebar drawer: makes the rest of the shell inert, traps focus and closes on Escape. */
 export function useCompactSidebarDrawer(
   compactSidebar: boolean,
   sidebarOpen: boolean,
@@ -24,12 +25,13 @@ export function useCompactSidebarDrawer(
   useEffect(() => {
     if (!compactSidebar || !sidebarOpen || !sidebar.current) return;
     const drawer = sidebar.current;
-    const workspace = drawer.parentElement?.querySelector<HTMLElement>(":scope > .workspace") ?? null;
-    const workspaceWasInert = workspace?.inert ?? false;
-    if (workspace) workspace.inert = true;
+    // The titlebar and the workspace share the main column of the shell.
+    const main = drawer.parentElement?.querySelector<HTMLElement>(":scope > .nk-shell__main") ?? null;
+    const mainWasInert = main?.inert ?? false;
+    if (main) main.inert = true;
     const focusable = () => [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')];
     const focusDrawer = () => {
-      const active = drawer.querySelector<HTMLElement>('.sidebar-item[aria-current="page"]');
+      const active = drawer.querySelector<HTMLElement>('.nk-nav-item[aria-current="page"]');
       (active ?? focusable()[0] ?? drawer).focus();
     };
     const frame = requestAnimationFrame(focusDrawer);
@@ -67,12 +69,17 @@ export function useCompactSidebarDrawer(
       cancelAnimationFrame(frame);
       document.removeEventListener("keydown", keydown, true);
       document.removeEventListener("focusin", focusin, true);
-      if (workspace) workspace.inert = workspaceWasInert;
+      if (main) main.inert = mainWasInert;
       if (window.matchMedia(COMPACT_SIDEBAR_QUERY).matches) {
         requestAnimationFrame(() => sidebarToggle.current?.focus());
       }
     };
   }, [compactSidebar, sidebarOpen]);
+}
+
+/** Where the macOS traffic lights sit; the real controls are drawn by the OS (hidden on Windows and Linux). */
+export function WindowControlsReserve({ className }: { className: string }) {
+  return <span aria-hidden="true" className={className} />;
 }
 
 export function TitleBar({
@@ -92,27 +99,41 @@ export function TitleBar({
   sidebarToggle: RefObject<HTMLButtonElement | null>;
   toggleSidebar: () => void;
 }) {
+  const surfaceLabel = ({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language), setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface];
+  // Nested surfaces add one crumb: Connections / Models and Codex route · Local tools connector.
+  const nested = surface === "setup" ? copy.modelsConnectionTab : surface === "mcp" ? copy.toolsConnectionTab : null;
+  const trail = [copy.product, surfaceLabel, ...(nested ? [nested] : [])];
   return (
-    <header className="app-titlebar draggable">
-      <div className="titlebar-left no-drag">
-        <IconButton
-          buttonRef={sidebarToggle}
-          icon="sidebar"
-          label={sidebarOpen ? copy.hideSidebar : copy.showSidebar}
-          controls="app-sidebar"
-          expanded={sidebarOpen}
-          onClick={toggleSidebar}
-        />
-        {devProfile ? <span className="titlebar-dev-profile">{copy.devBadge}</span> : null}
+    <header className="nk-titlebar">
+      {sidebarOpen ? null : (
+        <div className="nk-titlebar__lead">
+          <WindowControlsReserve className="nk-titlebar__controls" />
+          <IconButton
+            buttonRef={sidebarToggle}
+            controls="app-sidebar"
+            expanded={false}
+            icon="sidebar"
+            label={copy.showSidebar}
+            onClick={toggleSidebar}
+          />
+        </div>
+      )}
+      <ol aria-label={shellCopy(language).location} className="nk-titlebar__trail">
+        {trail.map((crumb, index) => (
+          <li aria-current={index === trail.length - 1 && index > 0 ? "page" : undefined} key={index}>{crumb}</li>
+        ))}
+      </ol>
+      {devProfile ? <span className="nk-dev-tag">{copy.devBadge}</span> : null}
+      <div className="nk-titlebar__end">
+        <Badge className="nk-titlebar__status" icon="globe" shape="pill" tone="outline">{copy.localWorkspace}</Badge>
       </div>
-      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language), setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface]}</strong></div>
     </header>
   );
 }
 
 export function SidebarGroup({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <section className="sidebar-group">
+    <section className="nk-nav-group">
       <h2>{label}</h2>
       <div>{children}</div>
     </section>
@@ -137,34 +158,33 @@ export function SidebarItem({
   return (
     <button
       aria-current={active ? "page" : undefined}
-      className={`sidebar-item${active ? " is-active" : ""}${tone === "update" ? " is-update" : ""}`}
+      // sidebar-item: stable hook for the measure-* scripts; the look comes from nk-nav-item.
+      className={cx("nk-nav-item", "sidebar-item", tone === "update" && "is-update")}
       onClick={onClick}
       type="button"
     >
-      <Icon name={icon} />
+      <Icon className="nk-icon" name={icon} />
       <span>{label}</span>
-      {badge ? <i className="sidebar-item-badge">{badge}</i> : null}
+      {!badge ? null : typeof badge === "string" || typeof badge === "number" ? <i className="nk-nav-item__badge">{badge}</i> : badge}
     </button>
   );
 }
 
+/** Attention dot on a nav item: required (amber), optional (yellow) or error (rose). */
 export function ActionDot({ pulse = false, tone }: { pulse?: boolean; tone: "required" | "optional" | "error" }) {
-  return <i aria-hidden="true" className={`action-dot is-${tone}${pulse ? " is-pulse" : ""}`} />;
+  return (
+    <StateDot
+      className={cx("nk-action-dot", tone === "required" && !pulse && "is-static", tone !== "required" && pulse && "is-pulse")}
+      state={tone === "required" ? "busy" : tone}
+    />
+  );
 }
 
 export function ErrorToast({ copy, message, onDismiss }: { copy: Copy; message: string; onDismiss: () => void }) {
   return (
-    <div
-      className="error-toast"
-      role="alert"
-    >
-      <StateDot state="error" />
-      <span>
-        <strong>{copy.error}</strong>
-        <p>{message}</p>
-      </span>
-      <button onClick={onDismiss} type="button">{copy.dismiss}</button>
-    </div>
+    <Toast dismissLabel={copy.dismiss} fixed onDismiss={onDismiss} title={copy.error} tone="error">
+      {message}
+    </Toast>
   );
 }
 
@@ -181,37 +201,37 @@ export function BiggerContextRecommendation({
   onChange: (checked: boolean) => void;
   onClose: () => void;
 }) {
-  const dialog = useRef<HTMLDivElement>(null);
+  const dialog = useRef<HTMLElement>(null);
   useModalFocus(true, dialog, onClose, { closeAllowed: !busy });
+  // The design system's Dialog markup, kept here so the dialog keeps its ids, aria-describedby and aria-busy.
   return createPortal(
-    <div
-      aria-busy={busy}
-      aria-describedby="bigger-context-recommendation-body"
-      aria-labelledby="bigger-context-recommendation-title"
-      aria-modal="true"
-      className="bigger-context-recommendation-backdrop"
-      ref={dialog}
-      role="dialog"
-      tabIndex={-1}
-    >
+    <div className="nk-dialog-backdrop">
       <section
-        className="bigger-context-recommendation"
+        aria-busy={busy}
+        aria-describedby="bigger-context-recommendation-body"
+        aria-labelledby="bigger-context-recommendation-title"
+        aria-modal="true"
+        className="nk-dialog"
+        ref={dialog}
+        role="dialog"
+        tabIndex={-1}
       >
-        <header className="bigger-context-recommendation-header">
+        <header>
           <small>{copy.biggerContext}</small>
           <h2 id="bigger-context-recommendation-title">{copy.biggerContextRecommendationTitle}</h2>
         </header>
-        <p className="bigger-context-recommendation-body" id="bigger-context-recommendation-body">{copy.biggerContextRecommendationBody}</p>
-        <div className="bigger-context-recommendation-toggle">
-          <div>
-            <strong>{copy.biggerContext}</strong>
-            <p>{copy.biggerContextRecommendationToggleBody}</p>
-          </div>
-          <Switch label={copy.biggerContext} checked={checked} disabled={busy} onChange={onChange} />
+        <div className="nk-dialog__body">
+          <p id="bigger-context-recommendation-body">{copy.biggerContextRecommendationBody}</p>
+          <KitSettingRow
+            className="nk-dialog__setting"
+            control={<KitSwitch checked={checked} disabled={busy} label={copy.biggerContext} onChange={onChange} />}
+            description={copy.biggerContextRecommendationToggleBody}
+            title={copy.biggerContext}
+          />
+          {checked ? <p className="nk-dialog__note">{copy.contextClientRefreshBody}</p> : null}
         </div>
-        {checked ? <p className="bigger-context-recommendation-restart">{copy.contextClientRefreshBody}</p> : null}
         <footer>
-          <button className="button-secondary" data-modal-autofocus disabled={busy} onClick={onClose} type="button">{copy.close}</button>
+          <Button data-modal-autofocus disabled={busy} onClick={onClose}>{copy.close}</Button>
         </footer>
       </section>
     </div>,
@@ -221,10 +241,11 @@ export function BiggerContextRecommendation({
 
 export function LaunchLoading() {
   return (
-    <main className="launch-loading" role="status" aria-busy="true">
-      <BrandMark />
-      <span />
-      <span className="visually-hidden">Loading…</span>
+    <main className="nk-launch" role="status" aria-busy="true">
+      <span aria-hidden="true" className="nk-launch__drag" />
+      <Mark size={48} />
+      <span aria-hidden="true" className="nk-launch__line" />
+      <span className="nk-visually-hidden">Loading…</span>
     </main>
   );
 }
@@ -235,11 +256,13 @@ export function FatalMessage({ message, onRetry, retryLabel }: {
   retryLabel?: string;
 }) {
   return (
-    <main className="fatal-message">
-      <BrandMark />
+    <main className="nk-launch">
+      <span aria-hidden="true" className="nk-launch__drag" />
+      <Mark size={48} />
       <h1>NEKODEX</h1>
       <p role="alert">{message}</p>
-      {onRetry ? <PrimaryButton onClick={onRetry}>{retryLabel}</PrimaryButton> : null}
+      {onRetry ? <Button onClick={onRetry} variant="primary">{retryLabel}</Button> : null}
     </main>
   );
 }
+

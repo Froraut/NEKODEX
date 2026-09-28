@@ -9,7 +9,8 @@ import { LocaleNotice } from "./LocaleNotice";
 import { Icon } from "./icons";
 import { RouteDiagnostics } from "./RouteDiagnostics";
 import { workflowCopy } from "./workflow-copy";
-import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState, ProModelVersion } from "./types";
+import { APPEARANCE_OPTIONS, appearanceCopy } from "./appearance-copy";
+import type { Appearance, BrowserCapacitySettings, BrowserInteractionMode, BrowserState, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState, ProModelVersion } from "./types";
 const api = window.codexWebLauncher;
 import { ContentSurface, SecondaryButton, SectionHeading, messageOf, DoctorSummary, InteractionModePicker, ContextBudgetTable, SettingRow, Switch, LanguageMenu, ProModelVersionMenu, platformLabel } from './launcher-ui';
 
@@ -335,6 +336,13 @@ export function SettingsSurface({
             disabled={busy || operation?.status === "running"}
             onChange={event => void savePreference(() => api!.setPreference("passkeyBrowser", event.target.value as "chrome" | "firefox"))}>
             <option value="chrome">Google Chrome</option><option value="firefox">Firefox</option>
+          </select>
+        </SettingRow>
+        <SettingRow body={appearanceCopy(language).body} label={appearanceCopy(language).title}>
+          <select className="settings-select" aria-label={appearanceCopy(language).title} value={snapshot.state.appearance ?? "dark"}
+            disabled={busy}
+            onChange={event => void savePreference(() => api!.setPreference("appearance", event.target.value as Appearance))}>
+            {APPEARANCE_OPTIONS.map(option => <option key={option} value={option}>{appearanceCopy(language).options[option]}</option>)}
           </select>
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>

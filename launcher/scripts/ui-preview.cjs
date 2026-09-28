@@ -6,6 +6,7 @@
 // benefits-repair-failure, browser-ui-signed-out, browser-ui-ready, browser-ui-error, browser-ui-home-loading
 // Account forms: accounts-ui-ready, accounts-ui-error (first add/save attempt fails).
 // Add &no-animation-frames=true to keep requestAnimationFrame callbacks permanently paused.
+// Add &appearance=system|dark|light to choose the saved launcher appearance (default dark).
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -21,6 +22,8 @@ function installMockLauncher() {
     window.cancelAnimationFrame = () => {};
   }
   const language = ["en", "ru", "zh-CN", "ja"].includes(parameters.get("language")) ? parameters.get("language") : "en";
+  const appearances = ["system", "dark", "light"];
+  const appearance = appearances.includes(parameters.get("appearance")) ? parameters.get("appearance") : "dark";
   const browserUiScenario = scenario.startsWith("browser-ui-");
   const accountsUiScenario = scenario.startsWith("accounts-ui-");
   const benefitsScenario = scenario.startsWith("benefits-") || browserUiScenario || accountsUiScenario;
@@ -36,7 +39,7 @@ function installMockLauncher() {
     autoStart: false, keepRunningOnClose: true, showBrowserDuringTurns: true, browserInteractionMode: "automatic",
     experimentalBiggerContext: false, zeroRiskProEnabled: false, sidebarOpen: true, sidebarWidth: 252,
     browserSmokePassed: false, browserSmokeVersion: null, coreSetupComplete: false, codexCatalogVerified: false,
-    mcpGuideStep: 0,
+    mcpGuideStep: 0, appearance,
   };
   if (scenario === "manual-tools") state.browserInteractionMode = "manual";
   const browser = {
@@ -209,7 +212,13 @@ function installMockLauncher() {
     claude: { installed: false, ready: false, model: null, issue: null },
     provider: { installed: true, active: true, mode: 'mixed', issue: null } };
   window.codexWebLauncher = {
-    setPreference: async (key, value) => { calls.push(["set-preference", key, value]); state[key] = value; return { ...state }; },
+    setPreference: async (key, value) => {
+      calls.push(["set-preference", key, value]);
+      if (key === "appearance" && !appearances.includes(value)) throw new Error("Appearance must be System, Dark or Light");
+      state[key] = value;
+      if (key === "appearance") emit("state", { ...state });
+      return { ...state };
+    },
     getClientConnections: async () => structuredClone(clientConnections),
     changeClientConnection: async action => {
       calls.push(['client-connection', action]);

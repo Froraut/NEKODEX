@@ -1,4 +1,6 @@
 const api = window.nekodexChromeProfiles;
+// The launcher passes its resolved theme; anything else keeps the dark default palette.
+if (new URLSearchParams(location.search).get('theme') === 'light') document.documentElement.dataset.theme = 'light';
 const elements = {
   search: document.getElementById('search'),
   profiles: document.getElementById('profiles'),

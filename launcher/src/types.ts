@@ -3,6 +3,9 @@ import languages from "../electron/languages.json";
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
+/** Launcher appearance preference; "system" follows the operating system theme. */
+export type Appearance = "system" | "dark" | "light";
+export type ResolvedTheme = "dark" | "light";
 export type AuthenticationStatus = "unknown" | "verified" | "signed-out" | "unavailable";
 export type ProModelVersion = "5.6" | "5.5" | "6";
 export type Surface = "overview" | "accounts" | "browser" | "tasks" | "setup" | "mcp" | "activity" | "settings" | "updates";
@@ -49,6 +52,7 @@ export interface LauncherState {
   runtimeMigrationPending?: boolean;
   launcherRestartRequired?: boolean;
   mcpGuideStep: number;
+  appearance: Appearance;
 }
 
 export interface BrowserWorkspaceItem {
@@ -596,6 +600,7 @@ export interface LauncherApi {
   }>;
   setPreference(key: "passkeyBrowser", value: "chrome" | "firefox"): Promise<LauncherState>;
   setPreference(key: "manualSubmitTimeoutSec", value: number): Promise<LauncherState>;
+  setPreference(key: "appearance", value: Appearance): Promise<LauncherState>;
   setPreference(
     key: "keepRunningOnClose" | "showBrowserDuringTurns" | "showNetworkIssueNotice",
     value: boolean,
