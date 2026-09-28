@@ -325,6 +325,9 @@ export function parseChatGptWebModelCapabilities(value: unknown): ChatGptWebMode
   return { observedAt: candidate.observedAt, families, names };
 }
 
+/** Localized names of ChatGPT's Latest row, preferred when several rows name no version. */
+const CHATGPT_LATEST_MODEL_OPTION = /^(?:Latest|Newest|Le plus récent|Neueste(?:s)?|Más reciente|Mais recente|Più recente|Последняя|Новейшая|最新|최신)$/i;
+
 /**
  * The picker row that runs a model version: the one row naming that version, else the one
  * unversioned (Latest) row when the version is newer than every named row. Discovery and turn
@@ -338,7 +341,9 @@ export function chatGptModelRowForVersion(
   const explicit = named.flatMap((candidate, index) => candidate === version ? [index] : []);
   if (explicit.length === 1) return { index: explicit[0]!, latest: false };
   if (explicit.length > 1) return undefined;
-  const unversioned = named.flatMap((candidate, index) => candidate === undefined ? [index] : []);
+  let unversioned = named.flatMap((candidate, index) => candidate === undefined ? [index] : []);
+  // Another unversioned row (a legacy or "Auto" entry) must not hide Latest behind ambiguity.
+  if (unversioned.length > 1) unversioned = unversioned.filter(index => CHATGPT_LATEST_MODEL_OPTION.test(labels[index]!.trim()));
   if (unversioned.length !== 1) return undefined;
   const newest = named.every(candidate => candidate === undefined || compareChatGptWebModelVersions(version, candidate) < 0);
   return newest ? { index: unversioned[0]!, latest: true } : undefined;
@@ -553,6 +558,8 @@ export const CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES: readonly ChatGptWebModelRoute[
   ...CHATGPT_WEB_MODEL_ROUTES,
   ...CHATGPT_WEB_LUNA_MODEL_ROUTES,
   ...CHATGPT_WEB_RETIRED_MODEL_ROUTES,
+  // Named rows stay resolvable when discovery later names the same model differently.
+  ...CHATGPT_WEB_NAMED_MODEL_ROUTES,
 ];
 
 const routesBySlug = new Map(
@@ -591,7 +598,10 @@ const DISCOVERED_ROUTE_SLUG = /^chatgpt-web\/gpt-(\d{1,2}(?:\.\d{1,2})?)(?:-(?!(
 function discoveredRouteSlug(version: string, name: string | undefined, group: typeof DISCOVERED_ROUTE_GROUPS[number]): string {
   // Pro rows are named by version alone, matching the existing GPT-5.6 Pro and GPT-6 Pro identities.
   const namePart = name && group.kind !== "pro" ? `-${name.toLowerCase()}` : "";
-  return `${CHATGPT_WEB_MODEL_PREFIX}gpt-${version}${namePart}${group.slugSuffix}`;
+  const slug = `${CHATGPT_WEB_MODEL_PREFIX}gpt-${version}${namePart}${group.slugSuffix}`;
+  // Saved tasks that name a retired alias keep running GPT-5.6 Sol, so a real model never takes it.
+  return CHATGPT_WEB_RETIRED_MODEL_ROUTES.some(route => route.slug === slug)
+    ? `${CHATGPT_WEB_MODEL_PREFIX}gpt-${version}${group.slugSuffix}` : slug;
 }
 
 function levelList(efforts: readonly ChatGptWebAdapterEffort[]): string {
@@ -733,6 +743,12 @@ export function requireChatGptWebModelRoute(
   if (!capabilities.solAvailable) {
     throw new Error(`${route.displayName} is not available for this Luna-only account`);
   }
+  // Fixed Instant through Extra High always meant GPT-5.6 Sol. Once discovery lists other rows,
+  // pin that row so a previous turn on another model cannot silently change what they run.
+  if ((CHATGPT_WEB_MODEL_ROUTES as readonly ChatGptWebModelRoute[]).includes(route) && route.adapterEffort !== "max"
+    && capabilities.modelCapabilities?.names && capabilities.modelCapabilities.families["5.6"]) {
+    return resolveRouteEffort({ ...route, modelFamily: "5.6" }, capabilities, reasoning);
+  }
   if (route.requiresModelObservation && !capabilities.modelCapabilities) {
     throw new Error(`${route.displayName} needs a verified model observation; run Repair to refresh capabilities`);
   }
@@ -774,4 +790,17 @@ function resolveRouteEffort(
   }
   if (effort === route.codexEffort) return route;
   return { ...route, codexEffort: effort as ChatGptWebCodexEffort, adapterEffort: effort as ChatGptWebAdapterEffort };
+}
+
+/**
+ * "Follow ChatGPT" Pro without a pinned version: the newest discovered version that offers Pro,
+ * which is what ChatGPT's Latest row runs at Pro. Undefined when discovery has no names.
+ */
+export function newestChatGptWebProFamily(
+  capabilities: Pick<ChatGptWebAccountCapabilities, "modelCapabilities">,
+): ChatGptWebModelFamily | undefined {
+  const observed = capabilities.modelCapabilities;
+  if (!observed?.names) return undefined;
+  return Object.keys(observed.families).filter(isChatGptWebModelVersion).toSorted(compareChatGptWebModelVersions)
+    .find(version => observed.families[version]?.includes("max"));
 }

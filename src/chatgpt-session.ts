@@ -836,14 +836,12 @@ export function aggregateChatGptModelObservation(
     }
     return positions;
   });
-  // A Latest row whose descriptions never name a version keeps the earlier compatibility rule:
-  // its Pro level is GPT-6 Pro. ChatGPT runs GPT-5.6 Sol at its lower levels.
+  // When a Latest row's Pro level names no version, the earlier compatibility rule applies: it is
+  // GPT-6 Pro. ChatGPT runs GPT-5.6 Sol at its lower levels.
   rows.forEach((row, index) => {
     const positions = attributed[index]!;
-    if (chatGptModelOptionVersion(row.label) || [...positions.values()].some(position => position.version)) return;
-    if (positions.has("max") && !labels.some(label => chatGptModelOptionVersion(label)?.version === "6")) {
-      positions.set("max", { version: "6" });
-    }
+    if (chatGptModelOptionVersion(row.label) || !positions.has("max") || positions.get("max")!.version) return;
+    if (!labels.some(label => chatGptModelOptionVersion(label)?.version === "6")) positions.set("max", { version: "6" });
   });
   const versions = new Set<string>();
   for (const positions of attributed) for (const position of positions.values()) if (position.version) versions.add(position.version);
@@ -883,7 +881,12 @@ async function detectChatGptModelCapabilities(
   const probeSignal = signal ? AbortSignal.any([signal, probe.signal]) : probe.signal;
   try {
     activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
-    await waitForChatGptModelRows(activation.menu, 1_500, signal);
+    const powerPicker = await activation.menu.locator("[data-model-picker-view]").count() > 0;
+    // The power picker always lists model rows. A list that does not attach in time is an
+    // incomplete inspection, not evidence that the account offers no models.
+    if (!await waitForChatGptModelRows(activation.menu, 3_000, signal) && powerPicker) {
+      throw new Error("ChatGPT model picker rows did not appear");
+    }
     const rows = await readChatGptModelRows(activation.menu);
     if (rows.length) {
       const checked = rows.filter(row => row.checked);
@@ -913,6 +916,8 @@ async function detectChatGptModelCapabilities(
           await setChatGptEffortValue(page, activation.slider, state.min + index, probeSignal, true);
           positions[effort] = await readDescribedChatGptModelState(page, activation.slider, index, effort, signal);
         }
+        // Leave each visited row at the level it had, in case ChatGPT remembers it per model.
+        await setChatGptEffortValue(page, activation.slider, state.value, probeSignal, true);
         observed.push({ label: row.label, positions });
       }
       if (!legacy) capabilities = aggregateChatGptModelObservation(observed);

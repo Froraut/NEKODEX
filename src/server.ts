@@ -51,6 +51,7 @@ import {
   CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   isChatGptWebModelSlug,
+  newestChatGptWebProFamily,
   requireChatGptWebModelRoute,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
@@ -339,6 +340,13 @@ export async function responseRequest(
       return formatErrorResponse(400, "invalid_request_error",
         "ChatGPT Pro model preference is invalid or unavailable. Open Settings and choose a Pro model.");
     }
+  }
+  // Unpinned Pro ("Follow ChatGPT") runs the newest discovered Pro model, as ChatGPT's Latest row
+  // does, rather than whichever row an earlier turn on another model left selected.
+  if (route.interactionMode === "automatic" && route.adapterEffort === "max" && !route.modelFamily
+    && !requestConfig.proModelVersion && !parsed._chatgptModelFamily) {
+    const newest = newestChatGptWebProFamily(requestConfig);
+    if (newest) parsed._chatgptModelFamily = newest;
   }
   if (parsed._opaqueMultiAgentV2Payload) {
     return formatErrorResponse(

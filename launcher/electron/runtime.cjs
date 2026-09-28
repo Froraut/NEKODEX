@@ -137,6 +137,30 @@ function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = fal
   return result;
 }
 
+
+const CAPABILITY_WRITE_TIMEOUT_MS = 30_000;
+
+/** Run one short runtime CLI command without publishing a launcher operation. */
+function runQuietRuntimeCommand(invocation, environment, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(invocation.executable, invocation.args, {
+      cwd: invocation.cwd, detached: DETACH_OWNED_CHILD, env: environment, stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
+    });
+    let stderr = "";
+    child.stderr.on("data", chunk => { stderr = `${stderr}${chunk}`.slice(-2_000); });
+    const timer = setTimeout(() => {
+      try { terminateOwnedProcessTree(child, "SIGKILL"); } catch {}
+      reject(new Error(`Runtime command timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once("error", error => { clearTimeout(timer); reject(error); });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`Runtime command failed (${signal ?? code}): ${redactText(stderr.trim().split("\n").at(-1) ?? "")}`));
+    });
+  });
+}
+
 class RuntimeHost {
   constructor({
     app,
@@ -680,6 +704,8 @@ class RuntimeHost {
   }
 
   async run(name, args, options = {}) {
+    // A background model-list write is short; operations start after it instead of racing it.
+    if (this.capabilityWrite) await this.capabilityWrite.catch(() => {});
     if (options.privateControlMessage !== undefined && (!options.privateOutput || !options.controlStdin
       || typeof options.privateControlMessage !== "string" || Buffer.byteLength(options.privateControlMessage) > 4096)) {
       throw new Error("Private runtime control message is invalid");
@@ -1312,6 +1338,8 @@ class RuntimeHost {
   /**
    * Save the selected account's latest ChatGPT picker evidence. The daemon reads it per request
    * and the command rebuilds Codex's picker catalog, so new models appear without a Repair.
+   * This background write never takes the launcher's operation lock: it is skipped while another
+   * operation runs (the account pool retries it), and `run()` waits for it to finish.
    */
   async saveModelCapabilities(evidence) {
     const current = this.runtimeConfigSnapshot();
@@ -1337,23 +1365,35 @@ class RuntimeHost {
     });
     // A newer timestamp alone does not change which models Codex lists.
     if (comparable(config) === comparable(payload)) return { saved: false, reason: "unchanged" };
-    // Never contend with setup, Repair or another launcher operation; the next check retries.
-    if (this.active || this.lifecycleOperation) return { saved: false, reason: "busy" };
-    const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-    await this.run("model-capabilities", [
-      ...(this.launcherProfile === "development" ? ["dev"] : []),
-      "config", "model-capabilities", encoded, "--launcher-control",
-    ], {
-      ...(this.launcherProfile === "development" ? {
-        embedded: true,
-        environment: this.devSetupEnvironment(),
-      } : {}),
-      env: this.launcherControlEnvironment(),
-      message: "Updating the ChatGPT model list",
-      successMessage: "ChatGPT model list updated",
-      timeoutMs: CORE_SETUP_TIMEOUT_MS,
-    });
-    return { saved: true };
+    // A check that read no model rows never replaces a discovered list; Repair still can.
+    if (config?.modelCapabilities?.names && !payload.modelCapabilities) return { saved: false, reason: "incomplete" };
+    if (this.currentOperation() || this.capabilityWrite) return { saved: false, reason: "busy" };
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev"] : []),
+      "config", "model-capabilities", Buffer.from(JSON.stringify(payload), "utf8").toString("base64url"), "--launcher-control",
+    ];
+    this.capabilityWrite = (async () => {
+      const invocation = development
+        ? embeddedRuntimeInvocation({ app: this.app, sourceRoot: this.sourceRoot, args })
+        : this.command(args);
+      const environment = {
+        ...(development ? this.devSetupEnvironment() : process.env),
+        CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
+        ...this.launcherControlEnvironment(),
+      };
+      await runQuietRuntimeCommand(invocation, environment, CAPABILITY_WRITE_TIMEOUT_MS);
+    })();
+    try {
+      await this.capabilityWrite;
+      this.logger.info("runtime.model_capabilities_saved", {});
+      return { saved: true };
+    } catch (error) {
+      this.logger.warn("runtime.model_capabilities_not_saved", { message: error instanceof Error ? error.message : String(error) });
+      return { saved: false, reason: "failed" };
+    } finally {
+      this.capabilityWrite = null;
+    }
   }
 
   async setSkillAttachments(enabled) {

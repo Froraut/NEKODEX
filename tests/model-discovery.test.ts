@@ -17,15 +17,20 @@ import {
 } from "../src/chatgpt-session";
 import {
   availableChatGptWebModelRoutes,
+  CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES,
   chatGptModelRowForVersion,
   chatGptWebModelSlugVersion,
+  newestChatGptWebProFamily,
   parseChatGptWebModelCapabilities,
   requireChatGptWebModelRoute,
 } from "../src/chatgpt-web-models";
 import { parseLauncherCapabilityEvidence } from "../src/pro-model-config";
+import { ClientTurns } from "../src/client-turns";
 
 const require = createRequire(import.meta.url);
 const { BrowserTaskLedger, isTaskModel, taskModelFamily } = require("../launcher/electron/browser-task-ledger.cjs");
+const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
+const { RuntimeHost } = require("../launcher/electron/runtime.cjs");
 
 const levels = ["low", "medium", "high", "xhigh", "max"] as const;
 const described = (version: string, name?: string) => ({ version, ...(name ? { name } : {}) });
@@ -60,7 +65,7 @@ test("each version is served by the row naming it, or by Latest only when it is 
   expect(chatGptModelRowForVersion(labels, "7")).toEqual({ index: 0, latest: true });
   // An older version without its own row is not silently run as Latest.
   expect(chatGptModelRowForVersion(labels, "5.4")).toBeUndefined();
-  expect(chatGptModelRowForVersion(["Latest", "Auto", "GPT-5.6 Sol"], "6")).toBeUndefined();
+  expect(chatGptModelRowForVersion(["Auto", "Fast", "GPT-5.6 Sol"], "6")).toBeUndefined();
   expect(chatGptModelRowForVersion(["GPT-5.6 Sol", "GPT-5.6 Luna"], "5.6")).toBeUndefined();
 });
 
@@ -183,3 +188,77 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("discovery reads every picker
     await expect(selectChatGptModelFamily(page, control, activation, "5.4")).rejects.toThrow("unavailable or ambiguous");
   } finally { await browser.close(); }
 }, 60_000);
+
+test("Latest stays reachable beside other unversioned rows, and its unversioned Pro is GPT-6", () => {
+  expect(chatGptModelRowForVersion(["Auto", "Latest", "GPT-5.6 Sol"], "6")).toEqual({ index: 1, latest: true });
+  const mixed = aggregateChatGptModelObservation([
+    { label: "Latest", positions: { high: described("5.6", "Sol"), max: null } },
+    { label: "Auto", positions: { max: null } },
+    { label: "GPT-5.6 Sol", positions: { high: described("5.6", "Sol"), max: described("5.6", "Sol") } },
+  ]);
+  expect(mixed.families).toEqual({ "6": ["max"], "5.6": ["high", "max"] });
+});
+
+test("a real model never takes a retired alias, and saved names keep catalog rows", () => {
+  const astra = aggregateChatGptModelObservation([
+    { label: "Latest", positions: Object.fromEntries(levels.map(effort => [effort, described("6", "Astra")])) },
+    { label: "GPT-5.6 Sol", positions: { high: described("5.6", "Sol") } },
+  ]);
+  const routes = availableChatGptWebModelRoutes({ ...config, modelCapabilities: astra });
+  expect(routes.map(route => [route.slug, route.displayName])).toEqual([
+    ["chatgpt-web/gpt-6-pro", "GPT-6 Astra Pro (Web)"],
+    ["chatgpt-web/gpt-6", "GPT-6 Astra (Web)"],
+    ["chatgpt-web/gpt-6-instant", "GPT-6 Astra Instant (Web)"],
+    ["chatgpt-web/gpt-5.6-sol", "GPT-5.6 Sol (Web)"],
+  ]);
+  const alias = requireChatGptWebModelRoute("chatgpt-web/gpt-6-astra", { ...config, modelCapabilities: astra });
+  expect(alias.interactionMode === "automatic" && alias.modelFamily).toBe("5.6");
+  expect(CHATGPT_WEB_SAVED_TASK_MODEL_ROUTES.map(route => route.slug)).toContain("chatgpt-web/gpt-5.6-sol");
+});
+
+test("fixed levels and unpinned Pro no longer depend on the row an earlier turn left selected", () => {
+  const high = requireChatGptWebModelRoute("chatgpt-web/high", config);
+  expect(high.interactionMode === "automatic" && high.modelFamily).toBe("5.6");
+  expect(newestChatGptWebProFamily(config)).toBe("6");
+  expect(newestChatGptWebProFamily({ modelCapabilities: { observedAt: 1, families: { "6": ["max"] } } })).toBeUndefined();
+});
+
+test("external clients may request discovered models", () => {
+  const turns = new ClientTurns("hermes");
+  const prepared = turns.prepare({ prompt_cache_key: "session-1", model: "chatgpt-web/gpt-5.5", input: "Hello" });
+  expect(prepared.body.model).toBe("chatgpt-web/gpt-5.5");
+  prepared.release();
+  expect(() => turns.prepare({ prompt_cache_key: "session-2", model: "gpt-6-astra", input: "Hello" })).toThrow("Choose a ChatGPT Web model");
+});
+
+test("the launcher defers evidence it cannot save yet and never replaces a discovered list with none", async () => {
+  const logger = { info() {}, warn() {} };
+  const host = Object.assign(Object.create(RuntimeHost.prototype), {
+    logger, launcherProfile: "production", active: null, lifecycleOperation: null, activeChild: null,
+    runtimeConfigSnapshot: () => ({ configured: true, config: { browserHost: "launcher", browserInteractionMode: "automatic",
+      solAvailable: true, proAvailable: true, extraHighAvailable: true, modelCapabilities: observed } }),
+  });
+  expect(await host.saveModelCapabilities({ solAvailable: true, proAvailable: true, extraHighAvailable: true, modelCapabilities: { ...observed, observedAt: 5 } }))
+    .toEqual({ saved: false, reason: "unchanged" });
+  expect(await host.saveModelCapabilities({ solAvailable: true, proAvailable: true, extraHighAvailable: true }))
+    .toEqual({ saved: false, reason: "incomplete" });
+  host.active = "setup";
+  expect(await host.saveModelCapabilities({ solAvailable: true, proAvailable: false, extraHighAvailable: true, modelCapabilities: observed }))
+    .toEqual({ saved: false, reason: "busy" });
+
+  const results = [{ saved: false, reason: "busy" }, { saved: true }];
+  const calls: string[] = [];
+  const pool = Object.assign(Object.create(AccountBrowserPool.prototype), {
+    logger, destroyed: false, capabilitySave: null, capabilitySaveAgain: false, capabilitySavePending: false, capabilitySaveRetry: null,
+    capabilities: new Map([["default", { solAvailable: true, proAvailable: true }]]),
+    registry: { snapshot: () => ({ selectedId: "default" }) },
+    options: { onCapabilityEvidence: async (id: string) => { calls.push(id); return results.shift(); } },
+  });
+  expect(await pool.saveSelectedCapabilities()).toBe(false);
+  expect(pool.capabilitySavePending).toBe(true);
+  expect(pool.capabilitySaveRetry).not.toBeNull();
+  clearTimeout(pool.capabilitySaveRetry);
+  expect(await pool.saveSelectedCapabilities()).toBe(true);
+  expect(pool.capabilitySavePending).toBe(false);
+  expect(calls).toEqual(["default", "default"]);
+});

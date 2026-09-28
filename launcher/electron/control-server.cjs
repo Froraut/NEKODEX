@@ -416,7 +416,7 @@ class BrowserControlServer {
         if (!['luna', 'low', 'medium', 'high', 'xhigh', 'max', 'unknown'].includes(body.effort)) {
           throw new Error("Invalid usage effort");
         }
-        if (!['5.5', '5.6', '6', 'unknown'].includes(body.modelVersion)) {
+        if (body.modelVersion !== 'unknown' && !(typeof body.modelVersion === 'string' && /^\d{1,2}(?:\.\d{1,2})?$/.test(body.modelVersion))) {
           throw new Error("Invalid usage model version");
         }
         if (body.modelVersionSource !== undefined && !['observed', 'pinned', 'unknown'].includes(body.modelVersionSource)) {
