@@ -5,7 +5,7 @@ import { native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { type WorkspaceReadiness } from "./workspace-readiness";
 import { workflowCopy } from "./workflow-copy";
 import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState } from "./types";
-import { Button, Disclosure, Icon, Notice, Page, Panel, StateDot, SurfaceHeader, TextField, cx } from "./design";
+import { Button, Disclosure, Icon, Notice, Page, Panel, PhaseSteps, StateDot, SurfaceHeader, TextField, cx } from "./design";
 import { ConnectionsTabs, messageOf, TutorialVideo, DoctorSummary } from './launcher-ui';
 import { connectorProofMismatch, runtimeCapabilities, currentToolProof } from './launcher-readiness';
 import "./surfaces/connections.css";
@@ -126,15 +126,8 @@ export function McpSurface({
     }
   };
 
-  const guide = useRef<HTMLDivElement>(null);
+  const guide = useRef<HTMLDetailsElement>(null);
   const identityInputId = useId();
-  useEffect(() => {
-    const details = guide.current?.querySelector("details");
-    if (!details) return;
-    const pause = () => { if (!details.open) details.querySelector("video")?.pause(); };
-    details.addEventListener("toggle", pause);
-    return () => details.removeEventListener("toggle", pause);
-  }, [step]);
 
   useEffect(() => {
     if (previousStep.current === step) return;
@@ -259,44 +252,31 @@ export function McpSurface({
           <Notice icon="setup" tone="warning">{copy.mcpCatalogRequired}</Notice>
         ) : null}
         {!configuringInactiveMode && (tunnelRepair?.eligible === true || tunnelRepair?.active === true || repairOutcome) ? (
-          <div data-testid="web-route-repair">
-            <Notice
-              action={<Button busy={repairing} disabled={busy || tunnelRepair?.eligible !== true}
-                onClick={() => void repairWebRoute()} size="sm">
-                {repairing ? workflow.recovery.repairing : workflow.recovery.repairAction}
-              </Button>}
-              meta={repairOutcome ? <span role="status">{repairOutcome === "recovered" ? workflow.recovery.recovered
-                : repairOutcome === "unavailable" ? workflow.recovery.stillUnavailable : workflow.recovery.couldNotVerify}</span> : undefined}
-              title={workflow.recovery.webTransportTitle}
-              tone="warning"
-            >
-              {readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}
-              {readiness.native === "ready" ? <span className="nk-connections__line">{workflow.recovery.nativePreserved}</span> : null}
-            </Notice>
-          </div>
+          <Notice
+            data-testid="web-route-repair"
+            action={<Button busy={repairing} disabled={busy || tunnelRepair?.eligible !== true}
+              onClick={() => void repairWebRoute()} size="sm">
+              {repairing ? workflow.recovery.repairing : workflow.recovery.repairAction}
+            </Button>}
+            meta={repairOutcome ? <span role="status">{repairOutcome === "recovered" ? workflow.recovery.recovered
+              : repairOutcome === "unavailable" ? workflow.recovery.stillUnavailable : workflow.recovery.couldNotVerify}</span> : undefined}
+            title={workflow.recovery.webTransportTitle}
+            tone="warning"
+          >
+            {readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}
+            {readiness.native === "ready" ? <span className="nk-connections__line">{workflow.recovery.nativePreserved}</span> : null}
+          </Notice>
         ) : null}
 
         <div aria-label={`${copy.localTools}: ${step + 1} / 3`} className="nk-connections__wizard" role="group">
-          <ol className="nk-steps">
-            {steps.map((item, index) => (
-              <li
-                className={stepComplete(index) ? "is-complete" : index === step ? "is-current" : undefined}
-                key={item.title}
-              >
-                <span aria-hidden="true">{stepComplete(index) ? <Icon className="nk-icon" name="check" /> : index + 1}</span>
-                <button
-                  aria-current={index === step ? "step" : undefined}
-                  aria-label={`${index + 1}. ${item.title}`}
-                  disabled={busy || index > step}
-                  onClick={() => void safeMove(index)}
-                  title={item.title}
-                  type="button"
-                >
-                  {item.title}
-                </button>
-              </li>
-            ))}
-          </ol>
+          {/* Earlier steps (and the current one) are buttons that return to that step. */}
+          <PhaseSteps disabled={busy} onSelect={index => void safeMove(index)}
+            steps={steps.map((item, index) => ({
+              label: item.title,
+              state: stepComplete(index) ? "complete" : index === step ? "current" : "upcoming",
+              current: index === step,
+              selectable: index <= step,
+            }))} />
         </div>
 
         <div aria-busy={busy} className="nk-connections__stage">
@@ -504,15 +484,14 @@ export function McpSurface({
             </footer>
           </Panel>
 
-          {guideMedia ? <div className="nk-connections__guide" ref={guide}>
-            <Disclosure title={copy.guideVideo}>
-              <TutorialVideo
-                copy={copy}
-                label={`${copy.guideVideo}: ${steps[step]!.title}`}
-                src={guideMedia}
-              />
-            </Disclosure>
-          </div> : null}
+          {guideMedia ? <Disclosure ref={guide} title={copy.guideVideo}
+            onToggle={open => { if (!open) guide.current?.querySelector("video")?.pause(); }}>
+            <TutorialVideo
+              copy={copy}
+              label={`${copy.guideVideo}: ${steps[step]!.title}`}
+              src={guideMedia}
+            />
+          </Disclosure> : null}
         </div>
       </div>
     </Page>

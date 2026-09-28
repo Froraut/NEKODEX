@@ -2,7 +2,7 @@
  * NEKODEX shell: the design system's AppShell (sidebar, titlebar, workspace) wired to the launcher, plus the
  * shared launcher-ui pieces that have no component in the system. Components come from
  * ../design/components.css; this file only places them and styles the app-only pieces, with tokens only.
- * Imported by AppShell.tsx, so it loads after components.css and before the legacy stylesheets.
+ * Imported by AppShell.tsx, so it loads after components.css (and the app base in styles.css).
  */
 
 /* ---------- Frame ---------- */
@@ -79,26 +79,6 @@
   scrollbar-gutter: stable;
 }
 .nk-shell[data-surface="browser"] .nk-shell__scroll { overflow: hidden; scrollbar-gutter: auto; }
-
-/* Transitional: 6.1.5 surfaces that still draw their own .content-surface flow in the workspace scroller and
-   take the system's page column (size-content, gutters space-8). Remove with the last .content-surface. */
-.nk-shell .nk-shell__scroll > .content-surface { height: auto; min-height: 100%; padding-top: 0; overflow: visible; scrollbar-gutter: auto; }
-.nk-shell .nk-shell__scroll > .content-surface > .content-scroll {
-  width: min(var(--size-content), calc(100% - 2 * var(--space-8)));
-  height: auto;
-  min-height: 0;
-  overflow: visible;
-  padding: var(--space-6) 0 var(--space-12);
-}
-/* The titlebar is in the flow now; the browser surface no longer offsets itself under it. */
-.nk-shell .nk-shell__scroll > .browser-surface { padding-top: 0; }
-
-/* Scrollbars follow the theme (the 6.1.5 thumbs were white-on-transparent). */
-.nk-root * { scrollbar-color: var(--border-heavy) transparent; }
-
-/* ---------- Brand mark ---------- */
-/* The 6.1.5 BrandMark strokes the face with --brand-ink; the face colour is --mark-face in both themes. */
-.brand-mark { --brand-ink: var(--mark-face); }
 
 /* ---------- Overlays ---------- */
 /* Overlays cover the titlebar; a press on them must not start a window drag. */
@@ -281,10 +261,3 @@
 .nk-media.is-expanded { position: fixed; z-index: var(--z-toast); inset: 0; width: auto; padding-top: var(--size-titlebar); border: 0; border-radius: 0; }
 .nk-media.is-expanded video { height: 100%; max-height: none; }
 .nk-media__close { position: absolute; top: calc((var(--size-titlebar) - var(--size-control-sm)) / 2); left: 84px; background: var(--bg-elevated); }
-
-/* ---------- Transitional: 6.1.5 surface contexts around shared components ---------- */
-/* The browser zoom pill is 28px tall; its kit icon buttons shrink to fit it. */
-.browser-zoom-controls > .nk-icon-btn { width: 26px; height: 26px; }
-/* Primary/SecondaryButton are kit buttons now; these keep their 6.1.5 placement in grid rows. */
-.setup-next > .nk-btn { justify-self: end; }
-@container workspace (max-width: 760px) { .setup-next > .nk-btn { justify-self: start; } }

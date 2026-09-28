@@ -1,6 +1,6 @@
 /*
  * Activity surface (Runtime activity): layout for the usage dashboard and the event log.
- * Places kit components; the few modifiers on kit internals are marked "Kit gap:".
+ * Places kit components (layout only).
  */
 
 .activity-sections { display: grid; gap: var(--space-10); min-width: 0; }
@@ -33,16 +33,6 @@
 .usage-figures { display: grid; gap: var(--space-3); }
 .usage-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .usage-stats--rates { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
-/* Kit gap: StatGroup cells do not share rows, so a wrapped label pushes its value below its neighbours'.
-   Each Stat spans three shared rows (label, value, note) through subgrid. */
-.usage-stats > .nk-stat { grid-row: span 3; grid-template-rows: subgrid; }
-.usage-stats > .nk-stat > .nk-stat__label { align-self: end; }
-/* Kit gap: Stat sets any non-numeric string as a word (20px). Locale-formatted figures ("1,234", "81.5%",
-   "4.1 sec") keep the display numerals; only the "not available" word (.is-word) stays at the text size. */
-.usage-stats > .nk-stat:not(.is-word) > .nk-stat__value.is-text { padding: 0; font-size: 44px; line-height: 44px; letter-spacing: -0.04em; }
-
-/* Panels whose header title is an h3 (UsagePanel). */
-.usage-panel > .nk-panel__header h3 { margin: 0; }
 .usage-empty { padding-block: var(--space-2); }
 
 /* Reported token usage (native). */
@@ -70,8 +60,6 @@
 .usage-columns { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: var(--space-4); }
 /* The accessible table needs the full width. */
 .usage-columns:has(.usage-calendar-table) { grid-template-columns: minmax(0, 1fr); }
-/* Headers with and without a small action keep their titles on one line. */
-.usage-columns .usage-panel__header { min-height: var(--size-control-sm); }
 
 /* Calendar heat grid: token colours only, so both themes work. */
 .usage-heat { display: grid; gap: var(--space-4); min-width: 0; }
@@ -129,8 +117,6 @@
 .activity-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
 .activity-filters > .nk-field { flex: 0 1 220px; }
 .activity-filters > .activity-filters__search { flex: 1 1 320px; }
-/* Kit gap: EventList rows have no inline inset, which a flush Panel needs. */
-.activity-log .nk-events > li { padding-inline: var(--space-5); }
 .activity-row { display: grid; gap: 2px; min-width: 0; }
 .activity-row > strong { color: var(--text-primary); font-weight: 500; }
 .activity-row > strong::first-letter { text-transform: uppercase; }

@@ -1,8 +1,8 @@
 /*
  * Connections surface (SetupSurface: Models and Codex route, McpSurface: Local tools connector), plus the two
  * pieces it shares with Settings: RouteDiagnostics and ClientConnections. Layout only: kit components are
- * placed, not restyled; the few app-only pieces (wizard step buttons, nested option lists, fact lists) use
- * tokens and the system's type styles.
+ * placed, not restyled; the few app-only pieces (nested option lists, fact lists) use tokens and the system's
+ * type styles.
  */
 
 /* ---------- Page ---------- */
@@ -66,20 +66,6 @@
 .nk-connections__more { display: grid; gap: var(--space-3); }
 
 /* ---------- Local tools connector ---------- */
-/* Wizard steps: the kit PhaseSteps look; each step title is a button that returns to that step. */
-.nk-connections__wizard .nk-steps li > button {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-.nk-connections__wizard .nk-steps li > button:hover:not(:disabled) { color: var(--text-primary); }
-.nk-connections__wizard .nk-steps li > button:disabled { opacity: 1; }
-
 .nk-connections__stage { display: grid; gap: var(--space-3); }
 .nk-connections__step-head small { display: block; margin-bottom: var(--space-1); color: var(--text-tertiary); font-family: var(--font-mono); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
 .nk-connections__step-head h2 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }

@@ -17,15 +17,14 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
 }) {
   const text = accountToolsCopy(language);
   const step = accountToolsStep(account, runtimeConfigured);
-  const region = useRef<HTMLElement>(null);
-  // Returning from the tools setup opens this disclosure once; afterwards the user controls it.
-  const [pinnedOpen, setPinnedOpen] = useState(focus);
+  const summary = useRef<HTMLElement>(null);
+  // Returning from the tools setup opens this disclosure once and focuses its summary; afterwards the user controls it.
+  const [expanded, setExpanded] = useState(focus);
   useEffect(() => {
     if (!focus) return;
-    setPinnedOpen(true);
-    const summary = region.current?.querySelector<HTMLElement>('summary');
-    summary?.scrollIntoView({ block: 'nearest' });
-    summary?.focus({ preventScroll: true });
+    setExpanded(true);
+    summary.current?.scrollIntoView({ block: 'nearest' });
+    summary.current?.focus({ preventScroll: true });
   }, [focus]);
   const open = async (url: string) => {
     if (disabled) return;
@@ -34,8 +33,8 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
     catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   };
   const status = manual ? text.manual : step === 'checking' ? copy.checkingSignIn : text[step === 'sign-in' ? 'signIn' : step];
-  return <section className="accounts-tools" aria-label={text.title} ref={region}>
-    <Disclosure title={text.title} defaultOpen={pinnedOpen}
+  return <section className="accounts-tools" aria-label={text.title}>
+    <Disclosure title={text.title} open={expanded} onToggle={setExpanded} summaryRef={summary}
       hint={manual ? undefined : step === 'verified' ? copy.connectionVerified : copy.connectionPending}>
       <div className="accounts-disclosure">
       <p role="status">{status}</p>
@@ -80,7 +79,6 @@ export function AccountToolsHandoff({ browser, language, disabled, onContinue }:
   const text = accountToolsCopy(language);
   return <aside className="account-tools-handoff" aria-label={text.title}>
     <div><strong>{account.accountLabel || account.label}</strong><p>{text.connector}</p></div>
-    <button type="button" className="button-secondary" disabled={disabled}
-      onClick={() => onContinue(account.id)}>{text.continue}</button>
+    <Button size="sm" disabled={disabled} onClick={() => onContinue(account.id)}>{text.continue}</Button>
   </aside>;
 }

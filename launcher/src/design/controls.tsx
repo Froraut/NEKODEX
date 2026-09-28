@@ -10,6 +10,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: "md" | "sm";
   icon?: IconName;
   iconEnd?: IconName;
+  /** Spinner, aria-busy="true" and disabled. A caller's own aria-busy is kept when busy is not set. */
   busy?: boolean;
   block?: boolean;
   ref?: Ref<HTMLButtonElement>;
@@ -19,7 +20,7 @@ export function Button({ variant = "secondary", size = "md", icon, iconEnd, busy
   return (
     <button
       {...rest}
-      aria-busy={busy ? "true" : undefined}
+      aria-busy={busy ? "true" : rest["aria-busy"]}
       className={cx("nk-btn", `nk-btn--${variant}`, size === "sm" && "nk-btn--sm", block && "nk-btn--block", className)}
       disabled={disabled || busy}
       type={type || "button"}
@@ -35,12 +36,14 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   icon: IconName;
   /** Required: becomes aria-label and the tooltip. */
   label: string;
+  /** md: 32px (default) · sm: 24px with a 14px icon (e.g. closing a tab inside a 32px strip). */
+  size?: "md" | "sm";
   buttonRef?: Ref<HTMLButtonElement>;
 }
 
-export function IconButton({ icon, label, className, buttonRef, ...rest }: IconButtonProps) {
+export function IconButton({ icon, label, size = "md", className, buttonRef, ...rest }: IconButtonProps) {
   return (
-    <button aria-label={label} className={cx("nk-icon-btn", className)} ref={buttonRef} title={label} type="button" {...rest}>
+    <button aria-label={label} className={cx("nk-icon-btn", size === "sm" && "nk-icon-btn--sm", className)} ref={buttonRef} title={label} type="button" {...rest}>
       <NkIcon name={icon} />
     </button>
   );
@@ -84,17 +87,19 @@ export function TextField({ label, hint, error, action, id, type, className, ...
 
 export interface SelectOption { value: string; label: string; disabled?: boolean }
 
-export interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, "onChange"> {
+export interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, "onChange" | "size"> {
   options: Array<string | SelectOption>;
   /** Accessible name when there is no visible label. */
   label?: string;
   onChange?: (value: string, event: ChangeEvent<HTMLSelectElement>) => void;
+  /** md: 36px (default) · sm: 32px, level with small buttons in a dense bar. (Not the native list-box size.) */
+  size?: "md" | "sm";
   ref?: Ref<HTMLSelectElement>;
 }
 
-export function Select({ options, className, label, onChange, style, ...rest }: SelectProps) {
+export function Select({ options, className, label, onChange, size = "md", style, ...rest }: SelectProps) {
   return (
-    <span className={cx("nk-select", className)} style={style}>
+    <span className={cx("nk-select", size === "sm" && "nk-select--sm", className)} style={style}>
       <select aria-label={label} onChange={onChange ? event => onChange(event.target.value, event) : undefined} {...rest}>
         {options.map(option => {
           const item = typeof option === "string" ? { value: option, label: option } : option;

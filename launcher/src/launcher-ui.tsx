@@ -7,6 +7,7 @@ import {
 } from "./design";
 import { localizeRuntimeMessage, type Copy } from "./i18n";
 import { stripIpcErrorPrefix } from "./ipc-error";
+import { useModalFocus } from "./modal-focus";
 import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits, resolveChatGptWebTransportLimits } from "../../src/chatgpt-web-models";
 import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, ProModelVersion } from "./types";
 
@@ -14,6 +15,8 @@ import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, 
 // surfaces keep compiling; the look comes from design/components.css and surfaces/shell.css (nk-* classes).
 
 export { Switch };
+// Moved to ./modal-focus (the kit Dialog uses it without importing this module); re-exported for callers.
+export { useModalFocus };
 
 // ConnectionsTabs switches surfaces (setup <-> mcp), which remounts the tabs. A tab chosen while focus was in
 // the tabs gets focus back after the switch, so the kit's arrow-key model keeps working across surfaces.
@@ -321,11 +324,6 @@ export function PrimaryButton({
   return <Button disabled={disabled} onClick={onClick} variant="primary">{children}</Button>;
 }
 
-/** The official Model Context Protocol mark, drawn in currentColor. */
-export function McpMark() {
-  return <i aria-hidden="true" className="mcp-mark" />;
-}
-
 export function messageOf(value: unknown): string {
   return stripIpcErrorPrefix(value instanceof Error ? value.message : String(value));
 }
@@ -394,82 +392,6 @@ export function TutorialVideo({ copy, label, src }: { copy: Copy; label: string;
       ) : null}
     </>
   );
-}
-
-export function useModalFocus(
-  active: boolean,
-  container: RefObject<HTMLElement | null>,
-  onClose: () => void,
-  { closeAllowed = true, restoreFocus }: { closeAllowed?: boolean; restoreFocus?: RefObject<HTMLElement | null> } = {},
-) {
-  const close = useRef(onClose);
-  const canClose = useRef(closeAllowed);
-  close.current = onClose;
-  canClose.current = closeAllowed;
-  useEffect(() => {
-    if (!active || !container.current) return;
-    const modal = container.current;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const inerted = new Map<HTMLElement, boolean>();
-    let branch: HTMLElement = modal;
-    let parent = branch.parentElement;
-    while (parent) {
-      for (const element of parent.children) {
-        if (element instanceof HTMLElement && element !== branch && !inerted.has(element)) {
-          inerted.set(element, element.inert);
-          element.inert = true;
-        }
-      }
-      if (parent === document.body) break;
-      branch = parent;
-      parent = branch.parentElement;
-    }
-    const visible = (element: HTMLElement) => {
-      if (element.hidden || element.closest("[inert]")) return false;
-      const style = window.getComputedStyle(element);
-      return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
-    };
-    const focusable = () => [...modal.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled), video[controls], [href], [tabindex]:not([tabindex="-1"])')].filter(visible);
-    const focusFirst = () => {
-      const preferred = modal.querySelector<HTMLElement>("[data-modal-autofocus]");
-      (preferred && visible(preferred) && !preferred.matches(":disabled") ? preferred : focusable()[0] ?? modal).focus();
-    };
-    const frame = requestAnimationFrame(focusFirst);
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        if (canClose.current) close.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const controls = focusable();
-      if (!controls.length) { event.preventDefault(); modal.focus(); return; }
-      const first = controls[0]!;
-      const last = controls.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    const focusin = (event: FocusEvent) => {
-      if (event.target instanceof Node && modal.contains(event.target)) return;
-      event.stopPropagation();
-      focusFirst();
-    };
-    document.addEventListener("keydown", keydown, true);
-    document.addEventListener("focusin", focusin, true);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", keydown, true);
-      document.removeEventListener("focusin", focusin, true);
-      for (const [element, inert] of inerted) element.inert = inert;
-      const restore = restoreFocus?.current ?? previous;
-      requestAnimationFrame(() => {
-        const target = restore?.isConnected && !restore.closest("[inert]") && !restore.matches(":disabled")
-          ? restore
-          : document.querySelector<HTMLElement>('.nk-nav-item[aria-current="page"]:not(:disabled)');
-        target?.focus();
-      });
-    };
-  }, [active, container, restoreFocus]);
 }
 
 /** A labelled input row; a plain <input>, <select> or <textarea> child gets the kit's field styling. */

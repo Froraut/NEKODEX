@@ -4,7 +4,10 @@ import type { Copy } from './locale-catalog';
 import type { Language } from './types';
 import './locale-notice.css';
 
-/** Shows that a language catalog is loading or failed. Floating: a kit Toast; inline: a status line. */
+/**
+ * Shows that a language catalog is loading or failed. Floating: a fixed kit Toast, which joins the shared
+ * bottom-right toast stack (so it never covers the error toast); inline: a status line.
+ */
 export function LocaleNotice({ language, copy, failed, floating = false }: {
   language: Language; copy: Copy; failed: boolean; floating?: boolean;
 }) {

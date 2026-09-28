@@ -1,5 +1,6 @@
 import { Component, lazy, Suspense, type ComponentType, type ReactNode } from 'react';
 import type { Copy } from './i18n';
+import { Button } from './design';
 
 type LoadCopy = Pick<Copy, 'loading' | 'failed' | 'reload'>;
 class SurfaceError extends Component<{ copy: LoadCopy; children: ReactNode }, { failed: boolean }> {
@@ -8,7 +9,7 @@ class SurfaceError extends Component<{ copy: LoadCopy; children: ReactNode }, { 
   render() {
     return this.state.failed ? <div className="surface-empty" role="alert">
       <span>{this.props.copy.failed}</span>
-      <button type="button" className="button-secondary" onClick={() => window.location.reload()}>{this.props.copy.reload}</button>
+      <Button size="sm" onClick={() => window.location.reload()}>{this.props.copy.reload}</Button>
     </div> : this.props.children;
   }
 }

@@ -228,7 +228,7 @@ export function BrowserSurface({
   // One account context drives the embedded page and the separate windows (BrowserWorkspaceManager).
   const accountControl = accounts.length > 0 && browser?.accountId ? <label className="browser-bar__account">
     <span>{windowCopy.account}</span>
-    <Select className="browser-bar__select" label={windowCopy.account} value={browser.accountId} disabled={accountSelectionLocked}
+    <Select className="browser-bar__select" size="sm" label={windowCopy.account} value={browser.accountId} disabled={accountSelectionLocked}
       options={accounts.map(account => ({ value: account.accountId, label: account.label }))}
       onChange={accountId => {
         if (!accountSelectionLocked && accountId !== browser.accountId) {
@@ -288,7 +288,7 @@ export function BrowserSurface({
                   <button
                     aria-label={`${running ? copy.manualPromptCancel : copy.hideTab}: ${browserTabTitleFromTitle(tab.title, copy)}`}
                     disabled={transitionBusy || closing}
-                    className="nk-icon-btn browser-tabs__close"
+                    className="nk-icon-btn nk-icon-btn--sm browser-tabs__close"
                     onClick={() => {
                       if (running) setCancelTarget({ id: tab.id, traceId: tab.traceId });
                       else void closeTab(tab.id, tab.traceId);
@@ -391,27 +391,23 @@ export function BrowserSurface({
           <Notice>{passkeyAvailable ? copy.embeddedLoginPasskeyBody : copy.embeddedLoginBody}</Notice>
         ) : null}
         {sessionRecovery ? (
-          <div data-testid="browser-session-recovery">
-            <Notice tone="warning" title={workflow.session.verificationUnavailable}
-              meta={browser.lastVerifiedAt ? workflow.session.lastVerifiedAt.replace("{time}", new Date(browser.lastVerifiedAt).toLocaleString(language)) : undefined}
-              action={<div className="browser-notices__actions">
-                {recoverableBrowserTabs.length ? <Button variant="ghost" size="sm" disabled={transitionBusy}
-                  onClick={() => void selectTab(recoverableBrowserTabs[0]!.id)}>{copy.openWorkspace}</Button> : null}
-                <Button size="sm" busy={sessionRetryBusy} disabled={transitionBusy || browser.navigationLocked || !browser.accountId}
-                  onClick={() => void retrySession()}>
-                  {sessionRetryBusy ? workflow.session.checkingVerification : workflow.session.retryVerification}
-                </Button>
-              </div>}>
-              {sessionIssueCopy(language, browser?.authenticationIssue)}
-            </Notice>
-          </div>
+          <Notice data-testid="browser-session-recovery" tone="warning" title={workflow.session.verificationUnavailable}
+            meta={browser.lastVerifiedAt ? workflow.session.lastVerifiedAt.replace("{time}", new Date(browser.lastVerifiedAt).toLocaleString(language)) : undefined}
+            action={<>
+              {recoverableBrowserTabs.length ? <Button variant="ghost" size="sm" disabled={transitionBusy}
+                onClick={() => void selectTab(recoverableBrowserTabs[0]!.id)}>{copy.openWorkspace}</Button> : null}
+              <Button size="sm" busy={sessionRetryBusy} disabled={transitionBusy || browser.navigationLocked || !browser.accountId}
+                onClick={() => void retrySession()}>
+                {sessionRetryBusy ? workflow.session.checkingVerification : workflow.session.retryVerification}
+              </Button>
+            </>}>
+            {sessionIssueCopy(language, browser?.authenticationIssue)}
+          </Notice>
         ) : browser?.authenticated === true && (readiness.web === "degraded" || readiness.web === "unavailable") ? (
-          <div data-testid="browser-web-recovery">
-            <Notice tone="warning" title={workflow.recovery.webTransportTitle}
-              meta={readiness.native === "ready" ? workflow.recovery.nativePreserved : undefined}>
-              {readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}
-            </Notice>
-          </div>
+          <Notice data-testid="browser-web-recovery" tone="warning" title={workflow.recovery.webTransportTitle}
+            meta={readiness.native === "ready" ? workflow.recovery.nativePreserved : undefined}>
+            {readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}
+          </Notice>
         ) : null}
         <NetworkIssueNotice language={language} browser={browser} muted={networkNoticeMuted} onDontShowAgain={onMuteNetworkNotice} />
         {selectedManualTab

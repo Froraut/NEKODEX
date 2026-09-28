@@ -99,7 +99,7 @@ export function AccountSafetySettings({ id, language, safety, resumeRequired = f
   useEffect(() => { onStateChange?.(formState); }, [formState, onStateChange]);
   return <section className="accounts-controls__section" aria-labelledby={`${statusId}-title`}>
     <header className="accounts-controls__head">
-      <h4 id={`${statusId}-title`} className="nk-type-label">{copy.pacingTitle}</h4>
+      <h3 id={`${statusId}-title`} className="nk-type-label">{copy.pacingTitle}</h3>
       {formState ? <span className="accounts-hint is-attention nk-type-caption">{formState}</span> : null}
     </header>
     <p>{copy.pacingBody}</p>
@@ -118,7 +118,7 @@ export function AccountSafetySettings({ id, language, safety, resumeRequired = f
             onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, policy: { ...draft, [key]: event.target.valueAsNumber } }); }} />)}
         </div>
         <section className="accounts-form__section" aria-labelledby={`${statusId}-window-title`}>
-          <h5 id={`${statusId}-window-title`} className="nk-type-label">{copy.newSessionWindowTitle}</h5>
+          <h4 id={`${statusId}-window-title`} className="nk-type-label">{copy.newSessionWindowTitle}</h4>
           <p>{copy.newSessionWindowBody}</p>
           <p className="accounts-caption nk-type-caption" role="status">{windowStatusText}</p>
           {windowResetsAt !== null

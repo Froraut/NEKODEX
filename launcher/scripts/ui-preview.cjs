@@ -5,8 +5,13 @@
 // benefits-auth-unavailable, benefits-portfolio-mixed, benefits-insights, benefits-repair-success,
 // benefits-repair-failure, browser-ui-signed-out, browser-ui-ready, browser-ui-error, browser-ui-home-loading
 // Account forms: accounts-ui-ready, accounts-ui-error (first add/save attempt fails).
+// benefits-portfolio-mixed also has launcher log events (Overview "Recent events", Activity), recorded
+// tasks and a waiting queue (Task center); benefits-insights has the same events and a 7-day usage calendar.
 // Add &no-animation-frames=true to keep requestAnimationFrame callbacks permanently paused.
 // Add &appearance=system|dark|light to choose the saved launcher appearance (default dark).
+// Add &context-capabilities=true to report Sol/Pro context capabilities (Settings context budget table).
+// Page hooks: window.fixtureCalls, fixtureSetBrowser/Accounts/Update/State/Operation, fixtureEmitLog(record);
+// set window.fixtureCancelExport / fixtureCancelUninstall to simulate a cancelled save or confirmation dialog.
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -135,20 +140,105 @@ function installMockLauncher() {
       primary: { ...quota.accountBucket.primary, usedPercent: 45, remainingPercent: 55 } } };
   let quotaFailed = scenario === "accounts-failed";
   let diagnosticChecks = 0;
+  // Launcher log stream: snapshot.logs seeds the renderer, logs() reads it, onLog carries later records.
+  // Real event ids and detail keys from the main process; a mix of levels so the event lists show every icon.
+  const at = (time) => `2026-09-21T${time}.000Z`;
+  const fixtureLogs = scenario === "benefits-portfolio-mixed" || scenario === "benefits-insights" ? [
+    { at: at("09:28:40"), level: "info", event: "launcher.window_created", detail: { platform: "darwin" } },
+    { at: at("09:28:44"), level: "info", event: "runtime.operation_completed", detail: { name: "start" } },
+    { at: at("09:29:02"), level: "info", event: "codex.model_catalog_served", detail: { requests: 1, at: at("09:29:02") } },
+    { at: at("09:29:30"), level: "info", event: "connector.verified", detail: { appName: "Fixture connector" } },
+    { at: at("09:30:00"), level: "info", event: "browser.turn_started", detail: { traceId: "trace-5d10e7" } },
+    { at: at("09:34:41"), level: "error", event: "browser.manual_tab_navigation_failed",
+      detail: { tabId: "tab-task-failed", traceId: "trace-5d10e7", message: "Fixture navigation timed out" } },
+    { at: at("09:34:42"), level: "info", event: "browser.turn_ended", detail: { traceId: "trace-5d10e7", status: "failed" } },
+    { at: at("09:48:02"), level: "info", event: "browser.turn_started", detail: { traceId: "trace-7f3a2c" } },
+    { at: at("09:48:09"), level: "info", event: "browser.turn_ended", detail: { traceId: "trace-7f3a2c", status: "completed" } },
+    { at: at("09:52:31"), level: "warning", event: "browser.session_refresh_failed", detail: { message: "Fixture session check timed out" } },
+    { at: at("09:55:10"), level: "info", event: "browser.turn_started", detail: { traceId: "trace-91be04" } },
+    { at: at("10:00:05"), level: "warning", event: "runtime.tunnel_status_report_failed", detail: { message: "Fixture tunnel status 502" } },
+    { at: at("10:03:20"), level: "debug", event: "runtime.stdout", detail: { line: "responses proxy listening on 127.0.0.1:8765" } },
+    { at: at("10:05:58"), level: "error", event: "launcher.ipc_failed", detail: { channel: "launcher:usage", message: "Fixture usage store is busy" } },
+  ] : [];
+  const emitLog = (record) => {
+    fixtureLogs.push(record);
+    if (fixtureLogs.length > 300) fixtureLogs.shift();
+    emit("log", record);
+  };
+  if (scenario === "benefits-portfolio-mixed") {
+    // Task center: recorded tasks (running, completed, needs attention) and a queue with one row per action kind.
+    const time = (value) => Date.parse(at(value));
+    browser.tasks = [
+      { id: "task-running", traceId: "trace-91be04", accountId: "fixture-primary", accountName: "Primary", model: "High",
+        phase: "responding", submission: "accepted", terminal: false, canOpen: true, canCancel: true, canDismiss: false, retrySafe: false,
+        createdAt: time("09:55:10"), updatedAt: time("10:03:20") },
+      { id: "task-completed", traceId: "trace-7f3a2c", accountId: "fixture-secondary", accountName: "Secondary", model: "Medium",
+        phase: "completed", submission: "accepted", terminal: true, canOpen: false, canCancel: false, canDismiss: true, retrySafe: false,
+        createdAt: time("09:48:02"), updatedAt: time("09:48:09") },
+      { id: "task-failed", traceId: "trace-5d10e7", accountId: "fixture-primary", accountName: "Primary", model: "Pro",
+        phase: "failed-after-send", submission: "accepted", terminal: true, canOpen: true, canCancel: false, canDismiss: true, retrySafe: false,
+        createdAt: time("09:30:00"), updatedAt: time("09:34:42") },
+    ].map((task, index) => ({ ...task, tabId: `tab-${task.id}`, sequence: index + 1 }));
+    browser.queue = { paused: false, pausedAccounts: [], storageIssue: null,
+      accounts: accountSnapshot.accounts.map(account => ({ id: account.id, label: account.label })),
+      entries: [
+        { id: "queued-review", traceId: "trace-queued-review", accountId: "fixture-primary", status: "waiting", reason: null,
+          createdAt: time("10:04:00"), position: 1, retryAt: null, ownerConnected: true,
+          canCancel: true, canPrioritize: true, canResume: false, canDismiss: false },
+        { id: "queued-docs", traceId: "trace-queued-docs", accountId: "fixture-secondary", status: "paused", reason: null,
+          createdAt: time("10:05:00"), position: 2, retryAt: null, ownerConnected: true,
+          canCancel: true, canPrioritize: false, canResume: true, canDismiss: false },
+        { id: "queued-interrupted", traceId: "trace-queued-interrupted", accountId: "fixture-tertiary", status: "interrupted", reason: null,
+          createdAt: time("09:20:00"), position: 0, retryAt: null, ownerConnected: false,
+          canCancel: false, canPrioritize: false, canResume: false, canDismiss: true },
+      ] };
+  }
+  // Admission order for queueAction ("Move to front" raises a row's priority, as the main process does).
+  const queuePriority = new Map();
+  const openQueueStatus = ["waiting", "paused", "admitting"];
+  const withQueuePositions = (entries) => {
+    const ordered = entries.filter(entry => openQueueStatus.includes(entry.status))
+      .sort((a, b) => (queuePriority.get(b.id) ?? 0) - (queuePriority.get(a.id) ?? 0) || a.createdAt - b.createdAt);
+    return entries.map(entry => ({ ...entry, position: ordered.indexOf(entry) + 1 }));
+  };
+  // Usage: the period ends on the fixture day and spans query.days; benefits-insights spreads its 27 tasks
+  // over the last seven days, so the calendar, the period and the totals agree for every range.
+  const usageEnd = "2026-09-21";
+  const usageDay = (offset) => new Date(Date.parse(`${usageEnd}T00:00:00Z`) - offset * 86_400_000).toISOString().slice(0, 10);
+  const insightCalendar = [
+    [6, 3, 3, 0, 0], [5, 5, 4, 1, 0], [3, 6, 5, 1, 0], [2, 2, 2, 0, 0], [1, 7, 5, 1, 1], [0, 4, 3, 1, 0],
+  ].map(([offset, total, completed, failed, cancelled]) => ({ day: usageDay(offset), total, completed, failed, cancelled, unrecorded: 0 }));
+  const usageFor = (days) => {
+    const period = { startDay: usageDay(days - 1), endDay: usageEnd, days };
+    const calendar = scenario === "benefits-insights" ? insightCalendar.filter(day => day.day >= period.startDay) : [];
+    const sum = (key) => calendar.reduce((total, day) => total + day[key], 0);
+    const known = sum("completed") + sum("failed") + sum("cancelled");
+    // Failure codes cover exactly the failed count (timeouts first, as in the diagnostic groups).
+    let unassigned = sum("failed");
+    const failures = [["timeout", 2], ["browser_failure", 1], ["transport", 1]].map(([code, count]) => {
+      const share = Math.min(count, unassigned); unassigned -= share; return { code, count: share };
+    }).filter(failure => failure.count > 0);
+    return { period, calendar, failures, metrics: { total: sum("total"), completed: sum("completed"), failed: sum("failed"),
+      cancelled: sum("cancelled"), unrecorded: sum("unrecorded"), knownOutcomeTotal: known,
+      knownOutcomeCompletionRate: known ? sum("completed") / known : null } };
+  };
   let runtimeCapabilities = benefitsScenario ? { runtimeStatus: "ready", nativeAvailability: "ready", webAvailability: "ready",
     tunnelStatus: "ready", tunnelRepair: { eligible: false, active: false, reason: null } } : undefined;
   if (scenario === "benefits-repair-success" || scenario === "benefits-repair-failure") {
     runtimeCapabilities = { runtimeStatus: "degraded", nativeAvailability: "ready", webAvailability: "degraded",
       tunnelStatus: "failed", tunnelRepair: { eligible: true, active: false, reason: "tunnel-unavailable" } };
   }
+  const contextCapabilities = parameters.get("context-capabilities") === "true"
+    ? { solAvailable: true, proAvailable: true, extraHighAvailable: true } : null;
   const snapshot = () => ({
     profile: scenario === "models-ready" || scenario === "tools-pending" || benefitsScenario ? "production" : "development", profilePaths: { coreHome: "", codexHome: "", userData: "" },
     state: { ...state }, browser: { ...browser }, connectorName: "Fixture connector",
     connectorNames: { automatic: "Fixture connector", manual: "Fixture manual" }, mcpCredentialsConfigured: scenario === "tools-pending",
-    logs: [], urls: { github: "https://github.com/Froraut/NEKODEX", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
+    logs: fixtureLogs.slice(), urls: { github: "https://github.com/Froraut/NEKODEX", x: "", connectors: "https://chatgpt.com/plugins", developerMode: "https://chatgpt.com/#settings/Security?section=developer-mode", tunnels: "", keys: "" },
     browserCapacity: { configured: 16, active: 16, maximum: 1000, restartRequired: false },
     platform: "darwin", packaged: false, version: "fixture", smokePassed: state.browserSmokePassed, operation, update,
     ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
+    ...(contextCapabilities ? { contextCapabilities } : {}),
   });
   let startupAttempts = 0;
   const calls = [];
@@ -311,6 +401,11 @@ function installMockLauncher() {
       browser.tabs = browser.tabs.filter(tab => tab.id !== tabId);
       if (closing?.active && browser.tabs.length) browser.tabs = browser.tabs.map((tab, index) => ({ ...tab, active: index === 0 }));
       browser.activeTabId = browser.tabs.find(tab => tab.active)?.id ?? null;
+      // Closing a running task's tab cancels that task (Task center "Cancel task").
+      if (browser.tasks?.some(task => task.tabId === tabId && !task.terminal)) {
+        browser.tasks = browser.tasks.map(task => task.tabId === tabId && !task.terminal ? { ...task, phase: "cancelled",
+          terminal: true, canOpen: false, canCancel: false, canDismiss: true, updatedAt: Date.now() } : task);
+      }
       emit("browser", { ...browser }); return { ...browser };
     },
     accounts: async () => accountSnapshot,
@@ -333,6 +428,24 @@ function installMockLauncher() {
       calls.push(["pause-queue", accountId, paused]);
       if (accountId === null) browser.queue.paused = paused;
       else browser.queue.pausedAccounts = paused ? [...new Set([...browser.queue.pausedAccounts, accountId])] : browser.queue.pausedAccounts.filter(id => id !== accountId);
+      emit("browser", { ...browser }); return { ...browser };
+    },
+    queueAction: async (id, action) => {
+      calls.push(["queue-action", id, action]);
+      const row = browser.queue?.entries.find(entry => entry.id === id);
+      if (!row) throw new Error("Queued task no longer exists");
+      let entries = browser.queue.entries;
+      const update = (patch) => { entries = entries.map(entry => entry === row ? { ...entry, ...patch } : entry); };
+      if (action === "cancel" && openQueueStatus.includes(row.status)) {
+        update({ status: "cancelled", reason: null, canCancel: false, canPrioritize: false, canResume: false, canDismiss: true });
+      } else if (action === "resume" && row.status === "paused") {
+        update({ status: "waiting", reason: "checking", canPrioritize: true, canResume: false });
+      } else if (action === "prioritize" && row.status === "waiting") {
+        queuePriority.set(id, Math.max(0, ...queuePriority.values()) + 1);
+      } else if (action === "dismiss" && ["cancelled", "failed", "interrupted"].includes(row.status)) {
+        entries = entries.filter(entry => entry !== row);
+      } else throw new Error("This action is unavailable for the queued task");
+      browser.queue = { ...browser.queue, entries: withQueuePositions(entries) };
       emit("browser", { ...browser }); return { ...browser };
     },
     uninstallIntegration: async () => {
@@ -403,18 +516,15 @@ function installMockLauncher() {
       { accountId: "fixture-tertiary", evidenceEpoch: 3, status: "unavailable", snapshot: null, reason: "authentication-unavailable" },
     ].filter(row => accountSnapshot.accounts.some(account => account.id === row.accountId)) }),
     startCodexLogin: async () => { calls.push(["start-codex-login"]); return null; },
-    usage: async (query) => ({ available: true, rows: [], generatedAt: "2026-09-21T10:00:00.000Z", timeZone: "UTC",
-      source: query.source, period: { startDay: "2026-09-21", endDay: "2026-09-21", days: query.days },
+    usage: async (request) => {
+      const query = typeof request === "number" ? { days: request, source: "web" } : request;
+      return { available: true, rows: [], generatedAt: "2026-09-21T10:00:00.000Z", timeZone: "UTC",
+      source: query.source, ...usageFor(query.days),
       selectedAccountId: query.accountId ?? null,
       accounts: accountSnapshot.accounts.map(account => ({ id: account.id, label: account.label, available: true })),
-      metrics: scenario === "benefits-insights"
-        ? { total: 27, completed: 22, failed: 4, cancelled: 1, unrecorded: 0,
-          knownOutcomeTotal: 27, knownOutcomeCompletionRate: 22 / 27 }
-        : { total: 0, completed: 0, failed: 0, cancelled: 0, unrecorded: 0,
-          knownOutcomeTotal: 0, knownOutcomeCompletionRate: null },
       durations: scenario === "benefits-insights"
         ? { observedSamples: 24, medianMs: 4100, p95Ms: 9200 }
-        : { observedSamples: 0, medianMs: null, p95Ms: null }, failures: [], calendar: [],
+        : { observedSamples: 0, medianMs: null, p95Ms: null },
       ...(scenario === "benefits-insights" ? { diagnosticGroups: [
         { source: "web", accountId: "fixture-primary", mode: "automatic", effort: "high", modelVersion: "5.6-sol",
           modelVersionSource: "observed", messageKind: "task",
@@ -430,7 +540,8 @@ function installMockLauncher() {
           accepted: 3, completed: 2, failed: 1, cancelled: 0, incomplete: 0, knownOutcomeTotal: 3,
           knownOutcomeCompletionRate: null, durations: { observedSamples: 2, eligibleSamples: 3, medianMs: null, p95Ms: null },
           failures: [{ code: "transport", count: 1 }], classifiedFailureSamples: 1 },
-      ] } : {}) }),
+      ] } : {}) };
+    },
     repairWebRoute: async () => {
       calls.push(["repair-web-route"]);
       runtimeCapabilities = { ...runtimeCapabilities, tunnelRepair: { eligible: false, active: true, reason: null } };
@@ -442,6 +553,23 @@ function installMockLauncher() {
       runtimeCapabilities = { runtimeStatus: "ready", nativeAvailability: "ready", webAvailability: "ready",
         tunnelStatus: "ready", tunnelRepair: { eligible: false, active: false, reason: null } };
       return { status: "recovered", reason: null };
+    },
+    logs: async (limit = 300) => fixtureLogs.slice(-Math.max(0, limit)),
+    exportLogs: async () => {
+      calls.push(["export-logs"]);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (window.fixtureCancelExport) return null; // the save dialog was cancelled
+      emitLog({ at: new Date().toISOString(), level: "info", event: "launcher.logs_exported", detail: { recordCount: fixtureLogs.length } });
+      return "/fixture/Documents/codex-web-gpt-diagnostics-2026-09-21.jsonl";
+    },
+    doctor: async () => {
+      calls.push(["doctor"]);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      return { ok: true, mode: "full", checks: [
+        { id: "proxy", status: "ok", message: "Responses proxy answered on 127.0.0.1:8765" },
+        { id: "runtime", status: "warning", message: "Tunnel runtime answered slowly", detail: "Fixture health check took 2.4 s" },
+        { id: "connector", status: "ok", message: "ChatGPT connector verified" },
+      ] };
     },
     routeDiagnostics: async () => {
       diagnosticChecks++;
@@ -469,6 +597,7 @@ function installMockLauncher() {
   window.fixtureSetUpdate = value => { update = value; emit("update", update); };
   window.fixtureSetState = patch => { Object.assign(state, patch); emit("state", { ...state }); };
   window.fixtureSetOperation = value => { operation = value; emit("operation", value); };
+  window.fixtureEmitLog = record => emitLog({ at: new Date().toISOString(), level: "info", detail: {}, ...record });
   if (astraScenario) {
     window.codexWebLauncher.onLifecycle = listen("lifecycle");
     window.fixtureSetLifecycle = value => emit("lifecycle", value);

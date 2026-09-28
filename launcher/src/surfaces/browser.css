@@ -53,9 +53,8 @@
 }
 .browser-bar__account > span:first-child { white-space: nowrap; }
 .browser-bar__account > strong { color: var(--text-secondary); font-size: 14px; line-height: 20px; font-weight: 500; }
-/* Kit addition: a 32px select, so the bar's controls share one height (size-control-sm). */
+/* The small (32px) kit Select, so the bar's controls share one height; narrower than the kit default. */
 .nk-select.browser-bar__select { min-width: 0; width: clamp(128px, 14vw, 176px); }
-.nk-select.browser-bar__select select { height: var(--size-control-sm); }
 
 /* ---------- Task tabs ---------- */
 .browser-tabs {
@@ -99,10 +98,9 @@
 .browser-tabs__tab:has(> .browser-tabs__close) > .browser-tabs__select { padding-right: var(--space-1); }
 /* The strip scrolls (overflow clips outer rings), so its controls draw their focus ring inside. */
 .browser-tabs__select:focus-visible, .browser-tabs__close:focus-visible { outline-offset: -2px; }
-/* Kit addition: a 24px icon button inside a 32px tab. Close shows on hover, focus and the active tab;
+/* The small (24px) kit icon button inside a 32px tab. Close shows on hover, focus and the active tab;
    stopping a running turn stays visible. */
-.nk-icon-btn.browser-tabs__close { width: 24px; height: 24px; margin-right: var(--space-1); border-radius: var(--radius-xs); opacity: 0; }
-.nk-icon-btn.browser-tabs__close .nk-icon { width: 14px; height: 14px; }
+.nk-icon-btn.browser-tabs__close { margin-right: var(--space-1); opacity: 0; }
 .browser-tabs__tab:hover > .browser-tabs__close,
 .browser-tabs__tab.is-active > .browser-tabs__close,
 .browser-tabs__tab.is-running > .browser-tabs__close,
@@ -187,7 +185,6 @@
   text-align: left;
 }
 .browser-windows__item:hover:not(:disabled) { background: var(--bg-control-hover); }
-.browser-windows__item:disabled { opacity: 1; }
 .browser-windows__item:focus-visible { outline-offset: -2px; }
 .browser-windows__item-title { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .browser-windows__item-state { display: flex; align-items: center; gap: var(--space-2); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
@@ -253,7 +250,6 @@
   border-bottom: 1px solid var(--border);
 }
 .browser-notices:empty { display: none; }
-.browser-notices__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 
 .browser-confirm__panel {
   display: flex;
@@ -336,5 +332,13 @@
   .browser-idle { padding: var(--space-8) var(--space-4); }
   .browser-idle > .browser-guide { padding: var(--space-4); }
   .browser-manual { grid-template-columns: minmax(0, 1fr); }
-  .browser-manual__actions, .browser-notices__actions, .browser-nav__actions { justify-content: flex-start; }
+  .browser-manual__actions, .browser-nav__actions { justify-content: flex-start; }
+}
+
+/* ---------- Reduced motion ---------- */
+/* The kit stops animation under reduced motion; loading indicators keep a slow pulse in place instead of freezing
+   on a frame (the kit's nk-reduced-pulse), and the loading line spans the whole bar so it does not read as partial. */
+@media (prefers-reduced-motion: reduce) {
+  .nk-root .browser-tabs__spinner { animation: nk-reduced-pulse 2.4s ease-in-out infinite !important; }
+  .nk-root .browser-nav__progress::after { width: 100%; animation: nk-reduced-pulse 2.4s ease-in-out infinite !important; }
 }

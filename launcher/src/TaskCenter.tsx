@@ -2,7 +2,7 @@ import { taskCenterCopy } from "./task-center-copy";
 import { filterTasks, taskKey, eligibleTaskConfirmation, requiresDismissConfirmation, type HistoryStatus, type TaskConfirmationTarget } from "./task-center-model";
 import { TaskActionConfirmation } from "./TaskActionConfirmation";
 import { Button, EmptyState, Notice, Panel, Select, StateDot, TextField, type Status } from './design';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import type { BrowserTaskState, Language } from './types';
 import './surfaces/tasks-updates.css';
 
@@ -36,22 +36,13 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
   for (const health of historyHealth) accounts.set(health.accountId, health.accountName);
   const visible = filterTasks(tasks, { account, status, query, language });
   const confirmation = eligibleTaskConfirmation(visible, target);
-  const confirmationKey = confirmation ? `${confirmation.kind}:${confirmation.taskKey}` : null;
   const confirmationTask = confirmation ? visible.find(task => taskKey(task) === confirmation.taskKey) : undefined;
-  useEffect(() => {
-    if (!confirmationKey) return;
+  // After the confirmation closes, focus returns to the row control that opened it. A cancelled or dismissed task
+  // removes or disables that control; continue from the search field instead of the sidebar.
+  const confirmationFocus = () => {
     const trigger = confirmationTrigger.current;
-    return () => {
-      // The Dialog returns focus to the row control that opened it (one frame after closing). A cancelled or
-      // dismissed task removes or disables that control; continue from the search field instead of the sidebar.
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (trigger?.isConnected && !trigger.disabled) return;
-        const active = document.activeElement;
-        if (active && active !== document.body && !active.matches('.nk-nav-item[aria-current="page"]')) return;
-        searchInput.current?.focus();
-      }));
-    };
-  }, [confirmationKey]);
+    return trigger?.isConnected && !trigger.disabled ? trigger : searchInput.current;
+  };
   const clearConfirmations = () => setTarget(null);
   const act = async (id: string, action: () => Promise<unknown>) => {
     if (actionPending.current || disabled) return;
@@ -118,6 +109,7 @@ export function TaskCenter({ tasks, language, disabled, open, cancel, dismiss, o
       disabled={disabled} pending={!!pending}
       onKeep={clearConfirmations}
       canEscape={() => !actionPending.current}
+      restoreFocus={confirmationFocus}
       onConfirm={() => void act(taskKey(confirmationTask), async () => {
         if (confirmation.kind === 'cancel') await cancel(confirmationTask.tabId, confirmationTask.traceId);
         else await dismiss(confirmationTask.accountId, confirmationTask.id);

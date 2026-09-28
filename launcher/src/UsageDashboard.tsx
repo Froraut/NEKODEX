@@ -12,7 +12,6 @@ import type {
 } from "./types";
 import { aggregateUsageGroups, formatUsageDuration, formatUsageRate, usageReportCsv, type UsageDisplayGroup } from "./usage-statistics";
 import { UsageInsights } from "./UsageInsights";
-import { UsagePanel } from "./usage-panel";
 import { Button, Disclosure, EmptyState, Notice, Panel, Select, Stat, StatGroup, StateDot, type Status } from "./design";
 import { workflowCopy } from "./workflow-copy";
 
@@ -106,8 +105,6 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const rateValue = rate === null || rate === undefined ? copy.usageNotAvailable : formatUsageRate(rate, language);
   const medianValue = visible ? duration(visible.durations.medianMs, copy, language) : copy.usageNotAvailable;
   const p95Value = visible ? duration(visible.durations.p95Ms, copy, language) : copy.usageNotAvailable;
-  /** Formatted figures ("1,234", "81.5%", "4.1 sec") keep the display numerals; only the "not available" word is set as text. */
-  const figureClass = (value: string) => value === copy.usageNotAvailable ? "is-word" : undefined;
 
   return <section className="usage-dashboard" aria-labelledby="usage-title">
     <header className="usage-header">
@@ -179,18 +176,18 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
           </StatGroup>
           {!web ? <p className="usage-note">{nativeRecordedOnly}</p> : null}
           <StatGroup className="usage-stats usage-stats--rates">
-            <Stat label={copy.usageKnownRate} className={figureClass(rateValue)} value={rateValue}
+            <Stat label={copy.usageKnownRate} value={rateValue}
               note={<>
                 {visible.metrics.knownOutcomeTotal ? knownRateBody.replace("{completed}", number(visible.metrics.completed, language)).replace("{known}", number(visible.metrics.knownOutcomeTotal, language)) : copy.usageNoKnownOutcomes}
                 {visible.metrics.unrecorded > 0 ? <> {copy.usageUnrecordedExcluded.replace("{count}", number(visible.metrics.unrecorded, language))}</> : null}
               </>} />
-            <Stat label={insightsCopy.median} className={figureClass(medianValue)} value={medianValue}
+            <Stat label={insightsCopy.median} value={medianValue}
               note={visible.durations.observedSamples ? durationSamples.replace("{count}", number(visible.durations.observedSamples, language)) : noDurations} />
-            <Stat label={insightsCopy.p95} className={figureClass(p95Value)} value={p95Value} />
+            <Stat label={insightsCopy.p95} value={p95Value} />
           </StatGroup>
         </div>
 
-        {!web && visible.tokens ? <UsagePanel titleId="usage-token-title" title={copy.usageTokenUsage} description={copy.usageTokenUsageBody} className="usage-tokens">
+        {!web && visible.tokens ? <Panel headingLevel={3} titleId="usage-token-title" title={copy.usageTokenUsage} description={copy.usageTokenUsageBody} className="usage-tokens">
           <dl>{([
             [copy.usageInputTokens, visible.tokens.inputTokens, visible.tokens.reportedSamples],
             [copy.usageOutputTokens, visible.tokens.outputTokens, visible.tokens.reportedSamples],
@@ -199,7 +196,7 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
           ] as const).map(([label, value, coverage]) => <div key={label}><dt>{label}</dt><dd>{value == null ? "—" : number(value, language)}
             <small>{coverage === undefined ? "—" : copy.usageTokenFieldCoverage.replace("{count}", number(coverage, language))}</small></dd></div>)}</dl>
           <p className="usage-note">{copy.usageTokenCoverage.replace("{reported}", number(visible.tokens.reportedSamples, language)).replace("{unreported}", number(visible.tokens.unreportedSamples, language))}</p>
-        </UsagePanel> : null}
+        </Panel> : null}
 
         <UsageInsights groups={diagnosticGroups} accounts={visible.accounts} copy={insightsCopy}
           language={language} failureLabels={failureLabels} detailsLabel={copy.usageDetailedBreakdown}
@@ -209,10 +206,10 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
 
         <div className="usage-columns">
           <UsageCalendar report={visible} copy={copy} language={language} />
-          <UsagePanel titleId="usage-failures-title" title={copy.usageFailures} className="usage-failures">
+          <Panel headingLevel={3} titleId="usage-failures-title" title={copy.usageFailures} className="usage-failures">
             {failures.length ? <ul>{failures.map(item => <li key={item.code}><span>{failureLabels[item.code]}</span><strong>{number(item.count, language)}</strong></li>)}</ul>
               : <EmptyState icon="info" title={copy.usageNoFailures} />}
-          </UsagePanel>
+          </Panel>
         </div>
       </>}
 

@@ -2,8 +2,7 @@ import { useRef, useState } from "react";
 import type { Language, UsageAccountOption, UsageDiagnosticGroup, UsageFailureCode } from "./types";
 import { rankUsageDiagnosticGroups, usageAttentionFacts } from "./usage-diagnostics";
 import { formatUsageDuration, formatUsageRate } from "./usage-statistics";
-import { Button, EmptyState } from "./design";
-import { UsagePanel } from "./usage-panel";
+import { Button, EmptyState, Panel } from "./design";
 
 export interface UsageInsightsCopy {
   title: string;
@@ -102,7 +101,7 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
     if (next) requestAnimationFrame(() => detailsRef.current?.focus());
   };
 
-  return <UsagePanel titleId="usage-diagnostic-title" title={copy.title} description={copy.body} className="usage-diagnostic-insights"
+  return <Panel headingLevel={3} titleId="usage-diagnostic-title" title={copy.title} description={copy.body} className="usage-diagnostic-insights"
     actions={ranked.length ? <Button variant="ghost" size="sm" aria-expanded={open}
       aria-controls="usage-diagnostic-details" onClick={toggle}>{open ? hideDetailsLabel : detailsLabel}</Button> : null}>
     {!ranked.length ? <EmptyState icon="activity" title={copy.noComparison} /> : <>
@@ -141,5 +140,5 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
         </table></div>
       </div> : null}
     </>}
-  </UsagePanel>;
+  </Panel>;
 }

@@ -14,7 +14,6 @@ import {
   type EventItem, type IconName,
 } from "./design";
 import type { BrowserState, LauncherSnapshot, Surface } from "./types";
-import "./surfaces/overview.css";
 
 export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logStore, navigate, openTab, onMuteNetworkNotice }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
@@ -140,12 +139,14 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
       <StatGroup label={copy.overviewActiveRuns}>
         <Stat label={copy.overviewActiveRuns} value={active} note={copy.overviewActiveRunsBody} />
         <Stat label={copy.configuredLimit} value={snapshot.browserCapacity.active} onClick={() => navigate("settings")}
-          note={<>{copy.capacityNotMeasured}<span className="nk-visually-hidden">. {copy.capacityLink}</span></>} />
-        <Stat label={copy.modeLabel} value={modeValue} note={copy.modeLink} onClick={() => navigate("settings")} />
+          title={copy.capacityHint} aria-label={`${copy.configuredLimit}: ${snapshot.browserCapacity.active}. ${copy.capacityLink}`}
+          aria-describedby={`${overviewId}-capacity`} note={<span id={`${overviewId}-capacity`}>{copy.capacityNotMeasured}</span>} />
+        <Stat label={copy.modeLabel} value={modeValue} note={copy.modeLink} onClick={() => navigate("settings")}
+          title={copy.modeLink} aria-label={`${copy.modeLabel}: ${modeValue}. ${copy.modeLink}`} />
       </StatGroup>
       <div className="nk-columns">
         <div className="nk-stack">
-          {activeTabs.length ? <Panel title={overview.runningNow} titleId={`${overviewId}-runs`} padding="compact" className="overview-panel"
+          {activeTabs.length ? <Panel title={overview.runningNow} titleId={`${overviewId}-runs`} padding="compact"
             actions={<Button variant="link" size="sm" iconEnd="chevron" onClick={() => navigate("browser")}>{overview.openBrowser}</Button>}>
             <div className="nk-conn-list">{activeTabs.map(tab => {
               const mode = tab.interactionMode === "manual" ? copy.manualShort
@@ -155,7 +156,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
                 onClick={() => openTab(tab.id)} />;
             })}</div>
           </Panel> : null}
-          <Panel title={copy.connectionsShort} titleId={`${overviewId}-connections`} padding="compact" className="overview-panel">
+          <Panel title={copy.connectionsShort} titleId={`${overviewId}-connections`} padding="compact">
             <p className="nk-visually-hidden">{copy.connectionsBody}</p>
             <div className="nk-conn-list">{connections.map(connection => <ConnectionRow key={connection.surface}
               icon={connection.icon} label={connection.label} status={connection.status}
@@ -164,7 +165,7 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
               onClick={() => navigate(connection.surface)} />)}</div>
           </Panel>
         </div>
-        <Panel title={copy.recentActivity} titleId={`${overviewId}-events`} padding="compact" className="overview-panel overview-activity"
+        <Panel title={copy.recentActivity} titleId={`${overviewId}-events`} padding="compact" className="overview-activity"
           actions={<Button variant="link" size="sm" iconEnd="chevron" onClick={() => navigate("activity")}>{copy.viewAllShort}</Button>}>
           <EventList items={events}
             empty={<EmptyState title={copy.activityEmpty} icon="logs">{copy.activityEmptyBody}</EmptyState>} />

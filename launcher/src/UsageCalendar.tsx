@@ -1,8 +1,7 @@
 import { Fragment, useState } from "react";
 import type { Copy } from "./i18n";
 import type { Language, UsageCalendarDay, UsageSnapshot } from "./types";
-import { Button } from "./design";
-import { UsagePanel } from "./usage-panel";
+import { Button, Panel } from "./design";
 const number = (value: number, language: Language) => value.toLocaleString(language);
 export function dateLabel(day: string, language: Language, options: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" }) {
   const date = new Date(`${day}T00:00:00Z`);
@@ -93,10 +92,10 @@ export function UsageCalendar({ report: visible, copy, language }: { report: Usa
   const web = visible.source === "web";
   const totalLabel = web ? copy.usageWebTotal : copy.usageNativeTotal;
   const calendarSummary = web ? copy.usageCalendarSummary : copy.usageNativeCalendarSummary;
-  return <UsagePanel titleId="usage-calendar-title" title={copy.usageCalendar} className="usage-calendar"
+  return <Panel headingLevel={3} titleId="usage-calendar-title" title={copy.usageCalendar} className="usage-calendar"
     description={calendarSummary.replace("{total}", number(visible.metrics.total, language)).replace("{active}", number(activeDays, language)).replace("{days}", number(visible.period.days, language))}
     actions={<Button variant="ghost" size="sm" aria-expanded={showTable} onClick={() => setShowTable(value => !value)}>{showTable ? copy.usageHideTable : copy.usageShowTable}</Button>}>
     <CalendarHeat calendar={calendar} language={language} totalLabel={totalLabel} failedLabel={copy.usageFailed} />
     {showTable ? <CalendarTable calendar={calendar} copy={copy} language={language} showIncomplete={!web} showUnrecorded={web} totalLabel={totalLabel} /> : null}
-  </UsagePanel>;
+  </Panel>;
 }

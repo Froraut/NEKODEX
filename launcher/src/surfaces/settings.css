@@ -56,8 +56,7 @@
 .settings-capacity { display: grid; justify-items: end; gap: var(--space-1); min-width: 0; text-align: end; }
 .settings-capacity > .nk-field__row { justify-content: flex-end; }
 .settings-capacity .nk-input { flex: 0 0 88px; width: 88px; font-variant-numeric: tabular-nums; }
-.nk-setting-row .settings-capacity > p { max-width: 260px; margin: 0; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
-.nk-setting-row .settings-capacity > .nk-field__error { color: var(--text-error); }
+.settings-capacity > p { max-width: 260px; margin: 0; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
 
 /* A control with a status line above it (Language while a locale loads). */
 .settings-control-stack { display: grid; justify-items: end; gap: var(--space-2); min-width: 0; }
@@ -67,7 +66,7 @@
 
 /* Log out confirms inline in its row. */
 .settings-confirm { display: grid; justify-items: end; gap: var(--space-3); max-width: 340px; }
-.nk-setting-row .settings-confirm > p { justify-self: stretch; max-width: none; margin: 0; color: var(--text-secondary); }
+.settings-confirm > p { justify-self: stretch; margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
 .settings-confirm__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 
 /* ---------- Advanced ---------- */
@@ -78,8 +77,6 @@
 .settings-context-status { margin: var(--space-4) 0 0; color: var(--text-tertiary); }
 .settings-disclosure .nk-budget-table { margin-bottom: 0; }
 .settings-context-change { margin-top: var(--space-4); }
-.settings-notice-detail { display: block; }
-.settings-notice-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
 
 /* ---------- Diagnostics ---------- */
 .settings-codex-status { margin-bottom: var(--space-3); }

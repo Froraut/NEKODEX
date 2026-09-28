@@ -1,7 +1,8 @@
 /*
  * NEKODEX components: the design system's component bundle (bundle.css), adapted for the launcher.
  * Every value is a token from ../tokens.css (which also holds color-scheme and the motion variables).
- * Load order: tokens.css -> this file -> not-yet-migrated legacy stylesheets.
+ * Load order (main.tsx): tokens.css -> styles.css (app base) -> this file; the shell and surface layout
+ * sheets (surfaces/*.css) are imported by their components and load after it.
  * Adaptations for the app are marked "App:"; the nk-* rules themselves are unchanged.
  */
 
@@ -11,22 +12,20 @@ body {
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: 15px;
-  /* App: the system also sets line-height: 22px here. It is applied to .nk-page instead (see the end of
-     this file) until the legacy stylesheets are gone, so unmigrated screens keep their line boxes. */
+  line-height: 22px;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-/* App: scoped under .nk-root (the <body>) so it outranks the legacy blue ::selection. */
-.nk-root::selection, .nk-root ::selection { background: var(--selection); }
+::selection { background: var(--selection); }
 
 :where(.nk-root), :where(.nk-root) * { box-sizing: border-box; }
 :where(.nk-root) :where(button, input, select, textarea) { font-family: inherit; color: inherit; }
 .nk-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* One focus treatment for every interactive element.
-   App: .nk-root is wrapped in :where() so this outranks the generic legacy element rules
-   (button:focus-visible ...) but not the per-component legacy rings (inset outlines in clipped rows). */
+   App: .nk-root is wrapped in :where() so component and surface rules can adjust the ring
+   (inset outlines in clipped rows, outline-offset: -2px) without out-ranking it. */
 :where(.nk-root) :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
@@ -103,6 +102,9 @@ body {
 .nk-icon-btn .nk-icon { width: 16px; height: 16px; }
 .nk-icon-btn:hover:not(:disabled), .nk-icon-btn[aria-pressed="true"], .nk-icon-btn[aria-expanded="true"] { background: var(--bg-control-hover); color: var(--icon-primary); }
 .nk-icon-btn:disabled { color: var(--text-disabled); }
+/* App: IconButton size="sm", a 24px control inside a 32px row (closing a tab). */
+.nk-icon-btn--sm { width: 24px; height: 24px; border-radius: var(--radius-xs); }
+.nk-icon-btn--sm .nk-icon { width: 14px; height: 14px; }
 
 /* ---------- StateDot ---------- */
 .nk-dot { display: inline-block; width: 8px; height: 8px; flex: none; border-radius: var(--radius-pill); background: var(--dot-idle); }
@@ -136,10 +138,13 @@ body {
 .nk-badge--pill { height: 28px; padding: 0 var(--space-3); border-radius: var(--radius-pill); }
 
 /* ---------- Notice ---------- */
+/* App: flex instead of the bundle's 20px | 1fr | auto grid (same geometry), so that in a narrow notice the
+   action wraps under the body, right-aligned, instead of squeezing the text into a thin column: it stays beside
+   the body while the body keeps its one-line width or at least 480px (calc-size; the plain 480px is the fallback). */
 .nk-notice {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-light);
@@ -149,12 +154,15 @@ body {
   font-size: 14px;
   line-height: 20px;
 }
-.nk-notice > .nk-icon { width: 18px; height: 18px; margin-top: 1px; color: var(--text-accent); }
+.nk-notice > .nk-icon { width: 18px; height: 18px; margin: 1px 2px 0 0; color: var(--text-accent); }
+.nk-notice > div:not(.nk-notice__action) { flex: 1 1 min(480px, calc(100% - 44px)); flex-basis: calc-size(max-content, min(size, 480px, 100% - 44px)); min-width: 0; }
+/* No action: the text column ends where the bundle's empty action column began. */
+.nk-notice > div:not(.nk-notice__action):last-child { margin-inline-end: var(--space-3); }
 .nk-notice strong { display: block; color: var(--text-primary); font-weight: 500; }
 .nk-notice p { margin: 0; overflow-wrap: anywhere; }
 .nk-notice strong + p { margin-top: 2px; }
 .nk-notice small { display: block; margin-top: var(--space-1); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
-.nk-notice__action { align-self: center; }
+.nk-notice__action { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; margin-inline-start: auto; align-self: center; }
 .nk-notice.is-plain { align-items: center; }
 .nk-notice.is-plain > .nk-icon { margin-top: 0; }
 .nk-notice--success { background: var(--bg-success); }
@@ -178,20 +186,26 @@ body {
   box-shadow: var(--shadow-overlay);
 }
 .nk-toast--fixed { position: fixed; z-index: var(--z-toast); right: var(--space-5); bottom: var(--space-5); width: min(430px, calc(100vw - 40px)); }
+/* App: fixed toasts portal into one bottom-right stack on <body>, so two never cover each other (newest at the
+   bottom). It sits just under dialogs, which make the page, the stack included, inert while open. */
+.nk-toast-stack { position: fixed; z-index: calc(var(--z-toast) - 1); right: var(--space-5); bottom: var(--space-5); display: grid; gap: var(--space-2); width: min(430px, calc(100vw - 40px)); pointer-events: none; }
+.nk-toast-stack:empty { display: none; }
+.nk-toast-stack > .nk-toast { position: static; width: 100%; pointer-events: auto; }
 .nk-toast > .nk-dot { margin-top: 7px; }
 .nk-toast strong { display: block; font-size: 14px; line-height: 20px; font-weight: 500; }
 .nk-toast p { max-height: 160px; margin: 2px 0 0; overflow-y: auto; color: var(--text-secondary); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 
 /* ---------- ProgressMeter ---------- */
-.nk-meter { display: grid; gap: var(--space-2); }
+/* App: align-content start, so a meter stretched by its grid cell (beside a taller one) keeps its rows together. */
+.nk-meter { --meter-fill: var(--accent); display: grid; align-content: start; gap: var(--space-2); }
 .nk-meter__head { display: flex; justify-content: space-between; gap: var(--space-4); font-size: 14px; line-height: 20px; }
 .nk-meter__head span { color: var(--text-secondary); }
 .nk-meter__head strong { font-weight: 500; font-variant-numeric: tabular-nums; }
 .nk-meter__track { position: relative; height: 8px; overflow: hidden; border-radius: var(--radius-pill); background: var(--bg-control-active); }
-.nk-meter__fill { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width var(--duration-panel) var(--ease-enter); }
-.nk-meter--success .nk-meter__fill { background: var(--dot-ready); }
-.nk-meter--warning .nk-meter__fill { background: var(--dot-busy); }
-.nk-meter--error .nk-meter__fill { background: var(--dot-error); }
+.nk-meter__fill { display: block; height: 100%; border-radius: inherit; background: var(--meter-fill); transition: width var(--duration-panel) var(--ease-enter); }
+.nk-meter--success { --meter-fill: var(--dot-ready); }
+.nk-meter--warning { --meter-fill: var(--dot-busy); }
+.nk-meter--error { --meter-fill: var(--dot-error); }
 .nk-meter.is-indeterminate .nk-meter__fill { position: absolute; width: 36%; animation: nk-slide 1.4s var(--ease-enter) infinite; }
 .nk-meter__foot { color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
 @keyframes nk-slide { from { left: -36%; } to { left: 100%; } }
@@ -199,14 +213,17 @@ body {
 /* ---------- PhaseSteps ---------- */
 .nk-steps { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); margin: 0; padding: 0; list-style: none; }
 .nk-steps li { display: flex; align-items: center; gap: var(--space-2); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
-.nk-steps li > span { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border: 1px solid var(--border-heavy); border-radius: var(--radius-pill); font-variant-numeric: tabular-nums; }
-.nk-steps li > span .nk-icon { width: 14px; height: 14px; }
+.nk-steps li > span, .nk-steps li > button > span { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border: 1px solid var(--border-heavy); border-radius: var(--radius-pill); font-variant-numeric: tabular-nums; }
+.nk-steps li > span .nk-icon, .nk-steps li > button > span .nk-icon { width: 14px; height: 14px; }
 .nk-steps li.is-current { color: var(--text-primary); font-weight: 500; }
-.nk-steps li.is-current > span { border-color: var(--accent); background: var(--bg-brand); }
+.nk-steps li.is-current > span, .nk-steps li.is-current > button > span { border-color: var(--accent); background: var(--bg-brand); }
 .nk-steps li.is-complete { color: var(--text-success); }
-.nk-steps li.is-complete > span { border-color: currentColor; }
+.nk-steps li.is-complete > span, .nk-steps li.is-complete > button > span { border-color: currentColor; }
 .nk-steps li.is-error { color: var(--text-error); }
-.nk-steps li.is-error > span { border-color: currentColor; }
+.nk-steps li.is-error > span, .nk-steps li.is-error > button > span { border-color: currentColor; }
+/* App: PhaseSteps onSelect makes each step a button (marker + label) that returns to that phase. */
+.nk-steps li > button { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: left; }
+.nk-steps li > button:hover:not(:disabled) { color: var(--text-primary); }
 
 /* ---------- Switch ---------- */
 .nk-switch { position: relative; width: var(--size-hit); height: var(--size-hit); flex: 0 0 var(--size-hit); padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; }
@@ -257,6 +274,8 @@ body {
 .nk-select select option { background: var(--bg-elevated); color: var(--text-primary); }
 .nk-select > .nk-icon { position: absolute; top: 50%; right: var(--space-3); width: 14px; height: 14px; color: var(--icon-secondary); pointer-events: none; transform: translateY(-50%) rotate(90deg); }
 .nk-select select:hover:not(:disabled), .nk-input:hover:not(:disabled) { background: var(--bg-control-hover); }
+/* App: Select size="sm", level with small buttons in a dense bar. */
+.nk-select--sm select { height: var(--size-control-sm); }
 .nk-select select:disabled, .nk-input:disabled { color: var(--text-disabled); opacity: 0.62; }
 .nk-input { padding: 0 var(--space-3); }
 .nk-input::placeholder { color: var(--text-tertiary); }
@@ -404,14 +423,21 @@ body {
 .nk-panel--raised { border-color: var(--border-heavy); background: var(--bg-panel-raised); box-shadow: var(--shadow-panel); }
 .nk-panel--brand { border-color: var(--border-accent); border-radius: var(--radius-lg); background: var(--bg-brand); box-shadow: var(--shadow-panel); }
 .nk-panel--brand p { color: var(--text-on-brand-muted); }
-.nk-panel__header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-3); }
+/* App: the header is at least one small control tall, so side-by-side panels with and without header actions
+   start their titles on one line (content-box: the flush padding comes on top). */
+.nk-panel__header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); box-sizing: content-box; min-height: var(--size-control-sm); margin-bottom: var(--space-3); }
 .nk-panel--flush > .nk-panel__header { margin: 0; padding: var(--space-4) var(--space-5) var(--space-2); }
-.nk-panel__header h2 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
+.nk-panel__header :is(h2, h3, h4) { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
 .nk-panel__header p { flex-basis: 100%; margin: 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
 
 /* ---------- Stat ---------- */
 .nk-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-panel); }
+/* (The bundle's hairline below is reset by ".nk-stat { border: 0 }" further down, so the reference renders show
+   no dividers; kept as it is to match them.) */
 .nk-stats > * + * { border-left: 1px solid var(--border-light); }
+/* App: label, value and note rows are shared along a line of cells, so a wrapped label keeps the values level. */
+.nk-stats > .nk-stat { grid-row: span 3; grid-template-rows: subgrid; }
+.nk-stats > .nk-stat > .nk-stat__label { align-self: end; }
 .nk-stat { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding: var(--space-4) var(--space-5); border: 0; background: transparent; color: inherit; text-align: left; }
 button.nk-stat { border-radius: 0; transition: background-color var(--duration-micro) ease; }
 button.nk-stat:hover { background: var(--bg-control-hover); }
@@ -432,8 +458,10 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 .nk-settings-group > .nk-panel { padding: 0 var(--space-5); }
 .nk-setting-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); align-items: center; gap: var(--space-2) var(--space-6); min-height: 72px; padding: var(--space-4) 0; border-bottom: 1px solid var(--border-light); }
 .nk-setting-row:last-child { border-bottom: 0; }
-.nk-setting-row strong { display: block; font-size: 15px; line-height: 22px; font-weight: 500; }
-.nk-setting-row p { max-width: 62ch; margin: 2px 0 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+/* App: scoped to the text column, so paragraphs and strong text inside the control (field hints and errors,
+   status lines) keep their own styles. */
+.nk-setting-row > :first-child strong { display: block; font-size: 15px; line-height: 22px; font-weight: 500; }
+.nk-setting-row > :first-child p { max-width: 62ch; margin: 2px 0 0; color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
 .nk-setting-row__control { display: flex; justify-content: flex-end; min-width: 0; }
 @container workspace (max-width: 640px) {
   .nk-setting-row:not(.has-switch) { grid-template-columns: minmax(0, 1fr); }
@@ -490,6 +518,8 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 .nk-events li.is-error > .nk-icon { color: var(--text-error); }
 .nk-events li > span { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .nk-events time { color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+/* App: rows of a list that fills a flush Panel keep the panel's inset. */
+.nk-panel--flush > .nk-events > li { padding-inline: var(--space-5); }
 
 /* ---------- EmptyState ---------- */
 .nk-empty { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-4) 0; }
@@ -517,7 +547,7 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 .nk-account__header { display: flex; align-items: center; gap: var(--space-3); }
 .nk-account__avatar { display: grid; width: 40px; height: 40px; flex: none; place-items: center; border-radius: var(--radius-md); background: var(--bg-brand); color: var(--text-accent); font-size: 17px; line-height: 24px; font-weight: 600; }
 .nk-account__who { flex: 1; min-width: 0; }
-.nk-account__who h3 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
+.nk-account__who :is(h2, h3, h4) { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
 .nk-account__who p { margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 .nk-account__facts { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
 .nk-account__body { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border-light); }
@@ -546,8 +576,7 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 }
 
 /* ---------- BrandMark (cat rig; reactions ported from nekodex.css) ---------- */
-/* App: --brand-ink bridges the app's CatHead (BrandMark.tsx), which strokes the face with it. */
-.nk-mark { --brand-ink: var(--mark-face); --mark-size: 32px; --neko-x: 0px; --neko-y: 0px; --neko-tilt: 0deg; display: inline-block; width: var(--mark-size); height: var(--mark-size); flex: none; color: var(--mark-body); user-select: none; }
+.nk-mark { --mark-size: 32px; --neko-x: 0px; --neko-y: 0px; --neko-tilt: 0deg; display: inline-block; width: var(--mark-size); height: var(--mark-size); flex: none; color: var(--mark-body); user-select: none; }
 .nk-mark > svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .neko-tracking { transform: rotate(var(--neko-tilt)); transform-origin: 32px 43px; transition: transform var(--duration-control) var(--ease-enter); }
 .neko-head { transform-origin: 32px 47px; }
@@ -651,7 +680,17 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 @media (prefers-reduced-motion: reduce) {
   .nk-root *, .nk-root *::before, .nk-root *::after, .nk-mark * { animation: none !important; transition: none !important; }
   .nk-mark .neko-tracking, .nk-mark .neko-face { transform: none; }
+  /* App: loading indicators must not freeze on a frame that reads as partial progress. They stay in place and
+     pulse slowly instead: the spinner keeps its ring, the indeterminate meter becomes a full-width striped track. */
+  .nk-root .nk-spinner { animation: nk-reduced-pulse 2.4s ease-in-out infinite !important; }
+  .nk-root .nk-meter.is-indeterminate .nk-meter__fill {
+    left: 0;
+    width: 100%;
+    background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--meter-fill) 55%, transparent) 0 6px, color-mix(in srgb, var(--meter-fill) 20%, transparent) 6px 12px);
+    animation: nk-reduced-pulse 2.4s ease-in-out infinite !important;
+  }
 }
+@keyframes nk-reduced-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 
 /* Hero art: the coding-cat raster is drawn on graphite, so the light theme shows the vector mark instead. */
 .nk-hero__art { position: relative; display: grid; place-items: center; height: 168px; border-radius: var(--radius-md); mix-blend-mode: lighten; background-repeat: no-repeat; background-position: 50% 58%; background-size: 175%; }
@@ -659,11 +698,3 @@ button.nk-stat:hover .nk-stat__label .nk-icon { color: var(--text-accent); }
 [data-theme="light"] .nk-hero__art { background-image: none !important; mix-blend-mode: normal; }
 [data-theme="light"] .nk-hero__art > .nk-mark { display: block; }
 .nk-hero__art:not([style*="background-image"]) > .nk-mark { display: block; }
-
-/* ---------- App integration ---------- */
-/* App: the system's body typography, applied to migrated pages (see the body rule at the top). */
-.nk-page { font-size: 15px; line-height: 22px; }
-
-/* App: legacy styles.css dims every disabled <button>; kit buttons that define their own disabled look
-   (or none) must not inherit that. */
-:is(.nk-icon-btn, .nk-conn-row, .nk-tabs > button, button.nk-stat, .nk-nav-item):disabled { opacity: 1; }

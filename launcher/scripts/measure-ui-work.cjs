@@ -35,7 +35,7 @@ async function measure() {
     const files = initialScripts.map(name => fs.readFileSync(path.resolve(__dirname, '../dist', '.' + name)));
     const evidence = { language, initialJavaScriptBytes: files.reduce((n, file) => n + file.length, 0),
       initialJavaScriptGzipBytes: files.reduce((n, file) => n + gzipSync(file).length, 0), initialScripts, screens: {} };
-    for (const [label, ready] of startupOnly ? [] : [['Settings', '.settings-list'], ['Activity', '.activity-filters']]) {
+    for (const [label, ready] of startupOnly ? [] : [['Settings', '.settings-page'], ['Activity', '.activity-filters']]) {
       await page.locator('.sidebar-item').filter({ hasText: label }).first().click();
       await page.locator(ready).first().waitFor();
       await page.waitForTimeout(200);

@@ -53,9 +53,8 @@ export function SetupSurface({
   const pickerReady = models === "available";
   const confirmPending = models === "picker-pending";
   const pendingContext = typeof snapshot.state.pendingBiggerContext === "boolean";
-  // The disclosures and setup rows are looked up by class: kit components do not forward refs.
-  const disclosures = useRef<HTMLDivElement>(null);
-  const setupSteps = useRef<HTMLDivElement>(null);
+  const troubleshooting = useRef<HTMLDetailsElement>(null);
+  const signInRow = useRef<HTMLDivElement>(null);
   const toolsVerified = currentToolProof(snapshot, operation);
   const nextStep = setupNextStep({ manual: manualInteraction, signedIn: browser?.authenticated === true,
     smokePassed: snapshot.smokePassed, installed: snapshot.state.coreSetupComplete === true,
@@ -122,14 +121,15 @@ export function SetupSurface({
     await api!.refreshAccountAuthentication(browser.accountId);
   });
   const showTroubleshooting = () => {
-    const troubleshooting = disclosures.current?.querySelector<HTMLDetailsElement>(".nk-connections__troubleshooting");
-    if (!troubleshooting) return;
-    troubleshooting.open = true;
-    troubleshooting.scrollIntoView({ block: "start" });
-    troubleshooting.querySelector<HTMLButtonElement>("button")?.focus();
+    const details = troubleshooting.current;
+    if (!details) return;
+    details.open = true;
+    details.scrollIntoView({ block: "start" });
+    // The routing check is the first control in the troubleshooting body.
+    details.querySelector<HTMLButtonElement>("button")?.focus();
   };
   const showAccountSignInChoices = () => {
-    const row = setupSteps.current?.querySelector<HTMLElement>(".nk-connections__sign-in");
+    const row = signInRow.current;
     row?.scrollIntoView({ block: "center" });
     row?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
   };
@@ -256,7 +256,7 @@ export function SetupSurface({
           <Notice title={copy.localToolsUnavailable} tone="warning">{copy.localToolsUnavailableBody}</Notice>
         ) : null}
 
-        <div className="nk-connections__steps" ref={setupSteps}>
+        <div className="nk-connections__steps">
           {!manualInteraction ? <>
             <SetupRow
               actions={<>
@@ -271,13 +271,13 @@ export function SetupSurface({
                     : browser?.status === "loading" ? copy.checkingSignIn : copy.stepAccount}
                 </Button>
               </>}
-              className="nk-connections__sign-in"
               complete={complete.account}
               current={currentRow === "account"}
               description={browser?.authenticated && browser.accountLabel
                 ? `${copy.signedIn}: ${browser.accountLabel}`
                 : copy.stepAccountBody}
               index={1}
+              ref={signInRow}
               title={copy.stepAccount}
             />
             <SetupRow
@@ -329,8 +329,8 @@ export function SetupSurface({
           />
         </div>
 
-        <div className="nk-connections__more" ref={disclosures}>
-          <Disclosure className="nk-connections__troubleshooting" title={copy.setupTroubleshooting}>
+        <div className="nk-connections__more">
+          <Disclosure ref={troubleshooting} title={copy.setupTroubleshooting}>
             <div className="nk-connections__stack">
             <RouteDiagnostics disabled={busy} language={snapshot.state.language ?? "en"}
               onActionError={cause => setError(messageOf(cause))}

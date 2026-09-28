@@ -29,8 +29,6 @@ import { ActionDot, BiggerContextRecommendation, COMPACT_SIDEBAR_QUERY, ErrorToa
 import { useUpdateControls } from "./useUpdateControls";
 import { useAppliedAppearance } from "./theme";
 
-import "./connections.css";
-import "./connection-recovery.css";
 import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, Language, LauncherLifecycle as LifecycleProjection, LauncherSnapshot, LauncherState, LogRecord, OperationState, ProModelVersion, Surface } from "./types";
 
 const ActivitySurface = deferredSurface(async () => ({ default: (await import('./ActivitySurface')).ActivitySurface }));

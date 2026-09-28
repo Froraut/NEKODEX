@@ -217,6 +217,10 @@ export function SettingsSurface({
   });
 
   const pendingContext = snapshot.state.pendingBiggerContext;
+  // Advanced context settings open while a context change is pending, and stay as the user leaves them afterwards.
+  const contextChangePending = typeof pendingContext === "boolean";
+  const [advancedOpen, setAdvancedOpen] = useState(contextChangePending);
+  useEffect(() => { if (contextChangePending) setAdvancedOpen(true); }, [contextChangePending]);
   const seconds = new Intl.NumberFormat(language, { style: "unit", unit: "second", unitDisplay: "short" });
   const sectionTitles: Record<SectionId, string> = {
     "settings-agent": settings.agent,
@@ -420,7 +424,8 @@ export function SettingsSurface({
           <header><h2>{settings.advanced}</h2></header>
           <Disclosure
             className="settings-disclosure"
-            defaultOpen={typeof pendingContext === "boolean" ? true : undefined}
+            open={advancedOpen}
+            onToggle={setAdvancedOpen}
             hint={[copy.compactionModel, copy.biggerContext].join(" · ")}
             title={copy.advancedContext}
           >
@@ -489,9 +494,7 @@ export function SettingsSurface({
                 tone={snapshot.state.contextChangeError ? "warning" : "info"}
                 title={snapshot.state.contextChangeApplying ? copy.contextApplying
                   : snapshot.state.contextChangeError ? copy.contextFailed : copy.contextWaiting}
-              >
-                {snapshot.state.contextChangeError ? <span className="settings-notice-detail">{snapshot.state.contextChangeError}</span> : null}
-                <span className="settings-notice-actions">
+                action={<>
                   <Button size="sm" disabled={localBusy || snapshot.state.contextChangeApplying}
                     onClick={() => void savePreference(() => api!.cancelContextChange())}>{copy.cancelContextChange}</Button>
                   {snapshot.state.contextChangeError ? (
@@ -499,7 +502,9 @@ export function SettingsSurface({
                       {copy.retryContextChange}
                     </Button>
                   ) : null}
-                </span>
+                </>}
+              >
+                {snapshot.state.contextChangeError || null}
               </Notice>
             ) : null}
           </Disclosure>
@@ -515,16 +520,12 @@ export function SettingsSurface({
                   : codexStatus === "catalog-error" ? copy.catalogUnavailable
                   : codexStatus === "catalog" ? copy.setupCatalogTitle
                   : codexStatus === "removed" ? copy.integrationRemoved : copy.codexSettingsSaved}
+                action={<Button size="sm" onClick={showModelSetup}>{copy.openModelSettings}</Button>}
               >
-                <span className="settings-notice-detail">
-                  {codexStatus === "picker" ? copy.setupConfirmBody
-                    : codexStatus === "catalog-error" ? copy.catalogFailureKeptInstall
-                    : codexStatus === "removed" ? copy.codexIntegrationRemovedBody
-                    : codexStatus === "manual-refresh" ? copy.codexManualRefreshBody : copy.setupCatalogBody}
-                </span>
-                <span className="settings-notice-actions">
-                  <Button size="sm" onClick={showModelSetup}>{copy.openModelSettings}</Button>
-                </span>
+                {codexStatus === "picker" ? copy.setupConfirmBody
+                  : codexStatus === "catalog-error" ? copy.catalogFailureKeptInstall
+                  : codexStatus === "removed" ? copy.codexIntegrationRemovedBody
+                  : codexStatus === "manual-refresh" ? copy.codexManualRefreshBody : copy.setupCatalogBody}
               </Notice>
             </section>
           ) : null}

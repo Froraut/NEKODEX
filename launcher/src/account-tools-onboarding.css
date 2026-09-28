@@ -1,18 +1,17 @@
 /* Browser surface: "Continue account setup" strip (AccountToolsHandoff). The per-account setup
-   on the Accounts surface is laid out by surfaces/accounts.css. */
-.account-tools-handoff p { margin: 8px 0; font-size: var(--text-xs); line-height: 1.6; color: var(--color-text-secondary); }
+   on the Accounts surface is laid out by surfaces/accounts.css. Semantic tokens only. */
 .account-tools-handoff {
   flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-background-control);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-control);
 }
-.account-tools-handoff strong { font-size: var(--text-sm); overflow-wrap: anywhere; }
-.account-tools-handoff p { margin-bottom: 0; }
-.account-tools-handoff > div { min-width: 0; flex: 1 1 14rem; }
-.account-tools-handoff button { flex-shrink: 0; }
+.account-tools-handoff > div { min-width: 0; flex: 1 1 14rem; line-height: 20px; }
+.account-tools-handoff strong { color: var(--text-primary); font-size: 14px; overflow-wrap: anywhere; }
+.account-tools-handoff p { margin: var(--space-2) 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.account-tools-handoff > .nk-btn { flex-shrink: 0; }

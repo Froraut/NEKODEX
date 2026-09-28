@@ -71,7 +71,7 @@ export function AccountProxySettings({ proxy, language, disabled, blockedReason,
   useEffect(() => { onStateChange?.(formState); }, [formState, onStateChange]);
   return <section className="accounts-controls__section" aria-labelledby={`${statusId}-title`}>
     <header className="accounts-controls__head">
-      <h4 id={`${statusId}-title`} className="nk-type-label">{copy.accountProxy}</h4>
+      <h3 id={`${statusId}-title`} className="nk-type-label">{copy.accountProxy}</h3>
       {formState ? <span className="accounts-hint is-attention nk-type-caption">{formState}</span> : null}
     </header>
     <p>{copy.accountProxyBody}</p>

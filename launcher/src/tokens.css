@@ -3,7 +3,7 @@
  * Compiled from the design system's tokens.json (version 2); do not edit values here without
  * changing the system. Dark is the default theme (:root) and applies to data-theme="dark"; Light applies
  * when <html data-theme="light">. Components use semantic tokens only; the palette exists so semantic
- * tokens can alias it. The "Legacy aliases" block at the end keeps not-yet-migrated stylesheets working.
+ * tokens can alias it.
  */
 
 /* ---------- Palette (theme independent) ---------- */
@@ -245,81 +245,3 @@
 .nk-type-caption { font-family: var(--font-ui); font-size: 13px; line-height: 18px; font-weight: 400; }
 .nk-type-eyebrow { font-family: var(--font-ui); font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; }
 .nk-type-code { font-family: var(--font-mono); font-size: 13px; line-height: 20px; font-weight: 400; }
-
-/* =====================================================================================================
- * Legacy aliases (6.1.5 names).
- * Stylesheets and inline styles that have not moved to the system yet still read these names. Each one
- * points at the semantic token that migration.md maps it to, so unmigrated CSS keeps its dark look and
- * follows the light theme. Delete an alias once nothing in launcher/src references it.
- * ===================================================================================================== */
-:root {
-  /* Surfaces */
-  --color-background-surface-under: var(--bg-under);
-  --color-background-surface: var(--bg-surface);
-  --color-background-sidebar: var(--bg-sidebar);
-  --color-background-elevated: var(--bg-elevated);
-  --color-background-brand: var(--bg-brand);
-  --color-background-control: var(--bg-control);
-  --color-background-control-hover: var(--bg-control-hover);
-  --color-background-control-active: var(--bg-control-active);
-  --color-background-panel: var(--bg-panel);
-  --color-background-panel-raised: var(--bg-panel-raised);
-  --color-background-button-secondary: var(--bg-control);
-  --color-background-button-secondary-hover: var(--bg-control-hover);
-  --color-background-status-success: var(--bg-success);
-  --color-background-status-warning: var(--bg-warning);
-  --color-background-status-error: var(--bg-error);
-
-  /* Text and icons */
-  --color-text-primary: var(--text-primary);
-  --color-text-secondary: var(--text-secondary);
-  --color-text-tertiary: var(--text-tertiary);
-  --color-text-disabled: var(--text-disabled);
-  --color-text-accent: var(--text-accent);
-  --color-text-success: var(--text-success);
-  --color-text-warning: var(--text-warning);
-  --color-text-error: var(--text-error);
-  --color-icon-primary: var(--icon-primary);
-  --color-icon-secondary: var(--icon-secondary);
-  --color-icon-tertiary: var(--icon-tertiary);
-
-  /* Lines and focus */
-  --color-border: var(--border);
-  --color-border-light: var(--border-light);
-  --color-border-heavy: var(--border-heavy);
-  --color-border-accent: var(--border-accent);
-  --color-border-focus: var(--focus-ring);
-
-  /* Brand */
-  --brand-accent: var(--accent);
-  --brand-ink: var(--on-accent);
-
-  /* Old palette names, used as status and accent colours */
-  --blue-100: var(--text-accent);
-  --blue-300: var(--lavender-300); /* no semantic twin in Dark; Light maps it to accent below */
-  --green-300: var(--text-success);
-  --orange-300: var(--text-warning);
-  --red-300: var(--text-error);
-
-  /* Type sizes: the system has type styles (.nk-type-*) instead of size variables; values unchanged. */
-  --text-xs: 13px; /* caption */
-  --text-sm: 14px; /* small / label */
-  --text-base: 15px; /* body */
-  --text-lg: 17px; /* heading */
-  --text-title: 30px; /* page-title */
-
-  /* Sizes and radii */
-  --height-titlebar: var(--size-titlebar);
-  --height-row: var(--size-row);
-  --height-control: var(--size-control);
-  --radius-round: var(--radius-pill);
-  /* Kept at their 6.1.5 values so current layouts do not shift; the system values are
-     --size-sidebar (232px), --size-content (960px) and --size-content-narrow (760px). */
-  --sidebar-width: 220px;
-  --content-width: 900px;
-  --settings-width: 790px;
-}
-
-:root[data-theme="light"] {
-  --blue-300: var(--accent);
-}

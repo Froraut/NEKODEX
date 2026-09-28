@@ -73,12 +73,11 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
   const { snapshot: state, failed: loadFailed, retry: retryPool, applyReceipt } = useAccountPoolSnapshot({ api });
   const [label, setLabel] = useState("");
   const [createdAccountId, setCreatedAccountId] = useState<string | null>(null);
-  const accountList = useRef<HTMLDivElement>(null);
+  // The new account's card hands over its name heading, which takes focus once the card has rendered.
+  const createdHeading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (!createdAccountId || !state) return;
-    // Cards render in snapshot order; the kit card's h3 is the account name.
-    const index = state.accounts.findIndex(account => account.id === createdAccountId);
-    const heading = index < 0 ? null : accountList.current?.children[index]?.querySelector<HTMLElement>("h3");
+    const heading = createdHeading.current;
     if (!heading) return;
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
@@ -435,7 +434,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           pending={refreshAllBusy ? state.accounts.length : 0}
           rows={(quotaPortfolio?.rows ?? []).map(row => ({ status: row.status, snapshot: row.snapshot }))} /> : null}
       </div>
-      <div className="accounts-list" ref={accountList}>
+      <div className="accounts-list">
         {state.accounts.map((account, accountIndex) => {
           const selected = account.id === state.selectedId;
           const credentialLabel = account.authenticated ? copy.replaceCredentials : copy.accountsSignIn;
@@ -509,7 +508,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           if (pacing && (pacing.held || !account.safety)) {
             facts.push({ label: `${pacing.label}: ${pacing.value}`, tone: pacing.held ? "warning" : undefined, dot: pacing.held ? "busy" : "ready" });
           }
-          return <AccountCard key={account.id} className="accounts-card" name={account.label}
+          return <AccountCard key={account.id} className="accounts-card" name={account.label} headingLevel={2}
+            headingRef={account.id === createdAccountId ? createdHeading : undefined}
             email={account.accountLabel || (account.authenticated ? copy.accountsSignedIn : undefined)}
             initial={account.label.trim().slice(0, 1).toLocaleUpperCase()}
             selected={selected} selectedLabel={copy.accountsCurrent} facts={facts}

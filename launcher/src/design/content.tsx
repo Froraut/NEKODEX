@@ -1,4 +1,4 @@
-import { createElement, isValidElement, type JSX, type ReactElement, type ReactNode } from "react";
+import { createElement, isValidElement, useState, type DetailsHTMLAttributes, type HTMLAttributes, type JSX, type ReactElement, type ReactNode, type Ref } from "react";
 import { Switch } from "./controls";
 import { Mark } from "./Mark";
 import { NkIcon, cx, type IconName, type Status, type Tone } from "./shared";
@@ -63,10 +63,12 @@ export function Hero({ title, eyebrow, actions, illustration = codingCatIllustra
   );
 }
 
-export interface PanelProps {
+export interface PanelProps extends Omit<HTMLAttributes<HTMLElement>, "title" | "children"> {
   title?: ReactNode;
-  /** id for the h2; also sets aria-labelledby on the panel. */
+  /** id for the title heading; also sets aria-labelledby on the panel. */
   titleId?: string;
+  /** Level of the title heading (default 2), e.g. 3 for panels under a section's h2. */
+  headingLevel?: 2 | 3 | 4;
   actions?: ReactNode;
   /** Shown in the header (only when title or actions are set). */
   description?: ReactNode;
@@ -76,68 +78,89 @@ export interface PanelProps {
   as?: keyof JSX.IntrinsicElements;
   children?: ReactNode;
   className?: string;
+  ref?: Ref<HTMLElement>;
 }
 
-export function Panel({ title, titleId, actions, description, variant, padding, as = "section", children, className }: PanelProps) {
+/** Other DOM props (data-*, aria-*, id, role) go on the panel element. */
+export function Panel({ title, titleId, headingLevel = 2, actions, description, variant, padding, as = "section", children, className, ref, ...rest }: PanelProps) {
   const header = title || actions ? (
     <header className="nk-panel__header">
-      {title ? <h2 id={titleId}>{title}</h2> : null}
+      {title ? createElement(`h${headingLevel}`, { id: titleId }, title) : null}
       {actions || null}
       {description ? <p>{description}</p> : null}
     </header>
   ) : null;
   return createElement(as, {
     "aria-labelledby": titleId,
+    ...rest,
     className: cx("nk-panel", variant && variant !== "default" && `nk-panel--${variant}`, padding && `nk-panel--${padding}`, className),
+    ref,
   }, header, children);
 }
 
 /* ---------------- Metrics ---------------- */
 
-export interface StatProps {
+export interface StatProps extends Omit<HTMLAttributes<HTMLElement>, "onClick" | "children"> {
   label: ReactNode;
-  /** Numbers render as display numerals; non-numeric strings as a title-sized word. */
+  /** Numbers and formatted figures render as display numerals; words ("Manual") at the title size. */
   value: number | string;
+  /**
+   * Display numerals or the word style. Default: numbers, and strings that start with a digit, so locale-formatted
+   * figures ("1,234", "81,5 %", "4.1 sec", "2 h") keep the numerals.
+   */
+  numeric?: boolean;
   note?: ReactNode;
   /** Makes the stat a button with a chevron. */
   onClick?: () => void;
   className?: string;
 }
 
-export function Stat({ label, value, note, onClick, className }: StatProps) {
+const startsWithDigit = /^[+\-\u2212]?\p{Nd}/u;
+
+/** Other DOM props (title, data-*, aria-*, id) go on the stat element (the button when interactive). */
+export function Stat({ label, value, numeric, note, onClick, className, ...rest }: StatProps) {
   const interactive = typeof onClick === "function";
-  const isText = typeof value === "string" && Number.isNaN(Number(value));
+  const isNumeric = numeric ?? (typeof value === "number" || startsWithDigit.test(value.trim()));
   const content = (
     <>
       <span className="nk-stat__label">{label}{interactive ? <NkIcon name="chevron" /> : null}</span>
-      <strong className={cx("nk-stat__value", isText && "is-text")}>{value}</strong>
+      <strong className={cx("nk-stat__value", !isNumeric && "is-text")}>{value}</strong>
       {note ? <span className="nk-stat__note">{note}</span> : null}
     </>
   );
   return interactive
-    ? <button className={cx("nk-stat", className)} onClick={onClick} type="button">{content}</button>
-    : <div className={cx("nk-stat", className)}>{content}</div>;
+    ? <button {...rest} className={cx("nk-stat", className)} onClick={onClick} type="button">{content}</button>
+    : <div {...rest} className={cx("nk-stat", className)}>{content}</div>;
 }
 
-export function StatGroup({ label, children, className }: { label?: string; children?: ReactNode; className?: string }) {
-  return <div aria-label={label} className={cx("nk-stats", className)} role="group">{children}</div>;
+export interface StatGroupProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
+  /** Accessible name of the group. */
+  label?: string;
+  children?: ReactNode;
+  className?: string;
+}
+
+/** Stat cells that wrap (auto-fit, at least 200px); values line up along a line of cells even when a label wraps. */
+export function StatGroup({ label, children, className, ...rest }: StatGroupProps) {
+  return <div aria-label={label} role="group" {...rest} className={cx("nk-stats", className)}>{children}</div>;
 }
 
 /* ---------------- Settings and setup ---------------- */
 
-export interface SettingRowProps {
+export interface SettingRowProps extends Omit<HTMLAttributes<HTMLDivElement>, "title" | "children"> {
   title: ReactNode;
   titleId?: string;
   description?: ReactNode;
   /** Right-aligned control; a kit <Switch> keeps its place when the row stacks under 640px. */
   control?: ReactElement;
   className?: string;
+  ref?: Ref<HTMLDivElement>;
 }
 
-export function SettingRow({ title, titleId, description, control, className }: SettingRowProps) {
+export function SettingRow({ title, titleId, description, control, className, ref, ...rest }: SettingRowProps) {
   const isSwitch = isValidElement(control) && control.type === Switch;
   return (
-    <div className={cx("nk-setting-row", isSwitch && "has-switch", className)}>
+    <div {...rest} className={cx("nk-setting-row", isSwitch && "has-switch", className)} ref={ref}>
       <div>
         <strong id={titleId}>{title}</strong>
         {description ? <p>{description}</p> : null}
@@ -160,7 +183,7 @@ export function SettingsGroup({ title, description, id, children, className }: {
   );
 }
 
-export interface SetupRowProps {
+export interface SetupRowProps extends Omit<HTMLAttributes<HTMLDivElement>, "title" | "children"> {
   index: number;
   title: ReactNode;
   description?: ReactNode;
@@ -171,11 +194,12 @@ export interface SetupRowProps {
   /** Inline after the title, e.g. <Badge tone="outline">Optional</Badge>. */
   tag?: ReactNode;
   className?: string;
+  ref?: Ref<HTMLDivElement>;
 }
 
-export function SetupRow({ index, title, description, actions, complete, current, tag, className }: SetupRowProps) {
+export function SetupRow({ index, title, description, actions, complete, current, tag, className, ref, ...rest }: SetupRowProps) {
   return (
-    <div className={cx("nk-setup-row", complete && "is-complete", current && "is-current", className)}>
+    <div {...rest} className={cx("nk-setup-row", complete && "is-complete", current && "is-current", className)} ref={ref}>
       <span className="nk-setup-row__index">{complete ? <NkIcon name="check" /> : index}</span>
       <div>
         <strong>{title}{tag || null}</strong>
@@ -243,7 +267,7 @@ export function EventList({ items, empty, className }: { items: EventItem[]; emp
   );
 }
 
-export interface EmptyStateProps {
+export interface EmptyStateProps extends Omit<HTMLAttributes<HTMLDivElement>, "title" | "children"> {
   title: ReactNode;
   /** Leading icon (default "logs"); ignored when mark is set. */
   icon?: IconName;
@@ -253,11 +277,12 @@ export interface EmptyStateProps {
   centered?: boolean;
   children?: ReactNode;
   className?: string;
+  ref?: Ref<HTMLDivElement>;
 }
 
-export function EmptyState({ title, icon, mark, action, centered, children, className }: EmptyStateProps) {
+export function EmptyState({ title, icon, mark, action, centered, children, className, ref, ...rest }: EmptyStateProps) {
   return (
-    <div className={cx("nk-empty", centered && "nk-empty--centered", className)}>
+    <div {...rest} className={cx("nk-empty", centered && "nk-empty--centered", className)} ref={ref}>
       {mark ? <Mark label={null} size={32} /> : <NkIcon name={icon || "logs"} />}
       <div>
         <strong>{title}</strong>
@@ -268,11 +293,42 @@ export function EmptyState({ title, icon, mark, action, centered, children, clas
   );
 }
 
+export interface DisclosureProps extends Omit<DetailsHTMLAttributes<HTMLDetailsElement>, "title" | "open" | "onToggle" | "children"> {
+  title: ReactNode;
+  hint?: ReactNode;
+  /** Initial state when uncontrolled; later changes are ignored (like defaultValue). */
+  defaultOpen?: boolean;
+  /** Controlled state: the summary asks onToggle(!open) and only this prop opens or closes it. */
+  open?: boolean;
+  /** The user opened or closed it (called in both modes, with the new state). */
+  onToggle?: (open: boolean) => void;
+  children?: ReactNode;
+  className?: string;
+  /** The <details> element. */
+  ref?: Ref<HTMLDetailsElement>;
+  /** The <summary> (e.g. to move focus to it). */
+  summaryRef?: Ref<HTMLElement>;
+}
+
 /** Native <details> panel for secondary content (advanced settings, troubleshooting). */
-export function Disclosure({ title, hint, defaultOpen, children, className }: { title: ReactNode; hint?: ReactNode; defaultOpen?: boolean; children?: ReactNode; className?: string }) {
+export function Disclosure({ title, hint, defaultOpen, open, onToggle, children, className, ref, summaryRef, ...rest }: DisclosureProps) {
+  const controlled = open !== undefined;
+  const [initialOpen] = useState(Boolean(defaultOpen));
   return (
-    <details className={cx("nk-disclosure", className)} open={defaultOpen}>
-      <summary><span>{title}</span>{hint ? <small>{hint}</small> : null}<NkIcon name="chevron" /></summary>
+    <details
+      {...rest}
+      className={cx("nk-disclosure", className)}
+      // Also reports toggles the browser makes itself (find in page); in controlled mode only real changes.
+      onToggle={event => { const next = event.currentTarget.open; if (!controlled || next !== open) onToggle?.(next); }}
+      open={controlled ? open : initialOpen}
+      ref={ref}
+    >
+      <summary
+        onClick={controlled ? event => { event.preventDefault(); onToggle?.(!open); } : undefined}
+        ref={summaryRef}
+      >
+        <span>{title}</span>{hint ? <small>{hint}</small> : null}<NkIcon name="chevron" />
+      </summary>
       <div className="nk-disclosure__body">{children}</div>
     </details>
   );
@@ -280,31 +336,37 @@ export function Disclosure({ title, hint, defaultOpen, children, className }: { 
 
 /* ---------------- Accounts ---------------- */
 
-export interface AccountCardProps {
+export interface AccountCardProps extends Omit<HTMLAttributes<HTMLElement>, "children"> {
   name: string;
   email?: string;
   /** Avatar letter (default: first letter of name). */
   initial?: string;
   selected?: boolean;
-  /** Text of the Selected badge (pass localized copy; defaults to "Selected"). */
-  selectedLabel?: string;
+  /** Text of the Selected badge, shown when selected (localized copy). */
+  selectedLabel: string;
   facts?: Array<{ label: ReactNode; tone?: Tone; dot?: Status }>;
   actions?: ReactNode;
   children?: ReactNode;
   className?: string;
+  /** Level of the name heading (default 3). */
+  headingLevel?: 2 | 3 | 4;
+  /** The name heading (e.g. to focus a newly added account). */
+  headingRef?: Ref<HTMLHeadingElement>;
+  ref?: Ref<HTMLElement>;
 }
 
-export function AccountCard({ name, email, initial, selected, selectedLabel, facts = [], actions, children, className }: AccountCardProps) {
+/** Other DOM props (data-*, aria-*, id) go on the article. */
+export function AccountCard({ name, email, initial, selected, selectedLabel, facts = [], actions, children, className, headingLevel = 3, headingRef, ref, ...rest }: AccountCardProps) {
   const letter = initial || (name ? String(name).trim().charAt(0).toUpperCase() : "?");
   return (
-    <article aria-label={name} className={cx("nk-account", selected && "is-selected", className)}>
+    <article aria-label={name} {...rest} className={cx("nk-account", selected && "is-selected", className)} ref={ref}>
       <header className="nk-account__header">
         <span aria-hidden="true" className="nk-account__avatar">{letter}</span>
         <div className="nk-account__who">
-          <h3>{name}</h3>
+          {createElement(`h${headingLevel}`, { ref: headingRef }, name)}
           {email ? <p>{email}</p> : null}
         </div>
-        {selected ? <Badge tone="accent">{selectedLabel || "Selected"}</Badge> : null}
+        {selected ? <Badge tone="accent">{selectedLabel}</Badge> : null}
       </header>
       {facts.length ? (
         <div className="nk-account__facts">

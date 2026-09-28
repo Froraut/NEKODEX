@@ -10,12 +10,13 @@ export {
 } from "./controls";
 export {
   Badge, Notice, PhaseSteps, ProgressMeter, StateDot,
-  type BadgeProps, type NoticeProps, type PhaseStep, type ProgressMeterProps,
+  type BadgeProps, type NoticeProps, type PhaseStep, type PhaseStepsProps, type ProgressMeterProps,
 } from "./status";
 export { Dialog, Toast, type DialogProps, type ToastProps } from "./overlays";
+export type { FocusRestoreTarget } from "../modal-focus";
 export {
   AccountCard, ConnectionRow, Disclosure, EmptyState, EventList, Hero, Page, Panel, SettingRow, SettingsGroup, SetupRow,
   Stat, StatGroup, SurfaceHeader, codingCatIllustration,
-  type AccountCardProps, type ConnectionRowProps, type EmptyStateProps, type EventItem, type HeroProps, type PanelProps,
-  type SetupRowProps, type SettingRowProps, type StatProps, type SurfaceHeaderProps,
+  type AccountCardProps, type ConnectionRowProps, type DisclosureProps, type EmptyStateProps, type EventItem, type HeroProps,
+  type PanelProps, type SetupRowProps, type SettingRowProps, type StatGroupProps, type StatProps, type SurfaceHeaderProps,
 } from "./content";

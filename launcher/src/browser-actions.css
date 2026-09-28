@@ -1,2 +1,0 @@
-/* The Browser surface's styles moved to surfaces/browser.css (imported by BrowserSurface.tsx).
-   This file stays only because main.tsx still imports it; delete both in the stylesheet cleanup. */

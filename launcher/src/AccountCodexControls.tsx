@@ -62,7 +62,7 @@ export function AccountCodexAllowance({
   const updatedAt = reported ? quota.fetchedAt ?? quota.checkedAt ?? null : null;
   return <section className="accounts-allowance" aria-labelledby={ids.quotaTitle}>
     <header className="accounts-allowance__header">
-      <h4 id={ids.quotaTitle} className="nk-type-label">{copy.quotaTitle}</h4>
+      <h3 id={ids.quotaTitle} className="nk-type-label">{copy.quotaTitle}</h3>
       {updatedAt ? <p className="accounts-caption nk-type-caption">{copy.quotaUpdated.replace("{time}", formatDateTime(updatedAt, language, copy.quotaUnknown))}</p> : null}
       <Button size="sm" icon="reload"
         busy={quotaBusy}
@@ -116,9 +116,10 @@ export function AccountCodexLogin({
   const copiedTimer = useRef<number | undefined>(undefined);
   const ids = accountCodexIds(idPrefix);
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
-  // A sign-in flow opens the disclosure once; it then stays under the user's control.
-  const [pinnedOpen, setPinnedOpen] = useState(Boolean(login));
-  useEffect(() => { if (login) setPinnedOpen(true); }, [login]);
+  // A sign-in flow opens the disclosure when it starts; otherwise it stays under the user's control.
+  const hasLogin = Boolean(login);
+  const [open, setOpen] = useState(hasLogin);
+  useEffect(() => { if (hasLogin) setOpen(true); }, [hasLogin]);
 
   const shared = sharedReason(login, quotaDisabledReason, loginDisabledReason);
   const flowRunning = Boolean(login?.active || login?.settling);
@@ -131,7 +132,7 @@ export function AccountCodexLogin({
     copiedTimer.current = window.setTimeout(() => setCopied(false), 2_000);
   };
 
-  return <Disclosure className="accounts-codex-login" title={copy.loginTitle} defaultOpen={pinnedOpen}>
+  return <Disclosure className="accounts-codex-login" title={copy.loginTitle} open={open} onToggle={setOpen}>
     <div className="accounts-disclosure">
     <p>{copy.loginBody}</p>
     {loginDisabledReason && !flowRunning && !shared
@@ -239,7 +240,7 @@ function QuotaBucketView({ bucket, copy, fallbackName, language }: {
   const availability = quotaAvailability(bucket);
   return <article className="accounts-bucket">
     <header className="accounts-bucket__head">
-      <h5 className="nk-type-label">{name}</h5>
+      <h4 className="nk-type-label">{name}</h4>
       <Badge {...bucketTone[availability]}>{accountAvailabilityCopy(language)[availability]}</Badge>
     </header>
     <div className="accounts-bucket__meters">
@@ -262,11 +263,8 @@ function QuotaWindowMeter({ copy, label, language, value }: {
   const note = [duration, reset].filter(Boolean).join(" · ") || undefined;
   const remaining = value.remainingPercent;
   if (remaining === null) {
-    // Missing values are not zero: the empty track is decoration, the words carry the state.
-    return <div className="accounts-meter is-unreported">
-      <div aria-hidden="true"><ProgressMeter label={label} valueLabel={copy.quotaUnknown} value={0} note={note} /></div>
-      <span className="nk-visually-hidden">{`${label}: ${copy.quotaUnknown}${note ? `. ${note}` : ""}`}</span>
-    </div>;
+    // Missing values are not zero: the kit shows the words and an empty, decorative track (no progressbar).
+    return <ProgressMeter className="accounts-meter is-unreported" label={label} unreported={copy.quotaUnknown} note={note} />;
   }
   const tone = remaining <= 0 ? "error" : remaining < 25 ? "warning" : "success";
   return <ProgressMeter className="accounts-meter" label={label}
