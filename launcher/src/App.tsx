@@ -715,7 +715,12 @@ function LauncherShell({
     const dropped = () => !document.activeElement || document.activeElement === document.body;
     if (fromDrawer || !region || !dropped()) return;
     let observer: MutationObserver | null = null;
+    // A page can replace the heading it first rendered once its state settles (Browser swaps the idle h1 for its own
+    // when the ChatGPT view appears after "Sign in to ChatGPT"): while the handed-off element is removed with focus,
+    // focus follows to the new heading. Once anything else holds focus, the hand-off is over.
+    let handed: HTMLElement | null = null;
     const settle = () => {
+      if (handed?.isConnected) return document.activeElement !== handed;
       if (!dropped()) return true;
       const heading = region.querySelector<HTMLElement>(".nk-shell__scroll h1");
       const loading = region.querySelector(".nk-shell__scroll .surface-empty[role='status']");
@@ -723,7 +728,8 @@ function LauncherShell({
       const target = heading ?? region;
       if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
       target.focus({ preventScroll: true });
-      return true;
+      handed = target;
+      return false;
     };
     if (settle()) return;
     observer = new MutationObserver(() => { if (settle()) observer?.disconnect(); });

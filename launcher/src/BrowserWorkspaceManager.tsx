@@ -1,6 +1,6 @@
 import { useFeatureAction } from "./useFeatureAction";
 import { useId, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
-import { Button, Icon, IconButton, Notice, StateDot } from "./design";
+import { Button, Icon, IconButton, Notice, StateDot, useFocusSafeDisabled } from "./design";
 import type { BrowserWorkspaceDirectorySnapshot, BrowserWorkspaceItem, Language } from "./types";
 import { browserWindowCopy } from "./browser-window-copy";
 import { stripIpcErrorPrefix } from "./ipc-error";
@@ -27,6 +27,18 @@ function locationLabel(item: BrowserWorkspaceItem) {
   } catch {
     return "ChatGPT";
   }
+}
+
+/**
+ * A row's "bring this window to the front" button. Activating it makes the whole directory busy; a native disabled
+ * attribute on the focused button would drop keyboard focus to <body>, so, like the kit's controls, it stays
+ * focusable (aria-disabled, activation ignored) while it has focus and is disabled once focus leaves.
+ */
+function ItemButton({ disabled, onActivate, children }: { disabled: boolean; onActivate(): void; children: ReactNode }) {
+  const guard = useFocusSafeDisabled<HTMLButtonElement>(disabled);
+  return <button type="button" className="browser-windows__item" aria-disabled={guard.soft ? "true" : undefined}
+    disabled={guard.disabled} onFocus={guard.onFocus} onBlur={guard.onBlur}
+    onClick={() => { if (!guard.soft) onActivate(); }}>{children}</button>;
 }
 
 /**
@@ -154,15 +166,15 @@ export function BrowserWorkspaceManager({
 
       {account.items.length === 0 ? <p className="browser-windows__note">{copy.empty}</p> : <ul className="browser-windows__list">
         {account.items.map(item => <li className={item.active ? "is-active" : undefined} key={item.id}>
-          <button type="button" className="browser-windows__item" disabled={busy || item.state !== "open"}
-            onClick={() => void run(`focus-${item.id}`, () => onFocus(account.accountId, item.id))}>
+          <ItemButton disabled={busy || item.state !== "open"}
+            onActivate={() => void run(`focus-${item.id}`, () => onFocus(account.accountId, item.id))}>
             <span className="browser-windows__item-title" title={item.title || locationLabel(item)}>{item.title || locationLabel(item)}</span>
             <span className="browser-windows__item-state">
               <StateDot state={item.state === "open" ? "ready" : "idle"} />
               {item.state === "open" ? copy.current : item.needsOriginalAccount
                 ? copy.needsOriginalAccount : item.temporary ? copy.temporary : copy.saved}
             </span>
-          </button>
+          </ItemButton>
           <IconButton icon="close" disabled={busy}
             label={`${item.state === "saved" ? copy.forget : copy.close}: ${item.title || locationLabel(item)}`}
             title={item.state === "saved" ? copy.forget : copy.close}
