@@ -30,6 +30,24 @@ test("an out-of-page check that Cloudflare challenges is recognised, other refus
   expect(isCloudflareChallengedVerification(refused)).toBe(false);
 });
 
+test("rejected captures report a bounded reason without retaining session secrets and still clean up", async () => {
+  for (const [payload, reason] of [
+    [{ accessToken: 'private-fixture-value' }, 'missing-user'],
+    [{ user: { id: 'fixture-user' }, expires: '2000-01-01T00:00:00Z', accessToken: 'private-fixture-value' }, 'expired-session'],
+  ] as const) {
+    const cleanup: string[] = [];
+    const api = { fromPartition: () => ({ cookies: { set: async () => {} },
+      fetch: async () => Response.json(payload),
+      clearStorageData: async () => { cleanup.push('storage'); },
+      closeAllConnections: async () => { cleanup.push('connections'); },
+    }) };
+    const error = await verifyCapturedAccount(api, capture()).catch((value: unknown) => value);
+    expect(error).toMatchObject({ code: 'chrome-account-unverified', verificationReason: reason, httpStatus: 200, authCookieCount: 1 });
+    expect(JSON.stringify(error)).not.toContain('private-fixture-value');
+    expect(cleanup).toEqual(['storage', 'connections']);
+  }
+});
+
 test("a deferred capture commits only the identity the installed page reported and confirmed", async () => {
   const committed: unknown[] = [];
   const confirmed: string[] = [];

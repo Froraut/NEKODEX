@@ -4,7 +4,8 @@ const PICKER_CHANNEL = 'nekodex:chrome-profile-picker';
 // bg-surface of each launcher theme; the page reads the same theme from its query.
 const PICKER_BACKGROUND = Object.freeze({ dark: '#1b1b24', light: '#f8f7fc' });
 
-function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId = null, language = 'en', theme = 'dark', signal, workArea }) {
+function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId = null, confirmedId = selectedId,
+  lastAttemptId = null, language = 'en', theme = 'dark', signal, workArea }) {
   if (typeof BrowserWindow !== 'function') throw new Error('Chrome profile picker window is unavailable');
   if (!Array.isArray(profiles) || profiles.some(profile => !profile || typeof profile.id !== 'string')) {
     throw new Error('Chrome profile picker received an invalid profile list');
@@ -46,7 +47,7 @@ function showChromeProfilePicker({ BrowserWindow, parent, profiles, selectedId =
     picker.webContents.on('ipc-message', (_event, channel, message) => {
       if (channel !== PICKER_CHANNEL || !message || typeof message !== 'object' || Array.isArray(message)) return;
       if (message.type === 'ready') {
-        picker.webContents.send(PICKER_CHANNEL, { type: 'profiles', language, selectedId,
+        picker.webContents.send(PICKER_CHANNEL, { type: 'profiles', language, selectedId, confirmedId, lastAttemptId,
           profiles: profiles.map(({ id, name, googleEmail }) => ({ id, name, googleEmail })) });
         return;
       }

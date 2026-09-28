@@ -6,6 +6,7 @@
 // benefits-repair-success, benefits-repair-failure, browser-ui-signed-out, browser-ui-ready, browser-ui-error,
 // browser-ui-home-loading, browser-ui-manual (a Manual mode turn waiting for the user to send its prompt),
 // picker-refresh (the Web model list changed: restart Codex, then confirm its picker again).
+// passkey-retry-pending (Retry waits for a host operation; Cancel must still settle that operation).
 // Account forms: accounts-ui-ready, accounts-ui-error (first add/save attempt fails).
 // benefits-portfolio-mixed also has launcher log events (Overview "Recent events", Activity), recorded
 // tasks with their browser tabs and a waiting queue (Task center); benefits-insights has the same events and
@@ -78,8 +79,8 @@ function installMockLauncher() {
   if (scenario === "setup-fresh" || scenario === "diagnostics-redirect") {
     Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: null, visible: false });
   }
-  if (scenario === "passkey-failed") {
-    Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: "passkey", visible: false,
+  if (scenario === "passkey-failed" || scenario === "passkey-retry-pending") {
+    Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: null, visible: false,
       passkeyLogin: { phase: "failed", startedAt: new Date().toISOString(), deadlineAt: new Date().toISOString(),
         active: false, canImport: false, canReveal: false, canCancel: false,
         error: "passkey-verification-failed", revealError: null } });
@@ -110,6 +111,7 @@ function installMockLauncher() {
       status: "idle", loading: false, active: true, closable: true, interactionMode: "automatic" }];
   }
   let operation = scenario === "passkey" ? { name: "passkey-login", status: "running", message: "Waiting in Chrome" } : null;
+  let pendingPasskeyFinish = null;
   if (scenario === "existing-chrome-failed") {
     Object.assign(browser, { navigationLocked: false, loginInProgress: false, loginKind: null, visible: false,
       existingChromeLogin: { phase: "failed", startedAt: new Date().toISOString(), deadlineAt: new Date().toISOString(),
@@ -625,6 +627,14 @@ function installMockLauncher() {
       browser.loginKind = "passkey";
       browser.passkeyLogin = { phase: "waiting", active: true, canImport: true, canReveal: true, canCancel: true,
         startedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 180000).toISOString(), error: null };
+      if (scenario === "passkey-retry-pending") {
+        Object.assign(browser, { loginInProgress: true, navigationLocked: true });
+        Object.assign(browser.passkeyLogin, { phase: "importing", chromePhase: "waiting-for-chrome",
+          chromeProfileLabel: "Selected profile · selected@example.test", canImport: false, canReveal: false });
+        operation = { name: "passkey-login", status: "running", message: "Waiting in Chrome" };
+        emit("browser", { ...browser }); emit("operation", operation);
+        return await new Promise(resolve => { pendingPasskeyFinish = resolve; });
+      }
       operation = { name: "passkey-login", status: "running", message: "Waiting in Chrome" };
       emit("browser", { ...browser }); emit("operation", operation); return { ...browser };
     },
@@ -641,11 +651,13 @@ function installMockLauncher() {
     revealPasskeyLogin: async () => { calls.push(["passkey-reveal"]); return true; },
     cancelPasskeyLogin: async () => {
       calls.push(["passkey-cancel"]);
-      if (browserUiScenario) {
+      if (browserUiScenario || scenario === "passkey-retry-pending") {
         Object.assign(browser, { loginKind: null, passkeyLogin: { ...browser.passkeyLogin, phase: "cancelled",
           active: false, canImport: false, canCancel: false, canReveal: false } });
         operation = { name: "passkey-login", status: "completed", message: "Fixture sign-in flow settled" };
+        browser.loginInProgress = false; browser.navigationLocked = false;
         emit("browser", { ...browser }); emit("operation", operation);
+        pendingPasskeyFinish?.({ ...browser }); pendingPasskeyFinish = null;
       }
       return { ...browser };
     },
