@@ -1,6 +1,7 @@
 {
   "name": "codex-chatgpt-web",
-  "version": "6.1.11-nekodex.1",
+  "version": "6.1.12-nekodex.1",
+  "publishedReleaseVersion": "6.1.11-nekodex.1",
   "private": true,
   "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
@@ -34,6 +35,8 @@
     "typecheck": "bun x --no-install --bun tsc --noEmit",
     "architecture:check": "bun run scripts/architecture-map.ts --check",
     "architecture:update": "bun run scripts/architecture-map.ts --write",
+    "connector-abi:check": "bun run scripts/connector-abi.ts --check",
+    "connector-abi:write": "bun run scripts/connector-abi.ts --write",
     "licenses": "bun run scripts/generate-third-party-notices.ts --include-launcher",
     "clean": "bun run scripts/clean.ts",
     "build": "bun run scripts/build-runtime-bundle.ts",

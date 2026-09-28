@@ -1,0 +1,483 @@
+{
+  "instructions": null,
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Invoke the outer Codex apply_patch tool, producing a native file-change item in the Codex task.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "patch": {
+            "maxLength": 5000000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_token",
+          "patch"
+        ],
+        "type": "object"
+      },
+      "name": "codex_apply_patch",
+      "outputSchema": null,
+      "title": "Apply a native Codex patch"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Invoke the command tool advertised by the current outer Codex harness. A long-running command returns its native session_id.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "cmd": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "justification": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_output_tokens": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "prefix_rule": {
+            "items": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "sandbox_permissions": {
+            "enum": [
+              "use_default",
+              "require_escalated"
+            ],
+            "type": "string"
+          },
+          "tty": {
+            "type": "boolean"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "workdir": {
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "yield_time_ms": {
+            "maximum": 30000,
+            "minimum": 250,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "turn_token",
+          "cmd"
+        ],
+        "type": "object"
+      },
+      "name": "codex_exec",
+      "outputSchema": null,
+      "title": "Run a native Codex command"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Invoke the outer Codex read_thread tool for a referenced task. This action is read-only and cannot continue, archive, or otherwise modify the task.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "cursor": {
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "hostId": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "includeOutputs": {
+            "type": "boolean"
+          },
+          "maxOutputCharsPerItem": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "threadId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "turnLimit": {
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_token",
+          "threadId"
+        ],
+        "type": "object"
+      },
+      "name": "codex_read_thread",
+      "outputSchema": null,
+      "title": "Read a referenced Codex task"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle. A pending context-compaction request can also provide the reserved codex.control.compaction_handoff operation, which is not listed by inventory. Use only that request's issued control token and arguments {handoff_id, summary}. This operation submits the conversation summary to the pending Codex task; it does not execute commands, access files, or invoke other tools.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "arguments": {
+            "additionalProperties": {},
+            "default": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "input": {
+            "maxLength": 5000000,
+            "type": "string"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "wire_name": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_token",
+          "wire_name"
+        ],
+        "type": "object"
+      },
+      "name": "codex_tool_call",
+      "outputSchema": null,
+      "title": "Call any tool from the current Codex harness"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Native6 only. Cancels a queued call before dispatch. After dispatch it cancels only this operation's observation; the external tool and side effects may continue. Sibling calls and the owning turn remain active. Acknowledge the returned delivery_id with codex_tool_poll.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "operation_id": {
+            "pattern": "^operation_[A-Za-z0-9_-]{32,128}$",
+            "type": "string"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_token",
+          "operation_id"
+        ],
+        "type": "object"
+      },
+      "name": "codex_tool_cancel",
+      "outputSchema": null,
+      "title": "Cancel observation of one long native Codex tool operation"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Search the exact tool registry supplied to the current outer Codex turn, including configured MCP/app tools.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "include_schema": {
+            "default": true,
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_token"
+        ],
+        "type": "object"
+      },
+      "name": "codex_tool_inventory",
+      "outputSchema": null,
+      "title": "Discover tools from the current Codex harness"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Native6 only. Wait at most 30 seconds for an owned operation. A poll timeout or disconnect never restarts or retires it. After receiving a terminal result, call again with its exact delivery_id to acknowledge and release it.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "ack_delivery_id": {
+            "pattern": "^delivery_[A-Za-z0-9_-]{32,128}$",
+            "type": "string"
+          },
+          "operation_id": {
+            "pattern": "^operation_[A-Za-z0-9_-]{32,128}$",
+            "type": "string"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "wait_ms": {
+            "default": 30000,
+            "maximum": 30000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "turn_token",
+          "operation_id"
+        ],
+        "type": "object"
+      },
+      "name": "codex_tool_poll",
+      "outputSchema": null,
+      "title": "Poll or acknowledge a long native Codex tool operation"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Native6 only. Start an exact wire_name once under operation_key. Reuse the same operation_key after an ambiguous transport failure, then use codex_tool_poll until terminal and acknowledge its delivery_id.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "arguments": {
+            "additionalProperties": {},
+            "default": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "input": {
+            "maxLength": 5000000,
+            "type": "string"
+          },
+          "operation_key": {
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "wire_name": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_token",
+          "operation_key",
+          "wire_name"
+        ],
+        "type": "object"
+      },
+      "name": "codex_tool_start",
+      "outputSchema": null,
+      "title": "Start a long native Codex tool operation"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Native6 only. List all live/unacknowledged operations plus the newest acknowledged guards, up to 64 identities, without delivery IDs. The truncated and omitted fields report older acknowledged guards that remain protected from replay until turn retirement. Returns metadata only and never acknowledges or restarts work. Poll a recovered terminal operation to receive its result and delivery_id before acknowledging that exact delivery_id. Expired payloads cannot be recovered and never authorize rerunning side effects.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_token"
+        ],
+        "type": "object"
+      },
+      "name": "codex_tool_status",
+      "outputSchema": null,
+      "title": "Recover owned operation metadata"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Invoke the outer Codex view_image tool and return its multimodal result to this same ChatGPT response.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "detail": {
+            "enum": [
+              "high",
+              "original"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_token",
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "codex_view_image",
+      "outputSchema": null,
+      "title": "View an image through native Codex"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Write characters to, or poll, a session_id returned by codex_exec.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "chars": {
+            "maxLength": 1000000,
+            "type": "string"
+          },
+          "max_output_tokens": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_id": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "turn_token": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "yield_time_ms": {
+            "maximum": 300000,
+            "minimum": 250,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "turn_token",
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "name": "codex_write_stdin",
+      "outputSchema": null,
+      "title": "Continue a native Codex command session"
+    }
+  ]
+}

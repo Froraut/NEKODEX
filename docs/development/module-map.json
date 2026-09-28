@@ -271,6 +271,7 @@
   {"path":"scripts/check-version.ts","dependencies":["node:fs","node:path","scripts/readme-downloads.ts"]},
   {"path":"scripts/check-web-provider-client.ts","dependencies":["node:child_process","node:fs","node:os","node:path","src/adapters/chatgpt-web/turn-broker.ts","src/codex-integration.ts","src/config.ts","src/server.ts"]},
   {"path":"scripts/clean.ts","dependencies":["node:fs","node:path"]},
+  {"path":"scripts/connector-abi.ts","dependencies":["@modelcontextprotocol/sdk/client/index.js","@modelcontextprotocol/sdk/client/stdio.js","node:fs","node:os","node:path"]},
   {"path":"scripts/generate-third-party-notices.ts","dependencies":["node:fs","node:path"]},
   {"path":"scripts/install-launcher.ps1","dependencies":[]},
   {"path":"scripts/install-launcher.sh","dependencies":[]},

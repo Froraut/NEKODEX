@@ -38,6 +38,12 @@ jobs:
       - name: Check architecture map and documented paths
         if: runner.os == 'Linux'
         run: bun run architecture:check
+      - name: Install runtime dependencies for the connector ABI check
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun install --frozen-lockfile
+      - name: Check published ChatGPT connector ABIs
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun run connector-abi:check
       - name: Validate launcher installer with Windows PowerShell 5.1
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: powershell

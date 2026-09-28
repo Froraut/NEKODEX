@@ -275,7 +275,8 @@ without publishing the prepared prompt, raw browser state, credentials, or Tunne
 These are result boundaries, not one diagnosis. The bridge uses them when it cannot prove a complete
 ChatGPT turn. Common causes include an account-side rate limit, ChatGPT's own "Something went wrong"
 state, a changed UI control, a closed browser surface, a conflicting route, or a tool that exceeded
-its bounded MCP deadline.
+its bounded MCP deadline. With Codex Native5 or Native6 a slow tool call returns a running handle
+instead of ending the turn; with Native4 it still ends the turn after about 90 seconds.
 
 - Read the final detailed error after the reconnect attempts; do not report only the word
   `Reconnecting`.
