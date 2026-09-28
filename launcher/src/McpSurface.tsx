@@ -1,14 +1,15 @@
-import { modelConnectionReadiness } from "./setup-progress";
 import { accountToolsCopy } from "./account-tools-onboarding";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
-import { Icon } from "./icons";
-import { type WorkspaceReadiness } from "./workspace-readiness";
+import { modelsTabConnection, type WorkspaceReadiness } from "./workspace-readiness";
+import { connectionTabStatus, connectionsCopy, connectionsSubtitle } from "./connections-copy";
 import { workflowCopy } from "./workflow-copy";
 import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState } from "./types";
-const api = window.codexWebLauncher;
-import { ConnectionsTabs, StateDot, ContentSurface, SecondaryButton, NoticeRow, PrimaryButton, messageOf, TutorialVideo, FieldRow, DoctorSummary } from './launcher-ui';
+import { Button, Disclosure, Icon, Notice, Page, Panel, PhaseSteps, StateDot, SurfaceHeader, TextField, cx } from "./design";
+import { ConnectionsTabs, connectionsTabPanelProps, messageOf, TutorialVideo, DoctorSummary } from './launcher-ui';
 import { connectorProofMismatch, runtimeCapabilities, currentToolProof } from './launcher-readiness';
+import "./surfaces/connections.css";
+const api = window.codexWebLauncher;
 const MCP_GUIDE_MEDIA = [
   new URL("./assets/mcp-create-tunnel.mp4", import.meta.url).href,
   new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
@@ -70,10 +71,16 @@ export function McpSurface({
   const [repairOutcome, setRepairOutcome] = useState<"recovered" | "unavailable" | "failed" | null>(null);
   const [repairOutcomeRevision, setRepairOutcomeRevision] = useState<number | null>(null);
   const workflow = workflowCopy(language);
+  const words = connectionsCopy(language);
   const currentRuntime = runtimeCapabilities(snapshot);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const wizardHeading = useRef<HTMLHeadingElement>(null);
+  const tunnelFieldId = useId();
+  const runtimeKeyFieldId = useId();
+  const replaceCredentialsId = useId();
+  // Replace / Keep saved credentials swap the controls: focus moves to the control that takes the removed one's place.
+  const credentialsFocus = useRef<string | null>(null);
   const previousStep = useRef(step);
   const verified = !configuringInactiveMode && currentToolProof(snapshot, operation);
   const manualInteraction = interactionMode === "manual";
@@ -124,6 +131,16 @@ export function McpSurface({
       setLocalBusy(false);
     }
   };
+
+  const guide = useRef<HTMLDetailsElement>(null);
+  const identityInputId = useId();
+
+  useEffect(() => {
+    const target = credentialsFocus.current;
+    if (!target) return;
+    credentialsFocus.current = null;
+    document.getElementById(target)?.focus();
+  }, [replacingCredentials]);
 
   useEffect(() => {
     if (previousStep.current === step) return;
@@ -219,224 +236,216 @@ export function McpSurface({
     }
   };
 
+  const tunnelRepair = runtimeCapabilities(snapshot)?.tunnelRepair;
+  const repairing = repairBusy || tunnelRepair?.active === true;
+  // An eligible repair is the next step: it takes the primary, and the wizard's own action steps back to secondary.
+  const repairIsNext = !configuringInactiveMode && tunnelRepair?.eligible === true && !repairing;
+  // The shown step is always the current one; steps before it are done, steps after it are still ahead (even when
+  // the connector was verified earlier, the wizard does not claim a later step while an earlier one is open).
+  const stepState = (index: number) => index === step ? "current" as const : index < step ? "complete" as const : "upcoming" as const;
+  const tunnelInvalid = Boolean(tunnelId && !tunnelId.trim());
+  const runtimeKeyInvalid = Boolean(runtimeKey && !runtimeKey.trim());
+
   return (
-    <ContentSurface
-      subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
-      title={devProfile ? copy.devMcpTitle : copy.localTools}
-    >
-      {accountSetupLabel ? <p className="field-hint"><strong>{accountToolsCopy(language).target}: {accountSetupLabel}</strong><br />
-        {accountToolsCopy(language).identity}</p> : null}
-      {onReturnToAccount ? <button type="button" className="text-button" disabled={busy}
-        onClick={onReturnToAccount}>{accountToolsCopy(language).back}</button> : null}
+    <Page className="nk-connections">
+      <SurfaceHeader
+        actions={onReturnToAccount ? <Button disabled={busy} icon="back" onClick={onReturnToAccount} variant="ghost">
+          {accountToolsCopy(language).back}
+        </Button> : undefined}
+        subtitle={connectionsSubtitle(copy, language, { development: devProfile,
+          manual: snapshot.state.browserInteractionMode === "manual" })}
+        title={copy.connectionsNav}
+      />
       <ConnectionsTabs active="tools" copy={copy}
-        modelsReady={modelConnectionReadiness({ manual: manualInteraction,
-          installed: snapshot.state.coreSetupComplete === true,
-          catalogVerified: snapshot.state.codexCatalogVerified === true,
-          pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-          development: devProfile }) === "available"}
-        onModels={showSetup} onTools={() => {}} toolsReady={verified} />
-      {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
-        <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
-      ) : null}
-      {!configuringInactiveMode && (runtimeCapabilities(snapshot)?.tunnelRepair?.eligible === true
-        || runtimeCapabilities(snapshot)?.tunnelRepair?.active === true || repairOutcome) ? (
-        <section className="connection-recovery-card" aria-live="polite" data-testid="web-route-repair">
-          <Icon name="alert" />
-          <div>
-            <strong>{workflow.recovery.webTransportTitle}</strong>
-            <p>{readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}</p>
-            {readiness.native === "ready" ? <p>{workflow.recovery.nativePreserved}</p> : null}
-            {repairOutcome ? <p role="status">{repairOutcome === "recovered" ? workflow.recovery.recovered
-              : repairOutcome === "unavailable" ? workflow.recovery.stillUnavailable : workflow.recovery.couldNotVerify}</p> : null}
-          </div>
-          <button className="button-secondary" type="button"
-            disabled={busy || repairBusy || runtimeCapabilities(snapshot)?.tunnelRepair?.active === true
-              || runtimeCapabilities(snapshot)?.tunnelRepair?.eligible !== true}
-            aria-busy={repairBusy || runtimeCapabilities(snapshot)?.tunnelRepair?.active === true}
-            onClick={() => void repairWebRoute()}>
-            {repairBusy || runtimeCapabilities(snapshot)?.tunnelRepair?.active
-              ? workflow.recovery.repairing : workflow.recovery.repairAction}
-          </button>
-        </section>
-      ) : null}
-
-      <div className="wizard-stepper" aria-label={`${copy.localTools}: ${step + 1} / 3`} role="group">
-        {steps.map((item, index) => (
-          <button
-            className={`${index === step ? "is-active" : ""}${index < step || (index === 2 && verified) ? " is-complete" : ""}`}
-            aria-label={`${index + 1}. ${item.title}`}
-            aria-current={index === step ? "step" : undefined}
-            title={item.title}
-            disabled={busy || index > step}
-            key={item.title}
-            onClick={() => void safeMove(index)}
-            type="button"
+        modelsReady={modelsTabConnection(readiness.connections).ready}
+        modelsStatus={connectionTabStatus(modelsTabConnection(readiness.connections), copy, language)}
+        onModels={showSetup} onTools={() => {}}
+        toolsReady={readiness.connections.tools.ready}
+        toolsStatus={connectionTabStatus(readiness.connections.tools, copy, language)} />
+      <div className="nk-connections__content" {...connectionsTabPanelProps("tools")}>
+        {accountSetupLabel ? (
+          <Notice title={`${accountToolsCopy(language).target}: ${accountSetupLabel}`}>{accountToolsCopy(language).identity}</Notice>
+        ) : null}
+        {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
+          <Notice icon="setup" tone="warning">{copy.mcpCatalogRequired}</Notice>
+        ) : null}
+        {!configuringInactiveMode && (tunnelRepair?.eligible === true || tunnelRepair?.active === true || repairOutcome) ? (
+          <Notice
+            data-testid="web-route-repair"
+            action={<Button busy={repairing} disabled={busy || tunnelRepair?.eligible !== true}
+              onClick={() => void repairWebRoute()} size="sm" variant={repairIsNext && !busy ? "primary" : "secondary"}>
+              {repairing ? workflow.recovery.repairing : workflow.recovery.repairAction}
+            </Button>}
+            meta={repairOutcome ? <span role="status">{repairOutcome === "recovered" ? workflow.recovery.recovered
+              : repairOutcome === "unavailable" ? workflow.recovery.stillUnavailable : workflow.recovery.couldNotVerify}</span> : undefined}
+            title={workflow.recovery.webTransportTitle}
+            tone="warning"
           >
-            <span>{index < step || (index === 2 && verified) ? <Icon name="check" /> : index + 1}</span>
-            <em>{item.title}</em>
-          </button>
-        ))}
-      </div>
+            {readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody}
+          </Notice>
+        ) : null}
 
-      <div aria-busy={busy} className="mcp-stage">
-        {guideMedia ? <details className="setup-video-help" onToggle={event => { if (!event.currentTarget.open) event.currentTarget.querySelector("video")?.pause(); }}><summary>{copy.guideVideo}</summary>
-          <TutorialVideo
-            copy={copy}
-            label={`${copy.guideVideo}: ${steps[step]!.title}`}
-            src={guideMedia}
-          />
-        </details> : null}
+        <div aria-label={`${devProfile ? copy.devMcpTitle : copy.toolsConnectionTab}: ${step + 1} / 3`} className="nk-connections__wizard" role="group">
+          {/* Earlier steps (and the current one) are buttons that return to that step. */}
+          <PhaseSteps disabled={busy} onSelect={index => void safeMove(index)}
+            steps={steps.map((item, index) => ({
+              label: item.title,
+              state: stepState(index),
+              current: index === step,
+              selectable: index <= step,
+            }))} />
+        </div>
 
-          <section
-            className="wizard-content"
-            key={step}
-          >
-            <header>
-              <span>0{step + 1}</span>
-              <div>
-                <h2 ref={wizardHeading} tabIndex={-1}>{steps[step]!.title}</h2>
-                {step === 2 && !manualInteraction ? <div className="connector-instructions">
-                  <ol>
-                    {[copy.mcpStepThreeStepOne, copy.mcpStepThreeStepTwo, copy.mcpStepThreeStepThree]
-                      .map(instruction => <li key={instruction}>{instruction}</li>)}
-                  </ol>
-                  <p>{copy.mcpStepThreePermissions}</p>
-                </div> : <p>{steps[step]!.body}</p>}
-              </div>
+        <div aria-busy={busy} className="nk-connections__stage">
+          <Panel as="section" className="nk-connections__step" key={step}>
+            <header className="nk-connections__step-head">
+              <small>{`0${step + 1}`}</small>
+              <h2 ref={wizardHeading} tabIndex={-1}>{steps[step]!.title}</h2>
+              {step === 2 && !manualInteraction ? <div className="nk-connections__instructions">
+                <ol>
+                  {[copy.mcpStepThreeStepOne, copy.mcpStepThreeStepTwo, copy.mcpStepThreeStepThree]
+                    .map(instruction => <li key={instruction}>{instruction}</li>)}
+                </ol>
+                <p>{copy.mcpStepThreePermissions}</p>
+              </div> : steps[step]!.body ? <p>{steps[step]!.body}</p> : null}
             </header>
 
             {step === 0 ? (
-              <><p>{accountToolsCopy(language).keyInstructions}</p><p>{accountToolsCopy(language).identity}</p>
-              <div className="inline-actions">
-                <SecondaryButton icon="external" onClick={() => void openExternal(snapshot.urls.tunnels)}>
-                  {copy.openTunnels}
-                </SecondaryButton>
-                <SecondaryButton icon="external" onClick={() => void openExternal(snapshot.urls.keys)}>
-                  {copy.openKeys}
-                </SecondaryButton>
-              </div></>
+              <div className="nk-connections__step-body">
+                <p>{accountToolsCopy(language).keyInstructions}</p>
+                <p>{accountToolsCopy(language).identity}</p>
+                <div className="nk-connections__actions">
+                  <Button icon="external" onClick={() => void openExternal(snapshot.urls.tunnels)}>{copy.openTunnels}</Button>
+                  <Button icon="external" onClick={() => void openExternal(snapshot.urls.keys)}>{copy.openKeys}</Button>
+                </div>
+              </div>
             ) : null}
             {step === 1 ? (
-              credentialsConfigured && !replacingCredentials ? (
-                <div className="saved-credentials">
-                  <NoticeRow icon="check" tone="success">
-                    <span>
-                      <strong>{copy.credentialsConfigured}</strong>
-                      <small>{copy.credentialsConfiguredBody}</small>
-                    </span>
-                  </NoticeRow>
-                  <button
-                    className="text-button"
-                    disabled={busy}
-                    onClick={() => setReplacingCredentials(true)}
-                    type="button"
+              <div className="nk-connections__step-body">
+                {credentialsConfigured && !replacingCredentials ? (
+                  <Notice
+                    action={<Button disabled={busy} id={replaceCredentialsId} size="sm" variant="ghost"
+                      onClick={() => { credentialsFocus.current = tunnelFieldId; setReplacingCredentials(true); }}>
+                      {copy.replaceCredentials}
+                    </Button>}
+                    title={copy.credentialsConfigured}
+                    tone="success"
                   >
-                    {copy.replaceCredentials}
-                  </button>
-                </div>
-              ) : (
-                <div className="field-list">
-                  <FieldRow label={copy.tunnelId}>
-                    <input
-                      aria-describedby="mcp-credentials-hint"
-                      aria-invalid={Boolean(tunnelId && !tunnelId.trim())}
+                    {copy.credentialsConfiguredBody}
+                  </Notice>
+                ) : (
+                  <div className="nk-connections__fields">
+                    <TextField
+                      // The kit wires the error (id `${id}-hint`); the shared hint stays in the description.
+                      aria-describedby={tunnelInvalid ? `${tunnelFieldId}-hint mcp-credentials-hint` : "mcp-credentials-hint"}
                       autoCapitalize="none"
                       autoCorrect="off"
+                      error={tunnelInvalid ? words.tunnelIdRequired : undefined}
+                      id={tunnelFieldId}
+                      label={copy.tunnelId}
                       onChange={(event) => setTunnelId(event.target.value)}
                       placeholder="tunnel_…"
                       spellCheck={false}
                       value={tunnelId}
                     />
-                  </FieldRow>
-                  <FieldRow label={copy.runtimeKey}>
-                    <input
-                      aria-describedby="mcp-credentials-hint"
-                      aria-invalid={Boolean(runtimeKey && !runtimeKey.trim())}
+                    <TextField
+                      aria-describedby={runtimeKeyInvalid ? `${runtimeKeyFieldId}-hint mcp-credentials-hint` : "mcp-credentials-hint"}
                       autoCapitalize="none"
                       autoCorrect="off"
+                      error={runtimeKeyInvalid ? words.runtimeKeyRequired : undefined}
+                      id={runtimeKeyFieldId}
+                      label={copy.runtimeKey}
                       onChange={(event) => setRuntimeKey(event.target.value)}
                       placeholder="sk-…"
                       spellCheck={false}
                       type="password"
                       value={runtimeKey}
                     />
-                  </FieldRow>
-                  {credentialsConfigured ? (
-                    <button
-                      className="text-button keep-credentials"
-                      disabled={busy}
-                      onClick={() => {
-                        setTunnelId("");
-                        setRuntimeKey("");
-                        setReplacingCredentials(false);
-                      }}
-                      type="button"
-                    >
-                      {copy.keepCredentials}
-                    </button>
-                  ) : null}
-                </div>
-              )
+                    {credentialsConfigured ? (
+                      <div className="nk-connections__actions">
+                        <Button
+                          disabled={busy}
+                          onClick={() => {
+                            setTunnelId("");
+                            setRuntimeKey("");
+                            credentialsFocus.current = replaceCredentialsId;
+                            setReplacingCredentials(false);
+                          }}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          {copy.keepCredentials}
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+                <p className="nk-connections__hint" id="mcp-credentials-hint">
+                  {manualInteraction || configuringInactiveMode || snapshot.state.codexCatalogVerified
+                    ? copy.mcpStepTwoHint
+                    : copy.mcpCatalogRequired}
+                </p>
+                {credentialsConfigured && !replacingCredentials ? (
+                  <p className="nk-connections__hint">{workflow.recovery.fullSetupBody}</p>
+                ) : null}
+              </div>
             ) : null}
-            {step === 1 ? (
-            <><p className="mcp-step-two-hint" id="mcp-credentials-hint">
-                {manualInteraction || configuringInactiveMode || snapshot.state.codexCatalogVerified
-                  ? copy.mcpStepTwoHint
-                  : copy.mcpCatalogRequired}
-              </p>
-            {credentialsConfigured && !replacingCredentials ? (
-              <p className="mcp-step-two-hint">{workflow.recovery.fullSetupBody}</p>
-            ) : null}
-            </>
-            ) : null}
-        {step === 2 ? (
-              <div className="connector-actions">
+            {step === 2 ? (
+              <div className="nk-connections__step-body">
                 {!manualInteraction && !verified && ["Codex Native6", "Codex Native6 DEV"].includes(snapshot.connectorNames[interactionMode]) ? (
-                  <NoticeRow icon="alert" tone="warning">
+                  <Notice tone="warning">
                     {native6CopyFor(language).body.replace("{connector}", snapshot.connectorNames[interactionMode])}
-                  </NoticeRow>
-                ) : <details className="connector-upgrade-help"><summary>{copy.connectorUpgradeHelp}</summary>
-                  <NoticeRow icon="alert" tone="warning">
+                  </Notice>
+                ) : <details className="nk-connections__nested"><summary>
+                  <Icon className="nk-icon" focusable="false" name="chevron" size={14} />{copy.connectorUpgradeHelp}</summary>
+                  <Notice tone="warning">
                     {manualInteraction ? copy.manualConnectorNotice : native6CopyFor(language).retained}
-                  </NoticeRow>
+                  </Notice>
                   {!manualInteraction && snapshot.state.experimentalAsyncToolOperations ? (
-                    <button className="button-secondary" disabled={busy}
-                      onClick={() => void setAsyncConnectorIdentity(false)} type="button">
+                    <Button disabled={busy} onClick={() => void setAsyncConnectorIdentity(false)} size="sm">
                       {native6CopyFor(language).compatibility}
-                    </button>
+                    </Button>
                   ) : null}
                 </details>}
                 {!configuringInactiveMode && connectorProofMismatch(snapshot)
-                  ? <NoticeRow icon="alert" tone="warning">{native6CopyFor(language).mismatch}</NoticeRow> : null}
-                {native6UpgradeAvailable ? <div className="connector-upgrade-action">
-                  <p>{recommendedConnectorName
-                    ? native6CopyFor(language).body.replace("{connector}", recommendedConnectorName)
-                    : native6CopyFor(language).title}</p>
-                  <PrimaryButton disabled={busy} onClick={() => void setAsyncConnectorIdentity(true)}>
-                    {native6CopyFor(language).upgrade}
-                  </PrimaryButton>
-                </div> : null}
-                <div className="connector-identity-card">
-                  <div>
-                    <span>{copy.currentSavedConnector}</span>
-                    <code>{currentConnectorName || copy.connectorIdentityUnavailable}</code>
-                  </div>
-                  <label>
-                    <span>{copy.createConnectorIdentity}</span>
-                    <input aria-label={copy.createConnectorIdentity} readOnly
-                      onFocus={event => event.currentTarget.select()}
-                      value={targetConnectorName || copy.connectorIdentityUnavailable} />
-                  </label>
-                  <p className="connector-identity-warning"><Icon name="alert" />{copy.newConnectorRequired}</p>
-                  <p className={`connector-verification-status${exactConnectorVerified ? " is-ready" : ""}`} role="status">
+                  ? <Notice tone="warning">{native6CopyFor(language).mismatch}</Notice> : null}
+                {native6UpgradeAvailable ? (
+                  <Notice
+                    action={<Button disabled={busy} onClick={() => void setAsyncConnectorIdentity(true)} size="sm" variant="primary">
+                      {native6CopyFor(language).upgrade}
+                    </Button>}
+                    icon="update"
+                  >
+                    {recommendedConnectorName
+                      ? native6CopyFor(language).body.replace("{connector}", recommendedConnectorName)
+                      : native6CopyFor(language).title}
+                  </Notice>
+                ) : null}
+                <div className="nk-connections__identity">
+                  <dl>
+                    <div>
+                      <dt>{copy.currentSavedConnector}</dt>
+                      <dd><code>{currentConnectorName || copy.connectorIdentityUnavailable}</code></dd>
+                    </div>
+                    <div>
+                      <dt><label htmlFor={identityInputId}>{copy.createConnectorIdentity}</label></dt>
+                      <dd>
+                        <input aria-label={copy.createConnectorIdentity} className="nk-input" id={identityInputId} readOnly
+                          onFocus={event => event.currentTarget.select()}
+                          value={targetConnectorName || copy.connectorIdentityUnavailable} />
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="nk-connections__warning"><Icon className="nk-icon" name="alert" />{copy.newConnectorRequired}</p>
+                  <p className={cx("nk-connections__status", exactConnectorVerified && "is-ready")} role="status">
                     <StateDot state={exactConnectorVerified ? "ready" : "idle"} />
                     {exactConnectorVerified ? copy.connectorVerified : copy.connectorNotVerified}
                   </p>
                 </div>
-                <div className="inline-actions">
-                  {snapshot.urls.developerMode ? <SecondaryButton icon="external"
-                    onClick={() => void openExternal(snapshot.urls.developerMode!)}>{copy.openDeveloperMode}</SecondaryButton> : null}
-                  <SecondaryButton
+                <div className="nk-connections__actions">
+                  {snapshot.urls.developerMode ? <Button icon="external"
+                    onClick={() => void openExternal(snapshot.urls.developerMode!)}>{copy.openDeveloperMode}</Button> : null}
+                  <Button
                     disabled={!connectorConfiguredForTarget}
                     icon="external"
                     onClick={() => void (async () => {
@@ -449,52 +458,67 @@ export function McpSurface({
                     })()}
                   >
                     {copy.openConnectors}
-                  </SecondaryButton>
+                  </Button>
                 </div>
                 {doctor ? <DoctorSummary copy={copy} language={language} report={doctor} /> : null}
               </div>
             ) : null}
-          </section>
-      </div>
 
-      <div className="wizard-footer">
-        <button className="text-button" disabled={step === 0 || busy} onClick={() => void safeMove(step - 1)} type="button">
-          {copy.previous}
-        </button>
-        {step === 0 ? <PrimaryButton disabled={busy} onClick={() => void safeMove(1)}>{copy.next}</PrimaryButton> : null}
-        {step === 1 ? (
-          <PrimaryButton
-            disabled={
-              busy
-              || (!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified)
-              || ((!credentialsConfigured || replacingCredentials) && (!tunnelId.trim() || !runtimeKey.trim()))
-            }
-            onClick={() => void install()}
-          >
-            {busy ? copy.running : credentialsConfigured && !replacingCredentials
-              ? workflow.recovery.fullSetupAction : copy.connect}
-          </PrimaryButton>
-        ) : null}
-            {step === 2 ? (
-          <>
-            {!onReturnToAccount && verified ? (
-              <SecondaryButton disabled={busy} onClick={() => void verify()}>
-                {copy.verifyRuntime}
-              </SecondaryButton>
-            ) : null}
-            <PrimaryButton
-              disabled={busy || !connectorConfiguredForTarget}
-              onClick={() => void (onReturnToAccount ? onReturnToAccount() : verified ? onDone() : verify())}
-            >
-              {busy
-                ? operation?.name === "mcp-verification" && operation.status === "running"
-                  ? localizeRuntimeMessage(copy, operation.message, undefined, language)
-                  : copy.running
-                : onReturnToAccount ? accountToolsCopy(language).back : verified ? copy.done : native6CopyFor(language).verify}
-            </PrimaryButton>
-          </>
-        ) : null}
+            <footer className="nk-connections__step-actions">
+              <Button disabled={step === 0 || busy} icon="back" onClick={() => void safeMove(step - 1)} variant="ghost">
+                {copy.previous}
+              </Button>
+              <span className="nk-connections__spacer" />
+              {step === 0 ? <Button disabled={busy} onClick={() => void safeMove(1)} variant={repairIsNext ? "secondary" : "primary"}>{copy.next}</Button> : null}
+              {step === 1 ? (
+                <Button
+                  disabled={
+                    busy
+                    || (!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified)
+                    || ((!credentialsConfigured || replacingCredentials) && (!tunnelId.trim() || !runtimeKey.trim()))
+                  }
+                  onClick={() => void install()}
+                  variant={repairIsNext ? "secondary" : "primary"}
+                >
+                  {busy ? copy.running : credentialsConfigured && !replacingCredentials
+                    ? workflow.recovery.fullSetupAction : copy.connect}
+                </Button>
+              ) : null}
+              {step === 2 ? (
+                <>
+                  {!onReturnToAccount && verified ? (
+                    <Button disabled={busy} onClick={() => void verify()}>
+                      {copy.verifyRuntime}
+                    </Button>
+                  ) : null}
+                  <Button
+                    disabled={busy || !connectorConfiguredForTarget}
+                    onClick={() => void (onReturnToAccount ? onReturnToAccount() : verified ? onDone() : verify())}
+                    variant={native6UpgradeAvailable || repairIsNext ? "secondary" : "primary"}
+                  >
+                    {busy
+                      ? operation?.name === "mcp-verification" && operation.status === "running"
+                        ? localizeRuntimeMessage(copy, operation.message, undefined, language)
+                        : copy.running
+                      : onReturnToAccount ? accountToolsCopy(language).back : verified ? copy.done : native6CopyFor(language).verify}
+                  </Button>
+                </>
+              ) : null}
+            </footer>
+          </Panel>
+
+          {guideMedia ? <Disclosure ref={guide} title={copy.guideVideo}
+            onToggle={open => { if (!open) guide.current?.querySelector("video")?.pause(); }}>
+            <div className="nk-connections__disclosure-content">
+              <TutorialVideo
+                copy={copy}
+                label={`${copy.guideVideo}: ${steps[step]!.title}`}
+                src={guideMedia}
+              />
+            </div>
+          </Disclosure> : null}
+        </div>
       </div>
-    </ContentSurface>
+    </Page>
   );
 }

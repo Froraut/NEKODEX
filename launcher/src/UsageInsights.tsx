@@ -1,8 +1,22 @@
-import { useRef, useState } from "react";
+import { Fragment, useState } from "react";
 import type { Language, UsageAccountOption, UsageDiagnosticGroup, UsageFailureCode } from "./types";
 import { rankUsageDiagnosticGroups, usageAttentionFacts } from "./usage-diagnostics";
 import { formatUsageDuration, formatUsageRate } from "./usage-statistics";
-import "./usage-insights.css";
+import { Button, EmptyState, Panel } from "./design";
+
+/** Localised words for the identity parts (mode, effort, version or model source, message kind). */
+export interface UsageIdentityWords {
+  mode: (value: string) => string;
+  effort: (value: string) => string;
+  versioned: (model: string, source: string | null) => string;
+  reported: (model: string, source: string | null) => string;
+  messageKind: (value: string) => string;
+}
+
+const rawWords: UsageIdentityWords = {
+  mode: value => value, effort: value => value === "max" ? "Pro" : value, messageKind: value => value,
+  versioned: (model, source) => source ? `${model} (${source})` : model, reported: (model, source) => source ? `${model} (${source})` : model,
+};
 
 export interface UsageInsightsCopy {
   title: string;
@@ -22,6 +36,9 @@ export interface UsageInsightsCopy {
 const replace = (value: string, fields: Record<string, string | number>) =>
   Object.entries(fields).reduce((text, [key, field]) => text.replaceAll(`{${key}}`, String(field)), value);
 
+/** A "{label}: {count}" template as a column header ("Observed sample coverage"). */
+const columnLabel = (template: string) => template.replace(/\s*[:：]\s*\{count\}\s*$/, "");
+
 export interface UsageInsightsLabels {
   /** Short placeholder for one unreported identity field; the full explanation is shown once per group. */
   unknown: string;
@@ -39,20 +56,26 @@ function duration(value: number | null, language: Language, labels: UsageInsight
 
 const known = (value: string | null | undefined) => value && value.trim() && value !== "unknown" ? value : null;
 
-function identityParts(group: UsageDiagnosticGroup, accounts: UsageAccountOption[]) {
-  if (group.source === "native") return [known(group.modelId), known(group.endpoint), known(group.modelIdSource)];
+/** Identity parts in reading order; null marks a field that was not reported (shown as "unknown", never guessed). */
+function identityParts(group: UsageDiagnosticGroup, accounts: UsageAccountOption[], words: UsageIdentityWords) {
+  if (group.source === "native") {
+    const model = known(group.modelId);
+    return [model ? words.reported(model, known(group.modelIdSource)) : null, known(group.endpoint)];
+  }
   const account = accounts.find(candidate => candidate.id === group.accountId)?.label || null;
-  const model = known(group.modelVersion) ? `GPT-${group.modelVersion}` : null;
-  const effort = group.effort === "max" ? "Pro" : known(group.effort);
-  return [account, known(group.mode), model, known(group.modelVersionSource), effort, known(group.messageKind)];
+  const model = known(group.modelVersion) ? words.versioned(`GPT-${group.modelVersion}`, known(group.modelVersionSource)) : null;
+  const mode = known(group.mode), effort = known(group.effort), kind = known(group.messageKind);
+  return [account, mode && words.mode(mode), model, effort && words.effort(effort), kind && words.messageKind(kind)];
 }
 
-function identity(group: UsageDiagnosticGroup, accounts: UsageAccountOption[], labels: UsageInsightsLabels) {
-  return identityParts(group, accounts).map(part => part ?? labels.unknown).join(" · ");
+function identity(group: UsageDiagnosticGroup, accounts: UsageAccountOption[], labels: UsageInsightsLabels, words: UsageIdentityWords) {
+  return identityParts(group, accounts, words).map(part => part ?? labels.unknown).join(" · ");
 }
 
 function identityIncomplete(group: UsageDiagnosticGroup, accounts: UsageAccountOption[]) {
-  return identityParts(group, accounts).some(part => part === null);
+  const fields = group.source === "native" ? [group.modelId, group.endpoint, group.modelIdSource]
+    : [accounts.find(candidate => candidate.id === group.accountId)?.label, group.mode, group.modelVersion, group.modelVersionSource, group.effort, group.messageKind];
+  return fields.some(field => !known(field));
 }
 
 function groupKey(group: UsageDiagnosticGroup) {
@@ -67,7 +90,7 @@ function failures(group: UsageDiagnosticGroup, labels: Partial<Record<UsageFailu
 }
 
 export function UsageInsights({ groups, accounts, copy, language, failureLabels, detailsLabel, hideDetailsLabel,
-  completedLabel, failedLabel, cancelledLabel, incompleteLabel, labels }: {
+  completedLabel, failedLabel, cancelledLabel, incompleteLabel, labels, words = rawWords }: {
   groups: UsageDiagnosticGroup[];
   accounts: UsageAccountOption[];
   copy: UsageInsightsCopy;
@@ -80,35 +103,27 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
   cancelledLabel: string;
   incompleteLabel: string;
   labels?: Partial<UsageInsightsLabels>;
+  words?: UsageIdentityWords;
 }) {
   const text = { ...defaultLabels, unknown: copy.unknownIdentity, group: copy.title, ...labels };
   const note = (group: UsageDiagnosticGroup) => text.unknown !== copy.unknownIdentity && identityIncomplete(group, accounts)
     ? <small className="usage-identity-note">{copy.unknownIdentity}</small> : null;
   const [open, setOpen] = useState(false);
-  const detailsRef = useRef<HTMLDivElement>(null);
   const source = groups[0]?.source;
   const scoped = source ? groups.filter(group => group.source === source) : [];
   const ranked = source ? rankUsageDiagnosticGroups(scoped, source) : [];
   const facts = source ? usageAttentionFacts(scoped, source) : [];
   const hasComparableGroups = ranked.some(({ eligibility }) =>
     eligibility.eligible.failureRate || eligibility.eligible.median || eligibility.eligible.p95);
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    if (next) requestAnimationFrame(() => detailsRef.current?.focus());
-  };
 
-  return <section className="usage-diagnostic-insights" aria-labelledby="usage-diagnostic-title">
-    <div className="usage-diagnostic-heading">
-      <div><h3 id="usage-diagnostic-title">{copy.title}</h3><p>{copy.body}</p></div>
-      {ranked.length ? <button className="text-button" type="button" aria-expanded={open}
-        aria-controls="usage-diagnostic-details" onClick={toggle}>{open ? hideDetailsLabel : detailsLabel}</button> : null}
-    </div>
-    {!ranked.length ? <p className="usage-diagnostic-empty">{copy.noComparison}</p> : <>
+  // The table toggle sits under the facts, just above the table it opens (in the header it would wrap between the
+  // title and the description in a narrow workspace). Like the calendar's toggle, focus stays on it.
+  return <Panel headingLevel={3} titleId="usage-diagnostic-title" title={copy.title} description={copy.body} className="usage-diagnostic-insights">
+    {!ranked.length ? <EmptyState icon="activity" title={copy.noComparison} /> : <>
       {facts.length ? <div className="usage-diagnostic-facts">{facts.map(({ group, eligibility, kind }) => {
         const insufficient = kind === "failures" && !eligibility.eligible.failureRate;
         return <article key={`${groupKey(group)}:${kind}`} className={insufficient ? "is-insufficient" : undefined}>
-          <strong>{identity(group, accounts, text)}</strong>{note(group)}
+          <strong>{identity(group, accounts, text, words)}</strong>{note(group)}
           <span>{kind === "failures" ? failures(group, failureLabels, language)
             : kind === "median" ? `${copy.median}: ${duration(eligibility.medianMs, language, text)}`
             : `${copy.p95}: ${duration(eligibility.p95Ms, language, text)}`}</span>
@@ -117,22 +132,27 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
             : <><small>{replace(copy.durationSamples, { count: eligibility.observedSamples })}</small>
               <small>{replace(copy.coverage, { observed: eligibility.observedSamples, eligible: eligibility.eligibleSamples, count: `${eligibility.observedSamples}/${eligibility.eligibleSamples}` })}</small></>}
         </article>;
-      })}</div> : hasComparableGroups ? null : <p className="usage-diagnostic-empty">{copy.noComparison}</p>}
-      {open ? <div id="usage-diagnostic-details" className="usage-diagnostic-details" ref={detailsRef} tabIndex={-1}>
+      })}</div> : hasComparableGroups ? null : <EmptyState icon="activity" title={copy.noComparison} />}
+      <div className="usage-diagnostic-toggle">
+        <Button variant="ghost" size="sm" className="usage-toggle" iconEnd="chevron" aria-expanded={open}
+          aria-controls={open ? "usage-diagnostic-details" : undefined} onClick={() => setOpen(value => !value)}>{open ? hideDetailsLabel : detailsLabel}</Button>
+      </div>
+      {open ? <div id="usage-diagnostic-details" className="usage-diagnostic-details">
         <p>{copy.notBestModel}</p>
-        <div className="usage-table-scroll"><table className="usage-diagnostic-table">
-          <caption className="visually-hidden">{copy.title}</caption>
+        <div className="usage-table-scroll"><table className="usage-table usage-diagnostic-table">
+          <caption className="nk-visually-hidden">{copy.title}</caption>
           <thead><tr><th scope="col">{text.group}</th><th scope="col">{copy.completionRate}</th>
-            <th scope="col">{copy.median}</th><th scope="col">{copy.p95}</th><th scope="col">{copy.coverage}</th></tr></thead>
+            <th scope="col">{copy.median}</th><th scope="col">{copy.p95}</th><th scope="col">{columnLabel(copy.coverage)}</th></tr></thead>
           <tbody>{ranked.map(({ group, eligibility }) => {
             const insufficient = !eligibility.eligible.failureRate && !eligibility.eligible.median && !eligibility.eligible.p95;
             return <tr key={groupKey(group)} className={insufficient ? "is-insufficient" : undefined}>
-              <th scope="row">{identity(group, accounts, text)}{note(group)}<small>{failures(group, failureLabels, language)}</small></th>
+              <th scope="row">{identity(group, accounts, text, words)}{note(group)}<small>{failures(group, failureLabels, language)}</small></th>
               <td>{!eligibility.eligible.failureRate || group.knownOutcomeCompletionRate === null ? "—"
                 : formatUsageRate(group.knownOutcomeCompletionRate, language)}
                 <small>{replace(copy.knownOutcomes, { count: eligibility.knownOutcomes })}</small>
-                <small>{completedLabel}: {group.completed.toLocaleString(language)} · {failedLabel}: {group.failed.toLocaleString(language)} · {cancelledLabel}: {group.cancelled.toLocaleString(language)}
-                  {group.source === "native" ? ` · ${incompleteLabel}: ${(group.incomplete ?? 0).toLocaleString(language)}` : ""}</small></td>
+                <small className="usage-pairs">{[[completedLabel, group.completed], [failedLabel, group.failed], [cancelledLabel, group.cancelled],
+                  ...(group.source === "native" ? [[incompleteLabel, group.incomplete ?? 0] as const] : [])].map(([label, count], index) =>
+                  <Fragment key={label}>{index ? " · " : null}<span>{label}: {count.toLocaleString(language)}</span></Fragment>)}</small></td>
               <td>{duration(eligibility.medianMs, language, text)}</td><td>{duration(eligibility.p95Ms, language, text)}</td>
               <td>{replace(copy.durationSamples, { count: eligibility.observedSamples })}<small>{replace(copy.coverage, { observed: eligibility.observedSamples, eligible: eligibility.eligibleSamples, count: `${eligibility.observedSamples}/${eligibility.eligibleSamples}` })}</small>{insufficient ? <small>{copy.insufficientEvidence}</small> : null}</td>
             </tr>;
@@ -140,5 +160,5 @@ export function UsageInsights({ groups, accounts, copy, language, failureLabels,
         </table></div>
       </div> : null}
     </>}
-  </section>;
+  </Panel>;
 }

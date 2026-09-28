@@ -1,0 +1,183 @@
+/*
+ * Activity surface (Runtime activity): layout for the usage dashboard and the event log.
+ * Places kit components (layout only).
+ */
+
+/* Recent events · Local usage: kit Tabs over two views (both stay mounted; the inactive one is hidden). */
+.activity-tabs { margin-bottom: var(--space-6); }
+.activity-view { min-width: 0; }
+.activity-view[hidden] { display: none; }
+
+/* Korean breaks between words, not inside them (median/coverage notes, identities). */
+.activity-surface:lang(ko) { word-break: keep-all; overflow-wrap: anywhere; }
+
+/* Search fields: the browser's own clear (×) glyph drawn as the kit close icon in a token colour. */
+:is(.activity-filters__search, .task-history-search) .nk-input::-webkit-search-cancel-button {
+  width: 16px;
+  height: 16px;
+  margin-inline-start: var(--space-2);
+  background: var(--icon-tertiary);
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 6 12 12M18 6 6 18' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 6 12 12M18 6 6 18' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+}
+:is(.activity-filters__search, .task-history-search) .nk-input::-webkit-search-cancel-button:hover { background: var(--text-primary); }
+
+/* ---------- Local usage ---------- */
+
+.usage-dashboard { display: grid; gap: var(--space-4); min-width: 0; }
+
+/* The view's description with its own action (Export displayed CSV) on the right, like a SurfaceHeader. */
+.usage-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-3) var(--space-6); }
+.usage-header > div { flex: 1 1 420px; min-width: 0; max-width: 72ch; }
+.usage-header h2 { margin: 0; }
+.usage-header p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+
+.usage-filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3) var(--space-4); }
+.usage-filters > .nk-field { flex: 0 1 220px; }
+.usage-filters .nk-select, .activity-filters .nk-select { width: 100%; min-width: 0; }
+/* Takes the account select's place and size, so the reporting period does not move when the source changes. */
+.usage-account-boundary { display: grid; flex: 0 1 220px; gap: var(--space-1); min-width: 0; }
+.usage-account-boundary > span { font-size: 14px; line-height: 20px; font-weight: 500; }
+/* Sits where the account select would be, level with the neighbouring selects' values. */
+.usage-account-boundary > strong { display: flex; align-items: center; min-height: var(--size-control); color: var(--text-secondary); font-size: 14px; line-height: 20px; font-weight: 400; }
+.usage-account-boundary > strong + small { margin-top: calc(-1 * var(--space-2)); }
+.usage-account-boundary > small { color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+.usage-refreshing { display: inline-flex; align-self: flex-end; align-items: center; gap: var(--space-2); min-height: var(--size-control); margin-left: auto; color: var(--text-secondary); font-size: 13px; line-height: 18px; }
+
+.usage-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1) var(--space-4); margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.usage-status { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.usage-note { margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+
+/* Figures: two StatGroups. */
+.usage-figures { display: grid; gap: var(--space-3); }
+.usage-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+/* Three rates side by side; narrower, see the container queries at the end. */
+.usage-stats--rates { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.usage-empty { padding-block: var(--space-2); }
+
+/* Reported token usage (native). */
+.usage-tokens dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: var(--space-4) var(--space-6); margin: 0; }
+/* Label and value rows are shared across the four figures, so a wrapped label keeps the values level. */
+.usage-tokens dl > div { display: grid; grid-row: span 2; grid-template-rows: subgrid; gap: var(--space-1); min-width: 0; }
+.usage-tokens dt { align-self: end; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.usage-tokens dd { margin: 0; font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.usage-tokens dd small { display: block; margin-top: 2px; color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-weight: 400; letter-spacing: 0; }
+.usage-tokens > .usage-note { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--border-light); }
+
+/* Observed performance. */
+.usage-diagnostic-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--space-4) var(--space-6); }
+.usage-diagnostic-facts article { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-light); }
+.usage-diagnostic-facts strong { font-size: 15px; line-height: 22px; font-weight: 500; overflow-wrap: anywhere; }
+.usage-diagnostic-facts span { font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.usage-diagnostic-facts small { color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.usage-diagnostic-facts article.is-insufficient span { color: var(--text-secondary); }
+.usage-identity-note { display: block; color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+/* Show/hide table toggles: a ghost button whose label lines up with the text above it and whose chevron turns like a
+   Disclosure's. */
+.usage-toggle.nk-btn { margin-inline-start: calc(-1 * (var(--space-3) + 1px)); }
+.usage-toggle.nk-btn .nk-icon { color: var(--icon-tertiary); transition: transform var(--duration-control) var(--ease-enter); }
+.usage-toggle.nk-btn[aria-expanded="true"] .nk-icon { transform: rotate(90deg); }
+.usage-diagnostic-toggle { margin-top: var(--space-4); }
+.usage-diagnostic-details { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.usage-diagnostic-details > p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+
+/* Calendar and failures side by side; one column in a narrow workspace. */
+/* Each card keeps its own height (a short failure list does not stretch to the calendar). */
+.usage-columns { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; gap: var(--space-4); }
+/* The accessible table needs the full width. */
+.usage-columns:has(.usage-calendar-table) { grid-template-columns: minmax(0, 1fr); }
+
+/* Calendar heat grid: token colours only, so both themes work. */
+.usage-heat { display: grid; gap: var(--space-4); min-width: 0; }
+.usage-heat__grid { display: grid; grid-template-columns: max-content repeat(7, minmax(0, 40px)); gap: var(--space-1); align-items: center; }
+.usage-heat__weekday, .usage-heat__week { color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+.usage-heat__weekday { text-align: center; }
+.usage-heat__week { padding-right: var(--space-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-heat__day { position: relative; display: block; height: 28px; border-radius: var(--radius-xs); background: var(--bg-control); box-shadow: inset 0 0 0 1px var(--border); }
+.usage-heat__pad { display: block; height: 28px; }
+.usage-heat.is-dense .usage-heat__day, .usage-heat.is-dense .usage-heat__pad { height: 18px; }
+.usage-heat__day[data-level="1"] { background: color-mix(in srgb, var(--accent) 24%, transparent); box-shadow: none; }
+.usage-heat__day[data-level="2"] { background: color-mix(in srgb, var(--accent) 46%, transparent); box-shadow: none; }
+.usage-heat__day[data-level="3"] { background: color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: none; }
+.usage-heat__day[data-level="4"] { background: var(--accent); box-shadow: none; }
+.usage-heat__failed { position: absolute; top: var(--space-1); right: var(--space-1); width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--dot-error); box-shadow: 0 0 0 2px var(--bg-surface); }
+.usage-heat.is-dense .usage-heat__failed { top: 3px; right: 3px; }
+/* Dense periods (more than six weeks): weeks run left to right, weekdays down, month names above. */
+.usage-heat__grid--weeks { gap: 3px; overflow-x: auto; }
+.usage-heat__grid--weeks > .usage-heat__week { padding-right: var(--space-2); }
+.usage-heat__month { overflow: visible; color: var(--text-tertiary); font-size: 13px; line-height: 18px; white-space: nowrap; }
+/* Legend, then the table toggle on its own line (lined up with the Observed performance toggle). */
+.usage-heat__footer { display: grid; justify-items: start; gap: var(--space-3); }
+.usage-heat__legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.usage-heat__scale, .usage-heat__key { display: inline-flex; align-items: center; gap: var(--space-1); }
+.usage-heat__key { gap: var(--space-2); }
+.usage-heat__scale > .usage-heat__day { width: 14px; height: 14px; }
+.usage-heat__key > .usage-heat__failed { position: static; box-shadow: none; }
+
+/* Failure breakdown. */
+.usage-failures ul { margin: 0; padding: 0; list-style: none; }
+.usage-failures li { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-light); color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.usage-failures li:last-child { border-bottom: 0; }
+.usage-failures li strong { color: var(--text-primary); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Mode and model details. */
+.usage-breakdown__content { display: grid; gap: var(--space-4); }
+.usage-breakdown__content p { margin: 0; }
+.usage-figure { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* Tables (accessible calendar, mode/model breakdown, observed performance details). */
+.usage-table-scroll { min-width: 0; overflow-x: auto; }
+.usage-heat + .usage-table-scroll { margin-top: var(--space-6); }
+.usage-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.usage-table caption { padding: 0 0 var(--space-2); color: var(--text-primary); text-align: start; font-size: 14px; line-height: 20px; font-weight: 500; }
+.usage-table th, .usage-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-light); text-align: end; vertical-align: top; }
+.usage-table :is(th, td):first-child { padding-left: 0; text-align: start; }
+.usage-table :is(th, td):last-child { padding-right: 0; }
+.usage-table thead th { border-bottom-color: var(--border); color: var(--text-tertiary); font-weight: 500; vertical-align: bottom; }
+.usage-table tbody th { color: var(--text-secondary); font-weight: 500; }
+.usage-calendar-table tbody th { white-space: nowrap; }
+.usage-table td { color: var(--text-primary); white-space: nowrap; }
+.usage-table tbody tr:last-child > * { border-bottom: 0; }
+.usage-table small { display: block; margin-top: 2px; color: var(--text-tertiary); font-weight: 400; white-space: normal; }
+.usage-diagnostic-table td { white-space: normal; }
+/* The group identity reads as a line of words; below this the table scrolls instead of stacking them letter by letter. */
+.usage-diagnostic-table { min-width: 640px; }
+.usage-diagnostic-table tbody th { min-width: 200px; }
+.usage-table tr.is-insufficient > * { color: var(--text-tertiary); }
+
+/* ---------- Recent events ---------- */
+
+.activity-events { display: grid; gap: var(--space-4); min-width: 0; }
+.activity-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
+.activity-filters > .nk-field { flex: 0 1 220px; }
+.activity-filters > .activity-filters__search { flex: 1 1 320px; }
+/* Empty and no-match states keep the flush panel's inset, like the Task center lists. */
+.activity-log > .nk-empty { padding-inline: var(--space-5); }
+.activity-row { display: grid; gap: 2px; min-width: 0; }
+.activity-row strong { color: var(--text-primary); font-weight: 500; }
+.activity-row strong::first-letter { text-transform: uppercase; }
+/* Warning and error rows lead with their level word (the icon alone is the same alert shape for both). */
+.activity-row__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.activity-row__head > strong { min-width: 0; }
+.activity-row__detail { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 13px; line-height: 20px; }
+
+/* Stat cells follow the kit StatGroup at every width (no dividers of their own here). */
+@container workspace (max-width: 840px) {
+  /* Five figures: the total on its own row, then two by two. */
+  .usage-stats:not(.usage-stats--rates) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .usage-stats:not(.usage-stats--rates) > :first-child { grid-column: 1 / -1; }
+}
+@container workspace (max-width: 720px) {
+  /* Three rates: the completion rate on its own row, then the two durations (never two plus an orphan). */
+  .usage-stats--rates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .usage-stats--rates > :first-child { grid-column: 1 / -1; }
+}
+@container workspace (max-width: 480px) {
+  .usage-stats, .usage-stats--rates { grid-template-columns: minmax(0, 1fr); }
+}
+
+@container workspace (max-width: 760px) {
+  .usage-columns { grid-template-columns: minmax(0, 1fr); }
+}

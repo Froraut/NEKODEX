@@ -1,19 +1,20 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { BrandMark } from "./BrandMark";
+import { Badge, Button, cx, Icon, Mark, Notice, SettingRow as KitSettingRow, StateDot, Switch as KitSwitch, Toast, type IconName } from "./design";
 import type { Copy } from "./i18n";
-import { Icon, type IconName } from "./icons";
-import { IconButton, PrimaryButton, StateDot, Switch, useModalFocus } from "./launcher-ui";
+import { IconButton, useModalFocus } from "./launcher-ui";
+import { shellCopy, startupLanguage } from "./shell-copy";
 import { taskCenterTitle } from "./task-center-copy";
 import type { Language, Surface } from "./types";
 import { updateCopyFor } from "./update-copy";
+import "./surfaces/shell.css";
 
-// Presentational shell chrome for App: title bar, sidebar pieces, dialogs and the
-// compact-drawer focus trap. App keeps shell state, navigation and IPC.
+// Presentational shell chrome for App (design-system AppShell, Sidebar and TitleBar markup): title bar,
+// sidebar pieces, dialogs and the compact-drawer focus trap. App keeps shell state, navigation and IPC.
 
 export const COMPACT_SIDEBAR_QUERY = "(max-width: 860px)";
 
-/** Compact-sidebar drawer: makes the workspace inert, traps focus and closes on Escape. */
+/** Compact-sidebar drawer: makes the rest of the shell inert, traps focus and closes on Escape. */
 export function useCompactSidebarDrawer(
   compactSidebar: boolean,
   sidebarOpen: boolean,
@@ -24,12 +25,13 @@ export function useCompactSidebarDrawer(
   useEffect(() => {
     if (!compactSidebar || !sidebarOpen || !sidebar.current) return;
     const drawer = sidebar.current;
-    const workspace = drawer.parentElement?.querySelector<HTMLElement>(":scope > .workspace") ?? null;
-    const workspaceWasInert = workspace?.inert ?? false;
-    if (workspace) workspace.inert = true;
+    // The titlebar and the workspace share the main column of the shell.
+    const main = drawer.parentElement?.querySelector<HTMLElement>(":scope > .nk-shell__main") ?? null;
+    const mainWasInert = main?.inert ?? false;
+    if (main) main.inert = true;
     const focusable = () => [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')];
     const focusDrawer = () => {
-      const active = drawer.querySelector<HTMLElement>('.sidebar-item[aria-current="page"]');
+      const active = drawer.querySelector<HTMLElement>('.nk-nav-item[aria-current="page"]');
       (active ?? focusable()[0] ?? drawer).focus();
     };
     const frame = requestAnimationFrame(focusDrawer);
@@ -67,12 +69,17 @@ export function useCompactSidebarDrawer(
       cancelAnimationFrame(frame);
       document.removeEventListener("keydown", keydown, true);
       document.removeEventListener("focusin", focusin, true);
-      if (workspace) workspace.inert = workspaceWasInert;
+      if (main) main.inert = mainWasInert;
       if (window.matchMedia(COMPACT_SIDEBAR_QUERY).matches) {
         requestAnimationFrame(() => sidebarToggle.current?.focus());
       }
     };
   }, [compactSidebar, sidebarOpen]);
+}
+
+/** Where the macOS traffic lights sit; the real controls are drawn by the OS (hidden on Windows and Linux). */
+export function WindowControlsReserve({ className }: { className: string }) {
+  return <span aria-hidden="true" className={className} />;
 }
 
 export function TitleBar({
@@ -92,30 +99,87 @@ export function TitleBar({
   sidebarToggle: RefObject<HTMLButtonElement | null>;
   toggleSidebar: () => void;
 }) {
+  const surfaceLabel = ({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language), setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface];
+  // Nested surfaces add one crumb: Connections / Models and Codex route · Local tools connector.
+  const nested = surface === "setup" ? copy.modelsConnectionTab : surface === "mcp" ? copy.toolsConnectionTab : null;
+  const trail = [copy.product, surfaceLabel, ...(nested ? [nested] : [])];
+  const header = useRef<HTMLElement>(null);
+  useStatusPillFit(header, `${language}|${trail.join("/")}|${devProfile}|${sidebarOpen}`);
   return (
-    <header className="app-titlebar draggable">
-      <div className="titlebar-left no-drag">
-        <IconButton
-          buttonRef={sidebarToggle}
-          icon="sidebar"
-          label={sidebarOpen ? copy.hideSidebar : copy.showSidebar}
-          controls="app-sidebar"
-          expanded={sidebarOpen}
-          onClick={toggleSidebar}
-        />
-        {devProfile ? <span className="titlebar-dev-profile">{copy.devBadge}</span> : null}
-      </div>
-      <div className="titlebar-location"><span>NEKODEX</span><span aria-hidden="true">/</span><strong>{({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language), setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface]}</strong></div>
+    <header className="nk-titlebar" ref={header}>
+      {sidebarOpen ? null : (
+        <div className="nk-titlebar__lead">
+          <WindowControlsReserve className="nk-titlebar__controls" />
+          <IconButton
+            buttonRef={sidebarToggle}
+            controls="app-sidebar"
+            expanded={false}
+            icon="sidebar"
+            label={copy.showSidebar}
+            onClick={toggleSidebar}
+          />
+        </div>
+      )}
+      <ol aria-label={shellCopy(language).location} className="nk-titlebar__trail">
+        {trail.map((crumb, index) => (
+          <li aria-current={index === trail.length - 1 && index > 0 ? "page" : undefined} key={index}>{crumb}</li>
+        ))}
+      </ol>
+      {/* At most one quiet status: the DEV tag replaces the Local workspace pill. The pill gives way before the
+          location does (it ellipsizes down to its icon, surfaces/shell.css). */}
+      {devProfile ? <span className="nk-dev-tag">{copy.devBadge}</span> : (
+        <div className="nk-titlebar__end" title={copy.localWorkspace}>
+          <Badge className="nk-titlebar__status" icon="globe" shape="pill" tone="outline">
+            <span className="nk-titlebar__status-label">{copy.localWorkspace}</span>
+          </Badge>
+        </div>
+      )}
     </header>
   );
 }
 
+/**
+ * The Local workspace pill gives way before the location: once the current crumb or the pill's own label would be
+ * cut, the pill shows only its globe (the label stays in the DOM as its text and in the tooltip); it shows the
+ * label again only when there is room for all of it, so it never flickers between the two.
+ */
+function useStatusPillFit(header: RefObject<HTMLElement | null>, content: string) {
+  useLayoutEffect(() => {
+    const bar = header.current;
+    const pill = bar?.querySelector<HTMLElement>(".nk-titlebar__status");
+    const label = pill?.querySelector<HTMLElement>(".nk-titlebar__status-label");
+    const trail = bar?.querySelector<HTMLElement>(".nk-titlebar__trail");
+    if (!bar || !pill || !label || !trail) return;
+    const clipped = (element: Element | null) => Boolean(element && element.scrollWidth > element.clientWidth);
+    const fit = () => {
+      const current = trail.querySelector('li[aria-current="page"]');
+      if (!pill.classList.contains("is-icon-only")) {
+        if (clipped(current) || clipped(label)) pill.classList.add("is-icon-only");
+        return;
+      }
+      // Icon only: the pill takes the label back when the free room before it holds the label, the label's gap and
+      // the pill's wider padding (2 x 5px), with a pixel to spare.
+      const room = pill.getBoundingClientRect().left - trail.getBoundingClientRect().right - 12;
+      if (!clipped(current) && room >= label.scrollWidth + 8 + 10 + 1) pill.classList.remove("is-icon-only");
+    };
+    // Start from the full pill for new content (another page, language or window state).
+    pill.classList.remove("is-icon-only");
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(bar);
+    observer.observe(trail);
+    return () => observer.disconnect();
+  }, [content]);
+}
+
+/** A group of nav items. The label is not a heading (the page's h1 comes first in the outline); it names the group. */
 export function SidebarGroup({ children, label }: { children: ReactNode; label: string }) {
+  const labelId = useId();
   return (
-    <section className="sidebar-group">
-      <h2>{label}</h2>
+    <div aria-labelledby={labelId} className="nk-nav-group" role="group">
+      <span className="nk-nav-group__label" id={labelId}>{label}</span>
       <div>{children}</div>
-    </section>
+    </div>
   );
 }
 
@@ -125,46 +189,57 @@ export function SidebarItem({
   icon,
   label,
   onClick,
+  status,
   tone,
 }: {
   active: boolean;
+  /** An attention dot (ActionDot) or a count; give it words in `status`. */
   badge?: ReactNode;
   icon: IconName;
   label: string;
   onClick: () => void;
+  /** What the badge says, in words: the item's description (screen readers) and tooltip (pointer). */
+  status?: string;
   tone?: "update";
 }) {
+  const statusId = useId();
   return (
-    <button
-      aria-current={active ? "page" : undefined}
-      className={`sidebar-item${active ? " is-active" : ""}${tone === "update" ? " is-update" : ""}`}
-      onClick={onClick}
-      type="button"
-    >
-      <Icon name={icon} />
-      <span>{label}</span>
-      {badge ? <i className="sidebar-item-badge">{badge}</i> : null}
-    </button>
+    <>
+      <button
+        aria-current={active ? "page" : undefined}
+        aria-describedby={status ? statusId : undefined}
+        // sidebar-item: stable hook for the measure-* scripts; the look comes from nk-nav-item.
+        className={cx("nk-nav-item", "sidebar-item", tone === "update" && "is-update")}
+        onClick={onClick}
+        title={status ? `${label}: ${status}` : undefined}
+        type="button"
+      >
+        <Icon className="nk-icon" name={icon} />
+        <span>{label}</span>
+        {!badge ? null : typeof badge === "string" || typeof badge === "number"
+          ? <i aria-hidden={status ? "true" : undefined} className="nk-nav-item__badge">{badge}</i> : badge}
+      </button>
+      {/* Outside the button, so the status describes the item without changing its name. */}
+      {status ? <span className="nk-visually-hidden" id={statusId}>{status}</span> : null}
+    </>
   );
 }
 
+/** Attention dot on a nav item: required (amber), optional (yellow) or error (rose). */
 export function ActionDot({ pulse = false, tone }: { pulse?: boolean; tone: "required" | "optional" | "error" }) {
-  return <i aria-hidden="true" className={`action-dot is-${tone}${pulse ? " is-pulse" : ""}`} />;
+  return (
+    <StateDot
+      className={cx("nk-action-dot", tone === "required" && !pulse && "is-static", tone !== "required" && pulse && "is-pulse")}
+      state={tone === "required" ? "busy" : tone}
+    />
+  );
 }
 
 export function ErrorToast({ copy, message, onDismiss }: { copy: Copy; message: string; onDismiss: () => void }) {
   return (
-    <div
-      className="error-toast"
-      role="alert"
-    >
-      <StateDot state="error" />
-      <span>
-        <strong>{copy.error}</strong>
-        <p>{message}</p>
-      </span>
-      <button onClick={onDismiss} type="button">{copy.dismiss}</button>
-    </div>
+    <Toast dismissLabel={copy.dismiss} fixed onDismiss={onDismiss} title={copy.error} tone="error">
+      {message}
+    </Toast>
   );
 }
 
@@ -172,46 +247,51 @@ export function BiggerContextRecommendation({
   busy,
   checked,
   copy,
+  error,
   onChange,
   onClose,
 }: {
   busy: boolean;
   checked: boolean;
   copy: Copy;
+  /** A failed save, shown in the dialog (the page's toast would sit behind it). */
+  error?: string | null;
   onChange: (checked: boolean) => void;
   onClose: () => void;
 }) {
-  const dialog = useRef<HTMLDivElement>(null);
+  const dialog = useRef<HTMLElement>(null);
   useModalFocus(true, dialog, onClose, { closeAllowed: !busy });
+  // The design system's Dialog markup, kept here so the dialog keeps its ids, aria-describedby and aria-busy.
+  // Like the kit Dialog, Escape and a press on the backdrop close it (not while the change is saving).
   return createPortal(
-    <div
-      aria-busy={busy}
-      aria-describedby="bigger-context-recommendation-body"
-      aria-labelledby="bigger-context-recommendation-title"
-      aria-modal="true"
-      className="bigger-context-recommendation-backdrop"
-      ref={dialog}
-      role="dialog"
-      tabIndex={-1}
-    >
+    <div className="nk-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
       <section
-        className="bigger-context-recommendation"
+        aria-busy={busy}
+        aria-describedby="bigger-context-recommendation-body"
+        aria-labelledby="bigger-context-recommendation-title"
+        aria-modal="true"
+        className="nk-dialog"
+        ref={dialog}
+        role="dialog"
+        tabIndex={-1}
       >
-        <header className="bigger-context-recommendation-header">
+        <header>
           <small>{copy.biggerContext}</small>
           <h2 id="bigger-context-recommendation-title">{copy.biggerContextRecommendationTitle}</h2>
         </header>
-        <p className="bigger-context-recommendation-body" id="bigger-context-recommendation-body">{copy.biggerContextRecommendationBody}</p>
-        <div className="bigger-context-recommendation-toggle">
-          <div>
-            <strong>{copy.biggerContext}</strong>
-            <p>{copy.biggerContextRecommendationToggleBody}</p>
-          </div>
-          <Switch label={copy.biggerContext} checked={checked} disabled={busy} onChange={onChange} />
+        <div className="nk-dialog__body">
+          <p id="bigger-context-recommendation-body">{copy.biggerContextRecommendationBody}</p>
+          <KitSettingRow
+            className="nk-dialog__setting"
+            control={<KitSwitch busy={busy} checked={checked} label={copy.biggerContext} onChange={onChange} />}
+            description={copy.biggerContextRecommendationToggleBody}
+            title={copy.biggerContext}
+          />
+          {error ? <Notice className="nk-dialog__error" title={copy.error} tone="error">{error}</Notice> : null}
+          {checked ? <p className="nk-dialog__note">{copy.contextClientRefreshBody}</p> : null}
         </div>
-        {checked ? <p className="bigger-context-recommendation-restart">{copy.contextClientRefreshBody}</p> : null}
         <footer>
-          <button className="button-secondary" data-modal-autofocus disabled={busy} onClick={onClose} type="button">{copy.close}</button>
+          <Button data-modal-autofocus disabled={busy} onClick={onClose}>{copy.close}</Button>
         </footer>
       </section>
     </div>,
@@ -219,27 +299,33 @@ export function BiggerContextRecommendation({
   );
 }
 
-export function LaunchLoading() {
+/** Before the first snapshot. `language`: the saved language when known, else the system language. */
+export function LaunchLoading({ language = startupLanguage() }: { language?: Language }) {
   return (
-    <main className="launch-loading" role="status" aria-busy="true">
-      <BrandMark />
-      <span />
-      <span className="visually-hidden">Loading…</span>
+    <main aria-busy="true" className="nk-launch" lang={language}>
+      <span aria-hidden="true" className="nk-launch__drag" />
+      <Mark size={48} />
+      <span aria-hidden="true" className="nk-launch__line" />
+      <span className="nk-visually-hidden" role="status">{shellCopy(language).loading}</span>
     </main>
   );
 }
 
-export function FatalMessage({ message, onRetry, retryLabel }: {
+/** The launcher could not start: what failed (the heading), the cause, and a retry. */
+export function FatalMessage({ language = startupLanguage(), message, onRetry, retryLabel }: {
+  language?: Language;
   message: string;
   onRetry?: () => void;
   retryLabel?: string;
 }) {
   return (
-    <main className="fatal-message">
-      <BrandMark />
-      <h1>NEKODEX</h1>
+    <main className="nk-launch" lang={language}>
+      <span aria-hidden="true" className="nk-launch__drag" />
+      <Mark size={48} />
+      <h1>{shellCopy(language).startupFailed}</h1>
       <p role="alert">{message}</p>
-      {onRetry ? <PrimaryButton onClick={onRetry}>{retryLabel}</PrimaryButton> : null}
+      {onRetry ? <Button onClick={onRetry} variant="primary">{retryLabel}</Button> : null}
     </main>
   );
 }
+

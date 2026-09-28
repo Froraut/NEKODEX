@@ -1,15 +1,23 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { AccountNewSessionWindowStatus, AccountSafetyPolicy, Language } from "./types";
 import type { Copy } from "./i18n";
-import "./account-forms.css";
+import { Button, Checkbox, TextField, cx } from "./design";
+
+/** A settings form's state for the summary of the disclosure that holds it. */
+export type AccountFormState = "saving" | "failed" | "unsaved" | null;
 
 function formatSafetyTime(value: number | string, language: Language): string {
   return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-export function AccountSafetySettings({ id, language, safety, resumeRequired = false, disabled, blockedReason, copy, save, resume }: {
+export function AccountSafetySettings({ id, language, safety, resumeRequired = false, disabled, blockedReason, copy, save, resume,
+  pacingStatus, onStateChange }: {
   id: string;
   language: Language;
+  /** Current local pacing state ("New task pacing: No local hold"), shown in the section. */
+  pacingStatus?: { label: string; value: string; held: boolean; retryAt: number | null } | null;
+  /** Reports saving / failed / unsaved (or null) for the enclosing disclosure summary. */
+  onStateChange?: (state: AccountFormState) => void;
   safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
     newSessionWindow: AccountNewSessionWindowStatus | null };
   resumeRequired?: boolean; disabled: boolean; blockedReason?: string; copy: Copy;
@@ -90,62 +98,66 @@ export function AccountSafetySettings({ id, language, safety, resumeRequired = f
       if (previous.current.id === id) { savingRef.current = false; setSaving(false); }
     }
   };
-  return <details className="account-safety account-form-panel">
-    <summary><span>{copy.pacingTitle}</span>
-      {saving || failed || dirty ? <span className="account-form-state">{saving ? copy.accountFormSaving
-        : failed ? copy.accountFormFailed : copy.accountFormUnsaved}</span> : null}
-    </summary>
+  const formState: AccountFormState = saving ? "saving" : failed ? "failed" : dirty ? "unsaved" : null;
+  useEffect(() => { onStateChange?.(formState); }, [formState, onStateChange]);
+  // Controls are disabled one by one (not through <fieldset disabled>) so a focused control keeps focus while saving.
+  const locked = disabled || saving;
+  // A blocked form says why it is blocked; the error styling belongs to the error text only.
+  const showError = !blockedReason && (!valid || failed);
+  // The pacing line already names the hold's end time; print "Paused until" only for a different deadline.
+  const cooldownShown = pacingStatus?.retryAt != null && Math.abs(pacingStatus.retryAt - safety.cooldownUntil) < 60_000;
+  return <section className="accounts-details__section accounts-controls__section" aria-labelledby={`${statusId}-title`}>
+    <h3 id={`${statusId}-title`} className="nk-type-label">{copy.pacingTitle}</h3>
     <p>{copy.pacingBody}</p>
-    {safety.stopped ? <p role="status">{copy.pacingStopped}</p> : null}
-    {safety.cooldownUntil > Date.now() ? <p role="status">{copy.pacingUntil}: {formatSafetyTime(safety.cooldownUntil, language)}</p> : null}
-    <form onSubmit={event => { event.preventDefault(); void submit(); }}>
-      <fieldset disabled={disabled || saving} aria-describedby={statusId}>
-        <label className="account-policy-enabled"><span><input type="checkbox" checked={draft.enabled}
-          onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, policy: { ...draft, enabled: event.target.checked } }); }} /> {copy.pacingEnabled}</span></label>
-        {fields.map(([key, label, min, max]) => <label key={key}>
-          {label}
-          <input type="number" min={min} max={max} step={1} required
+    {pacingStatus ? <p className={cx("accounts-caption nk-type-caption", pacingStatus.held && "accounts-attention")}>{pacingStatus.label}: {pacingStatus.value}</p> : null}
+    {safety.stopped ? <p role="status" className="accounts-attention">{copy.pacingStopped}</p> : null}
+    {safety.cooldownUntil > Date.now() && !cooldownShown ? <p role="status" className="accounts-attention">{copy.pacingUntil}: {formatSafetyTime(safety.cooldownUntil, language)}</p> : null}
+    <form className="accounts-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
+      <fieldset aria-describedby={statusId}>
+        <Checkbox label={copy.pacingEnabled} checked={draft.enabled} disabled={locked}
+          onChange={checked => { setFailed(false); setRawDraft({ ...rawDraft, policy: { ...draft, enabled: checked } }); }} />
+        <div className="accounts-form__grid">
+          {fields.map(([key, label, min, max]) => <TextField key={key} label={label} disabled={locked}
+            type="number" min={min} max={max} step={1} required
             aria-describedby={statusId} aria-invalid={!Number.isInteger(draft[key]) || draft[key] < min || draft[key] > max}
             value={Number.isFinite(draft[key]) ? draft[key] : ""}
-            onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, policy: { ...draft, [key]: event.target.valueAsNumber } }); }} />
-        </label>)}
-        <section className="account-new-session-window" aria-labelledby={`${statusId}-window-title`}>
-          <h3 id={`${statusId}-window-title`}>{copy.newSessionWindowTitle}</h3>
+            onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, policy: { ...draft, [key]: event.target.valueAsNumber } }); }} />)}
+        </div>
+        <section className="accounts-form__section" aria-labelledby={`${statusId}-window-title`}>
+          <h4 id={`${statusId}-window-title`} className="nk-type-label">{copy.newSessionWindowTitle}</h4>
           <p>{copy.newSessionWindowBody}</p>
-          <p className="field-hint" role="status">{windowStatusText}</p>
+          <p className="accounts-caption nk-type-caption" role="status">{windowStatusText}</p>
           {windowResetsAt !== null
-            ? <p className="field-hint">{copy.newSessionWindowNextSlot}: {formatSafetyTime(windowResetsAt, language)}</p>
-            : windowStatus ? <p className="field-hint">{copy.newSessionWindowNoSessions}</p> : null}
-          <label className="account-policy-enabled"><span><input type="checkbox" checked={windowEnabled}
-            onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowEnabled: event.target.checked }); }} /> {copy.newSessionWindowEnabled}</span></label>
-          {windowEnabled ? <div className="account-new-session-window-fields">
-            <label>{copy.newSessionWindowLimit}
-              <input type="number" min={1} max={10_000} step={1} required aria-describedby={statusId}
-                aria-invalid={!Number.isInteger(parsedWindowLimit) || parsedWindowLimit < 1 || parsedWindowLimit > 10_000}
-                value={windowLimit} onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowLimit: event.target.value }); }} />
-            </label>
-            <label>{copy.newSessionWindowMinutes}
-              <input type="number" min={1} max={525_600} step={1} required aria-describedby={statusId}
-                aria-invalid={!Number.isInteger(parsedWindowMinutes) || parsedWindowMinutes < 1 || parsedWindowMinutes > 525_600}
-                value={windowMinutes} onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowMinutes: event.target.value }); }} />
-            </label>
+            ? <p className="accounts-caption nk-type-caption">{copy.newSessionWindowNextSlot}: {formatSafetyTime(windowResetsAt, language)}</p>
+            : windowStatus ? <p className="accounts-caption nk-type-caption">{copy.newSessionWindowNoSessions}</p> : null}
+          <Checkbox label={copy.newSessionWindowEnabled} checked={windowEnabled} disabled={locked}
+            onChange={checked => { setFailed(false); setRawDraft({ ...rawDraft, windowEnabled: checked }); }} />
+          {windowEnabled ? <div className="accounts-form__grid">
+            <TextField label={copy.newSessionWindowLimit} disabled={locked} type="number" min={1} max={10_000} step={1} required aria-describedby={statusId}
+              aria-invalid={!Number.isInteger(parsedWindowLimit) || parsedWindowLimit < 1 || parsedWindowLimit > 10_000}
+              value={windowLimit} onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowLimit: event.target.value }); }} />
+            <TextField label={copy.newSessionWindowMinutes} disabled={locked} type="number" min={1} max={525_600} step={1} required aria-describedby={statusId}
+              aria-invalid={!Number.isInteger(parsedWindowMinutes) || parsedWindowMinutes < 1 || parsedWindowMinutes > 525_600}
+              value={windowMinutes} onChange={event => { setFailed(false); setRawDraft({ ...rawDraft, windowMinutes: event.target.value }); }} />
           </div> : null}
         </section>
-        <button type="submit" className="button-secondary" disabled={!changed || !valid || saving}>
-          {saving ? copy.accountFormSaving : copy.pacingSave}
-        </button>
-        <button type="button" className="button-secondary" disabled={disabled || saving || !dirty}
-          onClick={() => {
-            if (disabled || savingRef.current) return;
-            setRawDraft(toDraft(normalizedPolicy)); setFailed(false); submitted.current = null;
-          }}>{copy.accountSafetyRestore}</button>
-        {safety.stopped || resumeRequired ? <button type="button" className="button-secondary"
-          onClick={() => { if (!disabled && !savingRef.current) resume(); }}>{copy.pacingResume}</button> : null}
+        <div className="accounts-inline-actions">
+          <Button type="submit" size="sm" busy={saving} disabled={disabled || !changed || !valid}>
+            {saving ? copy.accountFormSaving : copy.pacingSave}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={disabled || saving || !dirty}
+            onClick={() => {
+              if (disabled || savingRef.current) return;
+              setRawDraft(toDraft(normalizedPolicy)); setFailed(false); submitted.current = null;
+            }}>{copy.accountSafetyRestore}</Button>
+          {safety.stopped || resumeRequired ? <Button size="sm" disabled={locked}
+            onClick={() => { if (!disabled && !savingRef.current) resume(); }}>{copy.pacingResume}</Button> : null}
+        </div>
       </fieldset>
-      <p id={statusId} className={!valid || failed ? "field-error" : "field-hint"} role={!valid || failed ? "alert" : "status"}>
+      <p id={statusId} className={cx("accounts-form__status nk-type-caption", showError && "is-error")} role={showError ? "alert" : "status"}>
         {blockedReason || (!valid ? copy.accountSafetyInvalid : failed ? copy.accountFormFailed
           : saving ? copy.accountFormSaving : dirty ? copy.accountFormUnsaved : copy.accountFormSaved)}
       </p>
     </form>
-  </details>;
+  </section>;
 }

@@ -1,20 +1,27 @@
 import type { LauncherLogStore } from './launcher-log-store';
-import { sessionIssueCopy } from "./session-issue-copy";
-import { CatTail } from "./CatTail";
 import { browserTabTitleFromTitle } from "./BrowserSurface";
 import { humanEvent } from "./log-format";
-import { BrandMark, CatHead, useCatReaction } from "./BrandMark";
-import { useId, useSyncExternalStore, type CSSProperties } from "react";
-import { Icon, type IconName } from "./icons";
+import { useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Copy } from "./i18n";
-import { deriveWorkspaceReadiness, type WorkspaceAction } from "./workspace-readiness";
-import { modelConnectionReadiness } from "./setup-progress";
-import { workflowCopy } from "./workflow-copy";
+import { deriveWorkspaceReadiness, workspaceReadinessInput, type ConnectionStatus } from "./workspace-readiness";
+import { connectionActionWord, connectionStatusWord, connectionsCopy, workspaceHeadline, type HeadlineStep } from "./connections-copy";
+import { overviewCopy } from "./overview-copy";
 import { NetworkIssueNotice } from "./NetworkIssueNotice";
+import { messageOf } from "./launcher-ui";
+import { requestRoutingChecks } from "./SetupSurface";
+import {
+  Button, ConnectionRow, EmptyState, EventList, Hero, Notice, Page, Panel, Stat, StatGroup, SurfaceHeader,
+  type EventItem, type IconName,
+} from "./design";
 import type { BrowserState, LauncherSnapshot, Surface } from "./types";
 
-const workspaceBase = new URL("./assets/cat-workspace-base.png", import.meta.url).href;
-const workspaceArt = new URL("./assets/cat-workspace.png", import.meta.url).href;
+const api = window.codexWebLauncher;
+
+/** Where each hero step leads (retry-session runs in place; wait has no destination). */
+const stepSurface: Record<Exclude<HeadlineStep, "wait" | "retry-session">, Surface> = {
+  "sign-in": "browser", setup: "setup", "routing-checks": "setup", tools: "mcp", repair: "mcp",
+  activity: "activity", "open-workspace": "browser",
+};
 
 export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, logStore, navigate, openTab, onMuteNetworkNotice }: {
   copy: Copy; browser: BrowserState | null; snapshot: LauncherSnapshot;
@@ -25,207 +32,132 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
 }) {
   const logs = useSyncExternalStore(logStore.subscribe, logStore.getSnapshot);
   const overviewId = useId();
-  const workflow = workflowCopy(snapshot.state.language ?? "en");
+  const language = snapshot.state.language ?? "en";
+  const overview = overviewCopy(language);
   const manual = snapshot.state.browserInteractionMode === "manual";
-  const catalogUnavailable = !manual && Boolean(catalogFailure);
-  const signedIn = browser?.authenticated === true;
-  const authenticationStatus = browser?.authenticationStatus
-    ?? (signedIn ? "verified" : browser?.status === "signed-out" ? "signed-out" : "unknown");
-  const accountVerified = authenticationStatus === "verified";
-  const runtime = snapshot.runtimeCapabilities ?? snapshot.lifecycle;
-  const readiness = deriveWorkspaceReadiness({
-    manual,
-    authenticationStatus,
-    catalogUnavailable,
-    smokePassed: snapshot.smokePassed,
-    installed: snapshot.state.coreSetupComplete === true,
-    catalogVerified: snapshot.state.codexCatalogVerified === true,
-    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
-    toolsVerified: toolsReady,
-    development: snapshot.profile === "development",
-    runtime: runtime ? { ...runtime, transitionActive: Boolean(snapshot.lifecycle?.transition) }
-      : { transitionActive: Boolean(snapshot.lifecycle?.transition) },
-  });
+  const development = snapshot.profile === "development";
+  // The same derivation the shell and the Connections page use, so every surface reports the same state.
+  const readiness = deriveWorkspaceReadiness(workspaceReadinessInput({ snapshot, browser, catalogFailure, toolsVerified: toolsReady }));
+  const headline = workspaceHeadline(readiness, { app: copy, language, development, manual,
+    authenticationIssue: browser?.authenticationIssue });
+
+  // "Retry verification" checks the session here instead of only navigating to Accounts.
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const retryInFlight = useRef(false);
+  const retrySession = async () => {
+    if (retryInFlight.current || snapshot.lifecycle?.transition || browser?.navigationLocked) return;
+    if (!browser?.accountId || !api) { navigate("accounts"); return; }
+    retryInFlight.current = true;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await api.refreshAccountAuthentication(browser.accountId);
+    } catch (cause) {
+      setRetryError(messageOf(cause));
+    } finally {
+      retryInFlight.current = false;
+      setRetrying(false);
+    }
+  };
+  const waiting = headline.step === "wait";
+  const runStep = () => {
+    if (headline.step === "wait") return;
+    if (headline.step === "retry-session") void retrySession();
+    else {
+      if (headline.step === "routing-checks") requestRoutingChecks();
+      navigate(stepSurface[headline.step]);
+    }
+  };
+
   const activeTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const active = activeTabs.length;
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
-  const modelReadiness = modelConnectionReadiness({
-    manual,
-    installed: snapshot.state.coreSetupComplete === true,
-    catalogVerified: snapshot.state.codexCatalogVerified === true,
-    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-    development: snapshot.profile === "development",
-  });
-  const modelsReady = modelReadiness === "available";
-  const modelStatus = catalogUnavailable ? copy.catalogUnavailable
-    : modelsReady ? (manual ? copy.setupInstalledTitle : copy.connectionVerified)
-      : modelReadiness === "catalog-pending" ? copy.modelsWaitingShort
-        : modelReadiness === "picker-pending" ? copy.modelsConfirmShort : copy.connectionPending;
-  const toolsError = readiness.tools === "degraded"
-    || (readiness.tools === "unavailable" && readiness.action === "open-tools");
-  const connections: Array<{ error?: boolean; icon: IconName; label: string; ready: boolean; surface: Surface; status: string }> = [
-    { icon: "accounts", label: copy.accountConnection, ready: manual || accountVerified, surface: "accounts",
-      status: manual ? copy.manualShort : accountVerified ? copy.connectionVerified
-        : authenticationStatus === "unavailable" ? workflow.session.verificationUnavailable
-          : authenticationStatus === "unknown" ? workflow.session.checkingVerification : copy.signInNeededShort },
-    { error: catalogUnavailable, icon: "setup", label: copy.modelsConnectionTab, ready: modelsReady && !catalogUnavailable,
-      surface: "setup", status: modelStatus },
-    { error: toolsError, icon: "mcp", label: copy.toolsConnectionTab,
-      ready: readiness.tools === "ready", surface: "mcp",
-      status: toolsError
-        ? copy.localToolsUnavailable : toolsReady ? copy.connectorVerified : copy.connectorNotVerified },
+  // While the retry runs, the session row reports the check it is waiting for.
+  const sessionStatus: ConnectionStatus = retrying ? { key: "checking", dot: "busy", action: "retry", ready: false }
+    : readiness.connections.session;
+  const connections: Array<{ icon: IconName; label: string; surface: Surface; status: ConnectionStatus }> = [
+    { icon: "accounts", label: copy.accountConnection, surface: "accounts", status: sessionStatus },
+    { icon: "setup", label: copy.modelsConnectionTab, surface: "setup", status: readiness.connections.models },
+    { icon: "mcp", label: copy.toolsConnectionTab, surface: "mcp", status: readiness.connections.tools },
   ];
-  const actionSurface: Partial<Record<WorkspaceAction, Surface>> = {
-    "retry-session": "accounts", "open-accounts": "accounts", "open-setup": "setup",
-    "open-tools": "mcp", "repair-web": "mcp", "open-browser": "browser",
-  };
-  const nativePreserved = readiness.native === "ready"
-    && (readiness.web === "degraded" || readiness.web === "unavailable"
-      || readiness.tools === "degraded" || readiness.tools === "unavailable");
-  const setupPending = readiness.action === "open-setup";
-  const toolsPending = readiness.action === "open-tools" || readiness.action === "repair-web"
-    || readiness.reason === "web-repair-active";
-  const catalogIsNext = readiness.reason === "catalog-unavailable";
-  const heroTitle = catalogIsNext ? copy.catalogUnavailable
-    : readiness.reason === "session-unavailable" ? workflow.session.verificationUnavailable
-      : toolsPending ? workflow.recovery.webTransportTitle
-        : readiness.action === "open-browser" ? (nativePreserved ? copy.setupReadyModels : copy.setupChecksPassed)
-          : setupPending ? copy.setupInstalledTitle : copy.overviewTitle;
-  const heroBody = catalogIsNext ? copy.catalogFailureKeptInstall
-    : readiness.reason === "session-unavailable" ? sessionIssueCopy(snapshot.state.language ?? "en", browser?.authenticationIssue)
-      : toolsPending ? (readiness.native === "ready" ? workflow.recovery.webTransportBody : copy.localToolsUnavailableBody)
-        : readiness.action === "open-browser" ? (nativePreserved ? workflow.recovery.webTransportBody : copy.connectorAvailableNotExecuted)
-          : setupPending ? (readiness.reason === "picker-confirmation-required" ? copy.setupConfirmTitle
-            : readiness.reason === "catalog-waiting" ? copy.setupCatalogTitle : copy.overviewBody)
-            : copy.overviewBody;
-  const heroSurface = catalogIsNext ? "setup" : actionSurface[readiness.action];
-  const heroAction = catalogIsNext ? copy.openRoutingChecks
-    : readiness.action === "retry-session" ? workflow.session.retryVerification
-      : readiness.action === "open-accounts" ? copy.accountConnection
-        : readiness.action === "repair-web" ? workflow.recovery.repairAction
-          : readiness.action === "open-tools" ? copy.manageToolsConnection
-          : readiness.action === "open-browser" ? copy.openWorkspace
-            : readiness.action === "open-setup" ? copy.finishSetup
-              : readiness.reason === "web-repair-active" ? workflow.recovery.repairing : copy.loading;
-  return <section className="content-surface overview-surface is-page-scroll">
-    <div className="content-scroll overview-scroll">
-      <header className="overview-heading"><div><h1>{copy.overview}</h1><p>{copy.overviewSubtitle}</p></div><span className="workspace-location"><Icon name="globe" />{copy.localWorkspace}</span></header>
-      <section className="workspace-intro" aria-labelledby="overview-intro-heading">
-        <div className="intro-copy"><h2 id="overview-intro-heading">{heroTitle}</h2>
-          <p>{heroBody}</p>
-          <button className="button-primary" type="button" disabled={!heroSurface}
-            onClick={() => { if (heroSurface) navigate(heroSurface); }}>{heroAction}<Icon name="forward" /></button>
-        </div>
-        <div className="intro-emblem"><BrandMark /><span>NEKODEX</span></div>
-      </section>
-      <NetworkIssueNotice language={snapshot.state.language ?? "en"} browser={browser} className="connection-recovery-card overview-network-notice"
+  const modeValue = manual ? copy.manualShort : copy.automaticShort;
+  // Time of day only: the list covers the current session, and the full timestamp lives in Activity.
+  const timeFormat = useMemo(() => new Intl.DateTimeFormat(language, { timeStyle: "short" }), [language]);
+  // Debug records (process output) stay in Activity; Overview lists launcher events.
+  const events: EventItem[] = logs.filter(({ record }) => record.level !== "debug").slice(-8).reverse().map(({ id, record: log }) => {
+    const text = humanEvent(log.event, language);
+    const at = new Date(log.at);
+    return {
+      id: String(id),
+      text: text.charAt(0).toUpperCase() + text.slice(1),
+      time: Number.isFinite(at.getTime()) ? timeFormat.format(at) : undefined,
+      dateTime: log.at,
+      level: log.level === "error" ? "error" : log.level === "warning" ? "warning" : "info",
+    };
+  });
+  return <Page width="wide" className="overview-page">
+    <SurfaceHeader title={copy.overview} subtitle={copy.overviewSubtitle} />
+    <div className="nk-stack">
+      <Hero eyebrow={waiting ? connectionsCopy(language).inProgress : copy.setupNext} title={headline.title}
+        actions={<>
+          <Button variant="primary" busy={waiting || retrying} iconEnd={waiting || headline.step === "retry-session" ? undefined : "forward"}
+            onClick={runStep}>{headline.action}</Button>
+          {headline.secondary === "activity"
+            ? <Button variant="ghost" onClick={() => navigate("activity")}>{copy.viewActivity}</Button>
+            : headline.secondary === "tools" || headline.secondary === "connect-tools"
+              ? <Button variant="ghost" onClick={() => navigate("mcp")}>
+                {headline.secondary === "tools" ? copy.manageToolsConnection : connectionsCopy(language).toolsTitle}
+              </Button>
+              : null}
+        </>}>
+        {headline.body}
+      </Hero>
+      {retryError && headline.step === "retry-session"
+        ? <Notice tone="error">{retryError}</Notice> : null}
+      <NetworkIssueNotice language={language} browser={browser}
         muted={snapshot.state.showNetworkIssueNotice === false} onDontShowAgain={onMuteNetworkNotice} />
-      <section className="overview-work" aria-labelledby={`${overviewId}-runs`} aria-describedby={`${overviewId}-runs-description`}>
-        <div className="overview-work-header">
-          <div className="overview-work-summary">
-            <strong className="overview-work-count">{active}</strong>
-            <div className="overview-work-copy">
-              <h2 id={`${overviewId}-runs`} title={copy.overviewActiveRunsBody}>{copy.overviewActiveRuns}</h2>
-            </div>
-          </div>
-          <div className="overview-work-preferences">
-            <div className="overview-work-actions">
-              <div className="overview-capacity-control">
-                <button className="overview-preference" type="button" title={copy.capacityHint}
-                  aria-label={`${copy.configuredLimit}: ${snapshot.browserCapacity.active}. ${copy.capacityLink}`}
-                  aria-describedby={`${overviewId}-capacity`} onClick={() => navigate("settings")}>
-                  <span>{copy.configuredLimit}</span><strong>{snapshot.browserCapacity.active}</strong><Icon name="chevron" />
-                </button>
-                <p className="overview-capacity-note" id={`${overviewId}-capacity`}>{copy.capacityNotMeasured}</p>
-              </div>
-              <button className="overview-preference" type="button" title={copy.modeLink}
-                aria-label={`${copy.modeLabel}: ${manual ? copy.manualShort : copy.automaticShort}. ${copy.modeLink}`}
-                onClick={() => navigate("settings")}>
-                <span>{copy.modeLabel}</span><strong>{manual ? copy.manualShort : copy.automaticShort}</strong><Icon name="chevron" />
-              </button>
-            </div>
-          </div>
+      <StatGroup label={overview.statsLabel}>
+        <Stat label={copy.overviewActiveRuns} value={active} note={copy.overviewActiveRunsBody} />
+        <Stat label={copy.configuredLimit} value={snapshot.browserCapacity.active} onClick={() => navigate("settings")}
+          title={copy.capacityHint} aria-label={`${copy.configuredLimit}: ${snapshot.browserCapacity.active}. ${copy.capacityLink}`}
+          aria-describedby={`${overviewId}-capacity`} note={<span id={`${overviewId}-capacity`}>{copy.capacityNotMeasured}</span>} />
+        <Stat label={copy.modeLabel} value={modeValue} note={copy.modeLink} onClick={() => navigate("settings")}
+          title={copy.modeLink} aria-label={`${copy.modeLabel}: ${modeValue}. ${copy.modeLink}`} />
+      </StatGroup>
+      <div className="nk-columns">
+        <div className="nk-stack">
+          {activeTabs.length ? <Panel title={overview.runningNow} titleId={`${overviewId}-runs`} padding="compact"
+            actions={<Button variant="link" size="sm" iconEnd="chevron" onClick={() => navigate("browser")}>{overview.openBrowser}</Button>}>
+            <div className="nk-conn-list">{activeTabs.map(tab => {
+              const mode = tab.interactionMode === "manual" ? copy.manualShort
+                : tab.interactionMode === "automatic" ? copy.automaticShort : copy.usageUnknown;
+              return <ConnectionRow key={tab.id} icon="browser" label={browserTabTitleFromTitle(tab.title, copy)}
+                status={`${runStatus(tab.status)} · ${mode}`} state="busy" action={copy.overviewOpenRun}
+                onClick={() => openTab(tab.id)} />;
+            })}</div>
+          </Panel> : null}
+          <Panel title={copy.connectionsShort} titleId={`${overviewId}-connections`} padding="compact">
+            <p className="nk-visually-hidden">{copy.connectionsBody}</p>
+            {/* Word, dot and action all come from one derived status per connection. */}
+            <div className="nk-conn-list">{connections.map(connection => <ConnectionRow key={connection.surface}
+              icon={connection.icon} label={connection.label} status={connectionStatusWord(connection.status, copy, language)}
+              state={connection.status.dot} action={connectionActionWord(connection.status.action, copy, language)}
+              // "Retry verification" checks the session here, like the hero; every other action opens the page.
+              onClick={() => {
+                if (connection.status.action === "retry") { void retrySession(); return; }
+                if (connection.status.action === "open-routing-checks") requestRoutingChecks();
+                navigate(connection.surface);
+              }} />)}</div>
+          </Panel>
         </div>
-        <p className="visually-hidden" id={`${overviewId}-runs-description`}>{copy.overviewActiveRunsBody}</p>
-        {activeTabs.length ? <ul className="overview-live-runs">{activeTabs.map(tab => {
-          const status = runStatus(tab.status);
-          const mode = tab.interactionMode === "manual" ? copy.manualShort
-            : tab.interactionMode === "automatic" ? copy.automaticShort : copy.usageUnknown;
-          const title = browserTabTitleFromTitle(tab.title, copy);
-          return <li key={tab.id}><button type="button" onClick={() => openTab(tab.id)} aria-label={`${title}. ${status}. ${mode}. ${copy.overviewOpenRun}`}>
-            <i className="state-dot is-busy" aria-hidden="true" />
-            <span><strong title={title}>{title}</strong><small>{status} · {mode}</small></span>
-            <span className="overview-run-action" aria-hidden="true">{copy.overviewOpenRun}<Icon name="chevron" /></span>
-          </button></li>;
-        })}</ul> : null}
-      </section>
-      <div className="overview-grid">
-        <div className="overview-main-column">
-          <section className="connection-section" aria-labelledby="connection-heading" aria-describedby={`${overviewId}-connections-description`}>
-            <div className="overview-section-heading"><h2 id="connection-heading">{copy.connectionsShort}</h2></div>
-            <p className="visually-hidden" id={`${overviewId}-connections-description`}>{copy.connectionsBody}</p>
-            <div className="connection-list">{connections.map(connection => <button type="button" key={connection.surface} aria-label={`${connection.label}: ${connection.status}. ${connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.openRoutingChecks : copy.connectShort}`} onClick={() => navigate(connection.surface)}>
-              <Icon name={connection.icon} />
-              <span className="overview-connection-copy"><strong>{connection.label}</strong><span className={`connection-status${connection.ready ? " is-ready" : ""}${connection.error ? " is-error" : ""}`} aria-live="polite" aria-atomic="true"><i className={`state-dot is-${connection.error ? "error" : connection.ready ? "ready" : "idle"}`} aria-hidden="true" />{connection.status}</span></span>
-              <span className="connection-action" aria-hidden="true">{connection.ready ? copy.manageShort : connection.surface === "setup" ? copy.openRoutingChecks : copy.connectShort}<Icon name="chevron" /></span>
-            </button>)}</div>
-          </section>
-          <section className="overview-activity">
-            <div className="overview-section-heading"><h2>{copy.recentActivity}</h2><button className="text-button" type="button" onClick={() => navigate("activity")}>{copy.viewAllShort}<Icon name="chevron" /></button></div>
-            {logs.length ? <ul>{logs.slice(-8).reverse().map(({ id, record: log }) => <li key={id}><Icon name={log.level === "error" || log.level === "warning" ? "alert" : "activity"} /><span>{humanEvent(log.event)}</span><time>{new Date(log.at).toLocaleTimeString(snapshot.state.language ?? "en", { hour: "2-digit", minute: "2-digit" })}</time></li>)}</ul>
-              : <div className="overview-empty"><Icon name="logs" /><div><strong>{copy.activityEmpty}</strong><p>{copy.activityEmptyBody}</p></div></div>}
-          </section>
-        </div>
-        <aside className="workspace-art-card">
-          <div className="art-card-copy"><h2>{copy.artCardTitle}</h2><p>{copy.artCardBody}</p></div>
-          <WorkspaceIllustration />
-        </aside>
+        <Panel title={copy.recentActivity} titleId={`${overviewId}-events`} padding="compact" className="overview-activity"
+          actions={<Button variant="link" size="sm" iconEnd="chevron" onClick={() => navigate("activity")}>{copy.viewAllShort}</Button>}>
+          <EventList items={events}
+            empty={<EmptyState title={copy.activityEmpty} icon="logs">{copy.activityEmptyBody}</EmptyState>} />
+        </Panel>
       </div>
     </div>
-  </section>;
-}
-
-function WorkspaceIllustration() {
-  const id = `coding-cat-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const { reaction, play, follow, reset } = useCatReaction();
-  const pawReaction = reaction === "happy" || reaction === "surprised" || reaction === "stretch" ? 2
-    : reaction === "wink" || reaction === "playful" || reaction === "peek" ? 1 : 0;
-  return <div className={`workspace-illustration-stage${reaction === null ? "" : ` is-playing reaction-${reaction} illustration-reaction-${pawReaction}`}`}
-    role="img" aria-label="NEKODEX" tabIndex={0}
-    onPointerEnter={play} onPointerMove={follow} onPointerLeave={event => reset(event.currentTarget)} onPointerCancel={event => reset(event.currentTarget)} onFocus={play} onBlur={event => reset(event.currentTarget)}>
-    <svg className="workspace-illustration" viewBox="0 0 1536 1024" aria-hidden="true">
-      <defs>
-        <mask id={`${id}-stationary`} maskUnits="userSpaceOnUse" x="0" y="0" width="1536" height="1024">
-          <rect width="1536" height="1024" fill="white" />
-          <rect x="590" y="260" width="356" height="267" fill="black" />
-          <ellipse cx="644" cy="514" rx="43" ry="33" fill="black" />
-          <ellipse cx="894" cy="514" rx="43" ry="33" fill="black" />
-        </mask>
-        <clipPath id={`${id}-left-paw`}><ellipse cx="644" cy="514" rx="43" ry="33" /></clipPath>
-        <clipPath id={`${id}-right-paw`}><ellipse cx="894" cy="514" rx="43" ry="33" /></clipPath>
-        <clipPath id={`${id}-tail-behind`}><rect x="220" y="300" width="295" height="450" /></clipPath>
-      </defs>
-      {/* The scene and paws retain the original pixels; the head shares the main cat rig. */}
-      <image href={workspaceBase} width="1536" height="1024" mask={`url(#${id}-stationary)`} />
-      <g clipPath={`url(#${id}-tail-behind)`}>
-        <CatTail reaction={reaction} id={id} />
-      </g>
-      {/* Restore the stationary laptop edge behind lifted paws using its own pixels. */}
-      <svg x="590" y="511" width="356" height="16" viewBox="540 511 50 16" preserveAspectRatio="none" overflow="hidden">
-        <image href={workspaceArt} width="1536" height="1024" />
-      </svg>
-      <g className="coding-cat-head" transform="translate(548 207) scale(6.8 5.3)"
-        style={{ color: "#343245", "--brand-ink": "#c6bdff" } as CSSProperties}>
-        <CatHead reaction={reaction} />
-      </g>
-      <g className="coding-cat-paw coding-cat-paw-left">
-        <image href={workspaceArt} width="1536" height="1024" clipPath={`url(#${id}-left-paw)`} />
-      </g>
-      <g className="coding-cat-paw coding-cat-paw-right">
-        <image href={workspaceArt} width="1536" height="1024" clipPath={`url(#${id}-right-paw)`} />
-      </g>
-    </svg>
-  </div>;
+  </Page>;
 }

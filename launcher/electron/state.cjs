@@ -47,7 +47,25 @@ const DEFAULT_STATE = Object.freeze({
   sidebarOpen: true,
   sidebarWidth: 252,
   mcpGuideStep: 0,
+  appearance: "dark",
 });
+const APPEARANCES = Object.freeze(["system", "dark", "light"]);
+
+function isAppearance(value) {
+  return typeof value === "string" && APPEARANCES.includes(value);
+}
+
+function validateAppearance(value) {
+  if (!isAppearance(value)) throw new Error("Appearance must be System, Dark or Light");
+  return value;
+}
+
+// "system" follows the operating system; everything else is an explicit launcher theme.
+function resolveAppearance(appearance, systemPrefersDark) {
+  if (appearance === "light" || appearance === "dark") return appearance;
+  if (appearance === "system") return systemPrefersDark ? "dark" : "light";
+  return DEFAULT_STATE.appearance;
+}
 
 function readState(filePath) {
   try {
@@ -85,6 +103,7 @@ function readState(filePath) {
     ]) {
       if (typeof state[key] !== "boolean") state[key] = DEFAULT_STATE[key];
     }
+    if (!isAppearance(state.appearance)) state.appearance = DEFAULT_STATE.appearance;
     if (state.browserInteractionMode !== "automatic" && state.browserInteractionMode !== "manual") {
       state.browserInteractionMode = DEFAULT_STATE.browserInteractionMode;
     }
@@ -217,9 +236,12 @@ function createStateStore(filePath) {
 
 module.exports = {
   ACCOUNT_PROOF_INVALIDATION,
+  APPEARANCES,
   MCP_PROOF_INVALIDATION,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   createStateStore,
+  resolveAppearance,
+  validateAppearance,
   validateSidebarState,
 };

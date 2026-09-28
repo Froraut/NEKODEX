@@ -1,12 +1,13 @@
-:root {
-  color-scheme: dark;
-  --brand-ink: #26243e;
-  --brand-accent: #c6bdff;
-  --color-background-brand: #29263d;
+/*
+ * NEKODEX design tokens.
+ * Compiled from the design system's tokens.json (version 2); do not edit values here without
+ * changing the system. Dark is the default theme (:root) and applies to data-theme="dark"; Light applies
+ * when <html data-theme="light">. Components use semantic tokens only; the palette exists so semantic
+ * tokens can alias it.
+ */
 
-  --blue-100: #d3ceff;
-  --blue-300: #aaa0fa;
-  --blue-900: #302a54;
+/* ---------- Palette (theme independent) ---------- */
+:root {
   --gray-0: #f5f4fa;
   --gray-100: #e6e5ee;
   --gray-300: #b5b3c3;
@@ -16,70 +17,211 @@
   --gray-750: #2c2b38;
   --gray-800: #23232e;
   --gray-900: #1b1b24;
-  --gray-1000: #13131b;
-  --green-300: #84d8b1;
-  --orange-300: #e8b679;
-  --red-300: #f490a0;
-  --red-400: #e76f83;
+  --gray-950: #191922;
+  --gray-1000: #15151e;
 
-  --color-background-surface-under: #15151e;
-  --color-background-surface: var(--gray-900);
-  --color-background-sidebar: #191922;
-  --color-background-elevated: var(--gray-750);
-  --color-background-control: rgb(255 255 255 / 3%);
-  --color-background-control-hover: rgb(255 255 255 / 7%);
-  --color-background-control-active: rgb(255 255 255 / 10%);
-  --color-background-panel: rgb(255 255 255 / 2%);
-  --color-background-panel-raised: rgb(255 255 255 / 4%);
-  --color-background-button-secondary: rgb(255 255 255 / 5%);
-  --color-background-button-secondary-hover: rgb(255 255 255 / 8%);
-  --color-background-status-success: rgb(4 184 76 / 16%);
-  --color-background-status-warning: rgb(255 133 73 / 12%);
-  --color-background-status-error: rgb(250 66 62 / 13%);
+  --lavender-50: #f3f0ff;
+  --lavender-100: #d3ceff;
+  --lavender-200: #c6bdff;
+  --lavender-300: #aaa0fa;
+  --lavender-400: #b5aaff;
+  --lavender-600: #5b4fc4;
+  --lavender-700: #4f43b8;
 
-  --color-text-primary: var(--gray-0);
-  --color-text-secondary: #c0bece;
-  --color-text-tertiary: #9693a9;
-  --color-text-disabled: rgb(255 255 255 / 32%);
-  --color-text-accent: var(--blue-100);
-  --color-text-success: var(--green-300);
-  --color-text-warning: var(--orange-300);
-  --color-text-error: var(--red-300);
+  --plum-800: #29263d;
+  --plum-850: #302a54;
+  --plum-900: #26243e;
 
-  --color-icon-primary: rgb(255 255 255 / 90%);
-  --color-icon-secondary: rgb(255 255 255 / 70%);
-  --color-icon-tertiary: rgb(255 255 255 / 50%);
-  --color-border: #ffffff12;
-  --color-border-light: #ffffff0a;
-  --color-border-heavy: #ffffff24;
-  --color-border-focus: #b5aaff;
-  --color-border-accent: #c6bdff55;
+  --mint-300: #84d8b1;
+  --mint-700: #17693f;
+
+  --amber-300: #e8b679;
+  --amber-700: #8a4f0c;
+
+  --rose-300: #f490a0;
+  --rose-400: #e76f83;
+  --rose-700: #b3243f;
+
+  --yellow-300: #ffd35c;
+  --yellow-700: #a07800;
+}
+
+/* ---------- Semantic colours and shadows: Dark ---------- */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-under: var(--gray-1000);
+  --bg-surface: var(--gray-900);
+  --bg-sidebar: var(--gray-950);
+  --bg-elevated: var(--gray-750);
+  --bg-brand: var(--plum-800);
+  --bg-panel: #ffffff05;
+  --bg-panel-raised: #ffffff0a;
+  --bg-control: #ffffff08;
+  --bg-control-hover: #ffffff12;
+  --bg-control-active: #ffffff1a;
+  --bg-accent-subtle: #c6bdff14;
+  --bg-success: #04b84c29;
+  --bg-warning: #ff85491f;
+  --bg-error: #fa423e21;
+  --bg-scrim: #00000052;
+
+  --selection: #c6bdff57;
+
+  --text-primary: var(--gray-0);
+  --text-secondary: #c0bece;
+  --text-tertiary: #9693a9;
+  --text-disabled: #ffffff52;
+  --text-accent: var(--lavender-100);
+  --text-on-brand-muted: #bbb6d5;
+  --text-success: var(--mint-300);
+  --text-warning: var(--amber-300);
+  --text-error: var(--rose-300);
+
+  --accent: var(--lavender-200);
+  --accent-hover: var(--lavender-100);
+
+  --on-accent: var(--plum-900);
+
+  --mark-body: var(--lavender-200);
+  --mark-face: var(--plum-900);
+
+  --danger: var(--rose-300);
+
+  --on-danger: var(--plum-900);
+
+  --icon-primary: #ffffffe6;
+  --icon-secondary: #ffffffb3;
+  --icon-tertiary: #ffffff80;
+
+  --border: #ffffff12;
+  --border-light: #ffffff0a;
+  --border-heavy: #ffffff24;
+  --border-control: #75738a;
+  --border-accent: #c6bdff55;
+
+  --focus-ring: var(--lavender-400);
+
+  --dot-idle: #ffffff52;
+  --dot-ready: var(--text-success);
+  --dot-busy: var(--text-warning);
+  --dot-error: var(--text-error);
+  --dot-optional: var(--yellow-300);
+
+  --shadow-control: 0 1px 2px #00000038;
+  --shadow-panel: 0 16px 42px -30px #000000ad;
+  --shadow-overlay: 0 24px 64px -28px #000000e0;
+  --shadow-accent: 0 8px 22px -14px #c6bdffcc;
+}
+
+/* ---------- Semantic colours and shadows: Light ---------- */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-under: #eceaf3;
+  --bg-surface: #f8f7fc;
+  --bg-sidebar: #f1eff7;
+  --bg-elevated: #ffffff;
+  --bg-brand: #ebe7ff;
+  --bg-panel: #ffffff;
+  --bg-panel-raised: #ffffff;
+  --bg-control: #26243e0a;
+  --bg-control-hover: #26243e12;
+  --bg-control-active: #26243e1a;
+  --bg-accent-subtle: #5b4fc414;
+  --bg-success: #1f9d5c1f;
+  --bg-warning: #d9731a1f;
+  --bg-error: #d42f4a1a;
+  --bg-scrim: #13131b33;
+
+  --selection: #5b4fc433;
+
+  --text-primary: #1b1b24;
+  --text-secondary: #4a4860;
+  --text-tertiary: #66637c;
+  --text-disabled: #1b1b2452;
+  --text-accent: var(--lavender-700);
+  --text-on-brand-muted: #4a4660;
+  --text-success: var(--mint-700);
+  --text-warning: var(--amber-700);
+  --text-error: var(--rose-700);
+
+  --accent: var(--lavender-600);
+  --accent-hover: var(--lavender-700);
+
+  --on-accent: #ffffff;
+
+  --mark-body: var(--lavender-600);
+  --mark-face: var(--lavender-50);
+
+  --danger: var(--rose-700);
+
+  --on-danger: #ffffff;
+
+  --icon-primary: #1b1b24e6;
+  --icon-secondary: #1b1b24b3;
+  --icon-tertiary: #1b1b248c;
+
+  --border: #1b1b2414;
+  --border-light: #1b1b240d;
+  --border-heavy: #1b1b2429;
+  --border-control: #85839a;
+  --border-accent: #5b4fc466;
+
+  --focus-ring: var(--lavender-600);
+
+  --dot-idle: #1b1b2452;
+  --dot-ready: var(--text-success);
+  --dot-busy: var(--text-warning);
+  --dot-error: var(--text-error);
+  --dot-optional: var(--yellow-700);
+
+  --shadow-control: 0 1px 2px #1b1b2414;
+  --shadow-panel: 0 12px 32px -20px #1b1b242e;
+  --shadow-overlay: 0 24px 64px -24px #1b1b2447;
+  --shadow-accent: 0 8px 22px -14px #5b4fc499;
+}
+
+/* ---------- Scales, fonts and motion ---------- */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --size-titlebar: 52px;
+  --size-sidebar: 232px;
+  --size-control: 36px;
+  --size-control-sm: 32px;
+  --size-row: 40px;
+  --size-list-row: 56px;
+  --size-hit: 44px;
+  --size-content: 960px;
+  --size-content-narrow: 760px;
+  --size-content-wide: 1280px;
+
+  --z-sidebar: 1;
+  --z-scrim: 30;
+  --z-drawer: 40;
+  --z-titlebar: 100;
+  --z-toast: 500;
 
   --font-ui: "Avenir Next", "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Yu Gothic UI", "Meiryo", "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
-  --text-xs: 13px;
-  --text-sm: 14px;
-  --text-base: 15px;
-  --text-lg: 17px;
-  --text-title: 30px;
 
-  --height-titlebar: 52px;
-  --height-row: 40px;
-  --height-control: 36px;
-  --sidebar-width: 220px;
-  --content-width: 900px;
-  --settings-width: 790px;
-
-  --radius-xs: 4px;
-  --radius-sm: 9px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-  --radius-round: 999px;
-
-  --shadow-control: 0 1px 2px rgb(0 0 0 / 22%);
-  --shadow-panel: 0 16px 42px -30px rgb(0 0 0 / 68%);
-  --shadow-overlay: 0 24px 64px -28px rgb(0 0 0 / 88%);
-
+  /* Motion lives in the component bundle of the system (tokens.json has no motion family). */
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --duration-press: 90ms;
@@ -87,3 +229,19 @@
   --duration-control: 180ms;
   --duration-panel: 260ms;
 }
+
+/* ---------- Type styles ----------
+ * Prefixed utility classes (the system names them display, page-title, ... code). Numbers that change
+ * (counts, bytes, times) also take font-variant-numeric: tabular-nums. */
+.nk-type-display { font-family: var(--font-ui); font-size: 44px; line-height: 44px; font-weight: 600; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.nk-type-page-title { font-family: var(--font-ui); font-size: 30px; line-height: 36px; font-weight: 600; letter-spacing: -0.035em; }
+.nk-type-hero-title { font-family: var(--font-ui); font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.035em; }
+.nk-type-title { font-family: var(--font-ui); font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.nk-type-heading { font-family: var(--font-ui); font-size: 17px; line-height: 24px; font-weight: 600; }
+.nk-type-body-strong { font-family: var(--font-ui); font-size: 15px; line-height: 22px; font-weight: 500; }
+.nk-type-body { font-family: var(--font-ui); font-size: 15px; line-height: 22px; font-weight: 400; }
+.nk-type-label { font-family: var(--font-ui); font-size: 14px; line-height: 20px; font-weight: 500; }
+.nk-type-small { font-family: var(--font-ui); font-size: 14px; line-height: 20px; font-weight: 400; }
+.nk-type-caption { font-family: var(--font-ui); font-size: 13px; line-height: 18px; font-weight: 400; }
+.nk-type-eyebrow { font-family: var(--font-ui); font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; }
+.nk-type-code { font-family: var(--font-mono); font-size: 13px; line-height: 20px; font-weight: 400; }

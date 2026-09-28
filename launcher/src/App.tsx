@@ -7,14 +7,14 @@ import { Onboarding } from "./Onboarding";
 import { BrowserSurface } from "./BrowserSurface";
 import { SetupSurface } from './SetupSurface';
 import { McpSurface } from './McpSurface';
-import { StateDot, ContentSurface, messageOf } from './launcher-ui';
-import { runtimeCapabilities, currentToolProof } from './launcher-readiness';
+import { IconButton, ContentSurface, messageOf } from './launcher-ui';
+import { currentToolProof } from './launcher-readiness';
 
-import { taskCenterTitle } from './task-center-copy';
+import { taskCenterSubtitle, taskCenterTitle } from './task-center-copy';
 import { QueueControls } from './QueueControls';
 import type { CompactionModel } from "./types";
 import { modelConnectionReadiness } from "./setup-progress";
-import { BrandMark } from "./BrandMark";
+import { Button, Mark, Notice, StateDot } from "./design";
 import { Overview } from "./Overview";
 import { AccountToolsHandoff } from "./AccountToolsOnboarding";
 
@@ -22,14 +22,15 @@ import { updateCopyFor } from "./update-copy";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { copyFor, localizeLauncherError, type Copy } from "./i18n";
 
-import { deriveWorkspaceReadiness } from "./workspace-readiness";
+import { deriveWorkspaceReadiness, workspaceReadinessInput } from "./workspace-readiness";
+import { connectionStatusWord } from "./connections-copy";
 import { workflowCopy } from "./workflow-copy";
 import { useNetworkIssueDismissalReset } from "./NetworkIssueNotice";
 import { ActionDot, BiggerContextRecommendation, COMPACT_SIDEBAR_QUERY, ErrorToast, FatalMessage, LaunchLoading, SidebarGroup, SidebarItem, TitleBar, useCompactSidebarDrawer } from "./AppShell";
 import { useUpdateControls } from "./useUpdateControls";
+import { useAppliedAppearance } from "./theme";
+import { rememberLanguage, shellCopy, startupLanguage } from "./shell-copy";
 
-import "./connections.css";
-import "./connection-recovery.css";
 import type { BrowserCapacitySettings, BrowserInteractionMode, BrowserState, Language, LauncherLifecycle as LifecycleProjection, LauncherSnapshot, LauncherState, LogRecord, OperationState, ProModelVersion, Surface } from "./types";
 
 const ActivitySurface = deferredSurface(async () => ({ default: (await import('./ActivitySurface')).ActivitySurface }));
@@ -49,6 +50,7 @@ function withLauncherState(current: LauncherSnapshot | null, state: LauncherStat
 
 export function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
+  useAppliedAppearance(snapshot?.state.appearance);
   const [browser, setBrowser] = useState<BrowserState | null>(null);
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [logStore] = useState(createLauncherLogStore);
@@ -72,6 +74,9 @@ export function App() {
   const locale = useLocaleCopy(requestedLanguage);
   const documentLanguage = locale.language;
   const hasPresentedLocale = useRef(false);
+  // Onboarding hands over to the workspace: its first page takes the focus the Finish button had.
+  const sawOnboarding = useRef(false);
+  if (snapshot && !snapshot.state.onboardingComplete) sawOnboarding.current = true;
   const currentLanguage = useRef(documentLanguage);
   currentLanguage.current = documentLanguage;
   // Clears only the catalog alert this code raised; a later unrelated error stays visible.
@@ -168,7 +173,9 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.lang = documentLanguage;
-  }, [documentLanguage]);
+    // The next launch (and its startup-failure screen) opens in the language presented now.
+    if (snapshot?.state.language && !locale.pending) rememberLanguage(documentLanguage);
+  }, [documentLanguage, snapshot?.state.language, locale.pending]);
 
   useEffect(() => {
     if (!api) return;
@@ -303,7 +310,9 @@ export function App() {
         setError(latestOperation.message);
       } else if (latestOperation?.status === "failed"
         && latestOperation.name !== "mcp-verification"
-        && latestOperation.name !== "catalog-verification") {
+        && latestOperation.name !== "catalog-verification"
+        // As in the live listener: the sign-in guide owns terminal import errors and their retry actions.
+        && latestOperation.name !== "existing-chrome-login") {
         setError(latestOperation.message);
       }
       initialized = true;
@@ -365,18 +374,19 @@ export function App() {
     setSnapshot((current) => current ? { ...current, compactionModel } : current);
   }, []);
 
-  if (!api) return <FatalMessage message="Launcher IPC is unavailable." />;
+  if (!api) return <FatalMessage language="en" message="Launcher IPC is unavailable." />;
   if (!snapshot && startupError) return (
     <FatalMessage
-      message={localizeLauncherError(copyFor(documentLanguage), startupError)}
-      retryLabel={copyFor(documentLanguage).retry}
+      language={startupLanguage()}
+      message={localizeLauncherError(copyFor(startupLanguage()), startupError)}
+      retryLabel={shellCopy(startupLanguage()).tryAgain}
       onRetry={() => {
         setStartupError(null);
         setStartupAttempt((attempt) => attempt + 1);
       }}
     />
   );
-  if (!snapshot || (locale.pending && !hasPresentedLocale.current)) return <LaunchLoading />;
+  if (!snapshot || (locale.pending && !hasPresentedLocale.current)) return <LaunchLoading language={snapshot ? requestedLanguage : undefined} />;
   hasPresentedLocale.current = true;
 
   const language = locale.language;
@@ -391,7 +401,6 @@ export function App() {
       data-language={language}
       data-platform={snapshot.platform}
       data-profile={snapshot.profile}
-      data-theme="dark"
     >
         {(locale.pending || locale.status === "failed") ? <LocaleNotice language={requestedLanguage} copy={copy} failed={locale.status === "failed"} floating /> : null}
         {!snapshot.state.onboardingComplete ? (
@@ -405,6 +414,7 @@ export function App() {
         ) : (
           <LauncherShell
             browser={browser}
+            focusPageOnMount={sawOnboarding.current}
             catalogFailure={catalogFailure}
             error={error}
             copy={copy}
@@ -429,6 +439,7 @@ export function App() {
 
 function LauncherShell({
   browser,
+  focusPageOnMount,
   catalogFailure,
   error,
   copy,
@@ -445,6 +456,8 @@ function LauncherShell({
   updatePanelRequest,
 }: {
   browser: BrowserState | null;
+  /** Focus the first page's heading once it renders (the shell replaces onboarding, which had the focus). */
+  focusPageOnMount: boolean;
   catalogFailure: string | null;
   error: string | null;
   copy: Copy;
@@ -479,19 +492,8 @@ function LauncherShell({
   const browserAuthenticationStatus = browser?.authenticationStatus
     ?? (browser?.authenticated ? "verified"
       : browser?.status === "signed-out" ? "signed-out" : "unknown");
-  const readiness = deriveWorkspaceReadiness({
-    manual: manualInteraction,
-    development: devProfile,
-    authenticationStatus: manualInteraction ? "verified" : browserAuthenticationStatus,
-    smokePassed: snapshot.smokePassed,
-    installed: snapshot.state.coreSetupComplete === true,
-    catalogUnavailable: Boolean(catalogFailure),
-    catalogVerified: snapshot.state.codexCatalogVerified === true,
-    pickerConfirmed: snapshot.state.codexPickerConfirmed === true,
-    toolsInstalled: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
-    toolsVerified: toolProof,
-    runtime: { ...(runtimeCapabilities(snapshot) ?? {}), transitionActive: Boolean(snapshot.lifecycle?.transition) },
-  });
+  // The same readiness input as Overview and Connections, so the sidebar, the rows and the tabs agree.
+  const readiness = deriveWorkspaceReadiness(workspaceReadinessInput({ snapshot, browser, catalogFailure, toolsVerified: toolProof }));
   const interactionSetupComplete = modelReadiness === "available" && (!manualInteraction || toolProof);
   const firstRunZeroRiskSetup = snapshot.state.browserInteractionMode === "manual"
     && snapshot.state.coreSetupComplete !== true;
@@ -512,6 +514,8 @@ function LauncherShell({
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
   const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(false);
   const [biggerContextRecommendationBusy, setBiggerContextRecommendationBusy] = useState(false);
+  // A failed save from the dialog is shown in it: the page's toast would sit behind the open dialog.
+  const [biggerContextRecommendationError, setBiggerContextRecommendationError] = useState<string | null>(null);
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
   const browserSurfaceActive = surface === "browser"
     && !(compactSidebar && sidebarOpen)
@@ -614,11 +618,26 @@ function LauncherShell({
     };
   }, [browserSlot, browserSurfaceActive, enqueueBrowserSurface, setError]);
 
+  // The rail's open/collapsed choice on wide windows, kept while the window is narrow (where the rail is a closed
+  // drawer) and restored when it widens again; a drawer that is open when the window widens stays open as the rail.
+  const desktopSidebarOpen = useRef(true);
+  const railState = useRef({ compact: compactSidebar, open: sidebarOpen });
+  railState.current = { compact: compactSidebar, open: sidebarOpen };
   useEffect(() => {
     const media = window.matchMedia(COMPACT_SIDEBAR_QUERY);
     const apply = () => {
+      const wide = !media.matches;
+      if (wide && railState.current.compact && railState.current.open) desktopSidebarOpen.current = true;
+      const open = wide && desktopSidebarOpen.current;
+      // The focused toggle is replaced when the rail opens or closes, and a rail that closes takes its focused item
+      // with it: focus follows to the toggle that shows it again.
+      const active = document.activeElement;
+      if (open !== railState.current.open
+        && (active === sidebarToggle.current || (!open && active instanceof Node && sidebar.current?.contains(active)))) {
+        toggleFocusPending.current = true;
+      }
       setCompactSidebar(media.matches);
-      setSidebarOpen(!media.matches);
+      setSidebarOpen(open);
     };
     apply();
     media.addEventListener("change", apply);
@@ -653,8 +672,19 @@ function LauncherShell({
         });
       return;
     }
+    toggleFocusPending.current = !compactSidebar && document.activeElement === sidebarToggle.current;
+    if (!compactSidebar) desktopSidebarOpen.current = next;
     setSidebarOpen(next);
   };
+
+  // "Hide sidebar" sits in the rail and "Show sidebar" in the titlebar: after a toggle, focus moves to the
+  // control that replaced the pressed one (the compact drawer manages its own focus).
+  const toggleFocusPending = useRef(false);
+  useEffect(() => {
+    if (!toggleFocusPending.current) return;
+    toggleFocusPending.current = false;
+    requestAnimationFrame(() => sidebarToggle.current?.focus());
+  }, [sidebarOpen]);
 
   // The account-tools focus target is a one-shot handoff; leaving Accounts must not replay it.
   useEffect(() => {
@@ -663,42 +693,89 @@ function LauncherShell({
 
   const navigateSurface = (next: Surface) => {
     if (next !== "browser") browserSurfaceIntent.current += 1;
+    // Closing the drawer returns focus to its toggle (useCompactSidebarDrawer); the page hand-off leaves it there.
+    drawerNavigation.current = compactSidebar && sidebarOpen;
     setSurface(next);
     if (compactSidebar) setSidebarOpen(false);
   };
 
+  // Each surface remounts its scroller (key={surface}). When the control that navigated was on the old page, focus
+  // fell to <body>: hand it to the new page's h1 (once a deferred page has rendered it), else the page region. A nav
+  // item, a tab that restores its own focus, or anything the user focused meanwhile keeps focus. The same hand-off
+  // runs once on mount when the shell replaces onboarding.
+  const workspace = useRef<HTMLElement>(null);
+  const drawerNavigation = useRef(false);
+  const shownSurface = useRef<Surface | null>(focusPageOnMount ? null : surface);
+  useLayoutEffect(() => {
+    if (shownSurface.current === surface) return;
+    shownSurface.current = surface;
+    const fromDrawer = drawerNavigation.current;
+    drawerNavigation.current = false;
+    const region = workspace.current;
+    const dropped = () => !document.activeElement || document.activeElement === document.body;
+    if (fromDrawer || !region || !dropped()) return;
+    let observer: MutationObserver | null = null;
+    const settle = () => {
+      if (!dropped()) return true;
+      const heading = region.querySelector<HTMLElement>(".nk-shell__scroll h1");
+      const loading = region.querySelector(".nk-shell__scroll .surface-empty[role='status']");
+      if (!heading && loading) return false;
+      const target = heading ?? region;
+      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+      target.focus({ preventScroll: true });
+      return true;
+    };
+    if (settle()) return;
+    observer = new MutationObserver(() => { if (settle()) observer?.disconnect(); });
+    observer.observe(region, { childList: true, subtree: true });
+    const timer = window.setTimeout(() => observer?.disconnect(), 5000);
+    return () => { observer?.disconnect(); window.clearTimeout(timer); };
+  }, [surface]);
+
   const setRecommendedBiggerContext = async (enabled: boolean) => {
     if (biggerContextRecommendationBusy) return;
     setBiggerContextRecommendationBusy(true);
-    setError(null);
+    setBiggerContextRecommendationError(null);
     try {
       updateState(await api!.setBiggerContext(enabled));
     } catch (cause) {
-      setError(messageOf(cause));
+      setBiggerContextRecommendationError(messageOf(cause));
     } finally {
       setBiggerContextRecommendationBusy(false);
     }
   };
 
-  return (
-    <main
-      className={`app-shell${compactSidebar ? " is-compact" : ""}${sidebarOpen ? " is-sidebar-open" : ""}`}
-    >
-      <TitleBar
-        copy={copy}
-        language={language}
-        surface={surface}
-        devProfile={devProfile}
-        sidebarOpen={sidebarOpen}
-        sidebarToggle={sidebarToggle}
-        toggleSidebar={toggleSidebar}
-      />
+  // One derived state drives the session line's word and dot: signed in (ready), checking (busy, pulsing), and
+  // sign-in needed or verification unavailable (amber, steady: they need the user). Manual mode needs no session.
+  const sessionPhase = manualInteraction ? "manual"
+    : browserAuthenticationStatus === "unavailable" ? "unavailable"
+      : browser?.authenticated ? "ready" : browserAuthenticationStatus === "signed-out" ? "signed-out" : "checking";
+  const sessionState = sessionPhase === "ready" ? "ready" : sessionPhase === "manual" ? "idle" : "busy";
+  const sessionLabel = sessionPhase === "manual" ? copy.manualInteraction
+    : sessionPhase === "unavailable" ? workflowCopy(language).session.verificationUnavailable
+      : sessionPhase === "ready" ? copy.sessionConnected : sessionPhase === "signed-out" ? copy.sessionDisconnected : copy.checkingSignIn;
+  const shell = shellCopy(language);
+  // Live browser runs, as counted on Overview (Active browser runs).
+  const runningTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)).length ?? 0;
+  // The Browser item reports the session with the Overview row's word and tone: sign-in needed (pulsing) and
+  // verification unavailable (amber, steady; not an error), else a browser error, else the running count.
+  const sessionConnection = readiness.connections.session;
+  const browserAttention = needsBrowser ? "required"
+    : sessionConnection.key === "verification-unavailable" ? "warning"
+      : browser?.status === "error" ? "error" : null;
+  const connectionsAttention = needsSetup ? "required" : mcpOptional ? "optional" : null;
+  const updateReady = snapshot.update.status === "available";
 
+  return (
+    <div
+      className={`nk-shell${compactSidebar ? " is-compact" : !sidebarOpen ? " is-collapsed" : ""}${sidebarOpen ? " is-sidebar-open" : ""}`}
+      data-surface={surface}
+    >
       {compactSidebar && sidebarOpen ? (
         <button
           aria-hidden="true"
           aria-label={copy.hideSidebar}
-          className="sidebar-backdrop"
+          className="nk-shell__scrim"
           onClick={() => setSidebarOpen(false)}
           tabIndex={-1}
           type="button"
@@ -706,121 +783,150 @@ function LauncherShell({
       ) : null}
 
       <aside
-        aria-label={compactSidebar ? copy.workspace : undefined}
+        aria-label={shell.navigation}
         aria-modal={compactSidebar && sidebarOpen ? "true" : undefined}
         inert={!sidebarOpen}
         id="app-sidebar"
         ref={sidebar}
         role={compactSidebar ? "dialog" : undefined}
-        style={{ width: sidebarOpen ? "var(--sidebar-width)" : 0 }}
         tabIndex={compactSidebar ? -1 : undefined}
-        className="app-sidebar"
+        className="nk-sidebar"
       >
-        <div className="sidebar-clip">
-          <div className="sidebar-content">
-            <div className="sidebar-brand-row">
-              <div className="sidebar-brand-identity">
-                <BrandMark small />
-                <span className="brand-wordmark"><strong>{copy.product}</strong><small>{copy.localWorkspace}</small></span>
-                {devProfile ? <em className="dev-profile-badge">{copy.devBadge}</em> : null}
-              </div>
-
-            </div>
-
-            <nav className="sidebar-nav" aria-label={copy.workspace}>
-              <SidebarGroup label={copy.workspace}>
-                <SidebarItem active={surface === "overview"} icon="overview" label={copy.overview} onClick={() => navigateSurface("overview")} />
-                <SidebarItem active={surface === "accounts"} icon="accounts" label={copy.accountsNav} onClick={() => navigateSurface("accounts")} />
-                <SidebarItem
-                  active={surface === "browser"}
-                  badge={needsBrowser
-                    ? <ActionDot pulse tone="required" />
-                    : browser?.status === "error"
-                      ? <ActionDot tone="error" />
-                      : null}
-                  icon="browser"
-                  label={copy.browser}
-                  onClick={() => navigateSurface("browser")}
-                />
-                <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
-                <SidebarItem active={surface === 'tasks'} icon="logs" label={taskCenterTitle(language)} onClick={() => navigateSurface('tasks')} />
-              </SidebarGroup>
-              <SidebarGroup label={copy.configuration}>
-                <SidebarItem
-                  active={surface === "setup" || surface === "mcp"}
-                  badge={needsSetup
-                    ? <ActionDot pulse tone="required" />
-                    : mcpOptional ? <ActionDot tone="optional" /> : null}
-                  icon="setup"
-                  label={copy.connectionsNav}
-                  onClick={() => navigateSurface("setup")}
-                />
-              </SidebarGroup>
-            </nav>
-
-            <div className="sidebar-footer">
-              <div className="sidebar-session"><StateDot state={manualInteraction ? "idle" : browser?.authenticated ? "ready" : "idle"} /><span>{manualInteraction ? copy.manualInteraction
-                : browserAuthenticationStatus === "unavailable" ? workflowCopy(language).session.verificationUnavailable
-                  : browser?.authenticated ? copy.sessionConnected : browserAuthenticationStatus === "signed-out" ? copy.sessionDisconnected : copy.checkingSignIn}</span></div>
-              <SidebarItem
-                active={surface === "updates"}
-                icon="update"
-                label={updateCopy.title}
-                badge={snapshot.update.status === "available" ? <ActionDot tone="optional" /> : null}
-                tone={snapshot.update.status === "available" ? "update" : undefined}
-                onClick={() => navigateSurface("updates")}
-              />
-              <SidebarItem
-                active={surface === "settings"}
-                icon="settings"
-                label={copy.settings}
-                onClick={() => navigateSurface("settings")}
-              />
-              <div className="sidebar-version"><BrandMark small /><span>v{snapshot.version}</span></div>
-            </div>
-          </div>
+        <div className="nk-sidebar__chrome">
+          <span aria-hidden="true" className="nk-sidebar__controls" />
+          <IconButton
+            buttonRef={sidebarOpen ? sidebarToggle : undefined}
+            controls="app-sidebar"
+            expanded
+            icon="sidebar"
+            label={copy.hideSidebar}
+            onClick={toggleSidebar}
+          />
         </div>
+        <div className="nk-sidebar__brand">
+          <Mark label={null} size={32} />
+          <div className="nk-wordmark"><strong>{copy.product}</strong><small>{copy.localWorkspace}</small></div>
+        </div>
+
+        {/* One nav landmark for every destination: the groups scroll, the footer items stay pinned below them. */}
+        <nav className="nk-sidebar__navigation">
+          <div className="nk-sidebar__nav">
+          <SidebarGroup label={copy.workspace}>
+            <SidebarItem active={surface === "overview"} icon="overview" label={copy.overview} onClick={() => navigateSurface("overview")} />
+            <SidebarItem active={surface === "accounts"} icon="accounts" label={copy.accountsNav} onClick={() => navigateSurface("accounts")} />
+            <SidebarItem
+              active={surface === "browser"}
+              badge={browserAttention === "required"
+                ? <ActionDot pulse tone="required" />
+                : browserAttention === "warning" ? <ActionDot tone="required" />
+                  : browserAttention === "error"
+                    ? <ActionDot tone="error" />
+                    : runningTabs || null}
+              icon="browser"
+              label={copy.browser}
+              onClick={() => navigateSurface("browser")}
+              status={browserAttention === "required" || browserAttention === "warning"
+                ? connectionStatusWord(sessionConnection, copy, language)
+                : browserAttention === "error" ? shell.needsAttention
+                  : runningTabs ? shell.running(runningTabs) : undefined}
+            />
+            <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
+            <SidebarItem active={surface === 'tasks'} icon="logs" label={taskCenterTitle(language)} onClick={() => navigateSurface('tasks')} />
+          </SidebarGroup>
+          <SidebarGroup label={copy.configuration}>
+            <SidebarItem
+              active={surface === "setup" || surface === "mcp"}
+              badge={connectionsAttention === "required"
+                ? <ActionDot pulse tone="required" />
+                : connectionsAttention === "optional" ? <ActionDot tone="optional" /> : null}
+              icon="setup"
+              label={copy.connectionsNav}
+              onClick={() => navigateSurface("setup")}
+              status={connectionsAttention === "required" ? shell.needsSetup
+                : connectionsAttention === "optional" ? shell.optionalSetup : undefined}
+            />
+          </SidebarGroup>
+          </div>
+
+          <div className="nk-sidebar__footer">
+            <div className="nk-sidebar__session" role="status">
+              <StateDot className={sessionPhase === "signed-out" || sessionPhase === "unavailable" ? "nk-action-dot is-static" : undefined} state={sessionState} />
+              <span>{sessionLabel}</span>
+            </div>
+            {/* A ready release renames the item (the update tone marks it) rather than adding a dot beside it. */}
+            <SidebarItem
+              active={surface === "updates"}
+              icon="update"
+              label={updateReady ? shell.updateAvailable : updateCopy.title}
+              tone={updateReady ? "update" : undefined}
+              onClick={() => navigateSurface("updates")}
+            />
+            <SidebarItem
+              active={surface === "settings"}
+              icon="settings"
+              label={copy.settings}
+              onClick={() => navigateSurface("settings")}
+            />
+            <div className="nk-sidebar__version"><Mark label={null} size={20} /><span>v{snapshot.version}</span></div>
+          </div>
+        </nav>
       </aside>
 
-      {error && surface !== "browser" ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
-      <section className={`workspace${snapshot.state.launcherRestartRequired ? " has-runtime-notice" : ""}`}>
-          {snapshot.state.launcherRestartRequired ? <div className="runtime-restart-notice" role="status">
-            <div><strong>{copy.launcherRuntimeRestartTitle}</strong><p>{copy.launcherRuntimeRestartBody}</p></div>
-            <button type="button" className="button-secondary" disabled={restartPending || updateBusy || transitionBusy}
-              aria-busy={restartPending}
-              onClick={() => {
-                if (restartInFlight.current) return;
-                restartInFlight.current = true;
-                setRestartPending(true);
-                setError(null);
-                void api!.restartLauncher().catch(cause => {
-                  setError(messageOf(cause));
-                  restartInFlight.current = false;
-                  setRestartPending(false);
-                });
-              }}>{restartPending ? <><i className="tab-spinner" aria-hidden="true" />{copy.restartingRuntime}</> : copy.launcherRuntimeRestartAction}</button>
-          </div> : null}
+      <div className="nk-shell__main">
+        <TitleBar
+          copy={copy}
+          language={language}
+          surface={surface}
+          devProfile={devProfile}
+          sidebarOpen={sidebarOpen}
+          sidebarToggle={sidebarToggle}
+          toggleSidebar={toggleSidebar}
+        />
+        <main className="nk-shell__content workspace" ref={workspace}>
+          {snapshot.state.launcherRestartRequired ? (
+            <div className="nk-shell__notice-row">
+            <Notice
+              action={(
+                <Button busy={restartPending} disabled={updateBusy || transitionBusy}
+                  onClick={() => {
+                    if (restartInFlight.current) return;
+                    restartInFlight.current = true;
+                    setRestartPending(true);
+                    setError(null);
+                    void api!.restartLauncher().catch(cause => {
+                      setError(messageOf(cause));
+                      restartInFlight.current = false;
+                      setRestartPending(false);
+                    });
+                  }}>{restartPending ? copy.restartingRuntime : copy.launcherRuntimeRestartAction}</Button>
+              )}
+              className="nk-shell__notice"
+              title={copy.launcherRuntimeRestartTitle}
+              tone="warning"
+            >
+              {copy.launcherRuntimeRestartBody}
+            </Notice>
+            </div>
+          ) : null}
           <div
-            className="surface-transition"
+            className="nk-shell__scroll"
             key={surface}
           >
             {surface === "overview" ? <Overview copy={copy} browser={browser} catalogFailure={catalogFailure}
               snapshot={snapshot} toolsReady={toolProof} logStore={logStore} navigate={navigateSurface}
               openTab={(tabId) => void openBrowserTab(tabId)} onMuteNetworkNotice={muteNetworkNotice} /> : null}
-            {surface === "accounts" ? <ContentSurface title={copy.accountsTitle} subtitle={copy.accountsBody}>
-              <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
-                setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
-                focusAccountId={accountToolsTargetId}
-                toolsSetup={{ runtimeConfigured: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
-                  connectorName: snapshot.connectorNames[snapshot.state.browserInteractionMode], urls: snapshot.urls }}
-                onSetupTools={(accountId, accountLabel) => {
-                  setMcpReturnAccountId(accountId);
-                  setMcpReturnAccountLabel(accountLabel);
-                  setMcpTargetMode(null);
-                  navigateSurface("mcp");
-                }} />
-            </ContentSurface> : null}
-            {surface === 'tasks' ? <ContentSurface title={taskCenterTitle(language)}>
+            {surface === "accounts" ? <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
+              setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
+              focusAccountId={accountToolsTargetId}
+              toolsSetup={{ runtimeConfigured: snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured,
+                connectorName: snapshot.connectorNames[snapshot.state.browserInteractionMode], urls: snapshot.urls }}
+              onSetupTools={(accountId, accountLabel) => {
+                setMcpReturnAccountId(accountId);
+                setMcpReturnAccountLabel(accountLabel);
+                setMcpTargetMode(null);
+                navigateSurface("mcp");
+              }} /> : null}
+            {surface === 'tasks' ? <ContentSurface title={taskCenterTitle(language)} subtitle={taskCenterSubtitle(language)}>
               <QueueControls queue={browser?.queue} language={language} disabled={transitionBusy}
                 action={(id, action) => api!.queueAction(id, action)} pause={(accountId, paused) => api!.pauseQueue(accountId, paused)}
                 onError={cause => setError(messageOf(cause))} />
@@ -851,6 +957,11 @@ function LauncherShell({
                 setError={setError}
                 networkNoticeMuted={networkNoticeMuted}
                 onMuteNetworkNotice={muteNetworkNotice}
+                onOpenConnections={() => {
+                  setMcpTargetMode(null);
+                  setMcpReturnAccountId(null);
+                  navigateSurface("mcp");
+                }}
               />
             ) : null}
             {surface === "setup" ? (
@@ -909,7 +1020,7 @@ function LauncherShell({
               state={snapshot.update} busy={updateBusy} blocked={updateBlocked} checking={updateCheckBusy}
               cooldown={updateCheckCooldown} error={updateError} transitionBusy={transitionBusy}
               onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()}
-              cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} /> : null}
+              cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} platform={snapshot.platform} /> : null}
             {surface === "settings" ? (
               <SettingsSurface loadCopy={copy}
                 browser={browser}
@@ -930,22 +1041,29 @@ function LauncherShell({
                 updateProModelVersion={updateProModelVersion}
                 updateCompactionModel={updateCompactionModel}
                 showBiggerContextInfo={() => setBiggerContextRecommendationOpen(true)}
+                showActivity={() => navigateSurface("activity")}
                 updateState={updateState}
               />
             ) : null}
           </div>
-      </section>
+        </main>
+      </div>
 
+      {error && surface !== "browser" ? <ErrorToast copy={copy} message={localizeLauncherError(copy, error)} onDismiss={() => setError(null)} /> : null}
         {biggerContextRecommendationOpen ? (
           <BiggerContextRecommendation
             busy={biggerContextRecommendationBusy || operation?.status === "running"}
             checked={snapshot.state.experimentalBiggerContext}
             copy={copy}
+            error={biggerContextRecommendationError ? localizeLauncherError(copy, biggerContextRecommendationError) : null}
             onChange={(enabled) => void setRecommendedBiggerContext(enabled)}
-            onClose={() => setBiggerContextRecommendationOpen(false)}
+            onClose={() => {
+              setBiggerContextRecommendationOpen(false);
+              setBiggerContextRecommendationError(null);
+            }}
           />
         ) : null}
 
-    </main>
+    </div>
   );
 }

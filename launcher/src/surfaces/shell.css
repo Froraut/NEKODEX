@@ -1,0 +1,323 @@
+/*
+ * NEKODEX shell: the design system's AppShell (sidebar, titlebar, workspace) wired to the launcher, plus the
+ * shared launcher-ui pieces that have no component in the system. Components come from
+ * ../design/components.css; this file only places them and styles the app-only pieces, with tokens only.
+ * Imported by AppShell.tsx, so it loads after components.css (and the app base in styles.css).
+ */
+
+/* ---------- Frame ---------- */
+.nk-shell > .nk-sidebar { grid-row: 1; grid-column: 1; }
+.nk-shell > .nk-shell__main { grid-row: 1; grid-column: 2; }
+/* The browser surface places a native view; do not animate its bounds. */
+.nk-shell[data-surface="browser"], .nk-shell[data-surface="browser"] > .nk-sidebar { transition: none; }
+
+/* ---------- Sidebar ---------- */
+/* Rows keep the rail width while the column collapses, so the rail is clipped rather than squeezed. */
+.nk-sidebar > * { width: calc(var(--size-sidebar) - 2 * var(--space-3) - 1px); }
+/* The rail's padding and border collapse with its column, so no sliver of it is left over the page while the
+   column closes (a padded box cannot be narrower than its padding) or once it is closed. */
+.nk-shell > .nk-sidebar {
+  transition:
+    padding var(--duration-panel) var(--ease-enter),
+    border-right-width var(--duration-panel) var(--ease-enter),
+    visibility 0s linear 0s;
+}
+.nk-shell.is-collapsed > .nk-sidebar {
+  padding-inline: 0;
+  border-right-width: 0;
+  transition:
+    padding var(--duration-panel) var(--ease-enter),
+    border-right-width var(--duration-panel) var(--ease-enter),
+    visibility 0s linear var(--duration-panel);
+}
+/* macOS draws the traffic lights over this reserve (76px from the window edge); other platforms hide it. */
+.nk-sidebar__controls, .nk-titlebar__controls { width: 52px; height: 12px; flex: none; }
+.app-root:not([data-platform="darwin"]) :is(.nk-sidebar__controls, .nk-titlebar__controls) { display: none; }
+.nk-sidebar__chrome > .nk-icon-btn { margin-left: auto; }
+/* The subtitle wraps instead of truncating (Russian runs longer than the rail). */
+.nk-wordmark small { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+/* At the shortest windows the subtitle gives its lines to the nav, so every item stays visible (the titlebar
+   pill says Local workspace too). */
+@media (max-height: 680px) {
+  .nk-sidebar__brand { padding-bottom: var(--space-3); }
+  .nk-wordmark small { display: none; }
+}
+/* The session line wraps under its first line: the dot stays level with the first line, and CJK phrases break
+   between words rather than leaving a single character on a line. */
+.nk-sidebar__session { align-items: flex-start; }
+.nk-sidebar__session > .nk-dot { margin-top: 5px; }
+.nk-sidebar__session > span { min-width: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+:is(:lang(ja), :lang(zh), :lang(ko)) .nk-sidebar__session > span { word-break: keep-all; }
+.nk-sidebar__version > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Korean breaks between words (eojeol), not inside them, on every surface; a word longer than its line still wraps. */
+.nk-root:lang(ko) { word-break: keep-all; overflow-wrap: break-word; }
+
+/* The nav list scrolls (overflow clips outer rings), so nav items draw their focus ring inside. */
+.nk-sidebar .nk-nav-item:focus-visible { outline-offset: -2px; }
+
+/* Attention dots on nav items (StateDot variants). */
+.nk-action-dot.is-static { animation: none; }
+.nk-action-dot.is-pulse { animation: nk-pulse 1.3s ease-in-out infinite; }
+
+/* Below 860px the rail is a drawer over the scrim, with a focus trap (useCompactSidebarDrawer). */
+.nk-shell.is-compact { grid-template-columns: minmax(0, 1fr); }
+.nk-shell.is-compact > .nk-shell__main { grid-column: 1; }
+.nk-shell.is-compact > .nk-sidebar {
+  position: absolute;
+  z-index: var(--z-drawer);
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--size-sidebar);
+  border-right-color: var(--border);
+  box-shadow: var(--shadow-overlay);
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition: transform var(--duration-panel) var(--ease-exit), visibility 0s linear var(--duration-panel);
+}
+.nk-shell.is-compact.is-sidebar-open > .nk-sidebar {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--duration-panel) var(--ease-enter), visibility 0s linear 0s;
+}
+.nk-shell__scrim { position: fixed; z-index: var(--z-scrim); inset: 0; padding: 0; border: 0; background: var(--bg-scrim); }
+
+/* ---------- Titlebar ---------- */
+/* The location keeps its room: the Local workspace pill gives way first, down to its globe (AppShell
+   useStatusPillFit; the label stays as its text and tooltip), and only then does the current crumb ellipsize.
+   The flex weights keep that order while a resize is being measured. */
+.nk-titlebar__trail { flex: 0 1 auto; }
+.nk-titlebar__trail li[aria-current="page"] { min-width: 0; }
+.nk-titlebar__end { flex: 0 1000 auto; min-width: 28px; }
+.nk-titlebar__status { min-width: 0; max-width: 100%; }
+.nk-titlebar__status-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nk-titlebar__status.is-icon-only { gap: 0; padding: 0 7px; }
+.nk-titlebar__status.is-icon-only > .nk-titlebar__status-label { max-width: 0; }
+.nk-dev-tag { flex: none; }
+/* Windows and Linux draw the window controls at the right end of the titlebar (titleBarOverlay). */
+.app-root:not([data-platform="darwin"]) .nk-titlebar {
+  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + var(--space-4));
+}
+
+/* ---------- Workspace ---------- */
+/* The workspace is the container for container queries; the keyed surface inside it is the scroller, so every
+   surface opens at the top and the runtime notice stays in view. */
+.nk-shell__content { display: flex; flex-direction: column; overflow: hidden; scrollbar-gutter: auto; }
+/* The runtime-restart notice sits above the scroller, in a row that reserves the scroller's scrollbar gutter, and
+   takes the width of the page below it (Page: wide on Overview, narrow on Updates and Settings). */
+.nk-shell__notice-row { flex: none; padding-top: var(--space-4); overflow: hidden; scrollbar-gutter: stable; }
+.nk-shell__notice { width: min(var(--size-content), calc(100% - 2 * var(--space-8))); margin: 0 auto; }
+.nk-shell[data-surface="overview"] .nk-shell__notice { width: min(var(--size-content-wide), calc(100% - 2 * var(--space-8))); }
+.nk-shell:is([data-surface="updates"], [data-surface="settings"]) .nk-shell__notice { width: min(var(--size-content-narrow), calc(100% - 2 * var(--space-8))); }
+.nk-shell[data-surface="browser"] .nk-shell__notice-row { padding-bottom: var(--space-4); scrollbar-gutter: auto; }
+/* Settings sets its narrow page beside an "On this page" rail once the workspace fits both (surfaces/settings.css
+   .settings-layout): the notice takes the page's column of that grid. */
+@container workspace (min-width: 1044px) {
+  .nk-shell[data-surface="settings"] .nk-shell__notice-row {
+    display: grid;
+    grid-template-columns: minmax(0, calc(var(--size-content-narrow) + 2 * var(--space-8))) 180px;
+    justify-content: center;
+    column-gap: var(--space-2);
+    padding-inline-end: var(--space-8);
+  }
+}
+/* Fixed toasts (design/overlays) publish --toast-clearance while they show: the page can scroll its end clear of
+   them (the page's own bottom padding counts). Keyboard focus scrolls controls in with room for the focus ring,
+   and clear of a toast. */
+.nk-shell__scroll {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  padding-bottom: max(0px, var(--toast-clearance, 0px) - var(--space-12));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: var(--space-6) max(var(--space-6), var(--toast-clearance, 0px));
+  scrollbar-gutter: stable;
+}
+.nk-shell[data-surface="browser"] .nk-shell__scroll { padding-bottom: 0; overflow: hidden; scrollbar-gutter: auto; }
+
+/* ---------- Overlays ---------- */
+/* Overlays cover the titlebar; a press on them must not start a window drag. */
+:is(.nk-dialog-backdrop, .nk-shell__scrim, .nk-menu__scrim, .nk-media.is-expanded) { -webkit-app-region: no-drag; }
+.nk-dialog__body > .nk-dialog__setting { min-height: 0; margin: var(--space-2) 0 0; border-top: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); }
+.nk-dialog__setting strong { color: var(--text-primary); }
+.nk-dialog__note { margin: var(--space-3) 0 0; color: var(--text-warning); font-size: 14px; line-height: 20px; }
+/* A failed save from the dialog is shown in it, under the setting it concerns. */
+.nk-dialog__error { margin-top: var(--space-3); }
+
+/* ---------- Launch and fatal screens ---------- */
+.nk-launch {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  text-align: center;
+}
+.nk-launch__drag { position: absolute; top: 0; right: 0; left: 0; height: var(--size-titlebar); -webkit-app-region: drag; }
+.nk-launch__line { width: 18px; height: 1px; margin-top: var(--space-4); overflow: hidden; background: var(--border-heavy); }
+.nk-launch__line::after { display: block; width: 8px; height: 1px; background: var(--text-primary); content: ""; animation: nk-launch-line 0.9s ease-in-out infinite alternate; }
+@keyframes nk-launch-line { to { transform: translateX(10px); } }
+.nk-launch h1 { margin: var(--space-4) 0 0; color: var(--text-primary); font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.nk-launch p { max-width: 52ch; margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.nk-launch .nk-btn { margin-top: var(--space-5); }
+
+/* =====================================================================================================
+ * Shared launcher-ui pieces without a system component. Tokens and type styles only.
+ * ===================================================================================================== */
+
+/* ConnectionsTabs: the tabs sit a section gap above the tab's content. */
+.nk-connections-tabs { margin-bottom: var(--space-6); }
+
+/* SectionHeading: heading style, optional caption on the right. */
+.nk-section-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-4); margin: 0 0 var(--space-3); }
+.nk-section-heading > span { color: var(--text-primary); font-size: 17px; line-height: 24px; font-weight: 600; }
+.nk-section-heading > small { color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+.nk-section-heading.is-spaced { margin-top: var(--space-10); }
+
+/* NoticeRow: a Notice inside a flow keeps its distance from what precedes it. */
+.nk-notice-row { margin-top: var(--space-4); }
+
+/* SetupRow: the title line can carry a tag or a small menu. */
+.nk-setup-row > div { min-width: 0; }
+
+/* SettingRow */
+.nk-setting-row.is-flush-after { border-bottom: 0; }
+
+/* FieldRow: label beside a kit input (stacks under 640px). */
+.nk-field-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 160px) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-height: var(--size-list-row);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.nk-field-row > span { color: var(--text-secondary); font-size: 14px; line-height: 20px; font-weight: 500; }
+.nk-field-row > .nk-input { font-family: var(--font-mono); font-size: 13px; }
+@container workspace (max-width: 640px) { .nk-field-row { grid-template-columns: minmax(0, 1fr); } }
+
+/* Choice cards: InteractionModePicker and the Pro model menu (role="radio" buttons). */
+.nk-choice-group { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--space-3); margin: 0 0 var(--space-4); }
+.nk-choice {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  text-align: left;
+  transition: border-color var(--duration-micro) ease, background-color var(--duration-micro) ease;
+}
+/* Hover is for the unselected cards: the selected one keeps its accent border and raised fill. */
+.nk-choice:not(.is-selected):hover:not(:disabled, [aria-disabled="true"]) { border-color: var(--border-heavy); background: var(--bg-control-hover); }
+.nk-choice.is-selected { border-color: var(--border-accent); background: var(--bg-panel-raised); box-shadow: var(--shadow-panel); color: var(--text-primary); }
+.nk-choice:is(:disabled, [aria-disabled="true"]) { opacity: 0.55; }
+.nk-choice__mark { display: grid; width: 20px; height: 20px; margin-top: 1px; place-items: center; border: 1px solid var(--border-control); border-radius: var(--radius-pill); }
+.nk-choice.is-selected .nk-choice__mark { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.nk-choice__mark .nk-icon { width: 12px; height: 12px; }
+.nk-choice__copy { display: grid; gap: 2px; min-width: 0; }
+.nk-choice__copy strong { color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; }
+.nk-choice__copy small { color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
+.nk-choice--compact { padding: var(--space-2) var(--space-3); border-color: transparent; background: transparent; }
+.nk-choice--compact.is-selected { border-color: transparent; background: var(--bg-accent-subtle); box-shadow: none; }
+.nk-choice--compact .nk-choice__copy strong { font-size: 14px; line-height: 20px; }
+.nk-choice--compact .nk-choice__copy small { font-size: 13px; line-height: 18px; }
+
+/* ZeroRiskModelMenu: an icon button that opens a small radio menu with an info tooltip. */
+.nk-menu { position: relative; z-index: 1; flex: none; }
+.nk-menu.is-open { z-index: 220; }
+.nk-menu__scrim { position: fixed; z-index: 0; inset: 0; padding: 0; border: 0; background: transparent; }
+.nk-menu__panel {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + var(--space-2));
+  left: calc(-1 * var(--space-2));
+  width: min(360px, calc(100vw - 48px));
+  padding: var(--space-2);
+  border: 1px solid var(--border-heavy);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.nk-menu__panel > p { margin: var(--space-1) var(--space-2) var(--space-2); color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+.nk-menu__option { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; }
+.nk-menu__option + .nk-menu__option { margin-top: var(--space-1); }
+.nk-menu__option > .nk-choice { grid-row: 1; grid-column: 1 / -1; }
+.nk-menu__option.has-info > .nk-choice { padding-right: var(--space-10); }
+.nk-menu__info { position: relative; z-index: 2; display: grid; grid-row: 1; grid-column: 2; width: 28px; height: 28px; place-items: center; border-radius: var(--radius-pill); color: var(--icon-tertiary); }
+.nk-menu__info:hover, .nk-menu__info:focus-visible { background: var(--bg-control-hover); color: var(--icon-primary); }
+.nk-menu__info .nk-icon { width: 14px; height: 14px; }
+.nk-tooltip {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + var(--space-2));
+  right: calc(-1 * var(--space-1));
+  width: min(300px, calc(100vw - 48px));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-heavy);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  visibility: hidden;
+  transition: opacity var(--duration-micro) ease, transform var(--duration-micro) ease, visibility 0s linear var(--duration-micro);
+}
+.nk-menu__info:hover .nk-tooltip, .nk-menu__info:focus-visible .nk-tooltip { opacity: 1; transform: none; visibility: visible; transition-delay: 0s; }
+
+/* DoctorSummary: a tinted result panel (error until every check passes). */
+.nk-doctor { margin-top: var(--space-4); overflow: hidden; border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-error); }
+.nk-doctor.is-healthy { background: var(--bg-success); }
+.nk-doctor.is-warning { background: var(--bg-warning); }
+.nk-doctor > header { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 var(--space-4); border-bottom: 1px solid var(--border-light); }
+.nk-doctor > header .nk-icon { width: 16px; height: 16px; color: var(--text-error); }
+.nk-doctor.is-healthy > header .nk-icon { color: var(--text-success); }
+.nk-doctor.is-warning > header .nk-icon { color: var(--text-warning); }
+.nk-doctor > header strong { color: var(--text-primary); font-size: 14px; line-height: 20px; font-weight: 500; }
+.nk-doctor > div { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-4) var(--space-3); }
+.nk-doctor p { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.nk-doctor p > .nk-dot { margin-top: 5px; }
+
+/* ContextBudgetTable */
+.nk-budget-table { margin: var(--space-4) 0 var(--space-6); overflow-x: auto; }
+.nk-budget-table table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 20px; }
+.nk-budget-table caption { padding: 0 0 var(--space-2); color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 500; text-align: left; }
+.nk-budget-table :is(th, td) { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-light); text-align: left; }
+.nk-budget-table :is(th, td):first-child { padding-left: 0; }
+.nk-budget-table thead th { color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-weight: 500; }
+.nk-budget-table tbody th { color: var(--text-primary); font-weight: 500; }
+.nk-budget-table td { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.nk-budget-table p { margin: var(--space-2) 0 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+
+/* TutorialVideo: inline player with an expand button; expanded, it fills the window below the titlebar controls. */
+.nk-media { position: relative; width: min(100%, 620px); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-under); }
+.nk-media video { display: block; width: 100%; max-height: 280px; object-fit: contain; }
+.nk-media__expand { position: absolute; top: var(--space-2); right: var(--space-2); background: var(--bg-elevated); opacity: 0; pointer-events: none; }
+.nk-media:hover .nk-media__expand, .nk-media__expand:focus-visible { opacity: 1; pointer-events: auto; }
+/* Expanded, the video sits below a titlebar-high band that keeps the window controls clear; the close
+   button sits in that band after the macOS traffic-light reserve. */
+.nk-media.is-expanded { position: fixed; z-index: var(--z-toast); inset: 0; width: auto; padding-top: var(--size-titlebar); border: 0; border-radius: 0; }
+.nk-media.is-expanded video { height: 100%; max-height: none; }
+.nk-media__close { position: absolute; top: calc((var(--size-titlebar) - var(--size-control-sm)) / 2); left: 84px; background: var(--bg-elevated); }

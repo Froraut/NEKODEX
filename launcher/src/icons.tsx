@@ -26,10 +26,22 @@ export type IconName =
   | "stop"
   | "update";
 
-export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {
+// Same order as the design system's Icon.names.
+export const iconNames: readonly IconName[] = [
+  "overview", "accounts", "activity", "alert", "back", "browser", "check", "chevron", "close", "stop", "external", "expand",
+  "forward", "globe", "info", "logs", "mcp", "minus", "plus", "reload", "settings", "setup", "sidebar", "update",
+];
+
+export type IconProps = { name: IconName; size?: number; title?: string } & SVGProps<SVGSVGElement>;
+
+// `size` sets width/height; without it the surrounding CSS sizes the icon. `title` makes it a labelled image.
+export function Icon({ name, size, title, ...props }: IconProps) {
   const common = { fill: "none", stroke: "currentColor", strokeLinecap: "round" as const, strokeLinejoin: "round" as const, strokeWidth: 1.7 };
+  const sizing = size == null ? null : { width: size, height: size };
+  const labelled = title ? { role: "img" as const, "aria-hidden": undefined } : null;
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" {...props}>
+    <svg aria-hidden="true" viewBox="0 0 24 24" {...sizing} {...labelled} {...props}>
+      {title ? <title>{title}</title> : null}
       {name === "overview" ? <><rect {...common} x="3" y="3" width="7" height="7" rx="2" /><rect {...common} x="14" y="3" width="7" height="7" rx="2" /><rect {...common} x="3" y="14" width="7" height="7" rx="2" /><rect {...common} x="14" y="14" width="7" height="7" rx="2" /></> : null}
       {name === "accounts" ? <><circle {...common} cx="9" cy="8" r="3" /><path {...common} d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2" /></> : null}
       {name === "activity" ? <><path {...common} d="M3 12h4l2.2-6 4.1 12 2.3-6H21" /></> : null}
@@ -57,3 +69,5 @@ export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGEle
     </svg>
   );
 }
+
+Icon.names = iconNames;

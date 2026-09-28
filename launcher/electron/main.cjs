@@ -3,6 +3,7 @@ const { stableChromiumUserAgent } = require("./browser-user-agent.cjs");
 const { registerBrowserHandlers } = require("./ipc/browser-handlers.cjs");
 const { registerAccountHandlers } = require("./ipc/account-handlers.cjs");
 const { createChromeProfileChoice } = require("./chrome-profile-choice.cjs");
+const { showChromeProfilePicker } = require("./chrome-profile-picker.cjs");
 const { createProfileFirstLogin } = require("./profile-first-login.cjs");
 const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
@@ -62,6 +63,8 @@ const { CHROME_SETTINGS_ADDRESS, confirmExistingChromeImport } = require("./exis
 const { selectChromeConnectionFile } = require("./existing-chrome-file-access.cjs");
 const {
   createStateStore,
+  resolveAppearance,
+  validateAppearance,
   validateSidebarState,
 } = require("./state.cjs");
 const {
@@ -506,9 +509,32 @@ function windowStateSnapshot(window) {
   };
 }
 
+// Launcher-owned surfaces paint bg-surface of the resolved launcher theme before the
+// renderer draws. ChatGPT pages keep following the OS through nativeTheme "system".
+const APP_THEME_COLORS = Object.freeze({
+  dark: Object.freeze({ background: "#1b1b24", symbol: "#a8a8a8" }),
+  light: Object.freeze({ background: "#f8f7fc", symbol: "#4a4860" }),
+});
+const TITLE_BAR_OVERLAY_HEIGHT = 52;
+
+function resolvedAppTheme(state = launcherStateStore?.read()) {
+  return resolveAppearance(state?.appearance, nativeTheme.shouldUseDarkColors);
+}
+
+function applyAppTheme(window = mainWindow, theme = resolvedAppTheme()) {
+  if (!window || window.isDestroyed()) return;
+  const colors = APP_THEME_COLORS[theme];
+  window.setBackgroundColor(colors.background);
+  if (process.platform === "darwin") return;
+  try {
+    window.setTitleBarOverlay({ color: colors.background, symbolColor: colors.symbol, height: TITLE_BAR_OVERLAY_HEIGHT });
+  } catch {}
+}
+
 function createWindow({ logger, stateStore, windowStatePath, startHidden, foregroundOnReady }) {
   const isMac = process.platform === "darwin";
   const state = stateStore.read();
+  const themeColors = APP_THEME_COLORS[resolvedAppTheme(state)];
   const windowState = readWindowState(windowStatePath, screen.getAllDisplays());
   const window = new BrowserWindow({
     width: windowState.bounds.width,
@@ -521,7 +547,7 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
     title: LAUNCHER_PROFILE.displayName,
     icon: APP_ICON_PATH,
     show: false,
-    backgroundColor: "#1b1b24",
+    backgroundColor: themeColors.background,
     titleBarStyle: isMac ? "hiddenInset" : "hidden",
     transparent: false,
     ...(isMac ? {
@@ -529,9 +555,9 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
       visualEffectState: "active",
     } : {
       titleBarOverlay: {
-        color: "#1b1b24",
-        symbolColor: "#a8a8a8",
-        height: 52,
+        color: themeColors.background,
+        symbolColor: themeColors.symbol,
+        height: TITLE_BAR_OVERLAY_HEIGHT,
       },
     }),
     webPreferences: {
@@ -609,12 +635,17 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden, foregr
   return window;
 }
 
+// The renderer paints its first frame in the theme the window background already has (?theme=), until it
+// remembers the appearance it applied itself (renderer theme-boot.ts). The query is not part of the trusted URL.
 async function loadRenderer(window) {
+  const theme = resolvedAppTheme();
   if (isDev) {
-    await window.loadURL(process.env.VITE_DEV_SERVER_URL);
+    const url = new URL(process.env.VITE_DEV_SERVER_URL);
+    url.searchParams.set("theme", theme);
+    await window.loadURL(url.href);
     return;
   }
-  await window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+  await window.loadFile(path.join(__dirname, "..", "dist", "index.html"), { query: { theme } });
 }
 
 function reloadOwnedRenderer(window) {
@@ -1441,6 +1472,11 @@ function registerIpc({ logger, stateStore }) {
       if (!Number.isInteger(value) || value < 30 || value > 600) throw new Error("Manual submission time must be 30–600 seconds");
       return stateStore.update({ manualSubmitTimeoutSec: value });
     }
+    if (key === "appearance") {
+      const next = stateStore.update({ appearance: validateAppearance(value) });
+      applyAppTheme(mainWindow, resolvedAppTheme(next));
+      return next;
+    }
     const ordinary = key === "keepRunningOnClose" || key === "showBrowserDuringTurns" || key === "showNetworkIssueNotice";
     if (!ordinary) throw new Error("Unknown preference");
     return stateStore.update({ [key]: value === true });
@@ -1751,6 +1787,9 @@ async function start() {
     startHidden,
     foregroundOnReady,
   });
+  nativeTheme.on("updated", () => {
+    if (stateStore.read().appearance === "system") applyAppTheme();
+  });
   startupPhase = "browser-control";
   browserControl = await new BrowserControlServer({
     logger,
@@ -1848,6 +1887,7 @@ async function start() {
       // its unrelated "Profile N" directory must never be selected from Stable's catalog.
       executable: () => "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       language: () => stateStore.read().language,
+      picker: options => showChromeProfilePicker({ ...options, theme: resolvedAppTheme(stateStore.read()) }),
     }), runtime: runtimeHost, session, dialog, window: () => mainWindow, language: () => stateStore.read().language,
     selectConnectionFile: ({ signal, accountId }) => selectChromeConnectionFile({
       dialog, window: mainWindow, homeDir: app.getPath("home"), language: stateStore.read().language, signal,

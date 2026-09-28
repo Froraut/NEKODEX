@@ -1,4 +1,5 @@
-/* NEKODEX palette (mirrors launcher/src/tokens.css; this sandboxed window cannot load the renderer bundle). */
+/* NEKODEX palette (mirrors the semantic tokens in launcher/src/tokens.css; this sandboxed window cannot load the
+   renderer bundle). Components follow the design system kit: Button, TextField, choice rows, focus ring. */
 :root {
   color-scheme: dark;
   --surface: #1b1b24;
@@ -6,6 +7,7 @@
   --control: #ffffff08;
   --control-hover: #ffffff12;
   --accent: #c6bdff;
+  --accent-hover: #d3ceff;
   --accent-subtle: #c6bdff14;
   --on-accent: #26243e;
   --text-primary: #f5f4fa;
@@ -13,49 +15,143 @@
   --text-tertiary: #9693a9;
   --text-accent: #d3ceff;
   --border: #ffffff12;
+  --border-light: #ffffff0a;
   --border-heavy: #ffffff24;
   --border-control: #75738a;
   --border-accent: #c6bdff55;
   --focus: #b5aaff;
-  font-family: "Avenir Next", "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Yu Gothic UI", "Segoe UI", sans-serif;
+  --selection: #c6bdff57;
+  --scrollbar-thumb: #ffffff24;
+  --shadow-control: 0 1px 2px #00000038;
+  --shadow-accent: 0 8px 22px -14px #c6bdffcc;
+  font-family: var(--font-ui);
   background: var(--surface);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
 }
+/* Light palette (NEKODEX tokens.json light theme); set from the launcher's resolved appearance. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --surface: #f8f7fc;
+  --panel: #ffffff;
+  --control: #26243e0a;
+  --control-hover: #26243e12;
+  --accent: #5b4fc4;
+  --accent-hover: #4f43b8;
+  --accent-subtle: #5b4fc414;
+  --on-accent: #ffffff;
+  --text-primary: #1b1b24;
+  --text-secondary: #4a4860;
+  --text-tertiary: #66637c;
+  --text-accent: #4f43b8;
+  --border: #1b1b2414;
+  --border-light: #1b1b240d;
+  --border-heavy: #1b1b2429;
+  --border-control: #85839a;
+  --border-accent: #5b4fc466;
+  --focus: #5b4fc4;
+  --selection: #5b4fc433;
+  --scrollbar-thumb: #1b1b2429;
+  --shadow-control: 0 1px 2px #1b1b2414;
+  --shadow-accent: 0 8px 22px -14px #5b4fc499;
+}
+/* Scales (tokens.css): 4px spacing, radii, control sizes, type faces and motion. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --size-control: 36px;
+  --size-control-sm: 32px;
+  --size-list-row: 56px;
+  --font-ui: "Avenir Next", "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Yu Gothic UI", "Meiryo", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
+  --duration-press: 90ms;
+  --duration-micro: 140ms;
+  --duration-control: 180ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+}
 * { box-sizing: border-box; }
+/* Elements hidden by the script stay hidden whatever display their rule sets. */
+[hidden] { display: none !important; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 body { margin: 0; min-width: 420px; background: var(--surface); }
-main { height: 100vh; padding: 24px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
-header { flex: none; margin-bottom: 4px; }
-.eyebrow { margin: 0 0 6px; color: var(--text-tertiary); font-size: 13px; line-height: 18px; font-weight: 500; }
-h1 { margin: 0; font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -.03em; }
-.intro { margin: 8px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
-.search-heading { display: flex; flex: none; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 4px; }
-.search-label { font-size: 14px; font-weight: 600; }
-input { width: 100%; flex: none; height: 38px; padding: 0 12px; border: 1px solid var(--border-control); border-radius: 9px; background: var(--control); color: inherit; font: inherit; font-size: 14px; outline: none; }
+::selection { background: var(--selection); }
+main { height: 100vh; padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); overflow: hidden; }
+
+/* Header: eyebrow, title and description, as in the kit Dialog. */
+header { flex: none; margin-bottom: var(--space-2); }
+.eyebrow { margin: 0 0 var(--space-1); color: var(--text-accent); font-size: 13px; line-height: 18px; font-weight: 500; }
+h1 { margin: 0; font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.intro { margin: var(--space-2) 0 0; color: var(--text-secondary); font-size: 15px; line-height: 22px; }
+
+/* Search: a kit TextField (label 4px above the input) with the result count on the right. */
+.search-heading { display: flex; flex: none; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: calc(var(--space-1) - var(--space-3)); }
+.search-label { font-size: 14px; line-height: 20px; font-weight: 500; }
+.status { margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; text-align: right; font-variant-numeric: tabular-nums; }
+input { width: 100%; flex: none; height: var(--size-control); padding: 0 var(--space-3); border: 1px solid var(--border-control); border-radius: var(--radius-sm); background: var(--control); color: var(--text-primary); font: inherit; font-size: 14px; line-height: 20px; outline: none; }
+input:hover { background: var(--control-hover); }
 input::placeholder { color: var(--text-tertiary); }
 input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.status { margin: 0; color: var(--text-tertiary); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
-.profiles { min-width: 0; min-height: 0; flex: 1; overflow: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #ffffff29 transparent; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 6px; padding: 3px; }
-.profile { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; min-width: 0; width: 100%; min-height: 60px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: inherit; font: inherit; text-align: left; cursor: default; }
+input:disabled { opacity: .38; }
+/* The native clear button, drawn as a tertiary × (Chromium's default is a blue glyph). */
+input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin: 0 0 0 var(--space-2);
+  background:
+    linear-gradient(45deg, transparent calc(50% - 0.8px), currentColor calc(50% - 0.8px), currentColor calc(50% + 0.8px), transparent calc(50% + 0.8px)),
+    linear-gradient(-45deg, transparent calc(50% - 0.8px), currentColor calc(50% - 0.8px), currentColor calc(50% + 0.8px), transparent calc(50% + 0.8px));
+  color: var(--text-tertiary);
+  cursor: default;
+}
+input::-webkit-search-cancel-button:hover { color: var(--text-primary); }
+
+/* Profiles: selectable two-line rows (kit choice card look); the list scrolls and keeps room for focus rings. The
+   negative margin gives that room back, so the rows line up with the search field. */
+.profiles { margin-inline: calc(-1 * var(--space-1)); min-width: 0; min-height: 0; flex: 1; overflow: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; gap: var(--space-2); padding: var(--space-1); }
+.profile { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-3); min-width: 0; width: 100%; min-height: var(--size-list-row); padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); color: inherit; font: inherit; text-align: left; cursor: default; }
 .profile:hover { background: var(--control-hover); border-color: var(--border-heavy); }
 .profile:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .profile[aria-selected="true"] { background: var(--accent-subtle); border-color: var(--border-accent); }
 .profile-name, .profile-meta, .profile-id { display: block; overflow-wrap: anywhere; white-space: normal; }
-.profile-name { grid-column: 1; grid-row: 1; font-size: 15px; line-height: 22px; font-weight: 600; }
+.profile-name { grid-column: 1; grid-row: 1; font-size: 15px; line-height: 22px; font-weight: 500; }
 .profile-meta { grid-column: 1 / -1; grid-row: 2; margin-top: 2px; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
-.profile-id { grid-column: 2; grid-row: 1; align-self: center; color: var(--text-tertiary); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.saved { grid-column: 1 / -1; display: block; margin-top: 4px; color: var(--text-accent); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
-footer { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding-top: 14px; border-top: 1px solid var(--border); }
+.profile-id { grid-column: 2; grid-row: 1; align-self: center; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 13px; line-height: 18px; }
+.saved { grid-column: 1 / -1; display: block; margin-top: var(--space-1); color: var(--text-accent); font-size: 13px; line-height: 18px; font-weight: 500; overflow-wrap: anywhere; }
+
+/* Empty state (kit EmptyState): icon, title, what to do next and, after a search, Clear search. */
+.empty { display: flex; flex: 1; align-items: flex-start; gap: var(--space-3); min-height: 0; overflow: auto; padding: var(--space-4) 0; }
+.empty-icon { width: 20px; height: 20px; flex: none; margin-top: 1px; color: var(--text-tertiary); }
+.empty-copy { min-width: 0; }
+.empty-copy strong { display: block; font-size: 15px; line-height: 22px; font-weight: 500; overflow-wrap: anywhere; }
+.empty-copy p { margin: 2px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.empty-copy button { margin-top: var(--space-3); }
+
+/* Footer: ghost Cancel on the left, secondary and primary kit buttons on the right. */
+footer { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); padding-top: var(--space-4); border-top: 1px solid var(--border-light); }
 #cancel { margin-right: auto; }
 button { font: inherit; }
-footer button { min-height: 38px; padding: 0 16px; border-radius: 9px; font-size: 14px; font-weight: 500; cursor: default; }
-footer button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.secondary { border: 1px solid var(--border); background: var(--control); color: var(--text-secondary); }
-.secondary:hover:not(:disabled) { border-color: var(--border-heavy); background: var(--control-hover); color: var(--text-primary); }
+:is(footer, .empty) button { display: inline-flex; align-items: center; justify-content: center; height: var(--size-control); padding: 0 var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; cursor: default; }
+:is(footer, .empty) button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+:is(footer, .empty) button:active:not(:disabled) { transform: scale(0.985); }
+footer button:disabled { opacity: .38; }
+.secondary { border-color: var(--border); background: var(--control); color: var(--text-secondary); }
+.secondary:hover:not(:disabled) { border-color: var(--border-heavy); background: var(--control-hover); color: var(--text-primary); box-shadow: var(--shadow-control); }
 #cancel.secondary { border-color: transparent; background: transparent; }
-.primary { border: 1px solid transparent; background: var(--accent); color: var(--on-accent); font-weight: 600; }
-.primary:hover:not(:disabled) { background: var(--text-accent); box-shadow: 0 8px 22px -14px #c6bdffcc; }
-.primary:disabled { opacity: .38; }
-@media (max-width: 560px) { main { padding: 16px; gap: 10px; } footer button { padding: 0 10px; font-size: 13px; } h1 { font-size: 21px; line-height: 26px; } }
-@media (max-height: 560px) { main { padding-block: 14px; gap: 8px; } .eyebrow { display: none; } header { margin-bottom: 0; } }
-@media (prefers-reduced-motion: no-preference) { .profile, input, footer button { transition: background-color .14s ease, border-color .14s ease, box-shadow .14s ease, color .14s ease; } }
+#cancel.secondary:hover:not(:disabled) { background: var(--control-hover); box-shadow: none; }
+.primary { background: var(--accent); color: var(--on-accent); }
+.primary:hover:not(:disabled) { background: var(--accent-hover); box-shadow: var(--shadow-accent), var(--shadow-control); }
+
+/* Narrow windows use the kit's small buttons; short windows drop the eyebrow and tighten the rhythm. */
+@media (max-width: 560px) { main { padding: var(--space-4); } :is(footer, .empty) button { height: var(--size-control-sm); padding: 0 var(--space-3); font-size: 13px; line-height: 18px; } }
+@media (max-height: 560px) { main { padding-block: var(--space-4); gap: var(--space-2); } .eyebrow { display: none; } header { margin-bottom: var(--space-1); } .search-heading { margin-bottom: calc(var(--space-1) - var(--space-2)); } }
+@media (prefers-reduced-motion: no-preference) {
+  .profile, input, :is(footer, .empty) button { transition: background-color var(--duration-micro) ease, border-color var(--duration-micro) ease, color var(--duration-micro) ease, box-shadow var(--duration-control) var(--ease-enter), transform var(--duration-press) ease; }
+}

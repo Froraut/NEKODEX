@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
 import extraLocales from "./route-diagnostics-locales.json";
-import { Icon } from "./icons";
+import { Button, EventList, Notice, SettingRow } from "./design";
 import { copyFor } from "./i18n";
 import type { Language, RouteDiagnosticsReport } from "./types";
+import "./surfaces/connections.css";
 
 const en = {
   title: "Check Codex routing", body: "Read the configured provider, Codex home, and observed model-catalog requests.",
@@ -125,10 +126,10 @@ function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language
   const catalogValue = failureValue ?? (malformedReceipt ? copy.unavailable
     : catalogStatus === "observed" ? `${copy.observed} (${report.catalog.successfulRequests})`
     : catalogStatus === "waiting" ? copy.waiting : copy.unavailable);
-  const rows = [
-    { label: copy.home, value: path(report.codexHome) },
-    { label: copy.file, value: path(report.configPath) },
-    ...(report.profilePath ? [{ label: copy.profileFile, value: path(report.profilePath) }] : []),
+  const rows: Array<{ label: string; value: string; path?: boolean }> = [
+    { label: copy.home, value: path(report.codexHome), path: true },
+    { label: copy.file, value: path(report.configPath), path: true },
+    ...(report.profilePath ? [{ label: copy.profileFile, value: path(report.profilePath), path: true }] : []),
     { label: copy.config, value: copy[report.configStatus] },
     { label: copy.profile, value: report.profile ? name(report.profile) : knownConfiguration && !report.issueCodes.includes("profile-unavailable") ? copy.none : copy.unknown },
     { label: copy.provider, value: knownConfiguration ? name(report.provider) : copy.unknown },
@@ -139,7 +140,7 @@ function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language
   ];
   if (!failureValue && !malformedReceipt && catalogStatus === "observed" && report.catalog.lastSuccessfulAt) {
     const date = new Date(report.catalog.lastSuccessfulAt);
-    if (Number.isFinite(date.getTime())) rows.push({ label: copy.last, value: new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "medium" }).format(date) });
+    if (Number.isFinite(date.getTime())) rows.push({ label: copy.last, value: new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(date) });
   }
   const messages: Record<string, string> = {
     "custom-provider": copy.custom, "catalog-override": copy.override, "route-mismatch": copy.routeMismatch,
@@ -149,15 +150,25 @@ function routeDiagnosticsView(report: RouteDiagnosticsReport, language: Language
     "provider-invalid": copy.providerProblem, "integration-unreadable": copy.integrationProblem,
     "integration-recovery-pending": copy.recoveryPending,
   };
-  return { rows, catalogFailed: Boolean(failureValue),
-    guidance: [...new Set(report.issueCodes.filter(code => Object.hasOwn(messages, code)).map(code => messages[code]!))],
-    catalogBody: failureValue ? failureCopy.routingCatalogFailureBody : malformedReceipt ? copy.unavailableBody
-      : catalogStatus === "observed" ? copy.observedBody : catalogStatus === "waiting" ? copy.waitingBody : copy.unavailableBody };
+  const guidance = [...new Set(report.issueCodes.filter(code => Object.hasOwn(messages, code)).map(code => messages[code]!))];
+  const catalogBody = failureValue ? failureCopy.routingCatalogFailureBody : malformedReceipt ? copy.unavailableBody
+    : catalogStatus === "observed" ? copy.observedBody : catalogStatus === "waiting" ? copy.waitingBody : copy.unavailableBody;
+  // Messages whose next step is Doctor (which lives in Settings, not next to this check on Connections).
+  const doctorMessages = new Set([copy.unavailableBody, copy.routeMismatch, copy.drift, copy.integrationProblem]);
+  return { rows, catalogFailed: Boolean(failureValue), guidance, catalogBody,
+    mentionsDoctor: doctorMessages.has(catalogBody) || guidance.some(message => doctorMessages.has(message)) };
 }
 
-function RouteDiagnosticsResult({ report, language, onActionError, onExport, onViewActivity }: {
+/** Where Doctor lives, for places that show this check away from it: "Run doctor: Settings → Diagnostics". */
+function doctorLocation(language: Language) {
+  const app = copyFor(language);
+  return `${app.runDoctor}: ${app.settings} → ${app.diagnostics}`;
+}
+
+function RouteDiagnosticsResult({ report, language, showDoctorLocation, onActionError, onExport, onViewActivity }: {
   report: RouteDiagnosticsReport;
   language: Language;
+  showDoctorLocation: boolean;
   onActionError?: (error: unknown) => void;
   onExport?: () => Promise<unknown>;
   onViewActivity?: () => void;
@@ -165,28 +176,35 @@ function RouteDiagnosticsResult({ report, language, onActionError, onExport, onV
   const copy = routeDiagnosticsCopy(language);
   const appCopy = copyFor(language);
   const view = routeDiagnosticsView(report, language);
+  // The facts come first: the failure notice and the guidance below them refer to "the routing details above".
   return (
-    <div className="route-diagnostics-result" aria-live="polite">
-      {view.catalogFailed ? <section className="route-diagnostics-summary" aria-labelledby="route-catalog-failure">
-        <Icon name="alert" />
-        <div><strong id="route-catalog-failure">{appCopy.catalogUnavailable}</strong><p>{view.catalogBody}</p></div>
-        <div className="route-diagnostics-actions">
-          {onViewActivity ? <button className="button-secondary" onClick={onViewActivity} type="button">{appCopy.viewActivity}</button> : null}
-          {onExport ? <button className="button-secondary" onClick={() => void onExport().catch(error => onActionError?.(error))}
-            type="button">{appCopy.exportSafeLog}</button> : null}
-        </div>
-      </section> : null}
+    <div className="nk-route-check__result" aria-live="polite">
       <p>{copy.scope}</p>
-      <dl>{view.rows.map(row => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
-      {!view.catalogFailed ? <p>{view.catalogBody}</p> : null}
-      {view.guidance.length ? <ul>{view.guidance.map(message => <li key={message}>{message}</li>)}</ul> : null}
+      <dl className="nk-route-check__facts">
+        {view.rows.map(row => <div key={row.label}><dt>{row.label}</dt><dd className={row.path ? "is-path" : undefined}>{row.value}</dd></div>)}
+      </dl>
+      {view.catalogFailed ? (
+        <Notice title={<span id="route-catalog-failure">{appCopy.catalogUnavailable}</span>} tone="error">
+          {view.catalogBody}
+          {onViewActivity || onExport ? <span className="nk-route-check__actions">
+            {onViewActivity ? <Button onClick={onViewActivity} size="sm">{appCopy.viewActivity}</Button> : null}
+            {onExport ? <Button onClick={() => void onExport().catch(error => onActionError?.(error))} size="sm">
+              {appCopy.exportSafeLog}
+            </Button> : null}
+          </span> : null}
+        </Notice>
+      ) : <p>{view.catalogBody}</p>}
+      {view.guidance.length ? <EventList items={view.guidance.map(message => ({ id: message, level: "warning" as const, text: message }))} /> : null}
+      {showDoctorLocation && view.mentionsDoctor ? <p>{doctorLocation(language)}</p> : null}
     </div>
   );
 }
 
-export function RouteDiagnostics({ language, disabled = false, onActionError, onExport, onViewActivity, readReport }: {
+export function RouteDiagnostics({ language, disabled = false, showDoctorLocation = false, onActionError, onExport, onViewActivity, readReport }: {
   language: Language;
   disabled?: boolean;
+  /** Name where Doctor lives when a message points to it (the check is shown away from Settings). */
+  showDoctorLocation?: boolean;
   onActionError?: (error: unknown) => void;
   onExport?: () => Promise<unknown>;
   onViewActivity?: () => void;
@@ -208,14 +226,17 @@ export function RouteDiagnostics({ language, disabled = false, onActionError, on
     finally { pending.current = false; setBusy(false); }
   };
   return (
-    <section className="route-diagnostics" aria-label={copy.title}>
-      <button className="diagnostic-row" disabled={disabled || busy} onClick={() => void check()} type="button">
-        <Icon name="activity" />
-        <span><strong>{busy ? copy.checking : report ? copy.refresh : copy.title}</strong><small>{copy.body}</small></span>
-        <Icon name="chevron" />
-      </button>
-      {failed ? <p className="route-diagnostics-error" role="alert">{copy.failed}</p> : null}
-      {report ? <RouteDiagnosticsResult report={report} language={language}
+    <section className="nk-route-check" aria-label={copy.title}>
+      <SettingRow
+        control={<Button busy={busy} disabled={disabled} icon="activity" onClick={() => void check()}>
+          {busy ? copy.checking : report ? copy.refresh : copy.title}
+        </Button>}
+        description={copy.body}
+        title={copy.title}
+      />
+      {failed ? <Notice tone="error">{copy.failed}{showDoctorLocation
+        ? <span className="nk-connections__line">{doctorLocation(language)}</span> : null}</Notice> : null}
+      {report ? <RouteDiagnosticsResult report={report} language={language} showDoctorLocation={showDoctorLocation}
         onActionError={onActionError} onExport={onExport} onViewActivity={onViewActivity} /> : null}
     </section>
   );

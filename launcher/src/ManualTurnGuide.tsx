@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { PrimaryButton, SecondaryButton } from "./launcher-ui";
+import { Badge, Button, Panel, type Status, type Tone } from "./design";
 import type { Copy } from "./i18n";
 import type { BrowserState } from "./types";
 
@@ -15,7 +15,8 @@ export function ManualTurnGuide({
   copy: Copy;
   confirmPending: boolean;
   transitionBusy: boolean;
-  onCancel: () => void;
+  /** Receives the Cancel turn button, so focus can return to it when a confirmation closes. */
+  onCancel: (opener: HTMLElement) => void;
   onCopy: () => Promise<boolean>;
   onSent: () => void;
   tab: BrowserState["tabs"][number];
@@ -58,19 +59,25 @@ export function ManualTurnGuide({
         : tab.manualState === "completed"
           ? copy.complete
           : copy.failed;
+  // Status word + dot: the countdown and in-flight states are busy, the settled ones ready or failed.
+  const [tone, dot]: [Tone, Status] = waiting ? ["warning", "busy"]
+    : tab.manualState === "sent" || tab.manualState === "running" ? ["accent", "busy"]
+      : tab.manualState === "completed" ? ["success", "ready"] : ["error", "error"];
   return (
-    <section className={`manual-turn-guide${waiting ? " is-waiting" : ""}`} aria-labelledby={headingId}>
-      <div>
-        <strong id={headingId}>{waiting ? copy.manualPromptTitle : copy.manualPromptWaiting}</strong>
+    <Panel as="section" titleId={headingId} variant="brand" padding="compact" className={`browser-manual${waiting ? " is-waiting" : ""}`}>
+      <div className="browser-manual__copy">
+        <h2 id={headingId} className="browser-manual__title" tabIndex={-1}>{waiting ? copy.manualPromptTitle : copy.manualPromptWaiting}</h2>
         {tab.canCopyPrompt ? <p>{copy.manualPromptInstruction}</p> : null}
       </div>
-      <span className="manual-turn-status">{status}</span>
-      <span className="visually-hidden" aria-live="polite">{waiting ? "" : status}</span>
-      <div className="manual-turn-actions">
-        <SecondaryButton disabled={transitionBusy} onClick={onCancel}>{copy.manualPromptCancel}</SecondaryButton>
-        <SecondaryButton disabled={transitionBusy || !tab.canCopyPrompt} onClick={() => void onCopy().then(ok => { if (ok) setCopied(true); })}>{copied ? copy.manualPromptCopied : copy.manualPromptCopy}</SecondaryButton>
-        <PrimaryButton disabled={transitionBusy || confirmPending || !tab.canConfirmSent} onClick={onSent}>{confirmPending ? copy.running : waiting ? copy.manualPromptConfirmSent : copy.manualPromptSent}</PrimaryButton>
+      <Badge className="browser-manual__status" tone={tone} dot={dot}>{status}</Badge>
+      <span className="nk-visually-hidden" aria-live="polite">{waiting ? "" : status}</span>
+      <div className="browser-manual__actions">
+        <Button variant="ghost" disabled={transitionBusy} onClick={event => onCancel(event.currentTarget)}>{copy.manualPromptCancel}</Button>
+        <Button disabled={transitionBusy || !tab.canCopyPrompt} onClick={() => void onCopy().then(ok => { if (ok) setCopied(true); })}>{copied ? copy.manualPromptCopied : copy.manualPromptCopy}</Button>
+        {/* Once sent, the status badge says so; the confirm button is only the next step while the turn waits. */}
+        {waiting ? <Button variant="primary" disabled={transitionBusy || confirmPending || !tab.canConfirmSent} onClick={onSent}>
+          {confirmPending ? copy.running : copy.manualPromptConfirmSent}</Button> : null}
       </div>
-    </section>
+    </Panel>
   );
 }
