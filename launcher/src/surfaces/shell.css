@@ -80,6 +80,9 @@
   visibility: visible;
   transition: transform var(--duration-panel) var(--ease-enter), visibility 0s linear 0s;
 }
+/* Electron applies drag regions in document order, so the workspace titlebar under the open drawer would
+   re-mark the drawer's Hide sidebar button as draggable and swallow its clicks in the packaged app. */
+.nk-shell.is-compact.is-sidebar-open .nk-titlebar { -webkit-app-region: none; }
 .nk-shell__scrim { position: fixed; z-index: var(--z-scrim); inset: 0; padding: 0; border: 0; background: var(--bg-scrim); }
 
 /* ---------- Titlebar ---------- */
