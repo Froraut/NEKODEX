@@ -150,7 +150,7 @@ export function SetupSurface({
   };
   // Title, body and next step come from the same readiness headline as the Overview hero.
   const headline = workspaceHeadline(readiness, { app: copy, language, development: devProfile, manual: manualInteraction,
-    authenticationIssue: browser?.authenticationIssue });
+    authenticationIssue: browser?.authenticationIssue, codexRestartRequired: snapshot.state.codexRestartRequired === true });
   const runHeadlineStep = () => {
     switch (headline.step) {
       case "wait": return;

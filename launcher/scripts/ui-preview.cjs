@@ -4,7 +4,8 @@
 // existing-chrome-failed, setup-fresh, manual-tools, accounts-failed, update-active, update-available,
 // diagnostics-redirect, benefits-auth-unavailable, benefits-portfolio-mixed, benefits-insights,
 // benefits-repair-success, benefits-repair-failure, browser-ui-signed-out, browser-ui-ready, browser-ui-error,
-// browser-ui-home-loading, browser-ui-manual (a Manual mode turn waiting for the user to send its prompt).
+// browser-ui-home-loading, browser-ui-manual (a Manual mode turn waiting for the user to send its prompt),
+// picker-refresh (the Web model list changed: restart Codex, then confirm its picker again).
 // Account forms: accounts-ui-ready, accounts-ui-error (first add/save attempt fails).
 // benefits-portfolio-mixed also has launcher log events (Overview "Recent events", Activity), recorded
 // tasks with their browser tabs and a waiting queue (Task center); benefits-insights has the same events and
@@ -83,7 +84,7 @@ function installMockLauncher() {
         active: false, canImport: false, canReveal: false, canCancel: false,
         error: "passkey-verification-failed", revealError: null } });
   }
-  if (scenario === "models-ready" || scenario === "tools-pending" || benefitsScenario) {
+  if (scenario === "models-ready" || scenario === "tools-pending" || scenario === "picker-refresh" || benefitsScenario) {
     Object.assign(state, { coreSetupComplete: true, codexCatalogVerified: true, codexPickerConfirmed: true, browserSmokePassed: true,
       browserSmokeVersion: "fixture", mcpRuntimeInstalled: scenario === "tools-pending" || benefitsScenario,
       mcpSetupComplete: benefitsScenario });
@@ -91,6 +92,10 @@ function installMockLauncher() {
       authenticationStatus: "verified", authenticationCheckedAt: "2026-09-21T10:00:00.000Z",
       lastVerifiedAt: "2026-09-21T10:00:00.000Z",
       navigationLocked: false, loginInProgress: false, loginKind: null, visible: false });
+  }
+  if (scenario === "picker-refresh") {
+    // The model list changed after the picker was confirmed: Codex still shows its startup list.
+    Object.assign(state, { codexPickerConfirmed: false, codexRestartRequired: true, codexPickerContract: "e".repeat(64) });
   }
   if (scenario === "benefits-auth-unavailable") {
     Object.assign(browser, { authenticated: false, authenticationStatus: "unavailable",
@@ -468,10 +473,10 @@ function installMockLauncher() {
     Object.assign(state, patch, modeChanged ? { mcpSetupComplete: false, browserSmokePassed: false, browserSmokeVersion: null,
       setupVerifiedAt: null, pickerVerifiedAt: null } : {});
     if (state.coreSetupComplete === false) {
-      Object.assign(state, { codexCatalogVerified: false, codexPickerConfirmed: false, mcpSetupComplete: false,
-        experimentalAsyncToolOperations: false });
+      Object.assign(state, { codexCatalogVerified: false, codexPickerConfirmed: false, codexPickerContract: null,
+        mcpSetupComplete: false, experimentalAsyncToolOperations: false });
     } else if (patch.codexCatalogVerified === false) state.codexPickerConfirmed = false;
-    if (state.coreSetupComplete === true && state.codexCatalogVerified === true) state.codexRestartRequired = false;
+    // Like state.cjs, the restart request changes only explicitly; confirming the picker clears it.
     if (state.browserInteractionMode === "manual" || state.coreSetupComplete === false) {
       Object.assign(state, { pendingBiggerContext: null, contextChangeError: null, contextChangeApplying: false });
     }
@@ -1178,7 +1183,8 @@ function installMockLauncher() {
       if (!state.coreSetupComplete || !state.codexCatalogVerified || typeof state.pendingBiggerContext === "boolean") {
         throw new Error("Wait for the configured model catalog before confirming the Codex picker");
       }
-      updateState({ codexPickerConfirmed: true, codexRestartRequired: false, pickerVerifiedAt: nowIso() });
+      updateState({ codexPickerConfirmed: true, codexRestartRequired: false, codexPickerContract: "f".repeat(64),
+        pickerVerifiedAt: nowIso() });
       return publishState();
     },
     setZeroRiskPro: async (enabled) => {
