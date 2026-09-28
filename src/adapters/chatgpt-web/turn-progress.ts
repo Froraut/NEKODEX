@@ -87,6 +87,8 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
   private lastToolBatchRevision = 0;
   private observedToolBatchRevision = 0;
   private activeToolCalls = 0;
+  /** Counted by call id: the broker redelivers an unacknowledged batch after an observer reconnect. */
+  private readonly activeCallIds = new Set<string>();
   private lastProgressAt?: number;
   private retirementError?: Error;
   private readonly toolBatchObservationWaiters = new Set<ToolBatchObservationWaiter>();
@@ -100,12 +102,17 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     };
   }
 
-  recordToolBatch(count: number, now = Date.now()): number {
+  recordToolBatch(callIds: readonly string[], now = Date.now()): number {
     this.assertNotRetired();
-    if (!Number.isSafeInteger(count) || count <= 0) {
+    if (callIds.length === 0 || callIds.some(callId => typeof callId !== "string" || callId.length === 0)) {
       throw new Error("ChatGPT external progress requires a non-empty tool batch");
     }
-    this.activeToolCalls += count;
+    const fresh = [...new Set(callIds)].filter(callId => !this.activeCallIds.has(callId));
+    // A redelivered batch is the same unresolved work; counting it again would leave a phantom
+    // in-flight call that vetoes completion after Codex returns every real result.
+    if (fresh.length === 0) return this.lastToolBatchRevision;
+    for (const callId of fresh) this.activeCallIds.add(callId);
+    this.activeToolCalls = this.activeCallIds.size;
     this.advance(now, "tool_batch");
     return this.lastToolBatchRevision;
   }
@@ -143,12 +150,12 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     });
   }
 
-  recordToolResult(now = Date.now()): void {
+  recordToolResult(callId: string, now = Date.now()): void {
     this.assertNotRetired();
-    if (this.activeToolCalls <= 0) {
+    if (!this.activeCallIds.delete(callId)) {
       throw new Error("ChatGPT external progress received a tool result without an active call");
     }
-    this.activeToolCalls -= 1;
+    this.activeToolCalls = this.activeCallIds.size;
     this.advance(now, "tool_result");
   }
 
@@ -163,6 +170,7 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     }
     this.toolBatchObservationWaiters.clear();
     if (this.activeToolCalls === 0) return true;
+    this.activeCallIds.clear();
     this.activeToolCalls = 0;
     // Retirement is not fresh model progress. Advance the transport revision so the browser mirror
     // drops its completion veto, while preserving the timestamp of the last proven MCP activity.

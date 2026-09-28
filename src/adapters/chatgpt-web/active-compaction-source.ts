@@ -81,7 +81,7 @@ async function settleActiveSource<T>(
           request.callId,
           policy.result(brokerToolResult(result), interruptedQueued, index === outstanding.length - 1),
         );
-        source.runtime.externalProgress.recordToolResult();
+        source.runtime.externalProgress.recordToolResult(request.callId);
         source.markResultDelivered(request.callId);
       }
       const browserOutcome = await withCompactionAbort(source.browserOutcome, signal);

@@ -1,0 +1,428 @@
+{
+  "instructions": "For each pasted NEKODEX request, begin with codex_turn_start using the request_id in its request block. Use that request_id with the Codex tools needed for the task. When the task is finished, send the complete answer with codex_turn_complete. If a tool returns an error, report that error instead of changing the request_id. A cancelled or timed-out Codex Native tool call retires this entire request_id; do not retry it or use it for sibling calls.",
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "For a Manual mode request connected by codex_turn_start. Invoke the outer Codex apply_patch tool, producing a native file-change item in the Codex task.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "patch": {
+            "maxLength": 5000000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "patch"
+        ],
+        "type": "object"
+      },
+      "name": "codex_apply_patch",
+      "outputSchema": null,
+      "title": "Apply a native Codex patch"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "For a Manual mode request connected by codex_turn_start. Invoke the command tool advertised by the current outer Codex harness. A long-running command returns its native session_id.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "cmd": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "justification": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_output_tokens": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "prefix_rule": {
+            "items": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "sandbox_permissions": {
+            "enum": [
+              "use_default",
+              "require_escalated"
+            ],
+            "type": "string"
+          },
+          "tty": {
+            "type": "boolean"
+          },
+          "workdir": {
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "yield_time_ms": {
+            "maximum": 30000,
+            "minimum": 250,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "cmd"
+        ],
+        "type": "object"
+      },
+      "name": "codex_exec",
+      "outputSchema": null,
+      "title": "Run a native Codex command"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "For a Manual mode request connected by codex_turn_start. Invoke the outer Codex read_thread tool for a referenced task. This action is read-only and cannot continue, archive, or otherwise modify the task.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "cursor": {
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "hostId": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "includeOutputs": {
+            "type": "boolean"
+          },
+          "maxOutputCharsPerItem": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "threadId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "turnLimit": {
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "threadId"
+        ],
+        "type": "object"
+      },
+      "name": "codex_read_thread",
+      "outputSchema": null,
+      "title": "Read a referenced Codex task"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "For a Manual mode request connected by codex_turn_start. Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "arguments": {
+            "additionalProperties": {},
+            "default": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "input": {
+            "maxLength": 5000000,
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "wire_name": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "wire_name"
+        ],
+        "type": "object"
+      },
+      "name": "codex_tool_call",
+      "outputSchema": null,
+      "title": "Call any tool from the current Codex harness"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List tools available to the connected Manual mode request, including configured MCP and app tools.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "include_schema": {
+            "default": true,
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "name": "codex_tool_inventory",
+      "outputSchema": null,
+      "title": "Discover tools from the current Codex harness"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Send the complete answer back to the connected Codex request after its work is finished. For compaction, send the requested compacted summary.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "final_answer": {
+            "maxLength": 5000000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "final_answer"
+        ],
+        "type": "object"
+      },
+      "name": "codex_turn_complete",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "completed": {
+            "const": true,
+            "type": "boolean"
+          },
+          "duplicate": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "completed",
+          "duplicate"
+        ],
+        "type": "object"
+      },
+      "title": "Return the result to Codex"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Connect the request_id included in the pasted NEKODEX request so its Codex tools can be used.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "name": "codex_turn_start",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "duplicate": {
+            "type": "boolean"
+          },
+          "started": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "started",
+          "duplicate"
+        ],
+        "type": "object"
+      },
+      "title": "Connect a Codex Manual mode request"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "For a Manual mode request connected by codex_turn_start. Invoke the outer Codex view_image tool and return its multimodal result to this same ChatGPT response.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "detail": {
+            "enum": [
+              "high",
+              "original"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "codex_view_image",
+      "outputSchema": null,
+      "title": "View an image through native Codex"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "For a Manual mode request connected by codex_turn_start. Write characters to, or poll, a session_id returned by codex_exec.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "chars": {
+            "maxLength": 1000000,
+            "type": "string"
+          },
+          "max_output_tokens": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 20,
+            "type": "string"
+          },
+          "session_id": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "yield_time_ms": {
+            "maximum": 300000,
+            "minimum": 250,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "name": "codex_write_stdin",
+      "outputSchema": null,
+      "title": "Continue a native Codex command session"
+    }
+  ]
+}

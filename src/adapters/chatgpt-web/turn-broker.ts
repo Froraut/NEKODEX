@@ -1,11 +1,12 @@
 import { OwnedToolOperationStore } from "./turn-broker-owned-operations";
 import { decodeBrokerRequest, opaqueId, assertSurfaceNonce, MAX_BROKER_LINE_CHARS, MAX_BROKER_REQUEST_ID_CHARS, BROKER_PROTOCOL_VERSION,
   type BrokerRequest, type BrokerResponse, type BrokerToolRequest, type BrokerToolResult,
-  type BrokerOwnedOperationSnapshot, type BrokerOwnedOperationStartResult,
+  type BrokerOwnedOperationSnapshot, type BrokerOwnedOperationStartResult, type BrokerInvokeResult,
   type BrokerCompletionFenceStart, type TurnBrokerOwner,
 } from "./turn-broker-protocol";
 export type { BrokerToolRequest, BrokerToolResult, BrokerOwnedOperationSnapshot, BrokerOwnedOperationStartResult,
-  BrokerOwnedOperationStatus, TurnBrokerOwner } from "./turn-broker-protocol";
+  BrokerOwnedOperationStatus, BrokerInvokeResult, BrokerPromotedInvocation, TurnBrokerOwner } from "./turn-broker-protocol";
+export { isBrokerPromotedInvocation } from "./turn-broker-protocol";
 export { callTurnBroker, RemoteTurnBroker, TurnBrokerTimeoutError } from "./turn-broker-client";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
@@ -72,10 +73,12 @@ interface TurnChannel {
   compactionResult?: BrokerToolResult;
   compactionDeliveryCount: number;
   safe?: SafeTurnControl;
-  /** Every MCP request owns a lease from token claim until its handler has settled. */
-  activities: Set<string>;
-  /** Prevents a lost/retried or delayed claim from resurrecting activity after cleanup. */
-  completedActivities: Set<string>;
+  /** Every MCP request owns a lease (claim time) from token claim until its handler has settled. */
+  activities: Map<string, number>;
+  /** Prevents a lost/retried or delayed claim from resurrecting activity after cleanup (completion time). */
+  completedActivities: Map<string, number>;
+  /** Start of the current completion-fence block caused only by unacknowledged owned results. */
+  unacknowledgedFenceSince?: { at: number; revision: number };
   /** Monotonic across activity start/end so a completed request cannot disappear across a fence. */
   activityRevision: number;
   completionCommitted: boolean;
@@ -90,9 +93,29 @@ const MAX_RETIRED_TURN_HANDLES = 64;
 // invocation settles. Overflow retires the capability so outstanding work fails explicitly.
 const MAX_ACTIVE_ACTIVITIES_PER_TURN = 64;
 const MAX_PENDING_INVOCATIONS_PER_TURN = 64;
-// A live turn cannot discard completed IDs: an ambiguously delivered claim could arrive later
-// and reopen activity past the completion fence. Retire the entire capability at this limit.
+// A completed ID stops an ambiguously delivered claim from reopening activity past the completion
+// fence. Such a claim arrives within seconds (its client gives up after five), so tombstones older
+// than this window can be reclaimed; the capability retires only if the bound is still exceeded.
 const MAX_COMPLETED_ACTIVITIES_PER_TURN = 4_096;
+const COMPLETED_ACTIVITY_TOMBSTONE_MS = 10 * 60_000;
+// Every MCP handler settles its lease well inside the tunnel's two-minute request deadline. A lease
+// older than this belongs to an MCP process that died mid-request and must not block completion.
+const MCP_ACTIVITY_LEASE_MS = 3 * 60_000;
+// A finished Web response can no longer acknowledge owned results. After this settle window the
+// completion fence acknowledges them itself; Codex already holds every native result.
+const UNACKNOWLEDGED_RESULT_SETTLE_MS = 5_000;
+/** Additive capabilities; the protocol version stays stable for DEV owner compatibility. */
+export const TURN_BROKER_FEATURES = Object.freeze(["soft-deadline-promotion"]);
+const MIN_SOFT_DEADLINE_MS = 1_000;
+const MAX_SOFT_DEADLINE_MS = 110_000;
+
+const DEFAULT_REVOKE_MESSAGE = "Codex turn binding was revoked";
+
+interface RetiredTurn {
+  traceId: string;
+  finished: boolean;
+  reason?: string;
+}
 export async function closeTurnBrokers(): Promise<void> {
   const active = [...brokers.values()];
   const results = await Promise.allSettled(active.map(broker => broker.close()));
@@ -114,6 +137,11 @@ function errorOf(value: unknown): Error {
 
 function retiredTurnLabel(traceId: string): string {
   return traceId && traceId !== "unknown" ? `Codex turn ${traceId}` : "a Codex turn";
+}
+
+function retiredTurnEnding(retired: RetiredTurn): string {
+  if (retired.finished) return "has already finished";
+  return retired.reason ? `was stopped (${retired.reason})` : "has ended";
 }
 
 function environmentIdentity(environment: ChatGptTurnEnvironment): string {
@@ -177,8 +205,8 @@ export class TurnBroker implements TurnBrokerOwner {
   // The Codex context replayed into ChatGPT still carries the handles of finished turns, so a model
   // can present one. Remembering which turn retired a handle is what separates "you are holding a
   // previous turn's handle" from "this handle never existed".
-  private readonly retiredBindings = new Map<string, string>();
-  private readonly retiredTokens = new Map<string, string>();
+  private readonly retiredBindings = new Map<string, RetiredTurn>();
+  private readonly retiredTokens = new Map<string, RetiredTurn>();
   private acceptingExternalOwners = true;
   private server?: Server;
   private startPromise?: Promise<void>;
@@ -228,8 +256,8 @@ export class TurnBroker implements TurnBrokerOwner {
       waiters: new Set(),
       compactionRequested: false,
       compactionDeliveryCount: 0,
-      activities: new Set(),
-      completedActivities: new Set(),
+      activities: new Map(),
+      completedActivities: new Map(),
       activityRevision: 0,
       completionCommitted: false,
       retirementWaiters: new Set(),
@@ -370,11 +398,30 @@ export class TurnBroker implements TurnBrokerOwner {
     if (channel.completionCommitted) return { revision: channel.completionRevision! };
     const runningWithoutInvocation = this.operations.runningWithoutInvocation(token, callId => channel.invocations.has(callId));
     const activeCount = channel.activities.size + channel.invocations.size + runningWithoutInvocation;
-    if (activeCount > 0) return { blockedReason: "active_work", blockedCount: activeCount };
+    if (activeCount > 0) {
+      channel.unacknowledgedFenceSince = undefined;
+      return { blockedReason: "active_work", blockedCount: activeCount };
+    }
     const unacknowledged = this.operations.ownedOperationCount(token, false);
     if (unacknowledged > 0) {
-      return { blockedReason: "unacknowledged_async_result", blockedCount: unacknowledged };
+      // The browser begins a fence only after the Web response has finished, and a finished
+      // response makes no further MCP calls. Once nothing has changed for the settle window,
+      // acknowledge those results here instead of failing a completed answer.
+      const now = Date.now();
+      const since = channel.unacknowledgedFenceSince;
+      if (!since || since.revision !== channel.activityRevision) {
+        channel.unacknowledgedFenceSince = { at: now, revision: channel.activityRevision };
+        return { blockedReason: "unacknowledged_async_result", blockedCount: unacknowledged };
+      }
+      if (now - since.at < UNACKNOWLEDGED_RESULT_SETTLE_MS) {
+        return { blockedReason: "unacknowledged_async_result", blockedCount: unacknowledged };
+      }
+      const acknowledged = this.operations.acknowledgeTerminal(token);
+      console.info(
+        `[chatgpt-web] broker trace=${channel.traceId} acknowledged ${acknowledged} owned result(s) that the finished Web response left unacknowledged`,
+      );
     }
+    channel.unacknowledgedFenceSince = undefined;
     return { revision: channel.activityRevision };
   }
 
@@ -420,11 +467,22 @@ export class TurnBroker implements TurnBrokerOwner {
       channel.batchTimer = undefined;
     }
     const queued = channel.queuedCallIds.splice(0);
+    let interrupted = 0;
     for (const callId of queued) {
       const invocation = channel.invocations.get(callId);
       if (!invocation) continue;
       channel.invocations.delete(callId);
+      const operationId = this.operations.operationForCall(token, callId);
+      if (operationId !== undefined) {
+        // An owned result reaches the model only if it is polled, so the control text must not
+        // masquerade as its completed result. The call never reached Codex: cancel it before dispatch.
+        this.operations.cancel(token, operationId, "queued",
+          "Codex started context compaction before this call was dispatched; it was not executed");
+        invocation.reject(new Error("Codex context compaction cancelled this call before dispatch"));
+        continue;
+      }
       channel.compactionDeliveryCount += 1;
+      interrupted += 1;
       invocation.resolve(structuredClone(queuedResult));
     }
     if (queued.length > 0) {
@@ -432,7 +490,7 @@ export class TurnBroker implements TurnBrokerOwner {
         `[chatgpt-web] broker trace=${channel.traceId} interrupted queued calls=${queued.length} for context compaction`,
       );
     }
-    return queued.length;
+    return interrupted;
   }
 
   compactionDeliveryCount(token: string): number {
@@ -539,7 +597,7 @@ export class TurnBroker implements TurnBrokerOwner {
     return this.waitForSafeState(safe.completionWaiters, signal, "Manual mode turn completion wait aborted");
   }
 
-  revoke(token: string, reason = new Error("Codex turn binding was revoked")): void {
+  revoke(token: string, reason = new Error(DEFAULT_REVOKE_MESSAGE)): void {
     const channel = this.channels.get(token);
     if (!channel) return;
     console.info(`[chatgpt-web] broker_retired ${JSON.stringify({
@@ -552,9 +610,17 @@ export class TurnBroker implements TurnBrokerOwner {
     })}`);
     this.channels.delete(token);
     this.pending.delete(token);
+    const detail = reason.message.replace(/\s+/g, " ").trim();
+    const finished = channel.completionCommitted || channel.safe?.state === "completed";
+    const retired: RetiredTurn = {
+      traceId: channel.traceId,
+      finished,
+      ...(!finished && detail && detail !== DEFAULT_REVOKE_MESSAGE
+        ? { reason: detail.length > 200 ? `${detail.slice(0, 199)}…` : detail } : {}),
+    };
     if (channel.bindingId) {
       this.bindings.delete(channel.bindingId);
-      this.retire(this.retiredBindings, channel.bindingId, channel.traceId);
+      this.retire(this.retiredBindings, channel.bindingId, retired);
     }
     if (channel.safe) {
       channel.safe.state = "revoked";
@@ -562,7 +628,7 @@ export class TurnBroker implements TurnBrokerOwner {
       this.rejectSafeWaiters(channel.safe.startWaiters, reason);
       this.rejectSafeWaiters(channel.safe.completionWaiters, reason);
     }
-    this.retire(this.retiredTokens, token, channel.traceId);
+    this.retire(this.retiredTokens, token, retired);
     this.resolveSafeWaiters(channel.retirementWaiters, undefined);
     this.rejectChannel(channel, reason);
     this.operations.retire(token, reason);
@@ -581,7 +647,7 @@ export class TurnBroker implements TurnBrokerOwner {
     return tokens.length;
   }
 
-  revokeTrace(traceId: string, reason = new Error("Codex turn binding was revoked")): number {
+  revokeTrace(traceId: string, reason = new Error(DEFAULT_REVOKE_MESSAGE)): number {
     const tokens = [...this.channels]
       .filter(([, channel]) => channel.traceId === traceId)
       .map(([token]) => token);
@@ -593,9 +659,9 @@ export class TurnBroker implements TurnBrokerOwner {
     this.acceptingExternalOwners = accepted;
   }
 
-  private retire(history: Map<string, string>, handle: string, traceId: string): void {
+  private retire(history: Map<string, RetiredTurn>, handle: string, retired: RetiredTurn): void {
     history.delete(handle);
-    history.set(handle, traceId);
+    history.set(handle, retired);
     while (history.size > MAX_RETIRED_TURN_HANDLES) {
       const oldest = history.keys().next();
       if (oldest.done) return;
@@ -962,7 +1028,11 @@ export class TurnBroker implements TurnBrokerOwner {
       return { submitted: true };
     }
     if (request.method === "owner_status") {
-      return { protocolVersion: BROKER_PROTOCOL_VERSION, acceptingExternalOwners: this.acceptingExternalOwners };
+      return {
+        protocolVersion: BROKER_PROTOCOL_VERSION,
+        acceptingExternalOwners: this.acceptingExternalOwners,
+        features: TURN_BROKER_FEATURES,
+      };
     }
     if (request.method === "owner_register") {
       const environment = ownerEnvironment(request.environment);
@@ -1058,15 +1128,18 @@ export class TurnBroker implements TurnBrokerOwner {
       }
       const channel = this.channels.get(token);
       let activeChannel = channel && !channel.completionCommitted ? channel : undefined;
-      const retiredTurn = channel?.completionCommitted ? channel.traceId : this.retiredTokens.get(token);
+      const retiredTurn: RetiredTurn | undefined = channel?.completionCommitted
+        ? { traceId: channel.traceId, finished: true }
+        : this.retiredTokens.get(token);
       console.error(
         `[chatgpt-web] broker claim received (tokenChars=${token.length}, tokenHash=${handleFingerprint(token)}, valid=${Boolean(activeChannel)}`
-        + `${activeChannel ? "" : `, retiredTurn=${retiredTurn ?? "unknown"}`})`,
+        + `${activeChannel ? "" : `, retiredTurn=${retiredTurn?.traceId ?? "unknown"}`})`,
       );
       if (!activeChannel) {
         throw new Error(retiredTurn !== undefined
-          ? `${contract === "safe" ? "This request_id" : "This turn_token"} was issued for ${retiredTurnLabel(retiredTurn)}, which has already finished.`
+          ? `${contract === "safe" ? "This request_id" : "This turn_token"} was issued for ${retiredTurnLabel(retiredTurn.traceId)}, which ${retiredTurnEnding(retiredTurn)}.`
           + " This Codex Native action can no longer run."
+          + (contract === "safe" ? "" : " A newer request carries its own turn_token in its latest codex_transport_resume block.")
           : `${contract === "safe" ? "request id" : "turn token"} is invalid, expired, or revoked`);
       }
       if (activeChannel.safe) {
@@ -1101,7 +1174,7 @@ export class TurnBroker implements TurnBrokerOwner {
           this.revoke(token, error);
           throw error;
         }
-        activeChannel.activities.add(activityId);
+        activeChannel.activities.set(activityId, Date.now());
         activeChannel.activityRevision += 1;
       }
       if (activeChannel.bindingId) {
@@ -1132,10 +1205,13 @@ export class TurnBroker implements TurnBrokerOwner {
         return { completed: false, duplicate: true };
       }
       const wasActive = channel.activities.delete(request.activityId);
-      channel.completedActivities.add(request.activityId);
+      channel.completedActivities.set(request.activityId, Date.now());
       // A cleanup that overtakes an ambiguously delivered claim is still a causal event. Its
       // tombstone makes the delayed claim fail instead of resurrecting activity after a fence.
       channel.activityRevision += 1;
+      if (channel.completedActivities.size >= MAX_COMPLETED_ACTIVITIES_PER_TURN) {
+        this.pruneCompletedActivities(channel);
+      }
       if (channel.completedActivities.size >= MAX_COMPLETED_ACTIVITIES_PER_TURN) {
         console.error(
           `[chatgpt-web] broker trace=${channel.traceId} reached the completed activity limit; retiring turn capability`,
@@ -1178,14 +1254,14 @@ export class TurnBroker implements TurnBrokerOwner {
       }
       console.error(
         `[chatgpt-web] broker rejected ${request.method} (binding=${bindingId.slice(0, 17)},`
-        + ` retiredTurn=${retiredTurn ?? "unknown"})`,
+        + ` retiredTurn=${retiredTurn?.traceId ?? "unknown"})`,
       );
       throw new Error(retiredTurn !== undefined
-        ? `${retiredTurnLabel(retiredTurn)} has already finished; this Codex Native action can no longer run.`
+        ? `${retiredTurnLabel(retiredTurn.traceId)} ${retiredTurnEnding(retiredTurn)}; this Codex Native action can no longer run.`
         : "internal Codex turn binding is invalid or expired");
     }
     if (request.method === "release") {
-      this.revoke(binding.token);
+      this.revoke(binding.token, new Error("its MCP request abandoned a pending Codex Native call"));
       return { released: true };
     }
     if (request.method === "resolve") return { environment: binding.channel.environment };
@@ -1225,7 +1301,19 @@ export class TurnBroker implements TurnBrokerOwner {
       }
       this.operations.assertCapacity(binding.token);
     }
+    const softDeadlineMs = request.method === "invoke" ? request.softDeadlineMs : undefined;
+    if (softDeadlineMs !== undefined && (!Number.isSafeInteger(softDeadlineMs)
+      || softDeadlineMs < MIN_SOFT_DEADLINE_MS || softDeadlineMs > MAX_SOFT_DEADLINE_MS)) {
+      throw new Error("Codex tool soft deadline is invalid");
+    }
     if (binding.channel.invocations.size >= MAX_PENDING_INVOCATIONS_PER_TURN) {
+      if (request.method === "invoke_async" || softDeadlineMs !== undefined) {
+        // A call whose result can be retained is rejected before queueing; the turn stays usable.
+        throw new Error(
+          `Codex turn already has ${MAX_PENDING_INVOCATIONS_PER_TURN} pending native tool calls;`
+          + " wait for running operations with codex_tool_poll before calling another tool",
+        );
+      }
       const error = new Error(
         `Codex turn exceeded its ${MAX_PENDING_INVOCATIONS_PER_TURN} pending native tool invocation limit; turn binding retired`,
       );
@@ -1247,11 +1335,57 @@ export class TurnBroker implements TurnBrokerOwner {
       `[chatgpt-web] broker trace=${binding.channel.traceId} queued call=${callId.slice(0, 17)} tool=${wireName} waiters=${binding.channel.waiters.size}`,
     );
     this.scheduleToolWaiters(binding.channel);
-    if (request.method !== "invoke_async") return invocation;
-    return this.operations.start(binding.token, request.operationId!, callId, {
+    const identity = {
       bindingId, wireName, freeform: request.freeform === true,
       input: request.input, arguments: request.arguments,
-    }, invocation);
+    };
+    if (request.method === "invoke_async") {
+      return this.operations.start(binding.token, request.operationId!, callId, identity, invocation);
+    }
+    if (softDeadlineMs !== undefined) {
+      return this.invokeWithSoftDeadline(binding.token, callId, identity, invocation, softDeadlineMs, socketSignal);
+    }
+    return invocation;
+  }
+
+  /**
+   * A synchronous call can wait on a person (an approval in Codex) or behind an earlier batch,
+   * since Codex runs one tool batch at a time. Instead of letting the MCP transport deadline revoke
+   * the whole turn, hand the still-pending call to the owned-operation store, which retains its
+   * eventual result for codex_tool_poll. A disconnected MCP request is handled the same way.
+   */
+  private async invokeWithSoftDeadline(
+    token: string,
+    callId: string,
+    identity: { bindingId: string; wireName: string; freeform: boolean; input?: string; arguments?: Record<string, unknown> },
+    invocation: Promise<BrokerToolResult>,
+    softDeadlineMs: number,
+    socketSignal?: AbortSignal,
+  ): Promise<BrokerInvokeResult> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onDisconnect: (() => void) | undefined;
+    const outcome = await new Promise<"settled" | "deadline" | "disconnected">(resolveOutcome => {
+      timer = setTimeout(() => resolveOutcome("deadline"), softDeadlineMs);
+      if (socketSignal) {
+        onDisconnect = () => resolveOutcome("disconnected");
+        if (socketSignal.aborted) onDisconnect();
+        else socketSignal.addEventListener("abort", onDisconnect, { once: true });
+      }
+      invocation.then(() => resolveOutcome("settled"), () => resolveOutcome("settled"));
+    });
+    clearTimeout(timer);
+    if (socketSignal && onDisconnect) socketSignal.removeEventListener("abort", onDisconnect);
+    const channel = this.channels.get(token);
+    // A settled or retired call answers directly; only a still-pending call is promoted.
+    if (outcome === "settled" || !channel || !channel.invocations.has(callId)) return invocation;
+    const operationId = opaqueId("operation");
+    const dispatched = channel.deliveredCallIds.has(callId);
+    this.operations.start(token, operationId, callId, identity, invocation);
+    console.info(
+      `[chatgpt-web] broker trace=${channel.traceId} promoted call=${callId.slice(0, 17)} tool=${identity.wireName}`
+      + ` reason=${outcome} dispatched=${dispatched}`,
+    );
+    return { promoted: { operationId, reason: outcome, dispatched } };
   }
 
   private cancelOwnedOperation(token: string, operationId: string): BrokerOwnedOperationSnapshot {
@@ -1336,8 +1470,34 @@ export class TurnBroker implements TurnBrokerOwner {
     const now = Date.now();
     this.operations.pruneOwnedOperations(now);
     for (const [token, channel] of this.channels) {
-      if (channel.environment.expiresAt === undefined || channel.environment.expiresAt > now) continue;
-      this.revoke(token);
+      if (channel.environment.expiresAt !== undefined && channel.environment.expiresAt <= now) {
+        this.revoke(token, new Error("the Codex turn expired"));
+        continue;
+      }
+      this.expireStaleActivities(channel, now);
+    }
+  }
+
+  /** A lease whose MCP process died mid-request would otherwise block the completion fence forever. */
+  private expireStaleActivities(channel: TurnChannel, now: number): void {
+    let expired = 0;
+    for (const [activityId, claimedAt] of channel.activities) {
+      if (now - claimedAt < MCP_ACTIVITY_LEASE_MS) continue;
+      channel.activities.delete(activityId);
+      channel.completedActivities.set(activityId, now);
+      expired += 1;
+    }
+    if (expired === 0) return;
+    channel.activityRevision += 1;
+    console.error(
+      `[chatgpt-web] broker trace=${channel.traceId} expired ${expired} stale MCP request lease(s) older than ${MCP_ACTIVITY_LEASE_MS}ms`,
+    );
+    if (channel.completedActivities.size >= MAX_COMPLETED_ACTIVITIES_PER_TURN) this.pruneCompletedActivities(channel, now);
+  }
+
+  private pruneCompletedActivities(channel: TurnChannel, now = Date.now()): void {
+    for (const [activityId, completedAt] of channel.completedActivities) {
+      if (now - completedAt >= COMPLETED_ACTIVITY_TOMBSTONE_MS) channel.completedActivities.delete(activityId);
     }
   }
 }

@@ -1,6 +1,6 @@
 import { accountToolsCopy } from "./account-tools-onboarding";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
+import { connectorAttachCopyFor, connectorAttachNotice, native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { modelsTabConnection, type WorkspaceReadiness } from "./workspace-readiness";
 import { connectionTabStatus, connectionsCopy, connectionsSubtitle } from "./connections-copy";
 import { workflowCopy } from "./workflow-copy";
@@ -117,6 +117,9 @@ export function McpSurface({
       ? currentConnectorName !== recommendedConnectorName
       : snapshot.state.experimentalAsyncToolOperations !== true);
   const connectorConfiguredForTarget = connectorIdentityAvailable && !native6UpgradeAvailable;
+  // The saved identity already is the target: nothing is renamed or upgraded, only attached here.
+  const reattachingSavedConnector = connectorConfiguredForTarget && currentConnectorName === targetConnectorName;
+  const setupAccountLabel = accountSetupLabel || snapshot.browser?.accountLabel || null;
 
   // A pressed control that a state change removes while it has focus hands focus on instead of dropping it to <body>:
   // "Upgrade to Native6" and "Use Native4 (compatibility)" replace each other once the connector identity changes, and
@@ -418,9 +421,9 @@ export function McpSurface({
             ) : null}
             {step === 2 ? (
               <div className="nk-connections__step-body">
-                {!manualInteraction && !verified && ["Codex Native6", "Codex Native6 DEV"].includes(snapshot.connectorNames[interactionMode]) ? (
+                {!manualInteraction && !verified && reattachingSavedConnector ? (
                   <Notice tone="warning">
-                    {native6CopyFor(language).body.replace("{connector}", snapshot.connectorNames[interactionMode])}
+                    {connectorAttachNotice(language, targetConnectorName, setupAccountLabel)}
                   </Notice>
                 ) : <details className="nk-connections__nested"><summary>
                   <Icon className="nk-icon" focusable="false" name="chevron" size={14} />{copy.connectorUpgradeHelp}</summary>
@@ -450,20 +453,27 @@ export function McpSurface({
                 ) : null}
                 <div className="nk-connections__identity">
                   <dl>
+                    {reattachingSavedConnector ? null : (
+                      <div>
+                        <dt>{copy.currentSavedConnector}</dt>
+                        <dd><code>{currentConnectorName || copy.connectorIdentityUnavailable}</code></dd>
+                      </div>
+                    )}
                     <div>
-                      <dt>{copy.currentSavedConnector}</dt>
-                      <dd><code>{currentConnectorName || copy.connectorIdentityUnavailable}</code></dd>
-                    </div>
-                    <div>
-                      <dt><label htmlFor={identityInputId}>{copy.createConnectorIdentity}</label></dt>
+                      <dt><label htmlFor={identityInputId}>
+                        {reattachingSavedConnector ? connectorAttachCopyFor(language).nameInChatGpt : copy.createConnectorIdentity}
+                      </label></dt>
                       <dd>
-                        <input aria-label={copy.createConnectorIdentity} className="nk-input" id={identityInputId} readOnly
+                        <input aria-label={reattachingSavedConnector ? connectorAttachCopyFor(language).nameInChatGpt : copy.createConnectorIdentity}
+                          className="nk-input" id={identityInputId} readOnly
                           onFocus={event => event.currentTarget.select()}
                           value={targetConnectorName || copy.connectorIdentityUnavailable} />
                       </dd>
                     </div>
                   </dl>
-                  <p className="nk-connections__warning"><Icon className="nk-icon" name="alert" />{copy.newConnectorRequired}</p>
+                  {native6UpgradeAvailable ? (
+                    <p className="nk-connections__warning"><Icon className="nk-icon" name="alert" />{copy.newConnectorRequired}</p>
+                  ) : null}
                   <p className={cx("nk-connections__status", exactConnectorVerified && "is-ready")} role="status">
                     <StateDot state={exactConnectorVerified ? "ready" : "idle"} />
                     {exactConnectorVerified ? copy.connectorVerified : copy.connectorNotVerified}

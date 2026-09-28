@@ -2,10 +2,13 @@ import type { CodexContentPart, CodexParsedRequest, CodexToolResultMessage } fro
 import { parseDataUrl } from "../image";
 import type { BrokerToolResult } from "./turn-broker-protocol";
 
-function structuredContent(text: string): unknown | undefined {
+function structuredContent(text: string): Record<string, unknown> | undefined {
   try {
     const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" ? parsed : undefined;
+    // MCP structuredContent is a JSON object; arrays and scalars remain text-only content.
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
   } catch {
     return undefined;
   }

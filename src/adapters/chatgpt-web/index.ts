@@ -681,7 +681,7 @@ export function createChatGptWebAdapter(
                 }
                 for (const message of results) {
                   await broker.completeTool(turnToken, message.toolCallId, brokerToolResult(message));
-                  session.runtime.externalProgress.recordToolResult();
+                  session.runtime.externalProgress.recordToolResult(message.toolCallId);
                   session.markResultDelivered(message.toolCallId);
                 }
               }
@@ -714,7 +714,7 @@ export function createChatGptWebAdapter(
                     throw new Error("ChatGPT broker returned tools for a read-only browser turn");
                   }
                   if (requests.length > 0) {
-                    const revision = externalProgress.recordToolBatch(requests.length);
+                    const revision = externalProgress.recordToolBatch(requests.map(request => request.callId));
                     if (!session.runtime.manualControl) {
                       // The browser outcome is in the same race below and owns the semantic DOM and
                       // renderer deadlines. A second fixed timer here can retire an accepted turn

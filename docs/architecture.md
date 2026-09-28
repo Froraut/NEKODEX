@@ -100,7 +100,18 @@ its cached public schema. Browser verification accepts the exact new identity, r
 error when only a legacy identity is visible, and never falls back to it. The normal and DEV
 identities remain separate even when both are installed in one ChatGPT account. Future public
 schema changes require another deliberate connector identity. See [connector identity migration](connector-identity-migration.md)
-and the earlier [MCP task access migration](mcp-task-access-migration.md).
+and the earlier [MCP task access migration](mcp-task-access-migration.md). The exact `tools/list` of
+every published identity is pinned in `docs/connector-abi/` and checked by `bun run connector-abi:check`.
+
+Codex executes one native tool batch at a time, so a synchronous Codex Native call can wait on an
+approval or on an earlier call. With Native5 or Native6 the MCP server gives each such call an
+80-second soft deadline; the broker then keeps the still-pending call as an owned operation and
+returns `state: "running"` with an `operation_id` for `codex_tool_poll`, instead of letting the
+tunnel deadline revoke the turn. A disconnected MCP request is kept the same way. Native4 and Manual
+mode, which have no poll tool, keep the original deadline behavior. When a finished Web response
+leaves owned results unacknowledged, the completion fence acknowledges them after a five-second
+settle window (Codex already holds each native result), and MCP request leases older than three
+minutes expire so a crashed MCP process cannot block completion.
 
 ## Browser lifecycle
 

@@ -13,6 +13,50 @@ verification proof; it does not prove that ChatGPT has loaded the new schema.
 Native6 is the default for new setups, not an automatic replacement of an active user's connection.
 The synchronous Native4 compatibility mode and Manual Zero Risk4 remain available.
 
+## Published ABI snapshots (6.1.12)
+
+`docs/connector-abi/` holds the exact public `tools/list` (and server instructions) of every published
+identity: Native4, Native5, Native6 and Zero Risk4. `bun run connector-abi:check` compares the live
+MCP server against them; CI runs it on every push and pull request. A difference means the change
+needs a new identity. Run `bun run connector-abi:write` only for an identity that has not shipped.
+
+The snapshots were introduced after two in-place changes to Native6:
+
+- 2026-09-20 (5.6 follow-up): the `codex_tool_status` description gained the truncation wording.
+- 2026-09-27 (6.1.1 adaptation): the `codex_tool_call` description gained the reserved
+  `codex.control.compaction_handoff` operation text. Native4 and Native5 changed the same way.
+
+A Codex Native6 app created before 2026-09-27 therefore holds the older descriptions in ChatGPT. It
+keeps working, because the compaction request itself carries the complete handoff instructions, but
+the model does not see the reserved operation in the tool description. To load the current Native6
+schema, delete that app in ChatGPT and create it again with the same name and tunnel. The snapshots
+freeze the current Native6 schema from 6.1.12 onward.
+
+## Planning a future Native7
+
+6.1.12 fixed the Native6 reliability problems without a schema change: slow calls become owned
+operations, the completion fence acknowledges results a finished response left behind, and stale
+leases expire. A Native7 is warranted only for a deliberate public contract change. Candidates
+collected in the 2026-09-29 review:
+
+- drop the "Native5 only." / "Native6 only." prefixes and describe the ~90-second window, approval
+  waits, running handles and one-batch-at-a-time execution in the `codex_exec`, `codex_tool_call`
+  and `codex_tool_start` descriptions;
+- describe `turn_token` (copy exactly) and `operation_key` (new key per execution) in their schemas;
+- cap `codex_write_stdin.yield_time_ms` at the 60,000 ms actually forwarded, and give `shell_command`
+  harnesses a separate `timeout_ms` instead of reusing `yield_time_ms`;
+- an `outputSchema` for `codex_tool_status` only.
+
+A bump must touch every place that hard-codes the async identities: `src/config-policy.ts`,
+`src/config.ts`, `src/setup-policy.ts` (the `Native5|Native6` pattern), `src/tunnel.ts` and
+`launcher/electron/runtime-supervisor.cjs` (both MCP command builders),
+`src/adapters/chatgpt-web/mcp-main.ts` and `mcp-server.ts` (keep the Native6 branch byte-identical),
+`launcher/electron/connector-identity.cjs`, `launcher/electron/runtime.cjs` (upgrade action),
+`launcher/src/McpSurface.tsx` and `launcher/src/i18n.ts` (six languages), `src/cli.ts`,
+`src/dev-chat/cli.ts`, the READMEs and troubleshooting guide, and a new snapshot in
+`scripts/connector-abi.ts`. Retain Native4, Native5 and Native6 as supported saved identities;
+ordinary updates must not move a saved identity.
+
 ## Historical Native4 migration reference
 
 # Connector identity migration for native command fields

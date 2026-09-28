@@ -41,7 +41,10 @@ const MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS = 64;
 // retirement, but fail new unique starts at a clear bound instead of evicting a guard and allowing
 // an already-consumed side effect to execute again.
 const MAX_OWNED_TOOL_OPERATION_GUARDS_PER_TURN = 4_096;
-const OWNED_TOOL_OPERATION_TTL_MS = 30 * 60_000;
+// Unacknowledged results are bounded by the per-turn byte budget below. The TTL only reclaims
+// results that a still-live turn never consumed; a finished Web response acknowledges its results
+// at the completion fence instead.
+const OWNED_TOOL_OPERATION_TTL_MS = 2 * 60 * 60_000;
 const MAX_OWNED_TOOL_OPERATION_BYTES_PER_TURN = 128 * 1024 * 1024;
 
 function canonicalJsonValue(value: unknown): unknown {
@@ -102,7 +105,8 @@ export class OwnedToolOperationStore {
     const acknowledgedGuardCount = [...this.acknowledgedOperations.values()]
       .filter(operation => operation.token === token).length;
     if (liveOperationCount >= MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS) {
-      throw new Error(`Codex turn owns ${MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS} live or unacknowledged async operations`);
+      throw new Error(`Codex turn owns ${MAX_DISCOVERABLE_OWNED_TOOL_OPERATIONS} live or unacknowledged async operations;`
+        + " poll running operations and acknowledge finished ones with codex_tool_poll ack_delivery_id before starting another");
     }
     if (liveOperationCount + acknowledgedGuardCount >= MAX_OWNED_TOOL_OPERATION_GUARDS_PER_TURN) {
       throw new Error(
@@ -110,6 +114,14 @@ export class OwnedToolOperationStore {
         + " retire the turn instead of reusing or evicting an acknowledged operation key",
       );
     }
+  }
+
+  /** The running operation that owns a native call, if any. */
+  operationForCall(token: string, callId: string): string | undefined {
+    for (const operation of this.ownedOperations.values()) {
+      if (operation.token === token && operation.callId === callId && operation.state === "running") return operation.id;
+    }
+    return undefined;
   }
 
   start(token: string, id: string, callId: string, request: InvocationIdentity,
@@ -178,15 +190,38 @@ export class OwnedToolOperationStore {
     return operation ? this.ownedOperationSnapshot(operation) : { operationId: id, state: "acknowledged" };
   }
 
-  cancel(token: string, id: string, scope: "queued" | "observation_only"): BrokerOwnedOperationSnapshot {
+  cancel(token: string, id: string, scope: "queued" | "observation_only", message?: string): BrokerOwnedOperationSnapshot {
     const operation = this.requireOperation(token, id);
     if (operation?.state === "running") {
       operation.cancellationScope = scope;
-      this.finishOwnedOperation(operation, "cancelled", undefined, scope === "observation_only"
+      this.finishOwnedOperation(operation, "cancelled", undefined, message ?? (scope === "observation_only"
         ? "Owned Codex tool observation was cancelled; the dispatched external tool may still complete or cause side effects"
-        : "Owned Codex tool operation was cancelled before dispatch");
+        : "Owned Codex tool operation was cancelled before dispatch"));
     }
     return this.snapshot(token, id);
+  }
+
+  /**
+   * Retire terminal results that the finished Web response never acknowledged. Codex already holds
+   * each native result in its own task history, so the replay guard is all that must survive.
+   */
+  acknowledgeTerminal(token: string): number {
+    let acknowledged = 0;
+    for (const operation of [...this.ownedOperations.values()]) {
+      if (operation.token !== token || operation.state === "running" || !operation.deliveryId) continue;
+      this.acknowledgedOperations.delete(operation.id);
+      this.acknowledgedOperations.set(operation.id, {
+        token: operation.token,
+        bindingId: operation.bindingId,
+        requestFingerprint: operation.requestFingerprint,
+        deliveryId: operation.deliveryId,
+        updatedAt: this.now(),
+      });
+      this.ownedOperations.delete(operation.id);
+      acknowledged += 1;
+    }
+    if (acknowledged > 0) this.onChange(token);
+    return acknowledged;
   }
 
   runningWithoutInvocation(token: string, hasInvocation: (callId: string) => boolean): number {

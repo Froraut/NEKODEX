@@ -26,6 +26,7 @@ import {
 export type { ChatGptMcpContract };
 import { createHash, randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { observeMcpTransport } from "./mcp-diagnostics";
 import * as z from "zod/v4";
@@ -38,10 +39,13 @@ import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import {
   callTurnBroker,
+  isBrokerPromotedInvocation,
   TurnBrokerTimeoutError,
+  type BrokerInvokeResult,
   type BrokerOwnedOperationSnapshot,
   type BrokerOwnedOperationStartResult,
   type BrokerOwnedOperationStatus,
+  type BrokerPromotedInvocation,
   type BrokerToolResult,
 } from "./turn-broker";
 
@@ -50,6 +54,10 @@ const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 // must settle first so an abandoned native tool call is returned as an MCP error instead of
 // letting the tunnel tear down and poison its long-lived stdio transport.
 const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+// Connectors with codex_tool_poll let the broker retain a slow synchronous call as an owned
+// operation. Answer before the invocation timeout so the running handle reaches ChatGPT.
+const CHATGPT_WEB_MCP_PROMOTION_DEADLINE_MS = 80_000;
+const CHATGPT_WEB_MCP_PROMOTION_MARGIN_MS = 5_000;
 const ZERO_RISK_MCP_INSTRUCTIONS = [
   "For each pasted NEKODEX request, begin with codex_turn_start using the request_id in its request block.",
   "Use that request_id with the Codex tools needed for the task.",
@@ -101,11 +109,20 @@ function chatGptMcpInvocationTimeout(
   return Math.min(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, remaining);
 }
 
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function asMcpResult(value: BrokerToolResult) {
   return {
     content: value.content as never,
-    ...(value.structuredContent !== undefined && value.structuredContent !== null && typeof value.structuredContent === "object"
-      ? { structuredContent: value.structuredContent as Record<string, unknown> }
+    // MCP structuredContent is a JSON object; an array or scalar stays in the text content only.
+    ...(plainObject(value.structuredContent)
+      ? { structuredContent: value.structuredContent }
       : {}),
     ...(value.isError ? { isError: true } : {}),
     ...(value._meta !== undefined && value._meta !== null && typeof value._meta === "object"
@@ -114,7 +131,22 @@ function asMcpResult(value: BrokerToolResult) {
   };
 }
 
-function asOwnedOperationResult(value: BrokerOwnedOperationSnapshot) {
+function promotedInvocationResult(tool: string, promoted: BrokerPromotedInvocation["promoted"]) {
+  const cause = promoted.dispatched
+    ? `Codex has not finished ${tool} yet; it may be waiting for the user's approval in Codex or still running.`
+    : `${tool} is queued behind an earlier Codex tool call that is still running; Codex runs one tool batch at a time.`;
+  return result({
+    state: "running",
+    operation_id: promoted.operationId,
+    poll_again: true,
+    tool,
+    dispatched: promoted.dispatched,
+    message: `${cause} It was not cancelled and must not be called again. Call codex_tool_poll with this operation_id`
+      + " (wait_ms up to 30000) until it returns a terminal result, then acknowledge its delivery_id.",
+  });
+}
+
+function asOwnedOperationResult(value: BrokerOwnedOperationSnapshot, context: "start" | "poll" | "cancel" = "poll") {
   if (value.state === "completed") {
     const metadata = {
       operation_id: value.operationId,
@@ -148,6 +180,11 @@ function asOwnedOperationResult(value: BrokerOwnedOperationSnapshot) {
     operation_id: value.operationId,
     state: value.state,
     ...(value.state === "running" ? { poll_again: true } : {}),
+    ...(value.state === "acknowledged" ? {
+      message: context === "start"
+        ? "This operation_key already ran in this turn and its result was acknowledged. It was not run again; use a new operation_key to run the tool again."
+        : "This operation's result was already acknowledged and is no longer retained.",
+    } : {}),
   });
 }
 
@@ -253,12 +290,18 @@ export async function runChatGptMcpServer(options: {
       if (cleanupFailed) {
         throw new AggregateError(
           [actionError, cleanupError],
-          "Codex Native action failed and its broker activity could not be retired",
+          `${errorMessage(actionError)} (its broker activity could not be retired: ${errorMessage(cleanupError)})`,
         );
       }
       throw actionError;
     }
-    if (cleanupFailed) throw cleanupError;
+    if (cleanupFailed) {
+      // The action already ran; discarding its result would invite a duplicate side effect. The
+      // broker expires this stale lease on its own, so report the cleanup failure only locally.
+      console.error(
+        `[chatgpt-web-mcp] ${toolName} completed but its broker activity could not be retired: ${errorMessage(cleanupError)}`,
+      );
+    }
     return value as T;
   };
 
@@ -288,24 +331,63 @@ export async function runChatGptMcpServer(options: {
     );
   }
 
-  const invoke = async (
+  // Only connectors that expose codex_tool_poll can receive a running handle for a slow call.
+  const promotionCapable = contract === "native" && options.asyncToolOperations === true;
+  let brokerPromotionSupport: Promise<boolean> | undefined;
+  const brokerSupportsPromotion = (): Promise<boolean> => {
+    brokerPromotionSupport ??= callTurnBroker<{ features?: unknown }>(options.brokerSocketPath, { method: "owner_status" })
+      .then(status => Array.isArray(status.features) && status.features.includes("soft-deadline-promotion"))
+      .catch(error => {
+        brokerPromotionSupport = undefined;
+        throw error;
+      });
+    return brokerPromotionSupport;
+  };
+
+  const invokeBroker = async (
     bindingId: string,
     bound: ChatGptTurnEnvironment & { expiresAt?: number },
     tool: CodexTool,
     payload: { arguments?: Record<string, unknown>; input?: string },
     signal?: AbortSignal,
-  ) => {
+  ): Promise<{ kind: "result"; value: CallToolResult } | { kind: "promoted"; promoted: BrokerPromotedInvocation["promoted"] }> => {
     const timeoutMs = chatGptMcpInvocationTimeout(bound);
+    const softDeadlineMs = promotionCapable
+      && timeoutMs > CHATGPT_WEB_MCP_PROMOTION_MARGIN_MS + 1_000
+      && await brokerSupportsPromotion()
+      ? Math.min(CHATGPT_WEB_MCP_PROMOTION_DEADLINE_MS, timeoutMs - CHATGPT_WEB_MCP_PROMOTION_MARGIN_MS)
+      : undefined;
     try {
-      const response = await callTurnBroker<BrokerToolResult>(options.brokerSocketPath, {
+      const response = await callTurnBroker<BrokerInvokeResult>(options.brokerSocketPath, {
         method: "invoke",
         bindingId,
         wireName: wireName(tool),
         freeform: tool.freeform === true,
         ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
+        ...(softDeadlineMs !== undefined ? { softDeadlineMs } : {}),
       }, timeoutMs, signal);
-      return asMcpResult(response);
+      return isBrokerPromotedInvocation(response)
+        ? { kind: "promoted", promoted: response.promoted }
+        : { kind: "result", value: asMcpResult(response) };
     } catch (error) {
+      if (softDeadlineMs !== undefined) {
+        // The broker retains a still-pending call as an owned operation (also when this request
+        // disconnects), so no late result can escape: an error here must not revoke the turn and
+        // drop its other running work. Capacity and validation errors leave the turn usable too.
+        if (signal?.aborted || !(error instanceof TurnBrokerTimeoutError)) throw error;
+        const toolName = wireName(tool);
+        console.error(`[chatgpt-web-mcp] ${toolName} promotion response was not received within ${timeoutMs}ms`);
+        return {
+          kind: "result",
+          value: result({
+            code: "codex_tool_unconfirmed",
+            tool: toolName,
+            retryable: false,
+            message: `Codex tool ${toolName} did not answer before the MCP transport deadline. It was not cancelled and may still`
+              + " complete; do not call it again. Its result is retained as an owned operation (see codex_tool_status when available).",
+          }, true),
+        };
+      }
       // Whole-turn cancellation is the deliberate transport contract. This MCP request does not
       // receive the broker's native callId, and a native tool already delivered to Codex can
       // still finish (or cause side effects) after the MCP request aborts. Retiring only this
@@ -320,7 +402,7 @@ export async function runChatGptMcpServer(options: {
       } catch (releaseError) {
         throw new AggregateError(
           [error, releaseError],
-          "Codex Native invocation failed and its abandoned broker binding could not be retired",
+          `${errorMessage(error)} (its abandoned broker binding could not be retired: ${errorMessage(releaseError)})`,
         );
       }
       if (error instanceof TurnBrokerTimeoutError) {
@@ -328,16 +410,33 @@ export async function runChatGptMcpServer(options: {
         console.error(
           `[chatgpt-web-mcp] ${toolName} did not complete within ${timeoutMs}ms; retired its turn binding`,
         );
-        return result({
-          code: "codex_tool_timeout",
-          tool: toolName,
-          timeout_ms: timeoutMs,
-          retryable: false,
-          message: `Codex tool ${toolName} did not complete before the MCP transport deadline. The current turn binding was retired; do not retry it in this ChatGPT response.`,
-        }, true);
+        return {
+          kind: "result",
+          value: result({
+            code: "codex_tool_timeout",
+            tool: toolName,
+            timeout_ms: timeoutMs,
+            retryable: false,
+            message: `Codex tool ${toolName} did not complete before the MCP transport deadline. The current turn binding was retired; do not retry it in this ChatGPT response.`,
+          }, true),
+        };
       }
       throw error;
     }
+  };
+
+  const invoke = async (
+    bindingId: string,
+    bound: ChatGptTurnEnvironment & { expiresAt?: number },
+    tool: CodexTool,
+    payload: { arguments?: Record<string, unknown>; input?: string },
+    signal?: AbortSignal,
+    publicName?: string,
+  ) => {
+    const outcome = await invokeBroker(bindingId, bound, tool, payload, signal);
+    return outcome.kind === "promoted"
+      ? promotedInvocationResult(publicName ?? wireName(tool), outcome.promoted)
+      : outcome.value;
   };
 
   const invokeNestedNative = (
@@ -354,7 +453,7 @@ export async function runChatGptMcpServer(options: {
     }
     return invoke(bindingId, bound, gateway, {
       input: execGatewayProgram(nestedToolName, freeform, payload, gatewayExcludedNames(bound, routingPolicy)),
-    }, signal);
+    }, signal, nestedToolName);
   };
 
   registerNativeTools(server, { contract, withClaimedTurn, invoke, invokeNestedNative });
@@ -400,12 +499,13 @@ export async function runChatGptMcpServer(options: {
         }));
         let nestedTotal = 0;
         let nestedPage: Array<Record<string, unknown>> = [];
+        let nestedPending: Record<string, unknown> | undefined;
         const gateway = execGateway(bound);
         if (gateway) {
           const excludedGatewayNames = gatewayExcludedNames(bound, routingPolicy);
           const nestedOffset = Math.max(0, offset - directMatches.length);
           const nestedLimit = Math.max(0, limit - directPage.length);
-          const response = await invoke(claimed.bindingId, bound, gateway, {
+          const outcome = await invokeBroker(claimed.bindingId, bound, gateway, {
             input: gatewayToolCatalogProgram({
               query,
               offset: nestedOffset,
@@ -416,7 +516,18 @@ export async function runChatGptMcpServer(options: {
               excludedNames: excludedGatewayNames,
             }),
           }, extra.signal);
-          const catalog = gatewayToolCatalogPage(response, new Set(excludedGatewayNames));
+          if (outcome.kind === "promoted") {
+            // The read-only catalog lookup is queued behind a running call. Answer with the outer
+            // registry now instead of holding this request until the transport deadline.
+            nestedPending = {
+              operation_id: outcome.promoted.operationId,
+              message: "Nested gateway tools could not be listed yet because an earlier Codex tool call is still running."
+                + " The outer tools above are complete; call codex_tool_inventory again after that call finishes.",
+            };
+          }
+          const catalog = outcome.kind === "promoted"
+            ? { total: 0, tools: [] }
+            : gatewayToolCatalogPage(outcome.value as Parameters<typeof gatewayToolCatalogPage>[0], new Set(excludedGatewayNames));
           nestedTotal = catalog.total;
           nestedPage = catalog.tools.map(tool => ({
             wire_name: tool.name,
@@ -453,6 +564,7 @@ export async function runChatGptMcpServer(options: {
           total,
           next_offset: offset + page.length < total ? offset + page.length : null,
           ...(discoveryTools.length > 0 ? { discovery_tools: discoveryTools } : {}),
+          ...(nestedPending ? { nested_inventory_pending: nestedPending } : {}),
         });
       },
     ),
@@ -505,7 +617,7 @@ export async function runChatGptMcpServer(options: {
       }
       return withClaimedTurn("codex_tool_call", requestId, extra, async claimed => {
         const invocation = resolveBrowserInvocation(routingPolicy, claimed.environment, wire_name, args, input);
-        return invoke(claimed.bindingId, claimed.environment, invocation.tool, invocation.payload, extra.signal);
+        return invoke(claimed.bindingId, claimed.environment, invocation.tool, invocation.payload, extra.signal, wire_name);
       });
     },
   );
@@ -569,7 +681,7 @@ export async function runChatGptMcpServer(options: {
               ? { input: invocation.payload.input ?? "" }
               : { arguments: invocation.payload.arguments ?? {} }),
           }, 5_000, extra.signal);
-          return snapshot.state === "control" ? asMcpResult(snapshot.result) : asOwnedOperationResult(snapshot);
+          return snapshot.state === "control" ? asMcpResult(snapshot.result) : asOwnedOperationResult(snapshot, "start");
         });
       },
     );
@@ -623,7 +735,7 @@ export async function runChatGptMcpServer(options: {
             token: turn_token,
             operationId: operation_id,
           }, 5_000, extra.signal);
-          return asOwnedOperationResult(snapshot);
+          return asOwnedOperationResult(snapshot, "cancel");
         });
       },
     );

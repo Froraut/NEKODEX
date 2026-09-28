@@ -1198,9 +1198,22 @@ export class ChatGptBrowserWorker {
         + ` but production requires a separate connector named ${JSON.stringify(CHATGPT_CONNECTOR_NAME)};`
         + ` create ${JSON.stringify(CHATGPT_CONNECTOR_NAME)} against the production tunnel and leave the DEV connector unchanged`;
     }
-    return `ChatGPT connector menu opened but exposed no row named ${JSON.stringify(this.config.appName)}`
+    const target = this.config.appName;
+    const comparable = (value: string) => value.normalize("NFKC").replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+      .replace(/\s+/g, " ").trim().toLowerCase();
+    const nearMiss = titles.find(title => title !== target && comparable(title) === comparable(target));
+    if (nearMiss) {
+      return `ChatGPT lists an app named ${JSON.stringify(nearMiss)}, which differs from the required exact name`
+        + ` ${JSON.stringify(target)} only in case, spacing or invisible characters. ChatGPT matches the exact name:`
+        + ` create an app named exactly ${JSON.stringify(target)} on this mode's tunnel, then verify again`;
+    }
+    const otherCodexApps = [...new Set(titles.filter(title => title !== target && /^codex\b/i.test(title.trim())))].slice(0, 6);
+    return `ChatGPT connector menu opened but exposed no row named ${JSON.stringify(target)}`
       + ` after ${triggerAttempts} complete mention trigger attempt(s)`
-      + `; verify that the existing connector is enabled and available in this account and chat, refresh the catalog, and retry. A missing menu row does not establish that it is uninstalled`;
+      + (otherCodexApps.length > 0 ? `; it lists ${otherCodexApps.map(title => JSON.stringify(title)).join(", ")} instead` : "")
+      + `. ChatGPT apps belong to one account and workspace: in the ChatGPT account being verified, enable Developer mode and`
+      + ` create an app named exactly ${JSON.stringify(target)} on this mode's tunnel with Authentication set to None,`
+      + " or enable the existing one, then verify again. A missing menu row does not establish that it is uninstalled";
   }
 
   private legacyConnectorInMenu(titles: readonly string[]): string | undefined {
@@ -1293,7 +1306,7 @@ export class ChatGptBrowserWorker {
           });
           await capture("personalization-proof-mention-triggered");
           try {
-            await appResult.waitFor({ state: "visible", timeout: 2_500, signal: personalizationSignal });
+            await appResult.first().waitFor({ state: "visible", timeout: 2_500, signal: personalizationSignal });
           } catch (error) {
             if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
             proofResult = false;
@@ -1351,7 +1364,8 @@ export class ChatGptBrowserWorker {
         await assertMentionAttached(composer, abortSignal);
         let exactRowVisible = false;
         try {
-          await appResult.waitFor({
+          // Duplicates must reach the explicit count check below instead of a strict-mode error.
+          await appResult.first().waitFor({
             state: "visible",
             timeout: 2_500,
             signal: abortSignal,
@@ -1410,6 +1424,12 @@ export class ChatGptBrowserWorker {
         withChatGptBrowserObservationTimeout(appResult.count()),
         abortSignal,
       );
+      if (exactResultCount > 1) {
+        throw chatGptConnectorUnavailableError(
+          `ChatGPT lists ${exactResultCount} apps named ${JSON.stringify(this.config.appName)} in this account.`
+          + " Keep exactly one, the app created on this mode's tunnel, and disable or delete the others in ChatGPT Plugins, then verify again",
+        );
+      }
       if (exactResultCount !== 1) {
         throw chatGptConnectorUnavailableError(
           `ChatGPT connector menu did not expose one exact ${JSON.stringify(this.config.appName)} row`
