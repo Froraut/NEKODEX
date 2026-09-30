@@ -21,7 +21,7 @@
 // would; onLifecycle exists only in benefits-astra and browser-ui-ready. The first routing check on a page
 // reports a catalog redirect failure; later checks pass.
 // Page hooks: window.fixtureCalls, fixtureSetBrowser/Accounts/Update/State/Operation, fixtureEmitLog(record),
-// fixtureOpenUpdates() (native "Check for Updates…" menu), fixtureCompleteCodexLogin() (finish the device code
+// fixtureOpenUpdates() (native "Check for Updates…" menu), fixtureFocusAddress() (⌘L inside the ChatGPT page), fixtureCompleteCodexLogin() (finish the device code
 // sign-in); set window.fixtureCancelExport / fixtureCancelUninstall / fixtureCancelTurns to simulate a cancelled
 // save or confirmation dialog. A setup or context change leaves the model catalog waiting for Codex to reload
 // it, as in the app: fixtureSetState({ codexCatalogVerified: true }) stands in for that reload.
@@ -592,6 +592,7 @@ function installMockLauncher() {
       return update;
     },
     onStateChanged: listen("state"), onBrowserState: listen("browser"), onOperation: listen("operation"), onLog: listen("log"), onUpdateState: listen("update"),
+    onBrowserFocusAddress: listen("focus-address"),
     setBrowserBounds: async bounds => { window.fixtureBounds = bounds; return true; },
     setBrowserSurfaceActive: async (active) => { browser.surfaceActive = active; return { ...browser }; },
     openBrowserWorkspace: async (accountId, { asTab }) => {
@@ -614,6 +615,25 @@ function installMockLauncher() {
     openBrowserWindow: async asTab => { calls.push(["browser-window", asTab]); return {count:1}; },
     showBrowser: async () => { browser.visible = true; emit("browser", { ...browser }); return { ...browser }; },
     hideBrowser: async () => { browser.visible = false; emit("browser", { ...browser }); return { ...browser }; },
+    // A reduced resolveBrowserAddress (electron/browser-navigation-policy.cjs): ChatGPT hosts load here, others "open externally".
+    openBrowserAddress: async (address) => {
+      calls.push(["address", address]);
+      const text = String(address).trim();
+      if (!text || /\s/.test(text) || /^[a-z-]+:(?!\/\/)/i.test(text)) throw new Error("Enter a ChatGPT page or a web address");
+      const candidate = /^[/?#]/.test(text) ? `https://chatgpt.com${text.startsWith("/") ? "" : "/"}${text}`
+        : /^[a-z][a-z\d+.-]*:\/\//i.test(text) ? text : /^[^/?#]*[.:]/.test(text) ? `https://${text}` : `https://chatgpt.com/${text}`;
+      const url = new URL(candidate);
+      if (!["chatgpt.com", "www.chatgpt.com", "chat.openai.com"].includes(url.hostname)) {
+        if (/^(localhost|127\.|10\.|192\.168\.)/.test(url.hostname)) throw new Error("Local external links are blocked");
+        calls.push(["external", url.toString()]);
+        return { ...browser };
+      }
+      if (activeTurn()) throw new Error("Browser navigation is locked while ChatGPT is running a Codex turn");
+      if (browser.loginInProgress) throw new Error("Browser navigation is locked during ChatGPT login");
+      for (const tab of browser.tabs) tab.active = tab.id === "home";
+      browser.url = `https://chatgpt.com${url.pathname}${url.search}${url.hash}`;
+      emit("browser", { ...browser }); return { ...browser };
+    },
     navigateBrowser: async (action) => {
       calls.push(["navigate", action]);
       if (!["back", "forward", "reload"].includes(action)) throw new Error(`Unknown browser navigation action: ${action}`);
@@ -1307,6 +1327,7 @@ function installMockLauncher() {
   window.fixtureSetOperation = value => { operation = value; emit("operation", value); };
   window.fixtureEmitLog = record => emitLog({ at: new Date().toISOString(), level: "info", detail: {}, ...record });
   window.fixtureOpenUpdates = () => { updateRequestRevision++; emit("open-updates"); };
+  window.fixtureFocusAddress = () => emit("focus-address");
   window.fixtureCompleteCodexLogin = () => {
     if (!codexLogin?.active) return null;
     const account = accountSnapshot.accounts.find(candidate => candidate.id === codexLogin.accountId);

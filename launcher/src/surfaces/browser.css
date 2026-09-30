@@ -252,21 +252,43 @@
   border-bottom: 1px solid var(--border);
 }
 .browser-nav__group { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+/* The address field reads as toolbar text at rest and becomes a control on hover and focus. */
 .browser-nav__location {
   display: flex;
   flex: 1 1 200px;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  height: var(--size-control-sm);
   padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 14px;
   line-height: 20px;
-  user-select: text;
+  cursor: text;
+  transition: border-color var(--duration-micro) ease, background-color var(--duration-micro) ease;
 }
+.browser-nav__location:hover { background: var(--bg-control-hover); }
+.browser-nav__location:focus-within { border-color: var(--focus-ring); background: var(--bg-control); color: var(--text-primary); }
+.browser-nav__location.is-invalid { border-color: var(--text-error); }
 .browser-nav__location > .nk-icon { width: 14px; height: 14px; color: var(--icon-tertiary); }
-/* The address is the one truncated line of the toolbar; its full value is the tooltip. */
-.browser-nav__location > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The one truncated line of the toolbar; the full URL is the tooltip and the focused value. */
+.browser-nav__address {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-nav__address::placeholder { color: var(--text-tertiary); }
+/* The field's border carries focus, so the input does not draw the kit ring inside it. */
+.browser-nav .browser-nav__address:focus-visible { outline: none; }
 .browser-nav__zoom { min-width: 56px; padding: 0 var(--space-2); font-variant-numeric: tabular-nums; }
 .browser-nav__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--space-1); margin-left: auto; }
 .browser-nav__progress {

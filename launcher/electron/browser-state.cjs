@@ -24,6 +24,14 @@ function shellZoomActionForInput(input, platform = process.platform) {
   return null;
 }
 
+// ⌘L / Ctrl+L focuses the toolbar address field, as in a desktop browser, even while the page has focus.
+function isAddressFocusShortcut(input, platform = process.platform) {
+  if (input?.type !== "keyDown" || input.alt === true || input.shift === true) return false;
+  const primaryModifier = platform === "darwin" ? input.meta === true && input.control !== true
+    : input.control === true && input.meta !== true;
+  return primaryModifier && String(input.key).toLowerCase() === "l";
+}
+
 function constrainBrowserBounds(bounds, contentSize) {
   const contentWidth = Math.max(1, Math.round(contentSize?.width || 0));
   const contentHeight = Math.max(1, Math.round(contentSize?.height || 0));
@@ -66,6 +74,7 @@ function navigateBrowser(contents, action) {
 module.exports = {
   browserViewVisible,
   constrainBrowserBounds,
+  isAddressFocusShortcut,
   navigateBrowser,
   readBrowserNavigationState,
   scaleBrowserBounds,

@@ -41,6 +41,7 @@ const { shouldBlockSleepForTurns } = require("./turn-suspension.cjs");
 const {
   browserViewVisible,
   constrainBrowserBounds,
+  isAddressFocusShortcut,
   navigateBrowser,
   readBrowserNavigationState,
   scaleBrowserBounds,
@@ -60,6 +61,7 @@ const {
   isWorkspaceSessionMutationRequest,
   navigationErrorForLog,
   navigationOriginForLog,
+  resolveBrowserAddress,
 } = require("./browser-navigation-policy.cjs");
 const { AUTH_PROBE_TIMEOUT_MS, authenticationProbeScript, unavailableAuthenticationProbe } = require("./browser-auth-probe.cjs");
 
@@ -969,9 +971,14 @@ class BrowserHost {
     contents.setZoomLevel(next);
   }
 
+  // Shell-level shortcuts on the launcher and every ChatGPT view: zoom and ⌘L (focus the address field).
   bindShellZoomShortcuts(contents) {
     if (!contents || contents.isDestroyed() || this.shellZoomShortcutBindings.has(contents)) return;
     const handler = (event, input) => {
+      if (isAddressFocusShortcut(input) && this.focusAddressField()) {
+        event.preventDefault();
+        return;
+      }
       const action = shellZoomActionForInput(input);
       if (!action) return;
       event.preventDefault();
@@ -2148,16 +2155,54 @@ class BrowserHost {
     );
   }
 
-  navigate(action) {
+  assertUserNavigationAllowed() {
     if (this.activeTraceId) {
       throw new Error("Browser navigation is locked while ChatGPT is running a Codex turn");
     }
     if (this.manualOperation || this.loginOperation) {
       throw new Error(`Browser navigation is locked during ${this.manualOperation || "ChatGPT login"}`);
     }
+  }
+
+  navigate(action) {
+    this.assertUserNavigationAllowed();
     const contents = this.activeView().webContents;
     navigateBrowser(contents, action);
     return this.snapshot();
+  }
+
+  // The toolbar address field. ChatGPT pages load in the ChatGPT (home) tab: a task tab keeps the conversation a
+  // retained Codex turn resumes. Other web addresses open in the system browser; the Enter press in the launcher's
+  // own field is the user gesture, and the broker still refuses local and private hosts.
+  async openAddress(value) {
+    const target = resolveBrowserAddress(value);
+    if (target.target === "external") {
+      if (!this.externalLinkBroker) throw new Error("External links are unavailable");
+      await this.externalLinkBroker.openTyped(target.url, "address");
+      return this.snapshot();
+    }
+    this.assertUserNavigationAllowed();
+    if (this.selectedTabId !== "home" || this.authView) this.selectTab("home");
+    const contents = this.view.webContents;
+    if (contents.isDestroyed()) throw new Error("ChatGPT browser is unavailable");
+    this.logger.info("browser.address_navigation", { origin: navigationOriginForLog(target.url) });
+    contents.loadURL(target.url).catch((error) => {
+      if (isAbortedNavigationError(error)) return;
+      this.logger.warn("browser.address_navigation_failed", {
+        origin: navigationOriginForLog(target.url),
+        ...navigationErrorForLog(error),
+      });
+    });
+    if (this.visible && this.surfaceActive) contents.focus();
+    return this.snapshot();
+  }
+
+  focusAddressField() {
+    const shell = this.window?.webContents;
+    if (!this.visible || !this.surfaceActive || !shell || shell.isDestroyed()) return false;
+    shell.focus();
+    shell.send("launcher:browser-focus-address");
+    return true;
   }
 
   zoom(action) {
