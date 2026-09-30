@@ -315,14 +315,12 @@ export function McpSurface({
         ) : null}
 
         <div aria-label={`${devProfile ? copy.devMcpTitle : copy.toolsConnectionTab}: ${step + 1} / 3`} className="nk-connections__wizard" role="group">
-          {/* Earlier steps (and the current one) are buttons that return to that step. */}
-          <PhaseSteps disabled={busy} onSelect={index => void safeMove(index)}
-            steps={steps.map((item, index) => ({
-              label: item.title,
-              state: stepState(index),
-              current: index === step,
-              selectable: index <= step,
-            }))} />
+          {/* A progress indicator only: Back and Next move between steps. */}
+          <PhaseSteps steps={steps.map((item, index) => ({
+            label: item.title,
+            state: stepState(index),
+            current: index === step,
+          }))} />
         </div>
 
         <div aria-busy={busy} className="nk-connections__stage">
