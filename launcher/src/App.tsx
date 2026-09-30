@@ -553,9 +553,6 @@ function LauncherShell({
   const needsBrowser = snapshot.state.browserInteractionMode === "automatic"
     && browserAuthenticationStatus === "signed-out";
   const needsSetup = !needsBrowser && !interactionSetupComplete;
-  const mcpOptional = snapshot.state.browserInteractionMode === "automatic"
-    && snapshot.state.codexCatalogVerified === true
-    && !toolProof;
   const transitionBusy = Boolean(snapshot.lifecycle?.transition);
   const updateCopy = updateCopyFor(language);
   const {
@@ -680,10 +677,11 @@ function LauncherShell({
     await enqueueBrowserSurface(true, intent, show);
   }, [enqueueBrowserSurface]);
 
+  // Opening a task's tab means showing it: a hidden ChatGPT view would leave the idle screen in place.
   const openBrowserTab = async (tabId: string) => {
     try {
       await api!.selectBrowserTab(tabId);
-      await activateBrowser();
+      await activateBrowser(true);
     } catch (cause) {
       setError(messageOf(cause));
     }
@@ -719,6 +717,13 @@ function LauncherShell({
   // The account-tools focus target is a one-shot handoff; leaving Accounts must not replay it.
   useEffect(() => {
     if (surface !== "accounts") setAccountToolsTargetId(null);
+  }, [surface]);
+  // Likewise the per-account tools setup and an inactive mode being configured belong to that visit to Connections:
+  // leaving both of its tabs ends them, so Overview's "Manage tools connection" opens the ordinary page.
+  useEffect(() => {
+    if (surface === "mcp" || surface === "setup") return;
+    setMcpReturnAccountId(null);
+    setMcpTargetMode(null);
   }, [surface]);
 
   const navigateSurface = (next: Surface) => {
@@ -799,7 +804,18 @@ function LauncherShell({
   const browserAttention = needsBrowser ? "required"
     : sessionConnection.key === "verification-unavailable" ? "warning"
       : browser?.status === "error" ? "error" : null;
-  const connectionsAttention = needsSetup ? "required" : mcpOptional ? "optional" : null;
+  // The Connections item reports what its two tabs report (the session belongs to the Browser item): a failed or
+  // degraded models or tools connection first, then optional tools setup once the models are in Codex.
+  const modelsConnection = readiness.connections.models;
+  const toolsConnection = readiness.connections.tools;
+  const connectionsProblem = [modelsConnection, toolsConnection].find(connection => connection.dot === "error")
+    ?? [modelsConnection, toolsConnection].find(connection => connection.key === "needs-attention");
+  const mcpOptional = snapshot.state.browserInteractionMode === "automatic"
+    && snapshot.state.codexCatalogVerified === true
+    && (toolsConnection.key === "not-connected" || toolsConnection.key === "connector-pending");
+  const connectionsAttention = needsSetup ? "required"
+    : connectionsProblem ? connectionsProblem.dot === "error" ? "error" : "warning"
+    : mcpOptional ? "optional" : null;
   const updateReady = snapshot.update.status === "available";
 
   return (
@@ -874,12 +890,16 @@ function LauncherShell({
               active={surface === "setup" || surface === "mcp"}
               badge={connectionsAttention === "required"
                 ? <ActionDot pulse tone="required" />
-                : connectionsAttention === "optional" ? <ActionDot tone="optional" /> : null}
+                : connectionsAttention === "error" ? <ActionDot tone="error" />
+                  : connectionsAttention === "warning" ? <ActionDot tone="required" />
+                    : connectionsAttention === "optional" ? <ActionDot tone="optional" /> : null}
               icon="setup"
               label={copy.connectionsNav}
               onClick={() => navigateSurface("setup")}
               status={connectionsAttention === "required" ? shell.needsSetup
-                : connectionsAttention === "optional" ? shell.optionalSetup : undefined}
+                : connectionsProblem && (connectionsAttention === "error" || connectionsAttention === "warning")
+                  ? connectionStatusWord(connectionsProblem, copy, language)
+                  : connectionsAttention === "optional" ? shell.optionalSetup : undefined}
             />
           </SidebarGroup>
           </div>
@@ -968,7 +988,7 @@ function LauncherShell({
                 onError={cause => setError(messageOf(cause))} />
               <TaskCenter loadCopy={copy} tasks={browser?.tasks ?? []} language={language} disabled={transitionBusy}
                 historyHealth={browser?.taskHistoryHealth}
-                open={async tabId => { await api!.selectBrowserTab(tabId); navigateSurface('browser'); }}
+                open={async tabId => { await api!.selectBrowserTab(tabId); await activateBrowser(true); }}
                 cancel={(tabId, traceId) => api!.closeBrowserTab(tabId, traceId)}
                 dismiss={(accountId, id) => api!.dismissTask(accountId, id)}
                 onError={cause => setError(messageOf(cause))} />
@@ -1023,6 +1043,8 @@ function LauncherShell({
             {surface === "mcp" ? (
               <McpSurface
                 accountSetupLabel={mcpReturnAccountId ? mcpReturnAccountLabel : null}
+                targetAccountId={mcpReturnAccountId}
+                browserAccountId={browser?.accountId ?? null}
                 onReturnToAccount={mcpReturnAccountId ? () => {
                   setAccountToolsTargetId(mcpReturnAccountId);
                   setMcpReturnAccountId(null);

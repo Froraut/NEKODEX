@@ -244,7 +244,8 @@ function QuotaContent({ copy, disabledReason, failed, freshnessCopy, language, n
     return <div className="accounts-allowance__status" role="status">
       {message !== disabledReason ? <p className="accounts-allowance__message nk-type-small">{message}</p> : null}
       {quota.checkedAt ? <p className="accounts-caption nk-type-caption">{copy.quotaUpdated.replace("{time}", formatDateTime(quota.checkedAt, language, copy.quotaUnknown))}</p> : null}
-      {quota.retryAt ? <p className="accounts-caption nk-type-caption">{copy.quotaResets.replace("{time}", formatDateTime(quota.retryAt, language, copy.quotaUnknown))}</p> : null}
+      {/* retryAt is when a refresh may be retried (the provider's Retry-After), not when the allowance resets. */}
+      {quota.retryAt ? <p className="accounts-caption nk-type-caption">{copy.quotaRetryAfter.replace("{time}", formatDateTime(quota.retryAt, language, copy.quotaUnknown))}</p> : null}
     </div>;
   }
   const updatedAt = quota.fetchedAt ?? quota.checkedAt ?? null;
@@ -292,7 +293,7 @@ function QuotaFreshness({ copy, failed, language, now, quota, updatedAt }: {
 const bucketTone: Record<ReturnType<typeof quotaAvailability>, { tone?: Tone; dot: Status }> = {
   allowed: { tone: "success", dot: "ready" },
   exhausted: { tone: "error", dot: "error" },
-  unavailable: { tone: "warning", dot: "error" },
+  unavailable: { tone: "warning", dot: "optional" },
   unknown: { dot: "idle" },
 };
 
@@ -422,20 +423,18 @@ function loginMessage(copy: AccountCodexCopy, login: CodexLoginProgress, wrongId
   return copy.loginFailed;
 }
 
+// Intl picks the unit's grammatical form for the count ("1 hour", "5 hours", "5 часов").
 function formatDuration(minutes: number | null, copy: AccountCodexCopy, language: Language) {
   if (minutes === null) return copy.quotaUnknown;
-  if (minutes % (24 * 60) === 0) return copy.quotaWindowDays.replace("{count}", formatNumber(minutes / (24 * 60), language));
-  if (minutes % 60 === 0) return copy.quotaWindowHours.replace("{count}", formatNumber(minutes / 60, language));
-  return copy.quotaWindowMinutes.replace("{count}", formatNumber(minutes, language));
+  const [value, unit] = minutes % (24 * 60) === 0 ? [minutes / (24 * 60), "day"]
+    : minutes % 60 === 0 ? [minutes / 60, "hour"] : [minutes, "minute"];
+  return new Intl.NumberFormat(language, { style: "unit", unit, unitDisplay: "long", maximumFractionDigits: 0 }).format(value);
 }
 
 function formatPercent(value: number, language: Language) {
   return new Intl.NumberFormat(language, { maximumFractionDigits: 1 }).format(value);
 }
 
-function formatNumber(value: number, language: Language) {
-  return new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).format(value);
-}
 
 function formatDateTime(value: string | number, language: Language, fallback: string) {
   const date = new Date(value);

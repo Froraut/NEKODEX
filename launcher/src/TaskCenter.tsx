@@ -13,7 +13,7 @@ type HistoryHealth = Array<{ accountId: string; accountName: string; issue: 'tas
 
 const unknownModel: Record<Language, string> = { en: 'Model unknown', ru: 'Модель неизвестна', 'zh-CN': '模型未知', 'zh-TW': '模型未知', ja: 'モデル不明', ko: '모델 알 수 없음' };
 
-/** Running work pulses; finished work is ready; anything that ended without completing needs attention. */
+/** Running work pulses; finished work is ready; a cancelled task is quiet; anything else that ended without completing needs attention. */
 const taskState = (task: BrowserTaskState): Status => !task.terminal ? 'busy'
   : task.phase === 'completed' ? 'ready' : task.phase === 'cancelled' ? 'idle' : 'error';
 

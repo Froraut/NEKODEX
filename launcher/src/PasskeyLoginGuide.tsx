@@ -56,7 +56,7 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
       setError(failure);
     } finally { inFlight.current = false; setPending(false); }
   };
-  // Retry/Continue await the whole host operation. Cancellation must remain usable while that
+  // Continue awaits the whole host operation. Cancellation must remain usable while that
   // promise is pending, and the host still owns cancellation, rollback and operation settlement.
   const cancel = async () => {
     if (cancelInFlight.current || !progress.canCancel) return;
@@ -88,8 +88,10 @@ export function PasskeyLoginGuide({ progress, copy, onRetry, onContinue, continu
         onClick={() => void act(() => window.codexWebLauncher!.revealPasskeyLogin(), false, copy.passkeyRevealFailed)}>{copy.passkeyReveal}</Button> : null}
       {progress.canCancel ? <Button variant="ghost" disabled={cancelPending}
         onClick={() => void cancel()}>{copy.passkeyCancel}</Button> : null}
+      {/* Retry restarts the flow and resolves only when that sign-in ends: it must not hold the guide's pending state,
+          or Continue and Reveal of the restarted flow stay disabled. BrowserSurface guards a repeated start. */}
       {terminal ? <Button variant="primary" disabled={pending || transitionBusy}
-        onClick={() => void act(onRetry)}>{copy.retry}</Button> : null}
+        onClick={() => void onRetry()}>{copy.retry}</Button> : null}
       {terminal ? <Button disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.openLogin())}>{copy.stepAccount}</Button> : null}
     </div>

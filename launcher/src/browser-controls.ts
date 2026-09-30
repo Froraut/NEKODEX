@@ -36,6 +36,8 @@ export function browserControls(
     passkeyBlocked: !passkeyAvailable || turnBusy || unrelatedOperation || existingChromeWaiting,
     existingChromeAvailable,
     existingChromeWaiting,
-    existingChromeBlocked: !existingChromeAvailable || turnBusy || otherExistingChromeOperation || passkeyWaiting,
+    // An embedded sign-in holds the account (the pool refuses a Chrome import meanwhile; only passkey has a hand-off).
+    existingChromeBlocked: !existingChromeAvailable || turnBusy || otherExistingChromeOperation || passkeyWaiting
+      || (browser?.loginInProgress === true && !existingChromeWaiting),
   };
 }

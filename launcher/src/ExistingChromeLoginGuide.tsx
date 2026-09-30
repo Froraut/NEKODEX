@@ -19,6 +19,8 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
   const [now, setNow] = useState(Date.now());
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
+  const [cancelPending, setCancelPending] = useState(false);
+  const cancelInFlight = useRef(false);
   const [copied, setCopied] = useState(false);
   useEffect(() => setCopied(false), [progress.startedAt]);
   useEffect(() => {
@@ -67,6 +69,14 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
     try { await action(); } catch { setError(copy.existingChromeFailure); }
     finally { inFlight.current = false; setPending(false); }
   };
+  // Cancel stays usable while another action (file access, copy) awaits the host.
+  const cancel = async () => {
+    if (cancelInFlight.current) return;
+    cancelInFlight.current = true;
+    setCancelPending(true);
+    try { await window.codexWebLauncher!.cancelExistingChromeLogin(); } catch { setError(copy.existingChromeFailure); }
+    finally { cancelInFlight.current = false; setCancelPending(false); }
+  };
   const copyButton = progress.canCopySettings ? <Button size={settings ? "sm" : "md"} disabled={pending || transitionBusy}
     onClick={() => void act(async () => { await window.codexWebLauncher!.copyExistingChromeSettingsAddress(); setCopied(true); })}>
     {copied ? copy.existingChromeCopied : copy.existingChromeCopy}</Button> : null;
@@ -99,13 +109,15 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
     <div className="browser-guide__actions">
       {progress.canAllowFileAccess ? <Button variant="primary" disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.allowExistingChromeFileAccess())}>{copy.existingChromeAllowFile}</Button> : null}
+      {/* Retry resolves only when the restarted import ends, so it does not hold the guide's pending state (that would
+          disable the restarted flow's own controls); BrowserSurface guards a repeated start. */}
       {terminal ? <Button variant={progress.canAllowFileAccess ? "secondary" : "primary"} disabled={pending || transitionBusy}
-        onClick={() => void act(onRetry)}>{copy.retry}</Button> : null}
+        onClick={() => void onRetry()}>{copy.retry}</Button> : null}
       {settings ? null : copyButton}
       {terminal ? <Button disabled={pending || transitionBusy}
         onClick={() => void act(() => window.codexWebLauncher!.openLogin())}>{copy.stepAccount}</Button> : null}
-      {progress.canCancel ? <Button variant="ghost" disabled={pending}
-        onClick={() => void act(() => window.codexWebLauncher!.cancelExistingChromeLogin(), true)}>{copy.passkeyCancel}</Button> : null}
+      {progress.canCancel ? <Button variant="ghost" disabled={cancelPending}
+        onClick={() => void cancel()}>{copy.passkeyCancel}</Button> : null}
     </div>
   </Panel>;
 }

@@ -595,14 +595,15 @@ function installMockLauncher() {
     onBrowserFocusAddress: listen("focus-address"),
     setBrowserBounds: async bounds => { window.fixtureBounds = bounds; return true; },
     setBrowserSurfaceActive: async (active) => { browser.surfaceActive = active; return { ...browser }; },
-    openBrowserWorkspace: async (accountId, { asTab }) => {
-      calls.push(["workspace-open", accountId, asTab]);
+    openBrowserWorkspace: async (accountId, { asTab, address }) => {
+      calls.push(["workspace-open", accountId, asTab, ...(address ? [address] : [])]);
+      if (address !== undefined && !/^https:\/\/chatgpt\.com\//.test(address)) throw new Error("Only ChatGPT pages open in an account window");
       if (scenario === "browser-ui-error" && !workspaceFailed) { workspaceFailed = true; throw new Error("Fixture window could not open. Try again."); }
       const account = browser.workspaces.accounts.find(account => account.accountId === accountId);
       const id = `workspace-${++workspaceSequence}`;
       account.items.push({ id, groupId: "fixture-group", state: "open", kind: asTab ? "tab" : "window",
         title: `${account.label} · ${asTab ? "Window tab" : "Separate window"} ${workspaceSequence}`,
-        location: "https://chatgpt.com/?temporary-chat=true", temporary: true, active: true, restorable: false });
+        location: address ?? "https://chatgpt.com/?temporary-chat=true", temporary: !address, active: true, restorable: false });
       browser.workspaces.total++;
       emit("browser", { ...browser }); return { ...browser };
     },

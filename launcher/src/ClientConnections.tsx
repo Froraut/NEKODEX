@@ -20,6 +20,8 @@ export function ClientConnections({ language, busy, configured, devProfile }: {
   // One message at a time, shown next to what it is about; a new read or change replaces it.
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [pending, setPending] = useState(false);
+  // Only a read spins "Refresh status"; Enable, Copy and Connect show their own progress.
+  const [refreshing, setRefreshing] = useState(false);
   const [mode, setMode] = useState<"mixed" | "web-only" | null>(null);
   const inFlight = useRef(false), mounted = useRef(true);
   // The row whose action is running: when the change removes the button that had focus (Disconnect → Connect),
@@ -29,13 +31,13 @@ export function ClientConnections({ language, busy, configured, devProfile }: {
   const errorText = (cause: unknown, fallback: string) => cause instanceof Error && cause.message ? cause.message : fallback;
   const load = async () => {
     if (inFlight.current) return;
-    inFlight.current = true; setPending(true); setFeedback(null);
+    inFlight.current = true; setPending(true); setRefreshing(true); setFeedback(null);
     try {
       const next = await window.codexWebLauncher!.getClientConnections();
       if (mounted.current) setStatus(next);
     } catch (cause) {
       if (mounted.current) setFeedback({ target: "list", tone: "error", text: errorText(cause, copy.loadFailed) });
-    } finally { inFlight.current = false; if (mounted.current) setPending(false); }
+    } finally { inFlight.current = false; if (mounted.current) { setPending(false); setRefreshing(false); } }
   };
   useEffect(() => {
     mounted.current = true;
@@ -91,7 +93,7 @@ export function ClientConnections({ language, busy, configured, devProfile }: {
     <div className="nk-connections__stack nk-connections__disclosure-content">
     <div className="nk-clients__intro">
       <p>{copy.body}</p>
-      {configured && !devProfile ? <Button busy={pending} disabled={locked} icon="reload" onClick={() => void load()} size="sm" variant="ghost">
+      {configured && !devProfile ? <Button busy={refreshing} disabled={locked} icon="reload" onClick={() => void load()} size="sm" variant="ghost">
         {copy.refresh}
       </Button> : null}
     </div>

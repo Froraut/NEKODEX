@@ -285,7 +285,9 @@ body {
 .nk-select select { appearance: none; -webkit-appearance: none; padding: 0 36px 0 var(--space-3); }
 .nk-select select option { background: var(--bg-elevated); color: var(--text-primary); }
 .nk-select > .nk-icon { position: absolute; top: 50%; right: var(--space-3); width: 14px; height: 14px; color: var(--icon-secondary); pointer-events: none; transform: translateY(-50%) rotate(90deg); }
-.nk-select select:hover:not(:disabled, [aria-disabled="true"]), .nk-input:hover:not(:disabled, [aria-disabled="true"]) { background: var(--bg-control-hover); }
+.nk-select select:hover:not(:disabled, [aria-disabled="true"]), .nk-input:hover:not(:disabled, [aria-disabled="true"], [readonly]) { background: var(--bg-control-hover); }
+/* App: a read-only value (a connector name to copy) must not look like a field waiting for input. */
+.nk-input[readonly] { border-color: var(--border); background: var(--bg-under); color: var(--text-secondary); }
 /* App: Select size="sm", level with small buttons in a dense bar. */
 .nk-select--sm select { height: var(--size-control-sm); }
 .nk-select select:is(:disabled, [aria-disabled="true"]), .nk-input:is(:disabled, [aria-disabled="true"]) { color: var(--text-disabled); opacity: 0.62; }
@@ -432,7 +434,8 @@ body {
 .nk-nav-item[aria-current="page"] > .nk-icon { color: var(--text-accent); }
 /* App: the bar sits inside the highlight, clear of its rounded edge, so it does not read as a broken border. */
 .nk-nav-item[aria-current="page"]::before { position: absolute; top: 11px; bottom: 11px; left: 4px; width: 3px; border-radius: var(--radius-pill); background: var(--accent); content: ""; }
-.nk-nav-item.is-update { background: var(--bg-accent-subtle); color: var(--text-accent); }
+/* App: a ready update is marked by its accent label only; the highlight fill means "current page". */
+.nk-nav-item.is-update { color: var(--text-accent); }
 .nk-nav-item.is-update > .nk-icon { color: var(--text-accent); }
 .nk-nav-item__badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; flex: none; padding: 0 6px; border-radius: var(--radius-pill); background: var(--bg-control-active); color: var(--text-secondary); font-size: 13px; line-height: 1; font-style: normal; font-variant-numeric: tabular-nums; }
 .nk-sidebar__footer { display: grid; flex: none; gap: 2px; padding-top: var(--space-2); border-top: 1px solid var(--border-light); }

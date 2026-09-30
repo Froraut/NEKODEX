@@ -328,9 +328,10 @@ export function LaunchLoading({ language = startupLanguage(), phase = "workspace
         <p className="nk-launch__status" role="status">{phase === "language" ? words.loadingLanguage : words.loadingWorkspace}</p>
         <div className="nk-launch__meter" role="progressbar" aria-label={words.loading} />
         <div className="nk-launch__recovery">
-          {slow ? <>
-            <p role="status">{onRetry ? words.loadingSlow : words.loadingLanguage}</p>
-            {onRetry ? <Button variant="secondary" onClick={onRetry}>{words.tryAgain}</Button> : null}
+          {/* Without a retry there is nothing to add: the status line above already says what is happening. */}
+          {slow && onRetry ? <>
+            <p role="status">{words.loadingSlow}</p>
+            <Button variant="secondary" onClick={onRetry}>{words.tryAgain}</Button>
           </> : null}
         </div>
       </div>

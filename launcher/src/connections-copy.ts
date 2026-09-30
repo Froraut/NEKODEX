@@ -12,6 +12,8 @@ export type ConnectionsCopy = {
   installed: string;
   /** Status: an optional connection is not set up. */
   notConnected: string;
+  /** Status: local tools are set up; the ChatGPT connector is not verified yet. */
+  connectorPending: string;
   /** Status: set up, but degraded. */
   needsAttention: string;
   /** Status: set up, but not available right now. */
@@ -54,6 +56,7 @@ const copy: Record<Language, ConnectionsCopy> = {
   en: {
     installed: "Installed",
     notConnected: "Not connected",
+    connectorPending: "Connector not verified",
     needsAttention: "Needs attention",
     unavailable: "Unavailable",
     signIn: "Sign in",
@@ -85,6 +88,7 @@ const copy: Record<Language, ConnectionsCopy> = {
   ru: {
     installed: "Установлено",
     notConnected: "Не подключено",
+    connectorPending: "Коннектор не проверен",
     needsAttention: "Требует внимания",
     unavailable: "Недоступно",
     signIn: "Войти",
@@ -116,6 +120,7 @@ const copy: Record<Language, ConnectionsCopy> = {
   "zh-CN": {
     installed: "已安装",
     notConnected: "未连接",
+    connectorPending: "连接器未验证",
     needsAttention: "需要处理",
     unavailable: "不可用",
     signIn: "登录",
@@ -147,6 +152,7 @@ const copy: Record<Language, ConnectionsCopy> = {
   "zh-TW": {
     installed: "已安裝",
     notConnected: "未連線",
+    connectorPending: "連接器未驗證",
     needsAttention: "需要處理",
     unavailable: "無法使用",
     signIn: "登入",
@@ -178,6 +184,7 @@ const copy: Record<Language, ConnectionsCopy> = {
   ja: {
     installed: "インストール済み",
     notConnected: "未接続",
+    connectorPending: "コネクター未検証",
     needsAttention: "確認が必要",
     unavailable: "利用不可",
     signIn: "サインイン",
@@ -209,6 +216,7 @@ const copy: Record<Language, ConnectionsCopy> = {
   ko: {
     installed: "설치됨",
     notConnected: "연결 안 됨",
+    connectorPending: "커넥터 미확인",
     needsAttention: "확인 필요",
     unavailable: "사용할 수 없음",
     signIn: "로그인",
@@ -257,6 +265,7 @@ export function connectionStatusWord(status: ConnectionStatus, app: Copy, langua
     case "catalog-unavailable": return app.catalogUnavailable;
     case "needs-setup": return app.connectionPending;
     case "not-connected": return words.notConnected;
+    case "connector-pending": return words.connectorPending;
     case "needs-attention": return words.needsAttention;
     case "unavailable": return words.unavailable;
   }

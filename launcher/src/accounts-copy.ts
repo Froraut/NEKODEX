@@ -18,6 +18,8 @@ export type AccountsCopy = {
   /** Reasons next to disabled card actions. */
   selectNeedsCheck: string;
   waitForSessionCheck: string;
+  /** A signed-in card's browser action: shows that account's ChatGPT session (it replaces no credentials). */
+  openInBrowser: string;
   /** Why "Refresh all allowances" is disabled while the list is empty. */
   refreshNeedsAccount: string;
   /** First read of the account list failed (nothing to show yet). */
@@ -45,6 +47,7 @@ const copy: Record<Language, AccountsCopy> = {
     proxyMode: "Proxy: {mode}",
     notSaved: "Not saved",
     runtimeNotice: "Local tools need the shared tunnel runtime. Set it up once; every account in this interaction mode uses it.",
+    openInBrowser: "Open in Browser",
     selectNeedsCheck: "Check this account before selecting it.",
     waitForSessionCheck: "Wait for the session check to finish.",
     refreshNeedsAccount: "Add an account first.",
@@ -67,6 +70,7 @@ const copy: Record<Language, AccountsCopy> = {
     proxyMode: "Прокси: {mode}",
     notSaved: "Не сохранено",
     runtimeNotice: "Локальным инструментам нужен общий туннель. Он настраивается один раз и используется всеми аккаунтами этого режима работы.",
+    openInBrowser: "Открыть в браузере",
     selectNeedsCheck: "Проверьте этот аккаунт, прежде чем выбрать его.",
     waitForSessionCheck: "Дождитесь окончания проверки сеанса.",
     refreshNeedsAccount: "Сначала добавьте аккаунт.",
@@ -89,6 +93,7 @@ const copy: Record<Language, AccountsCopy> = {
     proxyMode: "代理：{mode}",
     notSaved: "未保存",
     runtimeNotice: "本地工具需要共享隧道运行时。只需设置一次，此交互模式下的所有账户都会使用它。",
+    openInBrowser: "在浏览器中打开",
     selectNeedsCheck: "请先检查此账户，再选择它。",
     waitForSessionCheck: "请等待会话检查完成。",
     refreshNeedsAccount: "请先添加账户。",
@@ -111,6 +116,7 @@ const copy: Record<Language, AccountsCopy> = {
     proxyMode: "代理：{mode}",
     notSaved: "未儲存",
     runtimeNotice: "本機工具需要共用通道執行環境。只需設定一次，此互動模式下的所有帳號都會使用它。",
+    openInBrowser: "在瀏覽器中開啟",
     selectNeedsCheck: "請先檢查此帳號，再選擇它。",
     waitForSessionCheck: "請等待工作階段檢查完成。",
     refreshNeedsAccount: "請先新增帳號。",
@@ -133,6 +139,7 @@ const copy: Record<Language, AccountsCopy> = {
     proxyMode: "プロキシ: {mode}",
     notSaved: "保存されていません",
     runtimeNotice: "ローカルツールには共有トンネルの実行環境が必要です。一度設定すると、この操作モードのすべてのアカウントで使用されます。",
+    openInBrowser: "ブラウザーで開く",
     selectNeedsCheck: "選択する前にこのアカウントを確認してください。",
     waitForSessionCheck: "セッションの確認が終わるまでお待ちください。",
     refreshNeedsAccount: "先にアカウントを追加してください。",
@@ -155,6 +162,7 @@ const copy: Record<Language, AccountsCopy> = {
     proxyMode: "프록시: {mode}",
     notSaved: "저장되지 않음",
     runtimeNotice: "로컬 도구에는 공유 터널 런타임이 필요합니다. 한 번 설정하면 이 상호작용 모드의 모든 계정이 사용합니다.",
+    openInBrowser: "브라우저에서 열기",
     selectNeedsCheck: "선택하기 전에 이 계정을 확인하세요.",
     waitForSessionCheck: "세션 확인이 끝날 때까지 기다리세요.",
     refreshNeedsAccount: "먼저 계정을 추가하세요.",

@@ -1,7 +1,8 @@
-import { accountToolsCopy } from "./account-tools-onboarding";
+import { accountToolsCopy, accountToolsStep } from "./account-tools-onboarding";
+import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { connectorAttachCopyFor, connectorAttachNotice, native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
-import { modelsTabConnection, type WorkspaceReadiness } from "./workspace-readiness";
+import { modelsTabConnection, type ConnectionStatus, type WorkspaceReadiness } from "./workspace-readiness";
 import { connectionTabStatus, connectionsCopy, connectionsSubtitle } from "./connections-copy";
 import { workflowCopy } from "./workflow-copy";
 import type { BrowserInteractionMode, DoctorReport, Language, LauncherSnapshot, LauncherState, OperationState } from "./types";
@@ -17,6 +18,8 @@ const MCP_GUIDE_MEDIA = [
 ] as const;
 export function McpSurface({
   accountSetupLabel,
+  targetAccountId = null,
+  browserAccountId = null,
   onReturnToAccount,
   copy,
   devProfile,
@@ -32,6 +35,10 @@ export function McpSurface({
   updateSnapshot,
 }: {
   accountSetupLabel?: string | null;
+  /** Per-account setup (opened from an account card): the account whose connector this page sets up. */
+  targetAccountId?: string | null;
+  /** The account open in the Browser (live browser state; the launcher snapshot's copy can lag behind). */
+  browserAccountId?: string | null;
   onReturnToAccount?: () => void;
   copy: Copy;
   devProfile: boolean;
@@ -82,7 +89,19 @@ export function McpSurface({
   // Replace / Keep saved credentials swap the controls: focus moves to the control that takes the removed one's place.
   const credentialsFocus = useRef<string | null>(null);
   const previousStep = useRef(step);
-  const verified = !configuringInactiveMode && currentToolProof(snapshot, operation);
+  // The global tool proof belongs to the account selected in the Browser. Per-account setup reports that account's
+  // own connector check (the same fact as its card), never another account's proof.
+  const { snapshot: pool } = useAccountPoolSnapshot({ api: api!, initial: "immediate", retainOnFailure: false,
+    identity: targetAccountId ?? "" });
+  const targetAccount = targetAccountId ? pool?.accounts.find(account => account.id === targetAccountId) ?? null : null;
+  // The card's own derivation (accountToolsStep), so the page and the account card never disagree.
+  const runtimeConfigured = snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured;
+  const verified = !configuringInactiveMode && (targetAccountId
+    ? targetAccount !== null && accountToolsStep(targetAccount, runtimeConfigured) === "verified"
+    : currentToolProof(snapshot, operation));
+  // ChatGPT pages (developer mode, plugins) open in the configured account's own window; with no account they fall
+  // back to the system browser.
+  const pageAccountId = targetAccountId ?? browserAccountId ?? snapshot.browser?.accountId ?? null;
   const manualInteraction = interactionMode === "manual";
   useEffect(() => {
     if (repairOutcome !== "recovered" || repairOutcomeRevision === null
@@ -197,6 +216,15 @@ export function McpSurface({
       setError(messageOf(cause));
     }
   };
+  const openChatGptPage = async (url: string) => {
+    if (!pageAccountId) return openExternal(url);
+    setError(null);
+    try {
+      await api!.openBrowserWorkspace(pageAccountId, { asTab: false, address: url });
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+  };
   const install = async () => {
     if (busy) return;
     setLocalBusy(true);
@@ -272,6 +300,12 @@ export function McpSurface({
   // the connector was verified earlier, the wizard does not claim a later step while an earlier one is open).
   const stepState = (index: number) => index === step ? "current" as const : index < step ? "complete" as const : "upcoming" as const;
   const tunnelInvalid = Boolean(tunnelId && !tunnelId.trim());
+  // Configuring the inactive mode: the active mode's status would describe a different connection.
+  const toolsTab: ConnectionStatus = configuringInactiveMode
+    ? { key: interactionMode === "manual" ? "needs-setup" : "not-connected", dot: "idle", action: "connect", ready: false }
+    : !targetAccountId ? readiness.connections.tools
+    : verified ? { key: "verified", dot: "ready", action: "manage", ready: true }
+      : { key: credentialsConfigured ? "connector-pending" : "not-connected", dot: "idle", action: "connect", ready: false };
   const runtimeKeyInvalid = Boolean(runtimeKey && !runtimeKey.trim());
 
   return (
@@ -281,18 +315,19 @@ export function McpSurface({
           {accountToolsCopy(language).back}
         </Button> : undefined}
         subtitle={connectionsSubtitle(copy, language, { development: devProfile,
-          manual: snapshot.state.browserInteractionMode === "manual" })}
+          manual: interactionMode === "manual" })}
         title={copy.connectionsNav}
       />
       <ConnectionsTabs active="tools" copy={copy}
         modelsReady={modelsTabConnection(readiness.connections).ready}
         modelsStatus={connectionTabStatus(modelsTabConnection(readiness.connections), copy, language)}
         onModels={showSetup} onTools={() => {}}
-        toolsReady={readiness.connections.tools.ready}
-        toolsStatus={connectionTabStatus(readiness.connections.tools, copy, language)} />
+        toolsReady={toolsTab.ready}
+        toolsStatus={connectionTabStatus(toolsTab, copy, language)} />
       <div className="nk-connections__content" {...connectionsTabPanelProps("tools")}>
         {accountSetupLabel ? (
-          <Notice title={`${accountToolsCopy(language).target}: ${accountSetupLabel}`}>{accountToolsCopy(language).identity}</Notice>
+          // The system-browser caveat is on step 1, next to the links it concerns.
+          <Notice title={`${accountToolsCopy(language).target}: ${accountSetupLabel}`} />
         ) : null}
         {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
           <Notice icon="setup" tone="warning">{copy.mcpCatalogRequired}</Notice>
@@ -478,19 +513,12 @@ export function McpSurface({
                   </p>
                 </div>
                 <div className="nk-connections__actions">
-                  {snapshot.urls.developerMode ? <Button icon="external"
-                    onClick={() => void openExternal(snapshot.urls.developerMode!)}>{copy.openDeveloperMode}</Button> : null}
+                  {snapshot.urls.developerMode ? <Button icon="browser"
+                    onClick={() => void openChatGptPage(snapshot.urls.developerMode!)}>{copy.openDeveloperMode}</Button> : null}
                   <Button
                     disabled={!connectorConfiguredForTarget}
-                    icon="external"
-                    onClick={() => void (async () => {
-                      setError(null);
-                      try {
-                        await api!.openExternal(snapshot.urls.connectors);
-                      } catch (cause) {
-                        setError(messageOf(cause));
-                      }
-                    })()}
+                    icon="browser"
+                    onClick={() => void openChatGptPage(snapshot.urls.connectors)}
                   >
                     {copy.openConnectors}
                   </Button>
@@ -526,8 +554,9 @@ export function McpSurface({
                       {copy.verifyRuntime}
                     </Button>
                   ) : null}
+                  {/* Going back to the account is always possible; only verifying needs the target connector identity. */}
                   <Button
-                    disabled={busy || !connectorConfiguredForTarget}
+                    disabled={busy || (!onReturnToAccount && !connectorConfiguredForTarget)}
                     onClick={() => void (onReturnToAccount ? onReturnToAccount() : verified ? onDone() : verify())}
                     variant={native6UpgradeAvailable || repairIsNext ? "secondary" : "primary"}
                   >

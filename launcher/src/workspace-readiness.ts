@@ -84,6 +84,7 @@ export type ConnectionStatusKey =
   | "catalog-unavailable"
   | "needs-setup"              // a required connection is not set up
   | "not-connected"            // an optional connection is not set up
+  | "connector-pending"        // local tools: the runtime is set up; the ChatGPT connector is not verified yet
   | "needs-attention"          // set up, but degraded
   | "unavailable";             // set up, but not available right now
 
@@ -176,7 +177,10 @@ function toolsConnection(input: WorkspaceReadinessInput, tools: WorkspaceCapabil
   if (tools === "checking") return status("checking", "busy", "open");
   if (tools === "degraded") return status("needs-attention", "busy", "open");
   if (tools === "unavailable" && input.toolsInstalled) return status("unavailable", "error", "open");
-  // Not set up (or set up without a verified connector): required in Manual mode, optional otherwise.
+  // The harness is set up and only the ChatGPT connector is left: say so, rather than "Not connected" beside a
+  // wizard that shows its first two steps done.
+  if (input.toolsInstalled) return status("connector-pending", "idle", "connect");
+  // Not set up: required in Manual mode, optional otherwise.
   return input.manual ? status("needs-setup", "idle", "connect") : status("not-connected", "idle", "connect");
 }
 

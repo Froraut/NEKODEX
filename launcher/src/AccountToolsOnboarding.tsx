@@ -15,11 +15,15 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
 }) {
   const text = accountToolsCopy(language);
   const step = accountToolsStep(account, runtimeConfigured);
-  const open = async (url: string) => {
+  // Platform pages (tunnels) open in the system browser; ChatGPT pages open in this account's own window, so developer
+  // mode and the connector are set up in this account rather than whichever one the system browser is signed in to.
+  const open = async (url: string, inAccount = false) => {
     if (disabled) return;
     onError(null);
-    try { await window.codexWebLauncher!.openExternal(url); }
-    catch (error) { onError(error instanceof Error ? error.message : String(error)); }
+    try {
+      if (inAccount) await window.codexWebLauncher!.openBrowserWorkspace(account.id, { asTab: false, address: url });
+      else await window.codexWebLauncher!.openExternal(url);
+    } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   };
   const status = manual ? text.manual : step === 'checking' ? copy.checkingSignIn : text[step === 'sign-in' ? 'signIn' : step];
   return <section className="accounts-details__section accounts-tools" aria-labelledby={headingId}>
@@ -35,10 +39,10 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
             onFocus={event => event.currentTarget.select()} />
           <p>{text.identity}</p>
           <div className="accounts-inline-actions">
-            {urls.developerMode ? <Button size="sm" iconEnd="external" disabled={disabled}
-              onClick={() => void open(urls.developerMode!)}>{copy.openDeveloperMode}</Button> : null}
-            <Button size="sm" iconEnd="external" disabled={disabled || !connectorName}
-              onClick={() => void open(urls.connectors)}>{copy.openConnectors}</Button>
+            {urls.developerMode ? <Button size="sm" iconEnd="browser" disabled={disabled}
+              onClick={() => void open(urls.developerMode!, true)}>{copy.openDeveloperMode}</Button> : null}
+            <Button size="sm" iconEnd="browser" disabled={disabled || !connectorName}
+              onClick={() => void open(urls.connectors, true)}>{copy.openConnectors}</Button>
             <Button size="sm" variant="ghost" iconEnd="external" disabled={disabled}
               onClick={() => void open(urls.tunnels)}>{copy.openTunnels}</Button>
           </div>

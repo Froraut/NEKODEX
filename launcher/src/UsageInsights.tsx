@@ -85,7 +85,8 @@ function groupKey(group: UsageDiagnosticGroup) {
 }
 
 function failures(group: UsageDiagnosticGroup, labels: Partial<Record<UsageFailureCode, string>>, language: Language) {
-  const visible = group.failures.filter(failure => failure.count > 0);
+  // Cancellations are counted separately (cancelledLabel), not as failures.
+  const visible = group.failures.filter(failure => failure.count > 0 && failure.code !== "aborted");
   return visible.length ? visible.map(failure => `${labels[failure.code] ?? failure.code}: ${failure.count.toLocaleString(language)}`).join(", ") : "—";
 }
 

@@ -371,7 +371,8 @@ export function DoctorSummary({ copy, language, report }: { copy: Copy; language
       <div>
         {visibleChecks.map((check) => (
           <p key={check.id}>
-            <StateDot state={check.status === "ok" ? "ready" : check.status === "warning" ? "busy" : "error"} />
+            {/* A finished check: a warning is a steady amber dot, not the pulsing "still checking" one. */}
+            <StateDot state={check.status === "ok" ? "ready" : check.status === "warning" ? "optional" : "error"} />
             <span>{check.status === "ok"
               ? localizeRuntimeMessage(copy, check.message, check.id, language)
               : check.message}</span>

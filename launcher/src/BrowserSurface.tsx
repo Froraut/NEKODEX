@@ -9,6 +9,7 @@ import { Button, Icon, IconButton, Mark, Notice, Panel, Select, StateDot, cx } f
 import { messageOf } from "./launcher-ui";
 import { localizeLauncherError, type Copy } from "./i18n";
 import { browserControls } from "./browser-controls";
+import { browserSurfaceCopy } from "./browser-surface-copy";
 import { browserWindowCopy } from "./browser-window-copy";
 import { connectionsCopy } from "./connections-copy";
 import { passkeyFailureText } from "./passkey-copy";
@@ -62,7 +63,8 @@ export function BrowserSurface({
   const accountAction = useFeatureAction<string>(transitionBusy, cause => setError(messageOf(cause)));
   const [passkeyRequestPending, setPasskeyRequestPending] = useState(false);
   const [existingChromeStarting, setExistingChromeStarting] = useState(false);
-  const [cancelTarget, setCancelTarget] = useState<{ id: string; traceId: string | null } | null>(null);
+  // "cancel" stops a running task; "close" closes a failed or stopped task's kept page (how it ended).
+  const [cancelTarget, setCancelTarget] = useState<{ id: string; traceId: string | null; kind: "cancel" | "close" } | null>(null);
   const [closingTabs, setClosingTabs] = useState<Set<string>>(new Set());
   const closingTabRequests = useRef(new Set<string>());
   const confirmingTabRequests = useRef(new Set<string>());
@@ -71,8 +73,9 @@ export function BrowserSurface({
   const [sessionRetryBusy, setSessionRetryBusy] = useState(false);
   const activeBrowserTabs = browser?.tabs.filter(tab => tab.id !== "home" && ["running", "loading", "testing"].includes(tab.status)) ?? [];
   const recoverableBrowserTabs = browser?.tabs.filter(tab => tab.id !== "home" && !["error", "aborted"].includes(tab.status)) ?? [];
-  const cancelTab = browser?.tabs.find(tab => tab.id === cancelTarget?.id
-    && tab.traceId === cancelTarget?.traceId && tab.status === "running");
+  const cancelTab = browser?.tabs.find(tab => tab.id === cancelTarget?.id && tab.traceId === cancelTarget?.traceId
+    && (cancelTarget?.kind === "close" ? retainedOutcome(tab.status) : tab.status === "running"));
+  const surfaceWords = browserSurfaceCopy(language);
   useEffect(() => { if (cancelTarget && !cancelTab) setCancelTarget(null); }, [cancelTarget, cancelTab]);
   const visible = browser?.visible === true;
   const frameRef = useRef<HTMLElement>(null);
@@ -135,9 +138,9 @@ export function BrowserSurface({
       ?? selectedTab();
     target?.focus();
   });
-  const askToCancel = (tab: { id: string; traceId: string | null }, opener: HTMLElement | null) => {
+  const askToCancel = (tab: { id: string; traceId: string | null }, opener: HTMLElement | null, kind: "cancel" | "close" = "cancel") => {
     confirmOpener.current = opener;
-    setCancelTarget({ id: tab.id, traceId: tab.traceId });
+    setCancelTarget({ id: tab.id, traceId: tab.traceId, kind });
   };
   const activeTabId = browser?.tabs.find(tab => tab.active)?.id;
   useEffect(() => {
@@ -150,6 +153,7 @@ export function BrowserSurface({
     browser, operation, platform, interactionMode,
   );
   const navigationLocked = transitionBusy || browserNavigationLocked;
+  const accountOperationLocked = browser?.loginInProgress === true || passkeyWaiting || existingChromeWaiting;
   const accountSelectionLocked = transitionBusy || accountAction.pending !== null
     || browser?.loginInProgress === true || passkeyWaiting || existingChromeWaiting;
   const accounts = browser?.workspaces?.accounts ?? [];
@@ -191,10 +195,15 @@ export function BrowserSurface({
       setError(messageOf(cause));
     }
   };
+  // Choosing a tab shows it: re-selecting the current tab only reveals a hidden view, and another tab cannot be
+  // selected while a sign-in owns this account (the main process refuses it).
   const selectTab = async (tabId: string) => {
     if (transitionBusy) return;
+    const current = browser?.tabs.find(tab => tab.id === tabId)?.active === true;
+    if (!current && accountOperationLocked) return;
     try {
-      await api!.selectBrowserTab(tabId);
+      if (!current) await api!.selectBrowserTab(tabId);
+      if (!visible) await api!.showBrowser();
     } catch (cause) {
       setError(messageOf(cause));
     }
@@ -300,14 +309,15 @@ export function BrowserSurface({
   // The existing-Chrome guide owns its import failure (message, retry): the same operation error is not repeated above it.
   const errorOwnedByGuide = Boolean(error && browser?.existingChromeLogin && externalLoginGuide
     && operation?.name === "existing-chrome-login" && operation.status === "failed" && operation.message === error);
-  const zoomLevel = `${Math.round((browser?.zoomFactor ?? 1) * 100)}%`;
+  const zoomFactor = browser?.zoomFactor ?? 1;
+  const zoomLevel = `${Math.round(zoomFactor * 100)}%`;
   // The notice's action opens Connections (it does not repair by itself), worded like the Setup row's.
   const webRecoveryAction = readiness.action === "repair-web" ? connectionsCopy(language).openRepair
     : readiness.action === "open-tools" ? copy.manageToolsConnection : null;
 
   const sessionRecovery = visible && !manualInteraction && browser?.authenticationStatus === "unavailable";
   // One account context drives the embedded page and the separate windows (BrowserWorkspaceManager).
-  const accountControl = accounts.length > 0 && browser?.accountId ? <label className="browser-bar__account">
+  const accountControl = accounts.length > 1 && browser?.accountId ? <label className="browser-bar__account">
     <span>{windowCopy.account}</span>
     <Select className="browser-bar__select" size="sm" label={windowCopy.account} value={browser.accountId} disabled={accountSelectionLocked}
       options={accounts.map(account => ({ value: account.accountId, label: account.label }))}
@@ -317,8 +327,8 @@ export function BrowserSurface({
           void accountAction.run(accountId, () => api!.selectAccount(accountId));
         }
       }} />
-  </label> : browser?.accountName ? <span className="browser-bar__account">
-    <span>{windowCopy.account}</span><strong>{browser.accountName}</strong>
+  </label> : browser?.accountName || accounts[0]?.label ? <span className="browser-bar__account">
+    <span>{windowCopy.account}</span><strong>{browser?.accountName || accounts[0]?.label}</strong>
   </span> : null;
 
   return (
@@ -356,12 +366,10 @@ export function BrowserSurface({
                       }
                     }
                   }}
-                  aria-disabled={transitionBusy}
+                  aria-disabled={transitionBusy || (!tab.active && accountOperationLocked)}
                   role="tab"
                   aria-selected={tab.active}
-                  aria-label={`${tab.id === "home" ? "ChatGPT" : browserTabTitleFromTitle(tab.title, copy)} — ${tab.id === "home" ? (browser?.authenticated ? copy.sessionConnected : copy.stepAccount) : tab.status === "running" ? copy.running
-                    : tab.status === "loading" ? copy.loading : tab.status === "testing" ? copy.overviewRunTesting
-                      : tab.status === "error" ? copy.failed : tab.status === "ready" ? copy.complete : copy.noActiveTask}`}
+                  aria-label={`${tab.id === "home" ? "ChatGPT" : browserTabTitleFromTitle(tab.title, copy)} — ${browserTabStatusLabel(tab, browser?.authenticated === true, copy, surfaceWords)}`}
                   tabIndex={tab.active ? 0 : -1}
                   type="button"
                 >
@@ -378,6 +386,7 @@ export function BrowserSurface({
                     className="nk-icon-btn nk-icon-btn--sm browser-tabs__close"
                     onClick={(event) => {
                       if (running) askToCancel(tab, event.currentTarget);
+                      else if (retainedOutcome(tab.status)) askToCancel(tab, event.currentTarget, "close");
                       else void closeTab(tab.id, tab.traceId);
                     }}
                     title={running ? copy.manualPromptCancel : copy.hideTab}
@@ -422,13 +431,13 @@ export function BrowserSurface({
         <BrowserAddressBar url={browser?.url} copy={copy} language={language} platform={platform}
           locked={navigationLocked} setError={setError} />
         <div className="browser-nav__group">
-          <IconButton icon="minus" label={copy.zoomOut} onClick={() => void zoom("out")} />
+          <IconButton icon="minus" label={copy.zoomOut} disabled={zoomFactor <= MIN_ZOOM} onClick={() => void zoom("out")} />
           {/* The spoken name starts with the visible level: "100% Reset zoom". */}
-          <Button variant="ghost" size="sm" className="browser-nav__zoom" title={copy.zoomReset}
+          <Button variant="ghost" size="sm" className="browser-nav__zoom" title={copy.zoomReset} disabled={zoomFactor === 1}
             onClick={() => void zoom("reset")}>
             {zoomLevel}<span className="nk-visually-hidden"> {copy.zoomReset}</span>
           </Button>
-          <IconButton icon="plus" label={copy.zoomIn} onClick={() => void zoom("in")} />
+          <IconButton icon="plus" label={copy.zoomIn} disabled={zoomFactor >= MAX_ZOOM} onClick={() => void zoom("in")} />
         </div>
         <div className="browser-nav__actions">
           {existingChromeAvailable && !externalLoginGuide ? (
@@ -460,15 +469,18 @@ export function BrowserSurface({
           onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setCancelTarget(null); } }}>
           <Panel as="div" variant="raised" padding="compact" className="browser-confirm__panel">
             <div className="browser-confirm__copy">
-              <strong>{copy.browserCancelTaskTitle}</strong>
+              <strong>{cancelTarget?.kind === "close" ? surfaceWords.closeFailedTitle : copy.browserCancelTaskTitle}</strong>
               <p className="browser-confirm__target">{browserTabTitleFromTitle(cancelTab.title, copy)}</p>
-              <p>{copy.browserCancelTaskBody}</p>
+              <p>{cancelTarget?.kind === "close" ? surfaceWords.closeFailedBody : copy.browserCancelTaskBody}</p>
             </div>
             <div className="browser-confirm__actions">
               <Button autoFocus disabled={transitionBusy || closingTabs.has(cancelTab.id)} onClick={() => setCancelTarget(null)}>{copy.back}</Button>
               <Button variant="danger" disabled={transitionBusy || closingTabs.has(cancelTab.id)}
-                aria-label={`${copy.manualPromptCancel}: ${browserTabTitleFromTitle(cancelTab.title, copy)}`}
-                onClick={() => void closeTab(cancelTab.id, cancelTab.traceId)}>{closingTabs.has(cancelTab.id) ? copy.browserCancellingTask : copy.manualPromptCancel}</Button>
+                aria-label={`${cancelTarget?.kind === "close" ? surfaceWords.closeFailedConfirm : copy.manualPromptCancel}: ${browserTabTitleFromTitle(cancelTab.title, copy)}`}
+                onClick={() => void closeTab(cancelTab.id, cancelTab.traceId)}>
+                {cancelTarget?.kind === "close" ? surfaceWords.closeFailedConfirm
+                  : closingTabs.has(cancelTab.id) ? copy.browserCancellingTask : copy.manualPromptCancel}
+              </Button>
             </div>
           </Panel>
         </div> : null}
@@ -569,6 +581,27 @@ export function browserTabTitleFromTitle(value: string | undefined, copy: Copy):
   const title = value?.trim();
   if (!title || title === "about:blank" || title.includes("codex-web-gpt-browser-host")) return copy.temporaryChat;
   return title.replace(/\s*[|–-]\s*ChatGPT\s*$/i, "") || copy.temporaryChat;
+}
+
+// The main process zooms between these bounds (ZOOM_FACTORS in electron/browser-host.cjs); past them a click does nothing.
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2;
+
+/** A finished task whose kept page is the only record of how it ended. */
+function retainedOutcome(status: BrowserState["tabs"][number]["status"]): boolean {
+  return status === "error" || status === "aborted";
+}
+
+/** The spoken state of a tab; it agrees with the tab's dot (browserTabTone). */
+function browserTabStatusLabel(tab: BrowserState["tabs"][number], authenticated: boolean, copy: Copy,
+  words: { stoppedTab: string }): string {
+  if (tab.status === "running") return copy.running;
+  if (tab.status === "loading") return copy.loading;
+  if (tab.status === "testing") return copy.overviewRunTesting;
+  if (tab.status === "error") return copy.failed;
+  if (tab.status === "aborted") return words.stoppedTab;
+  if (tab.id === "home") return authenticated ? copy.sessionConnected : copy.stepAccount;
+  return tab.status === "ready" ? copy.complete : copy.noActiveTask;
 }
 
 function browserTabTone(status: BrowserState["tabs"][number]["status"]): "idle" | "ready" | "busy" | "error" {
