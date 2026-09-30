@@ -430,7 +430,8 @@ body {
 .nk-nav-item:hover > .nk-icon { color: var(--icon-secondary); }
 .nk-nav-item[aria-current="page"] { background: var(--bg-accent-subtle); color: var(--text-accent); font-weight: 500; }
 .nk-nav-item[aria-current="page"] > .nk-icon { color: var(--text-accent); }
-.nk-nav-item[aria-current="page"]::before { position: absolute; top: 12px; bottom: 12px; left: 0; width: 3px; border-radius: var(--radius-pill); background: var(--accent); content: ""; }
+/* App: the bar sits inside the highlight, clear of its rounded edge, so it does not read as a broken border. */
+.nk-nav-item[aria-current="page"]::before { position: absolute; top: 11px; bottom: 11px; left: 4px; width: 3px; border-radius: var(--radius-pill); background: var(--accent); content: ""; }
 .nk-nav-item.is-update { background: var(--bg-accent-subtle); color: var(--text-accent); }
 .nk-nav-item.is-update > .nk-icon { color: var(--text-accent); }
 .nk-nav-item__badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; flex: none; padding: 0 6px; border-radius: var(--radius-pill); background: var(--bg-control-active); color: var(--text-secondary); font-size: 13px; line-height: 1; font-style: normal; font-variant-numeric: tabular-nums; }
