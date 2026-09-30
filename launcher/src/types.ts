@@ -533,6 +533,8 @@ export interface LauncherApi {
   hideBrowser(): Promise<BrowserState>;
   navigateBrowser(action: "back" | "forward" | "reload"): Promise<BrowserState>;
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
+  /** Loads a ChatGPT page in the ChatGPT tab or opens another web address in the system browser. */
+  openBrowserAddress(address: string): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;
   closeBrowserTab(tabId: string, expectedTraceId?: string | null): Promise<BrowserState>;
   dismissTask(accountId: string, id: string): Promise<BrowserState>;
@@ -623,6 +625,8 @@ export interface LauncherApi {
   onWindowStateChanged(listener: (state: { fullScreen: boolean; maximized: boolean }) => void): () => void;
   onStateChanged(listener: (state: LauncherState) => void): () => void;
   onBrowserState(listener: (state: BrowserState) => void): () => void;
+  /** ⌘L / Ctrl+L pressed anywhere in the browser surface, including inside the ChatGPT page. */
+  onBrowserFocusAddress?(listener: () => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;
   onLifecycle(listener: (state: LauncherLifecycle) => void): () => void;
   onLog(listener: (record: LogRecord) => void): () => void;

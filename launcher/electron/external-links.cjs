@@ -108,17 +108,10 @@ function createExternalLinkBroker({
     contents.off("destroyed", state.destroy);
   }
 
-  async function open(contents, value, context = "remote") {
-    const state = owned.get(contents);
-    const url = externalWebUrl(value);
+  async function openVerified(url, context, authorize) {
     const origin = url.origin;
     try {
-      if (!state || contents.isDestroyed() || !isVisible(contents)
-        || clock() - state.gestureAt < 0 || clock() - state.gestureAt > gestureWindowMs) {
-        throw new Error("External link requires a recent gesture on the visible browser surface");
-      }
-      // Consume the gesture before asynchronous DNS/open work so one click authorizes one link.
-      state.gestureAt = 0;
+      authorize();
       const hostname = normalizedHostname(url.hostname);
       if (!net.isIP(hostname)) {
         let timer;
@@ -144,10 +137,29 @@ function createExternalLinkBroker({
     }
   }
 
+  async function open(contents, value, context = "remote") {
+    return openVerified(externalWebUrl(value), context, () => {
+      const state = owned.get(contents);
+      if (!state || contents.isDestroyed() || !isVisible(contents)
+        || clock() - state.gestureAt < 0 || clock() - state.gestureAt > gestureWindowMs) {
+        throw new Error("External link requires a recent gesture on the visible browser surface");
+      }
+      // Consume the gesture before asynchronous DNS/open work so one click authorizes one link.
+      state.gestureAt = 0;
+    });
+  }
+
+  // An address the user typed into the launcher's own toolbar: that Enter press is the gesture. Page content cannot
+  // reach this path, and the same public-host checks apply.
+  async function openTyped(value, context = "address") {
+    return openVerified(externalWebUrl(value), context, () => {});
+  }
+
   return {
     register,
     unregister,
     open,
+    openTyped,
     destroy() { for (const contents of [...owned.keys()]) unregister(contents); },
   };
 }

@@ -129,11 +129,52 @@ function isChatGptCloudflareChallengeResponse(details) {
     && responseHeaderIncludes(details.responseHeaders, "cf-mitigated", "challenge");
 }
 
+const INVALID_BROWSER_ADDRESS = "Enter a ChatGPT page or a web address";
+const MAX_BROWSER_ADDRESS_LENGTH = 4096;
+const CHATGPT_ADDRESS_HOSTS = new Set(["chatgpt.com", "www.chatgpt.com", "chat.openai.com"]);
+const NON_WEB_SCHEME = /^(?:about|blob|chrome|data|devtools|file|filesystem|javascript|mailto|view-source|vbscript):/i;
+
+function invalidBrowserAddress() {
+  const error = new Error(INVALID_BROWSER_ADDRESS);
+  error.code = "invalid_browser_address";
+  return error;
+}
+
+// What the user typed into the toolbar address field. ChatGPT pages load in the embedded view; any other web
+// address goes to the system browser, the same place a link clicked inside ChatGPT opens.
+// Accepted: full URLs, "chatgpt.com/…" or another host, "/path" or "?query", and a bare ChatGPT path ("codex", "c/<id>").
+function resolveBrowserAddress(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || text.length > MAX_BROWSER_ADDRESS_LENGTH || /\s/.test(text) || NON_WEB_SCHEME.test(text)) {
+    throw invalidBrowserAddress();
+  }
+  let candidate = text;
+  if (/^[/?#]/.test(candidate)) candidate = `${CHATGPT_ORIGIN}${candidate.startsWith("/") ? "" : "/"}${candidate}`;
+  else if (!/^[a-z][a-z\d+.-]*:\/\//i.test(candidate)) {
+    // A dot or a port in the part before the path names a host; otherwise it is a ChatGPT path.
+    candidate = /^[^/?#]*[.:]/.test(candidate) ? `https://${candidate}` : `${CHATGPT_ORIGIN}/${candidate}`;
+  }
+  let url;
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw invalidBrowserAddress();
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !url.hostname) {
+    throw invalidBrowserAddress();
+  }
+  if (CHATGPT_ADDRESS_HOSTS.has(url.hostname) && !url.port) {
+    return { target: "chatgpt", url: `${CHATGPT_ORIGIN}${url.pathname}${url.search}${url.hash}` };
+  }
+  return { target: "external", url: url.toString() };
+}
+
 module.exports = {
   allowedAuthUrl,
   allowedWorkspaceUrl,
   CHATGPT_ORIGIN,
   guardBrowserNavigation,
+  INVALID_BROWSER_ADDRESS,
   isAbortedNavigationError,
   isChatGptBackendUrl,
   isChatGptCloudflareChallengeResponse,
@@ -141,6 +182,7 @@ module.exports = {
   isWorkspaceSessionMutationRequest,
   navigationErrorForLog,
   navigationOriginForLog,
+  resolveBrowserAddress,
   SAVED_CHAT_URL,
   TEMPORARY_CHAT_URL,
 };

@@ -16,6 +16,10 @@ function registerBrowserHandlers({
   handle("launcher:browser-hide", () => { getBrowserHost()?.hide(); return getBrowserHost()?.snapshot(); });
   handle("launcher:browser-navigate", (_event, action) => getBrowserHost().navigate(action));
   handle("launcher:browser-zoom", (_event, action) => getBrowserHost().zoom(action));
+  handle("launcher:browser-open-address", (_event, address) => {
+    if (typeof address !== "string" || address.length > 4096) throw new Error("Invalid browser address");
+    return getBrowserHost().openAddress(address);
+  });
   handle("launcher:browser-tab-select", (_event, tabId) => getBrowserHost().selectTab(tabId));
   handle("launcher:browser-tab-close", (_event, tabId, expectedTraceId) => getBrowserHost().closeTab(tabId, expectedTraceId));
   handle('launcher:task-dismiss', (_event, accountId, id) => getBrowserHost().dismissTask(accountId, id));

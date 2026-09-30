@@ -1,5 +1,6 @@
 import { useFeatureAction } from "./useFeatureAction";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { BrowserAddressBar } from "./BrowserAddressBar";
 import { BrowserWorkspaceManager } from "./BrowserWorkspaceManager";
 import { ExistingChromeLoginGuide } from "./ExistingChromeLoginGuide";
 import { PasskeyLoginGuide } from "./PasskeyLoginGuide";
@@ -305,7 +306,6 @@ export function BrowserSurface({
     : readiness.action === "open-tools" ? copy.manageToolsConnection : null;
 
   const sessionRecovery = visible && !manualInteraction && browser?.authenticationStatus === "unavailable";
-  const address = formatBrowserAddress(browser?.url, copy);
   // One account context drives the embedded page and the separate windows (BrowserWorkspaceManager).
   const accountControl = accounts.length > 0 && browser?.accountId ? <label className="browser-bar__account">
     <span>{windowCopy.account}</span>
@@ -419,11 +419,8 @@ export function BrowserSurface({
           />
           <IconButton disabled={navigationLocked || !visible} icon="reload" label={copy.reload} onClick={() => void navigate("reload")} />
         </div>
-        {/* A location label, not an editable address field. */}
-        <div className="browser-nav__location" title={address}>
-          <Icon className="nk-icon" name="globe" />
-          <span>{address}</span>
-        </div>
+        <BrowserAddressBar url={browser?.url} copy={copy} language={language} platform={platform}
+          locked={navigationLocked} setError={setError} />
         <div className="browser-nav__group">
           <IconButton icon="minus" label={copy.zoomOut} onClick={() => void zoom("out")} />
           {/* The spoken name starts with the visible level: "100% Reset zoom". */}
@@ -584,18 +581,4 @@ function browserTabTone(status: BrowserState["tabs"][number]["status"]): "idle" 
 function formatDateTime(value: string, language: Language): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(date);
-}
-
-function formatBrowserAddress(url: string | undefined, copy: Copy): string {
-  if (!url || url.startsWith("about:blank")) return copy.browserAddress;
-  try {
-    const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) return copy.browserAddress;
-    if (parsed.hostname === "chatgpt.com" && parsed.searchParams.get("temporary-chat") === "true") {
-      return `chatgpt.com  /  ${copy.temporaryChat}`;
-    }
-    return `${parsed.hostname}${parsed.pathname === "/" ? "" : parsed.pathname}`;
-  } catch {
-    return copy.browserAddress;
-  }
 }
