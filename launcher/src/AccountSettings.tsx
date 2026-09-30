@@ -214,11 +214,9 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       quotaRevisions.current.set(id, revision);
       return [id, revision] as const;
     }));
-    setQuotas(current => {
-      const next = new Map([...current].filter(([id]) => activeIds.has(id)));
-      for (const id of hydrationAccounts) next.set(id, null);
-      return next;
-    });
+    // A re-read keeps each card's current allowance until its new value arrives: null would claim "not checked yet"
+    // on every card whenever one account changes. An account with no value yet reads as loading (undefined).
+    setQuotas(current => new Map([...current].filter(([id]) => activeIds.has(id))));
     setQuotaFailures(current => new Set([...current].filter(id => activeIds.has(id))));
     void (async () => {
       for (const id of hydrationAccounts) {
@@ -578,7 +576,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       <div className="accounts-list">
         {state.accounts.map((account, accountIndex) => {
           const selected = account.id === state.selectedId;
-          const credentialLabel = account.authenticated ? copy.replaceCredentials : copy.accountsSignIn;
+          // Signed in, the button shows that account's session; nothing is replaced (the host skips sign-in).
+          const credentialLabel = account.authenticated ? text.openInBrowser : copy.accountsSignIn;
           const authUnavailable = account.authenticationStatus === "unavailable";
           const authChecking = account.authenticationStatus === "unknown";
           const authRefreshBusy = authRefreshing.has(account.id);
@@ -603,7 +602,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const selectReason = blockedReason ?? readinessReason
             ?? (!manual && !account.checked ? text.selectNeedsCheck : undefined);
           const checkReason = blockedReason ?? (manual ? copy.accountsManual : readinessReason);
-          const credentialReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined);
+          const credentialReason = blockedReason ?? (quotaReadBusy ? codexCopy.quotaChecking : undefined)
+            ?? (account.authenticated && !selected && !manual && !account.checked ? text.selectNeedsCheck : undefined);
           const anotherLoginReason = (startingAccountId !== null && startingAccountId !== account.id)
             || Boolean(login && (login.active || login.settling) && login.accountId !== account.id)
             ? (login?.settling ? codexCopy.loginSettlingCurrent : codexCopy.loginCurrent)
@@ -645,7 +645,9 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           const quotaReasonId = quotaDisabledReason ? shown.get(quotaDisabledReason) : undefined;
           if (quotaDisabledReason && !quotaReasonId) shown.set(quotaDisabledReason, `${ids.codex}-quota-reason`);
           const enabledDisabled = mutationsDisabled || loginBoundActive;
-          const credentialDisabled = mutationsDisabled || active || loginBoundActive || quotaReadBusy;
+          // Opening a signed-in account selects it, so it needs the same check as Select.
+          const opensUncheckedAccount = account.authenticated && !selected && !manual && !account.checked;
+          const credentialDisabled = mutationsDisabled || active || loginBoundActive || quotaReadBusy || opensUncheckedAccount;
           const authRetryDisabled = Boolean(credentialReason);
           const selectDisabled = mutationsDisabled || loginBoundActive || !account.authenticated || (!manual && !account.checked);
           const checkDisabled = mutationsDisabled || manual || active || loginBoundActive || !account.authenticated;
@@ -698,8 +700,9 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                   disabled={credentialDisabled} aria-label={credentialLabel}
                   aria-describedby={describedBy(credentialDisabled, credentialReason)}
                   title={sessionMutationReason} onClick={() => void run("credentials", account.id, async () => {
-                    const next = await api.selectAccount(account.id);
-                    applyReceipt(next);
+                    // Selecting again resets the setup proof (launcher:account-select), so only switch when needed;
+                    // openAccountLogin selects the account itself as well.
+                    if (!selected) applyReceipt(await api.selectAccount(account.id));
                     openBrowser();
                     await api.openAccountLogin(account.id);
                     return api.accounts();

@@ -46,8 +46,10 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const [retryError, setRetryError] = useState<string | null>(null);
   const retryInFlight = useRef(false);
   const retrySession = async () => {
-    if (retryInFlight.current || snapshot.lifecycle?.transition || browser?.navigationLocked) return;
-    if (!browser?.accountId || !api) { navigate("accounts"); return; }
+    if (retryInFlight.current) return;
+    // A running task, sign-in or lifecycle transition holds the session: Accounts shows why the check must wait,
+    // instead of a click that silently does nothing here.
+    if (snapshot.lifecycle?.transition || browser?.navigationLocked || !browser?.accountId || !api) { navigate("accounts"); return; }
     retryInFlight.current = true;
     setRetrying(true);
     setRetryError(null);
@@ -75,7 +77,8 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   const runStatus = (status: BrowserState["tabs"][number]["status"]) => status === "running"
     ? copy.overviewRunRunning : status === "testing" ? copy.overviewRunTesting : copy.overviewRunLoading;
   // While the retry runs, the session row reports the check it is waiting for.
-  const sessionStatus: ConnectionStatus = retrying ? { key: "checking", dot: "busy", action: "retry", ready: false }
+  // Its action opens Accounts meanwhile, as for any check in progress: offering "Retry" again would do nothing.
+  const sessionStatus: ConnectionStatus = retrying ? { key: "checking", dot: "busy", action: "open", ready: false }
     : readiness.connections.session;
   const connections: Array<{ icon: IconName; label: string; surface: Surface; status: ConnectionStatus }> = [
     { icon: "accounts", label: copy.accountConnection, surface: "accounts", status: sessionStatus },

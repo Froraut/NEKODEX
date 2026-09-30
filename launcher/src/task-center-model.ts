@@ -9,7 +9,8 @@ export function filterTasks(tasks: BrowserTaskState[], filters: { account: strin
   return tasks.filter(task => (!account || task.accountId === account)
     && (status === 'all' || (status === 'active' ? !task.terminal
       : status === 'completed' ? task.terminal && task.phase === 'completed'
-      : task.terminal && task.phase !== 'completed'))
+      // A task the user cancelled is drawn as quiet (grey dot), so it is not listed as needing attention.
+      : task.terminal && task.phase !== 'completed' && task.phase !== 'cancelled'))
     && (!search || [task.traceId, task.accountName, task.model ?? ''].some(value => value.toLocaleLowerCase(language).includes(search))));
 }
 export function eligibleTaskConfirmation(tasks: BrowserTaskState[], target: TaskConfirmationTarget | null): TaskConfirmationTarget | null {

@@ -112,7 +112,9 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
                   : row.status === 'paused' || row.reason?.startsWith('paused') ? text[16] : text[14];
         const state = entryState(row);
         const notSent = ['waiting', 'paused', 'admitting', 'cancelling', 'cancelled', 'failed'].includes(row.status);
-        const actions = row.canPrioritize || row.canResume || row.canCancel || row.canDismiss;
+        // Moving to the front is offered only to a row that has another waiting row ahead of it.
+        const canPrioritize = row.canPrioritize && row.position > 1;
+        const actions = canPrioritize || row.canResume || row.canCancel || row.canDismiss;
         // Row buttons repeat across rows ("Dismiss", "Cancel waiting task"): describe each by its row's title and trace.
         const id = `${rowId}-${index}`;
         const describedBy = `${id}-title ${id}-trace`;
@@ -124,7 +126,7 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
               {row.retryAt ? <> · <time dateTime={new Date(row.retryAt).toISOString()}>{timeFormat.format(row.retryAt)}</time></> : null}</p>
           </div>
           {actions ? <div className="task-row__actions">
-            {row.canPrioritize ? <Button size="sm" data-action="prioritize" aria-describedby={describedBy} disabled={disabled || pending} onClick={() => void act(`prioritize:${row.id}`, () => action(row.id, 'prioritize'))}>{text[6]}</Button> : null}
+            {canPrioritize ? <Button size="sm" data-action="prioritize" aria-describedby={describedBy} disabled={disabled || pending} onClick={() => void act(`prioritize:${row.id}`, () => action(row.id, 'prioritize'))}>{text[6]}</Button> : null}
             {row.canResume ? <Button size="sm" data-action="resume" aria-describedby={describedBy} disabled={disabled || pending} onClick={() => void act(`resume:${row.id}`, () => action(row.id, 'resume'))}>{text[7]}</Button> : null}
             {row.canCancel ? <Button size="sm" variant="ghost" data-action="cancel" aria-describedby={describedBy} disabled={disabled || pending} onClick={() => void act(`cancel:${row.id}`, () => action(row.id, 'cancel'))}>{text[5]}</Button> : null}
             {row.canDismiss ? <Button size="sm" variant="ghost" data-action="dismiss" aria-describedby={describedBy} disabled={disabled || pending} onClick={() => void act(`dismiss:${row.id}`, () => action(row.id, 'dismiss'))}>{text[8]}</Button> : null}

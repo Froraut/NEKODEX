@@ -122,7 +122,8 @@ export function UsageDashboard({ copy, language }: { copy: Copy; language: Langu
   const knownRateBody = web ? copy.usageWebKnownRateBody : copy.usageNativeKnownRateBody;
   const nativeRecordedOnly = copy.usageNativeRecordedOnly;
   const diagnosticGroups = (visible?.diagnosticGroups ?? []).filter(group => group.source === source);
-  const failures = visible?.failures.filter(item => item.count > 0) ?? [];
+  // Cancellations have their own column and stat; "Failures" lists failures only.
+  const failures = visible?.failures.filter(item => item.count > 0 && item.code !== "aborted") ?? [];
   const rateValue = rate === null || rate === undefined ? copy.usageNotAvailable : formatUsageRate(rate, language);
   const medianValue = visible ? duration(visible.durations.medianMs, copy, language) : copy.usageNotAvailable;
   const p95Value = visible ? duration(visible.durations.p95Ms, copy, language) : copy.usageNotAvailable;

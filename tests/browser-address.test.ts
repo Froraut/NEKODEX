@@ -64,3 +64,28 @@ test("a typed address opens without a page gesture but keeps the public-host che
   await expect(broker.open({ isDestroyed: () => false }, "https://example.com/")).rejects.toThrow("recent gesture");
   expect(opened).toEqual(["https://example.com/docs"]);
 });
+
+test("an account window opens only ChatGPT pages from a given address", async () => {
+  const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
+  const opened: Array<Record<string, unknown>> = [];
+  const pool = Object.create(AccountBrowserPool.prototype);
+  Object.assign(pool, {
+    destroyed: false,
+    registry: { snapshot: () => ({ accounts: [{ id: "default", label: "Primary" }] }) },
+    getHost: () => ({ ready: async () => {}, workspaceManager: () => ({ open: (options: Record<string, unknown>) => opened.push(options) }) }),
+    publish: () => {},
+    snapshot: () => "snapshot",
+  });
+  await pool.openWorkspace("default", { asTab: false });
+  await pool.openWorkspace("default", { asTab: false, address: "https://chatgpt.com/#settings/Security?section=developer-mode" });
+  await pool.openWorkspace("default", { asTab: false, address: "chat.openai.com/plugins" });
+  expect(opened).toEqual([
+    { asTab: false },
+    { asTab: false, url: "https://chatgpt.com/#settings/Security?section=developer-mode" },
+    { asTab: false, url: "https://chatgpt.com/plugins" },
+  ]);
+  await expect(pool.openWorkspace("default", { asTab: false, address: "https://platform.openai.com/settings" }))
+    .rejects.toThrow("Only ChatGPT pages open in an account window");
+  await expect(pool.openWorkspace("default", { asTab: false, address: 42 })).rejects.toThrow("Browser workspace options are invalid");
+  expect(opened).toHaveLength(3);
+});

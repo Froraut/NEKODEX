@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { BrowserHost } = require('./browser-host.cjs');
+const { resolveBrowserAddress } = require('./browser-navigation-policy.cjs');
 const { AccountSafety } = require('./account-safety.cjs');
 const { AccountNetwork, validateProxy } = require('./account-network.cjs');
 const { UsageStore } = require('./usage-store.cjs');
@@ -882,15 +883,24 @@ class AccountBrowserPool {
   }
   async openWorkspace(accountId, options = {}) {
     validateAccountId(accountId);
-    if (!options || typeof options !== 'object' || typeof options.asTab !== 'boolean') {
+    if (!options || typeof options !== 'object' || typeof options.asTab !== 'boolean'
+      || (options.address !== undefined && (typeof options.address !== 'string' || options.address.length > 4096))) {
       throw new Error('Browser workspace options are invalid');
+    }
+    // An optional ChatGPT page (connector setup: developer mode, plugins) opens in this account's own session, so it
+    // cannot land in another ChatGPT account the way a system-browser link can. Other sites are refused here.
+    let url;
+    if (options.address !== undefined) {
+      const target = resolveBrowserAddress(options.address);
+      if (target.target !== 'chatgpt') throw new Error('Only ChatGPT pages open in an account window');
+      url = target.url;
     }
     const account = this.registry.snapshot().accounts.find(candidate => candidate.id === accountId);
     if (!account || this.destroyed) throw new Error('ChatGPT account is unavailable');
     const host = this.getHost(accountId);
     await host.ready();
     const manager = host.workspaceManager(account.label);
-    manager.open({ asTab: options.asTab }); this.publish(); return this.snapshot();
+    manager.open({ asTab: options.asTab, ...(url ? { url } : {}) }); this.publish(); return this.snapshot();
   }
   async restoreWorkspaces(accountId) {
     validateAccountId(accountId);
