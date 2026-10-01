@@ -4,6 +4,8 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { stableChromiumUserAgent } = require("../launcher/electron/browser-user-agent.cjs");
 const { observeChatGptSession } = require("../launcher/electron/browser-session-observation.cjs");
+const { authenticationProbeScript } = require("../launcher/electron/browser-auth-probe.cjs");
+const { isTemporaryChatUrl } = require("../launcher/electron/browser-navigation-policy.cjs");
 
 const electronDefault = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
   + "NEKODEX/6.1.2-nekodex.1 Chrome/146.0.7680.216 Electron/41.10.7 Safari/537.36";
@@ -50,6 +52,39 @@ test("a challenged or redirected session check is a failure, not a sign-out", as
   await expect(observeChatGptSession(pageWith({ status: 200, body: {}, url: "https://chatgpt.com/auth/login" })))
     .rejects.toThrow("session endpoint redirected");
   await expect(observeChatGptSession({ isDestroyed: () => true })).rejects.toThrow("session page is unavailable");
+});
+
+test("authentication survives a completed Temporary Chat without treating it as a fresh home", async () => {
+  const conversation = "https://chatgpt.com/c/11111111-2222-3333-4444-555555555555";
+  const composer = { isConnected: true, getBoundingClientRect: () => ({ width: 400, height: 26 }) };
+  const observe = (url: string, sessionUser = true) => new Function(
+    "location", "document", "getComputedStyle", "fetch", `return ${authenticationProbeScript()}`,
+  )(
+    { href: url },
+    { querySelectorAll: () => [composer], visibilityState: "visible", readyState: "complete" },
+    () => ({ display: "block", visibility: "visible", opacity: "1" }),
+    async () => ({ ok: true, url: "https://chatgpt.com/api/auth/session",
+      headers: { get: () => "application/json" },
+      json: async () => sessionUser ? { user: { id: "probe-fixture-user" } } : {},
+    }),
+  );
+
+  for (const url of ["https://chatgpt.com/?temporary-chat=true", `${conversation}?temporary-chat=true`]) {
+    const result = await observe(url);
+    expect(result.temporary).toBe(true);
+    expect(result.composer).toBe(true);
+    expect(result.sessionAuthenticated).toBe(true);
+    expect(result.principalFingerprint).toMatch(/^[a-f0-9]{64}$/);
+  }
+  for (const url of [conversation, `${conversation}?temporary-chat=false`,
+    `${conversation}/nested?temporary-chat=true`, "https://chatgpt.com/c/?temporary-chat=true",
+    "https://chatgpt.com/settings?temporary-chat=true", "https://example.com/?temporary-chat=true"]) {
+    expect((await observe(url)).temporary).toBe(false);
+  }
+  const signedOut = await observe(`${conversation}?temporary-chat=true`, false);
+  expect(signedOut.sessionAuthenticated).toBe(false);
+  expect(signedOut.sessionVerification).toBe("rejected");
+  expect(isTemporaryChatUrl(`${conversation}?temporary-chat=true`)).toBe(false);
 });
 
 // This optional fixture launches an isolated headless browser; it never uses an account.
