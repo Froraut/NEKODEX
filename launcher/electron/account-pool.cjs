@@ -881,6 +881,12 @@ class AccountBrowserPool {
       sessionMutation: this.workspaceSessionMutations.get(account.accountId)?.snapshot().mutation ?? null,
     })) };
   }
+  async openOpenAiApiPanel(accountId, section = "tunnels") {
+    validateAccountId(accountId);
+    const account = this.registry.snapshot().accounts.find(candidate => candidate.id === accountId);
+    if (!account || this.destroyed) throw new Error('ChatGPT account is unavailable');
+    return this.getHost(accountId).openOpenAiApiPanel(account.label, section);
+  }
   async openWorkspace(accountId, options = {}) {
     validateAccountId(accountId);
     if (!options || typeof options !== 'object' || typeof options.asTab !== 'boolean'
@@ -1501,6 +1507,10 @@ class AccountBrowserPool {
     const removedOwner = this.unsentAdmissions?.get(traceId)?.removedOwner;
     if (removedOwner && removedOwner.helperPid === helperPid) this.settleRemovedUnsentAdmission(removedOwner);
     const result = await owner.endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound);
+    const settledStatus = result?.cancelledByUser ? 'aborted'
+      : result?.authenticationRequired && status === 'completed' ? 'failed' : status;
+    const settledFailureCode = settledStatus === 'failed' && result?.authenticationRequired
+      ? 'chatgpt_sign_in_required' : failureCode;
     // A failed turn may retain its inspection surface; host end must succeed before refund.
     if (tab && owner.turnTabs.get(tab.id) === tab
       && owner.taskLedger?.get(tab.taskRecordId)?.terminal
@@ -1508,8 +1518,8 @@ class AccountBrowserPool {
     const pendingRemoval = this.unsentAdmissions?.get(traceId)?.removedOwner;
     if (pendingRemoval) this.settleRemovedUnsentAdmission(pendingRemoval);
     this.admissionQueue?.retire(traceId, helperPid);
-    this.recordUsage(() => this.usage.finish(traceId, helperPid, status, undefined, failureCode));
-    try { if (id && status === 'failed') this.safety.fail(id, failureCode); }
+    this.recordUsage(() => this.usage.finish(traceId, helperPid, settledStatus, undefined, settledFailureCode));
+    try { if (id && settledStatus === 'failed') this.safety.fail(id, settledFailureCode); }
     catch (error) {
       this.logger.warn('browser.account_safety_failure_record_failed', {
         accountId: id,

@@ -536,5 +536,7 @@
   "logOutConfirmBody": "Выйти из ChatGPT в NEKODEX? Перед новыми Web-задачами потребуется снова войти, возможно с ключом доступа.",
   "logOutKeepSignedIn": "Остаться в аккаунте",
   "restartingRuntime": "Перезапуск…",
-  "manualPromptCopied": "Запрос скопирован"
+  "manualPromptCopied": "Запрос скопирован",
+  "openAiApiPanel": "OpenAI API",
+  "apiPanelConnectorHint": "В API Panel выбери аккаунт и workspace, из которых будет подключаться ChatGPT. Создай или выбери туннель и разреши доступ этому workspace, затем вернись сюда для подключения коннектора ChatGPT."
 }

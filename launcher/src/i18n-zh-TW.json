@@ -536,5 +536,7 @@
   "logOutConfirmBody": "要在 NEKODEX 中登出 ChatGPT 嗎？執行新的 Web 回合前需要重新登入，可能需要使用通行金鑰。",
   "logOutKeepSignedIn": "保持登入",
   "restartingRuntime": "正在重新啟動…",
-  "manualPromptCopied": "已複製提示詞"
+  "manualPromptCopied": "已複製提示詞",
+  "openAiApiPanel": "OpenAI API",
+  "apiPanelConnectorHint": "在 API 面板中使用將從 ChatGPT 連線的帳戶與工作區。建立或選擇通道，並允許該工作區使用它，然後返回此處連接 ChatGPT 連接器。"
 }

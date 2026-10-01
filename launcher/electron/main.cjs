@@ -428,8 +428,8 @@ function trayImage() {
   if (process.platform !== "darwin") {
     return nativeImage.createFromPath(APP_ICON_PATH).resize({ width: 18, height: 18 });
   }
-  const svg = fs.readFileSync(path.join(__dirname, "..", "assets", "tray.svg"), "utf8");
-  const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
+  const image = nativeImage.createFromPath(path.join(__dirname, "..", "assets", "trayTemplate.png"));
+  if (image.isEmpty()) throw new Error("The macOS menu-bar icon is missing or invalid");
   image.setTemplateImage(true);
   return image;
 }

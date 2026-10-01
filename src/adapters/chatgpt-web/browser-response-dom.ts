@@ -215,6 +215,32 @@ export async function responseDomSnapshot(
         label.textContent = parts.join("").trim();
         button.parentNode?.replaceChild(label, button);
       });
+      // Project the unique writing-card body, excluding mutable toolbar/title text.
+      // Entity labels were normalized above while clone/source indices still matched.
+      const writingCard = '[data-markdown-copy="rich-block"]';
+      const cards = [...(content.matches(writingCard) ? [content] : []),
+        ...Array.from(content.querySelectorAll<HTMLElement>(writingCard))];
+      for (const card of cards.reverse()) {
+        const bodies = Array.from(card.querySelectorAll('[data-markdown-copy-content="true"]'))
+          .filter(body => body.closest(writingCard) === card);
+        if (bodies.length !== 1) continue;
+        const children = Array.from(bodies[0]!.childNodes);
+        card.textContent = "";
+        for (const child of children) card.appendChild(child);
+      }
+      // DIV-based code renderers need a PRE boundary before text fingerprinting and
+      // Markdown conversion so toolbar changes and code newlines remain independent.
+      const codeBlockSelector = 'pre, [data-markdown-copy="code-block"]';
+      for (const block of Array.from(content.querySelectorAll(codeBlockSelector))) {
+        if (block.parentElement?.closest(codeBlockSelector)) continue;
+        const codes = block.querySelectorAll("code");
+        if (codes.length !== 1) continue;
+        const code = codes[0]!.cloneNode(true);
+        const pre = block.tagName === "PRE" ? block : content.ownerDocument.createElement("pre");
+        block.textContent = "";
+        pre.appendChild(code);
+        if (pre !== block) block.appendChild(pre);
+      }
       // These are embedded renderers, not Markdown answer text. Their loading labels, controls
       // and plot axes change independently of generation (including after a later paragraph).
       // Keep their UI out of both the emitted HTML and the text consistency fingerprint.

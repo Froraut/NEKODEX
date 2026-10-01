@@ -32,6 +32,7 @@ function registerBrowserHandlers({
     return getBrowserHost().openWorkspaceWindow(asTab);
   });
   handle("launcher:browser-workspaces", () => getBrowserHost().workspaceSnapshot());
+  handle("launcher:openai-api-panel", (_event, accountId, section) => getBrowserHost().openOpenAiApiPanel(accountId, section));
   handle("launcher:browser-workspace-open", (_event, accountId, options) =>
     getBrowserHost().openWorkspace(accountId, options));
   handle("launcher:browser-workspace-restore", (_event, accountId) =>

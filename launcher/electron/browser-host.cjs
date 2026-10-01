@@ -3,6 +3,8 @@ const { BrowserArtifactTransfers } = require("./browser-artifact-transfers.cjs")
 const { BrowserManualTurns, manualPromptDigest, MANUAL_SUBMIT_TIMEOUT_MS, MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS } = require("./browser-manual-turns.cjs");
 const { BrowserTurnLifecycle, TURN_HEARTBEAT_SWEEP_MS } = require("./browser-turn-lifecycle.cjs");
 const { BrowserWorkspaceWindows } = require("./browser-workspace-windows.cjs");
+const { OPENAI_API_TUNNELS_URL, openAiApiPanelUrl, allowedOpenAiApiPanelUrl,
+  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest } = require("./openai-api-panel.cjs");
 const { authenticationIssue } = require("./authentication-issue.cjs");
 const { validateAccountId } = require("./account-registry.cjs");
 const fs = require("node:fs");
@@ -96,6 +98,7 @@ const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [
   "https://auth.openai.com/*", "https://auth0.openai.com/*", "https://login.openai.com/*",
   "https://accounts.openai.com/*", "https://accounts.google.com/*",
   "https://login.microsoftonline.com/*", "https://appleid.apple.com/*", "https://idmsa.apple.com/*",
+  "https://platform.openai.com/*",
 ] };
 const ZOOM_FACTORS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const SHELL_ZOOM_LEVEL_STEP = 0.5;
@@ -547,17 +550,18 @@ class BrowserHost {
     });
     this.artifactLeases = new Map();
     this.workspaceContents = new Map();
+    this.apiPanelContents = new Map();
     this.workspaceMetadata = new Map();
     this.workspaceMutationRequests = new Map();
-    const remoteContentsVisible = contents => this.workspaceContents.has(contents)
-      ? (() => { const window = this.workspaceContents.get(contents); return !window.isDestroyed() && window.isVisible() && window.isFocused(); })()
+    const remoteContentsVisible = contents => this.workspaceContents.has(contents) || this.apiPanelContents.has(contents)
+      ? (() => { const window = this.workspaceContents.get(contents) ?? this.apiPanelContents.get(contents); return !window.isDestroyed() && window.isVisible() && window.isFocused(); })()
       : this.window.isVisible() && !this.window.isMinimized()
       && this.isAccountVisible() && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady)
       && this.activeView().webContents === contents;
     this.permissionPolicy = createRemotePermissionPolicy({
       session: this.view.webContents.session,
       isAllowedPage: (url, kind) => httpsOrigin(url) === CHATGPT_ORIGIN
-        || (kind === "auth" && httpsOrigin(url) !== null && allowedAuthUrl(url)),
+        || (kind === "auth" && httpsOrigin(url) !== null && allowedOpenAiApiPanelUrl(url)),
       isVisible: remoteContentsVisible,
       requestConsent: async ({ permission, origin, signal }) => {
         const reading = permission === "clipboard-read";
@@ -1007,13 +1011,25 @@ class BrowserHost {
     return httpsOrigin(url) === CHATGPT_ORIGIN && !allowedAuthUrl(url);
   }
 
+  markTurnAuthenticationRequired(tab) {
+    tab.authenticationRequired = true;
+    tab.loading = false;
+    tab.message = "ChatGPT requested sign-in. Open sign in in the launcher, then retry.";
+    this.authenticationRevision += 1;
+    this.authGeneration += 1;
+    this.retireAuthenticatedIdentity();
+    this.setState({ authenticated: false, authenticationStatus: "signed-out",
+      authenticationCheckedAt: new Date().toISOString(), status: "signed-out", message: tab.message });
+    this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
+  }
+
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
     this.permissionPolicy?.register(contents);
     this.externalLinkBroker?.register(contents);
     contents.setWindowOpenHandler(({ url }) => {
       if (allowedAuthUrl(url)) {
-        this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
+        this.markTurnAuthenticationRequired(tab);
         return { action: "deny" };
       }
       void this.externalLinkBroker?.open(contents, url, "turn").catch(() => {});
@@ -1038,9 +1054,11 @@ class BrowserHost {
     const blockForeignNavigation = (event, url) => {
       if (allowedTurnUrl(url)) return;
       event.preventDefault();
-      tab.message = allowedAuthUrl(url)
-        ? "ChatGPT requires a fresh sign-in; finish this turn, then sign in from Setup"
-        : "External pages cannot replace this ChatGPT task tab";
+      if (allowedAuthUrl(url)) {
+        this.markTurnAuthenticationRequired(tab);
+        return;
+      }
+      tab.message = "External pages cannot replace this ChatGPT task tab";
       this.logger.warn("browser.turn_navigation_blocked", { tabId: tab.id, traceId: tab.traceId });
       publishBrowserSnapshot(this);
     };
@@ -1474,8 +1492,13 @@ class BrowserHost {
     const browserSession = this.view.webContents.session;
     browserSession.webRequest.onBeforeRequest(CHATGPT_BACKEND_REQUEST_FILTER, (details, callback) => {
       const owner = this.workspaceRequestOwner(details);
-      if (!owner || !isWorkspaceSessionMutationRequest(details)) { callback({}); return; }
-      if (this.workspaceSessionMutation.owns()) { callback({}); return; }
+      const sessionChanging = owner && (isWorkspaceSessionMutationRequest(details)
+        || (this.apiPanelContents.has(owner.contents) && isOpenAiApiSessionMutationRequest(details)));
+      if (!sessionChanging) { callback({}); return; }
+      if (this.workspaceSessionMutation.owns({ sourceId: owner.metadata.workspaceId })
+        || ((this.workspaceBrowser?.mutationLeasesByContents.has(owner.contents)
+          || this.apiPanelBrowser?.mutationLeasesByContents.has(owner.contents))
+          && this.workspaceSessionMutation.owns())) { callback({}); return; }
       try {
         const lease = this.workspaceSessionMutation.begin({
           sourceId: owner.metadata.workspaceId,
@@ -2416,6 +2439,52 @@ class BrowserHost {
       requireAutomaticBrowserInspection(this, "Access to the Chrome connection file");
       return contents;
     } });
+  }
+
+  async openOpenAiApiPanel(accountName = "ChatGPT", section = "tunnels") {
+    const url = openAiApiPanelUrl(section);
+    await this.ready();
+    if (!this.apiPanelBrowser) {
+      this.apiPanelBrowser = new BrowserWorkspaceWindows({
+        BrowserWindow, session: this.view.webContents.session, accountId: this.accountId,
+        label: `${accountName} — OpenAI API`, allowedUrl: allowedOpenAiApiPanelUrl,
+        home: OPENAI_API_TUNNELS_URL, restoreHome: OPENAI_API_TUNNELS_URL,
+        isSessionMutation: openAiApiSessionMutation,
+        persistLocations: false, manifestPath: this.workspaceManifestPath,
+        register: (contents, window, metadata) => {
+          this.applyAccountUserAgent(contents);
+          this.apiPanelContents.set(contents, window);
+          this.workspaceMetadata.set(contents, metadata);
+          this.permissionPolicy.register(contents, 'auth'); this.externalLinkBroker.register(contents);
+        },
+        unregister: contents => {
+          for (const [requestId, pending] of this.workspaceMutationRequests) {
+            if (pending.contents !== contents) continue;
+            this.workspaceMutationRequests.delete(requestId);
+            pending.lease.fail(new Error("OpenAI API panel closed during account session change"));
+          }
+          this.apiPanelContents.delete(contents); this.workspaceMetadata.delete(contents);
+          this.permissionPolicy.unregister(contents); this.externalLinkBroker.unregister(contents);
+        },
+        external: (contents, url) => this.externalLinkBroker.open(contents, url, 'home').catch(() => {}),
+        ...(this.workspaceSessionMutation
+          ? { beginSessionMutation: request => this.workspaceSessionMutation.begin(request) } : {}),
+        onMutationBlocked: error => this.logger.warn("browser.api_panel_session_mutation_blocked", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+        onChanged() {},
+      });
+    }
+    this.apiPanelBrowser.label = `${accountName} — OpenAI API`;
+    this.apiPanelWindows ??= new Map();
+    const existing = this.apiPanelWindows.get(section);
+    if (existing && !existing.isDestroyed()) { existing.show(); existing.focus(); }
+    else {
+      const window = this.apiPanelBrowser.open({ url });
+      this.apiPanelWindows.set(section, window);
+      window.once("closed", () => { if (this.apiPanelWindows.get(section) === window) this.apiPanelWindows.delete(section); });
+    }
+    return { opened: true };
   }
 
   workspaceManager(accountName = "ChatGPT") {
@@ -3501,6 +3570,7 @@ class BrowserHost {
     this.passkeyLoginController?.abort(new Error("Passkey sign-in cancelled during launcher shutdown"));
     this.existingChromeLoginController?.abort(new Error("Existing Chrome sign-in cancelled during launcher shutdown"));
     this.workspaceBrowser?.destroy();
+    this.apiPanelBrowser?.destroy();
     this.permissionPolicy?.destroy();
     this.externalLinkBroker?.destroy();
     this.authGeneration = (this.authGeneration ?? 0) + 1;

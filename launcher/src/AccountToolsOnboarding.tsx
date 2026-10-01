@@ -15,8 +15,7 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
 }) {
   const text = accountToolsCopy(language);
   const step = accountToolsStep(account, runtimeConfigured);
-  // Platform pages (tunnels) open in the system browser; ChatGPT pages open in this account's own window, so developer
-  // mode and the connector are set up in this account rather than whichever one the system browser is signed in to.
+  // ChatGPT and API settings keep the selected account's own browser session.
   const open = async (url: string, inAccount = false) => {
     if (disabled) return;
     onError(null);
@@ -25,10 +24,20 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
       else await window.codexWebLauncher!.openExternal(url);
     } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   };
+  const openApiPanel = async () => {
+    if (disabled) return;
+    onError(null);
+    try { await window.codexWebLauncher!.openOpenAiApiPanel(account.id); }
+    catch (error) { onError(error instanceof Error ? error.message : String(error)); }
+  };
   const status = manual ? text.manual : step === 'checking' ? copy.checkingSignIn : text[step === 'sign-in' ? 'signIn' : step];
   return <section className="accounts-details__section accounts-tools" aria-labelledby={headingId}>
     <h3 id={headingId} className="nk-type-label">{text.title}</h3>
     <p role="status">{status}</p>
+    <div className="accounts-inline-actions">
+      <Button size="sm" variant="ghost" iconEnd="browser" disabled={disabled}
+        onClick={() => void openApiPanel()}>{copy.openAiApiPanel}</Button>
+    </div>
     {(step !== 'sign-in' && step !== 'verification' && step !== 'checking') || manual ? <>
       {step !== 'verified' ? <>
         <p>{text.sharedTunnel}</p>
@@ -43,9 +52,8 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
               onClick={() => void open(urls.developerMode!, true)}>{copy.openDeveloperMode}</Button> : null}
             <Button size="sm" iconEnd="browser" disabled={disabled || !connectorName}
               onClick={() => void open(urls.connectors, true)}>{copy.openConnectors}</Button>
-            <Button size="sm" variant="ghost" iconEnd="external" disabled={disabled}
-              onClick={() => void open(urls.tunnels)}>{copy.openTunnels}</Button>
           </div>
+          <p>{copy.apiPanelConnectorHint}</p>
         </> : null}
       </> : null}
       {/* The shared runtime is set up once from the page-level notice; this per-account entry stays secondary. */}

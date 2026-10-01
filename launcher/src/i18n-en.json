@@ -536,5 +536,7 @@
   "logOutConfirmBody": "Log out of ChatGPT in NEKODEX? You will need to sign in again, possibly with a passkey, before new Web turns can run.",
   "logOutKeepSignedIn": "Keep signed in",
   "restartingRuntime": "Restarting…",
-  "manualPromptCopied": "Prompt copied"
+  "manualPromptCopied": "Prompt copied",
+  "openAiApiPanel": "OpenAI API",
+  "apiPanelConnectorHint": "In the API panel, use the account and workspace that will connect from ChatGPT. Create or select a tunnel and allow that workspace to use it, then return here to attach the ChatGPT connector."
 }

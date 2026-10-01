@@ -527,6 +527,7 @@ export interface LauncherApi {
   browserWorkspaceSnapshot(): Promise<BrowserWorkspaceDirectorySnapshot>;
   /** `address`, when given, must be a ChatGPT page; it opens in that account's own window and session. */
   openBrowserWorkspace(accountId: string, options: { asTab: boolean; address?: string }): Promise<BrowserState>;
+  openOpenAiApiPanel(accountId: string, section?: "tunnels" | "keys"): Promise<{ opened: boolean }>;
   restoreBrowserWorkspaces(accountId: string): Promise<BrowserState>;
   focusBrowserWorkspace(accountId: string, workspaceId: string): Promise<BrowserState>;
   closeBrowserWorkspace(accountId: string, workspaceId: string): Promise<BrowserState>;

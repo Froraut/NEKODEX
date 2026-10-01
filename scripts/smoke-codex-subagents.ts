@@ -326,6 +326,7 @@ writeFileSync(join(codexHome, "config.toml"), [
 try {
   const processHandle = Bun.spawn([
     codex,
+    "--no-daemon",
     "exec",
     "--skip-git-repo-check",
     "--json",

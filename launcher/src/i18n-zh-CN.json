@@ -536,5 +536,7 @@
   "logOutConfirmBody": "要在 NEKODEX 中退出 ChatGPT 吗？运行新的 Web 回合前需要重新登录，可能需要使用通行密钥。",
   "logOutKeepSignedIn": "保持登录",
   "restartingRuntime": "正在重启…",
-  "manualPromptCopied": "已复制提示词"
+  "manualPromptCopied": "已复制提示词",
+  "openAiApiPanel": "OpenAI API",
+  "apiPanelConnectorHint": "在 API 面板中使用将从 ChatGPT 连接的账户和工作区。创建或选择隧道，并允许该工作区使用它，然后返回此处连接 ChatGPT 连接器。"
 }

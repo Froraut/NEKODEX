@@ -1,6 +1,6 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "6.1.15-nekodex.1",
+  "version": "6.1.16-nekodex.1",
   "private": true,
   "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
@@ -59,7 +59,9 @@
       "assets/linux-appimage-runner.sh",
       "package.json",
       "release-trust.json",
-      "assets/tray.svg"
+      "assets/tray.svg",
+      "assets/trayTemplate.png",
+      "assets/trayTemplate@2x.png"
     ],
     "extraResources": [
       {

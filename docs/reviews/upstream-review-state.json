@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "upstream": "miuuyy/codex-chatgpt-web",
   "fork": "Froraut/NEKODEX",
-  "updatedAt": "2026-09-24T14:27:12.836207+00:00",
+  "updatedAt": "2026-10-01T01:22:44.618656+00:00",
   "lastCompleteScan": {
     "at": "2026-09-24T14:08:45.913847+00:00",
     "repository": "miuuyy/codex-chatgpt-web",
@@ -35,7 +35,8 @@
     "Exact records and historical gaps are retained. A maximum number is a navigation hint, not coverage proof.",
     "v6.0.0 commit 212ceef2acac9d6ee0f3c9037abfaf4ad8ff9827 and follow-up 757942251222ee0f71953c35636679c6d92dd636 reviewed against fork base afd9e5a.",
     "Current source implementation and verification: 115792667386478cd1fd5c391b8795cede90a8e7. No installed app, production account, tunnel or release changed.",
-    "Last actually revisited PR is 604 (replacement socket proof); highest reviewed PR is 658. Last issue is 663, including the final comment/attachment refresh."
+    "Last actually revisited PR is 604 (replacement socket proof); highest reviewed PR is 658. Last issue is 663, including the final comment/attachment refresh.",
+    "2026-10-01: Scoped release review of v6.1.1 a13cd099, v6.1.2 2d73f626 and v6.1.3 fa2d2c6c completed against fork 5fd97c1d; selected adaptations and exclusions recorded in docs/reviews/2026-10-01-upstream-6.1.1-6.1.3.md. Existing PR/issue high-water marks and lastCompleteScan are unchanged; this was not a complete new inventory."
   ],
   "items": {
     "issue:339": {
