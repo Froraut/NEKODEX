@@ -291,6 +291,7 @@
   {"path":"scripts/smoke-codex-catalog.ts","dependencies":["node:child_process","node:fs","node:os","node:path","src/chatgpt-web-models.ts","src/config.ts","src/model-catalog.ts"]},
   {"path":"scripts/smoke-codex-hooks-json.ts","dependencies":["node:assert/strict","node:child_process","node:fs","node:os","node:path","node:readline","src/codex-interrupt-hook.ts"]},
   {"path":"scripts/smoke-codex-interrupt.ts","dependencies":["node:child_process","node:fs","node:os","node:path","src/adapters/chatgpt-web/environment.ts","src/adapters/chatgpt-web/turn-execution.ts","src/codex-integration.ts","src/config.ts","src/server.ts"]},
+  {"path":"scripts/smoke-codex-protocol-switch.ts","dependencies":["node:assert/strict","node:fs","node:os","node:path","src/codex-integration-shared.ts","src/codex-integration.ts","src/config.ts"]},
   {"path":"scripts/smoke-codex-subagents.ts","dependencies":["node:child_process","node:fs","node:os","node:path","src/bridge.ts","src/config.ts","src/model-catalog.ts"]},
   {"path":"scripts/smoke-codex-web-subagents.ts","dependencies":["node:child_process","node:fs","node:os","node:path","src/config.ts","src/model-catalog.ts"]},
   {"path":"scripts/smoke-release.ts","dependencies":["launcher/electron/runtime-install.cjs","node:fs","node:module","node:os","node:path","src/config.ts","src/version.ts"]},

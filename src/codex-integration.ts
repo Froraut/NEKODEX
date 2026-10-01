@@ -77,6 +77,7 @@ import {
   replacementBaseline,
   restoreLegacyV2,
   restoreManagedRoute,
+  restoreManagedRouteForNativeProtocol,
   verifyInstalledRoute,
   verifyManagedJournalState,
   verifyRestoredRoute,
@@ -273,7 +274,7 @@ export function setCodexSubagentProtocol(
     data: preserveUtf8Bom(`${JSON.stringify(nextConfig, null, 2)}\n`, runtime.data?.toString("utf8") ?? ""),
     followSymlink: true,
     expectedSnapshot: runtime,
-  }]);
+  }], protocol === "native");
 }
 
 export function preflightCodexIntegration(
@@ -420,6 +421,7 @@ function installCodexIntegrationState(
   config: AppConfig,
   options: InstallCodexIntegrationOptions,
   runtimeWrites: Array<{ path: string; data: string; followSymlink: boolean; expectedSnapshot: FileSnapshot }> = [],
+  releaseCompatibilityOverrides = false,
 ): CodexIntegrationJournal {
   const configPath = getCodexConfigPath();
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
@@ -443,13 +445,18 @@ function installCodexIntegrationState(
     let baseline: string;
     let preservePrevious = true;
     try {
-      verifyManagedJournalState(currentText, existing);
       assertValidCodexToml(currentText);
+      const releasingCompatibility = releaseCompatibilityOverrides && managedJournalIsActive(existing)
+        && journalRecordsSubagentProtocol(existing)
+        && existing.installed.subagent_protocol === "compatibility-v1";
+      if (!releasingCompatibility) verifyManagedJournalState(currentText, existing);
       if (existing.version === 11 && existing.active) {
         verifyManagedJsonHook(existing);
       }
       baseline = managedJournalIsActive(existing)
-        ? restoreManagedRoute(currentText, existing)
+        ? releasingCompatibility
+          ? restoreManagedRouteForNativeProtocol(currentText, existing)
+          : restoreManagedRoute(currentText, existing)
         : currentText;
       if (existing.version === 11 && managedJournalIsActive(existing)) {
         hooksJson = restoreManagedJsonHook(existing) ?? hooksJson;

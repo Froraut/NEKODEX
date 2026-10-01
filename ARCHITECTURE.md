@@ -90,6 +90,9 @@ separate facts.
 5. **Setup/change:** read original configuration snapshot → compute candidate →
    coordinate runtime drain/transition → publish files with receipts → verify →
    commit the new runtime generation. Recovery preserves newer external changes.
+   Explicit `subagents native` releases only exact still-owned Compatibility V1
+   feature/depth overrides, preserving user-enabled V2 settings. Route, catalog
+   and hook checks remain strict; ordinary setup does not adopt those edits.
 6. **Update:** select a compatible release from the packaged repository → verify
    metadata → acquire authenticated bytes → validate staging → hand off to one
    detached installer → observe its terminal result before selecting the new UI.
