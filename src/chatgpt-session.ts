@@ -701,6 +701,7 @@ async function assertSelectedChatGptModelRow(
   page: Page, control: Locator, activation: ChatGptEffortActivation,
   target: ChatGptModelRowTarget, signal?: AbortSignal,
 ): Promise<ChatGptEffortActivation> {
+  signal?.throwIfAborted();
   const current = await resolveChatGptModelRow(activation.menu, target).catch(() => undefined);
   if (current?.row.checked && await activation.sliderContainer.isVisible().catch(() => false)) {
     return { ...activation, latestModelRow: current.latest };
@@ -712,6 +713,10 @@ async function assertSelectedChatGptModelRow(
     throw new Error(`ChatGPT did not retain ${describeChatGptModelRowTarget(target)}`);
   }
   await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
+  // Lazy rows require the advanced view, which has no reliable way back. Let its
+  // outgoing surface detach/hide before reopening; owner state can close first.
+  await activation.menu.waitFor({ state: "hidden", timeout: 5_000, ...(signal ? { signal } : {}) });
+  signal?.throwIfAborted();
   return { ...await activateChatGptEffortMenu(page, control, { abortSignal: signal }), latestModelRow: selected.latest };
 }
 
@@ -722,9 +727,7 @@ async function selectChatGptModelRow(
   signal?.throwIfAborted();
   const current = await resolveChatGptModelRow(activation.menu, target).catch(() => undefined);
   if (current?.row.checked) {
-    if (await activation.sliderContainer.isVisible().catch(() => false)) return { ...activation, latestModelRow: current.latest };
-    await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
-    return { ...await activateChatGptEffortMenu(page, control, { abortSignal: signal }), latestModelRow: current.latest };
+    return assertSelectedChatGptModelRow(page, control, activation, target, signal);
   }
   activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
   await waitForChatGptModelRows(activation.menu, 3_000, signal);
@@ -733,7 +736,8 @@ async function selectChatGptModelRow(
     throw new Error(`ChatGPT ${describeChatGptModelRowTarget(target)} is unavailable`);
   }
   await selected.option.click({ force: true, timeout: 5_000, signal });
-  await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
+  // Family selection returns to the owned effort surface. Escape/reopen here
+  // lets delayed exit cleanup remove the slider we are about to use.
   activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
   return assertSelectedChatGptModelRow(page, control, activation, target, signal);
 }
