@@ -86,6 +86,8 @@ interface BrokerRequestFields {
   surfaceNonce?: string;
   finalAnswer?: string;
   contract?: "native" | "safe";
+  tunnelId?: string;
+  tunnelScopePending?: boolean;
   operationId?: string;
   deliveryId?: string;
   waitMs?: number;
@@ -105,8 +107,10 @@ export interface TurnBrokerOwner {
     surfaceNonce: string,
     ttlMs?: number,
     traceId?: string,
+    options?: { tunnelScopePending?: boolean },
   ): Promise<string>;
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void | Promise<void>;
+  setTunnelScope(token: string, tunnelId?: string): void | Promise<void>;
   confirmSafeTurnSent(
     token: string,
     surfaceNonce: string,
@@ -155,8 +159,9 @@ const requestFields = {
   operation_cancel: ["token", "operationId"],
   owner_status: [],
   owner_register: ["environment", "ttlMs", "traceId"],
-  owner_register_safe: ["environment", "ttlMs", "traceId", "surfaceNonce"],
+  owner_register_safe: ["environment", "ttlMs", "traceId", "surfaceNonce", "tunnelScopePending"],
   owner_update: ["token", "environment"],
+  owner_set_tunnel_scope: ["token", "tunnelId"],
   owner_safe_sent: ["token", "surfaceNonce"],
   owner_next: ["token"],
   owner_complete: ["token", "callId", "toolResult"],
@@ -180,7 +185,7 @@ export type BrokerCallRequest = BrokerRequestFields & { method: keyof typeof req
 export type BrokerRequest = {
   [M in keyof typeof requestFields]: { id: string; method: M }
     & Pick<BrokerRequestFields, (typeof requestFields)[M][number]>
-}[keyof typeof requestFields];
+}[keyof typeof requestFields] & { tunnelId?: string };
 
 /** Decode shape only. Capability checks and required fields remain with the broker. */
 export function decodeBrokerRequest(value: unknown): BrokerRequest {
@@ -194,7 +199,7 @@ export function decodeBrokerRequest(value: unknown): BrokerRequest {
   }
   for (const [field, entry] of Object.entries(packet)) {
     if (entry === undefined || field === "id" || field === "method") continue;
-    const expected = field === "freeform" ? "boolean"
+    const expected = ["freeform", "tunnelScopePending"].includes(field) ? "boolean"
       : ["ttlMs", "revision", "waitMs", "softDeadlineMs"].includes(field) ? "number"
       : ["arguments", "environment", "toolResult"].includes(field) ? "object" : "string";
     // Ignore extension fields as before; validate recognized fields before method narrowing.

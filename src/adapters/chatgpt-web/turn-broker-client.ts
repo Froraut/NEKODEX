@@ -146,12 +146,14 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     surfaceNonce: string,
     ttlMs?: number,
     traceId = "unknown",
+    options: { tunnelScopePending?: boolean } = {},
   ): Promise<string> {
     assertSurfaceNonce(surfaceNonce);
     const response = await callTurnBroker<{ token?: unknown }>(this.socketPath, {
       method: "owner_register_safe",
       environment,
       surfaceNonce,
+      ...(options.tunnelScopePending ? { tunnelScopePending: true } : {}),
       ...(ttlMs !== undefined ? { ttlMs } : {}),
       ...(traceId !== "unknown" ? { traceId } : {}),
     });
@@ -163,6 +165,10 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
 
   async updateEnvironment(token: string, environment: ChatGptTurnEnvironment): Promise<void> {
     await callTurnBroker(this.socketPath, { method: "owner_update", token, environment });
+  }
+
+  async setTunnelScope(token: string, tunnelId?: string): Promise<void> {
+    await callTurnBroker(this.socketPath, { method: "owner_set_tunnel_scope", token, ...(tunnelId ? { tunnelId } : {}) });
   }
 
   async confirmSafeTurnSent(

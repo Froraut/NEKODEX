@@ -54,6 +54,7 @@
 .accounts-details__section + .accounts-details__section { padding-top: var(--space-5); border-top: 1px solid var(--border-light); }
 .accounts-details__section > h3 { margin: 0; color: var(--text-primary); }
 .accounts-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.accounts-tools__tunnel { color: var(--text-secondary); overflow-wrap: anywhere; }
 .accounts-attention { color: var(--text-warning); }
 .accounts-models__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-3) var(--space-4); margin: 0; }
 .accounts-models__grid dt { color: var(--text-primary); font-weight: 500; }

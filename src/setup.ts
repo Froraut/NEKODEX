@@ -254,6 +254,16 @@ async function configureTunnel(
     delete config.manualTunnel;
     return;
   }
+  if (config.accountTunnelMode === true) {
+    if (options.tunnelId) throw new Error('Configure each account tunnel from its account setup instead of replacing a shared tunnel');
+    const bindings = config.accountTunnels ?? [];
+    const active = bindings.find(binding => binding.interactionMode === config.browserInteractionMode);
+    if (!active) throw new Error('Configure an account-owned tunnel for this interaction mode first');
+    config.tunnel = active.tunnel;
+    config.automaticTunnel = bindings.find(binding => binding.interactionMode === 'automatic')?.tunnel;
+    config.manualTunnel = bindings.find(binding => binding.interactionMode === 'manual')?.tunnel;
+    return;
+  }
   const interactionMode = config.browserInteractionMode;
   const legacyTunnel = existing?.mode === "full"
     && !existing.automaticTunnel
@@ -327,6 +337,7 @@ async function bootstrapTunnelProfile(
   onConnectFailed?: () => void,
   keepRuntime = false,
 ): Promise<void> {
+  if (config.accountTunnelMode === true) return;
   let bootstrapError: unknown;
   let connectReturned = false;
   try {

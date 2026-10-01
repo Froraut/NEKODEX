@@ -1,4 +1,4 @@
-import { accountToolsCopy, accountToolsStep } from "./account-tools-onboarding";
+import { accountToolsCopy, accountToolsStep, accountTunnelFor } from "./account-tools-onboarding";
 import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { connectorAttachCopyFor, connectorAttachNotice, native6CopyFor, localizeRuntimeMessage, type Copy } from "./i18n";
@@ -54,14 +54,15 @@ export function McpSurface({
   updateSnapshot: () => Promise<void>;
 }) {
   const configuringInactiveMode = interactionMode !== snapshot.state.browserInteractionMode;
+  const pageAccountId = targetAccountId ?? browserAccountId ?? snapshot.browser?.accountId ?? null;
   const [step, setStep] = useState(
-    configuringInactiveMode ? 1
+    pageAccountId || configuringInactiveMode ? 1
       : snapshot.state.mcpRuntimeInstalled && snapshot.mcpCredentialsConfigured ? 2
       : Math.min(2, Math.max(0, snapshot.state.mcpGuideStep || 0)),
   );
   const [tunnelId, setTunnelId] = useState("");
   const [runtimeKey, setRuntimeKey] = useState("");
-  const [credentialsConfigured, setCredentialsConfigured] = useState(
+  const [legacyCredentialsConfigured, setLegacyCredentialsConfigured] = useState(
     interactionMode === snapshot.state.browserInteractionMode
       ? snapshot.mcpCredentialsConfigured
       : false,
@@ -69,10 +70,11 @@ export function McpSurface({
   const [replacingCredentials, setReplacingCredentials] = useState(false);
   useEffect(() => {
     if (!replacingCredentials && interactionMode === snapshot.state.browserInteractionMode) {
-      setCredentialsConfigured(snapshot.mcpCredentialsConfigured);
+      setLegacyCredentialsConfigured(snapshot.mcpCredentialsConfigured);
     }
   }, [interactionMode, replacingCredentials, snapshot.mcpCredentialsConfigured, snapshot.state.browserInteractionMode]);
   const [localBusy, setLocalBusy] = useState(false);
+  useEffect(() => { setLocalBusy(false); }, [pageAccountId, interactionMode]);
   const repairInFlight = useRef(false);
   const [repairBusy, setRepairBusy] = useState(false);
   const [repairOutcome, setRepairOutcome] = useState<"recovered" | "unavailable" | "failed" | null>(null);
@@ -91,17 +93,30 @@ export function McpSurface({
   const previousStep = useRef(step);
   // The global tool proof belongs to the account selected in the Browser. Per-account setup reports that account's
   // own connector check (the same fact as its card), never another account's proof.
-  const { snapshot: pool } = useAccountPoolSnapshot({ api: api!, initial: "immediate", retainOnFailure: false,
-    identity: targetAccountId ?? "" });
-  const targetAccount = targetAccountId ? pool?.accounts.find(account => account.id === targetAccountId) ?? null : null;
+  const { snapshot: pool, retry: refreshPool } = useAccountPoolSnapshot({ api: api!, initial: "immediate", retainOnFailure: false,
+    identity: pageAccountId ?? "" });
+  const targetAccount = pageAccountId ? pool?.accounts.find(account => account.id === pageAccountId) ?? null : null;
+  const tunnelAccountLabel = accountSetupLabel ?? (targetAccount
+    ? `${targetAccount.label}${targetAccount.accountLabel ? ` · ${targetAccount.accountLabel}` : ""}`
+    : snapshot.browser?.accountName ?? null);
+  const accountTunnel = accountTunnelFor(targetAccount, interactionMode);
+  const credentialsConfigured = pageAccountId ? Boolean(accountTunnel?.tunnelId) : legacyCredentialsConfigured;
+  const currentScope = useRef({ accountId: pageAccountId, interactionMode });
+  currentScope.current = { accountId: pageAccountId, interactionMode };
+  useEffect(() => {
+    setRuntimeKey(""); setTunnelId(""); setReplacingCredentials(false);
+    if (pageAccountId) setStep(1);
+  }, [pageAccountId, interactionMode]);
+  const sameScope = (accountId: string | null, mode: BrowserInteractionMode) =>
+    currentScope.current.accountId === accountId && currentScope.current.interactionMode === mode;
   // The card's own derivation (accountToolsStep), so the page and the account card never disagree.
-  const runtimeConfigured = snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured;
-  const verified = !configuringInactiveMode && (targetAccountId
+  const runtimeConfigured = pageAccountId ? accountTunnel?.ready === true
+    : snapshot.state.mcpRuntimeInstalled === true && snapshot.mcpCredentialsConfigured;
+  const verified = !configuringInactiveMode && (pageAccountId
     ? targetAccount !== null && accountToolsStep(targetAccount, runtimeConfigured) === "verified"
     : currentToolProof(snapshot, operation));
   // ChatGPT pages (developer mode, plugins) open in the configured account's own window; with no account they fall
   // back to the system browser.
-  const pageAccountId = targetAccountId ?? browserAccountId ?? snapshot.browser?.accountId ?? null;
   const openApiPanel = async (section: "tunnels" | "keys" = "tunnels") => {
     setError(null);
     try {
@@ -122,12 +137,12 @@ export function McpSurface({
     currentRuntime?.tunnelRepair?.eligible, readiness.web, repairOutcome, repairOutcomeRevision]);
   const steps = useMemo(() => [
     { title: accountToolsCopy(language).tunnelTitle, body: accountToolsCopy(language).sharedTunnel },
-    { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
+    { title: copy.mcpStepTwo, body: pageAccountId ? accountToolsCopy(language).sharedTunnel : copy.mcpStepTwoBody },
     {
       title: copy.mcpStepThree,
       body: manualInteraction ? copy.manualMcpStepThreeBody : null,
     },
-  ], [copy, language, manualInteraction]);
+  ], [copy, language, manualInteraction, pageAccountId]);
   const guideMedia = MCP_GUIDE_MEDIA[step];
   const recommendedConnectorName = snapshot
     .recommendedConnectorNames?.[interactionMode]?.trim() ?? "";
@@ -202,6 +217,7 @@ export function McpSurface({
   }, [step]);
 
   const move = async (next: number) => {
+    if (pageAccountId) { setStep(next); return; }
     const state = await api!.setMcpStep(next);
     updateState(state);
     setStep(next);
@@ -233,33 +249,61 @@ export function McpSurface({
     }
   };
   const install = async () => {
-    if (busy) return;
+    if (busy || (targetAccount?.activeTurns ?? 0) > 0) return;
+    const accountId = pageAccountId;
+    const mode = interactionMode;
+    const submittedKey = runtimeKey;
+    setRuntimeKey("");
     setLocalBusy(true);
     setError(null);
+    let transportReady = true;
     try {
-      await api!.setupMcp({
-        interactionMode,
-        ...(credentialsConfigured && !replacingCredentials
-          ? { replace: false }
-          : { tunnelId, runtimeKey, replace: true }),
-      });
-      setRuntimeKey("");
+      if (accountId) {
+        const receipt = await api!.configureAccountTunnel(accountId, {
+          tunnelId: credentialsConfigured && !replacingCredentials ? accountTunnel?.tunnelId ?? "" : tunnelId.trim(),
+          interactionMode: mode,
+          ...(credentialsConfigured && !replacingCredentials
+            ? { reuseSavedCredentials: true } : { runtimeKey: submittedKey }),
+        });
+        if (!receipt.ok) throw new Error(accountToolsCopy(language).tunnelError);
+        transportReady = receipt.ready !== false;
+      } else {
+        await api!.setupMcp({ interactionMode: mode,
+          ...(credentialsConfigured && !replacingCredentials ? { replace: false }
+            : { tunnelId, runtimeKey: submittedKey, replace: true }) });
+      }
+      if (!sameScope(accountId, mode)) return;
       setTunnelId("");
-      setCredentialsConfigured(true);
+      setLegacyCredentialsConfigured(true);
       setReplacingCredentials(false);
+      if (accountId) refreshPool();
       try {
         await updateSnapshot();
       } catch (cause) {
-        // setupMcp has already committed; a stale metadata read must not make
-        // the committed setup look like an installation failure.
-        setError(messageOf(cause));
+        if (sameScope(accountId, mode)) setError(messageOf(cause));
       }
-      await move(2);
+      if (sameScope(accountId, mode)) {
+        await move(transportReady ? 2 : 1);
+        if (!transportReady && !configuringInactiveMode) setError(accountToolsCopy(language).tunnelError);
+      }
     } catch (cause) {
-      setError(messageOf(cause));
+      if (sameScope(accountId, mode)) setError(messageOf(cause));
     } finally {
-      setLocalBusy(false);
+      if (sameScope(accountId, mode)) setLocalBusy(false);
     }
+  };
+  const removeTunnel = async () => {
+    if (!pageAccountId || busy || !accountTunnel?.tunnelId) return;
+    const accountId = pageAccountId;
+    const mode = interactionMode;
+    setLocalBusy(true);
+    setError(null);
+    try {
+      const receipt = await api!.removeAccountTunnel(accountId, mode);
+      if (!receipt.ok) throw new Error(accountToolsCopy(language).tunnelError);
+      if (sameScope(accountId, mode)) { setReplacingCredentials(false); setStep(1); refreshPool(); }
+    } catch (cause) { if (sameScope(accountId, mode)) setError(messageOf(cause)); }
+    finally { if (sameScope(accountId, mode)) setLocalBusy(false); }
   };
   const verify = async () => {
     if (busy) return;
@@ -310,10 +354,16 @@ export function McpSurface({
   // Configuring the inactive mode: the active mode's status would describe a different connection.
   const toolsTab: ConnectionStatus = configuringInactiveMode
     ? { key: interactionMode === "manual" ? "needs-setup" : "not-connected", dot: "idle", action: "connect", ready: false }
-    : !targetAccountId ? readiness.connections.tools
+    : !pageAccountId ? readiness.connections.tools
     : verified ? { key: "verified", dot: "ready", action: "manage", ready: true }
-      : { key: credentialsConfigured ? "connector-pending" : "not-connected", dot: "idle", action: "connect", ready: false };
+      : { key: runtimeConfigured ? "connector-pending" : "not-connected", dot: "idle", action: "connect", ready: false };
   const runtimeKeyInvalid = Boolean(runtimeKey && !runtimeKey.trim());
+  const tunnelText = accountToolsCopy(language);
+  const tunnelStatus = accountTunnel?.status === "ready" ? tunnelText.tunnelReady
+    : accountTunnel?.status === "starting" ? tunnelText.tunnelStarting
+    : accountTunnel?.status === "stopped" ? tunnelText.tunnelStopped
+    : accountTunnel?.status === "error" ? tunnelText.tunnelError
+    : accountTunnel?.status === "unknown" ? tunnelText.tunnelUnknown : tunnelText.tunnelUnconfigured;
 
   return (
     <Page className="nk-connections">
@@ -332,10 +382,18 @@ export function McpSurface({
         toolsReady={toolsTab.ready}
         toolsStatus={connectionTabStatus(toolsTab, copy, language)} />
       <div className="nk-connections__content" {...connectionsTabPanelProps("tools")}>
-        {accountSetupLabel ? (
+        {pageAccountId && tunnelAccountLabel ? (
           // The system-browser caveat is on step 1, next to the links it concerns.
-          <Notice title={`${accountToolsCopy(language).target}: ${accountSetupLabel}`} />
+          <Notice title={`${accountToolsCopy(language).target}: ${tunnelAccountLabel}`} />
         ) : null}
+        {pageAccountId ? <Notice className="nk-connections__account-tunnel" title={`${tunnelText.tunnelStatus} · ${interactionMode === "manual" ? tunnelText.manualMode : tunnelText.automaticMode}`}>
+          <span role="status">{tunnelStatus}{accountTunnel?.tunnelId ? ` · ${tunnelText.configuredTunnel}: ${accountTunnel.tunnelId}` : ""}</span>
+          {accountTunnel?.detail ? <p>{accountTunnel.detail}</p> : null}
+          {accountTunnel?.tunnelId ? <div className="nk-connections__actions">
+            <Button size="sm" variant="ghost" disabled={busy || (targetAccount?.activeTurns ?? 0) > 0}
+              onClick={() => void removeTunnel()}>{tunnelText.removeTunnel}</Button>
+          </div> : null}
+        </Notice> : null}
         {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
           <Notice icon="setup" tone="warning">{copy.mcpCatalogRequired}</Notice>
         ) : null}
@@ -401,7 +459,7 @@ export function McpSurface({
                     title={copy.credentialsConfigured}
                     tone="success"
                   >
-                    {copy.credentialsConfiguredBody}
+                    {pageAccountId ? tunnelText.savedTunnel : copy.credentialsConfiguredBody}
                   </Notice>
                 ) : (
                   <div className="nk-connections__fields">
@@ -456,7 +514,7 @@ export function McpSurface({
                     : copy.mcpCatalogRequired}
                 </p>
                 {credentialsConfigured && !replacingCredentials ? (
-                  <p className="nk-connections__hint">{workflow.recovery.fullSetupBody}</p>
+                  <p className="nk-connections__hint">{pageAccountId ? tunnelText.savedTunnel : workflow.recovery.fullSetupBody}</p>
                 ) : null}
               </div>
             ) : null}
@@ -547,6 +605,7 @@ export function McpSurface({
                 <Button
                   disabled={
                     busy
+                    || Boolean(pageAccountId && ((targetAccount?.activeTurns ?? 0) > 0 || !targetAccount))
                     || (!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified)
                     || ((!credentialsConfigured || replacingCredentials) && (!tunnelId.trim() || !runtimeKey.trim()))
                   }
@@ -554,7 +613,7 @@ export function McpSurface({
                   variant={repairIsNext ? "secondary" : "primary"}
                 >
                   {busy ? copy.running : credentialsConfigured && !replacingCredentials
-                    ? workflow.recovery.fullSetupAction : copy.connect}
+                    ? pageAccountId ? tunnelText.reuseSavedTunnel : workflow.recovery.fullSetupAction : copy.connect}
                 </Button>
               ) : null}
               {step === 2 ? (

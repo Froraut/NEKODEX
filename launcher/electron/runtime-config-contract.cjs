@@ -1,4 +1,5 @@
 const path = require("node:path");
+const { validateAccountTunnelBindings } = require('./account-tunnels.cjs');
 
 function absolutePath(value, platform = process.platform) {
   return platform === "win32" ? path.win32.isAbsolute(value) : path.isAbsolute(value);
@@ -15,6 +16,8 @@ function windowsPipeEndpoint(value) {
 
 function validateConfig(config, descriptorPath, platform = process.platform, launcherProfile = "production") {
   if (!config || config.version !== 3) throw new Error("Runtime configuration is missing or unsupported");
+  if (config.accountTunnelMode !== undefined && typeof config.accountTunnelMode !== 'boolean') throw new Error('Runtime account tunnel mode is invalid');
+  if (config.accountTunnels !== undefined) validateAccountTunnelBindings(config.accountTunnels, platform);
   if (launcherProfile === "development") {
     if (config.purpose !== "dev-harness") {
       throw new Error("DEV launcher refuses a configuration that is not marked dev-harness");

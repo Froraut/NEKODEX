@@ -372,6 +372,10 @@ function installMockLauncher() {
   // Runtime configuration owned by the main process; the setting mocks below change it.
   const connectorNames = { automatic: "Fixture connector", manual: "Fixture manual" };
   let mcpCredentialsConfigured = scenario === "tools-pending";
+  const blankTunnel = (accountId, interactionMode) => ({ accountId, interactionMode,
+    status: "unconfigured", ready: false });
+  accountSnapshot.accounts = accountSnapshot.accounts.map(account => ({ ...account, tunnels: {
+    automatic: blankTunnel(account.id, "automatic"), manual: blankTunnel(account.id, "manual") } }));
   let browserCapacity = { configured: 16, active: 16, maximum: 1000, restartRequired: false };
   let proModelVersion = null;
   let compactionModel = null;
@@ -830,6 +834,7 @@ function installMockLauncher() {
       const id = `fixture-added-${++accountSequence}`;
       const account = { id, label, enabled: true, authenticated: false, authenticationStatus: "signed-out",
         activeTurns: 0, checked: false, connectorReady: false, evidenceEpoch: 1,
+        tunnels: { automatic: blankTunnel(id, "automatic"), manual: blankTunnel(id, "manual") },
         proxy: { mode: "system" }, safety: { policy: { ...defaultPolicy }, cooldownUntil: 0, stopped: false, newSessionWindow: null } };
       accountSnapshot = { ...accountSnapshot, selectedId: id, accounts: [...accountSnapshot.accounts, account] };
       Object.assign(browser, { accountId: id, accountName: label, accountLabel: null, authenticated: false, authenticationStatus: "signed-out", status: "signed-out" });
@@ -1139,6 +1144,42 @@ function installMockLauncher() {
         ...(mode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false, experimentalFreshConversationPerTurn: false } : {}) });
       publishState();
       return { ok: true, stdout: "Local MCP tools are ready" };
+    },
+    configureAccountTunnel: async (accountId, input = {}) => {
+      calls.push(["account-tunnel-configure", accountId, { ...input,
+        ...(input.runtimeKey ? { runtimeKey: "[redacted]" } : {}) }]);
+      const mode = input.interactionMode ?? state.browserInteractionMode;
+      const account = accountSnapshot.accounts.find(candidate => candidate.id === accountId);
+      if (!account || !["automatic", "manual"].includes(mode)) throw new Error("Unknown account or mode");
+      if (account.activeTurns > 0 || operation?.status === "running") throw new Error("Account is busy");
+      const tunnelId = input.tunnelId?.trim();
+      if (!/^tunnel_[a-f0-9]{32}$/.test(tunnelId ?? "")) throw new Error("Invalid Tunnel ID");
+      if (accountSnapshot.accounts.some(candidate => candidate.id !== accountId
+        && Object.values(candidate.tunnels).some(view => view.tunnelId === tunnelId))) {
+        throw new Error("This tunnel belongs to another account");
+      }
+      if (input.reuseSavedCredentials !== true && (typeof input.runtimeKey !== "string" || input.runtimeKey.trim().length < 20)) {
+        throw new Error("A Tunnels Read + Use runtime key is required");
+      }
+      if (input.reuseSavedCredentials === true && account.tunnels[mode].tunnelId !== tunnelId) {
+        throw new Error("This account has no saved credentials for that tunnel");
+      }
+      accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(candidate => candidate.id === accountId
+        ? { ...candidate, connectorReady: false, tunnels: { ...candidate.tunnels,
+          [mode]: { accountId, interactionMode: mode, tunnelId, status: "ready", ready: true } } } : candidate) };
+      emit("browser", { ...browser });
+      return { ok: true };
+    },
+    removeAccountTunnel: async (accountId, interactionMode = state.browserInteractionMode) => {
+      calls.push(["account-tunnel-remove", accountId, interactionMode]);
+      const account = accountSnapshot.accounts.find(candidate => candidate.id === accountId);
+      if (!account || !["automatic", "manual"].includes(interactionMode)) throw new Error("Unknown account or mode");
+      if (account.activeTurns > 0 || operation?.status === "running") throw new Error("Account is busy");
+      accountSnapshot = { ...accountSnapshot, accounts: accountSnapshot.accounts.map(candidate => candidate.id === accountId
+        ? { ...candidate, connectorReady: false, tunnels: { ...candidate.tunnels,
+          [interactionMode]: blankTunnel(accountId, interactionMode) } } : candidate) };
+      emit("browser", { ...browser });
+      return { ok: true };
     },
     setMcpStep: async (step) => {
       calls.push(["mcp-step", step]);

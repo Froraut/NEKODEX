@@ -62,13 +62,21 @@ function tunnelCommandQuoted(value) {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-function managedTunnelMcpCommand(invocation) {
+function managedTunnelMcpCommand(invocation, tunnelId) {
   if (!invocation
     || typeof invocation.executable !== "string"
     || !Array.isArray(invocation.args)) {
     throw new Error("Launcher tunnel MCP command requires an explicit runtime invocation");
   }
-  return [invocation.executable, ...invocation.args]
+  const args = [...invocation.args];
+  if (tunnelId !== undefined) {
+    if (typeof tunnelId !== "string" || !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
+      throw new Error("Account tunnel MCP invocation has an invalid tunnel id");
+    }
+    if (args.includes("--tunnel-id")) throw new Error("Account tunnel MCP invocation already selects a tunnel");
+    args.push("--tunnel-id", tunnelId);
+  }
+  return [invocation.executable, ...args]
     .map(tunnelCommandQuoted)
     .join(" ");
 }
@@ -84,7 +92,7 @@ function managedTunnelConnectArgs(config, invocation) {
     "--tunnel-client-bin", tunnel.binaryPath,
     "--tunnel-id", tunnel.tunnelId,
     "--runtime-api-key", `file:${tunnel.runtimeKeyFile}`,
-    "--mcp-command", managedTunnelMcpCommand(invocation),
+    "--mcp-command", managedTunnelMcpCommand(invocation, config.accountTunnelBinding ? tunnel.tunnelId : undefined),
     "--json",
   ];
 }

@@ -15,6 +15,7 @@ import {
   type LauncherManualTurnEnd,
   type LauncherManualTurnOwner,
   type LauncherManualTurnStart,
+  type LauncherManualTurnLease,
 } from "../../launcher-browser-host";
 import { type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import { ChatGptWebAdapterError } from "./adapter-error";
@@ -81,7 +82,7 @@ function cancellableBrowserTurn(
 }
 
 export interface ChatGptZeroRiskManualControl {
-  start(descriptorPath: string, activity: LauncherManualTurnStart): Promise<unknown>;
+  start(descriptorPath: string, activity: LauncherManualTurnStart): Promise<LauncherManualTurnLease>;
   waitSent(
     descriptorPath: string,
     owner: LauncherManualTurnOwner,
@@ -157,7 +158,7 @@ export interface ChatGptTurnRuntimeContext {
   provider: CodexProviderConfig;
   worker: Pick<ChatGptBrowserWorker, "run">;
   broker: Pick<TurnBrokerOwner,
-    "register" | "registerSafe" | "waitForRetirement" | "revoke" | "confirmSafeTurnSent"
+    "register" | "registerSafe" | "setTunnelScope" | "waitForRetirement" | "revoke" | "confirmSafeTurnSent"
     | "waitForSafeStart" | "waitForSafeCompletion" | "beginCompletionFence" | "commitCompletionFence">;
   zeroRiskManualControl: ChatGptZeroRiskManualControl;
   lunaCheckpointStore: Pick<ChatGptLunaCheckpointStore, "apply" | "commit">;
@@ -344,7 +345,8 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
       };
       const runManual = async (): Promise<string> => {
         try {
-          activeToken = await broker.registerSafe(environment, surfaceNonce, undefined, traceId);
+          activeToken = await broker.registerSafe(environment, surfaceNonce, undefined, traceId,
+            { tunnelScopePending: true });
           observeCapabilityRetirement(activeToken, externalProgress);
           const compiled = compileChatGptWebPrompt(
             checkpointInput.parsed,
@@ -371,8 +373,6 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
               });
             }
           }
-          tokenSettled = true;
-          token.resolve(activeToken);
           const manualAttachments = await materializeChatGptManualAttachments(`${traceId}-new`, compiled);
           const manualResumeAttachments = resumeCompiled
             ? await materializeChatGptManualAttachments(`${traceId}-resume`, resumeCompiled)
@@ -394,7 +394,7 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
                 + "\n>\n> Send only after the exact required files are attached, then confirm `Sent` in the launcher after ChatGPT accepts the message. If the selected model cannot send, choose another available model and copy the same prompt again; it remains available until the connector starts.",
             });
           }
-          await zeroRiskManualControl.start(retainedLauncherDescriptor, {
+          const manualLease = await zeroRiskManualControl.start(retainedLauncherDescriptor, {
             useSavedChats: provider.chatgptWeb?.useSavedChats === true,
             ...owner,
             prompt: compiled.text,
@@ -403,6 +403,12 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
             ...(parsed._compactionRequest ? { compaction: true as const } : {}),
           });
           launcherStarted = true;
+          if (manualLease.accountTunnelRequired === true && !manualLease.tunnelId) {
+            throw new Error("Manual mode requires the selected account's ready tunnel before sending");
+          }
+          await broker.setTunnelScope(activeToken, manualLease.tunnelId);
+          tokenSettled = true;
+          token.resolve(activeToken);
           await zeroRiskManualControl.waitSent(retainedLauncherDescriptor, owner, {
             abortSignal: browserAbort.signal,
           });
@@ -533,7 +539,12 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
       const externalProgress = new ChatGptExternalTurnProgress();
       let tokenSettled = false;
       let activeToken: string | undefined;
+      let selectedTunnel: { accountTunnelRequired: boolean; tunnelId?: string } | undefined;
+      let selectedTunnelScopeAssigned = false;
       const prepareWith = async (input: CodexParsedRequest) => {
+        if (selectedTunnel?.accountTunnelRequired && !selectedTunnel.tunnelId) {
+          throw new Error("Automatic mode requires the selected account's ready tunnel before preparing the prompt");
+        }
         const turnToken = activeToken ?? await broker.register(
           environment,
           timeoutMs === undefined ? undefined : timeoutMs + 60_000,
@@ -541,6 +552,10 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
         );
         activeToken = turnToken;
         try {
+          if (selectedTunnel?.tunnelId && !selectedTunnelScopeAssigned) {
+            await broker.setTunnelScope(turnToken, selectedTunnel.tunnelId);
+            selectedTunnelScopeAssigned = true;
+          }
           const compiled = compileChatGptWebPrompt(
             input,
             turnCapabilities,
@@ -559,6 +574,7 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
           try {
             await broker.revoke(turnToken);
             activeToken = undefined;
+            selectedTunnelScopeAssigned = false;
           } catch (revokeError) {
             throw new AggregateError(
               [error, revokeError],
@@ -570,6 +586,16 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
       };
       const browserTurn = cancellableBrowserTurn(trackBrowserOwner(finalizeCheckpoint(worker.run({
         ...automaticLifecycle(),
+        onTunnelSelected: lease => {
+          if (lease.accountTunnelRequired && !lease.tunnelId) {
+            throw new Error("Automatic mode requires the selected account's ready tunnel");
+          }
+          if (selectedTunnel && (selectedTunnel.accountTunnelRequired !== lease.accountTunnelRequired
+            || selectedTunnel.tunnelId !== lease.tunnelId)) {
+            throw new Error("ChatGPT account tunnel changed during an active turn");
+          }
+          selectedTunnel = lease;
+        },
         prepare: () => prepareWith(checkpointInput.parsed),
         ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput) } : {}),
         ...(retainConversation ? { retainConversation: true, conversationKey } : {}),

@@ -260,6 +260,8 @@ export interface CodexProviderConfig {
     browserInteractionMode?: "automatic" | "manual";
     /** Explicit browser owner. Launcher mode attaches to the embedded Electron ChatGPT surface. */
     browserHost?: "managed-chrome" | "launcher";
+    /** Require a ready account-owned tunnel for launcher tool-capable browser turns. */
+    requireAccountTunnel?: boolean;
     /** Owner-only descriptor containing the launcher's loopback CDP and control endpoints. */
     browserHostDescriptorPath?: string;
     /** Explicit browser-helper bundle. DEV builds current source; the launcher still supplies Electron-as-Node. */

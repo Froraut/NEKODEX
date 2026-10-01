@@ -3,6 +3,7 @@ import { CHATGPT_CONNECTOR_NAME, CHATGPT_ASYNC_CONNECTOR_NAME, ZERO_RISK_CHATGPT
 export { atomicWriteFile } from "./file-transactions";
 import { snapshotFile, writeFileSnapshot, type FileSnapshot } from "./file-transactions";
 import { createHash, randomBytes } from "node:crypto";
+import { validateAccountTunnelBindings } from "../launcher/electron/account-tunnels.cjs";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, isAbsolute, join, resolve, sep, win32 } from "node:path";
@@ -31,6 +32,13 @@ export interface TunnelConfig {
   profileDir: string;
   profileName: string;
   alias: string;
+}
+
+export interface AccountTunnelBinding {
+  accountId: string;
+  interactionMode: BrowserInteractionMode;
+  tunnel: TunnelConfig;
+  principalFingerprint?: string;
 }
 
 export interface AppConfig {
@@ -79,6 +87,8 @@ export interface AppConfig {
   tunnel?: TunnelConfig;
   automaticTunnel?: TunnelConfig;
   manualTunnel?: TunnelConfig;
+  accountTunnelMode?: boolean;
+  accountTunnels?: AccountTunnelBinding[];
 }
 
 export function tunnelConfigForInteractionMode(
@@ -372,6 +382,8 @@ function parseConfigForSetup(raw: Record<string, unknown>, path: string): AppCon
 function parseConfig(value: unknown, path: string): AppConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid configuration object in ${path}`);
   const parsed = value as Partial<AppConfig>;
+  if (parsed.accountTunnelMode !== undefined && typeof parsed.accountTunnelMode !== "boolean") throw new Error(`Invalid accountTunnelMode in ${path}`);
+  if (parsed.accountTunnels !== undefined) validateAccountTunnelBindings(parsed.accountTunnels);
   if (parsed.version !== 3) throw new Error(`Unsupported configuration version in ${path}; rerun setup to migrate it`);
   if (parsed.purpose !== undefined && parsed.purpose !== "dev-harness") {
     throw new Error(`Invalid configuration purpose in ${path}`);
@@ -385,6 +397,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.host !== "127.0.0.1") throw new Error("The Responses proxy must bind to 127.0.0.1");
   if (parsed.browserHost !== "managed-chrome" && parsed.browserHost !== "launcher") {
     throw new Error(`Invalid browserHost in ${path}`);
+  }
+  if (parsed.accountTunnelMode === true && parsed.browserHost !== 'launcher') {
+    throw new Error('Account-owned tunnels require the NEKODEX launcher account router');
   }
   const browserInteractionMode = parsed.browserInteractionMode ?? "automatic";
   if (browserInteractionMode !== "automatic" && browserInteractionMode !== "manual") {
@@ -626,6 +641,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       lunaCheckpointStatePath: join(getConfigDir(), "runtime", "luna-checkpoints.json"),
       headed: config.headed,
       localToolsEnabled: config.mode === "full",
+      requireAccountTunnel: config.browserHost === 'launcher' && config.mode === 'full',
       solAvailable: manual ? false : config.solAvailable,
       extraHighAvailable: manual ? false : config.extraHighAvailable ?? config.proAvailable,
       proAvailable: manual ? false : config.proAvailable,

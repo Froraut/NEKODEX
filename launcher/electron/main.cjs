@@ -978,7 +978,7 @@ function registerIpc({ logger, stateStore }) {
       automatic: automaticConnectorName({ development: IS_DEV_PROFILE, asyncToolOperations: true }),
       manual: MANUAL_CONNECTOR_NAME,
     },
-    mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
+    mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured(undefined, browserHost?.registry.snapshot().selectedId) ?? false,
     logs: logger.recent(),
     urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, developerMode: DEVELOPER_MODE_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
     platform: process.platform,
@@ -1297,6 +1297,27 @@ function registerIpc({ logger, stateStore }) {
     if (interactionModeChange) browserHost.publish();
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return { ok: true, stdout: result.stdout };
+  });
+
+  handle('launcher:account-tunnel-configure', async (_event, id, input) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Account tunnel settings are invalid');
+    if (runtimeHost.runtimeConfigSnapshot().config?.accountTunnelMode !== true && browserHost.hasActiveTurns()) {
+      throw new Error('Finish current browser tasks before switching from shared to account-owned tunnels');
+    }
+    const mode = input.interactionMode === undefined ? stateStore.read().browserInteractionMode
+      : validateBrowserInteractionMode(input.interactionMode);
+    const result = await browserHost.withAccountTunnelMutation(id, () => runtimeHost.configureAccountTunnel(id,
+      { tunnelId: typeof input.tunnelId === 'string' ? input.tunnelId.trim() : '',
+        runtimeKey: typeof input.runtimeKey === 'string' ? input.runtimeKey : '',
+        reuseSavedCredentials: input.reuseSavedCredentials === true, interactionMode: mode,
+        principalFingerprint: browserHost.getHost(id).authPrincipalFingerprint ?? undefined }));
+    const state = stateStore.update({ mcpRuntimeInstalled: true, mcpSetupComplete: false, mcpGuideStep: 2 });
+    send('launcher:state-changed', state);
+    return result;
+  });
+  handle('launcher:account-tunnel-remove', async (_event, id, requestedMode) => {
+    const mode = requestedMode === undefined ? stateStore.read().browserInteractionMode : validateBrowserInteractionMode(requestedMode);
+    return browserHost.withAccountTunnelMutation(id, () => runtimeHost.removeAccountTunnel(id, mode));
   });
   handle("launcher:set-mcp-step", (_event, step) => {
     if (!Number.isInteger(step) || step < 0 || step > 2) throw new Error("Invalid MCP guide step");
@@ -1834,7 +1855,7 @@ async function start() {
     browserDescriptorPath: BROWSER_DESCRIPTOR_PATH,
     launcherProfile: LAUNCHER_PROFILE.kind,
     publishOperation,
-    publishCapabilities: capability => lifecycleProjection.update(capability),
+    publishCapabilities: capability => { lifecycleProjection.update(capability); browserHost?.publish(); },
     // Prime the daemon-owned route. While the GUI is alive, bounded background refreshes
     // use its authenticated control channel without holding every native request.
     nativeProxyEnvironmentProvider: async () => {
@@ -1931,6 +1952,13 @@ async function start() {
     control: browserControl.descriptor(),
     cancelTurn: IS_DEV_PROFILE ? undefined : (traceId, reason) => runtimeSupervisor.cancelBrowserTurn(traceId, reason),
     getConnectorName: () => runtimeHost.browserConnectorName(),
+    getAccountTunnel: (id, mode) => {
+      const config = runtimeHost.runtimeConfigSnapshot().config;
+      const view = require('./account-tunnels.cjs').accountTunnelView(config, id, mode,
+        runtimeSupervisor.getAccountTunnelStatus?.(id, mode), browserHost?.hosts.get(id)?.authPrincipalFingerprint);
+      // The desktop account router never gives an account an unassigned legacy tunnel.
+      return { ...view, required: true };
+    },
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
     loginWithPasskey: (onProgress, context) => stateStore.read().passkeyBrowser === "firefox"

@@ -156,6 +156,8 @@ export interface LauncherManualTurnLease {
   reused: boolean;
   deadlineAt: string | null;
   state: "awaiting-user" | "sent" | "running" | "completed";
+  accountTunnelRequired: boolean;
+  tunnelId?: string;
 }
 
 export interface LauncherManualTurnEnd extends LauncherManualTurnOwner {
@@ -217,6 +219,9 @@ async function reconcileLauncherManualMutation(
 
 function isLauncherManualTurnLease(body: Record<string, unknown>): boolean {
   return body.ok === true
+    && (body.accountTunnelRequired === undefined || typeof body.accountTunnelRequired === "boolean")
+    && (body.tunnelId === undefined || (typeof body.tunnelId === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(body.tunnelId)))
+    && (body.accountTunnelRequired !== true || typeof body.tunnelId === "string")
     && typeof body.tabId === "string"
     && body.tabId.length > 0
     && typeof body.reused === "boolean"
@@ -252,6 +257,8 @@ export async function startLauncherManualTurn(
     reused: body.reused as boolean,
     deadlineAt: body.deadlineAt as string | null,
     state: body.state as LauncherManualTurnLease["state"],
+    accountTunnelRequired: body.accountTunnelRequired === true,
+    ...(typeof body.tunnelId === "string" ? { tunnelId: body.tunnelId } : {}),
   };
 }
 
@@ -368,6 +375,8 @@ export async function notifyLauncherTurn(
   connectorBound?: boolean;
   cancelledByUser?: boolean;
   authenticationRequired?: boolean;
+  accountTunnelRequired?: boolean;
+  tunnelId?: string;
 }> {
   let descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const mutation = activity.phase === "usage"
@@ -445,6 +454,15 @@ export async function notifyLauncherTurn(
         if (typeof body.connectorBound !== "boolean") {
           throw new Error("Launcher browser control channel returned an invalid connector state");
         }
+        if (body.accountTunnelRequired !== undefined && typeof body.accountTunnelRequired !== "boolean") {
+          throw new Error("Launcher browser control channel returned an invalid account tunnel requirement");
+        }
+        if (body.tunnelId !== undefined && (typeof body.tunnelId !== "string" || !/^[A-Za-z0-9_-]{1,256}$/.test(body.tunnelId))) {
+          throw new Error("Launcher browser control channel returned an invalid tunnel id");
+        }
+        if (body.accountTunnelRequired === true && typeof body.tunnelId !== "string") {
+          throw new Error("Launcher did not provide the selected account's ready tunnel");
+        }
         if (body.queueId !== undefined) {
           if (typeof body.queueId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.queueId)) throw new Error('Invalid admitted queue owner');
           let acknowledged = false;
@@ -470,6 +488,8 @@ export async function notifyLauncherTurn(
             ? { taskProgressVersion: 1, taskProgressSequence: body.taskProgressSequence as number } : {}),
           reused: body.reused,
           connectorBound: body.connectorBound,
+          accountTunnelRequired: body.accountTunnelRequired === true,
+          ...(typeof body.tunnelId === "string" ? { tunnelId: body.tunnelId } : {}),
         };
       }
       if (activity.phase === "end") {

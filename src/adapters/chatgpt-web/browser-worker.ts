@@ -252,6 +252,7 @@ export interface BrowserTurn {
   requireRetainedConversation?: boolean;
   conversationKey?: string;
   onPreparedSelected?: (reused: boolean) => void | Promise<void>;
+  onTunnelSelected?: (lease: { accountTunnelRequired: boolean; tunnelId?: string }) => void | Promise<void>;
   abortSignal?: AbortSignal;
   onHeartbeat?: () => void;
   /** Send activation is the ambiguity boundary after which a fresh surface must not replay this prompt. */
@@ -331,6 +332,7 @@ export interface ResolvedBrowserConfig {
   headed: boolean;
   autoApproveToolCalls: boolean;
   useSavedChats?: boolean;
+  requireAccountTunnel?: boolean;
 }
 
 /**
@@ -354,6 +356,12 @@ function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBrowserCon
   const turnTimeoutMs = configured.turnTimeoutMs;
   if (browserHost === "launcher" && !browserHostDescriptorPath) {
     throw new Error("Launcher browser host requires chatgptWeb.browserHostDescriptorPath");
+  }
+  if (configured.requireAccountTunnel !== undefined && typeof configured.requireAccountTunnel !== "boolean") {
+    throw new Error("ChatGPT Web requireAccountTunnel must be a boolean");
+  }
+  if (configured.requireAccountTunnel && browserHost !== "launcher") {
+    throw new Error("Account tunnel authority requires the launcher browser host");
   }
   if (browserHelperScriptPath && browserHost !== "launcher") {
     throw new Error("Explicit browser helper script requires a launcher host");
@@ -383,6 +391,7 @@ function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBrowserCon
     headed: configured.headed !== false,
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
     useSavedChats: configured.useSavedChats === true,
+    requireAccountTunnel: configured.requireAccountTunnel === true,
   };
 }
 
@@ -2103,6 +2112,11 @@ export class ChatGptBrowserWorker {
       if (reused && !turn.prepareResume) {
         throw new Error("Launcher reused a ChatGPT conversation without a continuation prompt");
       }
+      if (this.config.requireAccountTunnel && (turn.capabilities.localToolsEnabled || turn.nativeConnector)
+        && (lease.accountTunnelRequired !== true || !lease.tunnelId)) {
+        throw new Error("The selected account has no ready own tunnel for this tool-capable turn");
+      }
+      await turn.onTunnelSelected?.({ accountTunnelRequired: lease.accountTunnelRequired === true, tunnelId: lease.tunnelId });
       await turn.onPreparedSelected?.(reused);
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();

@@ -549,9 +549,14 @@ class RuntimeHost {
     };
   }
 
-  mcpCredentialsConfigured(requestedMode) {
+  mcpCredentialsConfigured(requestedMode, accountId) {
     const config = this.runtimeConfigSnapshot().config;
     const interactionMode = requestedMode ?? config?.browserInteractionMode ?? "automatic";
+    if (config?.accountTunnelMode === true) {
+      if (!accountId) return false;
+      const own = require('./account-tunnels.cjs').accountTunnelFor(config, accountId, interactionMode);
+      return Boolean(own && fs.existsSync(own.tunnel.runtimeKeyFile));
+    }
     if (interactionMode !== "automatic" && interactionMode !== "manual") {
       throw new Error("Browser interaction mode must be automatic or manual");
     }
@@ -569,6 +574,79 @@ class RuntimeHost {
       && path.isAbsolute(tunnel.runtimeKeyFile)
       && fs.existsSync(tunnel.runtimeKeyFile),
     );
+  }
+
+  configureAccountTunnel(accountId, input) {
+    const mode = input?.interactionMode ?? this.getBrowserInteractionMode();
+    const operation = async () => {
+      if (this.currentOperation()) throw new Error('Finish the current runtime operation before configuring an account tunnel');
+      assertTunnelCredentials(input?.reuseSavedCredentials === true, input?.tunnelId, input?.runtimeKey);
+      const current = this.runtimeConfigSnapshot();
+      if (!current.configured || current.owner !== 'launcher') throw new Error('Set up the local model runtime first');
+      if (this.launcherProfile === 'production' && current.config.releaseVersion !== this.app.getVersion()) {
+        throw new Error('Finish the managed runtime upgrade after active tasks before configuring account tunnels');
+      }
+      const binary = current.config.tunnel?.binaryPath ?? path.join(this.coreHome, 'bin', this.platform === 'win32' ? 'tunnel-client.exe' : 'tunnel-client');
+      if (!fs.existsSync(binary)) {
+        await this.run('account-tunnel-install', ['tunnel', 'install'], {
+          message: 'Installing the OpenAI tunnel client', successMessage: 'Tunnel client installed', timeoutMs: 60_000 });
+      }
+      const store = require('./account-tunnels.cjs');
+      const change = store.prepareAccountTunnel({ coreHome: this.coreHome, configPath: this.supervisor.configPath, accountId,
+        mode, tunnelId: input?.tunnelId, runtimeKey: input?.runtimeKey,
+        reuseSavedCredentials: input?.reuseSavedCredentials === true, principalFingerprint: input?.principalFingerprint });
+      const restartCore = this.launcherProfile === 'production' && change.before.config.mode !== change.config.mode;
+      let coreStopped = false;
+      let committed = false;
+      this.lifecycleOperation = 'account-tunnel-setup';
+      try {
+        if (restartCore) {
+          // Enabling Full mode creates the tool broker; the first transition needs
+          // an idle owned core restart. Existing requests are never cancelled.
+          await this.supervisor.stopForSetup(); coreStopped = true;
+        } else await this.supervisor.prepareAccountTunnelChange(accountId, mode);
+        store.commitAccountTunnel(change);
+        committed = true;
+        if (restartCore) await this.supervisor.startIfConfigured();
+        else await this.supervisor.syncAccountTunnels();
+        return { ok: true, saved: true, ready: this.supervisor.getAccountTunnelStatus(accountId, mode).ready === true };
+      } catch (error) {
+        store.discardAccountTunnel(change);
+        if (coreStopped) await this.supervisor.startIfConfigured().catch(() => {});
+        else await this.supervisor.syncAccountTunnels().catch(() => {});
+        if (committed) {
+          this.logger.warn('runtime.account_tunnel_saved_not_ready', { accountId, interactionMode: mode,
+            message: error instanceof Error ? error.message : String(error) });
+          return { ok: true, saved: true, ready: false, recoveryRequired: true };
+        }
+        throw error;
+      } finally { this.lifecycleOperation = null; }
+    };
+    const result = (this.accountTunnelQueue ?? Promise.resolve()).then(operation);
+    this.accountTunnelQueue = result.catch(() => {});
+    return result;
+  }
+
+  removeAccountTunnel(accountId, requestedMode) {
+    const mode = requestedMode ?? this.getBrowserInteractionMode();
+    const operation = async () => {
+      if (this.currentOperation()) throw new Error('Finish the current runtime operation before removing an account tunnel');
+      const store = require('./account-tunnels.cjs');
+      const change = store.prepareRemoveAccountTunnel({ configPath: this.supervisor.configPath, accountId, mode });
+      await this.supervisor.prepareAccountTunnelChange(accountId, mode);
+      try { store.commitAccountTunnel(change); }
+      catch (error) { await this.supervisor.syncAccountTunnels().catch(() => {}); throw error; }
+      try { await this.supervisor.syncAccountTunnels(); }
+      catch (error) {
+        this.logger.warn('runtime.account_tunnel_removed_recovery_required', { accountId, interactionMode: mode,
+          message: error instanceof Error ? error.message : String(error) });
+        return { ok: true, saved: true, ready: false, recoveryRequired: true };
+      }
+      return { ok: true, saved: true, ready: false };
+    };
+    const result = (this.accountTunnelQueue ?? Promise.resolve()).then(operation);
+    this.accountTunnelQueue = result.catch(() => {});
+    return result;
   }
 
   captureSetupCheckpoint(snapshot) {
@@ -1616,7 +1694,8 @@ class RuntimeHost {
       ? existing.config?.manualTunnel
       : existing.config?.automaticTunnel;
     const activeTunnel = existing.config?.tunnel;
-    const tunnelProfileMigrationRequired = existing.mode === "full" && Boolean(activeTunnel) && Boolean(
+    const tunnelProfileMigrationRequired = existing.config?.accountTunnelMode !== true
+      && existing.mode === "full" && Boolean(activeTunnel) && Boolean(
       !explicitTunnel
       || explicitTunnel.tunnelId !== activeTunnel.tunnelId
       || activeTunnel.profileName !== expectedTunnelProfile

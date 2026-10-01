@@ -16,7 +16,7 @@ import {
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { BrowserTurn, ResolvedBrowserConfig } from "./browser-worker";
-import { parseHelperMessage, type HelperTurnOutputMessage } from "./browser-helper-protocol";
+import { parseHelperMessage, type HelperTurnOutputMessage, type HelperTunnelScope } from "./browser-helper-protocol";
 import { asError } from "../../lib/errors";
 
 interface PendingTurn {
@@ -29,6 +29,22 @@ interface PendingTurn {
   localFailure?: Error;
   progressForwarding?: AbortController;
   acknowledgedMultipartStage?: number;
+}
+
+/** The prepared handshake is the parent-side authority barrier before a token is compiled. */
+export async function prepareScopedHelperPrompt<T>(options: {
+  requireAccountTunnel: boolean;
+  toolCapable: boolean;
+  tunnelScope?: HelperTunnelScope;
+  onTunnelSelected?: BrowserTurn["onTunnelSelected"];
+  prepare: () => Promise<T>;
+}): Promise<T> {
+  if (options.requireAccountTunnel && options.toolCapable
+    && (options.tunnelScope?.accountTunnelRequired !== true || !options.tunnelScope.tunnelId)) {
+    throw new Error("Launcher browser helper did not provide the selected account's ready tunnel");
+  }
+  if (options.tunnelScope) await options.onTunnelSelected?.(options.tunnelScope);
+  return options.prepare();
 }
 
 function validateCompactionExecution(turn: BrowserTurn): ChatGptWebCompactionExecution | undefined {
@@ -118,6 +134,10 @@ export class LauncherBrowserHelperClient {
         "Launcher browser helper does not support Native5 completion-fence diagnostics; update or restart the launcher",
       );
     }
+    if (this.config.requireAccountTunnel && (turn.capabilities.localToolsEnabled || turn.nativeConnector)
+      && !this.helperFeatures.has("tunnel-scope-handshake")) {
+      throw new Error("Launcher browser helper cannot confirm the selected account tunnel; update or restart the launcher");
+    }
     const compactionExecution = validateCompactionExecution(turn);
     if (compactionExecution && !this.helperFeatures.has("compaction-execution")) {
       throw new ChatGptWebAdapterError(
@@ -182,6 +202,7 @@ export class LauncherBrowserHelperClient {
             turnTimeoutMs: this.config.turnTimeoutMs,
             autoApproveToolCalls: this.config.autoApproveToolCalls,
             useSavedChats: this.config.useSavedChats === true,
+            requireAccountTunnel: this.config.requireAccountTunnel === true,
           },
           turn: {
             traceId: turn.traceId,
@@ -460,7 +481,13 @@ export class LauncherBrowserHelperClient {
         }
         else if (message.event === "prepared_selected") {
           const prepare = message.reused ? pending.turn.prepareResume : pending.turn.prepare;
-          void Promise.resolve().then(() => prepare?.()).then(prepared => {
+          void prepareScopedHelperPrompt({
+            requireAccountTunnel: this.config.requireAccountTunnel === true,
+            toolCapable: pending.turn.capabilities.localToolsEnabled || pending.turn.nativeConnector === true,
+            tunnelScope: message.tunnelScope,
+            onTunnelSelected: pending.turn.onTunnelSelected,
+            prepare: async () => this.pending.get(message.id) === pending ? prepare?.() : undefined,
+          }).then(prepared => {
             if (!prepared) throw new Error("Launcher browser helper selected an unavailable continuation prompt");
             if (this.pending.get(message.id) !== pending) {
               prepared.release();
