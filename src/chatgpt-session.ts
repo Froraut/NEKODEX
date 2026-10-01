@@ -665,6 +665,8 @@ type ChatGptModelRowTarget =
   | { kind: "version"; version: ChatGptWebModelFamily }
   | { kind: "label"; label: string };
 
+class ChatGptModelSelectionNotRetainedError extends Error {}
+
 function describeChatGptModelRowTarget(target: ChatGptModelRowTarget): string {
   return target.kind === "version" ? `model family ${target.version}` : `model row ${JSON.stringify(target.label)}`;
 }
@@ -713,9 +715,16 @@ async function assertSelectedChatGptModelRow(
   }
   activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
   await waitForChatGptModelRows(activation.menu, 3_000, signal);
-  const selected = await resolveChatGptModelRow(activation.menu, target);
+  let selected = await resolveChatGptModelRow(activation.menu, target);
+  // The effort view can reappear before React commits the selected radio.
+  // Wait for this exact row's confirmation; never repair or substitute a family.
+  const selectionDeadline = Date.now() + 1_500;
+  while (!selected?.row.checked && Date.now() < selectionDeadline) {
+    await waitForChatGptProbeSettle(50, signal);
+    selected = await resolveChatGptModelRow(activation.menu, target);
+  }
   if (!selected?.row.checked) {
-    throw new Error(`ChatGPT did not retain ${describeChatGptModelRowTarget(target)}`);
+    throw new ChatGptModelSelectionNotRetainedError(`ChatGPT did not retain ${describeChatGptModelRowTarget(target)}`);
   }
   // The model list keeps the power slider mounted under an inert ancestor.
   // Clicking the verified selected row returns to the editable effort view.
@@ -754,7 +763,23 @@ async function selectChatGptModelRow(
   // Family selection returns to the owned effort surface. Escape/reopen here
   // lets delayed exit cleanup remove the slider we are about to use.
   activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
-  return assertSelectedChatGptModelRow(page, control, activation, target, signal);
+  try {
+    return await assertSelectedChatGptModelRow(page, control, activation, target, signal);
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (!(error instanceof ChatGptModelSelectionNotRetainedError)
+      || await hasVisibleChatGptModalGate(page)) throw error;
+    // A forced pointer click can miss while an offscreen picker transitions.
+    // Retry only the explicit requested row, then require its checked state again.
+    activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
+    const retry = await resolveChatGptModelRow(activation.menu, target);
+    if (!retry || retry.row.disabled) throw error;
+    if (!retry.row.checked) {
+      await retry.option.dispatchEvent("click", undefined, { timeout: 2_000, ...(signal ? { signal } : {}) });
+    }
+    activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
+    return assertSelectedChatGptModelRow(page, control, activation, target, signal);
+  }
 }
 
 /** Inspect lazy model rows, then return to the effort view without selecting a model. */

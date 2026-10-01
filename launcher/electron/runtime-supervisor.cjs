@@ -1465,7 +1465,10 @@ class RuntimeSupervisor {
           void this.reportTunnelStatus(config, true, undefined, ownerIsCurrent).then((result) => {
             if (!ownerIsCurrent() || result?.stale === true) return;
             if (!ownerChanged && result && result.capabilityChanged !== true) return;
-            const available = this.webAccepting === true && this.brokerReady === true;
+            // DEV and account peers supervise only the transport. The production
+            // parent separately owns broker admission for all account tunnels.
+            const available = this.launcherProfile === "development"
+              || this.webAccepting === true && this.brokerReady === true;
             this.updateCapabilities(available ? "ready" : "degraded",
               available ? null : "Tool tunnel is ready; local broker admission is still pending", config);
           }).catch((error) => {

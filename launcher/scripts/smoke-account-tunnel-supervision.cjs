@@ -4,6 +4,9 @@ const { managedTunnelConnectArgs } = require("../electron/runtime-tunnel-policy.
 const { RuntimeSupervisor } = require("../electron/runtime-supervisor.cjs");
 const { processIdentity } = require('../electron/update-recovery.cjs');
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const tunnel = (suffix) => ({ tunnelId: `tunnel_${suffix.repeat(32)}`, alias: `account-${suffix}`,
   profileName: "profile", profileDir: "/tmp", binaryPath: "/tmp/unused", runtimeKeyFile: "/tmp/unused-key" });
@@ -48,6 +51,59 @@ const manager = new AccountTunnelSupervisor({
 }, () => events.push(manager.snapshot()));
 
 async function main() {
+  for (const launcherProfile of ['development', 'production']) {
+    const monitored = Object.create(RuntimeSupervisor.prototype);
+    let tick, receive;
+    const published = new Promise(resolve => { receive = resolve; });
+    Object.assign(monitored, { launcherProfile, stopping: false,
+      tunnel: { pid: 4242 }, tunnelMonitorGeneration: 0, tunnelMonitorTimer: null,
+      tunnelMonitorInFlight: false, restartTimers: { tunnel: null },
+      webAccepting: null, brokerReady: null,
+      observeTunnelForMonitor: async () => ({ ready: true, statusKnown: true, pid: 4242 }),
+      reportTunnelStatus: async () => launcherProfile === 'development' ? null : { capabilityChanged: true },
+      updateCapabilities: (status, detail) => receive({ status, detail }),
+    });
+    const originalInterval = global.setInterval;
+    try {
+      global.setInterval = callback => {
+        tick = callback;
+        return originalInterval(() => {}, 10_000);
+      };
+      monitored.startTunnelMonitor({ mode: 'full', tunnel: tunnel('d') });
+    } finally { global.setInterval = originalInterval; }
+    const timeout = setTimeout(() => receive({ status: 'fixture-timeout' }), 2_000);
+    try {
+      tick();
+      const result = await published;
+      assert.equal(result.status, launcherProfile === 'development' ? 'ready' : 'degraded');
+      if (launcherProfile === 'development') assert.equal(result.detail, null);
+    } finally { clearTimeout(timeout); monitored.stopTunnelMonitor(); }
+  }
+  const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-first-account-profile-'));
+  const profileDir = path.join(profileRoot, 'accounts', 'first');
+  const firstPeer = Object.create(AccountTunnelPeer.prototype);
+  Object.assign(firstPeer, { stopping: false, shutdownRequested: false,
+    tunnelControlControllers: new Map(), tunnelControlChildren: new Set(),
+    tunnelControlQueue: Promise.resolve(), tunnelProxyEnvironmentProvider: async () => ({}),
+  });
+  let inventoryReached = false;
+  firstPeer.waitForKnownTunnelStatus = async cfg => {
+    const result = await firstPeer.runTunnelCommand(cfg,
+      ['-e', 'process.stdout.write(process.cwd())'], 2_000, 'First profile inventory fixture');
+    assert.equal(result.code, 0);
+    assert.equal(fs.realpathSync(result.output), fs.realpathSync(profileDir));
+    if (process.platform !== 'win32') assert.equal(fs.statSync(profileDir).mode & 0o777, 0o700);
+    inventoryReached = true;
+    throw new Error('fixture reached inventory before SDK connect');
+  };
+  try {
+    assert.equal(fs.existsSync(profileDir), false);
+    await assert.rejects(firstPeer.startTunnel({ tunnel: { ...tunnel('d'),
+      profileDir, binaryPath: process.execPath } }), /fixture reached inventory before SDK connect/);
+    assert.equal(inventoryReached, true);
+    await firstPeer.tunnelControlQueue;
+    assert.equal(firstPeer.tunnelControlChildren.size, 0);
+  } finally { fs.rmSync(profileRoot, { recursive: true, force: true }); }
   const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'ignore' });
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
   try {

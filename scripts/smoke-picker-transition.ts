@@ -8,16 +8,23 @@ import {
 
 // Synthetic DOM only, in a fresh headless browser: no account/profile/network.
 const original = await Bun.file(new URL("../tests/fixtures/english-model-picker.html", import.meta.url)).text();
-function fixture(lazy: boolean, rejectSelection = false): string {
+function fixture(lazy: boolean, rejectSelection = false, selectionDelayMs = 0, missFirstSelection = false): string {
   return original
     .replace('<script>', '<script>(() => {').replace('</script>', '})();</script>')
     .replace("advanced ? Object.entries(rows)", `${lazy ? "advanced" : "true"} ? Object.entries(rows)`)
     .replace("for (const radio of document.querySelectorAll('[data-family'])) radio.setAttribute('aria-checked', String(radio.dataset.family === family));",
       "document.querySelector('#radios').hidden = !advanced; for (const radio of document.querySelectorAll('[data-family'])) radio.setAttribute('aria-checked', String(radio.dataset.family === family));")
     .replace("family = radio.dataset.family; value = 0;", "if (family !== radio.dataset.family) { family = radio.dataset.family; value = 0; }")
-    .replace("family = radio.dataset.family;", rejectSelection ? "/* simulate a refused selection */" : "family = radio.dataset.family;")
+    .replace("family = radio.dataset.family;", rejectSelection ? "/* simulate a refused selection */"
+      : selectionDelayMs > 0
+        ? `window.selectionWasDeferred = true; const requestedFamily = radio.dataset.family; setTimeout(() => { family = requestedFamily; render(); }, ${selectionDelayMs});`
+        : "family = radio.dataset.family;")
     .replace("setTimeout(() => { menu.hidden = true; control.setAttribute('aria-expanded', 'false'); }, 75);",
-      "control.setAttribute('aria-expanded', 'false'); setTimeout(() => { menu.hidden = true; }, 250);");
+      "control.setAttribute('aria-expanded', 'false'); setTimeout(() => { menu.hidden = true; }, 250);")
+    .replace("document.querySelector('#radios').onclick = event => { const radio = event.target.closest('[data-family]'); if (radio) {",
+      missFirstSelection
+        ? "window.rowSelectionFamilies = []; document.querySelector('#radios').onclick = event => { const radio = event.target.closest('[data-family]'); if (radio) { window.rowSelectionFamilies.push(radio.dataset.family); if (window.rowSelectionFamilies.length === 1) { view.dataset.modelPickerView = 'simple'; render(); return; }"
+        : "document.querySelector('#radios').onclick = event => { const radio = event.target.closest('[data-family]'); if (radio) {");
 }
 const browser = await chromium.launch({ headless: true });
 try {
@@ -57,6 +64,29 @@ try {
   assert.equal((await readChatGptEffortSnapshot(activation.sliderContainer)).value, 1);
   assert.equal(await draft.innerText(), 'Draft to keep');
   console.log('RETURNED_FROM_INERT_MODEL_LIST_WITH_EFFORT_PRESERVED');
+
+  // React can expose the effort view while the previously checked radio is
+  // still current. The exact requested legacy row must settle before acceptance.
+  await page.setContent(fixture(false, false, 500));
+  activation = await activateChatGptEffortMenu(page, control);
+  const deferredSelection = selectChatGptModelFamily(page, control, activation, '5.5');
+  // Attach a rejection handler while observing the in-flight transition.
+  void deferredSelection.catch(() => {});
+  await page.waitForFunction(() => (window as any).selectionWasDeferred === true);
+  assert.equal(await page.evaluate(() => (window as any).pickerState().family), 'latest');
+  activation = await deferredSelection;
+  assert.equal(await page.evaluate(() => (window as any).pickerState().family), '5.5');
+  assert.equal(await activation.sliderContainer.isVisible(), true);
+  assert.equal(await draft.innerText(), 'Draft to keep');
+  console.log('WAITED_FOR_EXACT_DEFERRED_MODEL_SELECTION');
+
+  await page.setContent(fixture(false, false, 0, true));
+  activation = await activateChatGptEffortMenu(page, control);
+  activation = await selectChatGptModelFamily(page, control, activation, '5.5');
+  assert.deepEqual(await page.evaluate(() => (window as any).rowSelectionFamilies), ['5.5', '5.5']);
+  assert.equal(await page.evaluate(() => (window as any).pickerState().family), '5.5');
+  assert.equal(await draft.innerText(), 'Draft to keep');
+  console.log('RETRIED_ONLY_THE_EXPLICIT_ROW_AFTER_A_MISSED_SELECTION');
 
   for (const lazy of [false, true]) {
     await page.setContent(fixture(lazy));

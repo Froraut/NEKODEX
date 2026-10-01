@@ -46,7 +46,8 @@ import { connectTunnel, createTunnelConfig, installRuntimeKey, installRuntimeKey
 import type { TunnelClientInstallSnapshot } from "./tunnel";
 import { getTunnelServiceStatus, installTunnelService, restartTunnelService, stopTunnelService, tunnelServiceDefinitionMatches, uninstallTunnelService } from "./tunnel-service";
 import { launchDomain } from "./launch-agent";
-import { runChecked, runCommand, type CommandResult } from "./process";
+import { runChecked, runCommand } from "./process";
+import { runtimeStatusReportsStopped } from "./tunnel-status";
 import { VERSION } from "./version";
 
 export interface SetupResult {
@@ -215,18 +216,6 @@ async function inspectLauncherCapabilities(
     proAvailable: detectCapabilities ? inspected.proAvailable === true : existing!.proAvailable,
     modelCapabilities: detectCapabilities ? inspected.modelCapabilities : existing!.modelCapabilities,
   };
-}
-
-/** `tunnel-client runtimes status --json` explicitly reports a stopped runtime without error.
- * An unreadable status is uncertain ownership, not evidence of a stopped runtime. */
-function runtimeStatusReportsStopped(result: CommandResult): boolean {
-  if (result.status !== 0) return false;
-  try {
-    const status = JSON.parse(result.stdout.trim() || result.stderr.trim()) as Record<string, unknown>;
-    return status.process_running === false
-      && (status.runtime_state === "stopped" || status.status === "stopped")
-      && status.error === undefined;
-  } catch { return false; }
 }
 
 /** A failed connect is not evidence of a stopped runtime. Probe with the candidate client;
@@ -963,16 +952,24 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   // Even a nominally unchanged Full setup can reinstall the tunnel client or
   // regenerate a missing profile during configureTunnel/bootstrapTunnelProfile.
   if (existing?.mode === "full") {
-    if (!existing.tunnel || !existsSync(existing.tunnel.binaryPath)) {
-      throw new Error("DEV setup cannot verify the existing Full tunnel is stopped; use the launcher owner/idle-drain setup path");
-    }
-    const observed = runCommand(existing.tunnel.binaryPath,
-      ["runtimes", "status", existing.tunnel.alias, "--json"], { timeout: 10_000 });
-    if (!runtimeStatusReportsStopped(observed)) {
-      throw new Error(
-        "DEV setup requires an explicitly stopped existing Full tunnel before changing its profile. "
-        + "Finish active turns and use the launcher owner/idle-drain setup path; direct CLI setup cannot stop or recover an unknown owner.",
-      );
+    const activeAccountTunnels = existing.accountTunnelMode === true
+      ? (existing.accountTunnels ?? []).filter(binding => binding.interactionMode === existing.browserInteractionMode)
+        .map(binding => binding.tunnel) : [];
+    // Removing the last binding can retain a recovery projection. It must also
+    // prove stopped; an empty binding set must never silently waive the guard.
+    const tunnels = activeAccountTunnels.length ? activeAccountTunnels : [existing.tunnel];
+    for (const tunnel of tunnels) {
+      if (!tunnel || !existsSync(tunnel.binaryPath)) {
+        throw new Error("DEV setup cannot verify the existing Full tunnel is stopped; use the launcher owner/idle-drain setup path");
+      }
+      const observed = runCommand(tunnel.binaryPath,
+        ["runtimes", "status", tunnel.alias, "--json"], { timeout: 10_000 });
+      if (!runtimeStatusReportsStopped(observed)) {
+        throw new Error(
+          "DEV setup requires an explicitly stopped existing Full tunnel before changing its profile. "
+          + "Finish active turns and use the launcher owner/idle-drain setup path; direct CLI setup cannot stop or recover an unknown owner.",
+        );
+      }
     }
   }
   const keyPath = managedRuntimeKeyPath(config.browserInteractionMode);
