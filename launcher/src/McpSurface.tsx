@@ -102,6 +102,13 @@ export function McpSurface({
   // ChatGPT pages (developer mode, plugins) open in the configured account's own window; with no account they fall
   // back to the system browser.
   const pageAccountId = targetAccountId ?? browserAccountId ?? snapshot.browser?.accountId ?? null;
+  const openApiPanel = async (section: "tunnels" | "keys" = "tunnels") => {
+    setError(null);
+    try {
+      if (pageAccountId) await api!.openOpenAiApiPanel(pageAccountId, section);
+      else await api!.openExternal(section === "keys" ? snapshot.urls.keys : snapshot.urls.tunnels);
+    } catch (error) { setError(messageOf(error)); }
+  };
   const manualInteraction = interactionMode === "manual";
   useEffect(() => {
     if (repairOutcome !== "recovered" || repairOutcomeRevision === null
@@ -377,9 +384,10 @@ export function McpSurface({
                 <p>{accountToolsCopy(language).keyInstructions}</p>
                 <p>{accountToolsCopy(language).identity}</p>
                 <div className="nk-connections__actions">
-                  <Button icon="external" onClick={() => void openExternal(snapshot.urls.tunnels)}>{copy.openTunnels}</Button>
-                  <Button icon="external" onClick={() => void openExternal(snapshot.urls.keys)}>{copy.openKeys}</Button>
+                  <Button icon="browser" onClick={() => void openApiPanel()}>{copy.openAiApiPanel}</Button>
+                  <Button icon="browser" onClick={() => void openApiPanel("keys")}>{copy.openKeys}</Button>
                 </div>
+                <p>{copy.apiPanelConnectorHint}</p>
               </div>
             ) : null}
             {step === 1 ? (
@@ -513,6 +521,7 @@ export function McpSurface({
                   </p>
                 </div>
                 <div className="nk-connections__actions">
+                  <Button icon="browser" onClick={() => void openApiPanel()}>{copy.openAiApiPanel}</Button>
                   {snapshot.urls.developerMode ? <Button icon="browser"
                     onClick={() => void openChatGptPage(snapshot.urls.developerMode!)}>{copy.openDeveloperMode}</Button> : null}
                   <Button
@@ -523,6 +532,7 @@ export function McpSurface({
                     {copy.openConnectors}
                   </Button>
                 </div>
+                <p>{copy.apiPanelConnectorHint}</p>
                 {doctor ? <DoctorSummary copy={copy} language={language} report={doctor} /> : null}
               </div>
             ) : null}

@@ -551,6 +551,19 @@ export function restoreManagedRoute(text: string, journal: ManagedRouteJournal):
     : restoredRoute;
 }
 
+/** Explicitly leave V1 without overwriting feature/depth values the user now owns. */
+export function restoreManagedRouteForNativeProtocol(text: string, journal: ManagedRouteJournal): string {
+  if (!journalRecordsSubagentProtocol(journal) || journal.installed.subagent_protocol !== "compatibility-v1") {
+    return restoreManagedRoute(text, journal);
+  }
+  // Validate the recorded feature baseline before releasing its ownership. URL, provider,
+  // catalog and hook verification remain strict; only exact still-managed overrides restore.
+  compatibilityV1Evidence(journal);
+  const routeJournal = structuredClone(journal);
+  routeJournal.installed.subagent_protocol = "native";
+  return restoreOwnedManagedFeatures(restoreManagedRoute(text, routeJournal), journal);
+}
+
 export function restoreLegacyV2(text: string, journal: LegacyCodexIntegrationJournal): string {
   if (!text.includes(journal.providerBlock)) {
     throw new Error("Managed legacy Codex provider block changed after setup; refusing migration");

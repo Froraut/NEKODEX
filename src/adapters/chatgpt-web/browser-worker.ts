@@ -1081,10 +1081,8 @@ export class ChatGptBrowserWorker {
             const normalize = (value: string) => value.replace(/\r\n?/g, "\n");
             return contents.length === 1 && normalize(contents[0]!.innerText) === normalize(submitted);
           }, baseline.submittedText!), signal));
-        if (matches) {
-          const response = await responseDomSnapshot(locator, {}, signal);
-          matches = response.responsePresent && response.completionActionVisible;
-        }
+        // Exact accepted user identity/text owns this replacement group even while its
+        // assistant response is unfinished. Generation is observed separately below.
       }
       if (!matches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
     }
@@ -1339,8 +1337,14 @@ export class ChatGptBrowserWorker {
     try {
       composer = await this.activeComposer(page, 30_000, abortSignal);
       if (await this.connectorIsSelected(composer, abortSignal)) {
-        await capture("connector-already-selected");
-        return composer;
+        if ((await this.attachedPromptText(page, abortSignal)).length === 0) {
+          await capture("connector-already-selected");
+          return composer;
+        }
+        // The selected connector does not prove that a restored task composer is empty.
+        await this.clearChatGptComposerState(page);
+        throwIfPromptAttachmentAborted(abortSignal);
+        composer = await this.activeComposer(page, 30_000, abortSignal);
       }
       await composer.fill("", { signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS });
 
@@ -2117,7 +2121,8 @@ export class ChatGptBrowserWorker {
       originalError = error;
       terminal = error instanceof ChatGptCompactionHandoffAccepted
         ? "completed"
-        : (error instanceof DOMException && error.name === "AbortError")
+        : turn.abortSignal?.aborted
+        || (error instanceof DOMException && error.name === "AbortError")
         || (error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")
         ? "aborted"
         : "failed";
@@ -2125,6 +2130,9 @@ export class ChatGptBrowserWorker {
       throw error;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (turn.abortSignal?.aborted && !(originalError instanceof ChatGptCompactionHandoffAccepted)) {
+        terminal = "aborted";
+      }
       try {
         const release = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
           phase: "end",
@@ -2139,14 +2147,34 @@ export class ChatGptBrowserWorker {
             : {}),
         });
         if (release.cancelledByUser) throw chatGptBrowserTabClosedError();
+        // Cancellation may arrive while the release request is in flight, after terminal was
+        // chosen. A sign-in receipt cannot turn that cancelled request into an auth failure.
+        if (turn.abortSignal?.aborted && !(originalError instanceof ChatGptCompactionHandoffAccepted)) {
+          throw new DOMException("ChatGPT web turn aborted", "AbortError");
+        }
+        if (release.authenticationRequired && terminal !== "aborted"
+          && !(originalError instanceof ChatGptCompactionHandoffAccepted)) {
+          throw new ChatGptWebAdapterError(
+            "ChatGPT requested sign-in. Open sign in in the launcher, then retry.",
+            { status: 401, errorType: "authentication_error", code: "chatgpt_sign_in_required", retryable: false },
+          );
+        }
       } catch (controlError) {
         if (controlError instanceof ChatGptWebAdapterError && controlError.code === "client_cancelled") {
           throw controlError;
         }
-        if (!originalError) throw controlError;
-        console.error(
-          `[chatgpt-web] launcher turn-end notification failed after browser error: ${controlError instanceof Error ? controlError.message : String(controlError)}`,
-        );
+        if (turn.abortSignal?.aborted && !(originalError instanceof ChatGptCompactionHandoffAccepted)) {
+          throw new DOMException("ChatGPT web turn aborted", "AbortError");
+        } else if (controlError instanceof ChatGptWebAdapterError
+          && controlError.code === "chatgpt_sign_in_required") {
+          throw controlError;
+        } else if (!originalError) {
+          throw controlError;
+        } else {
+          console.error(
+            `[chatgpt-web] launcher turn-end notification failed after browser error: ${controlError instanceof Error ? controlError.message : String(controlError)}`,
+          );
+        }
       }
     }
   }

@@ -253,6 +253,10 @@ native and routed Web backends:
 - **Native** preserves every official native row and gives routed rows the selected template's
   protocol surface. Under MultiAgent V2, Web-origin `spawn_agent`, `send_message`, and
   `followup_task` calls include Codex's explicit `encrypted_function_args: []` plaintext marker.
+  Explicit `subagents native` also accepts a user-enabled `multi_agent_v2` scalar,
+  inline table or feature table while releasing only the old V1 lines still owned
+  by NEKODEX. Other feature/depth edits are preserved; route and hook edits still
+  block the transaction. Ordinary setup and repair keep their strict ownership checks.
   A genuinely encrypted native-to-Web payload is rejected with one HTTP 400 before a browser is
   opened; it is never turned into an SSE disconnect/retry loop.
 

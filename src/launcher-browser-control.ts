@@ -367,6 +367,7 @@ export async function notifyLauncherTurn(
   reused?: boolean;
   connectorBound?: boolean;
   cancelledByUser?: boolean;
+  authenticationRequired?: boolean;
 }> {
   let descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const mutation = activity.phase === "usage"
@@ -475,7 +476,11 @@ export async function notifyLauncherTurn(
         if (body.ok !== true || typeof body.cancelledByUser !== "boolean") {
           throw new Error("Launcher browser control channel returned an invalid turn release result");
         }
-        return { cancelledByUser: body.cancelledByUser };
+        if (body.authenticationRequired !== undefined && typeof body.authenticationRequired !== "boolean") {
+          throw new Error("Launcher browser control channel returned an invalid authentication state");
+        }
+        return { cancelledByUser: body.cancelledByUser,
+          ...(body.authenticationRequired === true ? { authenticationRequired: true } : {}) };
       }
       if (body.ok !== true) {
         throw new Error("Launcher browser control channel returned an invalid acknowledgement");

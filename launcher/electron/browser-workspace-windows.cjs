@@ -62,11 +62,13 @@ class BrowserWorkspaceWindows {
     platform = process.platform,
     home = HOME,
     restoreHome = RESTORE_HOME,
+    persistLocations = true,
+    isSessionMutation = potentialSessionMutation,
   }) {
     Object.assign(this, {
       BrowserWindow, session, accountId, label, allowedUrl, register, unregister, external,
       beginSessionMutation, onMutationBlocked, onPersistenceError, getVerifiedPrincipal, onChanged, platform, home,
-      restoreHome, displays,
+      restoreHome, displays, persistLocations, isSessionMutation,
     });
     this.windows = new Set();
     this.windowMeta = new Map();
@@ -77,7 +79,7 @@ class BrowserWorkspaceWindows {
     this.restoreAttempted = false;
     this.restorePrincipal = null;
     this.restoreResult = null;
-    this.pendingPopupLeases = [];
+    this.pendingPopupLeases = new Map();
     this.mutationLeasesByContents = new WeakMap();
     this.saveTimer = null;
     this.pendingCaptures = new Set();
@@ -86,6 +88,7 @@ class BrowserWorkspaceWindows {
 
   ensureManifestLoaded() {
     if (this.manifestLoaded) return;
+    if (!this.persistLocations) { this.manifestLoaded = true; return; }
     const manifest = this.manifest.read();
     this.saved = new Map(manifest.entries.map(entry => [entry.id, entry]));
     this.manifestLoaded = true;
@@ -163,6 +166,11 @@ class BrowserWorkspaceWindows {
       win.on(event, () => this.scheduleCapture(win));
     }
     win.once("closed", () => {
+      for (const pending of this.pendingPopupLeases.get(contents) ?? []) {
+        clearTimeout(pending.timer);
+        pending.lease?.fail?.(new Error("Browser workspace closed before popup opened"));
+      }
+      this.pendingPopupLeases.delete(contents);
       const mutationLease = this.mutationLeasesByContents.get(contents);
       if (mutationLease) {
         this.mutationLeasesByContents.delete(contents);
@@ -190,7 +198,7 @@ class BrowserWorkspaceWindows {
         void this.external(contents, url);
         return;
       }
-      if (!potentialSessionMutation(url) || !this.beginSessionMutation) return;
+      if (!this.isSessionMutation(url) || !this.beginSessionMutation) return;
       // Redirects and provider hops remain inside the lease that already fenced this account.
       if (this.mutationLeasesByContents.has(contents)) return;
       event.preventDefault();
@@ -215,7 +223,7 @@ class BrowserWorkspaceWindows {
       }
       if (allWindows.size >= MAX_WORKSPACES) return { action: "deny" };
       let lease = null;
-      if (potentialSessionMutation(url) && this.beginSessionMutation) {
+      if (this.isSessionMutation(url) && this.beginSessionMutation) {
         try {
           lease = this.beginSessionMutation({ sourceId: meta.id, reason: "workspace-popup", url });
         } catch (error) {
@@ -223,20 +231,25 @@ class BrowserWorkspaceWindows {
           return { action: "deny" };
         }
       }
-      const pending = { lease, timer: null };
-      if (lease) {
-        pending.timer = setTimeout(() => {
-          const index = this.pendingPopupLeases.indexOf(pending);
-          if (index >= 0) this.pendingPopupLeases.splice(index, 1);
-          lease.fail?.(new Error("Session-changing popup did not open"));
-        }, 10_000);
-        pending.timer.unref?.();
-      }
-      this.pendingPopupLeases.push(pending);
+      const pending = { lease, url, timer: null };
+      const queue = this.pendingPopupLeases.get(contents) ?? [];
+      this.pendingPopupLeases.set(contents, queue);
+      pending.timer = setTimeout(() => {
+        const index = queue.indexOf(pending);
+        if (index >= 0) queue.splice(index, 1);
+        if (queue.length === 0) this.pendingPopupLeases.delete(contents);
+        lease?.fail?.(new Error("Browser workspace popup did not open"));
+      }, 10_000);
+      pending.timer.unref?.();
+      queue.push(pending);
       return { action: "allow", overrideBrowserWindowOptions: this.options(meta.groupId) };
     });
-    contents.on("did-create-window", child => {
-      const pending = this.pendingPopupLeases.shift() ?? null;
+    contents.on("did-create-window", (child, details) => {
+      const queue = this.pendingPopupLeases.get(contents);
+      const index = queue?.findIndex(candidate => candidate.url === details?.url) ?? -1;
+      const pending = index >= 0 ? queue.splice(index, 1)[0] : null;
+      if (queue?.length === 0) this.pendingPopupLeases.delete(contents);
+      if (!pending) { child.destroy(); return; }
       if (pending?.timer) clearTimeout(pending.timer);
       const lease = pending?.lease ?? null;
       if (allWindows.size >= MAX_WORKSPACES) {
@@ -314,6 +327,7 @@ class BrowserWorkspaceWindows {
   }
 
   capture(win, active = false) {
+    if (!this.persistLocations) return;
     if (!win || win.isDestroyed()) return;
     const meta = this.windowMeta.get(win);
     if (!meta) return;
@@ -356,6 +370,7 @@ class BrowserWorkspaceWindows {
   }
 
   persist() {
+    if (!this.persistLocations) return { ok: true, overflow: false };
     if (!this.manifestLoaded) return;
     try {
       this.manifest.write([...this.saved.values()]);
@@ -476,6 +491,7 @@ class BrowserWorkspaceWindows {
   }
 
   removeSavedWorkspace(workspaceId) {
+    if (!this.persistLocations) return { ok: true, overflow: false };
     const previous = new Map(this.saved);
     this.saved.delete(workspaceId);
     const result = this.persist();
@@ -536,10 +552,13 @@ class BrowserWorkspaceWindows {
 
   destroy() {
     this.flushCaptures();
-    for (const pending of this.pendingPopupLeases.splice(0)) {
-      if (pending.timer) clearTimeout(pending.timer);
-      pending.lease?.fail?.(new Error("Browser workspace closed"));
+    for (const queue of this.pendingPopupLeases.values()) {
+      for (const pending of queue) {
+        clearTimeout(pending.timer);
+        pending.lease?.fail?.(new Error("Browser workspace closed"));
+      }
     }
+    this.pendingPopupLeases.clear();
     for (const win of [...this.windows]) {
       const meta = this.windowMeta.get(win);
       if (meta) meta.preserveOnClose = true;

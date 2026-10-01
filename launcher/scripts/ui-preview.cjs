@@ -607,6 +607,10 @@ function installMockLauncher() {
       browser.workspaces.total++;
       emit("browser", { ...browser }); return { ...browser };
     },
+    openOpenAiApiPanel: async (accountId, section = "tunnels") => {
+      calls.push(["openai-api-panel", accountId, section]);
+      return { opened: true };
+    },
     closeBrowserWorkspace: async (accountId, id) => {
       const account = browser.workspaces.accounts.find(account => account.accountId === accountId);
       account.items = account.items.filter(item => item.id !== id); browser.workspaces.total--;

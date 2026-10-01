@@ -115,10 +115,10 @@ export class ChatGptTurnDomHealthTracker {
     externalProgressLive?: boolean;
   }, now = Date.now()): string | undefined {
     if (state.responsePresent) this.sawResponse = true;
-    if (state.externalProgressLive) {
+    if (state.externalProgressLive || state.running) {
       // Every conclusion below asserts that ChatGPT stopped producing this turn. A tool call that
-      // is still completing disproves all of them, whatever the renderer is currently exposing, so
-      // no window may accrue while the model is provably working.
+      // is still completing or a visible Stop control disproves that. Restart the grace
+      // windows once generation stops; the overall turn deadline remains independent.
       this.suspendForLiveProgress();
       return undefined;
     }

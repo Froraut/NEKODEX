@@ -533,6 +533,11 @@ class BrowserTurnLifecycle {
     }
     this.artifacts.release(traceId, helperPid, new Error(`Browser turn ${status}`));
     const cancelledByUser = this.cancelledOwners.get(traceId) === helperPid;
+    const authenticationRequired = tab.authenticationRequired === true;
+    const releaseResult = { cancelledByUser, ...(authenticationRequired ? { authenticationRequired: true } : {}) };
+    if (cancelledByUser) status = "aborted";
+    else if (authenticationRequired && status === "completed") status = "failed";
+    if (authenticationRequired && status !== "aborted" && !cancelledByUser) message = tab.message;
     if (tab.taskRecordId) this.context.ledger.end(tab.taskRecordId, status);
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
     this.presentation.syncPowerSaveBlocker();
@@ -546,7 +551,7 @@ class BrowserTurnLifecycle {
       // Preserve the exact document for inspection. It is not a reusable continuation and
       // cannot be silently reclaimed as an ordinary completed tab.
       publishBrowserSnapshot(this.presentation); this.presentation.writeDescriptor();
-      return { cancelledByUser };
+      return releaseResult;
     }
     if (status === "completed"
       && retain
@@ -559,14 +564,14 @@ class BrowserTurnLifecycle {
       this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
       publishBrowserSnapshot(this.presentation);
       this.presentation.writeDescriptor();
-      return { cancelledByUser };
+      return releaseResult;
     }
     // A browser tab represents an active Codex turn, not durable task history. The result already
     // lives in Codex, so release the terminal browser document without touching concurrent turns.
     this.removeTurnTab(tab, false);
     if (hideAfterTurn && !this.context.activeTraceId) this.presentation.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
-    return { cancelledByUser };
+    return releaseResult;
   }
 }
 

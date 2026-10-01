@@ -536,5 +536,7 @@
   "logOutConfirmBody": "NEKODEX で ChatGPT からログアウトしますか？新しい Web ターンを実行する前に、パスキーなどで再度サインインする必要があります。",
   "logOutKeepSignedIn": "サインインしたままにする",
   "restartingRuntime": "再起動しています…",
-  "manualPromptCopied": "プロンプトをコピーしました"
+  "manualPromptCopied": "プロンプトをコピーしました",
+  "openAiApiPanel": "OpenAI API",
+  "apiPanelConnectorHint": "API パネルで ChatGPT の接続に使うアカウントとワークスペースを選びます。トンネルを作成または選択して、そのワークスペースに利用を許可し、ここに戻って ChatGPT コネクタを接続します。"
 }

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   openBrowserWindow: (asTab = false) => ipcRenderer.invoke("launcher:browser-window-open", asTab),
   browserWorkspaceSnapshot: () => ipcRenderer.invoke("launcher:browser-workspaces"),
   openBrowserWorkspace: (accountId, options) => ipcRenderer.invoke("launcher:browser-workspace-open", accountId, options),
+  openOpenAiApiPanel: (accountId, section) => ipcRenderer.invoke("launcher:openai-api-panel", accountId, section),
   restoreBrowserWorkspaces: accountId => ipcRenderer.invoke("launcher:browser-workspace-restore", accountId),
   focusBrowserWorkspace: (accountId, workspaceId) => ipcRenderer.invoke("launcher:browser-workspace-focus", accountId, workspaceId),
   closeBrowserWorkspace: (accountId, workspaceId) => ipcRenderer.invoke("launcher:browser-workspace-close", accountId, workspaceId),
