@@ -14,6 +14,7 @@ function fixture(lazy: boolean, rejectSelection = false): string {
     .replace("advanced ? Object.entries(rows)", `${lazy ? "advanced" : "true"} ? Object.entries(rows)`)
     .replace("for (const radio of document.querySelectorAll('[data-family'])) radio.setAttribute('aria-checked', String(radio.dataset.family === family));",
       "document.querySelector('#radios').hidden = !advanced; for (const radio of document.querySelectorAll('[data-family'])) radio.setAttribute('aria-checked', String(radio.dataset.family === family));")
+    .replace("family = radio.dataset.family; value = 0;", "if (family !== radio.dataset.family) { family = radio.dataset.family; value = 0; }")
     .replace("family = radio.dataset.family;", rejectSelection ? "/* simulate a refused selection */" : "family = radio.dataset.family;")
     .replace("setTimeout(() => { menu.hidden = true; control.setAttribute('aria-expanded', 'false'); }, 75);",
       "control.setAttribute('aria-expanded', 'false'); setTimeout(() => { menu.hidden = true; }, 250);");
@@ -40,6 +41,22 @@ try {
   await activation.menu.waitFor({ state: 'hidden', timeout: 2_000 });
   assert.equal(await activation.sliderContainer.isVisible(), false);
   console.log('REPRODUCED_OUTGOING_ESCAPE_CLEANUP');
+
+  // A visible range in the model list is inert and cannot receive keys.
+  // Re-selecting the verified same family returns to effort without changing it.
+  await page.setContent(fixture(false).replace("document.querySelector('#power').style.display = advanced ? 'none' : 'block';",
+    "document.querySelector('#power').style.display = 'block'; document.querySelector('#power').inert = advanced;"));
+  activation = await activateChatGptEffortMenu(page, control);
+  await activation.menu.locator('[data-model-picker-view-toggle]').click();
+  assert.equal(await activation.sliderContainer.isVisible(), true);
+  assert.equal(await page.locator('#power').evaluate(node => (node as HTMLElement).inert), true);
+  activation = await selectChatGptModelFamily(page, control, activation, '6');
+  assert.equal(await page.locator('#power').evaluate(node => (node as HTMLElement).inert), false);
+  assert.equal((await readChatGptEffortSnapshot(activation.sliderContainer)).value, 2);
+  await page.locator('#power').press('ArrowLeft');
+  assert.equal((await readChatGptEffortSnapshot(activation.sliderContainer)).value, 1);
+  assert.equal(await draft.innerText(), 'Draft to keep');
+  console.log('RETURNED_FROM_INERT_MODEL_LIST_WITH_EFFORT_PRESERVED');
 
   for (const lazy of [false, true]) {
     await page.setContent(fixture(lazy));

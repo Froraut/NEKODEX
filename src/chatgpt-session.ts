@@ -703,7 +703,12 @@ async function assertSelectedChatGptModelRow(
 ): Promise<ChatGptEffortActivation> {
   signal?.throwIfAborted();
   const current = await resolveChatGptModelRow(activation.menu, target).catch(() => undefined);
-  if (current?.row.checked && await activation.sliderContainer.isVisible().catch(() => false)) {
+  const pickerView = activation.menu.locator("[data-model-picker-view]");
+  const modelListOpen = await pickerView.count() === 1
+    && await pickerView.getAttribute("data-model-picker-view") === "advanced";
+  // The advanced view can retain a geometrically visible but inert slider.
+  // Its selected radio proves the family, not a keyboard-ready effort control.
+  if (current?.row.checked && !modelListOpen && await activation.sliderContainer.isVisible().catch(() => false)) {
     return { ...activation, latestModelRow: current.latest };
   }
   activation = await expandChatGptModelPickerWithReopen(page, control, activation, signal);
@@ -711,6 +716,16 @@ async function assertSelectedChatGptModelRow(
   const selected = await resolveChatGptModelRow(activation.menu, target);
   if (!selected?.row.checked) {
     throw new Error(`ChatGPT did not retain ${describeChatGptModelRowTarget(target)}`);
+  }
+  // The model list keeps the power slider mounted under an inert ancestor.
+  // Clicking the verified selected row returns to the editable effort view.
+  await selected.option.click({ force: true, timeout: 5_000, signal });
+  activation = await activateChatGptEffortMenu(page, control, { abortSignal: signal });
+  const returnedView = activation.menu.locator("[data-model-picker-view]");
+  if ((await returnedView.count() !== 1
+    || await returnedView.getAttribute("data-model-picker-view") !== "advanced")
+    && await activation.sliderContainer.isVisible().catch(() => false)) {
+    return { ...activation, latestModelRow: selected.latest };
   }
   await closeOwnedChatGptEffortMenu(page, control, 5_000, signal);
   // Lazy rows require the advanced view, which has no reliable way back. Let its
