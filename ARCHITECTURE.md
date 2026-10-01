@@ -213,6 +213,10 @@ The Electron host treats ChatGPT cookie changes as triggers for a bounded sessio
 endpoint check, never as proof of sign-in. It retires an identity only after a
 valid session response establishes sign-out or a different principal; the page
 probe still owns Temporary Chat readiness and the full session fingerprint.
+Authentication observation accepts the canonical Temporary Chat home and its
+submitted `/c/<uuid>?temporary-chat=true` document, with a rendered composer and
+verified session. Fresh-turn navigation continues to require the canonical home;
+an existing conversation is not a new-chat surface.
 
 The optional `useSavedChats` setting selects ordinary ChatGPT history and remains
 false by default. It is independent of rebuilding every turn in a fresh browser

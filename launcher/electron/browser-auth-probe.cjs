@@ -4,6 +4,9 @@ const { TEMPORARY_CHAT_URL } = require("./browser-navigation-policy.cjs");
 
 const CHATGPT_AUTH_SESSION_TIMEOUT_MS = 5_000;
 const AUTH_PROBE_TIMEOUT_MS = CHATGPT_AUTH_SESSION_TIMEOUT_MS + 3_000;
+// A completed Temporary Chat has a conversation URL. Authentication observation
+// accepts that document; fresh-turn navigation still requires the canonical home.
+const TEMPORARY_CONVERSATION_PATH = /^\/c\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/?$/i;
 // Match the runtime's composer selector. Generic textboxes are not proof of a ready chat.
 const COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
@@ -38,7 +41,8 @@ function authenticationProbeScript() {
           url: actualUrl.href,
           composer: Boolean(composer),
           temporary: actualUrl.origin === expectedUrl.origin
-            && actualUrl.pathname === expectedUrl.pathname
+            && (actualUrl.pathname === expectedUrl.pathname
+              || ${TEMPORARY_CONVERSATION_PATH}.test(actualUrl.pathname))
             && actualUrl.searchParams.get("temporary-chat") === "true",
           readyState: document.readyState,
         };
