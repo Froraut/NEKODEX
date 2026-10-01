@@ -60,6 +60,9 @@ interface SafeTurnControl {
 
 interface TurnChannel {
   traceId: string;
+  tunnelId?: string;
+  tunnelScopePending?: boolean;
+  tunnelScopeAssigned?: boolean;
   externalOwner: boolean;
   environment: PendingTurn;
   bindingId?: string;
@@ -273,6 +276,7 @@ export class TurnBroker implements TurnBrokerOwner {
     surfaceNonce: string,
     ttlMs?: number,
     traceId = "unknown",
+    options: { tunnelScopePending?: boolean } = {},
     externalOwner = false,
   ): Promise<string> {
     assertSurfaceNonce(surfaceNonce);
@@ -288,6 +292,7 @@ export class TurnBroker implements TurnBrokerOwner {
       startWaiters: new Set(),
       completionWaiters: new Set(),
     };
+    channel.tunnelScopePending = options.tunnelScopePending === true;
     return token;
   }
 
@@ -324,6 +329,21 @@ export class TurnBroker implements TurnBrokerOwner {
         ? { expiresAt: channel.environment.expiresAt }
         : {}),
     };
+  }
+
+  setTunnelScope(token: string, tunnelId?: string): void {
+    this.prune();
+    if (tunnelId !== undefined && !/^[A-Za-z0-9_-]{1,256}$/.test(tunnelId)) {
+      throw new Error("turn tunnel scope is invalid");
+    }
+    const channel = this.channels.get(token);
+    if (!channel || channel.completionCommitted) throw new Error("turn token is invalid or expired");
+    if (channel.bindingId || channel.tunnelScopeAssigned || (tunnelId === undefined && !channel.tunnelScopePending)) {
+      throw new Error("turn tunnel scope is already assigned or bound");
+    }
+    channel.tunnelId = tunnelId;
+    channel.tunnelScopePending = false;
+    channel.tunnelScopeAssigned = true;
   }
 
   async nextToolBatch(token: string, signal?: AbortSignal): Promise<BrokerToolRequest[]> {
@@ -999,6 +1019,17 @@ export class TurnBroker implements TurnBrokerOwner {
 
   private async dispatch(request: BrokerRequest, socketSignal?: AbortSignal): Promise<unknown> {
     this.prune();
+    // The MCP process captures its endpoint at launch. Owner RPCs deliberately bypass this
+    // check; they are adapter control traffic, not calls arriving through a connector.
+    if (!request.method.startsWith("owner_")) {
+      const token = "token" in request ? request.token : undefined;
+      const bindingId = "bindingId" in request ? request.bindingId : undefined;
+      const channel = token ? this.channels.get(token)
+        : bindingId ? this.bindings.get(bindingId)?.channel : undefined;
+      if (channel?.tunnelScopePending || (channel?.tunnelId !== undefined && request.tunnelId !== channel.tunnelId)) {
+        throw new Error("MCP tunnel does not match this turn's assigned tunnel");
+      }
+    }
     if (request.method === "safe_start") {
       if (!request.token) throw new Error("Manual mode request_id is required");
       return this.startSafeTurn(request.token);
@@ -1052,6 +1083,7 @@ export class TurnBroker implements TurnBrokerOwner {
         request.surfaceNonce,
         request.ttlMs,
         request.traceId,
+        { tunnelScopePending: request.tunnelScopePending === true },
         true,
       ).then(token => ({ token }));
     }
@@ -1059,6 +1091,11 @@ export class TurnBroker implements TurnBrokerOwner {
       if (!request.token) throw new Error("turn owner token is required");
       this.updateEnvironment(request.token, ownerEnvironment(request.environment));
       return { updated: true };
+    }
+    if (request.method === "owner_set_tunnel_scope") {
+      if (!request.token) throw new Error("turn token is required");
+      this.setTunnelScope(request.token, request.tunnelId);
+      return { assigned: true };
     }
     if (request.method === "owner_safe_sent") {
       if (!request.token) throw new Error("turn owner token is required");

@@ -1,20 +1,25 @@
 import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
 import type { Copy } from './i18n';
-import type { AccountPoolSnapshot, BrowserState, Language, LauncherSnapshot } from './types';
-import { accountToolsCopy, accountToolsHandoffAccount, accountToolsStep } from './account-tools-onboarding';
+import type { AccountPoolSnapshot, BrowserInteractionMode, BrowserState, Language, LauncherSnapshot } from './types';
+import { accountToolsCopy, accountToolsHandoffAccount, accountToolsStep, accountTunnelFor } from './account-tools-onboarding';
 import { Button, Notice, TextField } from './design';
 
 type Account = AccountPoolSnapshot['accounts'][number];
 
 /** Account tools setup: a section of the card's setup disclosure. "Check connector" lives in the card's action row. */
-export function AccountToolsOnboarding({ account, copy, language, runtimeConfigured, connectorName, urls,
+export function AccountToolsOnboarding({ account, copy, language, interactionMode, connectorName, urls,
   disabled, manual, headingId, onSetup, onError }: {
-  account: Account; copy: Copy; language: Language; runtimeConfigured: boolean; connectorName: string;
+  account: Account; copy: Copy; language: Language; interactionMode: BrowserInteractionMode; connectorName: string;
   urls: LauncherSnapshot['urls']; disabled: boolean; manual: boolean; headingId: string;
   onSetup: () => void; onError: (message: string | null) => void;
 }) {
   const text = accountToolsCopy(language);
-  const step = accountToolsStep(account, runtimeConfigured);
+  const tunnel = accountTunnelFor(account, interactionMode);
+  const step = accountToolsStep(account, tunnel?.ready === true);
+  const tunnelStatus = tunnel?.status === 'ready' ? text.tunnelReady
+    : tunnel?.status === 'starting' ? text.tunnelStarting : tunnel?.status === 'stopped' ? text.tunnelStopped
+    : tunnel?.status === 'error' ? text.tunnelError : tunnel?.status === 'unknown' ? text.tunnelUnknown
+    : text.tunnelUnconfigured;
   // ChatGPT and API settings keep the selected account's own browser session.
   const open = async (url: string, inAccount = false) => {
     if (disabled) return;
@@ -34,6 +39,8 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
   return <section className="accounts-details__section accounts-tools" aria-labelledby={headingId}>
     <h3 id={headingId} className="nk-type-label">{text.title}</h3>
     <p role="status">{status}</p>
+    <p className="accounts-tools__tunnel" role="status">{text.tunnelStatus}: {tunnelStatus}
+      {tunnel?.tunnelId ? ` · ${text.configuredTunnel}: ${tunnel.tunnelId}` : null}</p>
     <div className="accounts-inline-actions">
       <Button size="sm" variant="ghost" iconEnd="browser" disabled={disabled}
         onClick={() => void openApiPanel()}>{copy.openAiApiPanel}</Button>
@@ -41,7 +48,7 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
     {(step !== 'sign-in' && step !== 'verification' && step !== 'checking') || manual ? <>
       {step !== 'verified' ? <>
         <p>{text.sharedTunnel}</p>
-        {runtimeConfigured && !manual ? <>
+        {tunnel?.ready && !manual ? <>
           <p>{text.instructions}</p>
           <TextField className="accounts-tools__identity" label={copy.currentSavedConnector} readOnly
             aria-label={copy.currentSavedConnector} value={connectorName || copy.connectorIdentityUnavailable}
@@ -56,7 +63,6 @@ export function AccountToolsOnboarding({ account, copy, language, runtimeConfigu
           <p>{copy.apiPanelConnectorHint}</p>
         </> : null}
       </> : null}
-      {/* The shared runtime is set up once from the page-level notice; this per-account entry stays secondary. */}
       <div className="accounts-inline-actions">
         <Button size="sm" variant="ghost" iconEnd="forward"
           disabled={disabled} onClick={onSetup}>{text.setup}</Button>

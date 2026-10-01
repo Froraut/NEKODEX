@@ -1,5 +1,27 @@
 import { parseChatGptLunaCheckpoint, type ChatGptLunaCheckpoint } from "./rolling-checkpoint";
 
+export interface HelperTunnelScope {
+  accountTunnelRequired: boolean;
+  tunnelId?: string;
+}
+
+export function parseHelperTunnelScope(value: unknown): HelperTunnelScope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Launcher browser helper tunnel scope is missing");
+  }
+  const scope = value as Record<string, unknown>;
+  if (typeof scope.accountTunnelRequired !== "boolean"
+    || (scope.tunnelId !== undefined
+      && (typeof scope.tunnelId !== "string" || !/^tunnel_[a-f0-9]{32}$/.test(scope.tunnelId)))
+    || (scope.accountTunnelRequired && scope.tunnelId === undefined)) {
+    throw new Error("Launcher browser helper tunnel scope is invalid");
+  }
+  return {
+    accountTunnelRequired: scope.accountTunnelRequired,
+    ...(scope.tunnelId !== undefined ? { tunnelId: scope.tunnelId as string } : {}),
+  };
+}
+
 // Maintenance operations have a separate receiver in Electron. The turn decoder below
 // deliberately rejects value-only results, preserving its fail-closed boundary.
 export type HelperMaintenanceResult =
@@ -19,7 +41,7 @@ export type HelperTurnOutputMessage =
   | { type: "event"; id: string; event: "multipart_stage_acknowledged"; stageIndex: number }
   | { type: "event"; id: string; event: "completion_fence_begin"; requestId: number }
   | { type: "event"; id: string; event: "completion_fence_commit"; requestId: number; revision: number }
-  | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
+  | { type: "event"; id: string; event: "prepared_selected"; reused: boolean; tunnelScope?: HelperTunnelScope }
   | { type: "event"; id: string; event: "luna_checkpoint"; checkpoint: ChatGptLunaCheckpoint; answerHash: string }
   | { type: "result"; id: string; text: string }
   | {
@@ -110,7 +132,8 @@ export function parseHelperMessage(line: string): HelperTurnOutputMessage {
       if (typeof message.reused !== "boolean") {
         throw new Error("Launcher browser helper prompt selection is invalid");
       }
-      return { type: "event", id: message.id, event, reused: message.reused };
+      return { type: "event", id: message.id, event, reused: message.reused,
+        ...(message.tunnelScope !== undefined ? { tunnelScope: parseHelperTunnelScope(message.tunnelScope) } : {}) };
     }
     if (!["heartbeat", "submitted", "reasoning", "commentary", "text"].includes(String(event))) {
       throw new Error("Launcher browser helper emitted an unknown event");

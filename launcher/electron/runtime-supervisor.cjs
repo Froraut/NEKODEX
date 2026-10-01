@@ -165,6 +165,116 @@ class RuntimeSupervisor {
     this.lastOwnedHealth = null;
     this.lastOwnedHealthAt = 0;
     this.tunnelRepairPromise = null;
+    this.accountTunnelSupervisor = null;
+    this.legacyTunnelTransitioning = false;
+    this.legacyTunnelTransitionPending = false;
+  }
+
+  accountPeers() {
+    if (!this.accountTunnelSupervisor) {
+      const { AccountTunnelSupervisor } = require("./account-tunnel-supervisor.cjs");
+      this.accountTunnelSupervisor = new AccountTunnelSupervisor({
+        app: this.app, logger: this.logger, sourceRoot: this.sourceRoot,
+        installedRuntimeRoot: this.installedRuntimeRoot, runtimeRootProvider: this.runtimeRootProvider,
+        coreHome: this.coreHome, browserDescriptorPath: this.browserDescriptorPath,
+        runtimeInvocationFactory: this.runtimeInvocationFactory,
+        nativeProxyEnvironmentProvider: this.nativeProxyEnvironmentProvider,
+        tunnelProxyEnvironmentProvider: this.tunnelProxyEnvironmentProvider,
+        readConfig: () => this.readConfig(),
+      }, () => this.publishAccountTunnelCapabilities());
+    }
+    return this.accountTunnelSupervisor;
+  }
+
+  publishAccountTunnelCapabilities() {
+    if (!this.accountTunnelSupervisor) return;
+    this.capabilityRevision += 1;
+    let config;
+    try { config = this.readConfig(); }
+    catch (error) {
+      this.logger.warn("runtime.account_tunnel_config_unavailable", { message: errorMessage(error) });
+      return;
+    }
+    this.publishCapabilities?.(this.capabilitySnapshot(config));
+    if (config?.accountTunnelMode && this.daemon && !this.stopping && !this.shutdownRequested) {
+      void this.reportTunnelStatus(config, this.accountTunnelSupervisor.snapshot().some(item => item.ready))
+        .catch(error => this.logger.warn("runtime.account_tunnel_status_report_failed", { message: errorMessage(error) }));
+    }
+  }
+
+  getAccountTunnelStatus(accountId, mode) {
+    return this.accountTunnelSupervisor?.getStatus(accountId, mode)
+      || { accountId, interactionMode: mode, status: "unconfigured", ready: false, pid: null };
+  }
+
+  async prepareAccountTunnelChange(accountId, mode) {
+    if (typeof accountId !== "string" || !accountId.trim()
+      || !["automatic", "manual"].includes(mode)) {
+      throw new Error("Account tunnel change requires an account and interaction mode");
+    }
+    const config = this.readConfig();
+    if (!config || config.mode !== "full") return { status: "no-full-runtime" };
+    if (config.accountTunnelMode === true) {
+      this.accountPeers().configure(config);
+      return this.accountTunnelSupervisor.prepareChange(accountId, mode);
+    }
+    // The first account binding replaces the legacy global tunnel. Fence only
+    // its recovery, report Web unavailable, then stop its verified old owner.
+    if (this.legacyTunnelTransitioning || this.legacyTunnelTransitionPending) {
+      throw new Error("Legacy tunnel transition is already active");
+    }
+    this.legacyTunnelTransitioning = true;
+    try {
+      if (this.restartTimers.tunnel) {
+        clearTimeout(this.restartTimers.tunnel);
+        this.restartTimers.tunnel = null;
+      }
+      this.stopTunnelMonitor();
+      if (!await this.settleRecoveryTasks()) {
+        throw new Error("Legacy tunnel recovery did not settle before account binding change");
+      }
+      if (this.daemon) await this.reportTunnelStatus(config, false);
+      if (!this.tunnel) {
+        const state = this.readState();
+        if (this.recoveryAliasMayBeLive
+          || state?.ownerPid === process.pid && processRunning(state.tunnelPid)) {
+          await this.adoptConfiguredTunnelForStop(config);
+        }
+      }
+      if (this.tunnel) await this.stopTunnelGracefully(config);
+      this.recoveryAliasMayBeLive = false;
+      if (!this.tryWriteState("degraded", "Per-account tunnel setup is pending")) {
+        throw new Error("Could not persist legacy tunnel transition ownership");
+      }
+      this.updateCapabilities("degraded", "Per-account tunnel setup is pending", config);
+      this.legacyTunnelTransitionPending = true;
+      return { status: "legacy-tunnel-stopped" };
+    } catch (error) {
+      if (this.tunnel) this.startTunnelMonitor(config);
+      else if (!this.shutdownRequested && !this.stopping) this.scheduleRecovery("tunnel");
+      throw error;
+    } finally {
+      this.legacyTunnelTransitioning = false;
+    }
+  }
+
+  async syncAccountTunnels() {
+    const config = this.readConfig();
+    if (!config?.accountTunnelMode || config.mode !== "full") {
+      if (this.accountTunnelSupervisor?.peers.size) {
+        throw new Error("Account tunnel mode changed before active peers were stopped");
+      }
+      if (this.legacyTunnelTransitionPending) {
+        this.legacyTunnelTransitionPending = false;
+        if (config?.mode === "full" && !this.tunnel) this.scheduleRecovery("tunnel");
+      }
+      return { status: "inactive", accountTunnels: [] };
+    }
+    this.legacyTunnelTransitionPending = false;
+    await this.accountPeers().start(config);
+    const accountTunnels = this.accountPeers().snapshot();
+    this.publishAccountTunnelCapabilities();
+    return { status: "synced", accountTunnels };
   }
 
   tunnelRepairSnapshot(config = undefined) {
@@ -177,6 +287,7 @@ class RuntimeSupervisor {
     if (active) return unavailable("repair-active");
     if (this.launcherProfile !== "production") return unavailable("production-only");
     if (!current || current.mode !== "full") return unavailable("full-mode-required");
+    if (current.accountTunnelMode === true) return unavailable("account-tunnel-mode");
     if (current.browserInteractionMode !== "automatic") return unavailable("automatic-mode-required");
     if (this.stopping || this.shutdownRequested || this.startPromise || this.stopPromise
       || this.recoveryTasks.size > 0 || this.restartTimers.daemon || this.restartTimers.tunnel) {
@@ -204,8 +315,11 @@ class RuntimeSupervisor {
     }
     const nativeReady = Boolean(this.daemon && this.daemon.exitCode === null && this.daemon.signalCode === null);
     const tunnelRequired = current?.mode === "full";
-    const tunnelReady = Boolean(this.tunnel && this.tunnel.exitCode === null && this.tunnel.signalCode === null
-      && this.reportedTunnelReady !== false);
+    const accountMode = current?.accountTunnelMode === true;
+    const accountTunnels = accountMode ? this.accountPeers().snapshot() : [];
+    const tunnelReady = accountMode ? accountTunnels.some(item => item.ready)
+      : Boolean(this.tunnel && this.tunnel.exitCode === null && this.tunnel.signalCode === null
+        && this.reportedTunnelReady !== false);
     const webReady = nativeReady && tunnelReady && this.brokerReady === true && this.webAccepting === true;
     return {
       revision: this.capabilityRevision,
@@ -219,9 +333,10 @@ class RuntimeSupervisor {
         : ["starting", "recovering", "stopping"].includes(this.runtimeStatus) ? this.runtimeStatus : "degraded",
       releaseVersion: current?.releaseVersion ?? null,
       daemonPid: this.daemon?.pid ?? null,
-      tunnelPid: this.tunnel?.pid ?? null,
+      tunnelPid: accountMode ? null : this.tunnel?.pid ?? null,
+      ...(accountMode ? { accountTunnels } : {}),
       brokerReady: this.brokerReady,
-      tunnelReady: this.reportedTunnelReady,
+      tunnelReady: accountMode ? tunnelReady : this.reportedTunnelReady,
       detail: this.runtimeDetail,
       tunnelRepair: this.tunnelRepairSnapshot(current),
     };
@@ -483,10 +598,16 @@ class RuntimeSupervisor {
     // Reserve before I/O. A timeout may hide an applied server mutation, so no later
     // transition may reuse this revision even when this request rejects locally.
     this.tunnelStatusRevision = revision;
+    const accountStatuses = config.accountTunnelMode === true ? this.accountPeers().snapshot() : null;
+    const effectiveReady = accountStatuses ? accountStatuses.some(item => item.ready) : ready === true;
     let result;
     try {
       result = await this.control(config, "tunnel-status", {
-        body: { ready: ready === true, revision },
+        body: { ready: effectiveReady, revision,
+          ...(accountStatuses ? { account_tunnels: accountStatuses.map(item => ({
+            account_id: item.accountId, interaction_mode: item.interactionMode,
+            tunnel_id: item.tunnelId, ready: item.ready,
+          })) } : {}) },
       });
     } catch (error) {
       if (config.releaseVersion !== this.app.getVersion() && /HTTP 404\b/.test(errorMessage(error))) return null;
@@ -519,7 +640,7 @@ class RuntimeSupervisor {
         throw new Error("Responses proxy returned an older tunnel capability status revision");
       }
     }
-    if (result.tunnel_ready !== (ready === true)) {
+    if (result.tunnel_ready !== effectiveReady) {
       throw new Error("Responses proxy rejected a conflicting tunnel capability status revision");
     }
     const capabilityChanged = this.nativeAccepting !== result.native_accepting_turns
@@ -796,7 +917,9 @@ class RuntimeSupervisor {
       const parsed = JSON.parse(result.output);
       this.assertRecoveryActive(recoverySignal);
       if (!Array.isArray(parsed.entries)) throw new Error("local inventory has no entries array");
-      const entry = parsed.entries.find(candidate => candidate?.alias === tunnel.alias);
+      const matchingEntries = parsed.entries.filter(candidate => candidate?.alias === tunnel.alias);
+      if (matchingEntries.length > 1) throw new Error("local inventory contains duplicate tunnel aliases");
+      const entry = matchingEntries[0];
       if (!entry) {
         return {
           ready: false,
@@ -816,6 +939,18 @@ class RuntimeSupervisor {
       const liveRuntime = entry.live_runtime && typeof entry.live_runtime === "object"
         ? entry.live_runtime
         : {};
+      const inventoryTunnelId = entry.tunnel_id ?? entry.tunnelId
+        ?? entry.tunnel?.tunnel_id ?? entry.tunnel?.id
+        ?? entry.config?.tunnel_id ?? liveRuntime.tunnel_id ?? liveRuntime.tunnelId;
+      if (config.accountTunnelBinding && inventoryTunnelId !== tunnel.tunnelId) {
+        throw new Error("local inventory tunnel id does not match the account binding");
+      }
+      if (config.accountTunnelBinding && (entry.profile?.name !== undefined
+        && entry.profile.name !== tunnel.profileName
+        || typeof entry.profile?.dir === "string"
+          && path.resolve(entry.profile.dir) !== path.resolve(tunnel.profileDir))) {
+        throw new Error("local inventory profile does not match the account binding");
+      }
       const healthBaseUrl = loopbackHealthBaseURL(liveRuntime.base_url);
       if (healthBaseUrl) this.tunnelHealthBaseUrl = healthBaseUrl;
       const pid = Number.isInteger(liveRuntime.system?.pid) && liveRuntime.system.pid > 0
@@ -841,6 +976,8 @@ class RuntimeSupervisor {
       return {
         ready,
         pid,
+        alias: entry.alias,
+        tunnelId: inventoryTunnelId,
         state: runtimeState,
         processRunning,
         healthy,
@@ -1531,14 +1668,26 @@ class RuntimeSupervisor {
     try {
       this.assertCanStart(startSignal);
       if (tunnelOnly) {
-        await this.startTunnel(config, "runtime-start", { recoverySignal: startSignal });
+        if (config.accountTunnelMode === true) await this.accountPeers().start(config);
+        else await this.startTunnel(config, "runtime-start", { recoverySignal: startSignal });
       } else {
         await this.startDaemon(config, startSignal);
       }
       this.assertCanStart(startSignal);
       this.restartHistory.daemon = [];
       let tunnelFailure = null;
-      if (!tunnelOnly && config.mode === "full") {
+      if (!tunnelOnly && config.mode === "full" && config.accountTunnelMode === true) {
+        this.accountPeers().configure(config);
+        try {
+          await this.reportTunnelStatus(config, false, startSignal);
+        } catch (error) {
+          if (startSignal.aborted) throw error;
+          this.logger.warn("runtime.account_tunnel_initial_report_failed", { message: errorMessage(error) });
+        }
+        void this.accountPeers().start(config).catch(error => {
+          this.logger.error("runtime.account_tunnels_start_failed", { message: errorMessage(error) });
+        });
+      } else if (!tunnelOnly && config.mode === "full") {
         try {
           await this.reportTunnelStatus(config, false, startSignal);
         } catch (error) {
@@ -1557,8 +1706,12 @@ class RuntimeSupervisor {
         message: tunnelOnly ? "Isolated DEV MCP runtime is ready"
           : tunnelFailure ? `Native runtime is ready; tool tunnel is recovering: ${tunnelFailure}` : "Local runtime is ready",
       });
-      return { status: "ready", nativeReady: !tunnelOnly, webReady: config.mode !== "full" || !tunnelFailure,
-        tunnelStatus: tunnelFailure ? "degraded" : config.mode === "full" ? "ready" : "absent",
+      return { status: "ready", nativeReady: !tunnelOnly,
+        webReady: config.accountTunnelMode === true ? this.accountPeers().snapshot().some(item => item.ready)
+          : config.mode !== "full" || !tunnelFailure,
+        tunnelStatus: config.accountTunnelMode === true
+          ? this.accountPeers().snapshot().some(item => item.ready) ? "ready" : "starting"
+          : tunnelFailure ? "degraded" : config.mode === "full" ? "ready" : "absent",
         ...(tunnelFailure ? { detail: tunnelFailure } : {}), daemonPid: this.daemon?.pid, tunnelPid: this.tunnel?.pid };
     } catch (error) {
       // Shutdown owns the stop after an aborted startup. Its bounded settlement
@@ -1639,7 +1792,8 @@ class RuntimeSupervisor {
     if (!config) return;
     this.shutdownRequested = false;
     this.shutdownResumeAllowed = false;
-    if (this.tunnel) this.startTunnelMonitor(config);
+    if (config.accountTunnelMode === true) this.accountTunnelSupervisor?.allowRestartAfterQuitFailure();
+    else if (this.tunnel) this.startTunnelMonitor(config);
     else if (config.mode === "full") this.scheduleRecovery("tunnel");
     if (!this.daemon && this.launcherProfile !== "development") this.scheduleRecovery("daemon");
   }
@@ -1676,6 +1830,7 @@ class RuntimeSupervisor {
 
   scheduleRecovery(name) {
     if (this.stopping || this.shutdownRequested) return;
+    if (name === "tunnel" && (this.legacyTunnelTransitioning || this.legacyTunnelTransitionPending)) return;
     if (this.restartTimers[name]) return;
     const attempts = this.recordRestart(name);
     if (attempts > MAX_RESTARTS_PER_WINDOW) {
@@ -1733,12 +1888,18 @@ class RuntimeSupervisor {
       throw new Error("Tunnel runtime is unavailable after runtime recovery");
     }
     if (!tunnelOnly) await this.waitForProxy(config, 20_000, recoverySignal);
+    if (name === "daemon" && config.accountTunnelMode === true) {
+      await this.reportTunnelStatus(config, this.accountPeers().snapshot().some(item => item.ready), recoverySignal);
+    }
     if (name === "tunnel" && config.mode === "full") {
       await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, "runtime-recovery", recoverySignal);
     }
     this.assertRecoveryActive(recoverySignal);
-    const recoveredStatus = config.mode === "full"
-      && (!this.tunnel || this.webAccepting !== true || this.brokerReady !== true) ? "degraded" : "ready";
+    const recoveredTunnelReady = config.accountTunnelMode === true
+      ? this.accountPeers().snapshot().some(item => item.ready) : Boolean(this.tunnel);
+    const recoveredStatus = tunnelOnly ? recoveredTunnelReady ? "ready" : "degraded"
+      : config.mode === "full"
+        && (!recoveredTunnelReady || this.webAccepting !== true || this.brokerReady !== true) ? "degraded" : "ready";
     if (!this.tryWriteState(recoveredStatus)) {
       let cleanupError;
       try {
@@ -1760,6 +1921,9 @@ class RuntimeSupervisor {
   }
 
   async cleanupFailedStart(config) {
+    if (config.accountTunnelMode === true && this.accountTunnelSupervisor) {
+      await this.accountTunnelSupervisor.stop();
+    }
     if (this.daemon) {
       const child = this.daemon;
       const healthy = Number.isInteger(child.pid) && await this.proxyHealth(config, 2_000, child.pid);
@@ -2291,7 +2455,8 @@ class RuntimeSupervisor {
       await this.runtimeSession(config, "detach");
       detached = true;
       this.stopTunnelMonitor();
-      if (this.tunnel) await this.stopTunnelGracefully(config);
+      if (config.accountTunnelMode === true) await this.accountTunnelSupervisor?.stop();
+      else if (this.tunnel) await this.stopTunnelGracefully(config);
       this.writeState("background");
       this.daemon.disposeMonitor?.();
       this.daemon.unref?.();
@@ -2307,7 +2472,9 @@ class RuntimeSupervisor {
       if (settled) {
         this.shutdownRequested = false;
         this.shutdownResumeAllowed = false;
-        if (config.mode === "full") {
+        if (config.accountTunnelMode === true) {
+          this.accountTunnelSupervisor?.allowRestartAfterQuitFailure();
+        } else if (config.mode === "full") {
           if (this.tunnel) this.startTunnelMonitor(config);
           else this.scheduleRecovery("tunnel");
         }
@@ -2343,7 +2510,8 @@ class RuntimeSupervisor {
     }
     let managedTunnelRunning = false;
     if (config.mode === "full") {
-      const tunnelHealth = await this.waitForKnownTunnelStatus(config, 10_000, startSignal);
+      const tunnelHealth = config.accountTunnelMode === true ? { absent: true }
+        : await this.waitForKnownTunnelStatus(config, 10_000, startSignal);
       if (startSignal) this.assertCanStart(startSignal);
       managedTunnelRunning = !tunnelRuntimeStopped(tunnelHealth);
       if (managedTunnelRunning
@@ -2561,6 +2729,8 @@ class RuntimeSupervisor {
     let config;
     let drained = false;
     let tunnelStopped = false;
+    let accountStopAttempted = false;
+    let accountPreviouslyOwned = [];
     let startUnsettled = false;
     try {
       if (!await this.settleInitialStart()) {
@@ -2572,17 +2742,19 @@ class RuntimeSupervisor {
         throw new Error("Cancelled runtime recovery did not settle within the shutdown bound");
       }
       config = this.readConfig();
+      if (config?.accountTunnelMode === true) this.accountPeers().configure(config);
+      const accountPeersLive = this.accountTunnelSupervisor?.ownedKeys().length > 0;
       const ownershipState = this.readState();
       const healthyRuntime = config && this.launcherProfile !== "development"
         ? await this.proxyHealth(config)
         : false;
       const runtimeMayBeLive = healthyRuntime || runtimeOwnershipMayBeLive(ownershipState);
-      if (config?.mode === "full"
+      if (config?.mode === "full" && config.accountTunnelMode !== true
         && !this.tunnel
         && (runtimeMayBeLive || !ownershipState || this.recoveryAliasMayBeLive)) {
         await this.adoptConfiguredTunnelForStop(config);
       }
-      if (!this.daemon && !this.tunnel) {
+      if (!this.daemon && !this.tunnel && !accountPeersLive) {
         if (!config) {
           if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState) && (
             processRunning(ownershipState.daemonPid)
@@ -2607,6 +2779,14 @@ class RuntimeSupervisor {
           throw new Error("launcher-owned daemon did not provide matching health evidence");
         }
         drained = await this.acquireDrain(config);
+      }
+      if (accountPeersLive) {
+        if (this.launcherProfile === "production" && !drained) {
+          throw new Error("Cannot stop owned account tunnels without a verified idle daemon drain");
+        }
+        accountPreviouslyOwned = this.accountTunnelSupervisor.ownedKeys();
+        accountStopAttempted = true;
+        await this.accountTunnelSupervisor.stop();
       }
       if (this.tunnel) {
         if (!config) throw new Error("launcher-owned tunnel cannot be stopped without a valid configuration");
@@ -2641,6 +2821,17 @@ class RuntimeSupervisor {
           compensationErrors.push(["daemon resume compensation failed", caught]);
         }
       }
+      if (accountStopAttempted && config?.accountTunnelMode === true) {
+        try {
+          await this.accountTunnelSupervisor.restartOwned(accountPreviouslyOwned);
+          if (this.daemon && this.launcherProfile === "production") {
+            await this.reportTunnelStatus(config,
+              this.accountTunnelSupervisor.snapshot().some(item => item.ready));
+          }
+        } catch (caught) {
+          compensationErrors.push(["account tunnel restart compensation failed", caught]);
+        }
+      }
       const message = compensationErrors.reduce(
         (current, [label, failure]) => appendFailure(current, label, failure),
         errorMessage(error),
@@ -2672,8 +2863,11 @@ class RuntimeSupervisor {
     this.stopTunnelMonitor();
     this.cancelRecoveries();
     this.cancelTunnelControls();
+    let accountFailure;
+    try { await this.accountTunnelSupervisor?.stop({ force: true }); }
+    catch (error) { accountFailure = errorMessage(error); }
     try {
-      const failures = [];
+      const failures = accountFailure ? [`account tunnels: ${accountFailure}`] : [];
       if (!await this.settleInitialStart()) {
         const message = "cancelled initial runtime startup did not settle within the shutdown bound";
         this.logger.warn("runtime.forced_shutdown_unsettled_start", { message });

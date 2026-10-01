@@ -7,7 +7,7 @@ import { AccountCodexAllowance, AccountCodexLogin, AccountCodexLoginProgress } f
 import { AccountReadiness, accountPacingStatus } from "./AccountReadiness";
 import { AccountToolsOnboarding } from "./AccountToolsOnboarding";
 import { quotaPortfolioSummary } from "./QuotaPortfolioSummary";
-import { accountToolsCopy, accountToolsStep } from "./account-tools-onboarding";
+import { accountToolsCopy, accountToolsStep, accountTunnelFor } from "./account-tools-onboarding";
 import { accountsCopy } from "./accounts-copy";
 import { AccountCard, Button, Checkbox, Disclosure, Notice, Page, Panel, Select, SurfaceHeader, TextField, cx, type Status, type Tone } from "./design";
 import { accountCodexCopyFor, type Copy } from "./i18n";
@@ -57,7 +57,7 @@ function focusTarget(element: HTMLElement | null | undefined) {
 /**
  * The card's one disclosure: account tools setup, Codex sign-in, models, pacing and proxy. Its summary is one line:
  * what is inside ("Pacing on · Proxy: System settings"), led by a short token while a form there is unsaved,
- * saving or failed. `focus` (returning from the shared tools setup) opens it once and focuses its summary.
+ * saving or failed. `focus` (returning from this account's tools setup) opens it once and focuses its summary.
  */
 function AccountDetails({ title, summary, tokens, focus, children }: {
   title: string; summary: string[]; focus: boolean;
@@ -487,10 +487,10 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       return next;
     }, () => { focusAddAfterFailure.current = true; });
   };
-  // The shared tunnel runtime is set up once for every account: one page notice instead of a step in each card.
-  const runtimeAccount = !manual && !toolsSetup.runtimeConfigured
+  const interactionMode = manual ? "manual" : "automatic";
+  const runtimeAccount = !manual
     ? [state.accounts.find(account => account.id === state.selectedId), ...state.accounts]
-      .find(account => account && accountToolsStep(account, false) === "runtime") ?? null
+      .find(account => account && accountToolsStep(account, accountTunnelFor(account, interactionMode)?.ready === true) === "runtime") ?? null
     : null;
   const primaryStep = ((): PrimaryStep | null => {
     if (addVisible) return { kind: "add" };
@@ -505,8 +505,8 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
       && (!account.authenticationStatus || account.authenticationStatus === "verified"));
     if (check) return { kind: "check", accountId: check.id };
     if (runtimeAccount) return { kind: "runtime" };
-    const connector = toolsSetup.runtimeConfigured && toolsSetup.connectorName
-      ? state.accounts.find(account => accountToolsStep(account, true) === "connector") : undefined;
+    const connector = toolsSetup.connectorName
+      ? state.accounts.find(account => accountToolsStep(account, accountTunnelFor(account, interactionMode)?.ready === true) === "connector") : undefined;
     return connector ? { kind: "connector", accountId: connector.id } : null;
   })();
   const isPrimary = (kind: PrimaryStep["kind"], accountId?: string) => primaryStep?.kind === kind
@@ -567,11 +567,12 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
         {codexCopy.quotaReportedOnly}
       </Notice>
       {runtimeAccount ? <Notice className="accounts-runtime"
+        title={`${toolsText.target}: ${runtimeAccount.label}`}
         action={<Button size="sm" variant={isPrimary("runtime") ? "primary" : "secondary"} iconEnd="forward"
           disabled={mutationsDisabled}
           onClick={() => onSetupTools(runtimeAccount.id, runtimeAccount.accountLabel
             ? `${runtimeAccount.label} · ${runtimeAccount.accountLabel}` : runtimeAccount.label)}>{toolsText.setup}</Button>}>
-        {text.runtimeNotice}
+        {toolsText.runtime}
       </Notice> : null}
       <div className="accounts-list">
         {state.accounts.map((account, accountIndex) => {
@@ -625,7 +626,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
               : refreshAllBusy ? codexCopy.quotaChecking
                 : loginBoundReason ?? (quotaRetryBlocked ? codexCopy.quotaRateLimited : undefined));
           const toolsDisabled = mutationsDisabled || active || loginBoundActive || quotaReadBusy || authRefreshBusy;
-          const runtimeConfigured = toolsSetup.runtimeConfigured;
+          const runtimeConfigured = accountTunnelFor(account, interactionMode)?.ready === true;
           const toolsStep = accountToolsStep(account, runtimeConfigured);
           const showCheckConnector = !manual && runtimeConfigured && (toolsStep === "connector" || toolsStep === "verified");
           const pacing = accountPacingStatus(account, language);
@@ -668,7 +669,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
           facts.push(account.checked
             ? { label: `${copy.accountsChecked}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
             : { label: `${copy.accountsChecked}: ${copy.connectionPending}`, dot: "idle" });
-          // The same derived step as the tools setup section: a verified connector without the shared runtime
+          // The same derived step as the tools setup section: a verified connector without this account's tunnel
           // still needs setup (the page notice names that step), so the badge never says Verified next to it.
           facts.push(toolsStep === "verified"
             ? { label: `${copy.toolConnection}: ${copy.connectionVerified}`, tone: "success", dot: "ready" }
@@ -764,7 +765,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                 tokens={{ failed: text.notSaved, saving: copy.accountFormSaving, unsaved: copy.accountFormUnsaved }}>
                 {report => <>
                   <AccountToolsOnboarding account={account} copy={copy} language={language} headingId={`${ids.details}-tools`}
-                    runtimeConfigured={runtimeConfigured} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
+                    interactionMode={interactionMode} connectorName={toolsSetup.connectorName} urls={toolsSetup.urls}
                     manual={manual} disabled={toolsDisabled} onError={setError}
                     onSetup={() => onSetupTools(account.id, account.accountLabel ? `${account.label} · ${account.accountLabel}` : account.label)} />
                   <AccountCodexLogin copy={codexCopy} headingId={`${ids.details}-login`} idPrefix={ids.codex}

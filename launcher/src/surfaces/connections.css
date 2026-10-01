@@ -9,6 +9,8 @@
 .nk-connections__content { display: grid; gap: var(--space-6); }
 .nk-connections__content > * { min-width: 0; }
 .nk-connections__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.nk-connections__account-tunnel { overflow-wrap: anywhere; }
+.nk-connections__account-tunnel .nk-connections__actions { margin-top: var(--space-2); }
 .nk-connections__spacer { flex: 1 1 auto; }
 .nk-connections__line { display: block; margin-top: var(--space-1); }
 .nk-connections__hint { margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; }

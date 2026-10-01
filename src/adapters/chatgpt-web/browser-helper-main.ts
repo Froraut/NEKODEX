@@ -1,5 +1,5 @@
 import { chatGptDocumentFilePayloads } from "./attachment-payloads";
-import type { HelperOutputMessage } from "./browser-helper-protocol";
+import { parseHelperTunnelScope, type HelperOutputMessage, type HelperTunnelScope } from "./browser-helper-protocol";
 import { validateSkillFiles } from "./skill-attachments";
 import { createProcessLineReader } from "./process-line-reader";
 import { CHATGPT_HELPER_DIAGNOSTIC_BYTES } from "./resource-budgets";
@@ -34,6 +34,7 @@ interface RunMessage {
     turnTimeoutMs: number;
     autoApproveToolCalls: boolean;
     useSavedChats?: boolean;
+    requireAccountTunnel?: boolean;
   };
   turn: {
     traceId: string;
@@ -184,6 +185,9 @@ async function run(message: RunMessage): Promise<void> {
     throw new Error("Browser helper turn identity is invalid");
   }
   if (abortControllers.has(message.id)) throw new Error(`Browser helper turn already exists: ${message.id}`);
+  if (message.config.requireAccountTunnel !== undefined && typeof message.config.requireAccountTunnel !== "boolean") {
+    throw new Error("Browser helper account tunnel requirement is invalid");
+  }
   if (message.turn.resumeAvailable !== undefined && typeof message.turn.resumeAvailable !== "boolean") {
     throw new Error("Browser helper resume availability is invalid");
   }
@@ -239,6 +243,7 @@ async function run(message: RunMessage): Promise<void> {
       turnTimeoutMs: message.config.turnTimeoutMs,
       autoApproveToolCalls: message.config.autoApproveToolCalls,
       useSavedChats: message.config.useSavedChats === true,
+      requireAccountTunnel: message.config.requireAccountTunnel === true,
     },
   };
   const abortController = new AbortController();
@@ -258,6 +263,7 @@ async function run(message: RunMessage): Promise<void> {
   const promptSelection = createBrowserHelperPromptSelection();
   preparedSelections.set(message.id, promptSelection);
   const prepareSelected = async () => ({ ...await promptSelection.wait(), release: () => {} });
+  let selectedTunnelScope: HelperTunnelScope | undefined;
   const turn: BrowserTurn = {
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
@@ -307,8 +313,13 @@ async function run(message: RunMessage): Promise<void> {
       },
     } : {}),
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
+    onTunnelSelected: scope => {
+      selectedTunnelScope = parseHelperTunnelScope(scope);
+    },
     onPreparedSelected: reused => {
-      if (!writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused })) {
+      if (!selectedTunnelScope) throw new Error("Browser helper has no selected account tunnel scope");
+      if (!writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused,
+        tunnelScope: selectedTunnelScope })) {
         throw new Error("Browser helper could not request prompt selection");
       }
       return promptSelection.wait().then(() => undefined);
@@ -585,4 +596,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-reasons", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "file-attachments", "compaction-execution"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-reasons", "multipart-stage-ack", "account-routing-key", "turn-settled", "skill-attachments", "file-attachments", "compaction-execution", "tunnel-scope-handshake"] });

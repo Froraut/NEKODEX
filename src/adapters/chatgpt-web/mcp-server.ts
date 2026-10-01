@@ -38,7 +38,7 @@ import { VERSION } from "../../version";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import {
-  callTurnBroker,
+  callTurnBroker as rawCallTurnBroker,
   isBrokerPromotedInvocation,
   TurnBrokerTimeoutError,
   type BrokerInvokeResult,
@@ -48,6 +48,16 @@ import {
   type BrokerPromotedInvocation,
   type BrokerToolResult,
 } from "./turn-broker";
+import type { BrokerCallRequest } from "./turn-broker-protocol";
+
+let cliTunnelId: string | undefined;
+/** CLI startup only; remote MCP tool inputs cannot alter this captured process binding. */
+export function setChatGptMcpCliTunnelId(tunnelId: string): void {
+  if (cliTunnelId !== undefined || !/^[A-Za-z0-9_-]{1,256}$/.test(tunnelId)) {
+    throw new Error("MCP tunnel id is invalid or already set");
+  }
+  cliTunnelId = tunnelId;
+}
 
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 // The OpenAI tunnel currently owns a two-minute command-response deadline. The local MCP server
@@ -190,6 +200,7 @@ function asOwnedOperationResult(value: BrokerOwnedOperationSnapshot, context: "s
 
 export async function runChatGptMcpServer(options: {
   brokerSocketPath: string;
+  tunnelId?: string;
   contract?: ChatGptMcpContract;
   allowWebSubagents?: boolean;
   /** Native5-only schema. Native4 and Manual mode must leave this disabled. */
@@ -197,6 +208,13 @@ export async function runChatGptMcpServer(options: {
   /** Adds the Native6 metadata recovery tool without changing Native4/5 schemas. */
   native6?: boolean;
 }): Promise<void> {
+  const tunnelId = options.tunnelId ?? cliTunnelId;
+  if (tunnelId !== undefined && !/^[A-Za-z0-9_-]{1,256}$/.test(tunnelId)) {
+    throw new Error("MCP tunnel id is invalid");
+  }
+  const callTurnBroker = <T>(socketPath: string, request: Omit<BrokerCallRequest, "id">,
+    timeoutMs?: number | null, signal?: AbortSignal): Promise<T> => rawCallTurnBroker<T>(socketPath,
+      { ...request, ...(tunnelId !== undefined ? { tunnelId } : {}) }, timeoutMs, signal);
   const contract = options.contract ?? "native";
   if (options.asyncToolOperations && contract !== "native") {
     throw new Error("Owned async tool operations are unavailable in the Manual mode MCP contract");

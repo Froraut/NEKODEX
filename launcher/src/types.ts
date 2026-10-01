@@ -396,6 +396,7 @@ export interface AccountPoolSnapshot {
   selectedId: string;
   mode: "selected" | "balanced";
   accounts: Array<{ id: string; label: string; enabled: boolean; authenticated: boolean;
+    tunnels?: Record<BrowserInteractionMode, AccountTunnelView>;
     capabilities?: { solAvailable: boolean | null; extraHighAvailable: boolean | null; proAvailable: boolean | null } | null;
     availability?: { eligible: boolean; reason: string | null; retryAt: number | null };
     authenticationStatus?: AuthenticationStatus;
@@ -404,6 +405,15 @@ export interface AccountPoolSnapshot {
     safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
       newSessionWindow: AccountNewSessionWindowStatus | null };
     accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number }>;
+}
+
+export interface AccountTunnelView {
+  accountId: string;
+  interactionMode: BrowserInteractionMode;
+  tunnelId?: string;
+  status: 'unconfigured' | 'starting' | 'ready' | 'stopped' | 'error' | 'unknown';
+  ready: boolean;
+  detail?: string;
 }
 
 export interface BrowserCapacitySettings {
@@ -568,6 +578,13 @@ export interface LauncherApi {
     replace?: boolean;
     interactionMode?: BrowserInteractionMode;
   }): Promise<{ ok: boolean; stdout: string }>;
+  configureAccountTunnel(accountId: string, input: {
+    tunnelId: string;
+    runtimeKey?: string;
+    interactionMode?: BrowserInteractionMode;
+    reuseSavedCredentials?: boolean;
+  }): Promise<{ ok: boolean; saved?: boolean; ready?: boolean; recoveryRequired?: boolean }>;
+  removeAccountTunnel(accountId: string, interactionMode?: BrowserInteractionMode): Promise<{ ok: boolean; saved?: boolean; recoveryRequired?: boolean }>;
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;

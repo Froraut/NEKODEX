@@ -784,6 +784,7 @@ export function startServer(
   // Standalone hosts retain their existing tunnel service contract.
   const requiresTunnelSignal = config.mode === "full" && config.browserHost === "launcher";
   let tunnelReady = !requiresTunnelSignal;
+  let accountTunnelStatuses: Array<{ account_id: string; interaction_mode: string; tunnel_id: string; ready: boolean }> = [];
   let tunnelStatusRevision = 0;
   const brokerReady = () => !turnBroker || brokerState === "ready";
   const acceptingNative = () => admission.accepting;
@@ -967,6 +968,7 @@ export function startServer(
           broker_ready: brokerReady(),
           broker_state: brokerState,
           tunnel_ready: tunnelReady,
+          ...(config.accountTunnelMode === true ? { account_tunnels: accountTunnelStatuses } : {}),
           tunnel_status_revision: tunnelStatusRevision,
           ...(brokerFailureCode ? { broker_failure_code: brokerFailureCode } : {}),
           browser_capacity: MAX_CHATGPT_BROWSER_TABS,
@@ -1012,7 +1014,7 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/tunnel-status") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let body: unknown;
-        try { body = await readJsonRequestBody(req, 4096, 4096); } catch {
+        try { body = await readJsonRequestBody(req, 65536, 65536); } catch {
           return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness requires a boolean and a positive revision");
         }
         if (!body || typeof body !== "object" || Array.isArray(body)
@@ -1021,11 +1023,29 @@ export function startServer(
           || ((body as { revision: number }).revision < 1)) {
           return formatErrorResponse(400, "invalid_request_error", "Tunnel readiness requires a boolean and a positive revision");
         }
-        const update = body as { ready: boolean; revision: number };
+        const update = body as { ready: boolean; revision: number; account_tunnels?: unknown };
+        if (config.accountTunnelMode === true && update.account_tunnels === undefined) {
+          return formatErrorResponse(400, 'invalid_request_error', 'Account tunnel mode requires account-scoped readiness');
+        }
+        if (update.account_tunnels !== undefined) {
+          if (!Array.isArray(update.account_tunnels) || update.account_tunnels.length > 64
+            || update.account_tunnels.some(item => !item || typeof item !== 'object'
+              || typeof item.account_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.account_id)
+              || (item.interaction_mode !== 'automatic' && item.interaction_mode !== 'manual')
+              || typeof item.tunnel_id !== 'string' || !/^tunnel_[a-f0-9]{32}$/.test(item.tunnel_id) || typeof item.ready !== 'boolean')
+            || new Set(update.account_tunnels.map(item => `${item.account_id}:${item.interaction_mode}`)).size !== update.account_tunnels.length
+            || new Set(update.account_tunnels.map(item => item.tunnel_id)).size !== update.account_tunnels.length
+            || update.ready !== update.account_tunnels.some(item => item.ready === true)) {
+            return formatErrorResponse(400, 'invalid_request_error', 'Account tunnel readiness must contain distinct owners and an accurate aggregate');
+          }
+        }
         const applied = update.revision > tunnelStatusRevision;
         if (applied) {
           tunnelStatusRevision = update.revision;
           tunnelReady = !requiresTunnelSignal || update.ready;
+          accountTunnelStatuses = Array.isArray(update.account_tunnels)
+            ? update.account_tunnels.map(item => ({ account_id: item.account_id,
+              interaction_mode: item.interaction_mode, tunnel_id: item.tunnel_id, ready: item.ready })) : [];
           turnBroker?.setExternalOwnersAccepted(acceptingTurns());
         }
         return Response.json({ status: "ok", native_accepting_turns: acceptingNative(),

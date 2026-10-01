@@ -59,6 +59,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   copyClientApiKey: () => ipcRenderer.invoke("launcher:copy-client-api-key"),
   setupHermes: (input) => ipcRenderer.invoke("launcher:setup-hermes", input),
   setupMcp: (input) => ipcRenderer.invoke("launcher:setup-mcp", input),
+  configureAccountTunnel: (id, input) => ipcRenderer.invoke('launcher:account-tunnel-configure', id, input),
+  removeAccountTunnel: (id, mode) => ipcRenderer.invoke('launcher:account-tunnel-remove', id, mode),
   setMcpStep: (step) => ipcRenderer.invoke("launcher:set-mcp-step", step),
   setAutostart: (enabled) => ipcRenderer.invoke("launcher:autostart", enabled),
   setBiggerContext: (enabled) => ipcRenderer.invoke("launcher:bigger-context", enabled),

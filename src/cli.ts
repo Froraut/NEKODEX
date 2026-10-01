@@ -27,11 +27,12 @@ import {
 } from "./codex-integration";
 import { formatDoctorReport, runDoctor } from "./doctor";
 import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
+import { setChatGptMcpCliTunnelId } from "./adapters/chatgpt-web/mcp-server";
 import { runCommand } from "./process";
 import { startServer } from "./server";
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, interruptActiveTurn, restartService, startService, stopService, uninstallService } from "./service";
 import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions } from "./setup";
-import { installRuntimeKeyBytes, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
+import { installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
 import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
 import { runDevCommand } from "./dev-chat/cli";
@@ -65,7 +66,7 @@ Usage:
   codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
   codex-chatgpt-web dev list
   codex-chatgpt-web serve
-  codex-chatgpt-web mcp [--broker-socket PATH]
+  codex-chatgpt-web mcp [--broker-socket PATH] [--tunnel-id ID]
   codex-chatgpt-web service <status|install|start|restart|stop|cancel-turns>
   codex-chatgpt-web tunnel <status|start|restart|stop|key-import>
   codex-chatgpt-web open <tunnels|runtime-keys|connectors>
@@ -506,6 +507,11 @@ async function interruptHookCommand(args: string[]): Promise<void> {
 async function tunnelCommand(args: string[]): Promise<void> {
   const action = args.shift() ?? "status";
   assertNoArgs(args);
+  if (action === 'install') {
+    const binary = await installTunnelClient();
+    stdout.write(`${JSON.stringify({ installed: true, binary })}\n`);
+    return;
+  }
   if (action === "key-import") {
     const key = await secretPrompt("Runtime key (hidden): ");
     if (!key) throw new Error("A non-empty runtime key is required");
@@ -673,7 +679,11 @@ async function main(): Promise<void> {
     stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
     await new Promise<void>(() => {});
   } else if (command === "dev") await runDevCommand(args);
-  else if (command === "mcp") await runChatGptMcpMain(args);
+  else if (command === "mcp") {
+    const tunnelId = takeOption(args, "--tunnel-id");
+    if (tunnelId !== undefined) setChatGptMcpCliTunnelId(tunnelId);
+    await runChatGptMcpMain(args);
+  }
   else if (command === "service") await serviceCommand(args);
   else if (command === "hook") {
     const action = args.shift();

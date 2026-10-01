@@ -526,6 +526,7 @@ export function mcpCommand(config: AppConfig): string {
     contract,
     "--broker-socket",
     config.brokerSocketPath,
+    ...(config.accountTunnelMode === true && config.tunnel ? ['--tunnel-id', config.tunnel.tunnelId] : []),
   ];
   if (process.platform === "win32") {
     return command.map(tunnelCommandQuoted).join(" ");

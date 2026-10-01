@@ -367,7 +367,8 @@ class AccountBrowserPool {
           ...(capabilities.modelCapabilities ? { modelCapabilities: structuredClone(capabilities.modelCapabilities) } : {}),
         } : null,
         checked: this.capabilities.has(account.id),
-        connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()) };
+        connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()),
+        tunnels: { automatic: this.accountTunnel(account.id, 'automatic'), manual: this.accountTunnel(account.id, 'manual') } };
     }) };
   }
   accountIdentityLease(id) {
@@ -608,6 +609,39 @@ class AccountBrowserPool {
     return this.snapshot();
   }
   hide() { for (const host of this.hosts.values()) host.hide(); return this.snapshot(); }
+  accountTunnel(accountId, mode = this.options.getBrowserInteractionMode?.() ?? 'automatic') {
+    return this.options.getAccountTunnel?.(accountId, mode)
+      ?? { accountId, interactionMode: mode, status: 'unconfigured', ready: false, required: false };
+  }
+  assertAccountTunnelReady(accountId, mode) {
+    const tunnel = this.accountTunnel(accountId, mode);
+    if (tunnel.required === true && tunnel.ready !== true) {
+      throw Object.assign(new Error(tunnel.status === 'unconfigured'
+        ? 'Configure this account’s own tool tunnel before starting a tool task. No request was sent.'
+        : 'This account’s own tool tunnel is not ready. Repair it before starting a tool task. No request was sent.'),
+      { code: 'account_tunnel_unavailable', workStarted: false });
+    }
+    return tunnel;
+  }
+  async withAccountTunnelMutation(id, action) {
+    this.getHost(id);
+    this.assertAccountOperationAvailable(id);
+    if ([...this.turnTabs.values()].some(tab => tab.accountId === id && tab.status === 'running')
+      || [...this.getHost(id).turnTabs.values()].some(tab => tab.status === 'running')
+      || [...this.reservations.values()].includes(id)) {
+      throw new Error('Finish this account’s active tasks before changing its tunnel');
+    }
+    const release = this.leases().acquireExclusive(id, 'tool tunnel setup');
+    this.publish();
+    try {
+      const result = await action();
+      this.connectors.delete(id);
+      const host = this.getHost(id);
+      for (const tab of [...host.turnTabs.values()]) if (tab.status === 'ready') host.removeTurnTab(tab, false);
+      this.writeDescriptor();
+      return result;
+    } finally { release(); this.publish(); }
+  }
   async checkAccount(id, connector = false) {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const host = this.getHost(id);
@@ -624,6 +658,7 @@ class AccountBrowserPool {
       }
       this.recordCapabilityEvidence(id, evidence);
       if (connector) {
+        this.assertAccountTunnelReady(id, this.options.getBrowserInteractionMode?.() ?? 'automatic');
         await host.verifyConnector(host.connectorName());
         if (!this.evidenceIsCurrent(id, epoch)) {
           throw new Error('ChatGPT account readiness changed while checking its connector');
@@ -1091,7 +1126,8 @@ class AccountBrowserPool {
         if (requirement?.effort === 'xhigh' && caps?.extraHighAvailable !== true) return false;
         if (requirement?.effort && requirement.effort !== 'max' && requirement.effort !== 'luna' && caps?.solAvailable !== true) return false;
       }
-      if (requirement?.connector && this.connectors.get(account.id) !== requirement.connector) return false;
+      if (requirement?.connector && (this.connectors.get(account.id) !== requirement.connector
+        || (this.accountTunnel(account.id, 'automatic').required === true && !this.accountTunnel(account.id, 'automatic').ready))) return false;
       return true;
     };
     // Exact retained/running continuations can finish on a disabled account.
@@ -1222,6 +1258,7 @@ class AccountBrowserPool {
     if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw Object.assign(new Error('Global browser capacity is full'), { code: 'browser_capacity_full' });
     if (!activeTraces.has(traceId) && this.admissionQueue?.paused) throw Object.assign(new Error('New browser tasks are paused'), { code: 'account_cooldown' });
     const id = this.chooseAccount(traceId, key, retained, { ...requirement, connector });
+    const tunnel = connector ? this.assertAccountTunnelReady(id, 'automatic') : this.accountTunnel(id, 'automatic');
     const assertHistoryAvailable = () => {
       if (this.taskLedgers?.get(id)?.storageIssue) {
         throw Object.assign(new Error('Task history is unavailable for this account. Repair its journal before starting a task. No request was sent.'), {
@@ -1340,7 +1377,8 @@ class AccountBrowserPool {
       }
       if (!requirement?.deferAffinity) this.persistAffinity(keys, id);
       this.writeDescriptor(); this.publish();
-      return { ...lease, accountId: id };
+      return { ...lease, accountId: id, accountTunnelRequired: Boolean(connector && tunnel.required),
+        ...(connector && tunnel.required && tunnel.tunnelId ? { tunnelId: tunnel.tunnelId } : {}) };
     } catch (error) {
       // No other account is tried here: even a failed acquisition can own a live tab.
       const ownsTab = [...this.getHost(id).turnTabs.values()].some(tab => tab.traceId === traceId);
@@ -1538,6 +1576,7 @@ class AccountBrowserPool {
     const retainedOwner = [...this.hosts].find(([, host]) => [...host.turnTabs.values()].some(tab => key && tab.conversationKey === key))?.[0];
     const pendingOwner = key && [...this.pendingAffinity.values()].find(pending => pending.keys.includes(key))?.id;
     const id = traceOwner || (key && this.affinity.get(key)) || pendingOwner || retainedOwner || this.registry.snapshot().selectedId;
+    const tunnel = this.assertAccountTunnelReady(id, 'manual');
     const activeTraces = new Set([...this.turnTabs.values()].filter(tab => tab.status === 'running').map(tab => tab.traceId));
     for (const trace of this.reservations.keys()) activeTraces.add(trace);
     if (!activeTraces.has(traceId) && activeTraces.size >= this.options.maxTabs) throw new Error('Global browser capacity is full');
@@ -1556,7 +1595,8 @@ class AccountBrowserPool {
     this.ensureTabCapacity(host, traceId, key, null, true);
     let lease;
     try {
-      lease = this.getHost(id).beginManualTurn(...args);
+      lease = { ...this.getHost(id).beginManualTurn(...args), accountTunnelRequired: tunnel.required === true,
+        ...(tunnel.required && tunnel.tunnelId ? { tunnelId: tunnel.tunnelId } : {}) };
       if (key) this.persistAffinity([key], id);
     } catch (error) {
       if (key && [...this.getHost(id).turnTabs.values()].some(tab => tab.traceId === traceId)) {
