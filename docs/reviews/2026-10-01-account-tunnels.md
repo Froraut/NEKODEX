@@ -13,6 +13,10 @@ The browser lease carries its tunnel before prompt preparation. The helper's pre
 ## Focused evidence
 
 - Private store: distinct keys/profiles, no shared fallback, sign-in mismatch, generation symlink preservation, newer-writer refusal and removal of only the selected binding.
+- First startup: prepare the private account profile directory before SDK inventory uses it as its working directory. A real child-process fixture reaches that inventory boundary from an absent directory; it checks private mode and complete child settlement.
+- Monitoring: an account peer supervises transport only, so healthy SDK observations keep it ready without a per-peer broker. The production parent retains its own broker/admission requirement. The focused monitor case checks both outcomes.
+- Native6 setup preflight: the shared picker waits for exact row confirmation and can retry only an explicit requested row after a missed pointer activation. A delayed-selection fixture observes the original family before commitment; a missed-selection fixture proves two attempts at the same row, with no fallback and the draft preserved.
+- Stopped proof: a real SDK 0.0.12 observation after owner-managed shutdown returned exit 0, `process_running:false`, `runtime_state:stopped` and `error:""`. The pure status owner accepts only canonical no-error values and still rejects live, uncertain, malformed or unsuccessful observations. DEV setup checks every prior active-mode alias before writing; an empty set requires the retained projection to prove stopped.
 - Runtime transition: reached idle refusal preserves config and pending key; first Full enable initializes core; later edits preserve Native; post-commit failure produces an explicit recovery receipt.
 - Admission: busy-account refusal; changing an idle account keeps another account's running task and proof.
 - Peer supervision: isolated failure, unchanged-owner start count, changed-peer stop before config write, inactive-mode handling, scoped SDK command, PID mismatch refusal, drain refusal and shutdown compensation.

@@ -1,4 +1,5 @@
 const path = require("node:path");
+const fs = require("node:fs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { processIdentity } = require('./update-recovery.cjs');
 
@@ -136,6 +137,9 @@ class AccountTunnelPeer extends RuntimeSupervisor {
   }
 
   async startTunnel(config, operationName, options) {
+    // Inventory commands use this directory as their cwd before the SDK's
+    // connect command creates a profile. Prepare a first account's private path.
+    fs.mkdirSync(config.tunnel.profileDir, { recursive: true, mode: 0o700 });
     const existing = await this.waitForKnownTunnelStatus(config, 10_000, options?.recoverySignal);
     const wasOwnAttempt = this.connectAttempted && this.initialAliasAbsent;
     this.initialAliasAbsent = existing.absent === true || existing.state === "stopped";

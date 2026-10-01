@@ -7,6 +7,18 @@ export interface TunnelRuntimeStatus {
   detail: string;
 }
 
+/** Scoped SDK status must explicitly prove stopped. SDK 0.0.12 uses an empty
+ * error string when stopped and null when healthy; both mean no status error. */
+export function runtimeStatusReportsStopped(result: { status: number; stdout: string; stderr: string }): boolean {
+  if (result.status !== 0) return false;
+  try {
+    const status = JSON.parse(result.stdout.trim() || result.stderr.trim()) as Record<string, unknown>;
+    return status.process_running === false
+      && (status.runtime_state === "stopped" || status.status === "stopped")
+      && (status.error === undefined || status.error === null || status.error === "");
+  } catch { return false; }
+}
+
 export function tunnelCommandOutput(result: {
   status: number;
   stdout: string;
