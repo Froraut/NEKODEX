@@ -66,6 +66,7 @@ test("an account without its tool tunnel fails the queued task with that cause, 
 test("the cause is written in the launcher language", () => {
   expect(admissionFailureMessage("account_tunnel_unconfigured", "ru", "Основной")).toContain("Настроить туннель этого аккаунта");
   expect(admissionFailureMessage("account_unchecked", "ja", undefined)).toContain("コネクター確認");
+  expect(admissionFailureMessage("account_disabled", "en", "Team $& $' $$")).toContain("“Team $& $' $$” is disabled");
   for (const language of ["en", "ru", "zh-CN", "zh-TW", "ja", "ko"]) {
     for (const code of READINESS_CODES) expect(admissionFailureMessage(code, language, "A")).not.toContain("{");
   }

@@ -14,8 +14,8 @@ function admissionFailureMessage(code, language, accountLabel) {
   const entry = text.codes[READINESS_CODES.has(code) ? code : 'account_not_ready'];
   const label = typeof accountLabel === 'string' ? accountLabel.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80) : '';
   const subject = code === 'account_not_ready' || !READINESS_CODES.has(code) ? text.anyAccount
-    : label ? text.account.replace('{account}', label) : text.accountUnknown;
-  return text.prefix + entry.message.replace('{subject}', subject);
+    : label ? text.account.replace('{account}', () => label) : text.accountUnknown;
+  return text.prefix + entry.message.replace('{subject}', () => subject);
 }
 
 module.exports = { READINESS_CODES, admissionFailureMessage };
