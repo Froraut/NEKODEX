@@ -516,12 +516,17 @@ class AccountBrowserPool {
     if (this.destroyed || this.creatingHosts.size) return;
     for (const [id, host] of this.hosts) {
       const authenticated = host.state.authenticated === true;
+      const uncertain = ['unavailable', 'unknown'].includes(host.state.authenticationStatus);
+      const authentication = authenticated ? true : uncertain ? null : false;
       const previous = this.publishedAuthentication.get(id);
-      if (!authenticated && previous !== false) this.invalidateEvidence(id);
+      // A temporarily unavailable session check blocks admission through authenticated=false,
+      // but does not prove logout or invalidate the identity of an in-flight model inspection.
+      // Confirmed logout and the host's identity-change callback still retire its evidence.
+      if (authentication === false && previous !== false) this.invalidateEvidence(id);
       // Sign-out discarded this account's model and connector evidence; a sign-in restores it
       // the way startup does, so the account becomes usable without another manual check.
-      if (authenticated && previous === false) this.scheduleEvidenceRestore(id);
-      this.publishedAuthentication.set(id, authenticated);
+      if (authenticated && (previous === false || previous === null)) this.scheduleEvidenceRestore(id);
+      this.publishedAuthentication.set(id, authentication);
     }
     this.observationRevision = (this.observationRevision ?? 0) + 1;
     if (!this.options.publishState) return;
@@ -666,16 +671,34 @@ class AccountBrowserPool {
   }
   async withAccountTunnelMutation(id, action) {
     this.getHost(id);
-    this.assertAccountOperationAvailable(id);
-    if ([...this.turnTabs.values()].some(tab => tab.accountId === id && tab.status === 'running')
-      || [...this.getHost(id).turnTabs.values()].some(tab => tab.status === 'running')
-      || [...this.reservations.values()].includes(id)) {
-      throw new Error('Finish this account’s active tasks before changing its tunnel');
-    }
-    const release = this.leases().acquireExclusive(id, 'tool tunnel setup');
-    this.publish();
+    const assertIdle = () => {
+      if ([...this.turnTabs.values()].some(tab => tab.accountId === id && tab.status === 'running')
+        || [...this.getHost(id).turnTabs.values()].some(tab => tab.status === 'running')
+        || this.getHost(id).activeTraceId || [...this.reservations.values()].includes(id)) {
+        throw new Error('Finish this account’s active tasks before changing its tunnel');
+      }
+    };
+    assertIdle();
+    this.evidenceRestoreSuppressed ??= new Set();
+    if (this.evidenceRestoreSuppressed.has(id)) throw new Error('Tool tunnel setup is already pending for this account');
+    this.evidenceRestoreSuppressed.add(id);
+    let release;
     let changed = false;
     try {
+      // An explicit setup request owns priority over this pool's automatic check, but
+      // not over another user operation or an active turn. Join the read before editing.
+      const restore = this.evidenceRestores?.get(id);
+      if (restore) {
+        restore.cancelled = true;
+        if (restore.timer) clearTimeout(restore.timer);
+        restore.wake?.();
+        if (restore.ownsRefreshing) await this.getHost(id).cancelReadOnlyInspection();
+        await restore.done;
+      }
+      assertIdle();
+      this.assertAccountOperationAvailable(id);
+      release = this.leases().acquireExclusive(id, 'tool tunnel setup');
+      this.publish();
       const result = await action();
       this.connectors.delete(id);
       changed = true;
@@ -684,7 +707,9 @@ class AccountBrowserPool {
       this.writeDescriptor();
       return result;
     } finally {
-      release(); this.publish();
+      release?.();
+      this.evidenceRestoreSuppressed.delete(id);
+      this.publish();
       // The new tunnel needs its connector proven again; do it once the tunnel is running.
       if (changed) this.scheduleEvidenceRestore(id, { waitForTunnel: true });
     }
@@ -831,36 +856,58 @@ class AccountBrowserPool {
    */
   scheduleEvidenceRestore(id, { waitForTunnel = false } = {}) {
     this.evidenceRestores ??= new Map(); this.evidenceRefreshing ??= new Set();
-    if (this.destroyed || this.evidenceRestores.has(id) || this.evidenceRefreshing.has(id)) return;
-    const sleep = ms => new Promise(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
-    this.evidenceRefreshing.add(id);
+    if (this.destroyed || this.evidenceRestoreSuppressed?.has(id)) return;
+    const pending = this.evidenceRestores.get(id);
+    if (pending) {
+      if (pending.cancelled) return;
+      // A probe can itself make authentication temporarily unavailable. Permit one
+      // coalesced auth retry, not an endless chain that monopolizes the account.
+      if (!waitForTunnel && pending.authRetryQueued) return;
+      if (!waitForTunnel) pending.authRetryQueued = true;
+      pending.waitForTunnel ||= waitForTunnel;
+      pending.revision++;
+      return;
+    }
+    const host = this.hosts.get(id);
+    if (!host) return;
+    const restore = { waitForTunnel, revision: 0, timer: null, wake: null, ownsRefreshing: false, cancelled: false, authRetryQueued: false };
+    const sleep = ms => new Promise(resolve => {
+      restore.wake = resolve;
+      restore.timer = setTimeout(() => { restore.timer = null; restore.wake = null; resolve(); }, ms);
+      restore.timer.unref?.();
+    });
+    this.evidenceRestores.set(id, restore);
     const run = (async () => {
       await sleep(0);
-      for (let attempt = 0; attempt < 45; attempt += 1) {
-        if (this.destroyed || this.inspectionsPaused || !this.hosts.has(id)) return;
-        const host = this.hosts.get(id);
+      for (;;) {
+        if (restore.cancelled || this.destroyed || this.inspectionsPaused || this.hosts.get(id) !== host) return;
         if (host.state.authenticated !== true) return;
-        const busy = this.accountOperationLabel(id) || host.activeTraceId || [...this.reservations.values()].includes(id);
+        const busy = this.evidenceRefreshing.has(id) || this.accountOperationLabel(id)
+          || host.activeTraceId || [...this.reservations.values()].includes(id);
         const tunnel = this.accountTunnel(id, 'automatic');
-        const tunnelWait = waitForTunnel && tunnel.required === true && tunnel.ready !== true;
-        if (!busy && !tunnelWait) break;
-        if (attempt === 44) return;
-        await sleep(2000);
+        const tunnelWait = restore.waitForTunnel && tunnel.required === true && tunnel.ready !== true;
+        // A pending restore is not an active check. Keep the real tunnel cause visible to
+        // admission while waiting, and do not expire a user's in-flight account operation.
+        if (busy || (tunnelWait && this.capabilities.has(id))) { await sleep(2000); continue; }
+        const connector = this.options.bootstrapAccountConnectors?.() === true && (tunnel.required !== true || tunnel.ready === true);
+        if (this.capabilities.has(id) && (!connector || this.connectors.has(id))) return;
+        const revision = restore.revision;
+        this.evidenceRefreshing.add(id); restore.ownsRefreshing = true;
+        try { await this.checkAccount(id, connector); }
+        catch (error) {
+          // A new sign-in/tunnel receipt during the check supersedes its old evidence.
+          if (!restore.cancelled && restore.revision === revision) throw error;
+        } finally { this.evidenceRefreshing.delete(id); restore.ownsRefreshing = false; }
+        if (restore.revision === revision && !tunnelWait) return;
       }
-      if (this.capabilities.has(id) && (this.connectors.has(id) || this.options.bootstrapAccountConnectors?.() !== true)) return;
-      const tunnel = this.accountTunnel(id, 'automatic');
-      // A tunnel that never started (or was removed) leaves nothing new to prove.
-      if (waitForTunnel && tunnel.required === true && tunnel.ready !== true) return;
-      const connector = this.options.bootstrapAccountConnectors?.() === true && (tunnel.required !== true || tunnel.ready === true);
-      await this.checkAccount(id, connector);
     })().catch(error => {
       this.logger?.warn('browser.account_evidence_restore_failed', { accountId: id, message: error?.message ?? String(error) });
     }).finally(() => {
-      this.evidenceRefreshing.delete(id);
-      if (this.evidenceRestores.get(id) === run) this.evidenceRestores.delete(id);
+      if (restore.ownsRefreshing) this.evidenceRefreshing.delete(id);
+      if (this.evidenceRestores.get(id) === restore) this.evidenceRestores.delete(id);
       this.publish();
     });
-    this.evidenceRestores.set(id, run);
+    restore.done = run;
   }
   /** Keep fresh browser evidence and let the runtime list the models it shows. */
   recordCapabilityEvidence(id, evidence) {
@@ -1780,6 +1827,10 @@ class AccountBrowserPool {
   }
   destroy() {
     this.destroyed = true;
+    for (const restore of this.evidenceRestores.values()) {
+      if (restore.timer) clearTimeout(restore.timer);
+      restore.wake?.();
+    }
     if (this.capabilitySaveRetry) clearTimeout(this.capabilitySaveRetry);
     this.snapshotPublisher?.dispose();
     this.admissionQueue?.close();

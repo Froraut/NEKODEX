@@ -22,6 +22,17 @@ try {
   assert.notEqual(ownA.tunnel.profileDir, ownB.tunnel.profileDir);
   assert.equal(fs.readFileSync(ownA.tunnel.runtimeKeyFile, 'utf8'), 'synthetic-a');
   assert.equal(fs.statSync(ownA.tunnel.runtimeKeyFile).mode & 0o777, 0o600);
+  const devRoot = path.join(root, 'separate-dev-profile');
+  fs.mkdirSync(devRoot);
+  const devConfig = path.join(devRoot, 'config.json');
+  fs.writeFileSync(devConfig, JSON.stringify({ mode: 'browser-only', browserInteractionMode: 'automatic' }));
+  const dev = store.prepareAccountTunnel({ coreHome: devRoot, configPath: devConfig,
+    accountId: 'default', tunnelId: idA, runtimeKey: 'synthetic-dev' });
+  assert.notEqual(dev.binding.tunnel.alias, ownA.tunnel.alias,
+    'global tunnel-client aliases must not collide between application profiles');
+  assert.notEqual(dev.binding.tunnel.profileName, ownA.tunnel.profileName);
+  const same = prepare('default', idA, undefined, { reuseSavedCredentials: true });
+  assert.equal(same.binding.tunnel.alias, ownA.tunnel.alias, 'reconnect retains the same profile-scoped alias');
   assert.equal(store.accountTunnelFor(config, '00000000-0000-4000-8000-000000000004'), undefined);
   assert.equal(store.accountTunnelFor(config, 'default', 'manual'), undefined);
   assert.throws(() => prepare('00000000-0000-4000-8000-000000000003', idA, 'synthetic-c'), /already belongs/);

@@ -605,7 +605,9 @@ async function expandChatGptModelPicker(activation: ChatGptEffortActivation, sig
     const view = await powerView.getAttribute("data-model-picker-view");
     if (view === "advanced") return;
     if (view !== "simple") throw new Error("ChatGPT model picker view is unknown");
-    const toggle = powerView.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]');
+    // Current ChatGPT omits aria-hidden on the visible toggle. Missing means exposed;
+    // explicitly hidden duplicates must still be excluded, including offscreen surfaces.
+    const toggle = powerView.locator('[data-model-picker-view-toggle="true"]:not([aria-hidden="true"])');
     if (await toggle.count() !== 1) throw new Error("ChatGPT model picker toggle is ambiguous");
     await toggle.click({ force: true, timeout: 5_000, signal });
     // A forced click can land during the menu's entry transition without effect. The model rows
