@@ -30,6 +30,14 @@ export class LauncherRetainedConversationUnavailableError extends Error {
   }
 }
 
+/** The launcher proved before dispatch that the task's ChatGPT account cannot run it. */
+export class LauncherAccountNotReadyError extends Error {
+  constructor(message: string, readonly reason: string) {
+    super(message);
+    this.name = "LauncherAccountNotReadyError";
+  }
+}
+
 export class LauncherManualTurnTimedOutError extends Error {
   constructor(message: string) {
     super(message);

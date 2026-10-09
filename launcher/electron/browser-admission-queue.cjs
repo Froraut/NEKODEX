@@ -17,7 +17,7 @@ const accountPattern = /^(default|[a-f0-9-]{36})$/;
 // Persist only audited terminal outcomes, never arbitrary exception text or data.
 const terminalFailureMessages = new Map([
   ['retained_conversation_unavailable', 'The retained ChatGPT conversation is no longer available'],
-  ['account_signed_out', 'No request was sent: the ChatGPT account for this task is signed out. Sign in from NEKODEX › Accounts, then retry.'],
+  ['account_signed_out', 'No request was sent: the ChatGPT account for this task is not signed in, or its ChatGPT page is stuck on a sign-in or security check. Open the account in NEKODEX › Accounts › Browser, finish the check or sign in, then retry.'],
   ['account_tunnel_unconfigured', 'No request was sent: the ChatGPT account for this task has no tool tunnel. Open NEKODEX › Accounts › Set up this account’s tunnel, then retry.'],
   ['account_tunnel_not_ready', 'No request was sent: this ChatGPT account’s tool tunnel is not running. Repair it in NEKODEX › Connections, then retry.'],
   ['account_connector_unverified', 'No request was sent: this ChatGPT account has no verified tools connector. Finish NEKODEX › Connections › Local tools connector, then retry.'],

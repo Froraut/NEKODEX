@@ -43,6 +43,7 @@ test("an account without its tool tunnel fails the queued task with that cause",
     q.advance(5_000); q.poll(); await q.queue.pump();
     expect(q.queue.snapshot().entries[0].status).toBe("failed");
     expect(() => q.poll()).toThrow("has no tool tunnel");
+    expect(() => q.poll()).toThrow("has no tool tunnel");
     await expect(q.queue.cancelOwner(owner.traceId, owner.helperPid)).resolves.toEqual({ cancelled: true, notSent: true });
     expect(q.dispatched()).toBe(0);
   } finally { q.cleanup(); }
