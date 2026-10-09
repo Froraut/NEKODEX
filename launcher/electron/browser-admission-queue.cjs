@@ -6,6 +6,9 @@ const { processRunning } = require('./process-tree.cjs');
 const { isTaskModel } = require('./browser-task-ledger.cjs');
 
 const MAX_WAITING = 64;
+// A queued task whose account stays unready this long fails with an explicit cause.
+// Codex otherwise sees only heartbeats while a missing tunnel or sign-in never resolves.
+const ACCOUNT_NOT_READY_GRACE_MS = 45_000;
 const terminal = new Set(['cancelled', 'failed', 'interrupted', 'admitted', 'running', 'finished']);
 const known = new Set(['waiting', 'paused', ...terminal]);
 const idPattern = /^[a-f0-9-]{36}$/;
@@ -14,7 +17,13 @@ const accountPattern = /^(default|[a-f0-9-]{36})$/;
 // Persist only audited terminal outcomes, never arbitrary exception text or data.
 const terminalFailureMessages = new Map([
   ['retained_conversation_unavailable', 'The retained ChatGPT conversation is no longer available'],
+  ['account_signed_out', 'No request was sent: the ChatGPT account for this task is signed out. Sign in from NEKODEX › Accounts, then retry.'],
+  ['account_tunnel_unconfigured', 'No request was sent: the ChatGPT account for this task has no tool tunnel. Open NEKODEX › Accounts › Set up this account’s tunnel, then retry.'],
+  ['account_tunnel_not_ready', 'No request was sent: this ChatGPT account’s tool tunnel is not running. Repair it in NEKODEX › Connections, then retry.'],
+  ['account_connector_unverified', 'No request was sent: this ChatGPT account has no verified tools connector. Finish NEKODEX › Connections › Local tools connector, then retry.'],
+  ['account_not_ready', 'No request was sent: no ChatGPT account is ready for this model and connector. Check the account in NEKODEX › Accounts, then retry.'],
 ]);
+const readinessFailures = new Set([...terminalFailureMessages.keys()].filter(code => code.startsWith('account_')));
 function terminalFailure(error) {
   if (!terminalFailureMessages.has(error?.code)) return undefined;
   return { code: error.code, ...(error.workStarted === false ? { workStarted: false } : {}) };
@@ -175,6 +184,15 @@ class BrowserAdmissionQueue {
         }
         const held = this.paused ? { reason: 'paused-global' }
           : this.accountPaused(row.request.requestedAccountId) ? { reason: 'paused-account' } : this.inspect(row.request);
+        if (held?.reason === 'account-not-ready') {
+          row.notReadySince ??= this.clock();
+          if (this.clock() - row.notReadySince >= ACCOUNT_NOT_READY_GRACE_MS) {
+            const code = readinessFailures.has(held.blocker) ? held.blocker : 'account_not_ready';
+            row.status = 'failed'; row.reason = 'admission-failed'; row.retryAt = undefined;
+            row.terminalFailure = { code, workStarted: false };
+            this.save(); this.publish(); continue;
+          }
+        } else row.notReadySince = undefined;
         if (held) {
           if (row.reason !== held.reason || row.retryAt !== held.retryAt) {
             row.reason = held.reason; row.retryAt = held.retryAt; this.publish();
@@ -212,6 +230,8 @@ class BrowserAdmissionQueue {
     if (!row) {
       return { cancelled: true, notSent: true };
     }
+    // An audited predispatch failure proves that nothing reached ChatGPT.
+    if (row.status === 'failed' && row.terminalFailure?.workStarted === false) return { cancelled: true, notSent: true };
     if (['interrupted', 'failed', 'finished'].includes(row.status)) return { cancelled: false, notSent: false };
     if (row.status === 'admitted' || row.status === 'running') {
       const released = await this.releaseUnsent(row.request);
@@ -267,4 +287,4 @@ class BrowserAdmissionQueue {
     }
   }
 }
-module.exports = { BrowserAdmissionQueue, MAX_WAITING };
+module.exports = { BrowserAdmissionQueue, MAX_WAITING, ACCOUNT_NOT_READY_GRACE_MS };
