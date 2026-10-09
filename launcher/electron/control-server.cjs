@@ -529,9 +529,11 @@ class BrowserControlServer {
       const manualOwnerLost = error?.code === "manual_turn_owner_lost";
       const manualTimedOut = error?.code === "manual_turn_timed_out";
       const unavailable = error?.code === "control_unavailable";
+      const accountNotReady = typeof error?.code === "string" && error.code.startsWith("account_")
+        && error.code !== "account_cooldown" && error.workStarted === false;
       writeJson(
         response,
-        cancelled || retainedUnavailable || manualInspectionDisabled || manualOwnerLost
+        cancelled || retainedUnavailable || manualInspectionDisabled || manualOwnerLost || accountNotReady
           ? 409
           : manualTimedOut ? 408 : unavailable ? 503 : 400,
         {
@@ -543,6 +545,7 @@ class BrowserControlServer {
         ...(manualInspectionDisabled ? { code: "manual_browser_inspection_disabled" } : {}),
         ...(manualOwnerLost ? { code: "manual_turn_owner_lost" } : {}),
         ...(manualTimedOut ? { code: "manual_turn_timed_out" } : {}),
+        ...(accountNotReady ? { code: "account_not_ready", reason: error.code, workStarted: false } : {}),
         },
       );
     }

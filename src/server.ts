@@ -193,6 +193,23 @@ function lunaCompactionDisabled(): Response {
   );
 }
 
+const ACCOUNT_NOT_READY_REPLAY_MS = 10 * 60_000;
+const accountNotReadyTraces = new Map<string, { message: string; at: number }>();
+function rememberAccountNotReady(traceId: string, message: string): void {
+  const now = Date.now();
+  for (const [key, value] of accountNotReadyTraces) {
+    if (now - value.at > ACCOUNT_NOT_READY_REPLAY_MS || accountNotReadyTraces.size > 256) accountNotReadyTraces.delete(key);
+  }
+  accountNotReadyTraces.set(traceId, { message, at: now });
+}
+function recentAccountNotReady(traceId: string): string | undefined {
+  const entry = accountNotReadyTraces.get(traceId);
+  if (!entry) return undefined;
+  // Consume it: a later deliberate retry after the user fixes the account must be admitted again.
+  accountNotReadyTraces.delete(traceId);
+  return Date.now() - entry.at <= ACCOUNT_NOT_READY_REPLAY_MS ? entry.message : undefined;
+}
+
 export async function modelsRequest(
   req: Request,
   config: AppConfig,
@@ -462,6 +479,12 @@ export async function responseRequest(
     if (!message.includes("requires native Codex turn_id metadata")
       && !message.includes("requires a current-turn user message")) throw error;
   }
+  const notReady = traceId ? recentAccountNotReady(traceId) : undefined;
+  if (notReady) {
+    // The launcher proved before dispatch that this turn's account cannot run it. Codex retries
+    // a streamed failure; answering its replay with HTTP 400 ends the retries with the cause.
+    return formatErrorResponse(400, "invalid_request_error", notReady);
+  }
   const cancelledError = traceId ? chatGptTurnSessions.cancelledError(traceId) : undefined;
   if (cancelledError) {
     // Codex retries unknown streamed response.failed codes. A replay after the user explicitly
@@ -521,6 +544,9 @@ export async function responseRequest(
           throw new Error("Non-streaming response event budget exceeded; use streaming for long turns");
         }
       }
+      if (traceId && event.type === "error" && event.code === "account_not_ready") {
+        rememberAccountNotReady(traceId, event.message);
+      }
       options.onAdapterEvent?.(event);
       queue.push(event);
     } catch (error) {
@@ -539,6 +565,9 @@ export async function responseRequest(
       await adapter.runTurn!(parsed, { headers: req.headers, abortSignal: abort.signal }, deliverEvent);
     } catch (error) {
       const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      if (traceId && error instanceof ChatGptWebAdapterError && error.code === "account_not_ready") {
+        rememberAccountNotReady(traceId, error.message);
+      }
       deliverEvent(event);
     } finally {
       queue.close();

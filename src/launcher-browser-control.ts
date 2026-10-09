@@ -3,7 +3,7 @@ import { parseChatGptWebModelCapabilities, type ChatGptWebModelCapabilities } fr
 import { dirname, join, resolve } from "node:path";
 import { expandUserPath } from "./config";
 import { assertExpectedLauncherProfile, readLauncherBrowserHostDescriptor, type LauncherBrowserHostDescriptor, type LauncherBrowserHostProfile } from "./launcher-browser-descriptor";
-import { LauncherAccountCooldownError, LauncherBrowserTurnCancelledError, LauncherRetainedConversationUnavailableError, LauncherManualTurnTimedOutError, LauncherManualTurnFailedError } from "./launcher-browser-errors";
+import { LauncherAccountCooldownError, LauncherAccountNotReadyError, LauncherBrowserTurnCancelledError, LauncherRetainedConversationUnavailableError, LauncherManualTurnTimedOutError, LauncherManualTurnFailedError } from "./launcher-browser-errors";
 
 /** One authenticated JSON POST to the launcher control channel; each caller decodes its own response. */
 function postLauncherControl(
@@ -433,6 +433,12 @@ export async function notifyLauncherTurn(
             typeof body.error === "string" ? body.error : `Browser turn ${activity.traceId} was cancelled by the user`,
           );
         }
+        if (response.status === 409 && body.code === "account_not_ready" && body.workStarted === false) {
+          throw new LauncherAccountNotReadyError(
+            typeof body.error === "string" ? body.error : "No request was sent: the ChatGPT account for this task is not ready.",
+            typeof body.reason === "string" ? body.reason : "account_not_ready",
+          );
+        }
         if (response.status === 409 && body.code === "retained_conversation_unavailable") {
           throw new LauncherRetainedConversationUnavailableError(
             typeof body.error === "string" ? body.error : "The retained ChatGPT conversation is no longer available",
@@ -515,6 +521,7 @@ export async function notifyLauncherTurn(
       if (error instanceof LauncherBrowserTurnCancelledError
         || error instanceof LauncherAccountCooldownError
         || error instanceof LauncherRetainedConversationUnavailableError
+        || error instanceof LauncherAccountNotReadyError
         || (error instanceof Error && error.name === "LauncherControlRejectedError")) throw error;
       ambiguousError = error;
     } finally {
@@ -526,6 +533,9 @@ export async function notifyLauncherTurn(
     // Only the server's explicit predispatch proof makes cleanup unnecessary.
     // A missing retained tab or a typed failure alone does not prove no work.
     if (error instanceof LauncherRetainedConversationUnavailableError && error.workStarted === false) throw error;
+    // The failed queue row itself proves nothing was sent. Cancelling it would turn a same-trace
+    // retry into "cancelled before admission" instead of repeating the actionable cause.
+    if (error instanceof LauncherAccountNotReadyError) throw error;
     try { await cancelAdmission(); } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], 'Browser admission did not finish cleanly; inspect Task center before retrying');
     }

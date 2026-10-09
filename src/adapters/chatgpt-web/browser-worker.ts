@@ -102,6 +102,7 @@ import {
   waitForLauncherArtifactDownload,
   LauncherBrowserTurnCancelledError,
   LauncherAccountCooldownError,
+  LauncherAccountNotReadyError,
   LauncherRetainedConversationUnavailableError,
   LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS,
   LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS,
@@ -2058,6 +2059,9 @@ export class ChatGptBrowserWorker {
     }, undefined, turn.abortSignal).catch(error => {
       if (error instanceof LauncherAccountCooldownError) throw new ChatGptWebAdapterError(error.message, {
         status: 429, errorType: "rate_limit_error", code: "account_cooldown", retryable: false,
+      });
+      if (error instanceof LauncherAccountNotReadyError) throw new ChatGptWebAdapterError(error.message, {
+        status: 409, errorType: "invalid_request_error", code: "account_not_ready", retryable: false,
       });
       if (error instanceof LauncherBrowserTurnCancelledError) throw chatGptBrowserTabClosedError();
       if (error instanceof LauncherRetainedConversationUnavailableError) {

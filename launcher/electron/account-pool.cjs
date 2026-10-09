@@ -1451,8 +1451,24 @@ class AccountBrowserPool {
       const availability = this.safety.availability(id, activeCount, { createsNewSession: !reuses });
       return availability.eligible ? null : { reason: availability.reason, retryAt: availability.retryAt };
     } catch (error) {
-      return { reason: error?.code === 'account_cooldown' ? 'local-admission' : 'account-not-ready', retryAt: error.retryAt };
+      if (error?.code === 'account_cooldown') return { reason: 'local-admission', retryAt: error.retryAt };
+      return { reason: 'account-not-ready', blocker: this.accountReadinessBlocker(request) };
     }
+  }
+  /** Names the first unmet requirement of the account a queued task would use. */
+  accountReadinessBlocker(request) {
+    const config = this.registry.snapshot();
+    const id = request.requestedAccountId ?? (config.mode === 'selected' ? config.selectedId : undefined);
+    const account = id ? config.accounts.find(candidate => candidate.id === id) : undefined;
+    if (!account?.enabled || !this.hosts.has(account.id)) return 'account_not_ready';
+    if (this.hosts.get(account.id).state.authenticated !== true) return 'account_signed_out';
+    if (request.connector) {
+      const tunnel = this.accountTunnel(account.id, 'automatic');
+      if (tunnel.required === true && tunnel.status === 'unconfigured') return 'account_tunnel_unconfigured';
+      if (tunnel.required === true && tunnel.ready !== true) return 'account_tunnel_not_ready';
+      if (this.connectors.get(account.id) !== request.connector) return 'account_connector_unverified';
+    }
+    return 'account_not_ready';
   }
   releaseUnsentAdmission(request) {
     const host = [...this.hosts.values()].find(candidate => [...candidate.turnTabs.values()].some(tab => tab.traceId === request.traceId));
