@@ -1971,6 +1971,7 @@ async function start() {
     publishState: (state) => send("launcher:browser-state", state),
     showWindow: showMainWindow,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
+    getLanguage: () => stateStore.read().language,
     bootstrapAccountConnectors: () => {
       const runtime = runtimeHost.runtimeConfigSnapshot();
       return stateStore.read().browserInteractionMode === "automatic"

@@ -1,0 +1,260 @@
+{
+  "en": {
+    "anyAccount": "no ChatGPT account",
+    "account": "the ChatGPT account “{account}”",
+    "accountUnknown": "the ChatGPT account for this task",
+    "prefix": "No request was sent: ",
+    "checking": "Waiting while NEKODEX checks the account",
+    "busy": "Waiting for the account’s current operation to finish",
+    "failsAt": "fails at {time} unless fixed",
+    "codes": {
+      "account_signed_out": {
+        "short": "Account not signed in or stuck on a security check",
+        "message": "{subject} is not signed in, or its ChatGPT page is stuck on a sign-in or security check. Open NEKODEX › Accounts › Browser for that account, sign in or finish the check, then retry. NEKODEX re-checks the account after sign-in."
+      },
+      "account_disabled": {
+        "short": "Account disabled for new tasks",
+        "message": "{subject} is disabled for new tasks. Enable it in NEKODEX › Accounts, then retry."
+      },
+      "account_tunnel_unconfigured": {
+        "short": "Account has no tool tunnel",
+        "message": "{subject} has no tool tunnel. Open NEKODEX › Accounts › Set up this account’s tunnel, then retry. NEKODEX re-checks the connector once the tunnel is running."
+      },
+      "account_tunnel_not_ready": {
+        "short": "Account’s tool tunnel is not running",
+        "message": "{subject} has a tool tunnel that is not running. Repair it in NEKODEX › Connections, then retry."
+      },
+      "account_unchecked": {
+        "short": "Account not checked yet",
+        "message": "{subject} has no current check. Click Check connector (or Check account if it has no tool tunnel) on that account in NEKODEX › Accounts, then retry."
+      },
+      "account_model_unavailable": {
+        "short": "Account does not offer this model or level",
+        "message": "{subject} does not offer the requested Web model or reasoning level. Choose another model in Codex, or click Check connector (or Check account if it has no tool tunnel) on that account in NEKODEX › Accounts if its plan changed, then retry."
+      },
+      "account_connector_unverified": {
+        "short": "Account’s tools connector is not verified",
+        "message": "{subject} has no verified tools connector. Click Check connector on that account in NEKODEX › Accounts, then retry."
+      },
+      "account_not_ready": {
+        "short": "No account is ready for this model and connector",
+        "message": "{subject} is ready for this model and connector. Click Check connector (or Check account if it has no tool tunnel) on each enabled account in NEKODEX › Accounts, then retry."
+      }
+    }
+  },
+  "ru": {
+    "anyAccount": "ни один аккаунт ChatGPT не",
+    "account": "аккаунт ChatGPT «{account}»",
+    "accountUnknown": "аккаунт ChatGPT для этой задачи",
+    "prefix": "Запрос не отправлен: ",
+    "checking": "Ожидание, пока NEKODEX проверяет аккаунт",
+    "busy": "Ожидание завершения текущей операции аккаунта",
+    "failsAt": "завершится ошибкой в {time}, если не исправить",
+    "codes": {
+      "account_signed_out": {
+        "short": "Аккаунт не вошёл в систему или застрял на проверке безопасности",
+        "message": "{subject} не вошёл в систему, или его страница ChatGPT застряла на входе или проверке безопасности. Откройте NEKODEX › Аккаунты › Браузер для этого аккаунта, войдите или пройдите проверку, затем повторите. После входа NEKODEX заново проверит аккаунт."
+      },
+      "account_disabled": {
+        "short": "Аккаунт отключён для новых задач",
+        "message": "{subject} отключён для новых задач. Включите его в NEKODEX › Аккаунты, затем повторите."
+      },
+      "account_tunnel_unconfigured": {
+        "short": "У аккаунта нет туннеля инструментов",
+        "message": "{subject} не имеет туннеля инструментов. Откройте NEKODEX › Аккаунты › Настроить туннель этого аккаунта, затем повторите. Когда туннель заработает, NEKODEX заново проверит коннектор."
+      },
+      "account_tunnel_not_ready": {
+        "short": "Туннель инструментов аккаунта не запущен",
+        "message": "{subject}: туннель инструментов не запущен. Исправьте его в NEKODEX › Подключения, затем повторите."
+      },
+      "account_unchecked": {
+        "short": "Аккаунт ещё не проверен",
+        "message": "{subject} ещё не проверен. Нажмите «Проверить коннектор» (или «Проверить аккаунт», если у него нет туннеля инструментов) у этого аккаунта в NEKODEX › Аккаунты, затем повторите."
+      },
+      "account_model_unavailable": {
+        "short": "Аккаунт не предлагает эту модель или уровень",
+        "message": "{subject} не предлагает запрошенную Web-модель или уровень рассуждения. Выберите другую модель в Codex или, если тариф изменился, нажмите «Проверить коннектор» (или «Проверить аккаунт», если у него нет туннеля инструментов) у этого аккаунта в NEKODEX › Аккаунты, затем повторите."
+      },
+      "account_connector_unverified": {
+        "short": "Коннектор инструментов аккаунта не подтверждён",
+        "message": "{subject} не имеет подтверждённого коннектора инструментов. Нажмите «Проверить коннектор» у этого аккаунта в NEKODEX › Аккаунты, затем повторите."
+      },
+      "account_not_ready": {
+        "short": "Ни один аккаунт не готов для этой модели и коннектора",
+        "message": "{subject} готов для этой модели и коннектора. Нажмите «Проверить коннектор» (или «Проверить аккаунт», если у него нет туннеля инструментов) у каждого включённого аккаунта в NEKODEX › Аккаунты, затем повторите."
+      }
+    }
+  },
+  "zh-CN": {
+    "anyAccount": "没有 ChatGPT 账户",
+    "account": "ChatGPT 账户“{account}”",
+    "accountUnknown": "此任务的 ChatGPT 账户",
+    "prefix": "未发送请求：",
+    "checking": "正在等待 NEKODEX 检查账户",
+    "busy": "正在等待账户当前操作完成",
+    "failsAt": "若未修复，将于 {time} 失败",
+    "codes": {
+      "account_signed_out": {
+        "short": "账户未登录或卡在安全检查",
+        "message": "{subject}未登录，或其 ChatGPT 页面卡在登录或安全检查。请在 NEKODEX › 账户 › 浏览器 中打开该账户，登录或完成检查后重试。登录后 NEKODEX 会重新检查该账户。"
+      },
+      "account_disabled": {
+        "short": "账户已停用新任务",
+        "message": "{subject}已停用新任务。请在 NEKODEX › 账户 中启用后重试。"
+      },
+      "account_tunnel_unconfigured": {
+        "short": "账户没有工具隧道",
+        "message": "{subject}没有工具隧道。请打开 NEKODEX › 账户 › 设置此账户的隧道，然后重试。隧道运行后 NEKODEX 会重新检查连接器。"
+      },
+      "account_tunnel_not_ready": {
+        "short": "账户的工具隧道未运行",
+        "message": "{subject}的工具隧道未运行。请在 NEKODEX › 连接 中修复后重试。"
+      },
+      "account_unchecked": {
+        "short": "账户尚未检查",
+        "message": "{subject}尚未检查。请在 NEKODEX › 账户 中对该账户点击“检查连接器”（若该账户没有工具隧道，则点击“检查账户”），然后重试。"
+      },
+      "account_model_unavailable": {
+        "short": "账户不提供此模型或级别",
+        "message": "{subject}不提供所请求的 Web 模型或推理级别。请在 Codex 中选择其他模型；如果套餐已变更，请在 NEKODEX › 账户 中对该账户点击“检查连接器”（若该账户没有工具隧道，则点击“检查账户”），然后重试。"
+      },
+      "account_connector_unverified": {
+        "short": "账户的工具连接器未验证",
+        "message": "{subject}没有已验证的工具连接器。请在 NEKODEX › 账户 中对该账户点击“检查连接器”，然后重试。"
+      },
+      "account_not_ready": {
+        "short": "没有账户可用于此模型和连接器",
+        "message": "{subject}可用于此模型和连接器。请在 NEKODEX › 账户 中对每个已启用的账户点击“检查连接器”（若该账户没有工具隧道，则点击“检查账户”），然后重试。"
+      }
+    }
+  },
+  "zh-TW": {
+    "anyAccount": "沒有 ChatGPT 帳戶",
+    "account": "ChatGPT 帳戶「{account}」",
+    "accountUnknown": "此任務的 ChatGPT 帳戶",
+    "prefix": "未傳送請求：",
+    "checking": "正在等待 NEKODEX 檢查帳戶",
+    "busy": "正在等待帳戶目前的操作完成",
+    "failsAt": "若未修正，將於 {time} 失敗",
+    "codes": {
+      "account_signed_out": {
+        "short": "帳戶未登入或卡在安全檢查",
+        "message": "{subject}未登入，或其 ChatGPT 頁面卡在登入或安全檢查。請在 NEKODEX › 賬戶 › 瀏覽器 中開啟該帳戶，登入或完成檢查後重試。登入後 NEKODEX 會重新檢查該帳戶。"
+      },
+      "account_disabled": {
+        "short": "帳戶已停用新任務",
+        "message": "{subject}已停用新任務。請在 NEKODEX › 賬戶 中啟用後重試。"
+      },
+      "account_tunnel_unconfigured": {
+        "short": "帳戶沒有工具通道",
+        "message": "{subject}沒有工具通道。請開啟 NEKODEX › 賬戶 › 設定此帳號的通道，然後重試。通道執行後 NEKODEX 會重新檢查聯結器。"
+      },
+      "account_tunnel_not_ready": {
+        "short": "帳戶的工具通道未執行",
+        "message": "{subject}的工具通道未執行。請在 NEKODEX › 連線 中修正後重試。"
+      },
+      "account_unchecked": {
+        "short": "帳戶尚未檢查",
+        "message": "{subject}尚未檢查。請在 NEKODEX › 賬戶 中對該帳戶點選「檢查聯結器」（若該帳戶沒有工具通道，則點選「檢查賬戶」），然後重試。"
+      },
+      "account_model_unavailable": {
+        "short": "帳戶不提供此模型或等級",
+        "message": "{subject}不提供所要求的 Web 模型或推理等級。請在 Codex 中選擇其他模型；如果方案已變更，請在 NEKODEX › 賬戶 中對該帳戶點選「檢查聯結器」（若該帳戶沒有工具通道，則點選「檢查賬戶」），然後重試。"
+      },
+      "account_connector_unverified": {
+        "short": "帳戶的工具聯結器未驗證",
+        "message": "{subject}沒有已驗證的工具聯結器。請在 NEKODEX › 賬戶 中對該帳戶點選「檢查聯結器」，然後重試。"
+      },
+      "account_not_ready": {
+        "short": "沒有帳戶可用於此模型和聯結器",
+        "message": "{subject}可用於此模型和聯結器。請在 NEKODEX › 賬戶 中對每個已啟用的帳戶點選「檢查聯結器」（若該帳戶沒有工具通道，則點選「檢查賬戶」），然後重試。"
+      }
+    }
+  },
+  "ja": {
+    "anyAccount": "利用できる ChatGPT アカウントがありません",
+    "account": "ChatGPT アカウント「{account}」",
+    "accountUnknown": "このタスクの ChatGPT アカウント",
+    "prefix": "リクエストは送信されていません：",
+    "checking": "NEKODEX がアカウントを確認するまで待機中",
+    "busy": "アカウントの現在の操作が終わるまで待機中",
+    "failsAt": "修正されない場合 {time} に失敗します",
+    "codes": {
+      "account_signed_out": {
+        "short": "アカウントが未ログインか、セキュリティ確認で止まっています",
+        "message": "{subject}はログインしていないか、ChatGPT ページがログインまたはセキュリティ確認で止まっています。NEKODEX › アカウント › ブラウザー でそのアカウントを開き、ログインまたは確認を完了してから再試行してください。ログイン後、NEKODEX がアカウントを再確認します。"
+      },
+      "account_disabled": {
+        "short": "アカウントは新しいタスクに使用できません",
+        "message": "{subject}は新しいタスクに対して無効です。NEKODEX › アカウント で有効にしてから再試行してください。"
+      },
+      "account_tunnel_unconfigured": {
+        "short": "アカウントにツールトンネルがありません",
+        "message": "{subject}にはツールトンネルがありません。NEKODEX › アカウント › このアカウントのトンネルを設定 を開いてから再試行してください。トンネルが動作すると NEKODEX がコネクターを再確認します。"
+      },
+      "account_tunnel_not_ready": {
+        "short": "アカウントのツールトンネルが動作していません",
+        "message": "{subject}のツールトンネルが動作していません。NEKODEX › 接続 で修復してから再試行してください。"
+      },
+      "account_unchecked": {
+        "short": "アカウントはまだ確認されていません",
+        "message": "{subject}はまだ確認されていません。NEKODEX › アカウント でそのアカウントの「コネクター確認」（ツールトンネルがない場合は「アカウント確認」）をクリックしてから再試行してください。"
+      },
+      "account_model_unavailable": {
+        "short": "アカウントはこのモデルまたはレベルを提供していません",
+        "message": "{subject}は要求された Web モデルまたは推論レベルを提供していません。Codex で別のモデルを選ぶか、プランが変わった場合は NEKODEX › アカウント でそのアカウントの「コネクター確認」（ツールトンネルがない場合は「アカウント確認」）をクリックしてから再試行してください。"
+      },
+      "account_connector_unverified": {
+        "short": "アカウントのツールコネクターが未確認です",
+        "message": "{subject}には確認済みのツールコネクターがありません。NEKODEX › アカウント でそのアカウントの「コネクター確認」をクリックしてから再試行してください。"
+      },
+      "account_not_ready": {
+        "short": "このモデルとコネクターに使えるアカウントがありません",
+        "message": "{subject}。NEKODEX › アカウント で有効な各アカウントの「コネクター確認」（ツールトンネルがない場合は「アカウント確認」）をクリックしてから再試行してください。"
+      }
+    }
+  },
+  "ko": {
+    "anyAccount": "준비된 ChatGPT 계정이 없습니다",
+    "account": "ChatGPT 계정 “{account}”",
+    "accountUnknown": "이 작업의 ChatGPT 계정",
+    "prefix": "요청이 전송되지 않았습니다: ",
+    "checking": "NEKODEX가 계정을 확인하는 동안 대기 중",
+    "busy": "계정의 현재 작업이 끝날 때까지 대기 중",
+    "failsAt": "해결되지 않으면 {time}에 실패합니다",
+    "codes": {
+      "account_signed_out": {
+        "short": "계정이 로그인되지 않았거나 보안 확인에서 멈췄습니다",
+        "message": "{subject}이(가) 로그인되지 않았거나 ChatGPT 페이지가 로그인 또는 보안 확인에서 멈췄습니다. NEKODEX › 계정 › 브라우저에서 해당 계정을 열고 로그인하거나 확인을 완료한 뒤 다시 시도하세요. 로그인 후 NEKODEX가 계정을 다시 확인합니다."
+      },
+      "account_disabled": {
+        "short": "계정이 새 작업에 비활성화되어 있습니다",
+        "message": "{subject}은(는) 새 작업에 비활성화되어 있습니다. NEKODEX › 계정에서 활성화한 뒤 다시 시도하세요."
+      },
+      "account_tunnel_unconfigured": {
+        "short": "계정에 도구 터널이 없습니다",
+        "message": "{subject}에 도구 터널이 없습니다. NEKODEX › 계정 › 이 계정의 터널 설정을 연 뒤 다시 시도하세요. 터널이 실행되면 NEKODEX가 커넥터를 다시 확인합니다."
+      },
+      "account_tunnel_not_ready": {
+        "short": "계정의 도구 터널이 실행되고 있지 않습니다",
+        "message": "{subject}의 도구 터널이 실행되고 있지 않습니다. NEKODEX › 연결에서 복구한 뒤 다시 시도하세요."
+      },
+      "account_unchecked": {
+        "short": "계정이 아직 확인되지 않았습니다",
+        "message": "{subject}이(가) 아직 확인되지 않았습니다. NEKODEX › 계정에서 해당 계정의 “커넥터 확인”(도구 터널이 없으면 “계정 확인”)을 클릭한 뒤 다시 시도하세요."
+      },
+      "account_model_unavailable": {
+        "short": "계정이 이 모델 또는 수준을 제공하지 않습니다",
+        "message": "{subject}은(는) 요청한 Web 모델 또는 추론 수준을 제공하지 않습니다. Codex에서 다른 모델을 선택하거나, 요금제가 바뀌었다면 NEKODEX › 계정에서 해당 계정의 “커넥터 확인”(도구 터널이 없으면 “계정 확인”)을 클릭한 뒤 다시 시도하세요."
+      },
+      "account_connector_unverified": {
+        "short": "계정의 도구 커넥터가 확인되지 않았습니다",
+        "message": "{subject}에 확인된 도구 커넥터가 없습니다. NEKODEX › 계정에서 해당 계정의 “커넥터 확인”을 클릭한 뒤 다시 시도하세요."
+      },
+      "account_not_ready": {
+        "short": "이 모델과 커넥터에 준비된 계정이 없습니다",
+        "message": "{subject}. NEKODEX › 계정에서 활성화된 각 계정의 “커넥터 확인”(도구 터널이 없으면 “계정 확인”)을 클릭한 뒤 다시 시도하세요."
+      }
+    }
+  }
+}

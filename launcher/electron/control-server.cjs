@@ -3,6 +3,7 @@ const { createHash, randomBytes, timingSafeEqual } = require("node:crypto");
 const { validateNativeUsageSample } = require("./usage-store.cjs");
 
 const { isTaskModel } = require("./browser-task-ledger.cjs");
+const { READINESS_CODES } = require("./admission-failure-copy.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
@@ -529,8 +530,9 @@ class BrowserControlServer {
       const manualOwnerLost = error?.code === "manual_turn_owner_lost";
       const manualTimedOut = error?.code === "manual_turn_timed_out";
       const unavailable = error?.code === "control_unavailable";
-      const accountNotReady = typeof error?.code === "string" && error.code.startsWith("account_")
-        && error.code !== "account_cooldown" && error.workStarted === false;
+      // Only proven predispatch account-readiness causes; any other account_* code keeps its own mapping.
+      const accountNotReady = error?.workStarted === false
+        && (READINESS_CODES.has(error?.code) || error?.code === "account_tunnel_unavailable");
       writeJson(
         response,
         cancelled || retainedUnavailable || manualInspectionDisabled || manualOwnerLost || accountNotReady
@@ -545,7 +547,8 @@ class BrowserControlServer {
         ...(manualInspectionDisabled ? { code: "manual_browser_inspection_disabled" } : {}),
         ...(manualOwnerLost ? { code: "manual_turn_owner_lost" } : {}),
         ...(manualTimedOut ? { code: "manual_turn_timed_out" } : {}),
-        ...(accountNotReady ? { code: "account_not_ready", reason: error.code, workStarted: false } : {}),
+        ...(accountNotReady ? { code: "account_not_ready",
+          reason: READINESS_CODES.has(error.blocker) ? error.blocker : error.code, workStarted: false } : {}),
         },
       );
     }

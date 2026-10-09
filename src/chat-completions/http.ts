@@ -44,6 +44,10 @@ export function publicChatError(error: unknown): { status: number; body: { error
       status = 429; code = error.code; message = "The Web service rejected the request; automatic retries are not performed";
     } else if (error.code === "chatgpt_prompt_integrity_mismatch") {
       code = error.code; message = "The composer did not preserve the request; no verified completion is available";
+    } else if (error.code === "account_not_ready") {
+      // Audited launcher text: it names the missing account requirement and proves nothing was sent.
+      // 400, not 409: OpenAI SDKs retry 409, and each retry would wait out another admission grace.
+      status = 400; code = error.code; message = error.message;
     }
   } else if (error instanceof Error && error.name === "AbortError") {
     status = 499; code = "request_cancelled"; message = "Request cancelled";
