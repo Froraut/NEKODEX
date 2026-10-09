@@ -191,3 +191,32 @@ test.serial("a probe that repeatedly changes auth state does not monopolize the 
     expect(h.pool.evidenceRefreshing.size).toBe(0);
   });
 });
+
+test("temporary verification loss does not invalidate an in-flight check; confirmed logout still does", () => {
+  const h = restorePool(); h.idle(); h.ready();
+  const evidence = { solAvailable: true };
+  Object.assign(h.pool, { creatingHosts: new Set(), publishedAuthentication: new Map([["default", true]]), observationRevision: 0 });
+  h.pool.capabilities.set("default", evidence);
+  h.pool.connectors.set("default", "Codex Native6");
+  h.pool.scheduleEvidenceRestore = () => {};
+  h.pool.publish = AccountBrowserPool.prototype.publish;
+  const epoch = h.pool.evidenceEpoch("default");
+  Object.assign(h.host.state, { authenticated: false, authenticationStatus: "unavailable" });
+  h.pool.publish();
+  expect(h.pool.evidenceEpoch("default")).toBe(epoch);
+  expect(h.pool.capabilities.get("default")).toBe(evidence);
+  expect(h.pool.previewAdmission({ traceId: "verification_probe", key: null, retained: false,
+    requestedModel: "chatgpt-web/gpt-5.6-sol-instant", effort: "low", connector: "Codex Native6",
+    routingKey: null, requestedAccountId: "default" })).toMatchObject({ reason: "account-not-ready" });
+  Object.assign(h.host.state, { authenticated: true, authenticationStatus: "verified" });
+  h.pool.publish();
+  expect(h.pool.evidenceEpoch("default")).toBe(epoch);
+  expect(h.pool.connectors.get("default")).toBe("Codex Native6");
+  Object.assign(h.host.state, { authenticated: false, authenticationStatus: "unknown" });
+  h.pool.publish();
+  Object.assign(h.host.state, { authenticated: false, authenticationStatus: "signed-out" });
+  h.pool.publish();
+  expect(h.pool.evidenceEpoch("default")).toBeGreaterThan(epoch);
+  expect(h.pool.capabilities.has("default")).toBe(false);
+  expect(h.pool.connectors.has("default")).toBe(false);
+});

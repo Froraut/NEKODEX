@@ -164,7 +164,7 @@ The account pool owns one pending evidence restore per account. Sign-in and
 tunnel receipts coalesce into it; a receipt during a check supersedes that check.
 Waiting for a user operation or tunnel has no elapsed-time expiry and is not an
 active inspection. Admission can still report a missing tunnel while model
-evidence is restored for plain requests. Pool destruction cancels pending waits. An explicit tunnel edit cancels and joins only that account's automatic restore before acquiring its mutation lease; active tasks and unrelated user operations still veto it. Repeated authentication changes during one restore get one follow-up check, preventing a failing probe from holding the account indefinitely.
+evidence is restored for plain requests. Pool destruction cancels pending waits. An explicit tunnel edit cancels and joins only that account's automatic restore before acquiring its mutation lease; active tasks and unrelated user operations still veto it. Repeated authentication changes during one restore get one follow-up check, preventing a failing probe from holding the account indefinitely. Transient unknown/unavailable observations block admission but preserve the in-flight evidence epoch; confirmed logout and identity changes still invalidate it.
 The profile chooser keeps the last attempted profile ID per account in memory for
 retries, separately from the verified binding on disk. The picker labels these
 states separately; capture progress identifies the selected Chrome profile.

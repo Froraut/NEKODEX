@@ -516,12 +516,17 @@ class AccountBrowserPool {
     if (this.destroyed || this.creatingHosts.size) return;
     for (const [id, host] of this.hosts) {
       const authenticated = host.state.authenticated === true;
+      const uncertain = ['unavailable', 'unknown'].includes(host.state.authenticationStatus);
+      const authentication = authenticated ? true : uncertain ? null : false;
       const previous = this.publishedAuthentication.get(id);
-      if (!authenticated && previous !== false) this.invalidateEvidence(id);
+      // A temporarily unavailable session check blocks admission through authenticated=false,
+      // but does not prove logout or invalidate the identity of an in-flight model inspection.
+      // Confirmed logout and the host's identity-change callback still retire its evidence.
+      if (authentication === false && previous !== false) this.invalidateEvidence(id);
       // Sign-out discarded this account's model and connector evidence; a sign-in restores it
       // the way startup does, so the account becomes usable without another manual check.
-      if (authenticated && previous === false) this.scheduleEvidenceRestore(id);
-      this.publishedAuthentication.set(id, authenticated);
+      if (authenticated && (previous === false || previous === null)) this.scheduleEvidenceRestore(id);
+      this.publishedAuthentication.set(id, authentication);
     }
     this.observationRevision = (this.observationRevision ?? 0) + 1;
     if (!this.options.publishState) return;

@@ -132,3 +132,14 @@ joins only its own automatic inspection, rechecks active-task ownership, and
 acquires the normal exclusive lease. Repeated auth changes within one restore
 receive one follow-up attempt and then settle. Seven focused follow-up cases
 and the account tunnel admission smoke passed. 6.1.21 identifies this local fix.
+
+## In-flight authentication epoch correction
+
+Codex Native6 was created and connected in the intended account on the existing
+tunnel. Its account check then failed because the pool treated an unavailable
+page-refresh observation as logout, incrementing the in-flight check's evidence
+epoch. The pool now keeps unknown/unavailable separate from confirmed false.
+Admission still rejects unverified authentication; confirmed logout and the host
+identity-change callback still invalidate evidence. The two focused files passed
+26 cases, and the final additional admission assertion passed in the8-case
+follow-up file. This correction is version6.1.22.
