@@ -831,36 +831,53 @@ class AccountBrowserPool {
    */
   scheduleEvidenceRestore(id, { waitForTunnel = false } = {}) {
     this.evidenceRestores ??= new Map(); this.evidenceRefreshing ??= new Set();
-    if (this.destroyed || this.evidenceRestores.has(id) || this.evidenceRefreshing.has(id)) return;
-    const sleep = ms => new Promise(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
-    this.evidenceRefreshing.add(id);
+    if (this.destroyed) return;
+    const pending = this.evidenceRestores.get(id);
+    if (pending) {
+      pending.waitForTunnel ||= waitForTunnel;
+      pending.revision++;
+      return;
+    }
+    const host = this.hosts.get(id);
+    if (!host) return;
+    const restore = { waitForTunnel, revision: 0, timer: null, wake: null, ownsRefreshing: false };
+    const sleep = ms => new Promise(resolve => {
+      restore.wake = resolve;
+      restore.timer = setTimeout(() => { restore.timer = null; restore.wake = null; resolve(); }, ms);
+      restore.timer.unref?.();
+    });
+    this.evidenceRestores.set(id, restore);
     const run = (async () => {
       await sleep(0);
-      for (let attempt = 0; attempt < 45; attempt += 1) {
-        if (this.destroyed || this.inspectionsPaused || !this.hosts.has(id)) return;
-        const host = this.hosts.get(id);
+      for (;;) {
+        if (this.destroyed || this.inspectionsPaused || this.hosts.get(id) !== host) return;
         if (host.state.authenticated !== true) return;
-        const busy = this.accountOperationLabel(id) || host.activeTraceId || [...this.reservations.values()].includes(id);
+        const busy = this.evidenceRefreshing.has(id) || this.accountOperationLabel(id)
+          || host.activeTraceId || [...this.reservations.values()].includes(id);
         const tunnel = this.accountTunnel(id, 'automatic');
-        const tunnelWait = waitForTunnel && tunnel.required === true && tunnel.ready !== true;
-        if (!busy && !tunnelWait) break;
-        if (attempt === 44) return;
-        await sleep(2000);
+        const tunnelWait = restore.waitForTunnel && tunnel.required === true && tunnel.ready !== true;
+        // A pending restore is not an active check. Keep the real tunnel cause visible to
+        // admission while waiting, and do not expire a user's in-flight account operation.
+        if (busy || (tunnelWait && this.capabilities.has(id))) { await sleep(2000); continue; }
+        const connector = this.options.bootstrapAccountConnectors?.() === true && (tunnel.required !== true || tunnel.ready === true);
+        if (this.capabilities.has(id) && (!connector || this.connectors.has(id))) return;
+        const revision = restore.revision;
+        this.evidenceRefreshing.add(id); restore.ownsRefreshing = true;
+        try { await this.checkAccount(id, connector); }
+        catch (error) {
+          // A new sign-in/tunnel receipt during the check supersedes its old evidence.
+          if (restore.revision === revision) throw error;
+        } finally { this.evidenceRefreshing.delete(id); restore.ownsRefreshing = false; }
+        if (restore.revision === revision && !tunnelWait) return;
       }
-      if (this.capabilities.has(id) && (this.connectors.has(id) || this.options.bootstrapAccountConnectors?.() !== true)) return;
-      const tunnel = this.accountTunnel(id, 'automatic');
-      // A tunnel that never started (or was removed) leaves nothing new to prove.
-      if (waitForTunnel && tunnel.required === true && tunnel.ready !== true) return;
-      const connector = this.options.bootstrapAccountConnectors?.() === true && (tunnel.required !== true || tunnel.ready === true);
-      await this.checkAccount(id, connector);
     })().catch(error => {
       this.logger?.warn('browser.account_evidence_restore_failed', { accountId: id, message: error?.message ?? String(error) });
     }).finally(() => {
-      this.evidenceRefreshing.delete(id);
-      if (this.evidenceRestores.get(id) === run) this.evidenceRestores.delete(id);
+      if (restore.ownsRefreshing) this.evidenceRefreshing.delete(id);
+      if (this.evidenceRestores.get(id) === restore) this.evidenceRestores.delete(id);
       this.publish();
     });
-    this.evidenceRestores.set(id, run);
+    restore.done = run;
   }
   /** Keep fresh browser evidence and let the runtime list the models it shows. */
   recordCapabilityEvidence(id, evidence) {
@@ -1780,6 +1797,10 @@ class AccountBrowserPool {
   }
   destroy() {
     this.destroyed = true;
+    for (const restore of this.evidenceRestores.values()) {
+      if (restore.timer) clearTimeout(restore.timer);
+      restore.wake?.();
+    }
     if (this.capabilitySaveRetry) clearTimeout(this.capabilitySaveRetry);
     this.snapshotPublisher?.dispose();
     this.admissionQueue?.close();

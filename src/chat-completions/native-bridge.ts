@@ -139,9 +139,14 @@ export class NativeChatCompletionBridge {
       const response = await this.respond(new Request("http://127.0.0.1/v1/responses", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
       }), config, turn.context);
-      const envelope = await response.json() as { status?: unknown; end_turn?: unknown; output?: unknown; error?: { code?: string } };
+      const envelope = await response.json() as { status?: unknown; end_turn?: unknown; output?: unknown; error?: { code?: string; message?: string } };
       signal.throwIfAborted();
       if (!response.ok || envelope.status !== "completed" || !Array.isArray(envelope.output)) {
+        if (envelope.error?.code === "account_not_ready") {
+          // This is the audited, never-sent launcher failure, also used by the plain API path.
+          // A retryable 502/409 would make SDKs repeat the whole admission wait.
+          throw new ChatCompletionError(envelope.error.message || "No request was sent: the account is not ready", 400, "account_not_ready");
+        }
         const rateLimited = envelope.error?.code === "rate_limit_exceeded";
         const accountStop = envelope.error?.code === "chatgpt_account_safety_stop";
         throw new ChatCompletionError(rateLimited || accountStop ? "The Web service rejected this turn" : "The Web turn did not complete",

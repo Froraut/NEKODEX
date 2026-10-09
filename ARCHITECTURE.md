@@ -160,6 +160,11 @@ restart request until the picker is confirmed again.
 Chrome profile bindings can retain the observed Chrome user agent for compatible
 session handoff; it never replaces endpoint/principal verification. Sign-in
 mutation receipts are published after the owning lease is released.
+The account pool owns one pending evidence restore per account. Sign-in and
+tunnel receipts coalesce into it; a receipt during a check supersedes that check.
+Waiting for a user operation or tunnel has no elapsed-time expiry and is not an
+active inspection. Admission can still report a missing tunnel while model
+evidence is restored for plain requests. Pool destruction cancels pending waits.
 The profile chooser keeps the last attempted profile ID per account in memory for
 retries, separately from the verified binding on disk. The picker labels these
 states separately; capture progress identifies the selected Chrome profile.
@@ -171,6 +176,8 @@ the host still owns cancellation, rollback and final settlement.
 `local-api-access.ts` owns a private revocable API key. `server.ts` admits scoped
 loopback API candidates before Native/admin dispatch. `chat-completions/` owns
 request validation, bounded stream encoding and exact tool continuation receipts;
+the native tool bridge preserves audited `account_not_ready` failures as HTTP 400,
+including the account remedy, just like the plain Chat Completions path;
 `messages/` translates Claude Messages and never fabricates signed thinking.
 `client-turns.ts` is the shared Hermes/Claude receipt owner. Authenticated
 in-process `external-client-context.ts` values identify the client and supply an

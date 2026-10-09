@@ -100,11 +100,15 @@ test("French effort evidence stays exact and rejects contradictory versions", ()
 });
 
 // This optional fixture launches an isolated headless browser; it never uses an account.
-test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("family discovery restores the selected model, effort, menu and unsent draft", async () => {
+for (const omittedAriaHidden of [false, true]) {
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`family discovery restores the selected model, effort, menu and unsent draft (aria-hidden ${omittedAriaHidden ? "omitted" : "false"})`, async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
     const page = await browser.newPage();
-    await page.setContent(readFileSync(join(import.meta.dir, "fixtures/french-model-picker.html"), "utf8"));
+    const fixture = readFileSync(join(import.meta.dir, "fixtures/french-model-picker.html"), "utf8");
+    await page.setContent(omittedAriaHidden
+      ? fixture.replace('data-model-picker-view-toggle="true" aria-hidden="false"', 'data-model-picker-view-toggle="true"')
+      : fixture);
     const capabilities = await detectChatGptAccountCapabilities(page, { selectorTimeoutMs: 3_000 });
     // Latest has no Pro level here, so the picker offers no GPT-6 level at all.
     expect(capabilities.modelCapabilities?.families).toEqual({ "5.6": evidence.families["5.6"] });
@@ -115,3 +119,4 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("family discovery restores th
     expect(await page.locator('#prompt-textarea').innerText()).toBe("Brouillon à conserver");
   } finally { await browser.close(); }
 }, 15_000);
+}
