@@ -97,7 +97,10 @@ function prepareAccountTunnel({ coreHome, configPath, accountId, mode = 'automat
     .filter(binding => binding.accountId !== accountId || binding.interactionMode !== mode);
   if (remaining.some(binding => binding.tunnel.tunnelId === tunnelId)) throw new Error('This tunnel already belongs to another account or interaction mode');
   let keyFile, created = false;
-  const owner = createHash('sha256').update(`${accountId}\0${mode}`).digest('hex').slice(0, 24);
+  // tunnel-client stores aliases globally, even when profile directories differ. Include
+  // the application home so DEV's "default" account cannot occupy production's alias.
+  const home = fs.realpathSync(coreHome);
+  const owner = createHash('sha256').update(`${process.platform === 'win32' ? home.toLowerCase() : home}\0${accountId}\0${mode}`).digest('hex').slice(0, 24);
   if (reuseSavedCredentials) {
     if (!prior || prior.tunnel.tunnelId !== tunnelId || !fs.existsSync(prior.tunnel.runtimeKeyFile)) {
       throw new Error('This account has no saved key for this tunnel');

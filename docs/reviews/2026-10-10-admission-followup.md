@@ -106,3 +106,19 @@ the correct Platform organization/tunnel and finish the app's existing setup.
 New source is not installed. The old installed 6.1.19 still has the picker-selector
 failure and the late-restore/API-tool-path defects described above. Installing a
 new build and live provider verification are separate remaining boundaries.
+
+## Continued local completion
+
+After the user requested completion, the source-built browser helper successfully
+inspected the actual signed-in Primary ChatGPT page: authenticated/temporary true,
+model families 6, 5.6 and 5.5 observed. This verifies the changed picker boundary
+against current provider markup. The helper returned and exited.
+
+The user authorized the prepared Restricted runtime key (Tunnels Read + Use only)
+and it was saved directly to NEKODEX without including its value in this report.
+Initial tunnel startup failed before connecting: the SDK-global alias for the
+production default account collided with a stopped, missing-profile DEV entry
+for a different tunnel. This is not a key rejection. New/reconfigured aliases now
+include the canonical application home; the old SDK entry remains untouched.
+The focused store check proves distinct aliases across homes and stable aliases
+within one home. Version 6.1.20 identifies the pending local update.
