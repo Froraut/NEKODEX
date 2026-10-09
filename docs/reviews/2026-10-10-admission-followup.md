@@ -122,3 +122,13 @@ for a different tunnel. This is not a key rejection. New/reconfigured aliases no
 include the canonical application home; the old SDK entry remains untouched.
 The focused store check proves distinct aliases across homes and stable aliases
 within one home. Version 6.1.20 identifies the pending local update.
+
+## Background inspection priority follow-up
+
+Installed 6.1.20 exposed repeated background session inspections: explicit
+Reconnect was rejected while an automatic readiness check owned the account.
+The pool now suppresses new restores during explicit tunnel setup, cancels and
+joins only its own automatic inspection, rechecks active-task ownership, and
+acquires the normal exclusive lease. Repeated auth changes within one restore
+receive one follow-up attempt and then settle. Seven focused follow-up cases
+and the account tunnel admission smoke passed. 6.1.21 identifies this local fix.

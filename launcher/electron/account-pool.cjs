@@ -666,16 +666,34 @@ class AccountBrowserPool {
   }
   async withAccountTunnelMutation(id, action) {
     this.getHost(id);
-    this.assertAccountOperationAvailable(id);
-    if ([...this.turnTabs.values()].some(tab => tab.accountId === id && tab.status === 'running')
-      || [...this.getHost(id).turnTabs.values()].some(tab => tab.status === 'running')
-      || [...this.reservations.values()].includes(id)) {
-      throw new Error('Finish this account’s active tasks before changing its tunnel');
-    }
-    const release = this.leases().acquireExclusive(id, 'tool tunnel setup');
-    this.publish();
+    const assertIdle = () => {
+      if ([...this.turnTabs.values()].some(tab => tab.accountId === id && tab.status === 'running')
+        || [...this.getHost(id).turnTabs.values()].some(tab => tab.status === 'running')
+        || this.getHost(id).activeTraceId || [...this.reservations.values()].includes(id)) {
+        throw new Error('Finish this account’s active tasks before changing its tunnel');
+      }
+    };
+    assertIdle();
+    this.evidenceRestoreSuppressed ??= new Set();
+    if (this.evidenceRestoreSuppressed.has(id)) throw new Error('Tool tunnel setup is already pending for this account');
+    this.evidenceRestoreSuppressed.add(id);
+    let release;
     let changed = false;
     try {
+      // An explicit setup request owns priority over this pool's automatic check, but
+      // not over another user operation or an active turn. Join the read before editing.
+      const restore = this.evidenceRestores?.get(id);
+      if (restore) {
+        restore.cancelled = true;
+        if (restore.timer) clearTimeout(restore.timer);
+        restore.wake?.();
+        if (restore.ownsRefreshing) await this.getHost(id).cancelReadOnlyInspection();
+        await restore.done;
+      }
+      assertIdle();
+      this.assertAccountOperationAvailable(id);
+      release = this.leases().acquireExclusive(id, 'tool tunnel setup');
+      this.publish();
       const result = await action();
       this.connectors.delete(id);
       changed = true;
@@ -684,7 +702,9 @@ class AccountBrowserPool {
       this.writeDescriptor();
       return result;
     } finally {
-      release(); this.publish();
+      release?.();
+      this.evidenceRestoreSuppressed.delete(id);
+      this.publish();
       // The new tunnel needs its connector proven again; do it once the tunnel is running.
       if (changed) this.scheduleEvidenceRestore(id, { waitForTunnel: true });
     }
@@ -831,16 +851,21 @@ class AccountBrowserPool {
    */
   scheduleEvidenceRestore(id, { waitForTunnel = false } = {}) {
     this.evidenceRestores ??= new Map(); this.evidenceRefreshing ??= new Set();
-    if (this.destroyed) return;
+    if (this.destroyed || this.evidenceRestoreSuppressed?.has(id)) return;
     const pending = this.evidenceRestores.get(id);
     if (pending) {
+      if (pending.cancelled) return;
+      // A probe can itself make authentication temporarily unavailable. Permit one
+      // coalesced auth retry, not an endless chain that monopolizes the account.
+      if (!waitForTunnel && pending.authRetryQueued) return;
+      if (!waitForTunnel) pending.authRetryQueued = true;
       pending.waitForTunnel ||= waitForTunnel;
       pending.revision++;
       return;
     }
     const host = this.hosts.get(id);
     if (!host) return;
-    const restore = { waitForTunnel, revision: 0, timer: null, wake: null, ownsRefreshing: false };
+    const restore = { waitForTunnel, revision: 0, timer: null, wake: null, ownsRefreshing: false, cancelled: false, authRetryQueued: false };
     const sleep = ms => new Promise(resolve => {
       restore.wake = resolve;
       restore.timer = setTimeout(() => { restore.timer = null; restore.wake = null; resolve(); }, ms);
@@ -850,7 +875,7 @@ class AccountBrowserPool {
     const run = (async () => {
       await sleep(0);
       for (;;) {
-        if (this.destroyed || this.inspectionsPaused || this.hosts.get(id) !== host) return;
+        if (restore.cancelled || this.destroyed || this.inspectionsPaused || this.hosts.get(id) !== host) return;
         if (host.state.authenticated !== true) return;
         const busy = this.evidenceRefreshing.has(id) || this.accountOperationLabel(id)
           || host.activeTraceId || [...this.reservations.values()].includes(id);
@@ -866,7 +891,7 @@ class AccountBrowserPool {
         try { await this.checkAccount(id, connector); }
         catch (error) {
           // A new sign-in/tunnel receipt during the check supersedes its old evidence.
-          if (restore.revision === revision) throw error;
+          if (!restore.cancelled && restore.revision === revision) throw error;
         } finally { this.evidenceRefreshing.delete(id); restore.ownsRefreshing = false; }
         if (restore.revision === revision && !tunnelWait) return;
       }

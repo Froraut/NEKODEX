@@ -10,6 +10,7 @@ import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-erro
 
 const require = createRequire(import.meta.url);
 const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
+const { AccountOperationLeases } = require("../launcher/electron/account-operation-leases.cjs");
 
 test("the API tool bridge preserves a never-sent account failure and does not turn it into a retried 502", async () => {
   const message = "No request was sent: Primary has no tool tunnel";
@@ -73,6 +74,8 @@ function restorePool() {
     options: { maxTabs: 16, getBrowserInteractionMode: () => "automatic", bootstrapAccountConnectors: () => true,
       getAccountTunnel: () => ({ required: true, ready, status: ready ? "ready" : "starting" }) },
     logger: { warn() {} }, recordCapabilityEvidence: (_id: string, evidence: any) => pool.capabilities.set("default", evidence) });
+  pool.operationLeases = new AccountOperationLeases();
+  pool.writeDescriptor = () => {};
   Object.defineProperty(pool, "turnTabs", { get: () => host.turnTabs });
   return { pool, host, idle: () => { busy = false; }, ready: () => { ready = true; }, checks: () => checks };
 }
@@ -140,6 +143,50 @@ test.serial("a new sign-in during an evidence check retries the superseded check
     await advance();
     expect(attempts).toBe(2);
     expect(h.pool.connectors.get("default")).toBe("Codex Native6");
+    expect(h.pool.evidenceRestores.size).toBe(0);
+    expect(h.pool.evidenceRefreshing.size).toBe(0);
+  });
+});
+
+test.serial("explicit tunnel setup cancels and joins only its automatic account check", async () => {
+  await withScheduledWaits(async advance => {
+    const h = restorePool(); h.idle(); h.ready();
+    const events: string[] = [];
+    const normalCheck = h.pool.checkAccount.bind(h.pool);
+    let rejectCheck: (error: Error) => void;
+    let checking = false;
+    h.host.currentOperation = () => checking ? "session inspection" : null;
+    h.pool.checkAccount = async () => {
+      checking = true;
+      try { await new Promise((_, reject) => { rejectCheck = reject; }); }
+      finally { checking = false; events.push("settled"); }
+    };
+    h.host.cancelReadOnlyInspection = async () => { events.push("cancel"); rejectCheck(new Error("cancelled")); };
+    h.pool.scheduleEvidenceRestore("default"); await advance();
+    await h.pool.withAccountTunnelMutation("default", async () => {
+      expect(checking).toBe(false);
+      expect(h.pool.operationLeases.exclusiveLabel("default")).toBe("tool tunnel setup");
+      events.push("mutation"); return { ok: true };
+    });
+    expect(events).toEqual(["cancel", "settled", "mutation"]);
+    h.pool.checkAccount = normalCheck;
+    await advance();
+    expect(h.pool.connectors.get("default")).toBe("Codex Native6");
+    expect(h.pool.evidenceRestoreSuppressed.size).toBe(0);
+  });
+});
+
+test.serial("a probe that repeatedly changes auth state does not monopolize the account", async () => {
+  await withScheduledWaits(async advance => {
+    const h = restorePool(); h.idle(); h.ready();
+    let attempts = 0;
+    h.pool.checkAccount = async () => {
+      attempts++;
+      h.pool.scheduleEvidenceRestore("default");
+      throw new Error("readiness changed while checking");
+    };
+    h.pool.scheduleEvidenceRestore("default"); await advance();
+    expect(attempts).toBe(2);
     expect(h.pool.evidenceRestores.size).toBe(0);
     expect(h.pool.evidenceRefreshing.size).toBe(0);
   });
