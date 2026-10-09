@@ -342,7 +342,7 @@ export function parseRequest(body: unknown, parseOptions?: {
       }
 
       if (effectiveType === "reasoning") {
-        const reasoning = item as { id?: string; summary?: { text: string }[]; content?: { text: string }[]; encrypted_content?: string };
+        const reasoning = item as { id?: string; summary?: { text: string }[] | null; content?: { text: string }[] | null; encrypted_content?: string | null };
         const fromSummary = (reasoning.summary ?? []).map(c => c.text).join("");
         const text = fromSummary || (reasoning.content ?? []).map(c => c.text).join("");
         const envelope = typeof reasoning.encrypted_content === "string"

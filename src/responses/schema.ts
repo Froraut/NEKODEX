@@ -69,10 +69,12 @@ const agentMessageItemSchema = z.object({
 const reasoningItemSchema = z.object({
   type: z.literal("reasoning"),
   id: z.string().optional(),
-  summary: z.array(summaryTextSchema).optional(),
-  content: z.array(reasoningTextSchema).optional(),
+  // Codex Desktop replays absent optional fields as null after a response or tool call.
+  // Only absence is relaxed; malformed populated reasoning must still fail validation.
+  summary: z.array(summaryTextSchema).nullish(),
+  content: z.array(reasoningTextSchema).nullish(),
   // Round-tripped opaque payload (native OpenAI encryption OR the proxy's ocxr1 envelope).
-  encrypted_content: z.string().optional(),
+  encrypted_content: z.string().nullish(),
 });
 const functionCallItemSchema = z.object({
   type: z.literal("function_call"),
