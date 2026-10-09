@@ -846,7 +846,13 @@ export function createChatGptWebAdapter(
           if (!(turnError instanceof ChatGptWebAdapterError && turnError.retryable)) {
             chatGptWebTurnRetryPolicy.clear(retryKey);
           }
-          if (handledError instanceof ChatGptWebAdapterError && !handledError.retryable) {
+          if (handledError instanceof ChatGptWebAdapterError && handledError.code === "account_not_ready") {
+            // An unready account sent nothing; the launcher's queue row and the server's replay
+            // guard own its outcome. Forget this round so a later attempt reaches the launcher
+            // again, but keep the thread's retained ChatGPT conversation open.
+            session.cancel();
+            chatGptTurnSessions.forget(executionKey, session);
+          } else if (handledError instanceof ChatGptWebAdapterError && !handledError.retryable) {
             // A deterministic request failure remains replayable so a native reconnect cannot burn
             // another browser attempt. Every other failure retires the browser session: client
             // disconnects, stage failures, and retryable ChatGPT errors must start a fresh surface

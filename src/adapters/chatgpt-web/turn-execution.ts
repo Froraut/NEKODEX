@@ -502,6 +502,26 @@ export class ChatGptTurnSessions {
     return true;
   }
 
+  /**
+   * Drop a session whose launcher admission proved that nothing was sent, without releasing the
+   * retained conversation it would have continued: the previous session stays its head.
+   */
+  forget(key: string, session: ChatGptTurnSession): boolean {
+    if (this.entries.get(key) !== session) return false;
+    const receipt = this.detachedToolReapers.get(session);
+    if (receipt?.timer) clearTimeout(receipt.timer);
+    this.detachedToolReapers.delete(session);
+    this.entries.delete(key);
+    const conversationKey = session.conversationKey();
+    if (conversationKey && this.conversationHeads.get(conversationKey) === session) {
+      const previous = [...this.entries.values()].filter(peer => peer.conversationKey() === conversationKey)
+        .sort((a, b) => b.lastUsedAt() - a.lastUsedAt())[0];
+      if (previous) this.conversationHeads.set(conversationKey, previous);
+      else this.conversationHeads.delete(conversationKey);
+    }
+    return true;
+  }
+
   retire(key: string, session: ChatGptTurnSession): boolean {
     if (this.entries.get(key) !== session) return false;
     this.observeRetirement(this.retireSession(key, session));

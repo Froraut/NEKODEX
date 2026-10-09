@@ -37,6 +37,37 @@ function newWebSessionReservationId(accountId, traceId, nonce = randomUUID()) {
 }
 
 /** One browser session per account; shared global capacity and sticky conversation routing. */
+/**
+ * Why an account's model evidence rejects a requirement: 'unchecked' when there is no evidence to
+ * decide, 'model' when the evidence lacks the requested model or level, null when it allows it.
+ */
+function capabilityRejection(pool, id, requirement, mode) {
+  const caps = pool.capabilities.get(id);
+  const missing = caps ? 'model' : 'unchecked';
+  const family = taskModelFamily(requirement?.requestedModel);
+  if (family && caps?.modelCapabilities
+    && !caps.modelCapabilities.families[family]?.includes(requirement?.effort)) return 'model';
+  if (mode === 'balanced' && id !== 'default' && !caps) return 'unchecked';
+  if (requirement?.effort === 'luna' && caps?.solAvailable !== false) return missing;
+  if (!(family && caps?.modelCapabilities)) {
+    if (requirement?.effort === 'max' && caps?.proAvailable !== true) return missing;
+    if (requirement?.effort === 'xhigh' && caps?.extraHighAvailable !== true) return missing;
+    if (requirement?.effort && requirement.effort !== 'max' && requirement.effort !== 'luna' && caps?.solAvailable !== true) return missing;
+  }
+  return null;
+}
+/** The account a task is already bound to, resolved exactly as chooseAccount pins it. */
+function pinnedAccount(pool, traceId, key, requirement) {
+  const existingTrace = pool.traceOwners.get(traceId);
+  const existingTab = [...pool.hosts].find(([, host]) => [...host.turnTabs.values()].some(tab => tab.traceId === traceId || (key && tab.conversationKey === key)));
+  const ownerForBinding = binding => pool.affinity.get(binding)
+    ?? [...pool.pendingAffinity.values()].find(pending => pending.keys.includes(binding))?.id;
+  const threadOwner = requirement?.routingKey ? ownerForBinding(requirement.routingKey) : undefined;
+  const conversationOwner = key ? ownerForBinding(key) : undefined;
+  return { threadOwner, conversationOwner,
+    pinned: existingTrace ?? threadOwner ?? conversationOwner ?? existingTab?.[0] ?? requirement?.requestedAccountId };
+}
+
 class AccountBrowserPool {
   constructor(options) {
     this.options = options;
@@ -52,6 +83,10 @@ class AccountBrowserPool {
     this.networkOperation = null;
     this.operationLeases = new AccountOperationLeases();
     this.authenticationRefreshOperations = new Map();
+    // Accounts whose evidence NEKODEX is (re)building: startup, after a sign-in, after a tunnel change.
+    // Queued tasks wait for these checks instead of failing as not ready.
+    this.evidenceRefreshing = new Set();
+    this.evidenceRestores = new Map();
     this.existingChromeImportLease = null;
     this.hosts = new Map();
     this.creatingHosts = new Set();
@@ -108,6 +143,8 @@ class AccountBrowserPool {
       releaseUnsent: request => this.releaseUnsentAdmission(request),
       leaseCurrent: (request, lease) => this.admissionLeaseCurrent(request, lease),
       changed: () => this.publish(),
+      language: () => this.options.getLanguage?.() ?? 'en',
+      accountLabel: id => this.registry.snapshot().accounts.find(account => account.id === id)?.label,
     });
     this.workspaceDirectory = new BrowserWorkspaceDirectory({ platform: process.platform });
     this.getHost('default');
@@ -481,6 +518,9 @@ class AccountBrowserPool {
       const authenticated = host.state.authenticated === true;
       const previous = this.publishedAuthentication.get(id);
       if (!authenticated && previous !== false) this.invalidateEvidence(id);
+      // Sign-out discarded this account's model and connector evidence; a sign-in restores it
+      // the way startup does, so the account becomes usable without another manual check.
+      if (authenticated && previous === false) this.scheduleEvidenceRestore(id);
       this.publishedAuthentication.set(id, authenticated);
     }
     this.observationRevision = (this.observationRevision ?? 0) + 1;
@@ -619,7 +659,8 @@ class AccountBrowserPool {
       throw Object.assign(new Error(tunnel.status === 'unconfigured'
         ? 'Configure this account’s own tool tunnel before starting a tool task. No request was sent.'
         : 'This account’s own tool tunnel is not ready. Repair it before starting a tool task. No request was sent.'),
-      { code: 'account_tunnel_unavailable', workStarted: false });
+      { code: 'account_tunnel_unavailable', workStarted: false, accountId,
+        blocker: tunnel.status === 'unconfigured' ? 'account_tunnel_unconfigured' : 'account_tunnel_not_ready' });
     }
     return tunnel;
   }
@@ -633,14 +674,20 @@ class AccountBrowserPool {
     }
     const release = this.leases().acquireExclusive(id, 'tool tunnel setup');
     this.publish();
+    let changed = false;
     try {
       const result = await action();
       this.connectors.delete(id);
+      changed = true;
       const host = this.getHost(id);
       for (const tab of [...host.turnTabs.values()]) if (tab.status === 'ready') host.removeTurnTab(tab, false);
       this.writeDescriptor();
       return result;
-    } finally { release(); this.publish(); }
+    } finally {
+      release(); this.publish();
+      // The new tunnel needs its connector proven again; do it once the tunnel is running.
+      if (changed) this.scheduleEvidenceRestore(id, { waitForTunnel: true });
+    }
   }
   async checkAccount(id, connector = false) {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
@@ -737,11 +784,17 @@ class AccountBrowserPool {
   }
   async refreshAuthentication() {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
-    for (const account of this.registry.snapshot().accounts.filter(account => account.enabled)) {
+    this.evidenceRefreshing ??= new Set();
+    const accounts = this.registry.snapshot().accounts.filter(account => account.enabled);
+    const pending = accounts.map(account => account.id).filter(id => !this.evidenceRefreshing.has(id));
+    for (const id of pending) this.evidenceRefreshing.add(id);
+    try {
+    for (const account of accounts) {
       if (this.inspectionsPaused || this.destroyed) break;
       const reserved = this.leases().exclusiveLabel(account.id);
       if (reserved) {
         this.logger.info('browser.account_refresh_deferred', { accountId: account.id, operation: reserved });
+        if (pending.includes(account.id)) this.evidenceRefreshing.delete(account.id);
         continue;
       }
       const host = this.getHost(account.id);
@@ -765,9 +818,49 @@ class AccountBrowserPool {
         }
       }
       catch (error) { this.logger.warn('browser.account_refresh_failed', { accountId: account.id, message: error.message }); }
+      finally { if (pending.includes(account.id)) this.evidenceRefreshing.delete(account.id); }
     }
+    } finally { for (const id of pending) this.evidenceRefreshing.delete(id); }
     this.publish();
     return this.snapshot();
+  }
+  /**
+   * Rebuild an account's model and connector evidence after a sign-in or a tunnel change, using the
+   * same check as the account card. It waits for the account to be idle (and, after a tunnel change,
+   * for the tunnel to run) and never preempts user operations or tasks.
+   */
+  scheduleEvidenceRestore(id, { waitForTunnel = false } = {}) {
+    this.evidenceRestores ??= new Map(); this.evidenceRefreshing ??= new Set();
+    if (this.destroyed || this.evidenceRestores.has(id) || this.evidenceRefreshing.has(id)) return;
+    const sleep = ms => new Promise(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
+    this.evidenceRefreshing.add(id);
+    const run = (async () => {
+      await sleep(0);
+      for (let attempt = 0; attempt < 45; attempt += 1) {
+        if (this.destroyed || this.inspectionsPaused || !this.hosts.has(id)) return;
+        const host = this.hosts.get(id);
+        if (host.state.authenticated !== true) return;
+        const busy = this.accountOperationLabel(id) || host.activeTraceId || [...this.reservations.values()].includes(id);
+        const tunnel = this.accountTunnel(id, 'automatic');
+        const tunnelWait = waitForTunnel && tunnel.required === true && tunnel.ready !== true;
+        if (!busy && !tunnelWait) break;
+        if (attempt === 44) return;
+        await sleep(2000);
+      }
+      if (this.capabilities.has(id) && (this.connectors.has(id) || this.options.bootstrapAccountConnectors?.() !== true)) return;
+      const tunnel = this.accountTunnel(id, 'automatic');
+      // A tunnel that never started (or was removed) leaves nothing new to prove.
+      if (waitForTunnel && tunnel.required === true && tunnel.ready !== true) return;
+      const connector = this.options.bootstrapAccountConnectors?.() === true && (tunnel.required !== true || tunnel.ready === true);
+      await this.checkAccount(id, connector);
+    })().catch(error => {
+      this.logger?.warn('browser.account_evidence_restore_failed', { accountId: id, message: error?.message ?? String(error) });
+    }).finally(() => {
+      this.evidenceRefreshing.delete(id);
+      if (this.evidenceRestores.get(id) === run) this.evidenceRestores.delete(id);
+      this.publish();
+    });
+    this.evidenceRestores.set(id, run);
   }
   /** Keep fresh browser evidence and let the runtime list the models it shows. */
   recordCapabilityEvidence(id, evidence) {
@@ -1097,16 +1190,12 @@ class AccountBrowserPool {
     if (this.addingAccount || this.activeTraceId || this.currentOperation()) throw new Error('Finish active tasks and account operations before changing interaction mode');
     return this.selectedHost().withInteractionModeChange(mode, action);
   }
+  capabilityRejection(id, requirement, mode) { return capabilityRejection(this, id, requirement, mode); }
+  pinnedAccount(traceId, key, requirement) { return pinnedAccount(this, traceId, key, requirement); }
   chooseAccount(traceId, key, retained, requirement) {
     const config = this.registry.snapshot();
-    const existingTrace = this.traceOwners.get(traceId);
-    const existingTab = [...this.hosts].find(([, host]) => [...host.turnTabs.values()].some(tab => tab.traceId === traceId || (key && tab.conversationKey === key)));
-    const ownerForBinding = binding => this.affinity.get(binding)
-      ?? [...this.pendingAffinity.values()].find(pending => pending.keys.includes(binding))?.id;
-    const threadOwner = requirement?.routingKey ? ownerForBinding(requirement.routingKey) : undefined;
-    const conversationOwner = key ? ownerForBinding(key) : undefined;
+    const { threadOwner, conversationOwner, pinned } = pinnedAccount(this, traceId, key, requirement);
     if (threadOwner && conversationOwner && threadOwner !== conversationOwner) throw new Error('Conversation and task account ownership conflict');
-    const pinned = existingTrace ?? threadOwner ?? conversationOwner ?? existingTab?.[0] ?? requirement?.requestedAccountId;
     if (pinned && ((threadOwner && threadOwner !== pinned) || (conversationOwner && conversationOwner !== pinned))) {
       throw new Error('Conversation and task account ownership conflict');
     }
@@ -1115,17 +1204,7 @@ class AccountBrowserPool {
       const host = this.hosts.get(account.id);
       if (!account.enabled || this.accountOperationLabel(account.id) || this.admissionQueue?.accountPaused(account.id)) return false;
       if (host?.state.authenticated !== true) return false;
-      const caps = this.capabilities.get(account.id);
-      const family = taskModelFamily(requirement?.requestedModel);
-      if (family && caps?.modelCapabilities
-        && !caps.modelCapabilities.families[family]?.includes(requirement?.effort)) return false;
-      if (config.mode === 'balanced' && account.id !== 'default' && !caps) return false;
-      if (requirement?.effort === 'luna' && caps?.solAvailable !== false) return false;
-      if (!(family && caps?.modelCapabilities)) {
-        if (requirement?.effort === 'max' && caps?.proAvailable !== true) return false;
-        if (requirement?.effort === 'xhigh' && caps?.extraHighAvailable !== true) return false;
-        if (requirement?.effort && requirement.effort !== 'max' && requirement.effort !== 'luna' && caps?.solAvailable !== true) return false;
-      }
+      if (capabilityRejection(this, account.id, requirement, config.mode)) return false;
       if (requirement?.connector && (this.connectors.get(account.id) !== requirement.connector
         || (this.accountTunnel(account.id, 'automatic').required === true && !this.accountTunnel(account.id, 'automatic').ready))) return false;
       return true;
@@ -1433,12 +1512,15 @@ class AccountBrowserPool {
     const active = new Set([...this.turnTabs.values()].filter(tab => tab.status === 'running').map(tab => tab.traceId));
     for (const trace of this.reservations.keys()) active.add(trace);
     if (!active.has(request.traceId) && active.size >= this.options.maxTabs) return { reason: 'capacity' };
+    const requirement = {
+      requestedModel: request.requestedModel,
+      effort: request.effort, connector: request.connector, routingKey: request.routingKey,
+      requestedAccountId: request.requestedAccountId ?? undefined,
+    };
+    let target;
+    try { target = this.admissionTarget(request, requirement); } catch { target = undefined; }
     try {
-      const id = this.chooseAccount(request.traceId, request.key ?? undefined, request.retained, {
-        requestedModel: request.requestedModel,
-        effort: request.effort, connector: request.connector, routingKey: request.routingKey,
-        requestedAccountId: request.requestedAccountId ?? undefined,
-      });
+      const id = this.chooseAccount(request.traceId, request.key ?? undefined, request.retained, requirement);
       const host = this.getHost(id);
       if (this.taskLedgers.get(id)?.storageIssue === 'task-history-unavailable') return { reason: 'task-history-unavailable' };
       if (this.admissionQueue.accountPaused(id)) return { reason: 'paused-account' };
@@ -1446,28 +1528,81 @@ class AccountBrowserPool {
         + [...this.reservations.values()].filter(owner => owner === id).length;
       const reuses = [...host.turnTabs.values()].some(tab => tab.traceId === request.traceId && tab.status === 'running')
         || host.exactRetainedTurnTab(request.key, request.connector ?? undefined);
+      if (request.connector) {
+        // Exact retained pages skip chooseAccount's readiness filter; their tunnel is still required.
+        const tunnel = this.accountTunnel(id, 'automatic');
+        if (tunnel.required === true && tunnel.ready !== true) {
+          return this.transientAccountHold(id) ?? { reason: 'account-not-ready', accountId: id,
+            blocker: tunnel.status === 'unconfigured' ? 'account_tunnel_unconfigured' : 'account_tunnel_not_ready' };
+        }
+      }
       if (!reuses && this.turnTabs.size >= this.options.maxTabs
         && ![...this.turnTabs.values()].some(tab => tab.status === 'ready')) return { reason: 'inspection-tabs' };
       const availability = this.safety.availability(id, activeCount, { createsNewSession: !reuses });
       return availability.eligible ? null : { reason: availability.reason, retryAt: availability.retryAt };
     } catch (error) {
       if (error?.code === 'account_cooldown') return { reason: 'local-admission', retryAt: error.retryAt };
-      return { reason: 'account-not-ready', blocker: this.accountReadinessBlocker(request) };
+      // No owner can ever be found for this retained conversation: report its own recoverable code
+      // now so compaction can fall back, instead of holding it as an unready account.
+      if (error?.code === 'retained_conversation_unavailable') return { reason: 'predispatch-failure', failure: error.code };
+      let transient = null;
+      try { transient = this.transientAccountHold(target); } catch { transient = null; }
+      if (transient) return transient;
+      let blocker = 'account_not_ready';
+      // Naming the cause is diagnostic; its failure must never disable admission for every task.
+      try { blocker = this.accountReadinessBlocker(request, requirement, target); } catch { blocker = 'account_not_ready'; }
+      return { reason: 'account-not-ready', blocker, accountId: target ?? null };
     }
   }
-  /** Names the first unmet requirement of the account a queued task would use. */
-  accountReadinessBlocker(request) {
+  /** The account whose readiness decides a queued task: its pinned owner, else the selected account. */
+  admissionTarget(request, requirement) {
+    const { pinned } = this.pinnedAccount(request.traceId, request.key ?? undefined, requirement);
+    if (pinned) return pinned;
     const config = this.registry.snapshot();
-    const id = request.requestedAccountId ?? (config.mode === 'selected' ? config.selectedId : undefined);
-    const account = id ? config.accounts.find(candidate => candidate.id === id) : undefined;
-    if (!account?.enabled || !this.hosts.has(account.id)) return 'account_not_ready';
-    if (this.hosts.get(account.id).state.authenticated !== true) return 'account_signed_out';
+    return config.mode === 'selected' ? config.selectedId : undefined;
+  }
+  /**
+   * States that end on their own or by the user's resume: they hold a queued task without the
+   * readiness deadline. With no target (balanced mode) any enabled account in such a state may
+   * still become the task's account.
+   */
+  transientAccountHold(target) {
+    const config = this.registry.snapshot();
+    const ids = target ? [target] : config.accounts.filter(account => account.enabled).map(account => account.id);
+    if (this.initializingHosts || ids.some(id => this.evidenceRefreshing?.has(id) || this.authenticationRefreshOperations?.has(id))) {
+      return { reason: 'account-checking' };
+    }
+    if (ids.some(id => this.accountOperationLabel(id))) return { reason: 'account-busy' };
+    if (ids.some(id => this.admissionQueue?.accountPaused(id))) return { reason: 'paused-account' };
+    return null;
+  }
+  /**
+   * Names the first unmet requirement of the account a queued task would use. In balanced mode
+   * without a pinned owner, a cause is named only when every enabled account shares it.
+   */
+  accountReadinessBlocker(request, requirement, target) {
+    const config = this.registry.snapshot();
+    if (!target) {
+      const blockers = config.accounts.filter(account => account.enabled)
+        .map(account => this.accountBlocker(account.id, request, requirement, config));
+      return blockers.length && blockers.every(blocker => blocker === blockers[0]) ? blockers[0] : 'account_not_ready';
+    }
+    return this.accountBlocker(target, request, requirement, config);
+  }
+  accountBlocker(id, request, requirement, config) {
+    const account = config.accounts.find(candidate => candidate.id === id);
+    if (!account || !this.hosts.has(id)) return 'account_not_ready';
+    if (!account.enabled) return 'account_disabled';
+    if (this.hosts.get(id).state.authenticated !== true) return 'account_signed_out';
     if (request.connector) {
-      const tunnel = this.accountTunnel(account.id, 'automatic');
+      const tunnel = this.accountTunnel(id, 'automatic');
       if (tunnel.required === true && tunnel.status === 'unconfigured') return 'account_tunnel_unconfigured';
       if (tunnel.required === true && tunnel.ready !== true) return 'account_tunnel_not_ready';
-      if (this.connectors.get(account.id) !== request.connector) return 'account_connector_unverified';
     }
+    const capability = this.capabilityRejection(id, requirement, config.mode);
+    if (capability === 'unchecked') return 'account_unchecked';
+    if (capability === 'model') return 'account_model_unavailable';
+    if (request.connector && this.connectors.get(id) !== request.connector) return 'account_connector_unverified';
     return 'account_not_ready';
   }
   releaseUnsentAdmission(request) {

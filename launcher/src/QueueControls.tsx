@@ -2,6 +2,7 @@ import { useFeatureAction } from "./useFeatureAction";
 import './surfaces/tasks-updates.css';
 import { useId, useMemo, useRef, useState } from 'react';
 import languages from "../electron/languages.json";
+import admissionFailureCopy from "../electron/admission-failure-copy.json";
 import { Badge, Button, EmptyState, Notice, Panel, Select, StateDot, type Status } from './design';
 import { taskCenterCopy } from './task-center-copy';
 import { focusableHeading, useRowFocusRecovery } from './task-center-focus';
@@ -35,7 +36,11 @@ const inspectionTabsCopy: Record<Language, string> = {
 };
 
 type QueueEntry = BrowserQueueState['entries'][number];
-const attentionReasons = new Set(['owner-reconnect-required', 'previous-submission-needs-review', 'task-history-unavailable', 'inspection-tabs']);
+type FailureCopy = typeof admissionFailureCopy.en;
+const failureCopy = (language: Language): FailureCopy => (admissionFailureCopy as Record<string, FailureCopy>)[language] ?? admissionFailureCopy.en;
+const causeText = (copy: FailureCopy, cause: string | null | undefined) => cause
+  ? (copy.codes as Record<string, { short: string }>)[cause]?.short ?? copy.codes.account_not_ready.short : null;
+const attentionReasons = new Set(['owner-reconnect-required', 'previous-submission-needs-review', 'task-history-unavailable', 'inspection-tabs', 'account-not-ready']);
 /** Work in motion or waiting on the user is amber; failures are rose; plain waiting and cancelled entries stay quiet. */
 const entryState = (row: QueueEntry): Status => row.status === 'failed' || row.status === 'interrupted' ? 'error'
   : row.status === 'admitting' || row.status === 'cancelling' || (row.reason !== null && attentionReasons.has(row.reason)) ? 'busy' : 'idle';
@@ -68,6 +73,7 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
   const shared = taskCenterCopy(language);
   const cancellingText = { en: 'Cancelling before sending', ru: 'Отмена до отправки', 'zh-CN': '正在取消，尚未发送', 'zh-TW': '正在取消，尚未傳送', ja: '送信前にキャンセル中', ko: '전송 전 취소 중' }[language];
   const timeFormat = useMemo(() => new Intl.DateTimeFormat(languages[language]?.locale ?? language, { dateStyle: 'medium', timeStyle: 'short' }), [language]);
+  const deadlineFormat = useMemo(() => new Intl.DateTimeFormat(languages[language]?.locale ?? language, { timeStyle: 'medium' }), [language]);
   // A dismissed or cancelled row takes its focused button with it: continue from the neighbouring row, else the heading.
   useRowFocusRecovery(list, { busy: pending, fallback: () => focusableHeading(titleId) });
   if (!queue) return null;
@@ -102,10 +108,20 @@ export function QueueControls({ queue, language, disabled, action, pause, onErro
     <div className="task-queue__list" ref={list}>
       {!queue.entries.length ? <div className="task-row task-row--empty"><EmptyState icon="logs" title={text[13]}>{shared.queueEmptyBody}</EmptyState></div> : null}
       {entries.map((row, index) => {
-        const reason = row.status === 'cancelling' ? cancellingText : row.reason === 'owner-reconnect-required' ? text[9]
+        const failure = failureCopy(language);
+        const cause = causeText(failure, row.cause);
+        const causeAccount = row.causeAccountId && row.causeAccountId !== row.accountId ? labels.get(row.causeAccountId) : undefined;
+        const causeLabel = cause ? `${cause}${causeAccount ? ` (${causeAccount})` : ''}` : null;
+        // A row whose owner is back but that was restored after a restart waits for an explicit Resume.
+        const reason = row.status === 'cancelling' ? cancellingText
+          : row.reason === 'owner-reconnect-required' ? (row.status === 'paused' && row.ownerConnected ? text[16] : text[9])
           : row.reason === 'previous-submission-needs-review' ? text[10]
-            : row.status === 'cancelled' ? text[17] : row.status === 'failed' ? text[18] : row.status === 'interrupted' ? text[19]
+            : row.status === 'cancelled' ? text[17] : row.status === 'failed' ? (causeLabel ? `${text[18]}: ${causeLabel}` : text[18])
+              : row.status === 'interrupted' ? text[19]
               : row.status === 'admitting' ? text[15]
+                : row.reason === 'account-not-ready' && causeLabel ? (row.failsAt
+                  ? `${causeLabel} · ${failure.failsAt.replace('{time}', deadlineFormat.format(row.failsAt))}` : causeLabel)
+                : row.reason === 'account-checking' ? failure.checking : row.reason === 'account-busy' ? failure.busy
                 : row.reason === 'task-history-unavailable' ? (historyUnavailableCopy[language] ?? historyUnavailableCopy.en)
                 : row.reason === 'inspection-tabs' ? (inspectionTabsCopy[language] ?? inspectionTabsCopy.en)
                 : row.reason === 'paused-global' ? pauseText.globalReason : row.reason === 'paused-account' ? pauseText.accountReason

@@ -205,7 +205,8 @@ function rememberAccountNotReady(traceId: string, message: string): void {
 function recentAccountNotReady(traceId: string): string | undefined {
   const entry = accountNotReadyTraces.get(traceId);
   if (!entry) return undefined;
-  // Consume it: a later deliberate retry after the user fixes the account must be admitted again.
+  // Consume it: Codex's automatic replay ends here, while a later deliberate retry reaches the
+  // launcher again, which re-checks the account for the same never-sent execution.
   accountNotReadyTraces.delete(traceId);
   return Date.now() - entry.at <= ACCOUNT_NOT_READY_REPLAY_MS ? entry.message : undefined;
 }
@@ -564,10 +565,11 @@ export async function responseRequest(
       abort.signal.throwIfAborted();
       await adapter.runTurn!(parsed, { headers: req.headers, abortSignal: abort.signal }, deliverEvent);
     } catch (error) {
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
-      if (traceId && error instanceof ChatGptWebAdapterError && error.code === "account_not_ready") {
-        rememberAccountNotReady(traceId, error.message);
-      }
+      const notReady = error instanceof ChatGptWebAdapterError && error.code === "account_not_ready";
+      const event: AdapterEvent = notReady
+        ? { type: "error", message: error.message, status: error.status, errorType: error.errorType, code: error.code, retryable: false }
+        : { type: "error", message: error instanceof Error ? error.message : String(error) };
+      if (traceId && notReady) rememberAccountNotReady(traceId, error.message);
       deliverEvent(event);
     } finally {
       queue.close();

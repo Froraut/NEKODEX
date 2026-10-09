@@ -135,6 +135,8 @@ export interface BrowserQueueState {
   entries: Array<{ id: string; traceId: string; accountId: string | null;
     status: 'waiting' | 'paused' | 'admitting' | 'cancelling' | 'cancelled' | 'failed' | 'interrupted';
     reason: string | null; createdAt: number; position: number; retryAt: number | null;
+    /** Account-readiness cause while held (reason account-not-ready) or after failing for it. */
+    cause?: string | null; causeAccountId?: string | null; failsAt?: number | null;
     ownerConnected: boolean; canCancel: boolean; canPrioritize: boolean; canResume: boolean; canDismiss: boolean }>;
 }
 
