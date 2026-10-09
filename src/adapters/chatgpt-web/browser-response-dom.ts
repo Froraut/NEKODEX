@@ -44,6 +44,11 @@ export async function responseDomSnapshot(
   cache?: ChatGptResponseDomCache,
   abortSignal?: AbortSignal,
 ): Promise<ChatGptResponseDomSnapshot> {
+  if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+  // A reasoning turn can be replaced by the completed renderer under a new identity.
+  // Prove absence explicitly so the owner can rebind it; do not spend the evaluation
+  // fault budget waiting on a locator that no longer exists.
+  if (await responseTurn.count() === 0) return absentResponseDomSnapshot();
   const observed = await responseTurn.evaluate((element, options) => {
     const root = element as HTMLElement;
     type ObserverState = {
@@ -578,14 +583,17 @@ export async function responseDomSnapshot(
     stoppedThinkingLabels: [...CHATGPT_STOPPED_THINKING_LABELS],
     knownKey: cache?.key,
     attributeFilter: [...CHATGPT_DOM_REVISION_ATTRIBUTES],
-  }, { timeout: 2_000 }).catch(error => {
+  }, { timeout: 2_000 }).catch(async error => {
     if (abortSignal?.aborted) {
       throw new DOMException("ChatGPT web turn aborted", "AbortError");
     }
     if (responseTurn.page().isClosed()) {
       return undefined;
     }
-    // An open page whose response subtree could not be evaluated is an observation fault, not
+    // The element may disappear between count and evaluate. Only a fresh zero count
+    // establishes detachment; an evaluation failure on a present node remains a fault.
+    if (await responseTurn.count() === 0) return { detached: true as const };
+    // A present response subtree that could not be evaluated is an observation fault, not
     // evidence that the assistant response is absent. Preserve the original failure so the
     // main turn loop can spend its bounded internal-observation budget instead of entering
     // missing-response handling with a fabricated empty snapshot.
@@ -594,6 +602,7 @@ export async function responseDomSnapshot(
       { cause: error },
     );
   });
+  if (observed && "detached" in observed) return absentResponseDomSnapshot();
   if (!observed) {
     if (abortSignal?.aborted) {
       throw new DOMException("ChatGPT web turn aborted", "AbortError");
