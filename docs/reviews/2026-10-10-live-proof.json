@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-10",
+  "installedVersion": "6.1.22-nekodex.1",
+  "installedBuildCommit": "c9514dfa6232fec730a65c3fdaa2b136c1845d9c",
+  "model": "chatgpt-web/gpt-5.6-sol-instant",
+  "connector": "Codex Native6",
+  "sandbox": "read-only",
+  "command": "cat proof.txt",
+  "toolExitCode": 0,
+  "codexExitCode": 0,
+  "visibleReplyMatches": true,
+  "rawMarkdownMatches": false,
+  "presentationNote": "Raw Markdown escapes underscores; rendered text and actual read output match the file.",
+  "proofFileSha256": "262d4c99e9fc8ffae347f2744312aa8f8143f424c7a4e060fcf274452e366753",
+  "activeWebRequestsAfterProbe": 0,
+  "activeBrowserTurnsAfterProbe": 0,
+  "tunnelReady": true,
+  "brokerReady": true
+}

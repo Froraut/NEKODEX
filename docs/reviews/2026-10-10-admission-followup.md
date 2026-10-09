@@ -1,19 +1,41 @@
-# Admission follow-up: recovered verification, 10 October 2026
+# NEKODEX admission and Web recovery — 10 October 2026
 
-## Scope and provenance
+## Result
 
-PR #73 is merged as `2faaf385515fd97c51d83977afe6ae56d6fef514`.
-Its tree matches local `fc460c11ad0f0b658fa12e905728a326dd63326e`.
-The GitHub checks for macOS, Ubuntu, Windows and actionlint succeeded.
-This follow-up is on `codex/complete-admission-review-20261010`.
+The installed app and active runtime are **6.1.22-nekodex.1**, built from
+`c9514dfa6232fec730a65c3fdaa2b136c1845d9c`. The selected Primary account is
+verified for models and local tools. Its own tunnel is running under a
+profile-scoped SDK alias. The user-approved **Codex Native6** connector was
+created and connected in the same ChatGPT account.
 
-Recovered the interrupted Claude workflow `wf_3786155c-800` from its journal in
-`~/.claude/projects/-Users-alex/890f2da6-fedd-4725-b2fe-e11594351389/subagents/workflows/`.
-All 18 original-finding checks and the runtime/UI/copy hunt produced results.
-The queue/pool and evidence-restore hunts did not produce final results, and the
-three-lens voting phase never started. No new independent votes are claimed.
-The coordinator completed the missing scoped source review and checked the
-remaining reported gaps against the final merged tree, not the moving diff.
+A real `chatgpt-web/gpt-5.6-sol-instant` request through Codex CLI invoked
+`cat proof.txt` in a disposable read-only workspace. The command exited 0 and
+returned the file's random marker; ChatGPT returned the same visible text.
+The raw answer escapes underscores for Markdown, so raw-string equality is
+false while visible-text equality is true. This is recorded explicitly in
+[the structured proof](2026-10-10-live-proof.json). The CLI exited 0; no Web
+HTTP request or browser turn remained active after it finished. This was a
+real provider/tool operation, not a simulated tool fixture.
+
+The local app is signed with the existing Developer ID; its embedded Bun
+retains its publisher signature. Runtime integrity validation passed. No public
+release assets or release tag were produced, and no new notarization was
+submitted for this local update. Account data and the working native route
+were preserved through the application's idle-drained lifecycle.
+
+## Review provenance
+
+PR #73 was merged as `2faaf385515fd97c51d83977afe6ae56d6fef514`; its tree matches
+`fc460c11ad0f0b658fa12e905728a326dd63326e`. The interrupted review journal
+`wf_3786155c-800` contained all 18 original-finding checks and the runtime/UI/copy
+hunt. The queue/pool and evidence-restore hunts had no final result, and the
+three-lens voting phase never started. The coordinator completed the missing
+scoped review against final code. No new independent votes are claimed.
+
+The four completed-hunt findings (retained conversation, dollar labels, API
+status documentation and global-pause documentation) had already been corrected
+by `fc460c11`. A focused regression now confirms that an unsent failed round is
+forgotten without releasing the earlier retained conversation.
 
 ## Reconciliation of the 18 original findings
 
@@ -38,108 +60,52 @@ remaining reported gaps against the final merged tree, not the moving diff.
 | 17 | Restore after sign-in | Core path existed; long operations and coalesced receipts could lose the restore. Fixed in this follow-up. |
 | 18 | Localized remedies | Final copy covers six languages. Literal dollar-sign interpolation is fixed in `fc460c11` and covered by the existing focused test. |
 
-The four findings in the completed runtime/UI/copy hunt (retained conversation,
-dollar labels, API status documentation and global-pause documentation) were all
-already corrected by `fc460c11`. The later focused check confirms retained head
-ownership and fresh-attempt creation without releasing the earlier conversation.
+## Follow-up changes
 
-## Additional corrections made here
+- Preserve HTTP 400 and the actionable account cause in the Local API tool bridge.
+- Retain scheduled account/connector checks through long user operations and
+  tunnel startup; distinguish a pending wait from an active inspection.
+- Coalesce new receipts; explicit tunnel setup cancels and joins only its own
+  automatic check before taking the normal mutation lease. Active tasks and
+  unrelated user operations still veto setup.
+- Limit repeated auth flips from a failing probe to one follow-up check.
+- Preserve the evidence epoch through transient unknown/unavailable observations
+  while still blocking admission. Confirmed logout and identity changes retire it.
+- Accept the current visible ChatGPT model toggle when `aria-hidden` is omitted,
+  continuing to exclude explicitly hidden or ambiguous controls.
+- Derive new/reconfigured SDK aliases from canonical app home, account and mode.
+  The stopped DEV alias that collided with production was preserved untouched.
 
-- `NativeChatCompletionBridge` now preserves an audited `account_not_ready`
-  envelope as HTTP 400 with the original actionable message, rather than 502.
-- Evidence restoration no longer expires after 45 two-second waits while a user
-  operation or tunnel startup is still in progress. Pending waits do not masquerade
-  as active checks, so missing-tunnel admission can still fail with its real cause.
-- A sign-in/tunnel receipt arriving during a restore updates the same owner and
-  retries superseded evidence. Model evidence can be restored before the tunnel
-  starts, preserving plain requests while tool requests wait for their own tunnel.
-- Pool destruction wakes/cancels its pending timers. Documentation describes the
-  ownership and HTTP boundary.
+## Verification
 
-## Focused evidence
+- 18 queue/admission cases plus 8 follow-up cases passed on the final behavioral
+  change. The unchanged server-replay case had passed earlier and was reused.
+- Both isolated real-browser picker variants passed and restored the selected
+  model, effort, menu and unsent draft.
+- Account-tunnel store and admission smokes passed, including cross-profile alias
+  separation and preservation of other accounts' active work.
+- Source typechecks, version synchronization, CJS syntax, architecture-map/path
+  validation and diff whitespace checks passed where applicable.
+- A source-built helper successfully read capabilities from the actual Primary
+  ChatGPT page; the installed app later displayed Models checked: Verified and
+  Local tools: Verified.
+- The final live Codex request used the installed 6.1.22 route, the real ChatGPT
+  connector, and a read-only local command. Broker and tunnel remained ready.
 
-`bun test tests/admission-readiness.test.ts tests/account-not-ready-replay.test.ts tests/admission-followup.test.ts`
-passed 24 tests. The final adjustment restoring plain-request capabilities while
-waiting for a tunnel passed the five follow-up tests again (22 assertions).
-`bun run typecheck`, `node --check launcher/electron/account-pool.cjs`,
-`git diff --check` and `bun run architecture:check` passed.
+## Account setup and cleanup
 
-Before the fix, the new tests reproduced the API 502 and both late-restore
-failures. Retained-conversation preservation already passed on the merged tree.
-No full suite, package, release, installation or application restart was run.
+Google rejected the embedded OpenAI API login. Normal Chrome reached the
+account's passkey flow; the user completed Touch ID. The existing tunnel was
+reused. The user approved a Restricted key with only Tunnels Read + Use, then
+approved creating Codex Native6. The key was copied directly into NEKODEX's
+secure field, stored with mode 0600, and never included in source or reports.
+No other account's key or tunnel was borrowed.
 
-## Live continuation checkpoint
+Superseded task-owned app copies/build outputs were moved to Trash with a path
+manifest; an archive of the prior installed 6.1.19 and config backup remain
+outside app discovery. The installed app and user profiles remain in place.
 
-The installed launcher and active runtime remain 6.1.19. New changes above are
-source-only. PID 81705 was the stable installed launcher when inspected; PID
-81741 served the 6.1.19 runtime. These PIDs are observations, not reusable targets.
-The installed Overview showed ChatGPT session verified, tools connector not
-verified and an account-evidence-restore warning. Native input then failed with
-`noWindowsAvailable`; a fresh observation returned ScreenCaptureKit -3811.
-Web recovery is continuing through the same installed app, preserving account
-profiles and all current provider conversations. No tunnel or credential has been
-created or changed by this follow-up yet.
-
-## Live Web recovery and picker correction
-
-Native Computer Use recovered after one binding reset; an actual Accounts button
-click succeeded. Both windows were on-screen and not fullscreen; the earlier
-capture/input failure was not evidence of an application crash.
-
-Primary was already signed in at the live check. Its Check account action failed
-with `ChatGPT model picker toggle is ambiguous`. Native UI opened the exact model
-menu successfully. A read-only DOM observation showed its exposed
-`data-model-picker-view-toggle` has no `aria-hidden` attribute. The old selector
-required `aria-hidden="false"` and therefore found zero controls. The source now
-accepts an omitted attribute while still excluding `aria-hidden="true"` and
-rejecting duplicate candidates. Two isolated browser cases (explicit false and
-omitted) passed with the original model/effort/menu/draft restored.
-
-The account's own tunnel is unconfigured. OpenAI Platform in the embedded API
-window reached Google's `This browser or app may not be secure` rejection. A
-normal Chrome login for the same account reached the saved OpenAI passkey prompt
-instead. At the latest checkpoint the dialog requests Touch ID. The user must
-provide the biometric; no password reset, authentication bypass, tunnel creation
-or new API key has been performed. Continue from that Chrome dialog, then inspect
-the correct Platform organization/tunnel and finish the app's existing setup.
-
-New source is not installed. The old installed 6.1.19 still has the picker-selector
-failure and the late-restore/API-tool-path defects described above. Installing a
-new build and live provider verification are separate remaining boundaries.
-
-## Continued local completion
-
-After the user requested completion, the source-built browser helper successfully
-inspected the actual signed-in Primary ChatGPT page: authenticated/temporary true,
-model families 6, 5.6 and 5.5 observed. This verifies the changed picker boundary
-against current provider markup. The helper returned and exited.
-
-The user authorized the prepared Restricted runtime key (Tunnels Read + Use only)
-and it was saved directly to NEKODEX without including its value in this report.
-Initial tunnel startup failed before connecting: the SDK-global alias for the
-production default account collided with a stopped, missing-profile DEV entry
-for a different tunnel. This is not a key rejection. New/reconfigured aliases now
-include the canonical application home; the old SDK entry remains untouched.
-The focused store check proves distinct aliases across homes and stable aliases
-within one home. Version 6.1.20 identifies the pending local update.
-
-## Background inspection priority follow-up
-
-Installed 6.1.20 exposed repeated background session inspections: explicit
-Reconnect was rejected while an automatic readiness check owned the account.
-The pool now suppresses new restores during explicit tunnel setup, cancels and
-joins only its own automatic inspection, rechecks active-task ownership, and
-acquires the normal exclusive lease. Repeated auth changes within one restore
-receive one follow-up attempt and then settle. Seven focused follow-up cases
-and the account tunnel admission smoke passed. 6.1.21 identifies this local fix.
-
-## In-flight authentication epoch correction
-
-Codex Native6 was created and connected in the intended account on the existing
-tunnel. Its account check then failed because the pool treated an unavailable
-page-refresh observation as logout, incrementing the in-flight check's evidence
-epoch. The pool now keeps unknown/unavailable separate from confirmed false.
-Admission still rejects unverified authentication; confirmed logout and the host
-identity-change callback still invalidate evidence. The two focused files passed
-26 cases, and the final additional admission assertion passed in the8-case
-follow-up file. This correction is version6.1.22.
+The focused review's small Task Center presentation limitation in row 16 remains
+recorded. It does not affect scheduling, delivery, saved conversations or the
+verified provider/tool flow. No broad repository suite or unrelated plugin
+maintenance was run.
