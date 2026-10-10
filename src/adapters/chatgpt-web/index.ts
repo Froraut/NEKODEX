@@ -679,9 +679,11 @@ export function createChatGptWebAdapter(
                 if (results.length !== outstanding.length) {
                   throw new Error(`Codex returned ${results.length} of ${outstanding.length} results for a parallel ChatGPT tool batch`);
                 }
+                const wireNames = new Map(outstanding.map(request => [request.callId, request.wireName]));
                 for (const message of results) {
                   await broker.completeTool(turnToken, message.toolCallId, brokerToolResult(message));
-                  session.runtime.externalProgress.recordToolResult(message.toolCallId);
+                  session.runtime.externalProgress.recordToolResult(message.toolCallId, Date.now(),
+                    message.isError ? undefined : wireNames.get(message.toolCallId));
                   session.markResultDelivered(message.toolCallId);
                 }
               }

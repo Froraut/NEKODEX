@@ -39,7 +39,8 @@ export function Overview({ copy, browser, catalogFailure, snapshot, toolsReady, 
   // The same derivation the shell and the Connections page use, so every surface reports the same state.
   const readiness = deriveWorkspaceReadiness(workspaceReadinessInput({ snapshot, browser, catalogFailure, toolsVerified: toolsReady }));
   const headline = workspaceHeadline(readiness, { app: copy, language, development, manual,
-    authenticationIssue: browser?.authenticationIssue, codexRestartRequired: snapshot.state.codexRestartRequired === true });
+    authenticationIssue: browser?.authenticationIssue, codexRestartRequired: snapshot.state.codexRestartRequired === true,
+    toolProof: browser?.toolProof });
 
   // "Retry verification" checks the session here instead of only navigating to Accounts.
   const [retrying, setRetrying] = useState(false);

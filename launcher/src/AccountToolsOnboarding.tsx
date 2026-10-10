@@ -1,4 +1,5 @@
 import { useAccountPoolSnapshot } from "./useAccountPoolSnapshot";
+import languages from "../electron/languages.json";
 import type { Copy } from './i18n';
 import type { AccountPoolSnapshot, BrowserInteractionMode, BrowserState, Language, LauncherSnapshot } from './types';
 import { accountToolsCopy, accountToolsHandoffAccount, accountToolsStep, accountTunnelFor } from './account-tools-onboarding';
@@ -35,7 +36,13 @@ export function AccountToolsOnboarding({ account, copy, language, interactionMod
     try { await window.codexWebLauncher!.openOpenAiApiPanel(account.id); }
     catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   };
-  const status = manual ? text.manual : step === 'checking' ? copy.checkingSignIn : text[step === 'sign-in' ? 'signIn' : step];
+  // A recorded tool run on this account's current sign-in replaces the "not confirmed" caveat with the fact.
+  const verified = step === 'verified' && account.toolProof ? text.verifiedExecuted
+    .replace('{tool}', () => account.toolProof!.tool)
+    .replace('{time}', () => new Intl.DateTimeFormat(languages[language]?.locale ?? language, { dateStyle: 'medium', timeStyle: 'short' })
+      .format(account.toolProof!.at)) : null;
+  const status = manual ? text.manual : step === 'checking' ? copy.checkingSignIn
+    : verified ?? text[step === 'sign-in' ? 'signIn' : step];
   return <section className="accounts-details__section accounts-tools" aria-labelledby={headingId}>
     <h3 id={headingId} className="nk-type-label">{text.title}</h3>
     <p role="status">{status}</p>

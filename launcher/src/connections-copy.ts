@@ -1,3 +1,4 @@
+import languages from "../electron/languages.json";
 import type { Copy } from "./i18n";
 import { sessionIssueCopy } from "./session-issue-copy";
 import { workflowCopy } from "./workflow-copy";
@@ -316,12 +317,14 @@ export interface WorkspaceHeadline {
 }
 
 /** Title, body and next step for every WorkspaceReason: the Overview hero and the Connections status notice. */
-export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language, development, manual, authenticationIssue, codexRestartRequired }: {
+export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language, development, manual, authenticationIssue, codexRestartRequired, toolProof }: {
   app: Copy;
   language: Language;
   development: boolean;
   manual: boolean;
   authenticationIssue?: BrowserState["authenticationIssue"];
+  /** Observed tool execution; without it the ready headline says no real tool task has run yet. */
+  toolProof?: BrowserState["toolProof"];
   /** A changed model list: Codex has not loaded it yet, so the picker needs a Codex restart first. */
   codexRestartRequired?: boolean;
 }): WorkspaceHeadline {
@@ -391,7 +394,13 @@ export function workspaceHeadline(readiness: WorkspaceReadiness, { app, language
   }
   if (manual) return { title: app.manualSetupReady, body: app.manualSetupReadyBody, tone: "success", ...ready };
   if (readiness.tools === "ready") {
-    return { title: app.setupChecksPassed, body: app.connectorAvailableNotExecuted, tone: "success", ...ready };
+    const body = toolProof ? app.connectorToolExecuted
+      .replace("{tool}", () => toolProof.tool)
+      .replace("{account}", () => toolProof.accountName ?? toolProof.accountId)
+      .replace("{time}", () => new Intl.DateTimeFormat(languages[language]?.locale ?? language,
+        { dateStyle: "medium", timeStyle: "short" }).format(toolProof.at))
+      : app.connectorAvailableNotExecuted;
+    return { title: app.setupChecksPassed, body, tone: "success", ...ready };
   }
   if (readiness.tools === "checking") return { title: words.toolsCheckingTitle, body: words.toolsCheckingBody, tone: "info", ...ready };
   if (readiness.tools === "degraded" || readiness.connections.tools.key === "unavailable") {

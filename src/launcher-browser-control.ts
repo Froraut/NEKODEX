@@ -125,6 +125,8 @@ export type LauncherTurnActivity =
       message?: string;
       retain?: boolean;
       connectorBound?: boolean;
+      /** A completed turn in which Codex returned at least one tool result without an error. */
+      toolProof?: { tool: string };
       failureCode?: "rate_limit_exceeded" | "account_safety_stop" | "context_length_exceeded"
         | "model_unavailable" | "tool_timeout" | "browser_failure" | "other";
     };

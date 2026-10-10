@@ -109,6 +109,8 @@ export interface BrowserState {
   networkIssue?: "egress-unstable" | "challenge-route" | null;
   networkIssueCheckedAt?: string | null;
   accountLabel?: string | null;
+  /** Latest completed task of any account whose tool returned without an error (observed fact, not a check). */
+  toolProof?: { at: number; tool: string; accountId: string; accountName?: string } | null;
   visible: boolean;
   surfaceActive: boolean;
   loading: boolean;
@@ -135,8 +137,10 @@ export interface BrowserQueueState {
   entries: Array<{ id: string; traceId: string; accountId: string | null;
     status: 'waiting' | 'paused' | 'admitting' | 'cancelling' | 'cancelled' | 'failed' | 'interrupted';
     reason: string | null; createdAt: number; position: number; retryAt: number | null;
-    /** Account-readiness cause while held (reason account-not-ready) or after failing for it. */
+    /** Account-readiness cause while its deadline runs (also during a neutral capacity hold) or after failing for it. */
     cause?: string | null; causeAccountId?: string | null; failsAt?: number | null;
+    /** Audited non-readiness failure code of a failed row, e.g. retained_conversation_unavailable. */
+    failure?: string | null;
     ownerConnected: boolean; canCancel: boolean; canPrioritize: boolean; canResume: boolean; canDismiss: boolean }>;
 }
 
@@ -406,7 +410,9 @@ export interface AccountPoolSnapshot {
     proxy: AccountProxy;
     safety: { policy: AccountSafetyPolicy; cooldownUntil: number; stopped: boolean;
       newSessionWindow: AccountNewSessionWindowStatus | null };
-    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number }>;
+    accountLabel: string | null; activeTurns: number; checked: boolean; connectorReady: boolean; evidenceEpoch?: number;
+    /** Last completed task on this account whose tool returned without an error. */
+    toolProof?: { at: number; tool: string } | null }>;
 }
 
 export interface AccountTunnelView {

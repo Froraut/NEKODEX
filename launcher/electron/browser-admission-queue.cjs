@@ -122,19 +122,25 @@ class BrowserAdmissionQueue {
   snapshot() {
     const ordered = this.ordered();
     return { paused: this.paused, pausedAccounts: [...this.pausedAccounts], storageIssue: this.storageIssue,
-      entries: this.entries.filter(row => !['running', 'finished'].includes(row.status)).map(row => ({
+      entries: this.entries.filter(row => !['running', 'finished'].includes(row.status)).map(row => {
+        const unready = row.status === 'waiting' && row.notReadySince !== undefined
+          && (row.reason === 'account-not-ready' || TIMER_NEUTRAL_HOLDS.has(row.reason));
+        return {
         id: row.id, traceId: row.request.traceId, accountId: row.request.requestedAccountId,
         status: row.cancelRequested && row.status === 'admitting' ? 'cancelling' : row.status === 'admitted' ? 'admitting' : row.status,
         reason: row.reason ?? null, createdAt: row.createdAt,
         position: ordered.indexOf(row) + 1, retryAt: row.retryAt ?? null,
-        cause: row.status === 'failed' ? row.admissionBlocker ?? null : row.reason === 'account-not-ready' ? row.blocker ?? null : null,
-        causeAccountId: row.status === 'failed' || row.reason === 'account-not-ready' ? row.blockerAccountId ?? null : null,
-        failsAt: row.status === 'waiting' && row.reason === 'account-not-ready' && row.notReadySince !== undefined
-          ? row.notReadySince + ACCOUNT_NOT_READY_GRACE_MS : null,
+        // A neutral hold (capacity, runtime transition, previous submission) keeps the readiness
+        // clock running, so its cause and deadline stay visible beside the hold's own reason.
+        cause: row.status === 'failed' ? row.admissionBlocker ?? null : unready ? row.blocker ?? null : null,
+        causeAccountId: row.status === 'failed' || unready ? row.blockerAccountId ?? null : null,
+        failsAt: unready ? row.notReadySince + ACCOUNT_NOT_READY_GRACE_MS : null,
+        failure: row.status === 'failed' && !row.admissionBlocker ? row.terminalFailure?.code ?? null : null,
         ownerConnected: !row.needsOwner && this.clock() - row.lastSeen < 10_000 && this.alive(row.request.helperPid),
         canCancel: !row.cancelRequested && ['waiting', 'paused', 'admitting', 'admitted'].includes(row.status), canPrioritize: row.status === 'waiting',
         canResume: row.status === 'paused' && !row.needsOwner && this.clock() - row.lastSeen < 10_000 && this.alive(row.request.helperPid), canDismiss: ['cancelled', 'failed', 'interrupted'].includes(row.status),
-      })) };
+        };
+      }) };
   }
   request(input) {
     validateRequest(input);

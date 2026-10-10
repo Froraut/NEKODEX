@@ -2151,6 +2151,7 @@ export class ChatGptBrowserWorker {
       if (turn.abortSignal?.aborted && !(originalError instanceof ChatGptCompactionHandoffAccepted)) {
         terminal = "aborted";
       }
+      const toolProof = turn.externalProgress?.snapshot().lastCompletedTool;
       try {
         const release = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
           phase: "end",
@@ -2163,6 +2164,7 @@ export class ChatGptBrowserWorker {
           ...(terminal === "completed" && (turn.nativeConnector || turn.capabilities.localToolsEnabled)
             ? { connectorBound: true }
             : {}),
+          ...(terminal === "completed" && toolProof ? { toolProof: { tool: toolProof } } : {}),
         });
         if (release.cancelledByUser) throw chatGptBrowserTabClosedError();
         // Cancellation may arrive while the release request is in flight, after terminal was

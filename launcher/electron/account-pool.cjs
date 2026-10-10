@@ -6,6 +6,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { BrowserHost } = require('./browser-host.cjs');
 const { resolveBrowserAddress } = require('./browser-navigation-policy.cjs');
 const { AccountSafety } = require('./account-safety.cjs');
+const { AccountToolProof } = require('./account-tool-proof.cjs');
 const { AccountNetwork, validateProxy } = require('./account-network.cjs');
 const { UsageStore } = require('./usage-store.cjs');
 const { createAccountRegistry, validateAccountId } = require('./account-registry.cjs');
@@ -78,6 +79,7 @@ class AccountBrowserPool {
     this.taskLedgers = new Map(this.registry.snapshot().accounts.map(account => [account.id,
       new BrowserTaskLedger(path.join(options.coreHome, 'runtime', `tasks-${account.id}.json`))]));
     this.safety = new AccountSafety(options.coreHome);
+    this.toolProof = new AccountToolProof(options.coreHome);
     this.network = new AccountNetwork(options.coreHome);
     this.usage = new UsageStore(options.coreHome);
     this.networkOperation = null;
@@ -405,6 +407,7 @@ class AccountBrowserPool {
         } : null,
         checked: this.capabilities.has(account.id),
         connectorReady: Boolean(host && this.connectors.get(account.id) === host.connectorName()),
+        toolProof: this.toolProof.snapshot(account.id, host?.authPrincipalFingerprint ?? null),
         tunnels: { automatic: this.accountTunnel(account.id, 'automatic'), manual: this.accountTunnel(account.id, 'manual') } };
     }) };
   }
@@ -500,6 +503,7 @@ class AccountBrowserPool {
       maxTabs: this.options.maxTabs,
       workspaces: this.workspaceDirectory ? this.workspaceSnapshot() : undefined,
       queue: this.admissionQueue?.snapshot(),
+      toolProof: this.latestToolProof(registry.accounts),
       accountTabs: [...this.hosts].map(([accountId, host]) => ({ accountId,
         tabs: accountId === registry.selectedId ? selectedState.tabs : host.turnTabSnapshots() })),
       taskHistories: [...(this.taskLedgers ?? [])].map(([accountId, ledger]) => ({ accountId,
@@ -510,6 +514,16 @@ class AccountBrowserPool {
         })),
       })),
     });
+  }
+
+  /** The most recent tool-execution proof of any account, for the workspace headline. */
+  latestToolProof(accounts) {
+    let latest = null;
+    for (const { id } of accounts) {
+      const proof = this.toolProof?.snapshot(id, this.hosts.get(id)?.authPrincipalFingerprint ?? null);
+      if (proof && (!latest || proof.at > latest.at)) latest = { ...proof, accountId: id };
+    }
+    return latest;
   }
 
   publish() {
@@ -1162,7 +1176,9 @@ class AccountBrowserPool {
     try {
       this.invalidateEvidence(id);
       for (const tab of [...host.turnTabs.values()]) host.removeTurnTab(tab, false);
-      await host.logout(); return this.snapshot();
+      await host.logout();
+      try { this.toolProof.forget(id); } catch { /* the principal check already hides a stale proof */ }
+      return this.snapshot();
     } finally { releaseOperation(); }
   }
   ownerForTrace(traceId) {
@@ -1735,7 +1751,7 @@ class AccountBrowserPool {
     }
     host.taskLedger.dismiss(id); this.publish(); return this.snapshot();
   }
-  async endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound, failureCode) {
+  async endTurn(traceId, helperPid, status, reveal, message, retain, connectorBound, failureCode, toolProof) {
     const owner = this.ownerForTrace(traceId);
     const id = this.traceOwners.get(traceId) ?? owner.accountId;
     // Host validates trace/helper ownership before account-wide state can change.
@@ -1755,6 +1771,14 @@ class AccountBrowserPool {
     if (pendingRemoval) this.settleRemovedUnsentAdmission(pendingRemoval);
     this.admissionQueue?.retire(traceId, helperPid);
     this.recordUsage(() => this.usage.finish(traceId, helperPid, settledStatus, undefined, settledFailureCode));
+    // A completed task whose tools returned without an error is the account's tool-execution proof.
+    if (id && settledStatus === 'completed' && connectorBound && toolProof) {
+      try { this.toolProof.record(id, toolProof.tool, owner.authPrincipalFingerprint); }
+      catch (error) {
+        this.logger.warn('browser.tool_proof_record_failed', { accountId: id,
+          message: error instanceof Error ? error.message : String(error) });
+      }
+    }
     try { if (id && settledStatus === 'failed') this.safety.fail(id, settledFailureCode); }
     catch (error) {
       this.logger.warn('browser.account_safety_failure_record_failed', {
