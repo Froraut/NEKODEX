@@ -6,16 +6,16 @@ NEKODEX は ChatGPT アカウント、Codex タスク、ローカルツールを
 
 ## ダウンロード
 
-**現在公開されている macOS 版は `6.1.25-nekodex.1`、Linux 版は `6.1.12-nekodex.1` です。** ソースのバージョンは先行する場合があります。以下のリンクは実際に公開されたファイルだけを示します。
+**現在公開されている macOS 版は `6.1.26-nekodex.1`、Linux 版は `6.1.12-nekodex.1` です。** ソースのバージョンは先行する場合があります。以下のリンクは実際に公開されたファイルだけを示します。
 
 | 対象 | ダウンロード | 状態 |
 | --- | --- | --- |
-| macOS 13+、Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.25-nekodex.1/NEKODEX-6.1.25-nekodex.1-mac-arm64.dmg) | Developer ID 署名・公証済み |
-| macOS 13+、Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.25-nekodex.1/NEKODEX-6.1.25-nekodex.1-mac-x64.dmg) | Developer ID 署名・公証済み |
+| macOS 13+、Apple Silicon | [ARM64 DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.26-nekodex.1/NEKODEX-6.1.26-nekodex.1-mac-arm64.dmg) | Developer ID 署名・公証済み |
+| macOS 13+、Intel | [Intel DMG](https://github.com/Froraut/NEKODEX/releases/download/v6.1.26-nekodex.1/NEKODEX-6.1.26-nekodex.1-mac-x64.dmg) | Developer ID 署名・公証済み |
 | Linux x64 | [AppImage 6.1.12-nekodex.1](https://github.com/Froraut/NEKODEX/releases/download/v6.1.12-nekodex.1/codex-web-gpt-6.1.12-nekodex.1-linux-x64.AppImage) | 公開済み |
 | Windows x64 | [プレビューのビルド](https://github.com/Froraut/NEKODEX/actions/workflows/release.yml) | 未署名。信頼済みアプリ内更新の対象外 |
 
-[リリースノート](https://github.com/Froraut/NEKODEX/releases/tag/v6.1.25-nekodex.1) · [チェックサム](https://github.com/Froraut/NEKODEX/releases/download/v6.1.25-nekodex.1/checksums.txt) · [リリースの真正性](docs/release-signing.md)
+[リリースノート](https://github.com/Froraut/NEKODEX/releases/tag/v6.1.26-nekodex.1) · [チェックサム](https://github.com/Froraut/NEKODEX/releases/download/v6.1.26-nekodex.1/checksums.txt) · [リリースの真正性](docs/release-signing.md)
 
 macOS では DMG を開き、**NEKODEX** を「アプリケーション」にドラッグしてください。今後公開される更新はアプリ内の **Updates** からインストールできます。アカウント設定と ChatGPT のログインデータは保持し、更新前に実行中のタスクを終えてください。
 
