@@ -11,7 +11,12 @@ export function throwIfPromptAttachmentAborted(signal?: AbortSignal): void {
 
 export function withBrowserTurnAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(new DOMException("ChatGPT web turn aborted", "AbortError"));
+  if (signal.aborted) {
+    // The abandoned browser operation can still reject later; an unowned rejection would crash
+    // the helper shared by every other task.
+    void promise.catch(() => {});
+    return Promise.reject(new DOMException("ChatGPT web turn aborted", "AbortError"));
+  }
   return new Promise<T>((resolvePromise, rejectPromise) => {
     const onAbort = () => rejectPromise(new DOMException("ChatGPT web turn aborted", "AbortError"));
     signal.addEventListener("abort", onAbort, { once: true });
