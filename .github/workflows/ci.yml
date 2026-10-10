@@ -47,6 +47,9 @@ jobs:
       - name: Check README downloads and version pins
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run check-version
+      - name: Install the headless browser for DOM regression tests
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun x --no-install playwright-core install --with-deps chromium-headless-shell
       - name: Run focused Web regression tests
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run test:regressions
