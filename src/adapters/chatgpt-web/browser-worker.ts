@@ -2112,12 +2112,11 @@ export class ChatGptBrowserWorker {
       return "other";
     };
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-    let heartbeatInFlight = false;
+    let heartbeatInFlight: Promise<void> | undefined;
     let lastHeartbeatFailureAt = 0;
     const sendHeartbeat = () => {
       if (heartbeatInFlight) return;
-      heartbeatInFlight = true;
-      void notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+      heartbeatInFlight = notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
         phase: "heartbeat",
         traceId: turn.traceId,
         helperPid: process.pid,
@@ -2129,8 +2128,8 @@ export class ChatGptBrowserWorker {
         console.warn(
           `[chatgpt-web] launcher turn heartbeat failed for ${turn.traceId}: ${error instanceof Error ? error.message : String(error)}`,
         );
-      }).finally(() => {
-        heartbeatInFlight = false;
+      }).then(() => undefined).finally(() => {
+        heartbeatInFlight = undefined;
       });
     };
     try {
@@ -2174,6 +2173,8 @@ export class ChatGptBrowserWorker {
       throw error;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
+      // A heartbeat still in flight must not reach the launcher after this turn's end.
+      await heartbeatInFlight;
       if (turn.abortSignal?.aborted && !(originalError instanceof ChatGptCompactionHandoffAccepted)) {
         terminal = "aborted";
       }

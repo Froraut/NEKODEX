@@ -1,6 +1,6 @@
 import type { Locator } from "playwright-core";
 import type { ChatGptMarkdownSegment } from "./markdown";
-import { CHATGPT_COMPLETION_ACTION_SELECTOR } from "../../chatgpt-session";
+import { CHATGPT_COMPLETION_ACTION_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR } from "../../chatgpt-session";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import { chatGptBrowserTabClosedError } from "./adapter-error";
 import { CHATGPT_DOM_REVISION_ATTRIBUTES, recordDomRevisionObservation } from "./browser-dom-revision";
@@ -106,7 +106,10 @@ export async function responseDomSnapshot(
         break;
       }
     }
-    const observerKey = `${registry.documentId}:${observerState.id}:${observerState.revision}`;
+    // Stop lives outside this subtree; its state is part of the key so its disappearance refreshes
+    // the completion-action decision below.
+    const generating = [...document.querySelectorAll<HTMLElement>(options.stopButtonSelector)].some(isRendered);
+    const observerKey = `${registry.documentId}:${observerState.id}:${observerState.revision}:${generating ? "g" : "s"}`;
     if (options.knownKey === observerKey) return { key: observerKey };
     observerState.rendered.clear();
     const renderedInDom = (candidate: HTMLElement): boolean => {
@@ -423,12 +426,18 @@ export async function responseDomSnapshot(
       linkTargets: segment.linkTargets,
     }));
     const rendered = renderedRoots.at(-1);
-    const completionAction = rendered
+    // The footer is shared with user messages; a user content unit's control is never completion.
+    const completionActions = rendered
       ? [...root.querySelectorAll<HTMLElement>(options.completionActionSelector)]
         .filter(renderedInDom)
-        .find(candidate => !rendered.contains(candidate)
-          && Boolean(rendered.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING))
-      : undefined;
+        .filter(candidate => !rendered.contains(candidate)
+          && !candidate.closest("[data-content-search-unit-key]")?.querySelector("[data-user-message-bubble]"))
+      : [];
+    // The bound turn already excludes older responses. ChatGPT may place this turn's footer before
+    // its final Markdown in DOM order while painting it below; accept that once generation stopped.
+    const completionAction = completionActions.find(candidate => Boolean(
+      rendered!.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING,
+    )) ?? (!generating ? completionActions.at(-1) : undefined);
     const completionActionSet = new Set(completionAction ? [completionAction] : []);
     const candidates = new Map<HTMLElement, ChatGptVisibleTraceBlock["kind"]>();
     renderedRoots.forEach(candidate => candidates.set(candidate, "answer"));
@@ -580,6 +589,7 @@ export async function responseDomSnapshot(
     };
   }, {
     completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
+    stopButtonSelector: CHATGPT_STOP_BUTTON_SELECTOR,
     stoppedThinkingLabels: [...CHATGPT_STOPPED_THINKING_LABELS],
     knownKey: cache?.key,
     attributeFilter: [...CHATGPT_DOM_REVISION_ATTRIBUTES],

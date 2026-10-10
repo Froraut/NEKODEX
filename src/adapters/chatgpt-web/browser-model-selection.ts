@@ -201,6 +201,25 @@ export class ChatGptModelSelectionController {
     } catch { /* Missing or ambiguous live metadata stays unknown; telemetry cannot fail a turn. */ }
   }
 
+  /**
+   * Closing the picker commits its label and restores the composer asynchronously; a fixed settle
+   * can read a menu that is still closing. Wait (bounded) on the same control; the caller's
+   * assertEffortSurface still verifies the exact selection afterwards.
+   */
+  private async awaitEffortMenuClosed(page: Page): Promise<void> {
+    await this.dependencies.settleChatGptUi();
+    const deadline = Date.now() + 3_000;
+    for (;;) {
+      const composer = await this.dependencies.activeComposer(page, 1_000).catch(() => undefined);
+      const controls = composer?.locator("xpath=ancestor::form[1]").locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
+      if (composer && controls && await controls.count().catch(() => 0) === 1
+        && await controls.first().getAttribute("aria-expanded").catch(() => null) === "false"
+        && await composer.isEditable().catch(() => false)) return;
+      if (Date.now() >= deadline) return;
+      await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
+    }
+  }
+
   private async assertEffortSurface(page: Page, effort: ChatGptWebModelMode["effort"]): Promise<void> {
     const selected = this.effortSelections.get(page);
     const composer = await this.dependencies.activeComposer(page);
@@ -373,7 +392,7 @@ export class ChatGptModelSelectionController {
     }
     await captureDiagnostic?.("effort-selected");
     await page.keyboard.press("Escape");
-    await this.dependencies.settleChatGptUi();
+    await this.awaitEffortMenuClosed(page);
     this.effortSelections.set(page, { label: (await currentEffort.innerText()).trim(), url: page.url(), effort: mode.effort });
     await this.assertEffortSurface(page, mode.effort);
     let confirmation = await activateChatGptEffortMenu(page, currentEffort);
@@ -389,7 +408,7 @@ export class ChatGptModelSelectionController {
           stageMayRunOtherVersion(confirmation, mode));
       }
     } finally { await page.keyboard.press("Escape"); }
-    await this.dependencies.settleChatGptUi();
+    await this.awaitEffortMenuClosed(page);
     await this.assertEffortSurface(page, mode.effort);
     return mode;
   }
@@ -431,7 +450,7 @@ export class ChatGptModelSelectionController {
           if (!verificationError) throw cleanupError;
         }
       }
-      await this.dependencies.settleChatGptUi();
+      await this.awaitEffortMenuClosed(page);
       await this.assertEffortSurface(page, expectedMode.effort);
       if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     } else if (expectedMode) {
