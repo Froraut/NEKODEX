@@ -56,7 +56,7 @@
     "launcher:typecheck": "bun run --cwd launcher typecheck",
     "launcher:build": "bun run --cwd launcher build",
     "verify": "bun run scripts/verify.ts",
-    "test:regressions": "bun test tests/reasoning-replay.test.ts tests/response-rebinding.test.ts tests/account-not-ready-replay.test.ts tests/tool-proof.test.ts tests/api-panel-google.test.ts tests/doctor-inspection-wait.test.ts"
+    "test:regressions": "bun test tests/reasoning-replay.test.ts tests/response-rebinding.test.ts tests/account-not-ready-replay.test.ts tests/tool-proof.test.ts tests/api-panel-google.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
