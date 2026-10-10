@@ -44,6 +44,12 @@ jobs:
       - name: Check published ChatGPT connector ABIs
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run connector-abi:check
+      - name: Check README downloads and version pins
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun run check-version
+      - name: Run focused Web regression tests
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun run test:regressions
       - name: Validate launcher installer with Windows PowerShell 5.1
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: powershell

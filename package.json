@@ -1,7 +1,8 @@
 {
   "name": "codex-chatgpt-web",
   "version": "6.1.24-nekodex.1",
-  "publishedReleaseVersion": "6.1.11-nekodex.1",
+  "publishedReleaseVersion": "6.1.24-nekodex.1",
+  "publishedLinuxReleaseVersion": "6.1.12-nekodex.1",
   "private": true,
   "description": "NEKODEX — a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
@@ -54,7 +55,8 @@
     "launcher:audit": "bun run --cwd launcher audit",
     "launcher:typecheck": "bun run --cwd launcher typecheck",
     "launcher:build": "bun run --cwd launcher build",
-    "verify": "bun run scripts/verify.ts"
+    "verify": "bun run scripts/verify.ts",
+    "test:regressions": "bun test tests/reasoning-replay.test.ts tests/response-rebinding.test.ts tests/account-not-ready-replay.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

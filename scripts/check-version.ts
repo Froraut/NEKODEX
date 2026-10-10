@@ -6,6 +6,7 @@ const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
   version?: string;
   publishedReleaseVersion?: string;
+  publishedLinuxReleaseVersion?: string;
   packageManager?: string;
   devDependencies?: Record<string, string>;
   engines?: Record<string, string>;
@@ -16,6 +17,11 @@ if (!packageVersion) throw new Error("package.json has no version");
 const publishedReleaseVersion = packageJson.publishedReleaseVersion ?? packageVersion;
 if (!/^\d+\.\d+\.\d+-nekodex\.\d+$/.test(publishedReleaseVersion)) {
   throw new Error("package.json has an invalid publishedReleaseVersion");
+}
+// The last published Linux files can be older than the macOS release (macOS-only publications).
+const publishedLinuxReleaseVersion = packageJson.publishedLinuxReleaseVersion ?? publishedReleaseVersion;
+if (!/^\d+\.\d+\.\d+-nekodex\.\d+$/.test(publishedLinuxReleaseVersion)) {
+  throw new Error("package.json has an invalid publishedLinuxReleaseVersion");
 }
 const packageManagerMatch = /^bun@(\d+\.\d+\.\d+)$/.exec(packageJson.packageManager ?? "");
 if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun packageManager version");
@@ -56,6 +62,7 @@ if (!repository) throw new Error("package.json must identify the GitHub release 
 for (const name of readdirSync(root).filter(name => /^README(?:\.[\w-]+)?\.md$/.test(name))) {
   assertReadmeDownloads(name, readFileSync(resolve(root, name), "utf8"), {
     version: publishedReleaseVersion,
+    linuxVersion: publishedLinuxReleaseVersion,
     repository,
     dmgName: launcherPackage.build.dmg.artifactName,
     archiveName: launcherPackage.build.artifactName,
