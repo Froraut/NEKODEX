@@ -511,6 +511,7 @@
   "newConnectorRequired": "建立新的 App ID。不要重新命名舊聯結器。",
   "setupChecksPassed": "設定檢查已通過",
   "connectorAvailableNotExecuted": "聯結器和本機工具可用。尚未以真實工具任務測試。",
+  "connectorToolExecuted": "聯結器和本機工具可用。最近一次真實工具執行：{tool}（{account}），{time}。",
   "manualSetupReady": "手動設定檢查已通過",
   "manualSetupReadyBody": "本機 Harness 和聯結器可用。每個回合都要自行選擇帳號、聯結器、模型和推理強度，貼上提示並傳送。只有真實任務才能確認工具執行。",
   "catalogUnavailable": "無法取得模型目錄",

@@ -91,9 +91,12 @@ test("capacity holds neither start nor reset the readiness deadline", async () =
   const q = queueWith(() => held);
   try {
     q.poll(); await q.queue.pump();
+    const deadline = q.queue.snapshot().entries[0].failsAt;
     held = { reason: "capacity" };
     await holdFor(q, ACCOUNT_NOT_READY_GRACE_MS + 5_000);
-    expect(q.queue.snapshot().entries[0].status).toBe("waiting");
+    // The running deadline and its cause stay visible beside the capacity reason.
+    expect(q.queue.snapshot().entries[0]).toMatchObject({ status: "waiting", reason: "capacity",
+      cause: "account_tunnel_not_ready", failsAt: deadline });
     held = { reason: "account-not-ready", blocker: "account_tunnel_not_ready" };
     q.advance(1_000); q.poll(); await q.queue.pump();
     expect(q.queue.snapshot().entries[0].status).toBe("failed");
@@ -108,7 +111,7 @@ test("checking, busy and paused accounts hold without a deadline; a recovered ac
     for (const reason of ["account-checking", "account-busy", "paused-account"]) {
       held = { reason };
       await holdFor(q, ACCOUNT_NOT_READY_GRACE_MS * 2);
-      expect(q.queue.snapshot().entries[0]).toMatchObject({ status: "waiting", reason });
+      expect(q.queue.snapshot().entries[0]).toMatchObject({ status: "waiting", reason, cause: null, failsAt: null });
     }
     held = { reason: "account-not-ready", blocker: "account_signed_out" };
     await holdFor(q, 5_000);
@@ -123,6 +126,7 @@ test("a retained conversation without an owner fails at once with its recoverabl
   try {
     q.poll(); await q.queue.pump();
     expect(() => q.poll()).toThrow("retained ChatGPT conversation");
+    expect(q.queue.snapshot().entries[0]).toMatchObject({ status: "failed", cause: null, failure: "retained_conversation_unavailable" });
     expect(q.dispatched()).toBe(0);
   } finally { q.cleanup(); }
 });

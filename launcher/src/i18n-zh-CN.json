@@ -510,6 +510,7 @@
   "newConnectorRequired": "创建新的 App ID。不要重命名旧连接器。",
   "setupChecksPassed": "设置检查已通过",
   "connectorAvailableNotExecuted": "连接器和本地工具可用。尚未通过真实工具任务验证。",
+  "connectorToolExecuted": "连接器和本地工具可用。最近一次真实工具运行：{tool}（{account}），{time}。",
   "manualSetupReady": "手动设置检查已通过",
   "manualSetupReadyBody": "本地运行环境和连接器可用。每个回合都需要自行选择账户、连接器、模型和推理强度，粘贴提示并发送。真实任务才能确认工具执行。",
   "catalogUnavailable": "模型目录不可用",

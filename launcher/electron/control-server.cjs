@@ -250,6 +250,12 @@ class BrowserControlServer {
       if (body.connectorBound !== undefined && typeof body.connectorBound !== "boolean") {
         throw new Error("connectorBound is invalid");
       }
+      if (body.toolProof !== undefined && (request.url !== "/v1/turn/end" || !body.toolProof
+        || typeof body.toolProof !== "object" || Array.isArray(body.toolProof)
+        || Object.keys(body.toolProof).length !== 1 || typeof body.toolProof.tool !== "string"
+        || !/^[A-Za-z0-9_.:-]{1,80}$/.test(body.toolProof.tool))) {
+        throw new Error("toolProof is invalid");
+      }
       if (body.refreshViewport !== undefined && typeof body.refreshViewport !== "boolean") {
         throw new Error("refreshViewport is invalid");
       }
@@ -514,6 +520,7 @@ class BrowserControlServer {
             body.retain === true,
             body.connectorBound === true,
             body.failureCode,
+            body.status === "completed" && body.toolProof ? { tool: body.toolProof.tool } : undefined,
           );
           this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
           return { ok: true, ...release };

@@ -117,13 +117,32 @@ export function McpSurface({
     : currentToolProof(snapshot, operation));
   // ChatGPT pages (developer mode, plugins) open in the configured account's own window; with no account they fall
   // back to the system browser.
-  const openApiPanel = async (section: "tunnels" | "keys" = "tunnels") => {
+  // Set while the user works on OpenAI pages (embedded panel or system browser) for this exact account and mode;
+  // coming back to NEKODEX then continues at the credentials step for the same account.
+  const awayForPlatform = useRef<{ accountId: string | null; interactionMode: BrowserInteractionMode } | null>(null);
+  const [returnedFromPlatform, setReturnedFromPlatform] = useState(false);
+  const openApiPanel = async (section: "tunnels" | "keys" = "tunnels", systemBrowser = false) => {
     setError(null);
     try {
-      if (pageAccountId) await api!.openOpenAiApiPanel(pageAccountId, section);
+      awayForPlatform.current = { accountId: pageAccountId, interactionMode };
+      if (pageAccountId && !systemBrowser) await api!.openOpenAiApiPanel(pageAccountId, section);
       else await api!.openExternal(section === "keys" ? snapshot.urls.keys : snapshot.urls.tunnels);
-    } catch (error) { setError(messageOf(error)); }
+    } catch (error) { awayForPlatform.current = null; setError(messageOf(error)); }
   };
+  useEffect(() => {
+    const onFocus = () => {
+      const away = awayForPlatform.current;
+      if (!away) return;
+      awayForPlatform.current = null;
+      // A different account or mode chosen meanwhile owns the page now; never carry the return over to it.
+      if (!sameScope(away.accountId, away.interactionMode)) return;
+      setStep(current => current === 0 ? 1 : current);
+      setReturnedFromPlatform(true);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+  useEffect(() => { setReturnedFromPlatform(false); awayForPlatform.current = null; }, [pageAccountId, interactionMode]);
   const manualInteraction = interactionMode === "manual";
   useEffect(() => {
     if (repairOutcome !== "recovered" || repairOutcomeRevision === null
@@ -445,11 +464,20 @@ export function McpSurface({
                   <Button icon="browser" onClick={() => void openApiPanel()}>{copy.openAiApiPanel}</Button>
                   <Button icon="browser" onClick={() => void openApiPanel("keys")}>{copy.openKeys}</Button>
                 </div>
+                {pageAccountId ? <>
+                  <p>{accountToolsCopy(language).googleFallback.replaceAll("{account}", () => tunnelAccountLabel ?? pageAccountId)}</p>
+                  <div className="nk-connections__actions">
+                    <Button icon="browser" variant="ghost" onClick={() => void openApiPanel("tunnels", true)}>{accountToolsCopy(language).openTunnelsExternal}</Button>
+                    <Button icon="browser" variant="ghost" onClick={() => void openApiPanel("keys", true)}>{accountToolsCopy(language).openKeysExternal}</Button>
+                  </div>
+                </> : null}
                 <p>{copy.apiPanelConnectorHint}</p>
               </div>
             ) : null}
             {step === 1 ? (
               <div className="nk-connections__step-body">
+                {returnedFromPlatform && pageAccountId ? <Notice tone="info" role="status">
+                  {accountToolsCopy(language).returned.replaceAll("{account}", () => tunnelAccountLabel ?? pageAccountId)}</Notice> : null}
                 {credentialsConfigured && !replacingCredentials ? (
                   <Notice
                     action={<Button disabled={busy} id={replaceCredentialsId} size="sm" variant="ghost"

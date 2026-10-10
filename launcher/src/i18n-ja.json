@@ -510,6 +510,7 @@
   "newConnectorRequired": "新しい App ID を作成してください。古いコネクタの名前を変更しないでください。",
   "setupChecksPassed": "設定チェックに合格しました",
   "connectorAvailableNotExecuted": "コネクタとローカルツールを利用できます。実際のツールタスクはまだテストされていません。",
+  "connectorToolExecuted": "コネクタとローカルツールを利用できます。最後の実際のツール実行：{tool}（{account}）、{time}。",
   "manualSetupReady": "手動設定チェックに合格しました",
   "manualSetupReadyBody": "ローカルハーネスとコネクタを利用できます。ターンごとにアカウント、コネクタ、モデル、推論レベルを選び、プロンプトを貼り付けて自分で送信してください。実際のタスクでツール実行を確認できます。",
   "catalogUnavailable": "モデルカタログを利用できません",

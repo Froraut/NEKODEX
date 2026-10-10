@@ -510,6 +510,7 @@
   "newConnectorRequired": "Create a new App ID. Do not rename the old connector.",
   "setupChecksPassed": "Setup checks passed",
   "connectorAvailableNotExecuted": "Connector and local tools are available. A real tool task has not been tested yet.",
+  "connectorToolExecuted": "Connector and local tools are available. Last real tool run: {tool} on {account}, {time}.",
   "manualSetupReady": "Manual setup checks passed",
   "manualSetupReadyBody": "The local harness and connector are available. For every turn, choose the account, connector, model, and effort, paste the prompt, and send it yourself. A real task confirms tool execution.",
   "catalogUnavailable": "Model catalog unavailable",

@@ -32,5 +32,17 @@ function isOpenAiApiSessionMutationRequest(details) {
   return openAiApiSessionMutation(details.url);
 }
 
-module.exports = { OPENAI_API_TUNNELS_URL, openAiApiPanelUrl, allowedOpenAiApiPanelUrl,
-  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest };
+/**
+ * Google refuses OAuth inside embedded browsers ("This browser or app may not be secure"). Its
+ * refusal page cannot be completed here, so the panel hands the same fixed page to the system browser.
+ */
+function googleRefusedEmbeddedSignIn(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "accounts.google.com"
+      && (/\/signin\/rejected(?:\/|$)/.test(url.pathname) || url.searchParams.get("error") === "disallowed_useragent");
+  } catch { return false; }
+}
+
+module.exports = { OPENAI_API_TUNNELS_URL, API_PANEL_URLS, openAiApiPanelUrl, allowedOpenAiApiPanelUrl,
+  openAiApiSessionMutation, isOpenAiApiSessionMutationRequest, googleRefusedEmbeddedSignIn };

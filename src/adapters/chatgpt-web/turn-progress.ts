@@ -3,7 +3,14 @@ export interface ChatGptExternalTurnProgressSnapshot {
   lastToolBatchRevision: number;
   activeToolCalls: number;
   lastProgressAt?: number;
+  /** Codex tool results returned to ChatGPT without an error during this turn (absent while none). */
+  completedToolResults?: number;
+  /** Wire name of the latest successful tool, the launcher's proof that a real tool ran. */
+  lastCompletedTool?: string;
 }
+
+/** Tool wire names are model-visible identifiers; anything else is not reported to the launcher. */
+export const TOOL_PROOF_NAME = /^[A-Za-z0-9_.:-]{1,80}$/;
 
 interface ProgressWaiter {
   afterRevision: number;
@@ -90,6 +97,8 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
   /** Counted by call id: the broker redelivers an unacknowledged batch after an observer reconnect. */
   private readonly activeCallIds = new Set<string>();
   private lastProgressAt?: number;
+  private completedToolResults = 0;
+  private lastCompletedTool?: string;
   private retirementError?: Error;
   private readonly toolBatchObservationWaiters = new Set<ToolBatchObservationWaiter>();
 
@@ -99,6 +108,8 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
       lastToolBatchRevision: this.lastToolBatchRevision,
       activeToolCalls: this.activeToolCalls,
       ...(this.lastProgressAt !== undefined ? { lastProgressAt: this.lastProgressAt } : {}),
+      ...(this.completedToolResults > 0 && this.lastCompletedTool
+        ? { completedToolResults: this.completedToolResults, lastCompletedTool: this.lastCompletedTool } : {}),
     };
   }
 
@@ -150,12 +161,17 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     });
   }
 
-  recordToolResult(callId: string, now = Date.now()): void {
+  /** `succeededTool` names a result Codex returned without an error; failed results only advance progress. */
+  recordToolResult(callId: string, now = Date.now(), succeededTool?: string): void {
     this.assertNotRetired();
     if (!this.activeCallIds.delete(callId)) {
       throw new Error("ChatGPT external progress received a tool result without an active call");
     }
     this.activeToolCalls = this.activeCallIds.size;
+    if (succeededTool !== undefined && TOOL_PROOF_NAME.test(succeededTool)) {
+      this.completedToolResults += 1;
+      this.lastCompletedTool = succeededTool;
+    }
     this.advance(now, "tool_result");
   }
 
@@ -274,7 +290,11 @@ export function assertChatGptTurnProgressSnapshot(
     || (value.lastProgressAt !== undefined && !Number.isFinite(value.lastProgressAt))
     // Any recorded activity stamps a timestamp, so a frame claiming progress without one is
     // malformed and would otherwise report liveness the daemon never observed.
-    || (value.revision > 0 && value.lastProgressAt === undefined)) {
+    || (value.revision > 0 && value.lastProgressAt === undefined)
+    || (value.completedToolResults !== undefined
+      && (!finiteIndex(value.completedToolResults) || value.completedToolResults === 0
+        || typeof value.lastCompletedTool !== "string" || !TOOL_PROOF_NAME.test(value.lastCompletedTool)))
+    || (value.lastCompletedTool !== undefined && value.completedToolResults === undefined)) {
     throw new Error("ChatGPT external progress snapshot is invalid");
   }
 }
