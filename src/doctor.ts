@@ -164,11 +164,15 @@ export async function runDoctor(): Promise<DoctorReport> {
           : `Embedded launcher browser is authenticated and reachable (pid ${descriptor.pid})`,
       });
     } catch (error) {
+      const detail = errorDetail(error);
       checks.push({
         id: "browser-host",
         status: "error",
-        message: "Embedded launcher browser is unavailable",
-        detail: errorDetail(error),
+        // A launcher-owned check of the same account is transient, not an unavailable browser.
+        message: /\bis busy with\b|already checking the account/.test(detail ?? "")
+          ? "Embedded launcher browser is busy with another check of this account; verify again when it finishes"
+          : "Embedded launcher browser is unavailable",
+        detail,
       });
     }
   } else {

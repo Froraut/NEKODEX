@@ -1085,7 +1085,9 @@ function registerIpc({ logger, stateStore }) {
       const state = stateStore.update({ mcpSetupComplete: false });
       send("launcher:state-changed", state);
       publishOperation({ name: operationName, status: "failed", message });
-      return report;
+      // The connector is only checked once the runtime is healthy; the runtime's generic
+      // "local checks cannot prove the connector" placeholder would contradict an existing proof.
+      return { ...report, checks: report.checks.filter((check) => check.id !== "connector") };
     }
     if (stateStore.read().browserInteractionMode === "manual") {
       if (!accountProofContextIsCurrent(proofContext, stateStore, { requireCoreSetup: true })) {
