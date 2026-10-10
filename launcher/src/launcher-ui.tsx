@@ -375,7 +375,8 @@ export function DoctorSummary({ copy, language, report }: { copy: Copy; language
             <StateDot state={check.status === "ok" ? "ready" : check.status === "warning" ? "optional" : "error"} />
             <span>{check.status === "ok"
               ? localizeRuntimeMessage(copy, check.message, check.id, language)
-              : check.message}</span>
+              : check.message}
+              {check.status !== "ok" && check.detail ? <small>{check.detail}</small> : null}</span>
           </p>
         ))}
       </div>

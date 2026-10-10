@@ -18,6 +18,9 @@ const { AccountSessionMutationCoordinator } = require('./browser-workspace-sessi
 
 const { AccountOperationLeases, validateRead, validateExclusive } = require('./account-operation-leases.cjs');
 
+// Under the runtime's 30 s session-inspection deadline, leaving time for its own short read.
+const READ_ONLY_INSPECTION_WAIT_MS = 20_000;
+
 function validateWorkspaceId(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 128
     || /[\u0000-\u001f\u007f]/.test(value)) throw new Error('Browser workspace identity is invalid');
@@ -1001,9 +1004,34 @@ class AccountBrowserPool {
     })();
     return this.capabilityRefresh;
   }
+  /**
+   * A runtime inspection (doctor, setup) that arrives while the launcher runs its own read-only
+   * check of the same account waits for that check instead of failing as "busy"; it is only a read.
+   * Mutations, turns and other operations still fail fast.
+   */
+  async awaitReadOnlyInspection(id, timeoutMs = this.options?.readOnlyInspectionWaitMs ?? READ_ONLY_INSPECTION_WAIT_MS) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const host = this.hosts.get(id);
+      const inspection = host?.readOnlyInspection;
+      if (!inspection?.done || host.activeTraceId || this.accountMutationOperationLabel(id)) return;
+      if (host.manualOperation && host.manualOperation !== inspection.name) return;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      let timer;
+      await Promise.race([
+        inspection.done.catch(() => {}),
+        new Promise(resolve => { timer = setTimeout(resolve, remaining); timer.unref?.(); }),
+      ]);
+      clearTimeout(timer);
+      if (this.inspectionsPaused || this.destroyed) return;
+    }
+  }
   async inspectSession(detectCapabilities, accountId) {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const id = accountId ?? this.registry.snapshot().selectedId;
+    await this.awaitReadOnlyInspection(id);
+    if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     this.assertAccountOperationAvailable(id);
     const epoch = detectCapabilities ? this.invalidateEvidence(id) : null;
     try {
