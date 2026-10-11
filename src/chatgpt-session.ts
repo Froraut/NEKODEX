@@ -51,7 +51,12 @@ const CHATGPT_STOP_ICON_PATH = "M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25
 export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"], form[data-chatgpt-composer] button[type="button"][aria-label="Stop"], form[data-chatgpt-composer] button[type="button"][aria-label="Arrêter"], '
   + `form[data-chatgpt-composer] button[type="button"].size-token-button-composer:has(svg.icon-primary-action > path[d="${CHATGPT_STOP_ICON_PATH}"])`;
 // The Think pill's brain glyph identifies it independently of its translated label.
-export const CHATGPT_THINK_BUTTON_ICON_SELECTOR = 'button[type="button"].__composer-pill[aria-pressed]:has(> .__composer-pill-icon > svg[viewBox="0 0 24 24"] > path[d^="M14.8974 2.29998C15.8303 2.29013 16.802 2.58194 17.5566 3.22577"])';
+// Free accounts (upstream capture 2026-10-11) use an SVG sprite whose fragment stays the same with
+// Think on or off; the asset hash in the sprite URL does not.
+export const CHATGPT_THINK_BUTTON_ICON_SELECTOR = [
+  'button[type="button"].__composer-pill[aria-pressed]:has(> .__composer-pill-icon > svg[viewBox="0 0 24 24"] > path[d^="M14.8974 2.29998C15.8303 2.29013 16.802 2.58194 17.5566 3.22577"])',
+  'button[type="button"][aria-pressed]:has(> svg[viewBox="0 0 20 20"] > use[href$="#brain-regular-20"])',
+].join(", ");
 // The new footer is shared with user messages. Response extraction additionally requires
 // this control to FOLLOW the last assistant answer, excluding the user's earlier footer.
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"], [data-turn-key] .turn-action-controls button';
