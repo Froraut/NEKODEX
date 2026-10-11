@@ -3050,6 +3050,7 @@ export class ChatGptBrowserWorker {
             currentText: snapshot.visibleText,
             completionActionVisible: snapshot.completionActionVisible,
             externalProgressLive,
+            responseStreamActive: submissionRejection.hasActiveResponse(),
           });
           if (domError) throw new Error(domError);
           const completionReady = completionTracker.update({
@@ -3196,6 +3197,7 @@ export class ChatGptBrowserWorker {
             currentText: "",
             completionActionVisible: false,
             externalProgressLive,
+            responseStreamActive: submissionRejection.hasActiveResponse(),
           });
           if (domError) throw new Error(domError);
         }
