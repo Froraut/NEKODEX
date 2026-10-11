@@ -348,7 +348,13 @@ export function extractChatGptContinuationEnvironmentClaim(parsed: CodexParsedRe
  * Git workspace metadata need not list every native filesystem root. Return that earlier claim
  * only for a same-turn pair; the store must compare it with the current canonical rollout.
  */
-export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedRequest): ChatGptTurnEnvironment | undefined {
+/** A steering claim corroborates the current rollout; it never supplies authority itself. */
+export type ChatGptSteeringEnvironmentClaim = ChatGptTurnEnvironment & {
+  /** Modern envelopes state filesystem access only; absence is not a disabled-network statement. */
+  statesNetworkAccess: boolean;
+};
+
+export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedRequest): ChatGptSteeringEnvironmentClaim | undefined {
   const turnId = extractChatGptTurnIdentity(parsed).turnId;
   if (!turnId) return undefined;
   const body = record(parsed._rawBody);
@@ -377,7 +383,10 @@ export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedReques
     const instruction = record(input[index]);
     if (typeof instruction?.id !== "string" || !instruction.id) continue;
     const text = environmentBeforeUser(input, index, turnId, metadata);
-    if (text) return parseChatGptEnvironmentText(parsed, text);
+    if (text) return {
+      ...parseChatGptEnvironmentText(parsed, text),
+      statesNetworkAccess: /<network_access>|network access is (?:enabled|disabled|restricted)/i.test(text),
+    };
   }
   return undefined;
 }

@@ -110,6 +110,9 @@ const diagnostic = (...values: unknown[]): void => {
 console.info = diagnostic;
 console.warn = diagnostic;
 console.error = diagnostic;
+// stdout carries the JSON-line protocol; stray log output from any dependency would corrupt it.
+console.log = diagnostic;
+console.debug = diagnostic;
 
 const abortControllers = new Map<string, AbortController>();
 const turnProgress = new Map<string, ChatGptMirroredTurnProgress>();

@@ -28,6 +28,14 @@ export class ChatGptTraceFeed {
     assertByteLimit(0, maxBytes, "ChatGPT trace feed");
   }
 
+  private readonly progressListeners = new Set<() => void>();
+
+  /** Notified on every new event; generation progress renews deadlines owned by other phases. */
+  observeProgress(listener: () => void): () => void {
+    this.progressListeners.add(listener);
+    return () => { this.progressListeners.delete(listener); };
+  }
+
   push(event: ChatGptTraceEvent): void {
     const normalized = event.continuation ? event.text : event.text.trim();
     if (!normalized) return;
@@ -36,6 +44,7 @@ export class ChatGptTraceFeed {
     assertByteLimit(this.queuedBytes + bytes, this.maxBytes, "ChatGPT trace feed");
     this.queuedBytes += bytes;
     this.queued.push(normalizedEvent);
+    for (const listener of this.progressListeners) listener();
     const waiter = this.waiters.values().next().value as TraceWaiter | undefined;
     if (!waiter) return;
     this.waiters.delete(waiter);
@@ -84,6 +93,14 @@ export class ChatGptTextFeed {
     assertByteLimit(0, maxBytes, "ChatGPT answer feed");
   }
 
+  private readonly progressListeners = new Set<() => void>();
+
+  /** Notified on every new event; generation progress renews deadlines owned by other phases. */
+  observeProgress(listener: () => void): () => void {
+    this.progressListeners.add(listener);
+    return () => { this.progressListeners.delete(listener); };
+  }
+
   push(delta: string): void {
     if (!delta) return;
     const bytes = Buffer.byteLength(delta, "utf8");
@@ -93,6 +110,7 @@ export class ChatGptTextFeed {
     this.queuedBytes += bytes + 64;
     this.text += delta;
     this.queued.push(delta);
+    for (const listener of this.progressListeners) listener();
     const waiter = this.waiters.values().next().value as TextWaiter | undefined;
     if (!waiter) return;
     this.waiters.delete(waiter);

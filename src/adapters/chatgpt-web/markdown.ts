@@ -270,6 +270,8 @@ export class ChatGptMarkdownBuffer {
   private lastGroup: string | undefined;
   private consistencyError: ChatGptMarkdownConsistencyError | undefined;
 
+  constructor(private readonly delivery: "stream" | "complete" = "stream") {}
+
   observe(segments: ChatGptMarkdownSegment[]): string {
     const now = Date.now();
     // Candidates and the latest snapshot both retain DOM records before Markdown is emitted.
@@ -283,6 +285,9 @@ export class ChatGptMarkdownBuffer {
     this.consistencyError = undefined;
     this.snapshotBytes = snapshotBytes;
     this.latest = reconciled.map(segment => ({ ...segment }));
+    // A compaction summary is delivered atomically. Until finish(), edits and reordering revise an
+    // undelivered draft instead of contradicting text already sent to Codex.
+    if (this.delivery === "complete") return "";
 
     const visibleCandidates = new Set<string>();
     for (const segment of reconciled) {

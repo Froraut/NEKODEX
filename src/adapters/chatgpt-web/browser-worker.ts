@@ -36,6 +36,7 @@ import {
   type ChatGptSubmissionEvidence,
 } from "./browser-submission-policy";
 import { parseChatGptWebCompactionExecution, type ChatGptWebCompactionExecution } from "../../chatgpt-web-compaction-policy";
+import { observeChatGptAttachmentUploads } from "./attachment-upload";
 import { skillFileTokens } from "./skill-attachments";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -185,10 +186,11 @@ const browserStageTimeouts = {
   effortSelection: 120_000,
   promptAttachment: 60_000,
   fileAttachment: 120_000,
-  send: 20_000,
-  // A Bigger Context stage posts a much larger payload onto a conversation that already holds the
-  // earlier parts. This budget covers ChatGPT accepting the submission, not just the click.
-  multipartStageSend: 180_000,
+  sendButton: 20_000,
+  // Covers ChatGPT accepting the submission, not just the click. A large single prompt or a
+  // Bigger Context stage onto a conversation holding the earlier parts can take minutes; a
+  // shorter budget reported accepted sends as failures.
+  send: 180_000,
   // Staging asks for one transaction-bound acknowledgement, not an open-ended model answer.
   multipartStageAcknowledgement: CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
 } as const;
@@ -1113,7 +1115,8 @@ export class ChatGptBrowserWorker {
     return composer.evaluate(element => {
       const clone = element.cloneNode(true) as HTMLElement;
       clone.querySelectorAll(
-        '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]',
+        // Decorations (link icons with <title>, injected styles) are not prompt text.
+        '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"], svg, style, script',
       )
         .forEach(part => part.remove());
       return [...clone.childNodes]
@@ -1636,7 +1639,7 @@ export class ChatGptBrowserWorker {
     const sendButton = composer
       .locator("xpath=ancestor::form[1]")
       .locator(CHATGPT_SEND_BUTTON_SELECTOR);
-    await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.send });
+    await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.sendButton });
     await settleChatGptUi();
     const sendEnableDeadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
     for (;;) {
@@ -1662,28 +1665,43 @@ export class ChatGptBrowserWorker {
     // Activity preceding Enter cannot have been caused by this submission.
     const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
     submissionRejection?.begin(page);
-    await sendButton.press("Enter", {
+    const activationAbort = new AbortController();
+    const sendSignal = abortSignal
+      ? AbortSignal.any([abortSignal, activationAbort.signal])
+      : activationAbort.signal;
+    // Enter can already have submitted the prompt while a busy renderer blocks Playwright's command
+    // reply. Observe acceptance concurrently and never wait for that reply once acceptance is proven.
+    const activation = sendButton.press("Enter", {
       noWaitAfter: true,
-      signal: abortSignal,
-      // runBrowserStage owns the operation budget. A second Locator timeout would silently collapse the
-      // 180-second Bigger Context budget back to the ordinary 20 seconds after Enter has already
-      // submitted the message; semantic submission evidence below remains the authority.
+      signal: sendSignal,
+      // runBrowserStage owns the operation budget; semantic submission evidence is the authority.
       timeout: 0,
     });
-    const evidence = await this.waitForSubmissionAcceptedWithRecovery(
+    const acceptance = this.waitForSubmissionAcceptedWithRecovery(
       page,
       baseline,
-      abortSignal,
+      sendSignal,
       externalProgress,
       initialToolBatchRevision,
       completionTracker,
       recoverObservation,
       recoverableObservation,
     );
-    // Observation may settle concurrently with cancellation; late evidence cannot revive the turn.
-    throwIfPromptAttachmentAborted(abortSignal);
-    await submissionLifecycle?.onSubmitted?.();
-    return evidence;
+    // Whichever side loses the race is abandoned; its later rejection must stay owned.
+    void activation.catch(() => {});
+    void acceptance.catch(() => {});
+    try {
+      const evidence = await withBrowserTurnAbort(Promise.race([
+        acceptance,
+        activation.then(() => acceptance),
+      ]), abortSignal);
+      // Observation may settle concurrently with cancellation; late evidence cannot revive the turn.
+      throwIfPromptAttachmentAborted(abortSignal);
+      await submissionLifecycle?.onSubmitted?.();
+      return evidence;
+    } finally {
+      activationAbort.abort();
+    }
   }
 
   private async waitForMultipartAcknowledgement(
@@ -1708,7 +1726,7 @@ export class ChatGptBrowserWorker {
     for (;;) {
       if (page.isClosed()) throw chatGptBrowserTabClosedError();
       if (abortSignal?.aborted) {
-        const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
+        const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).last();
         if (await stop.isVisible().catch(() => false)) await stop.press("Enter").catch(() => {});
         throw new DOMException("ChatGPT multipart stage aborted", "AbortError");
       }
@@ -1754,7 +1772,7 @@ export class ChatGptBrowserWorker {
         await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
         continue;
       }
-      const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false);
+      const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).last().isVisible().catch(() => false);
       const domError = domHealthTracker.update({
         responsePresent: snapshot.responsePresent,
         running,
@@ -2012,31 +2030,39 @@ export class ChatGptBrowserWorker {
     const composerForm = composer.locator("xpath=ancestor::form[1]");
     const input = page.locator('input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])');
     await withBrowserTurnAbort(input.waitFor({ state: "attached", timeout: 20_000 }), abortSignal);
-    await withBrowserTurnAbort(input.setInputFiles(files), abortSignal);
+    // Send must wait until ChatGPT has processed every file, not only shown its card.
+    const uploads = await observeChatGptAttachmentUploads(page, files.map(file => file.name));
     try {
-      await withBrowserTurnAbort(Promise.all(files.map(file => (
-        composerForm.getByRole("group", { name: file.name, exact: true })
-          .or(composerForm.locator(`.composer-attachment-surface:is(button, [role="button"])[aria-label=${JSON.stringify(file.name)}]`))
-          .waitFor({ state: "visible", timeout: 60_000 })
-      ))), abortSignal);
-    } catch (error) {
-      if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      const alerts = (await page.locator('[role="alert"]').allInnerTexts().catch(() => []))
-        .map(text => text.replace(/\s+/g, " ").trim())
-        .filter(Boolean);
-      throw new Error(
-        `ChatGPT did not accept all prompt attachments`
-        + (alerts.length > 0 ? `: ${alerts.join(" | ")}` : ""),
-      );
+      await withBrowserTurnAbort(input.setInputFiles(files), abortSignal);
+      try {
+        await withBrowserTurnAbort(Promise.all([uploads.wait(abortSignal), ...files.map(file => (
+          composerForm.getByRole("group", { name: file.name, exact: true })
+            .or(composerForm.locator(`.composer-attachment-surface:is(button, [role="button"])[aria-label=${JSON.stringify(file.name)}]`))
+            .waitFor({ state: "visible", timeout: 60_000 })
+        ))]), abortSignal);
+      } catch (error) {
+        uploads.throwIfFailed();
+        if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+        const alerts = (await page.locator('[role="alert"]').allInnerTexts().catch(() => []))
+          .map(text => text.replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+        throw new Error(
+          `ChatGPT did not accept all prompt attachments`
+          + (alerts.length > 0 ? `: ${alerts.join(" | ")}` : ""),
+        );
+      }
+      uploads.throwIfFailed();
+      const send = composerForm.locator(CHATGPT_SEND_BUTTON_SELECTOR);
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+        if (await send.isEnabled().catch(() => false)) return;
+        await withBrowserTurnAbort(new Promise(resolveSleep => setTimeout(resolveSleep, 100)), abortSignal);
+      }
+      throw new Error("ChatGPT accepted the prompt attachments but did not make the message ready to send");
+    } finally {
+      await uploads.dispose();
     }
-    const send = composerForm.locator(CHATGPT_SEND_BUTTON_SELECTOR);
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      if (await send.isEnabled().catch(() => false)) return;
-      await withBrowserTurnAbort(new Promise(resolveSleep => setTimeout(resolveSleep, 100)), abortSignal);
-    }
-    throw new Error("ChatGPT accepted the prompt attachments but did not make the message ready to send");
   }
 
   private async runExclusive(turn: BrowserTurn): Promise<string> {
@@ -2086,12 +2112,11 @@ export class ChatGptBrowserWorker {
       return "other";
     };
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-    let heartbeatInFlight = false;
+    let heartbeatInFlight: Promise<void> | undefined;
     let lastHeartbeatFailureAt = 0;
     const sendHeartbeat = () => {
       if (heartbeatInFlight) return;
-      heartbeatInFlight = true;
-      void notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+      heartbeatInFlight = notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
         phase: "heartbeat",
         traceId: turn.traceId,
         helperPid: process.pid,
@@ -2103,8 +2128,8 @@ export class ChatGptBrowserWorker {
         console.warn(
           `[chatgpt-web] launcher turn heartbeat failed for ${turn.traceId}: ${error instanceof Error ? error.message : String(error)}`,
         );
-      }).finally(() => {
-        heartbeatInFlight = false;
+      }).then(() => undefined).finally(() => {
+        heartbeatInFlight = undefined;
       });
     };
     try {
@@ -2148,6 +2173,8 @@ export class ChatGptBrowserWorker {
       throw error;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
+      // A heartbeat still in flight must not reach the launcher after this turn's end.
+      await heartbeatInFlight;
       if (turn.abortSignal?.aborted && !(originalError instanceof ChatGptCompactionHandoffAccepted)) {
         terminal = "aborted";
       }
@@ -2269,7 +2296,13 @@ export class ChatGptBrowserWorker {
       && isConfirmedLauncherCdpDisconnect(error, turnConnection, turn.abortSignal);
     let managedPage: Page | undefined;
     let diagnosticPage: Page | undefined;
-    const submissionRejection = new ChatGptSubmissionRejectionObserver();
+    const originalAbortSignal = turn.abortSignal;
+    // A size rejection or security check ends the turn at once instead of waiting for a DOM error.
+    const rejectionAbort = new AbortController();
+    const submissionRejection = new ChatGptSubmissionRejectionObserver(error => rejectionAbort.abort(error));
+    turn = { ...turn, abortSignal: originalAbortSignal
+      ? AbortSignal.any([originalAbortSignal, rejectionAbort.signal])
+      : rejectionAbort.signal };
     let providerSubmissionStage: string | undefined;
     try {
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
@@ -2585,7 +2618,7 @@ export class ChatGptBrowserWorker {
           const evidence = await runBrowserStage(
             turn.traceId,
             `multipart_stage_${index + 1}_send`,
-            browserStageTimeouts.multipartStageSend,
+            browserStageTimeouts.send,
             (stageSignal) => this.sendAttachedPrompt(
               page,
               stageBaseline,
@@ -2762,7 +2795,7 @@ export class ChatGptBrowserWorker {
         "send",
         // A multipart commit lands on a conversation already carrying every staged part, so it
         // needs the same acceptance headroom the stages themselves get.
-        prepared.multipart ? browserStageTimeouts.multipartStageSend : browserStageTimeouts.send,
+        browserStageTimeouts.send,
         (stageSignal) => this.sendAttachedPrompt(
           page,
           submissionBaseline,
@@ -2822,7 +2855,7 @@ export class ChatGptBrowserWorker {
       let capturedResponse = false;
       const sentAt = Date.now();
       const visibleTrace = new ChatGptVisibleTraceTracker();
-      const markdownBuffer = new ChatGptMarkdownBuffer();
+      const markdownBuffer = new ChatGptMarkdownBuffer(turn.compaction ? "complete" : "stream");
       const checkpointStream = turn.captureLunaCheckpoint
         ? new ChatGptLunaCheckpointStream()
         : undefined;
@@ -2876,7 +2909,7 @@ export class ChatGptBrowserWorker {
           throw chatGptBrowserTabClosedError();
         }
         if (turn.abortSignal?.aborted) {
-          const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
+          const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).last();
           if (await stop.isVisible().catch(() => false)) await stop.press("Enter").catch(() => {});
           throw new DOMException("ChatGPT web turn aborted", "AbortError");
         }
@@ -2991,7 +3024,7 @@ export class ChatGptBrowserWorker {
           await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
           continue;
         }
-        const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
+        const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).last();
         const running = await stop.isVisible().catch(() => false);
         if (running) sawRunning = true;
         if (snapshot.responsePresent) {
@@ -3017,6 +3050,7 @@ export class ChatGptBrowserWorker {
             currentText: snapshot.visibleText,
             completionActionVisible: snapshot.completionActionVisible,
             externalProgressLive,
+            responseStreamActive: submissionRejection.hasActiveResponse(),
           });
           if (domError) throw new Error(domError);
           const completionReady = completionTracker.update({
@@ -3163,6 +3197,7 @@ export class ChatGptBrowserWorker {
             currentText: "",
             completionActionVisible: false,
             externalProgressLive,
+            responseStreamActive: submissionRejection.hasActiveResponse(),
           });
           if (domError) throw new Error(domError);
         }
@@ -3245,7 +3280,10 @@ export class ChatGptBrowserWorker {
         }
         throw turn.abortSignal.reason;
       }
-      if (!(error instanceof DOMException && error.name === "AbortError")
+      if (rejectionAbort.signal.aborted && !originalAbortSignal?.aborted
+        && !(error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")) {
+        error = rejectionAbort.signal.reason;
+      } else if (!(error instanceof DOMException && error.name === "AbortError")
         && !(error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")) {
         error = await submissionRejection.failure() ?? error;
       }
