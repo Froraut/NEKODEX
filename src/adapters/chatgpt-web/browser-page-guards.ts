@@ -272,21 +272,32 @@ export async function resolveChatGptToolConfirmation(
   onVisible?: () => Promise<void>,
 ): Promise<boolean> {
   const escapedAppName = appName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const dialog = page.locator('[role="dialog"], [data-testid="tool-approval-card"]')
+  const dialogs = page.locator('[role="dialog"], [data-testid="tool-approval-card"], [data-codex-approval-surface="true"]')
     .filter({ hasText: new RegExp(`(?:Allow ChatGPT to use|Autoriser ChatGPT à utiliser) ${escapedAppName}\\s*\\?`) })
-    .last();
-  if (!await dialog.isVisible().catch(() => false)) return false;
+    .filter({ visible: true });
+  const dialogCount = await dialogs.count().catch(() => 0);
+  if (dialogCount === 0) return false;
+  if (dialogCount !== 1) throw new Error("ChatGPT exposed multiple approvals for the selected connector");
+  const dialog = dialogs.first();
   await onVisible?.();
+  if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+  const deny = dialog.getByRole("button", { name: /^(?:Deny|Refuser)$/ }).filter({ visible: true });
 
   if (autoApprove) {
-    // ChatGPT exposes either "Allow once" or the shorter "Allow" for the
-    // current one-shot approval. Keep the matcher anchored so persistent
-    // actions such as "Always allow" cannot match.
+    // ChatGPT exposes either "Allow once" or the shorter "Allow" for the current one-shot approval.
+    // Keep the matcher anchored so persistent actions such as "Always allow" cannot match. The
+    // current card no longer activates on Enter, so click and wait until it is gone.
     const allowCurrentAction = dialog
       .getByRole("button", { name: /^(?:Allow(?: once)?|Autoriser(?: une fois)?)$/ })
-      .last();
-    await allowCurrentAction.waitFor({ state: "visible", timeout: 10_000 });
-    await allowCurrentAction.press("Enter");
+      .filter({ visible: true });
+    await allowCurrentAction.first().waitFor({ state: "visible", timeout: 10_000 });
+    await deny.first().waitFor({ state: "visible", timeout: 10_000 });
+    if (await allowCurrentAction.count() !== 1 || await deny.count() !== 1) {
+      throw new Error("ChatGPT approval does not expose a unique one-time Allow and Deny action");
+    }
+    if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+    await allowCurrentAction.click({ timeout: 10_000 });
+    await dialog.waitFor({ state: "hidden", timeout: 10_000 });
     return true;
   }
 
@@ -297,10 +308,10 @@ export async function resolveChatGptToolConfirmation(
     await new Promise(resolveSleep => setTimeout(resolveSleep, Math.min(100, Math.max(1, deadline - Date.now()))));
   }
 
+  if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
   if (!await dialog.isVisible().catch(() => false)) return true;
-  const deny = dialog.getByRole("button", { name: /^(?:Deny|Refuser)$/, exact: true }).last();
-  await deny.waitFor({ state: "visible", timeout: 5_000 });
-  await deny.press("Enter");
+  if (await deny.count() !== 1) throw new Error("ChatGPT approval does not expose a unique Deny action");
+  await deny.click({ timeout: 5_000 });
   await dialog.waitFor({ state: "hidden", timeout: 10_000 });
   return true;
 }
