@@ -472,20 +472,32 @@ export function createChatGptWebAdapter(
                       }
                       rawSummary = await runFreshCompactionFallback("zero_risk_source_already_completed");
                     } else {
-                      if (source.isActive() && source.runtime.mode === "tools") {
-                        const settlement = await settleActiveCompactionSource(
-                          parsed,
-                          source,
-                          structuredBroker!,
-                          operationSignal,
-                        );
-                        preserveFinalResponse = !settlement.compactionInstructionDelivered;
-                      } else if (source.isActive()) {
-                        const outcome = await withAbort(source.browserOutcome, operationSignal);
-                        if (outcome.type === "error") throw outcome.error;
-                        await withAbort(source.physicalSettlement, operationSignal);
-                        preserveFinalResponse = true;
+                      // A long-running source keeps producing while it settles; its progress must not
+                      // exhaust the checkpoint deadline before the checkpoint request even starts.
+                      const stopObservingSource = [
+                        source.runtime.trace.observeProgress(armHandoffDeadline),
+                        source.runtime.text.observeProgress(armHandoffDeadline),
+                      ];
+                      try {
+                        if (source.isActive() && source.runtime.mode === "tools") {
+                          const settlement = await settleActiveCompactionSource(
+                            parsed,
+                            source,
+                            structuredBroker!,
+                            operationSignal,
+                          );
+                          preserveFinalResponse = !settlement.compactionInstructionDelivered;
+                        } else if (source.isActive()) {
+                          const outcome = await withAbort(source.browserOutcome, operationSignal);
+                          if (outcome.type === "error") throw outcome.error;
+                          await withAbort(source.physicalSettlement, operationSignal);
+                          preserveFinalResponse = true;
+                        }
+                      } finally {
+                        for (const stop of stopObservingSource) stop();
                       }
+                      // The retained checkpoint is a new bounded phase.
+                      armHandoffDeadline();
                       rawSummary = await requestRetainedCompactionHandoff(
                         worker,
                         compactionPlan.execution,
