@@ -4,7 +4,7 @@ import type { ChatGptWebModelFamily } from "../../chatgpt-web-models";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { stabilizeEffortSlider } from "./effort-stabilization";
 import { chatGptProUsageLimitTooltip } from "./pro-retry-hint";
-import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, activateChatGptEffortMenu, readChatGptEffortSnapshot, readChatGptEffortDescriptions, chatGptModelStateMatches, chatGptUnversionedEffortMatches, parseChatGptDescribedModelState, selectChatGptModelFamily, assertSelectedChatGptModelFamily } from "../../chatgpt-session";
+import { CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_THINK_BUTTON_ICON_SELECTOR, activateChatGptEffortMenu, readChatGptEffortSnapshot, readChatGptEffortDescriptions, chatGptModelStateMatches, chatGptUnversionedEffortMatches, parseChatGptDescribedModelState, selectChatGptModelFamily, assertSelectedChatGptModelFamily } from "../../chatgpt-session";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
 
 interface ModelSelectionDependencies {
@@ -110,6 +110,7 @@ export async function setChatGptThinkMode(
   throwIfPromptAttachmentAborted(abortSignal);
   const controls = composerForm
     .getByRole("button", { name: /^(?:Think|Analyser)$/, exact: true })
+    .or(composerForm.locator(CHATGPT_THINK_BUTTON_ICON_SELECTOR))
     .filter({ visible: true });
   const count = await controls.count();
   if (count === 0 && !enabled) {
