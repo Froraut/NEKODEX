@@ -17,6 +17,13 @@ const RETIRED_TURN_HANDLE = new RegExp(
  * the current turn is supplied by the contract text, never by the replayed context.
  */
 export function withoutRetiredTurnHandles(contextJson: string): string {
+  // Keep backticks out of serialized history. ChatGPT's user-message Markdown link lexer can
+  // backtrack indefinitely on a bracketed JSON value containing many code fences, freezing the
+  // tab. JSON Unicode escapes decode to the same context, including literal backslashes.
+  return scrubRetiredTurnHandles(contextJson).replaceAll("`", "\\u0060");
+}
+
+function scrubRetiredTurnHandles(contextJson: string): string {
   // Every caller passes JSON generated from our context envelope. Decode first so escaped
   // control characters are handled as values, and schema keys cannot be rewritten as handles.
   const scrub = (value: unknown): unknown => {

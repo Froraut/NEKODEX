@@ -113,9 +113,11 @@ export class ChatGptTurnDomHealthTracker {
     currentText: string;
     completionActionVisible: boolean;
     externalProgressLive?: boolean;
+    /** This turn's own conversation stream is still open, even if ChatGPT hid its Stop control. */
+    responseStreamActive?: boolean;
   }, now = Date.now()): string | undefined {
     if (state.responsePresent) this.sawResponse = true;
-    if (state.externalProgressLive || state.running) {
+    if (state.externalProgressLive || state.running || state.responseStreamActive) {
       // Every conclusion below asserts that ChatGPT stopped producing this turn. A tool call that
       // is still completing or a visible Stop control disproves that. Restart the grace
       // windows once generation stops; the overall turn deadline remains independent.

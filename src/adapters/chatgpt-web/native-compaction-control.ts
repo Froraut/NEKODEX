@@ -68,6 +68,8 @@ export function structuredCompactionHandoffInstruction(
   return [
     "Automatic Codex context compaction has started. Stop ordinary task work and do not call any more work tools.",
     COMPACT_PROMPT,
+    // A summary printed as prose ends the browser turn without a handoff (compaction_handoff_missing).
+    "Your only response must be the single control call specified below. Do not write the checkpoint summary as ordinary assistant text.",
     ...compactionControlBinding(transaction),
     "After the control call returns submitted=true, call no more tools. The bridge will close this one-purpose Web response after accepting the checkpoint.",
     "If the call is rejected or fails, stop and report its actual error. Do not retry through another tool or claim the summary was submitted without submitted=true.",

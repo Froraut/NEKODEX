@@ -523,8 +523,10 @@ export async function runChatGptMcpServer(options: {
           const excludedGatewayNames = gatewayExcludedNames(bound, routingPolicy);
           const nestedOffset = Math.max(0, offset - directMatches.length);
           const nestedLimit = Math.max(0, limit - directPage.length);
+          const catalogMarker = `codex-tool-catalog:${randomBytes(16).toString("hex")}:`;
           const outcome = await invokeBroker(claimed.bindingId, bound, gateway, {
             input: gatewayToolCatalogProgram({
+              marker: catalogMarker,
               query,
               offset: nestedOffset,
               limit: nestedLimit,
@@ -545,7 +547,7 @@ export async function runChatGptMcpServer(options: {
           }
           const catalog = outcome.kind === "promoted"
             ? { total: 0, tools: [] }
-            : gatewayToolCatalogPage(outcome.value as Parameters<typeof gatewayToolCatalogPage>[0], new Set(excludedGatewayNames));
+            : gatewayToolCatalogPage(outcome.value as Parameters<typeof gatewayToolCatalogPage>[0], new Set(excludedGatewayNames), catalogMarker);
           nestedTotal = catalog.total;
           nestedPage = catalog.tools.map(tool => ({
             wire_name: tool.name,

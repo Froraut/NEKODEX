@@ -122,17 +122,27 @@ function environmentRequestAcrossCompactionSummary(parsed: CodexParsedRequest): 
   return { ...parsed, _rawBody: { ...body, input: normalized } };
 }
 
-function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironment): boolean {
+export function sameAuthority(
+  left: ChatGptTurnEnvironment & { statesNetworkAccess?: boolean },
+  right: ChatGptTurnEnvironment,
+  allowAdditionalWritableRoots = false,
+): boolean {
   const samePaths = (a: string[], b: string[]): boolean => {
     const expected = new Set(b.map(pathIdentity));
     return a.length === expected.size && a.every(path => expected.has(pathIdentity(path)));
   };
   return pathIdentity(left.cwd) === pathIdentity(right.cwd)
     && samePaths(left.roots, right.roots)
-    && samePaths(left.writableRoots, right.writableRoots)
+    // A steering envelope can omit Codex's extra output folders. The current native rollout stays
+    // the authority returned to the caller, never the claim.
+    && (allowAdditionalWritableRoots
+      ? left.writableRoots.every(path => right.writableRoots.some(root => pathIdentity(root) === pathIdentity(path)))
+      : samePaths(left.writableRoots, right.writableRoots))
     && left.sandboxPolicy.type === right.sandboxPolicy.type
-    && (left.sandboxPolicy.type === "dangerFullAccess" || (right.sandboxPolicy.type !== "dangerFullAccess"
-      && left.sandboxPolicy.networkAccess === right.sandboxPolicy.networkAccess));
+    // An envelope that does not state its network policy cannot contradict the rollout on it.
+    && (left.sandboxPolicy.type === "dangerFullAccess" || left.statesNetworkAccess === false
+      || (right.sandboxPolicy.type !== "dangerFullAccess"
+        && left.sandboxPolicy.networkAccess === right.sandboxPolicy.networkAccess));
 }
 
 export function resolveThreadEnvironment(
@@ -192,7 +202,10 @@ export function resolveThreadEnvironment(
     const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
     const lineage = extractChatGptThreadSpawnLineage(parsed);
     const currentCompaction = hasCurrentContext && isChatGptCompactionContinuation(parsed);
-    const historicalMessages = hasCurrentContext && !currentCompaction && lineage
+    // Root tasks also retain unattributed environment fragments after compaction (#812). They are
+    // historical only when the exact native record predates this task; neither the fragment nor
+    // the cache supplies the current authority.
+    const historicalMessages = hasCurrentContext && !currentCompaction
       ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
     const steeringClaim = hasCurrentContext && !currentCompaction
       ? extractChatGptSteeringEnvironmentClaim(parsed) : undefined;
@@ -212,7 +225,7 @@ export function resolveThreadEnvironment(
         tools: parsed.context.tools,
       });
       if (rolloutEnvironment) {
-        if (currentClaim && !sameAuthority(currentClaim, rolloutEnvironment)) {
+        if (currentClaim && !sameAuthority(currentClaim, rolloutEnvironment, steeringClaim !== undefined && !currentCompaction)) {
           throw new Error(`${currentCompaction ? "Compaction continuation" : "Steering"} environment conflicts with its current Codex rollout`);
         }
         return { environment: rolloutEnvironment, persistForThreadId: rolloutIdentity.threadId };
