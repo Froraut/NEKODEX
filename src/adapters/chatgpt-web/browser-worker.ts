@@ -1665,17 +1665,24 @@ export class ChatGptBrowserWorker {
     // Activity preceding Enter cannot have been caused by this submission.
     const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
     submissionRejection?.begin(page);
-    const activationAbort = new AbortController();
+    const sendAbort = new AbortController();
     const sendSignal = abortSignal
-      ? AbortSignal.any([abortSignal, activationAbort.signal])
-      : activationAbort.signal;
+      ? AbortSignal.any([abortSignal, sendAbort.signal])
+      : sendAbort.signal;
+    const keypressAbort = new AbortController();
+    const keypressSignal = AbortSignal.any([sendSignal, keypressAbort.signal]);
+    let keypressRetiredForRecovery = false;
     // Enter can already have submitted the prompt while a busy renderer blocks Playwright's command
     // reply. Observe acceptance concurrently and never wait for that reply once acceptance is proven.
-    const activation = sendButton.press("Enter", {
+    const activation = withBrowserTurnAbort(sendButton.press("Enter", {
       noWaitAfter: true,
-      signal: sendSignal,
+      signal: keypressSignal,
       // runBrowserStage owns the operation budget; semantic submission evidence is the authority.
       timeout: 0,
+    }), keypressSignal).catch(error => {
+      // Same-page recovery retires the pending keypress on purpose; that is not a failed send.
+      if (!keypressRetiredForRecovery || sendSignal.aborted || !(error instanceof DOMException)
+        || error.name !== "AbortError") throw error;
     });
     const acceptance = this.waitForSubmissionAcceptedWithRecovery(
       page,
@@ -1684,7 +1691,15 @@ export class ChatGptBrowserWorker {
       externalProgress,
       initialToolBatchRevision,
       completionTracker,
-      recoverObservation,
+      recoverObservation ? async (...args: Parameters<ChatGptObservationRecovery>) => {
+        // Recovery disconnects the old transport. Retire its pending keypress first so that the
+        // disconnect cannot fail an accepted turn; only evidence from the rebound page establishes
+        // success, and the message is never pressed again (upstream 8d53ff6d).
+        keypressRetiredForRecovery = true;
+        keypressAbort.abort();
+        await activation.catch(() => {});
+        return recoverObservation(...args);
+      } : undefined,
       recoverableObservation,
     );
     // Whichever side loses the race is abandoned; its later rejection must stay owned.
@@ -1700,7 +1715,7 @@ export class ChatGptBrowserWorker {
       await submissionLifecycle?.onSubmitted?.();
       return evidence;
     } finally {
-      activationAbort.abort();
+      sendAbort.abort();
     }
   }
 
