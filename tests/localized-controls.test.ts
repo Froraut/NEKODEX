@@ -19,3 +19,13 @@ test.skipIf(!executable)("Stop and Think are recognized by their icons in any UI
     expect(await page.locator(CHATGPT_THINK_BUTTON_ICON_SELECTOR).count()).toBe(1);
   } finally { await browser.close(); }
 });
+
+test.skipIf(!executable)("the Free-account Think sprite button is recognized (upstream capture 2026-10-11)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const browser = await chromium.launch({ executablePath: executable, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(readFileSync(new URL("./fixtures/chatgpt-composer-think-2026-10-11.html", import.meta.url), "utf8"));
+    expect(await page.locator(CHATGPT_THINK_BUTTON_ICON_SELECTOR).count()).toBe(1);
+  } finally { await browser.close(); }
+});

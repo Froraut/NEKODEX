@@ -36,7 +36,7 @@ import {
 } from "./browser-request-contract";
 import { itemTurnId, rawMessageText } from "./raw-input-item";
 
-export { extractCodexTurnIdentityFromBody } from "./browser-request-contract";
+export { extractCodexTurnIdentityFromBody, isCodexComposerPrediction } from "./browser-request-contract";
 export type { ChatGptTurnIdentity } from "./browser-request-contract";
 
 export interface ChatGptTurnEnvironment {

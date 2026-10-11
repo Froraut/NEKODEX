@@ -242,8 +242,21 @@ export async function responseDomSnapshot(
       for (const block of Array.from(content.querySelectorAll(codeBlockSelector))) {
         if (block.parentElement?.closest(codeBlockSelector)) continue;
         const codes = block.querySelectorAll("code");
-        if (codes.length !== 1) continue;
-        const code = codes[0]!.cloneNode(true);
+        let code: Node;
+        if (codes.length === 1) {
+          code = codes[0]!.cloneNode(true);
+        } else {
+          // Interactive code blocks (upstream #815, 2026-10-11) render CodeMirror DIV lines instead
+          // of CODE/PRE. Read their language and logical lines, never the toolbar or wrapped lines.
+          const editors = block.querySelectorAll(".cm-content[data-language]");
+          if (codes.length !== 0 || editors.length !== 1) continue;
+          const lines = Array.from(editors[0]!.children);
+          if (lines.length === 0 || lines.some(line => !line.matches(".cm-line"))) continue;
+          const source = content.ownerDocument.createElement("code");
+          source.className = `language-${editors[0]!.getAttribute("data-language")}`;
+          source.textContent = lines.map(line => line.textContent ?? "").join("\n");
+          code = source;
+        }
         const pre = block.tagName === "PRE" ? block : content.ownerDocument.createElement("pre");
         block.textContent = "";
         pre.appendChild(code);

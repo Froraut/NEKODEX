@@ -26,6 +26,7 @@ import {
   extractChatGptTurnIdentity,
   extractCodexTurnIdentityFromBody,
   extractChatGptCompactionSourceRevision,
+  isCodexComposerPrediction,
   chatGptTurnUserRevisionHistory,
 } from "./adapters/chatgpt-web/environment";
 import { rememberCompactionContinuation } from "./adapters/chatgpt-web/compaction-continuation";
@@ -314,6 +315,15 @@ export async function responseRequest(
   const requestedModel = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { model?: unknown }).model
     : undefined;
+  if (typeof requestedModel === "string" && isChatGptWebModelSlug(requestedModel) && isCodexComposerPrediction(raw)) {
+    // A next-message suggestion would run a full ChatGPT Web turn on the task's model (Pro
+    // included), spending the account's limits and a browser tab. Decline it before any lifecycle,
+    // admission or browser work; Codex treats a failed prediction as no suggestion.
+    void nativeRequest.body?.cancel().catch(() => {});
+    console.info(`[chatgpt-web] composer_prediction declined model=${requestedModel}`);
+    return formatErrorResponse(400, "invalid_request_error",
+      "Next-message predictions are not run on ChatGPT Web models; no ChatGPT message was sent.");
+  }
   const identityRejection = bindBodyTurnIdentity(raw, nativeRequest, options);
   if (identityRejection) return identityRejection;
   if (typeof requestedModel === "string" && !isChatGptWebModelSlug(requestedModel)) {
