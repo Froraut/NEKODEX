@@ -21,6 +21,15 @@ export function clientTurnMetadataFromBody(value: unknown): Record<string, unkno
   return record(raw);
 }
 
+/**
+ * Codex Desktop forks the task thread on its own model to suggest the next composer message. It
+ * marks that ephemeral turn with this trigger.
+ */
+export function isCodexComposerPrediction(value: unknown): boolean {
+  const metadata = clientTurnMetadataFromBody(value);
+  return metadata?.turn_trigger === "composer_predictions";
+}
+
 /** Read only Codex-owned lifecycle identity without interpreting or rewriting provider input. */
 export function extractCodexTurnIdentityFromBody(value: unknown): ChatGptTurnIdentity {
   const metadata = clientTurnMetadataFromBody(value);
