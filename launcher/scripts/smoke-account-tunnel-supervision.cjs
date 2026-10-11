@@ -50,6 +50,65 @@ const manager = new AccountTunnelSupervisor({
   },
 }, () => events.push(manager.snapshot()));
 
+// A failed health probe drops peer.tunnel while the detached tunnel-client keeps
+// running. Quit, a successor launcher and its failed start must all keep the
+// exact process proof instead of orphaning the alias behind a PID-less marker.
+async function orphanedTunnelRecovery() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-orphan-tunnel-'));
+  const statePath = path.join(root, 'account-tunnel.json');
+  const logger = { info() {}, warn() {}, error() {} };
+  const peerConfig = { mode: 'full', tunnel: bindings[1].tunnel, accountTunnelBinding: true };
+  const orphan = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+  await new Promise((resolve, reject) => { orphan.once('spawn', resolve); orphan.once('error', reject); });
+  const peer = () => Object.assign(Object.create(AccountTunnelPeer.prototype), {
+    binding: bindings[1], statePath, logger, tunnel: null, ownedAliasVerified: false,
+    connectAttempted: false, initialAliasAbsent: false, launcherProfile: 'development' });
+  const live = { statusKnown: true, ready: true, state: 'ready', processRunning: true, pid: orphan.pid };
+  try {
+    const identity = processIdentity(orphan.pid);
+    const owner = Object.assign(peer(), { ownedAliasVerified: true,
+      tunnel: { pid: orphan.pid, exitCode: null, signalCode: null, managed: true } });
+    owner.writeState('ready');
+    owner.tunnel = null;
+    owner.writeState('degraded', 'Tunnel health probe failed: Account tunnel process identity timed out after 5000ms');
+    let marker = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.equal(marker.tunnelPid, orphan.pid);
+    assert.equal(marker.tunnelIdentity, identity);
+    owner.waitForKnownTunnelStatus = async () => live;
+    await owner.adoptConfiguredTunnelForStop(peerConfig);
+    assert.equal(owner.tunnel?.pid, orphan.pid, 'Quit must adopt the still-running owned tunnel for stop');
+
+    // The owner died without stopping it, as after an update relaunch.
+    fs.writeFileSync(statePath, JSON.stringify({ ...marker, ownerPid: 999999999 }));
+    const failedStart = peer();
+    failedStart.writeState('failed', 'Account tunnel alias is ready without current launcher ownership proof');
+    marker = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.equal(marker.ownerPid, 999999999, 'a failed start must not overwrite recoverable orphan proof');
+    assert.equal(marker.tunnelPid, orphan.pid);
+
+    const forged = peer();
+    forged.readTunnelHealth = async () => live;
+    fs.writeFileSync(statePath, JSON.stringify({ ...marker, tunnelIdentity: 'another process' }));
+    await assert.rejects(forged.runTunnelStopCommand(peerConfig), /ownership proof/);
+    fs.writeFileSync(statePath, JSON.stringify(marker));
+
+    const successor = peer();
+    const stops = [];
+    successor.readTunnelHealth = async () => stops.length ? { statusKnown: true, absent: true } : live;
+    successor.waitForKnownTunnelStatus = async () => live;
+    successor.waitForTunnelStopped = async () => ({ absent: true });
+    successor.runTunnelCommand = async (_config, argv) => { stops.push(argv); return { code: 0, output: 'stopped' }; };
+    assert.equal(await successor.stopStaleOwnedRuntime(peerConfig), true);
+    assert.deepEqual(stops, [['runtimes', 'stop', bindings[1].tunnel.alias, '--json']]);
+    assert.equal(fs.existsSync(statePath), false);
+    assert.equal(successor.tunnel, null, 'the orphan is stopped, never adopted');
+  } finally {
+    orphan.kill('SIGTERM');
+    await new Promise(resolve => orphan.exitCode !== null || orphan.signalCode ? resolve() : orphan.once('exit', resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   for (const launcherProfile of ['development', 'production']) {
     const monitored = Object.create(RuntimeSupervisor.prototype);
@@ -115,6 +174,7 @@ async function main() {
     assert.equal(peer.recoverableMarker({ ...marker, tunnelIdentity: 'different-process' }, child.pid), false);
     assert.equal(peer.recoverableMarker({ ...marker, ownerPid: process.pid, ownerIdentity: processIdentity(process.pid) }, child.pid), false);
   } finally { child.kill('SIGTERM'); await new Promise(resolve => child.once('exit', resolve)); }
+  await orphanedTunnelRecovery();
   const args = managedTunnelConnectArgs({ tunnel: bindings[1].tunnel, accountTunnelBinding: true },
     { executable: "/tmp/runtime", args: ["mcp", "--contract", "safe"] });
   assert.match(args[args.indexOf("--mcp-command") + 1], /"--tunnel-id" "tunnel_b{32}"/);

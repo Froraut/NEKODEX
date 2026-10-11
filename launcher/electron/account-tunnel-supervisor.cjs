@@ -22,13 +22,45 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     this.connectAttempted = false;
     this.initialAliasAbsent = false;
     this.restartOwnedAlias = false;
+    this.ownedTunnel = null;
+  }
+
+  // A failed health probe drops this.tunnel while the detached tunnel-client may
+  // still run. Keep its proven PID and start identity until that exact process
+  // exits, so Quit can stop it and a successor launcher can recover the orphan.
+  liveOwnedTunnel() {
+    if (Number.isInteger(this.tunnel?.pid) && this.tunnel.pid > 0) {
+      const identity = processIdentity(this.tunnel.pid);
+      this.ownedTunnel = identity ? { pid: this.tunnel.pid, identity } : null;
+    } else if (this.ownedTunnel && processIdentity(this.ownedTunnel.pid) !== this.ownedTunnel.identity) {
+      this.ownedTunnel = null;
+    }
+    return this.ownedTunnel ?? null;
   }
 
   snapshot(status, detail) {
+    const owned = this.liveOwnedTunnel();
     return { ...super.snapshot(status, detail), accountId: this.binding.accountId,
       interactionMode: this.binding.interactionMode, tunnelId: this.binding.tunnel.tunnelId,
       alias: this.binding.tunnel.alias, ownerIdentity: processIdentity(process.pid),
-      ...(this.tunnel?.pid ? { tunnelIdentity: processIdentity(this.tunnel.pid) } : {}) };
+      ...(owned ? { tunnelPid: owned.pid, tunnelIdentity: owned.identity } : {}) };
+  }
+
+  writeState(status, detail) {
+    if (!this.liveOwnedTunnel()) {
+      let prior = null;
+      try { prior = this.readState(); } catch { /* An unreadable record holds no recovery evidence. */ }
+      if (prior?.ownerPid !== process.pid && this.recoverableMarker(prior, prior?.tunnelPid)) {
+        // This launcher never owned that process. Its failure must not erase the
+        // only proof that a dead launcher's tunnel can be stopped safely.
+        this.logger?.warn("runtime.account_tunnel_marker_preserved", {
+          accountId: this.binding.accountId, interactionMode: this.binding.interactionMode,
+          status, tunnelPid: prior.tunnelPid,
+        });
+        return prior;
+      }
+    }
+    return super.writeState(status, detail);
   }
 
   recoverableMarker(marker, pid) {
@@ -76,8 +108,11 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     const checked = observation => {
       const marker = this.ownedAliasVerified && !Number.isInteger(this.tunnel?.pid)
         ? this.readState() : null;
+      // A retained marker PID constrains supervision only while that exact process lives.
+      const markerPid = currentProcessMarker(marker) && (!marker.tunnelIdentity
+        || processIdentity(marker.tunnelPid) === marker.tunnelIdentity) ? marker.tunnelPid : null;
       const expectedPid = Number.isInteger(this.tunnel?.pid) && this.tunnel.pid > 0
-        ? this.tunnel.pid : currentProcessMarker(marker) ? marker.tunnelPid : null;
+        ? this.tunnel.pid : markerPid;
       if (observation.processRunning !== false && this.ownedAliasVerified
         && Number.isInteger(expectedPid) && expectedPid > 0
         && observation.pid !== expectedPid) {
@@ -179,8 +214,12 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     const marker = this.readState();
     const expectedPid = this.tunnel?.pid ?? marker?.tunnelPid;
     const currentOwner = (currentProcessMarker(marker) || this.recoverableMarker(marker, health.pid)) && this.ownedAliasVerified;
+    // A dead launcher's marker that still names this exact alias process (PID and
+    // start identity) proves an orphan of this app. Stop it; never adopt it, since
+    // it may run the MCP command of a release this launcher has replaced.
+    const ownOrphan = !this.tunnel && this.recoverableMarker(marker, health.pid);
     const newAttempt = this.connectAttempted && this.initialAliasAbsent;
-    if (!currentOwner && !newAttempt) {
+    if (!currentOwner && !ownOrphan && !newAttempt) {
       throw new Error("Account tunnel shutdown has no current launcher ownership proof");
     }
     if (!Number.isInteger(expectedPid) || expectedPid < 1 || health.pid !== expectedPid) {
