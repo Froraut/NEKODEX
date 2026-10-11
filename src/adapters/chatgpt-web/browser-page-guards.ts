@@ -291,9 +291,8 @@ export async function resolveChatGptToolConfirmation(
       .getByRole("button", { name: /^(?:Allow(?: once)?|Autoriser(?: une fois)?)$/ })
       .filter({ visible: true });
     await allowCurrentAction.first().waitFor({ state: "visible", timeout: 10_000 });
-    await deny.first().waitFor({ state: "visible", timeout: 10_000 });
-    if (await allowCurrentAction.count() !== 1 || await deny.count() !== 1) {
-      throw new Error("ChatGPT approval does not expose a unique one-time Allow and Deny action");
+    if (await allowCurrentAction.count() !== 1 || await deny.count() > 1) {
+      throw new Error("ChatGPT approval does not expose a unique one-time Allow action");
     }
     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     await allowCurrentAction.click({ timeout: 10_000 });
