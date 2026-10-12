@@ -38,6 +38,8 @@ export interface BrokerPromotedInvocation {
     operationId: string;
     reason: "deadline" | "disconnected";
     dispatched: boolean;
+    /** Another batch was in flight in Codex when an undispatched call was promoted. */
+    queuedBehind?: boolean;
   };
 }
 
@@ -92,6 +94,8 @@ interface BrokerRequestFields {
   deliveryId?: string;
   waitMs?: number;
   softDeadlineMs?: number;
+  /** Internal: the claim precedes an invoke, so tool batching may wait briefly for it. */
+  invokeIntent?: boolean;
 }
 
 export interface BrokerResponse {
@@ -149,11 +153,11 @@ export function assertSurfaceNonce(value: unknown): asserts value is string {
 export const BROKER_PROTOCOL_VERSION = 5;
 
 const requestFields = {
-  claim: ["token", "contract", "activityId"],
+  claim: ["token", "contract", "activityId", "invokeIntent"],
   resolve: ["bindingId"],
   release: ["bindingId"],
-  invoke: ["bindingId", "wireName", "freeform", "arguments", "input", "softDeadlineMs"],
-  invoke_async: ["bindingId", "wireName", "freeform", "arguments", "input", "operationId"],
+  invoke: ["bindingId", "wireName", "freeform", "arguments", "input", "softDeadlineMs", "operationId", "activityId"],
+  invoke_async: ["bindingId", "wireName", "freeform", "arguments", "input", "operationId", "activityId"],
   operation_status: ["token"],
   operation_poll: ["token", "operationId", "deliveryId", "waitMs"],
   operation_cancel: ["token", "operationId"],
@@ -199,7 +203,7 @@ export function decodeBrokerRequest(value: unknown): BrokerRequest {
   }
   for (const [field, entry] of Object.entries(packet)) {
     if (entry === undefined || field === "id" || field === "method") continue;
-    const expected = ["freeform", "tunnelScopePending"].includes(field) ? "boolean"
+    const expected = ["freeform", "tunnelScopePending", "invokeIntent"].includes(field) ? "boolean"
       : ["ttlMs", "revision", "waitMs", "softDeadlineMs"].includes(field) ? "number"
       : ["arguments", "environment", "toolResult"].includes(field) ? "object" : "string";
     // Ignore extension fields as before; validate recognized fields before method narrowing.

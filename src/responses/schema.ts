@@ -124,10 +124,103 @@ const knownInputItemTypes = new Set([
   "custom_tool_call", "custom_tool_call_output",
   "tool_search_call", "tool_search_output",
 ]);
-const unknownInputItemSchema = z.object({ type: z.string() }).loose().refine(
-  item => !knownInputItemTypes.has(item.type),
-  { message: "known input item must satisfy its schema" },
-);
+const knownInputItemSchemas: Record<string, readonly z.ZodType[]> = {
+  agent_message: [agentMessageItemSchema],
+  reasoning: [reasoningItemSchema],
+  function_call: [functionCallItemSchema],
+  function_call_output: [functionCallOutputItemSchema],
+  custom_tool_call: [customToolCallItemSchema],
+  custom_tool_call_output: [customToolCallOutputItemSchema],
+  tool_search_call: [toolSearchCallItemSchema],
+  tool_search_output: [toolSearchOutputItemSchema],
+};
+
+type SchemaIssue = z.core.$ZodIssue;
+type IssuePath = ReadonlyArray<PropertyKey>;
+const MAX_DESCRIBED_ISSUES = 3;
+
+function issuePathText(path: IssuePath): string {
+  return path.reduce<string>((text, key) => typeof key === "number"
+    ? `${text}[${key}]`
+    : `${text}${text ? "." : ""}${String(key)}`, "") || "(item)";
+}
+
+function valueAt(value: unknown, path: IssuePath): unknown {
+  let current = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object") return undefined;
+    current = (current as Record<PropertyKey, unknown>)[key as never];
+  }
+  return current;
+}
+
+function receivedKind(value: unknown): string {
+  return value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+}
+
+/** A union branch that failed only at its root type or its `type` discriminator is not the match. */
+function rejectedAtRoot(branch: readonly SchemaIssue[]): boolean {
+  return branch.some(issue => (issue.path.length === 0 && issue.code === "invalid_type")
+    || (issue.path.length === 1 && issue.path[0] === "type" && issue.code === "invalid_value"));
+}
+
+/**
+ * Describe schema failures by path, issue kind and discriminator only. Values from the request
+ * never enter the text, except a block's short, token-shaped `type` discriminator.
+ */
+function describeIssues(issues: readonly SchemaIssue[], data: unknown, prefix: IssuePath = [], depth = 0): string[] {
+  const described: string[] = [];
+  for (const issue of issues) {
+    if (described.length >= MAX_DESCRIBED_ISSUES) break;
+    const path = [...prefix, ...issue.path];
+    if (issue.code !== "invalid_union" || depth >= 4) {
+      described.push(`${issuePathText(path)}: ${issue.message}`);
+      continue;
+    }
+    const plausible = issue.errors.find(branch => branch.length > 0 && !rejectedAtRoot(branch));
+    if (plausible) {
+      described.push(...describeIssues(plausible, data, path, depth + 1));
+      continue;
+    }
+    const value = valueAt(data, path);
+    const type = value && typeof value === "object" && !Array.isArray(value)
+      ? (value as { type?: unknown }).type : undefined;
+    if (typeof type === "string") {
+      described.push(`${issuePathText(path)}: unsupported type ${/^[A-Za-z0-9_.:-]{1,64}$/.test(type) ? `"${type}"` : "(invalid)"}`);
+      continue;
+    }
+    const expected = [...new Set(issue.errors.flatMap(branch => branch
+      .filter(entry => entry.path.length === 0 && entry.code === "invalid_type")
+      .map(entry => (entry as { expected?: unknown }).expected)
+      .filter((entry): entry is string => typeof entry === "string")))];
+    described.push(`${issuePathText(path)}: ${expected.length > 0
+      ? `expected ${expected.join(" | ")}, received ${receivedKind(value)}`
+      : issue.message}`);
+  }
+  return described;
+}
+
+function knownInputItemFailure(item: Record<string, unknown>): string {
+  const role = item.role;
+  const candidates = item.type === "message"
+    ? role === "system" ? [systemMessageItemSchema]
+      : role === "assistant" ? [assistantMessageItemSchema]
+        : [userMessageItemSchema]
+    : knownInputItemSchemas[String(item.type)] ?? [];
+  for (const schema of candidates) {
+    const parsed = schema.safeParse(item);
+    if (!parsed.success) return describeIssues(parsed.error.issues, item).join("; ");
+  }
+  return "no matching variant";
+}
+
+const unknownInputItemSchema = z.object({ type: z.string() }).loose().superRefine((item, ctx) => {
+  if (!knownInputItemTypes.has(item.type)) return;
+  ctx.addIssue({
+    code: "custom",
+    message: `known input item type=${item.type} must satisfy its schema: ${knownInputItemFailure(item)}`,
+  });
+});
 
 export const inputItemSchema = z.union([
   userMessageItemSchema,

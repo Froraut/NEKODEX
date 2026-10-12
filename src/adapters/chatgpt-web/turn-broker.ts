@@ -18,6 +18,7 @@ import {
   type CompactionTransactionHandle,
 } from "./compaction-transaction";
 import type { ChatGptTurnEnvironment } from "./environment";
+import { recordTurnBrokerEvent } from "./turn-broker-diagnostics";
 
 const BROKER_REQUEST_LINE_TIMEOUT_MS = 30_000;
 
@@ -27,6 +28,8 @@ interface PendingTurn extends ChatGptTurnEnvironment {
 
 interface PendingInvocation {
   request: BrokerToolRequest;
+  /** A soft-deadline call can answer before dispatch; a legacy invoke keeps its original wait. */
+  softDeadline?: boolean;
   resolve: (result: BrokerToolResult) => void;
   reject: (error: Error) => void;
 }
@@ -88,6 +91,12 @@ interface TurnChannel {
   completionRevision?: number;
   retirementWaiters: Set<SafeWaiter<void>>;
   batchTimer?: ReturnType<typeof setTimeout>;
+  /** When the current tool batch window opened; bounds the extended parallel-call window. */
+  batchScheduledAt?: number;
+  /** Claimed MCP requests that announced an invoke which has not reached the broker yet. */
+  pendingInvokeActivities: Set<string>;
+  /** Since when no adapter waiter and no dispatched batch could consume a queued call. */
+  ownerIdleSince?: number;
 }
 
 const brokers = new Map<string, TurnBroker>();
@@ -111,6 +120,29 @@ const UNACKNOWLEDGED_RESULT_SETTLE_MS = 5_000;
 export const TURN_BROKER_FEATURES = Object.freeze(["soft-deadline-promotion"]);
 const MIN_SOFT_DEADLINE_MS = 1_000;
 const MAX_SOFT_DEADLINE_MS = 110_000;
+// A queued call is consumed by an adapter waiter (Codex's open Responses request) or follows a
+// batch Codex is executing. With neither for this long, Codex failed or abandoned the round and a
+// never-dispatched call is cancelled instead of being retained until the turn deadline.
+const OWNER_IDLE_CANCEL_MS = 25_000;
+const OWNER_IDLE_CHECK_MS = 1_000;
+// Parallel ChatGPT calls arrive as separate MCP requests. Wait briefly for announced invokes so
+// they reach Codex as one round, never longer than the extended window.
+const BATCH_WINDOW_MS = 15;
+const MAX_BATCH_WINDOW_MS = 120;
+const OWNER_IDLE_CANCEL_MESSAGE = "Codex stopped requesting tool calls for this turn before it dispatched this call;"
+  + " it was cancelled and was not executed";
+
+function notDispatchedResult(tool: string): BrokerToolResult {
+  const value = {
+    code: "codex_tool_not_dispatched",
+    tool,
+    state: "cancelled",
+    cancellation_scope: "queued",
+    executed: false,
+    message: `${OWNER_IDLE_CANCEL_MESSAGE}. Call it again only if this Codex task is still running.`,
+  };
+  return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value, isError: true };
+}
 
 const DEFAULT_REVOKE_MESSAGE = "Codex turn binding was revoked";
 
@@ -264,10 +296,13 @@ export class TurnBroker implements TurnBrokerOwner {
       activityRevision: 0,
       completionCommitted: false,
       retirementWaiters: new Set(),
+      pendingInvokeActivities: new Set(),
+      ownerIdleSince: Date.now(),
     };
     this.channels.set(token, channel);
     this.pending.set(token, channel);
     console.info(`[chatgpt-web] broker trace=${traceId} registered tokenHash=${handleFingerprint(token)}`);
+    recordTurnBrokerEvent("broker_registered", { traceId, tokenHash: handleFingerprint(token), externalOwner });
     return token;
   }
 
@@ -347,6 +382,19 @@ export class TurnBroker implements TurnBrokerOwner {
   }
 
   async nextToolBatch(token: string, signal?: AbortSignal): Promise<BrokerToolRequest[]> {
+    // An arriving Codex request is a consumer: the idle sweep in prune() must not cancel the
+    // queued calls it is about to receive.
+    const arriving = this.channels.get(token);
+    if (arriving) arriving.ownerIdleSince = undefined;
+    try {
+      return await this.waitForToolBatch(token, signal);
+    } finally {
+      const channel = this.channels.get(token);
+      if (channel) this.refreshOwnerIdle(channel);
+    }
+  }
+
+  private async waitForToolBatch(token: string, signal?: AbortSignal): Promise<BrokerToolRequest[]> {
     this.prune();
     let channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
@@ -380,11 +428,13 @@ export class TurnBroker implements TurnBrokerOwner {
       if (signal) {
         waiter.onAbort = () => {
           channel.waiters.delete(waiter);
+          this.refreshOwnerIdle(channel);
           rejectWait(new DOMException("tool wait aborted", "AbortError"));
         };
         signal.addEventListener("abort", waiter.onAbort, { once: true });
       }
       channel.waiters.add(waiter);
+      this.refreshOwnerIdle(channel);
     });
   }
 
@@ -407,6 +457,7 @@ export class TurnBroker implements TurnBrokerOwner {
       throw new Error(`tool call was completed before it was delivered: ${callId}`);
     }
     channel.invocations.delete(callId);
+    this.refreshOwnerIdle(channel);
     console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size}`);
     invocation.resolve(result);
   }
@@ -486,6 +537,7 @@ export class TurnBroker implements TurnBrokerOwner {
       clearTimeout(channel.batchTimer);
       channel.batchTimer = undefined;
     }
+    channel.batchScheduledAt = undefined;
     const queued = channel.queuedCallIds.splice(0);
     let interrupted = 0;
     for (const callId of queued) {
@@ -628,6 +680,17 @@ export class TurnBroker implements TurnBrokerOwner {
       activeMcpRequests: channel.activities.size,
       completionCommitted: channel.completionCommitted,
     })}`);
+    recordTurnBrokerEvent("broker_retired", {
+      traceId: channel.traceId,
+      tokenHash: handleFingerprint(token),
+      reason: reason.message.replace(/\s+/g, " ").trim(),
+      pendingTools: channel.invocations.size,
+      queuedTools: channel.queuedCallIds.length,
+      deliveredTools: channel.deliveredCallIds.size,
+      activeMcpRequests: channel.activities.size,
+      runningOperations: this.operations.ownedOperationCount(token, true),
+      completionCommitted: channel.completionCommitted,
+    });
     this.channels.delete(token);
     this.pending.delete(token);
     const detail = reason.message.replace(/\s+/g, " ").trim();
@@ -1213,6 +1276,7 @@ export class TurnBroker implements TurnBrokerOwner {
         }
         activeChannel.activities.set(activityId, Date.now());
         activeChannel.activityRevision += 1;
+        if (request.invokeIntent === true) activeChannel.pendingInvokeActivities.add(activityId);
       }
       if (activeChannel.bindingId) {
         const existing = this.bindings.get(activeChannel.bindingId);
@@ -1242,6 +1306,7 @@ export class TurnBroker implements TurnBrokerOwner {
         return { completed: false, duplicate: true };
       }
       const wasActive = channel.activities.delete(request.activityId);
+      channel.pendingInvokeActivities.delete(request.activityId);
       channel.completedActivities.set(request.activityId, Date.now());
       // A cleanup that overtakes an ambiguously delivered claim is still a causal event. Its
       // tombstone makes the delayed claim fail instead of resurrecting activity after a fence.
@@ -1318,6 +1383,8 @@ export class TurnBroker implements TurnBrokerOwner {
 
     const wireName = request.wireName?.trim();
     if (!wireName) throw new Error("wire tool name is required");
+    // The announced invoke has arrived; batching no longer needs to wait for it.
+    if (typeof request.activityId === "string") binding.channel.pendingInvokeActivities.delete(request.activityId);
     if (request.method === "invoke_async") {
       this.operations.pruneOwnedOperations();
       if (!request.operationId || !/^operation_[A-Za-z0-9_-]{32,128}$/.test(request.operationId)) {
@@ -1343,6 +1410,13 @@ export class TurnBroker implements TurnBrokerOwner {
       || softDeadlineMs < MIN_SOFT_DEADLINE_MS || softDeadlineMs > MAX_SOFT_DEADLINE_MS)) {
       throw new Error("Codex tool soft deadline is invalid");
     }
+    // A client-proposed identity lets an MCP request that loses the broker's answer still name the
+    // operation that retains its result. It is used only if this call is promoted.
+    const proposedOperationId = request.method === "invoke" ? request.operationId : undefined;
+    if (proposedOperationId !== undefined && (softDeadlineMs === undefined
+      || !/^operation_[A-Za-z0-9_-]{32,128}$/.test(proposedOperationId))) {
+      throw new Error("owned Codex tool operation id is invalid");
+    }
     if (binding.channel.invocations.size >= MAX_PENDING_INVOCATIONS_PER_TURN) {
       if (request.method === "invoke_async" || softDeadlineMs !== undefined) {
         // A call whose result can be retained is rejected before queueing; the turn stays usable.
@@ -1365,7 +1439,10 @@ export class TurnBroker implements TurnBrokerOwner {
       ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
     };
     const invocation = new Promise<BrokerToolResult>((resolveInvoke, rejectInvoke) => {
-      binding.channel.invocations.set(callId, { request: toolRequest, resolve: resolveInvoke, reject: rejectInvoke });
+      binding.channel.invocations.set(callId, {
+        request: toolRequest, resolve: resolveInvoke, reject: rejectInvoke,
+        ...(softDeadlineMs !== undefined ? { softDeadline: true } : {}),
+      });
     });
     binding.channel.queuedCallIds.push(callId);
     console.info(
@@ -1380,7 +1457,8 @@ export class TurnBroker implements TurnBrokerOwner {
       return this.operations.start(binding.token, request.operationId!, callId, identity, invocation);
     }
     if (softDeadlineMs !== undefined) {
-      return this.invokeWithSoftDeadline(binding.token, callId, identity, invocation, softDeadlineMs, socketSignal);
+      return this.invokeWithSoftDeadline(binding.token, callId, identity, invocation, softDeadlineMs, socketSignal,
+        proposedOperationId);
     }
     return invocation;
   }
@@ -1398,11 +1476,20 @@ export class TurnBroker implements TurnBrokerOwner {
     invocation: Promise<BrokerToolResult>,
     softDeadlineMs: number,
     socketSignal?: AbortSignal,
+    proposedOperationId?: string,
   ): Promise<BrokerInvokeResult> {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let idleCheck: ReturnType<typeof setInterval> | undefined;
     let onDisconnect: (() => void) | undefined;
     const outcome = await new Promise<"settled" | "deadline" | "disconnected">(resolveOutcome => {
       timer = setTimeout(() => resolveOutcome("deadline"), softDeadlineMs);
+      // Without a consumer this call would otherwise wait for the full deadline and then live on
+      // as an owned operation until the turn expires. The sweep settles it as never executed.
+      idleCheck = setInterval(() => {
+        const channel = this.channels.get(token);
+        if (channel) this.cancelUnconsumedQueuedCalls(token, channel, Date.now());
+      }, OWNER_IDLE_CHECK_MS);
+      idleCheck.unref?.();
       if (socketSignal) {
         onDisconnect = () => resolveOutcome("disconnected");
         if (socketSignal.aborted) onDisconnect();
@@ -1411,18 +1498,32 @@ export class TurnBroker implements TurnBrokerOwner {
       invocation.then(() => resolveOutcome("settled"), () => resolveOutcome("settled"));
     });
     clearTimeout(timer);
+    clearInterval(idleCheck);
     if (socketSignal && onDisconnect) socketSignal.removeEventListener("abort", onDisconnect);
     const channel = this.channels.get(token);
     // A settled or retired call answers directly; only a still-pending call is promoted.
     if (outcome === "settled" || !channel || !channel.invocations.has(callId)) return invocation;
-    const operationId = opaqueId("operation");
     const dispatched = channel.deliveredCallIds.has(callId);
+    if (!dispatched && this.ownerIdleFor(channel, Date.now()) >= OWNER_IDLE_CANCEL_MS) {
+      // Nothing will dispatch this call; settle it as never executed instead of retaining it.
+      this.cancelUnconsumedQueuedCalls(token, channel, Date.now());
+      if (!channel.invocations.has(callId)) return invocation;
+    }
+    const operationId = proposedOperationId !== undefined && !this.operations.has(proposedOperationId)
+      ? proposedOperationId
+      : opaqueId("operation");
+    // An undispatched call waits behind a batch only while Codex is executing one.
+    const queuedBehind = !dispatched && channel.deliveredCallIds.size > 0;
     this.operations.start(token, operationId, callId, identity, invocation);
     console.info(
       `[chatgpt-web] broker trace=${channel.traceId} promoted call=${callId.slice(0, 17)} tool=${identity.wireName}`
-      + ` reason=${outcome} dispatched=${dispatched}`,
+      + ` reason=${outcome} dispatched=${dispatched} queuedBehind=${queuedBehind}`,
     );
-    return { promoted: { operationId, reason: outcome, dispatched } };
+    recordTurnBrokerEvent("broker_promoted", {
+      traceId: channel.traceId, call: callId.slice(0, 17), tool: identity.wireName,
+      reason: outcome, dispatched, queuedBehind, ownerWaiting: channel.waiters.size > 0,
+    });
+    return { promoted: { operationId, reason: outcome, dispatched, ...(!dispatched ? { queuedBehind } : {}) } };
   }
 
   private cancelOwnedOperation(token: string, operationId: string): BrokerOwnedOperationSnapshot {
@@ -1447,9 +1548,68 @@ export class TurnBroker implements TurnBrokerOwner {
         channel.invocations.delete(callId);
         invocation?.reject(new Error("Owned Codex tool operation was cancelled before dispatch"));
       }
+      this.refreshOwnerIdle(channel);
+      recordTurnBrokerEvent("broker_operation_cancelled", {
+        traceId: channel.traceId, call: callId.slice(0, 17), scope: delivered ? "observation_only" : "queued",
+      });
       return this.operations.cancel(token, operationId, delivered ? "observation_only" : "queued");
     }
     return this.operations.snapshot(token, operationId);
+  }
+
+  /** A consumer is an adapter waiter (an open Codex request) or a batch Codex is executing. */
+  private refreshOwnerIdle(channel: TurnChannel, now = Date.now()): void {
+    if (channel.waiters.size > 0 || channel.deliveredCallIds.size > 0) channel.ownerIdleSince = undefined;
+    else channel.ownerIdleSince ??= now;
+  }
+
+  private ownerIdleFor(channel: TurnChannel, now: number): number {
+    return channel.ownerIdleSince === undefined ? 0 : Math.max(0, now - channel.ownerIdleSince);
+  }
+
+  /**
+   * Settle never-dispatched calls whose turn has had no consumer for the idle window. Only calls
+   * that can answer early are touched: owned operations end as cancelled (scope "queued") and
+   * soft-deadline calls receive an explicit not-executed error. Legacy invokes keep their wait.
+   */
+  private cancelUnconsumedQueuedCalls(token: string, channel: TurnChannel, now: number): number {
+    if (channel.compactionRequested || channel.queuedCallIds.length === 0
+      || this.ownerIdleFor(channel, now) < OWNER_IDLE_CANCEL_MS) return 0;
+    const kept: string[] = [];
+    const cancelled: string[] = [];
+    for (const callId of channel.queuedCallIds) {
+      const invocation = channel.invocations.get(callId);
+      if (!invocation) continue;
+      const operationId = this.operations.operationForCall(token, callId);
+      if (operationId === undefined && !invocation.softDeadline) {
+        kept.push(callId);
+        continue;
+      }
+      channel.invocations.delete(callId);
+      cancelled.push(invocation.request.wireName);
+      if (operationId !== undefined) {
+        this.operations.cancel(token, operationId, "queued", OWNER_IDLE_CANCEL_MESSAGE);
+        invocation.reject(new Error(OWNER_IDLE_CANCEL_MESSAGE));
+      } else {
+        invocation.resolve(notDispatchedResult(invocation.request.wireName));
+      }
+    }
+    channel.queuedCallIds = kept;
+    if (cancelled.length === 0) return 0;
+    if (kept.length === 0 && channel.batchTimer) {
+      clearTimeout(channel.batchTimer);
+      channel.batchTimer = undefined;
+      channel.batchScheduledAt = undefined;
+    }
+    const idleMs = this.ownerIdleFor(channel, now);
+    console.info(
+      `[chatgpt-web] broker trace=${channel.traceId} cancelled ${cancelled.length} undispatched call(s)`
+      + ` after ${idleMs}ms without a Codex consumer tools=${cancelled.join(",")}`,
+    );
+    recordTurnBrokerEvent("broker_queued_call_cancelled", {
+      traceId: channel.traceId, count: cancelled.length, tools: cancelled.join(","), idleMs,
+    });
+    return cancelled.length;
   }
 
   private takeQueued(channel: TurnChannel): BrokerToolRequest[] {
@@ -1457,16 +1617,29 @@ export class TurnBroker implements TurnBrokerOwner {
     for (const id of ids) {
       if (channel.invocations.has(id)) channel.deliveredCallIds.add(id);
     }
+    this.refreshOwnerIdle(channel);
     return ids.map(id => channel.invocations.get(id)?.request).filter((request): request is BrokerToolRequest => Boolean(request));
   }
 
   private scheduleToolWaiters(channel: TurnChannel): void {
     if (channel.queuedCallIds.length === 0 || channel.waiters.size === 0) return;
     if (channel.batchTimer) return;
-    channel.batchTimer = setTimeout(() => {
-      channel.batchTimer = undefined;
-      this.wakeToolWaiters(channel);
-    }, 15);
+    channel.batchScheduledAt ??= Date.now();
+    const arm = (delayMs: number) => {
+      channel.batchTimer = setTimeout(() => {
+        channel.batchTimer = undefined;
+        const waited = Date.now() - (channel.batchScheduledAt ?? Date.now());
+        // Hold the batch open only while announced invokes have not reached the broker yet.
+        if (channel.pendingInvokeActivities.size > 0 && waited < MAX_BATCH_WINDOW_MS
+          && channel.queuedCallIds.length > 0 && channel.waiters.size > 0) {
+          arm(Math.max(1, Math.min(BATCH_WINDOW_MS, MAX_BATCH_WINDOW_MS - waited)));
+          return;
+        }
+        channel.batchScheduledAt = undefined;
+        this.wakeToolWaiters(channel);
+      }, delayMs);
+    };
+    arm(BATCH_WINDOW_MS);
   }
 
   private wakeToolWaiters(channel: TurnChannel): void {
@@ -1477,6 +1650,7 @@ export class TurnBroker implements TurnBrokerOwner {
     );
     const waiters = [...channel.waiters];
     channel.waiters.clear();
+    this.refreshOwnerIdle(channel);
     const first = waiters.shift();
     if (first) {
       if (first.signal && first.onAbort) first.signal.removeEventListener("abort", first.onAbort);
@@ -1491,6 +1665,8 @@ export class TurnBroker implements TurnBrokerOwner {
   private rejectChannel(channel: TurnChannel, error: Error): void {
     if (channel.batchTimer) clearTimeout(channel.batchTimer);
     channel.batchTimer = undefined;
+    channel.batchScheduledAt = undefined;
+    channel.pendingInvokeActivities.clear();
     for (const waiter of channel.waiters) {
       if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
       waiter.reject(error);
@@ -1512,6 +1688,7 @@ export class TurnBroker implements TurnBrokerOwner {
         continue;
       }
       this.expireStaleActivities(channel, now);
+      this.cancelUnconsumedQueuedCalls(token, channel, now);
     }
   }
 
@@ -1521,6 +1698,7 @@ export class TurnBroker implements TurnBrokerOwner {
     for (const [activityId, claimedAt] of channel.activities) {
       if (now - claimedAt < MCP_ACTIVITY_LEASE_MS) continue;
       channel.activities.delete(activityId);
+      channel.pendingInvokeActivities.delete(activityId);
       channel.completedActivities.set(activityId, now);
       expired += 1;
     }
@@ -1529,6 +1707,9 @@ export class TurnBroker implements TurnBrokerOwner {
     console.error(
       `[chatgpt-web] broker trace=${channel.traceId} expired ${expired} stale MCP request lease(s) older than ${MCP_ACTIVITY_LEASE_MS}ms`,
     );
+    recordTurnBrokerEvent("broker_lease_expired", {
+      traceId: channel.traceId, expired, remaining: channel.activities.size, leaseMs: MCP_ACTIVITY_LEASE_MS,
+    });
     if (channel.completedActivities.size >= MAX_COMPLETED_ACTIVITIES_PER_TURN) this.pruneCompletedActivities(channel, now);
   }
 
