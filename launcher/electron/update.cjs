@@ -283,7 +283,7 @@ function buildJob({ version, platform, arch = process.arch, executablePath, asse
 
 function defaultDependencies() {
   return {
-    fetchRelease: async (url) => JSON.parse(await downloadText(url)),
+    fetchRelease: async (url) => JSON.parse(await downloadText(url, undefined, { timeoutMs: 20_000 })),
     downloadText,
     downloadFile,
     sha256,
@@ -417,9 +417,22 @@ function createUpdateController({
         } catch (error) {
           // A new public fork has no latest release until its first stable build.
           // Never fall back to a different repository in that case.
-          if (error?.rateLimited) {
-            release = await checkSignedFeed();
-          } else if (error?.statusCode !== 404) throw error;
+          if (error?.statusCode === 404) release = undefined;
+          else {
+            // The REST API is quota-limited and often times out behind VPNs. The Atom feed
+            // is an independent route to the same signed assets, so use it for any REST
+            // failure, retrying once after a short jittered pause.
+            try {
+              release = await checkSignedFeed();
+            } catch (feedError) {
+              await new Promise(resolve => setTimeout(resolve, 1_000 + Math.floor(Math.random() * 1_000)));
+              try {
+                release = await checkSignedFeed();
+              } catch {
+                throw error?.rateLimited ? feedError : error;
+              }
+            }
+          }
         }
         if (!release) {
           candidate = null;
@@ -503,7 +516,10 @@ function createUpdateController({
     return startCheck();
   }
 
-  async function beginInstall() {
+  // `beforeHandoff(signal, onWaiting)` runs after the package is staged and verified and
+  // before the worker starts. The launcher uses it to wait for active work instead of
+  // refusing the update; it may call onWaiting() to report that wait.
+  async function beginInstall({ beforeHandoff } = {}) {
     if (pending) throw new Error("An update is already being prepared");
     if (state.status !== "available" || !candidate) throw new Error("No launcher update is available");
     if (platform === "linux") linuxUpdateInstallation();
@@ -535,6 +551,10 @@ function createUpdateController({
         // handoff starts, only the existing quit-failure rollback may stop the worker.
         await new Promise(resolve => setImmediate(resolve));
         throwIfAborted(active.controller.signal);
+        if (beforeHandoff) {
+          await beforeHandoff(active.controller.signal, () => transition({ status: "waiting", version: available.version }));
+          throwIfAborted(active.controller.signal);
+        }
         active.handoffCommitted = true;
         transition({ status: "installing", version: available.version });
         const child = await deps.spawnWorker(runtimeExecutable, workerPath, jobPath);

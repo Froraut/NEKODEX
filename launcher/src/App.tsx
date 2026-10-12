@@ -563,9 +563,9 @@ function LauncherShell({
   const restartInFlight = useRef(false);
 
   useCompactSidebarDrawer(compactSidebar, sidebarOpen, sidebar, sidebarToggle, setSidebarOpen);
-  const updateBusy = updateInstallPending || updateCancelPending || ["downloading", "verifying", "installing", "cancelling"].includes(snapshot.update.status);
+  const updateBusy = updateInstallPending || updateCancelPending || ["downloading", "verifying", "waiting", "installing", "cancelling"].includes(snapshot.update.status);
   useEffect(() => {
-    if (["downloading", "verifying", "installing"].includes(snapshot.update.status)) setUpdateError(null);
+    if (["downloading", "verifying", "waiting", "installing"].includes(snapshot.update.status)) setUpdateError(null);
   }, [snapshot.update.status]);
   const handledUpdatePanelRequest = useRef(0);
   useEffect(() => {
@@ -574,8 +574,6 @@ function LauncherShell({
     setSurface("updates");
     void recheckUpdate();
   }, [updatePanelRequest]);
-  const updateBlocked = operation?.status === "running" || browser?.status === "running"
-    || browser?.tabs.some(tab => tab.status === "running") === true;
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
 
   const enqueueBrowserSurface = useCallback((active: boolean, intent: number, show = false) => {
@@ -1075,7 +1073,7 @@ function LauncherShell({
               <ActivitySurface loadCopy={copy} transitionBusy={transitionBusy} copy={copy} language={language} logStore={logStore} setError={setError} />
             ) : null}
             {surface === "updates" ? <Updates loadCopy={copy} language={language} currentVersion={snapshot.version}
-              state={snapshot.update} busy={updateBusy} blocked={updateBlocked} checking={updateCheckBusy}
+              state={snapshot.update} busy={updateBusy} checking={updateCheckBusy}
               cooldown={updateCheckCooldown} error={updateError} transitionBusy={transitionBusy}
               onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()}
               cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} platform={snapshot.platform} /> : null}

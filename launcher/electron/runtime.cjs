@@ -1721,8 +1721,9 @@ class RuntimeHost {
     if (this.supervisor.daemonInstanceId && this.supervisor.daemon) {
       const live = await this.supervisor.runtimeSession(existing.config, "status");
       if (live.active_http_turns > 0 || live.active_browser_turns > 0 || live.active_compaction_runs > 0) {
-        return { updated: false, repairRequired: true, deferredUntilCommittedRestart: true,
-          detail: "The existing runtime is serving active work. Finish those tasks, then restart NEKODEX to activate the new runtime." };
+        // Not a repair: the launcher activates the new runtime at the next idle moment.
+        return { updated: false, busy: true,
+          detail: "The existing runtime is serving active work; the new runtime activates when it is idle." };
       }
     }
 

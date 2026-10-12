@@ -533,7 +533,14 @@ async function main() {
   }
   const job = validateJob(JSON.parse(fs.readFileSync(jobPath, "utf8")));
   appendLog(job, `waiting for exact launcher process ${job.parentPid} before installing v${job.version}`);
-  await waitForParent(job.parentPid, job.parentIdentity);
+  try {
+    await waitForParent(job.parentPid, job.parentIdentity);
+  } catch (error) {
+    // The launcher refused or delayed its quit. Nothing was replaced; say so instead of
+    // exiting silently, so the next attempt's log explains the earlier one.
+    appendLog(job, `update to v${job.version} not started: ${error.message}`);
+    throw error;
+  }
   await installUpdate(job);
 }
 

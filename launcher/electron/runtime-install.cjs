@@ -307,9 +307,88 @@ function installedRuntimeRoot({ coreHome, version, platform = process.platform, 
   return validateRuntimeBundle(runtimeRoot, { version, platform, arch });
 }
 
+function compareReleaseVersions(left, right) {
+  const parts = value => value.split(/[.-]/).map(part => (/^\d+$/.test(part) ? Number(part) : part));
+  const a = parts(left);
+  const b = parts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    if (a[index] === undefined) return -1;
+    if (b[index] === undefined) return 1;
+    if (a[index] === b[index]) continue;
+    if (typeof a[index] === "number" && typeof b[index] === "number") return a[index] - b[index];
+    return String(a[index]).localeCompare(String(b[index]));
+  }
+  return 0;
+}
+
+// Every release leaves a ~150 MB runtime under versions/. Keep the versions that
+// something may still execute (the app's own, the configured one, a pending
+// generation's endpoints) plus the newest older release for a manual rollback,
+// and remove the rest. Abandoned install temporaries are removed after an hour.
+function pruneRuntimeVersions({
+  coreHome, keepVersions = [], platform = process.platform, arch = process.arch,
+  retainPrevious = 1, now = Date.now(), logger = null,
+}) {
+  const versionsRoot = path.join(coreHome, "versions");
+  let entries;
+  try {
+    entries = fs.readdirSync(versionsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return { removed: [], kept: [] };
+    throw error;
+  }
+  const suffix = `-${platform}-${arch}`;
+  const keep = new Set(keepVersions.filter(version => typeof version === "string" && version));
+  const releases = [];
+  const removed = [];
+  const remove = name => {
+    try {
+      fs.rmSync(path.join(versionsRoot, name), { recursive: true, force: true });
+      removed.push(name);
+    } catch (error) {
+      logger?.warn?.("runtime.version_prune_failed", { name, message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const transient = entry.name.match(/\.(tmp|previous)-\d+-(\d+)$/);
+    if (transient) {
+      if (now - Number(transient[2]) > 60 * 60 * 1000) remove(entry.name);
+      continue;
+    }
+    if (!entry.name.endsWith(suffix)) continue;
+    const version = entry.name.slice(0, -suffix.length);
+    if (/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) releases.push({ name: entry.name, version });
+  }
+  const newestKept = [...keep].sort(compareReleaseVersions).at(-1);
+  const candidates = releases
+    .filter(release => !keep.has(release.version))
+    .sort((left, right) => compareReleaseVersions(right.version, left.version));
+  let previousRetained = 0;
+  const kept = releases.filter(release => keep.has(release.version)).map(release => release.version);
+  for (const release of candidates) {
+    const older = newestKept === undefined || compareReleaseVersions(release.version, newestKept) < 0;
+    if (older && previousRetained < retainPrevious) {
+      previousRetained += 1;
+      kept.push(release.version);
+      continue;
+    }
+    // A newer, unknown release may belong to a concurrent install; never remove it.
+    if (!older) {
+      kept.push(release.version);
+      continue;
+    }
+    remove(release.name);
+  }
+  if (removed.length) logger?.info?.("runtime.versions_pruned", { removed, kept });
+  return { removed, kept };
+}
+
 module.exports = {
+  compareReleaseVersions,
   ensurePackagedRuntime,
   installedRuntimeRoot,
+  pruneRuntimeVersions,
   validateRuntimeBundle,
   waitForPackagedRuntimeSource,
 };

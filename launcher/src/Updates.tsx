@@ -6,10 +6,10 @@ import type { UpdateFeedback } from "./useUpdateControls";
 import type { Language, UpdateState } from "./types";
 import "./surfaces/tasks-updates.css";
 
-const installPhases: ReadonlyArray<UpdateState["status"]> = ["downloading", "verifying", "installing", "cancelling"];
+const installPhases: ReadonlyArray<UpdateState["status"]> = ["downloading", "verifying", "waiting", "installing", "cancelling"];
 
-export function Updates({ language, currentVersion, state, busy, blocked, checking, cooldown, error, onCheck, onInstall, cancelling = false, onCancel, transitionBusy = false, platform }: {
-  language: Language; currentVersion: string; state: UpdateState; busy: boolean; blocked: boolean;
+export function Updates({ language, currentVersion, state, busy, checking, cooldown, error, onCheck, onInstall, cancelling = false, onCancel, transitionBusy = false, platform }: {
+  language: Language; currentVersion: string; state: UpdateState; busy: boolean;
   checking: boolean; cooldown: boolean;
   /** The last action's outcome from useUpdateControls (a plain string is treated as a failed check). */
   error: UpdateFeedback | string | null;
@@ -44,12 +44,14 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
   const installPending = busy && state.status === "available" && !cancellationPending;
   const statusTitle = {
     disabled: copy.disabled, idle: copy.idle, checking: copy.checking, "up-to-date": copy.latest,
-    available: copy.available, downloading: copy.downloading, verifying: copy.verifying, installing: copy.installing,
+    available: copy.available, downloading: copy.downloading, verifying: copy.verifying, waiting: copy.waiting,
+    installing: copy.installing,
     error: failureTitle, cancelling: copy.cancelling,
   }[state.status];
   const candidate = "version" in state ? state.version : null;
   // Download · Verify · Install · Restart. The app closes during installation, so Restart is never current here.
-  const phase = ["downloading", "verifying", "installing"].indexOf(state.status);
+  // Waiting for active browser tasks happens before the worker installs, so Install is current.
+  const phase = state.status === "waiting" ? 2 : ["downloading", "verifying", "installing"].indexOf(state.status);
   const steps: PhaseStep[] = [copy.stageDownload, copy.stageVerify, copy.stageInstall, copy.stageRestart].map((label, index) => ({
     label, state: index < phase ? "complete" : index === phase ? "current" : "upcoming",
   }));
@@ -62,10 +64,11 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
   // Once the updater answered that installation already started, cancelling is no longer possible.
   const cancelTooLate = feedback?.source === "cancel" && feedback.tone === "info";
   const showCancel = Boolean(onCancel) && !cancelTooLate
-    && (["downloading", "verifying", "cancelling"].includes(state.status) || cancellationPending);
+    && (["downloading", "verifying", "waiting", "cancelling"].includes(state.status) || cancellationPending);
   // Installing hands over to the worker: no action is possible, so the empty action row is left out.
   const showActions = showCancel || state.status === "available" || !busy;
-  const showWait = (blocked || transitionBusy) && state.status === "available";
+  // Active tasks no longer block the download: the updater waits for them before installing.
+  const showWait = transitionBusy && state.status === "available";
   const waitId = useId();
   const cooldownId = useId();
   const restart = platform === "darwin" ? `${copy.restart} ${copy.restartMac}` : copy.restart;
@@ -115,7 +118,7 @@ export function Updates({ language, currentVersion, state, busy, blocked, checki
               <Button busy={cancellationPending} onClick={onCancel}>{cancellationPending ? copy.cancelBusy : copy.cancel}</Button>
             ) : null}
             {state.status === "available" ? <Button variant="primary" icon="update" busy={installPending}
-              aria-describedby={showWait ? waitId : undefined} disabled={blocked || transitionBusy || busy || checking}
+              aria-describedby={showWait ? waitId : undefined} disabled={transitionBusy || busy || checking}
               onClick={onInstall}>{copy.install}</Button> : null}
             {!busy ? <Button variant={state.status === "available" ? "secondary" : "primary"} icon="reload" busy={checkBusy}
               aria-describedby={cooldown ? cooldownId : undefined} disabled={transitionBusy || cooldown} onClick={onCheck}>

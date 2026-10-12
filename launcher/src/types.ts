@@ -222,7 +222,7 @@ export interface OperationState {
 
 export type UpdateState =
   | { status: "disabled" | "idle" | "checking" | "up-to-date" }
-  | { status: "available" | "downloading" | "verifying" | "installing" | "cancelling"; version: string;
+  | { status: "available" | "downloading" | "verifying" | "waiting" | "installing" | "cancelling"; version: string;
       downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; remainingSeconds?: number | null;
       /** Why the previous install attempt rolled back, reported once after relaunch. */
       lastFailure?: string }
