@@ -57,15 +57,26 @@ export async function responseDomSnapshot(
       observer: MutationObserver;
       rendered: Map<HTMLElement, boolean>;
     };
-    type ObserverRegistry = { documentId: string; nextId: number; states: WeakMap<Element, ObserverState> };
+    type ObserverRegistry = {
+      documentId: string;
+      nextId: number;
+      nextNodeId: number;
+      nodeIds: WeakMap<Node, number>;
+      states: WeakMap<Element, ObserverState>;
+    };
     const scope = globalThis as typeof globalThis & {
       __CODEX_WEB_GPT_RESPONSE_OBSERVERS__?: ObserverRegistry;
     };
     const registry = scope.__CODEX_WEB_GPT_RESPONSE_OBSERVERS__ ??= {
       documentId: `${performance.timeOrigin}:${Math.random().toString(36).slice(2)}`,
       nextId: 0,
+      nextNodeId: 0,
+      nodeIds: new WeakMap<Node, number>(),
       states: new WeakMap<Element, ObserverState>(),
     };
+    // A page that survived a runtime upgrade can hold a registry from an older build.
+    registry.nextNodeId ??= 0;
+    registry.nodeIds ??= new WeakMap<Node, number>();
     let observerState = registry.states.get(root);
     if (!observerState) {
       observerState = {
@@ -186,8 +197,25 @@ export async function responseDomSnapshot(
     const commentaryRoots = classified.commentaryRoots;
     const renderedRoots = classified.answerRoots;
     // CHATGPT_MARKDOWN_CONTENT_BEGIN
-    const chatGptMarkdownContent = (markdownRoot: HTMLElement): HTMLElement => {
+    const chatGptMarkdownContent = (
+      markdownRoot: HTMLElement,
+      onClone?: (original: HTMLElement, clone: HTMLElement) => void,
+    ): HTMLElement => {
       const content = markdownRoot.cloneNode(true) as HTMLElement;
+      onClone?.(markdownRoot, content);
+      // A formula's visual and accessibility layers hydrate independently. Compare its TeX
+      // source, as Markdown conversion does, so cosmetic changes cannot look like an edit to
+      // text already delivered to Codex.
+      for (const math of Array.from(content.querySelectorAll<HTMLElement>(".katex"))) {
+        if (math.closest("pre, code")) continue;
+        const sources = math.querySelectorAll('annotation[encoding="application/x-tex"]');
+        if (sources.length !== 1) continue;
+        const source = content.ownerDocument.createElement("annotation");
+        source.setAttribute("encoding", "application/x-tex");
+        source.textContent = sources[0]!.textContent;
+        math.textContent = "";
+        math.appendChild(source);
+      }
       const labelSelector = "button.behavior-btn.entity-underline";
       const originalLabels = Array.from(markdownRoot.querySelectorAll<HTMLElement>(labelSelector));
       const hiddenLabelPart = (candidate: HTMLElement): boolean => {
@@ -236,6 +264,17 @@ export async function responseDomSnapshot(
         card.textContent = "";
         for (const child of children) card.appendChild(child);
       }
+      // A resource preview can change its title to filename/type after surrounding prose was
+      // delivered (upstream #769). That is a presentation control, not answer text; keep cards
+      // exposing an actual link destination. The empty boundary stays: a download link may
+      // replace the preview on a later frame.
+      const referenceSelector = '[data-chatgpt-copy-reference][data-markdown-copy="contents"]';
+      for (const card of [content, ...Array.from(content.querySelectorAll(referenceSelector))]
+        .filter(node => node.matches(referenceSelector) && !node.closest("pre, code"))) {
+        if (card.querySelector('[class~="group/resource-row"]') && !card.querySelector("a[href]")) {
+          card.textContent = "";
+        }
+      }
       // DIV-based code renderers need a PRE boundary before text fingerprinting and
       // Markdown conversion so toolbar changes and code newlines remain independent.
       const codeBlockSelector = 'pre, [data-markdown-copy="code-block"]';
@@ -277,10 +316,12 @@ export async function responseDomSnapshot(
     // answer is finalized. Root boundaries and visible indices therefore are not identity:
     // flatten semantic blocks and preserve ChatGPT's source ranges across that reparenting.
     const flattenedMarkdownSegments: Array<{
+      nodeKey: string;
       tag: string;
       html: string;
       text: string;
       pendingLinks: boolean;
+      mutableReference: boolean;
       linkTargets: string[];
       group?: string;
       sourceStart?: number;
@@ -312,6 +353,24 @@ export async function responseDomSnapshot(
       return parts.join("").trim();
     };
     // CHATGPT_MARKDOWN_CONTENT_END
+    // A DOM position is not a block identity: a file preview leaving the answer must not give
+    // the following paragraph the preview's already committed key.
+    const nodeKey = (node: Node): string => {
+      let id = registry.nodeIds.get(node);
+      if (id === undefined) {
+        id = registry.nextNodeId++;
+        registry.nodeIds.set(node, id);
+      }
+      return `dom:${registry.documentId}:${id}`;
+    };
+    const rememberClone = (original: HTMLElement, clone: HTMLElement): void => {
+      const source = document.createTreeWalker(original, NodeFilter.SHOW_ALL);
+      const copied = document.createTreeWalker(clone, NodeFilter.SHOW_ALL);
+      do {
+        nodeKey(source.currentNode);
+        registry.nodeIds.set(copied.currentNode, registry.nodeIds.get(source.currentNode)!);
+      } while (source.nextNode() && copied.nextNode());
+    };
     let listGroupIndex = 0;
     const sourceRange = (candidate: Element): { sourceStart: number; sourceEnd: number } | undefined => {
       const startAttribute = candidate.getAttribute("data-start");
@@ -324,10 +383,13 @@ export async function responseDomSnapshot(
         ? { sourceStart, sourceEnd }
         : undefined;
     };
-    const linkState = (element: HTMLElement): { pendingLinks: boolean; linkTargets: string[] } => {
+    const referenceSelector = '[data-chatgpt-copy-reference][data-markdown-copy="contents"]';
+    const linkState = (element: HTMLElement): { pendingLinks: boolean; linkTargets: string[]; mutableReference: boolean } => {
       const anchors = [element, ...element.querySelectorAll<HTMLElement>("a")]
         .filter(candidate => candidate.tagName === "A" && Boolean(candidate.textContent?.trim()));
       return {
+        mutableReference: [element, ...element.querySelectorAll(referenceSelector)]
+          .some(node => node.matches(referenceSelector) && !node.closest("pre, code")),
         pendingLinks: anchors.some(candidate => !candidate.getAttribute("href")?.trim()),
         linkTargets: anchors.flatMap(candidate => {
           const href = candidate.getAttribute("href");
@@ -343,6 +405,7 @@ export async function responseDomSnapshot(
         : [];
       if (listItems.length === 0) {
         flattenedMarkdownSegments.push({
+          nodeKey: nodeKey(child),
           tag,
           html: child.outerHTML,
           text: markdownText(child),
@@ -364,6 +427,7 @@ export async function responseDomSnapshot(
         }
         shell.append(item.cloneNode(true));
         flattenedMarkdownSegments.push({
+          nodeKey: nodeKey(item),
           tag: `${tag}:item`,
           html: shell.outerHTML,
           text: markdownText(item),
@@ -373,11 +437,12 @@ export async function responseDomSnapshot(
         });
       });
     };
-    renderedRoots.map(chatGptMarkdownContent).forEach((markdownRoot) => {
+    renderedRoots.map(candidate => chatGptMarkdownContent(candidate, rememberClone)).forEach((markdownRoot) => {
       const children = [...markdownRoot.children] as HTMLElement[];
       const hasBlockChildren = children.some(child => blockMarkdownTags.has(child.tagName.toLowerCase()));
       if (!hasBlockChildren) {
-        if (markdownRoot.innerHTML.trim()) flattenedMarkdownSegments.push({
+        if (markdownRoot.innerHTML.trim() || linkState(markdownRoot).mutableReference) flattenedMarkdownSegments.push({
+          nodeKey: nodeKey(markdownRoot),
           tag: "root",
           html: markdownRoot.innerHTML,
           text: markdownText(markdownRoot),
@@ -395,7 +460,7 @@ export async function responseDomSnapshot(
         const shell = document.createElement("span");
         nodes.forEach(node => shell.append(node.cloneNode(true)));
         const text = markdownText(shell);
-        if (text) {
+        if (text || linkState(shell).mutableReference) {
           const rangedElements = nodes.flatMap(node => node instanceof Element
             ? [node, ...node.querySelectorAll<HTMLElement>("[data-start][data-end]")]
             : []);
@@ -403,6 +468,7 @@ export async function responseDomSnapshot(
             .map(sourceRange)
             .filter((range): range is { sourceStart: number; sourceEnd: number } => range !== undefined);
           flattenedMarkdownSegments.push({
+            nodeKey: nodeKey(nodes[0]!),
             tag: "inline",
             html: shell.outerHTML,
             text,
@@ -426,9 +492,9 @@ export async function responseDomSnapshot(
       flushInlineRun();
     });
     const markdownSegments = flattenedMarkdownSegments.map((segment, index, segments) => ({
-      key: segment.sourceStart !== undefined
-        ? `${segment.sourceStart}:${segment.tag}`
-        : `${index}:${segment.tag}`,
+      // Source offsets may arrive after this exact node has already streamed. Keep its DOM
+      // identity; the buffer independently uses source ranges across later remounts.
+      key: `${segment.nodeKey}:${segment.tag}`,
       tag: segment.tag,
       html: segment.html,
       text: segment.text,
@@ -436,6 +502,7 @@ export async function responseDomSnapshot(
       ...(segment.sourceStart !== undefined ? { sourceStart: segment.sourceStart } : {}),
       ...(segment.sourceEnd !== undefined ? { sourceEnd: segment.sourceEnd } : {}),
       streamable: index < segments.length - 1 && !segment.pendingLinks,
+      ...(segment.mutableReference ? { mutableReference: true } : {}),
       linkTargets: segment.linkTargets,
     }));
     const rendered = renderedRoots.at(-1);
