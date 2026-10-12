@@ -60,6 +60,9 @@ test("no evidence before the deadline or a quitting launcher never switches the 
 test("release versions order numerically, including the fork prerelease", () => {
   expect(["6.1.9-nekodex.1", "6.1.29-nekodex.1", "6.1.10-nekodex.2", "6.1.10-nekodex.1"].sort(compareReleaseVersions))
     .toEqual(["6.1.9-nekodex.1", "6.1.10-nekodex.1", "6.1.10-nekodex.2", "6.1.29-nekodex.1"]);
+  expect(compareReleaseVersions("6.1.28", "6.1.28-nekodex.1")).toBeGreaterThan(0);
+  expect(compareReleaseVersions("6.1.28-nekodex.10", "6.1.28-nekodex.9")).toBeGreaterThan(0);
+  expect(compareReleaseVersions("6.1.28-nekodex.1", "6.1.28-nekodex.1")).toBe(0);
 });
 
 test("pruning keeps live versions, one rollback release and newer unknown installs", () => {

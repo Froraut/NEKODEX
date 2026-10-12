@@ -314,16 +314,35 @@ function installedRuntimeRoot({ coreHome, version, platform = process.platform, 
   return validateRuntimeBundle(runtimeRoot, { version, platform, arch });
 }
 
+// Semantic-version order: numeric core first; a release ranks above its prereleases;
+// prerelease identifiers compare numerically when both are numbers.
 function compareReleaseVersions(left, right) {
-  const parts = value => value.split(/[.-]/).map(part => (/^\d+$/.test(part) ? Number(part) : part));
-  const a = parts(left);
-  const b = parts(right);
+  const split = value => {
+    const dash = value.indexOf("-");
+    return dash < 0 ? [value, null] : [value.slice(0, dash), value.slice(dash + 1)];
+  };
+  const [leftCore, leftPre] = split(left);
+  const [rightCore, rightPre] = split(right);
+  const leftParts = leftCore.split(".").map(Number);
+  const rightParts = rightCore.split(".").map(Number);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference) return difference;
+  }
+  if (leftPre === rightPre) return 0;
+  if (leftPre === null) return 1;
+  if (rightPre === null) return -1;
+  const a = leftPre.split(".");
+  const b = rightPre.split(".");
   for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
     if (a[index] === undefined) return -1;
     if (b[index] === undefined) return 1;
     if (a[index] === b[index]) continue;
-    if (typeof a[index] === "number" && typeof b[index] === "number") return a[index] - b[index];
-    return String(a[index]).localeCompare(String(b[index]));
+    const numeric = /^\d+$/.test(a[index]) && /^\d+$/.test(b[index]);
+    if (numeric) return Number(a[index]) - Number(b[index]);
+    if (/^\d+$/.test(a[index])) return -1;
+    if (/^\d+$/.test(b[index])) return 1;
+    return a[index] < b[index] ? -1 : 1;
   }
   return 0;
 }

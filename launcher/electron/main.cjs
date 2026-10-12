@@ -1652,23 +1652,57 @@ function registerIpc({ logger, stateStore }) {
 }
 
 let runtimeActivation = null;
+const RUNTIME_ACTIVATION_LABEL = "the local runtime update";
+// Quit, signals and logout wait for these bounded transitions instead of failing.
+const DEFERRED_QUIT_TRANSITIONS = new Set(["local runtime startup", RUNTIME_ACTIVATION_LABEL]);
 const RUNTIME_ACTIVATION_POLL_MS = 1_000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const launcherClosing = () => shutdownInProgress || quitting || exitCommitted;
 
-function pruneInstalledRuntimeVersions() {
+function pruneInstalledRuntimeVersions(previousVersion) {
   if (IS_DEV_PROFILE) return;
   try {
     const pending = runtimeHost?.runtimeGeneration?.inspect?.();
     pruneRuntimeVersions({
       coreHome: CORE_HOME,
-      keepVersions: [app.getVersion(), runtimeSupervisor?.readConfig()?.releaseVersion,
+      // The version just replaced is the natural rollback target, even when an
+      // intermediate release was installed but never activated.
+      keepVersions: [app.getVersion(), runtimeSupervisor?.readConfig()?.releaseVersion, previousVersion,
         pending?.journal?.fromVersion, pending?.journal?.toVersion],
       logger,
     });
   } catch (error) {
     logger?.warn("runtime.version_prune_failed", { message: error instanceof Error ? error.message : String(error) });
   }
+}
+
+function retryableActivationRefusal(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (message.includes("atomic idleness could not be proven") && !message.includes("compensating resume failed")
+    && !message.includes("restart"))
+    || message.startsWith("Runtime session no longer matches the owned daemon")
+    || message.startsWith("Runtime session did not acknowledge");
+}
+
+// Activation failed after the previous runtime may have stopped. Mirror startup: keep a
+// usable runtime as is; otherwise retire readiness and give Codex its previous route back.
+async function recoverFromActivationFailure(message) {
+  stopCatalogVerificationMonitor();
+  const usable = runtimeSupervisor.capabilitySnapshot().nativeAvailability === "ready";
+  if (usable) {
+    publishOperation({ name: "runtime-upgrade", status: "failed",
+      message: `${message}; the previous verified runtime remains available` });
+    startCatalogVerificationMonitor({ logger, stateStore: launcherStateStore });
+    return;
+  }
+  retireAccountProof();
+  const state = launcherStateStore.update({ coreSetupComplete: false, codexCatalogVerified: false, mcpSetupComplete: false });
+  send("launcher:state-changed", state);
+  const route = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore: launcherStateStore });
+  if (route.skipped) return;
+  publishOperation({ name: "runtime-upgrade", status: "failed",
+    message: route.error ? `${message}; restoring the previous Codex route also failed: ${route.error}`
+      : route.restored ? `${message}; the previous Codex route was restored, restart Codex once` : message });
 }
 
 async function runtimeIdleForActivation() {
@@ -1715,7 +1749,7 @@ async function activatePendingRuntime(reason) {
   if (updateReadinessHandoff) {
     const commit = await waitForUpdateCommit(updateReadinessHandoff, { isCancelled: launcherClosing });
     logger.info("update.commit_observed", commit);
-    if (commit.status === "cancelled") return;
+    if (commit.status === "cancelled" || commit.status === "rolled-back") return;
     if (commit.status !== "committed") {
       // Without commit proof the previous app may still be restored; it must find its runtime.
       const state = launcherStateStore.update({ launcherRestartRequired: true });
@@ -1731,25 +1765,38 @@ async function activatePendingRuntime(reason) {
   for (let attempt = 0; ; attempt += 1) {
     if (attempt > 0) await sleep(RUNTIME_ACTIVATION_POLL_MS);
     if (launcherClosing()) return;
+    if (!runtimeSupervisor.readConfig()) return;
     if (!(await runtimeIdleForActivation())) continue;
     if (lifecycleAdmission.busy()) continue;
-    const owner = lifecycleAdmission.acquire("the local runtime update");
+    const owner = lifecycleAdmission.acquire(RUNTIME_ACTIVATION_LABEL);
     try {
       if (currentGlobalOperation() || browserHost?.hasActiveTurns() || runtimeHost.currentOperation()) continue;
-      const upgrade = await runtimeHost.upgradeManagedRuntime();
+      let upgrade;
+      try {
+        upgrade = await runtimeHost.upgradeManagedRuntime();
+      } catch (error) {
+        // A turn that started after the idle check, or a transient status probe, refuses the
+        // drain while the old runtime keeps serving. Try again at the next idle moment.
+        if (retryableActivationRefusal(error)) {
+          logger.info("runtime.activation_retry", { message: error instanceof Error ? error.message : String(error) });
+          continue;
+        }
+        throw error;
+      }
       if (upgrade.busy) continue;
       if (!upgrade.updated) {
         if (upgrade.repairRequired) publishOperation({ name: "runtime-repair", status: "failed", message: upgrade.detail });
         return;
       }
       const result = await startStagedRuntimeGeneration(upgrade);
-      pruneInstalledRuntimeVersions();
+      pruneInstalledRuntimeVersions(upgrade.fromVersion);
       const state = launcherStateStore.update({
         runtimeMigrationPending: false,
         launcherRestartRequired: false,
         ...(result.bridgeRouteChanged ? { codexCatalogVerified: false, codexRestartRequired: true } : {}),
       });
       send("launcher:state-changed", state);
+      if (result.bridgeRouteChanged) startCatalogVerificationMonitor({ logger, stateStore: launcherStateStore });
       logger.info("runtime.release_activated", { reason, fromVersion: upgrade.fromVersion, toVersion: upgrade.toVersion,
         waitedMs: Date.now() - startedAt, generationId: upgrade.generationId });
       publishOperation({ name: "runtime-upgrade", status: "completed",
@@ -1763,16 +1810,19 @@ async function activatePendingRuntime(reason) {
 
 function scheduleRuntimeActivation(reason) {
   if (runtimeActivation || IS_DEV_PROFILE) return runtimeActivation;
-  runtimeActivation = activatePendingRuntime(reason).catch((error) => {
+  runtimeActivation = activatePendingRuntime(reason).catch(async (error) => {
     const message = error instanceof Error ? error.message : String(error);
     logger.error("runtime.activation_failed", { reason, message });
-    if (!launcherClosing()) publishOperation({ name: "runtime-upgrade", status: "failed", message });
+    if (launcherClosing()) return;
+    await recoverFromActivationFailure(message).catch((failure) => {
+      logger.error("runtime.activation_recovery_failed", { message: failure instanceof Error ? failure.message : String(failure) });
+    });
   }).finally(() => { runtimeActivation = null; });
   return runtimeActivation;
 }
 
 async function requestQuit({ admissionHeld = false, restart = false, stopRuntime = false, transitionOwner = null } = {}) {
-  if (!transitionOwner && lifecycleAdmission.currentLabel() === "local runtime startup") {
+  if (!transitionOwner && DEFERRED_QUIT_TRANSITIONS.has(lifecycleAdmission.currentLabel())) {
     // Preserve a single native Quit/SIGTERM across the bounded startup owner.
     // A full-stop intent dominates a plain quit or interface restart.
     if (!deferredQuit) deferredQuit = { options: { restart, stopRuntime }, waiters: [] };
@@ -1794,6 +1844,13 @@ async function requestQuit({ admissionHeld = false, restart = false, stopRuntime
   shutdownInProgress = true;
   let shutdownResult;
   try {
+    // An ordinary quit abandons an update still downloading, verifying or waiting for
+    // tasks; cancelling it removes the staged package instead of leaking it.
+    if (!borrowedTransition) {
+      await updateController?.cancelPreparation().catch(error => {
+        logger?.warn("launcher.update_preparation_cancel_failed", { message: error instanceof Error ? error.message : String(error) });
+      });
+    }
     if (!admissionHeld) browserHost?.closeTurnAdmission("launcher shutdown");
     if (browserHost?.hasActiveTurns()) {
       throw new Error("Finish or cancel active tasks before quitting NEKODEX");
@@ -2378,7 +2435,7 @@ async function start() {
       if (generationId) {
         runtimeHost.commitManagedRuntimeUpgrade(generationId);
         generationCommitted = true;
-        pruneInstalledRuntimeVersions();
+        pruneInstalledRuntimeVersions(upgrade.fromVersion);
         logger.info("runtime.release_upgraded", { fromVersion: upgrade.fromVersion,
           toVersion: upgrade.toVersion, mode: upgrade.mode, generationId });
       }
