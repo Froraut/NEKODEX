@@ -190,6 +190,11 @@ function inspectRuntimeBundle(runtimeRoot, identity) {
   return { manifest, runtimeRoot: paths.runtimeRoot };
 }
 
+// The packaged source lives inside the signed, read-only application bundle. Hash it
+// once per launch: startup waits for it to materialize, then installs from it.
+const verifiedPackagedSources = new Map();
+const sourceKey = (runtimeRoot, identity) => [runtimeRoot, identity.version, identity.platform, identity.arch].join("\0");
+
 function validateRuntimeBundle(runtimeRoot, identity) {
   return inspectRuntimeBundle(runtimeRoot, identity).runtimeRoot;
 }
@@ -214,7 +219,9 @@ async function waitForPackagedRuntimeSource({
   let lastError;
   for (;;) {
     try {
-      return validateRuntimeBundle(source, identity);
+      const inspected = inspectRuntimeBundle(source, identity);
+      verifiedPackagedSources.set(sourceKey(source, identity), inspected);
+      return inspected.runtimeRoot;
     } catch (error) {
       lastError = error;
     }
@@ -234,7 +241,7 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
     arch: process.arch,
   };
   const source = path.join(resourcesPath, "runtime");
-  const sourceBundle = inspectRuntimeBundle(source, identity);
+  const sourceBundle = verifiedPackagedSources.get(sourceKey(source, identity)) ?? inspectRuntimeBundle(source, identity);
   const expectedIdentity = { ...identity, bundleId: sourceBundle.manifest.bundleId };
   const versionsRoot = path.join(coreHome, "versions");
   const destination = path.join(
