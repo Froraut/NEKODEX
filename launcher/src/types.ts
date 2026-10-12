@@ -421,6 +421,8 @@ export interface AccountTunnelView {
   tunnelId?: string;
   status: 'unconfigured' | 'starting' | 'ready' | 'stopped' | 'error' | 'unknown';
   ready: boolean;
+  /** Machine-readable cause while not ready, e.g. "openai_unreachable". */
+  reason?: string;
   detail?: string;
 }
 

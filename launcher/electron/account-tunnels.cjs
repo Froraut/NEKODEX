@@ -60,8 +60,14 @@ function accountTunnelView(config, accountId, mode, runtimeStatus, principalFing
   const ready = same && runtimeStatus.ready === true;
   const status = same && ['starting', 'ready', 'stopped', 'error', 'unknown'].includes(runtimeStatus.status)
     ? runtimeStatus.status : 'unknown';
+  // Keep the supervisor's cause (for example an OpenAI outage behind a running
+  // tunnel) so admission and the account page can name it.
+  const cause = same && !ready ? {
+    ...(typeof runtimeStatus.reason === 'string' ? { reason: runtimeStatus.reason } : {}),
+    ...(typeof runtimeStatus.detail === 'string' ? { detail: runtimeStatus.detail } : {}),
+  } : {};
   return { accountId, interactionMode: mode, tunnelId: binding.tunnel.tunnelId,
-    status: ready ? 'ready' : status, ready };
+    status: ready ? 'ready' : status, ready, ...cause };
 }
 function projectAccountTunnels(config, bindings) {
   const next = { ...config, accountTunnelMode: true, accountTunnels: validateAccountTunnelBindings(bindings) };

@@ -97,4 +97,22 @@ function managedTunnelConnectArgs(config, invocation) {
   ];
 }
 
-module.exports = { conciseTunnelLog, tunnelConnectCanContinue, tunnelControlDiagnostic, managedTunnelConnectArgs };
+const RECOVERY_BACKOFF_INITIAL_MS = 15_000;
+const RECOVERY_BACKOFF_MAX_MS = 5 * 60_000;
+
+// After the fast restart budget is spent, recovery keeps retrying with a delay
+// that starts at 15 s and doubles to 5 min. It is never disabled permanently.
+function recoveryBackoffDelay(previousMs) {
+  if (!Number.isFinite(previousMs) || previousMs < RECOVERY_BACKOFF_INITIAL_MS) return RECOVERY_BACKOFF_INITIAL_MS;
+  return Math.min(previousMs * 2, RECOVERY_BACKOFF_MAX_MS);
+}
+
+// A control command that timed out or was cancelled says nothing about the tunnel:
+// `runtimes status` performs a remote lookup that a network blip can stall.
+function tunnelObservationInconclusive(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /\btimed out after \d+ms\b|\bcancelled\b|\bETIMEDOUT\b|\bEAGAIN\b/.test(message);
+}
+
+module.exports = { conciseTunnelLog, tunnelConnectCanContinue, tunnelControlDiagnostic, managedTunnelConnectArgs,
+  RECOVERY_BACKOFF_INITIAL_MS, RECOVERY_BACKOFF_MAX_MS, recoveryBackoffDelay, tunnelObservationInconclusive };
