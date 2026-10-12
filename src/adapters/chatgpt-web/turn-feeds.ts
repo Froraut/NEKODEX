@@ -1,6 +1,7 @@
 import type { CodexParsedRequest } from "../../types";
 import { CHATGPT_TEXT_BUFFER_BYTES, CHATGPT_TRACE_BUFFER_BYTES, assertByteLimit, retainedRecordBytes } from "./resource-budgets";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
+import type { BrokerToolResult } from "./turn-broker-protocol";
 
 export type ChatGptBrowserOutcome =
   | { type: "final"; answer: string }
@@ -166,5 +167,7 @@ export type ChatGptTurnRuntime =
     mode: "tools";
     token: Promise<string>;
     externalProgress: ChatGptExternalTurnProgress;
+    /** Deliver a tool result for a dispatched call through this turn's broker capability. */
+    completeTool?: (callId: string, result: BrokerToolResult) => Promise<void>;
   })
   | (ChatGptTurnRuntimeBase & { mode: "read-only" });

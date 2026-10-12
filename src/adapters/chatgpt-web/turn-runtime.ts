@@ -159,7 +159,7 @@ export interface ChatGptTurnRuntimeContext {
   worker: Pick<ChatGptBrowserWorker, "run">;
   broker: Pick<TurnBrokerOwner,
     "register" | "registerSafe" | "setTunnelScope" | "waitForRetirement" | "revoke" | "confirmSafeTurnSent"
-    | "waitForSafeStart" | "waitForSafeCompletion" | "beginCompletionFence" | "commitCompletionFence">;
+    | "waitForSafeStart" | "waitForSafeCompletion" | "beginCompletionFence" | "commitCompletionFence" | "completeTool">;
   zeroRiskManualControl: ChatGptZeroRiskManualControl;
   lunaCheckpointStore: Pick<ChatGptLunaCheckpointStore, "apply" | "commit">;
   conversationNamespace: (parsed: CodexParsedRequest) => string;
@@ -498,6 +498,7 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
         retireCapability: async () => {
           if (activeToken) await broker.revoke(activeToken);
         },
+        completeTool: async (callId, result) => broker.completeTool(await token.promise, callId, result),
         submission,
         cancel: (reason?: Error) => {
           browserTurn.cancel(reason);
@@ -626,6 +627,7 @@ export function createChatGptTurnRuntimeFactory(context: ChatGptTurnRuntimeConte
         retireCapability: async () => {
           if (activeToken) await broker.revoke(activeToken);
         },
+        completeTool: async (callId, result) => broker.completeTool(await token.promise, callId, result),
         submission,
         cancel: (reason?: Error) => {
           browserTurn.cancel(reason);

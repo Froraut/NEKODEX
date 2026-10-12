@@ -116,6 +116,11 @@ export class OwnedToolOperationStore {
     }
   }
 
+  /** Whether an identity is already live or guarded; a proposed id must never alias it. */
+  has(id: string): boolean {
+    return this.ownedOperations.has(id) || this.acknowledgedOperations.has(id);
+  }
+
   /** The running operation that owns a native call, if any. */
   operationForCall(token: string, callId: string): string | undefined {
     for (const operation of this.ownedOperations.values()) {
