@@ -522,10 +522,25 @@ export class ChatGptTurnSessions {
     return true;
   }
 
-  retire(key: string, session: ChatGptTurnSession): boolean {
+  retire(key: string, session: ChatGptTurnSession, reason?: Error): boolean {
     if (this.entries.get(key) !== session) return false;
-    this.observeRetirement(this.retireSession(key, session));
+    this.observeRetirement(this.retireSession(key, session, reason));
     return true;
+  }
+
+  /** Tool-capable sessions whose unresolved batch contains any of these exact call ids. */
+  findOutstandingToolCalls(callIds: ReadonlySet<string>): Array<{
+    key: string;
+    session: ChatGptTurnSession;
+    callIds: string[];
+  }> {
+    const matches: Array<{ key: string; session: ChatGptTurnSession; callIds: string[] }> = [];
+    for (const [key, session] of this.entries) {
+      if (session.runtime.mode !== "tools" || !session.isActive()) continue;
+      const matched = [...callIds].filter(callId => session.hasOutstanding(callId));
+      if (matched.length > 0) matches.push({ key, session, callIds: matched });
+    }
+    return matches;
   }
 
   /** Register even before runExclusive unwinds; the deferred check requires all observers gone. */

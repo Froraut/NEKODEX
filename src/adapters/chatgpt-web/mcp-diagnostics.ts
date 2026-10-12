@@ -92,3 +92,19 @@ export function observeMcpTransport(
   };
   return observed;
 }
+
+const MCP_LOG_PREFIX = "[chatgpt-web-mcp]";
+let stderrTimestamped = false;
+
+/** The tunnel client buffers MCP stderr, so arrival time is not event time. Stamp each line. */
+export function timestampMcpStderrLines(now: () => Date = () => new Date()): void {
+  if (stderrTimestamped) return;
+  stderrTimestamped = true;
+  const original = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    if (typeof args[0] === "string" && args[0].startsWith(MCP_LOG_PREFIX)) {
+      args[0] = `${now().toISOString()} ${args[0]}`;
+    }
+    original(...args);
+  };
+}

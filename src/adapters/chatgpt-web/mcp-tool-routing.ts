@@ -146,7 +146,7 @@ interface GatewayToolDescriptor {
   description: string;
 }
 
-interface GatewayToolCatalogPage {
+export interface GatewayToolCatalogPage {
   tools: GatewayToolDescriptor[];
   total: number;
 }

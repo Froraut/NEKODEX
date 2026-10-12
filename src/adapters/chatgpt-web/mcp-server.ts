@@ -11,6 +11,7 @@ import {
   gatewayToolCatalogPage,
   gatewayToolDescription,
   resolveBrowserInvocation,
+  type GatewayToolCatalogPage,
   type McpToolRoutingPolicy,
   type ChatGptMcpContract,
 } from "./mcp-tool-routing";
@@ -24,6 +25,7 @@ import {
   type McpRequestExtra,
 } from "./mcp-native-tools";
 export type { ChatGptMcpContract };
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -68,6 +70,19 @@ const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
 // operation. Answer before the invocation timeout so the running handle reaches ChatGPT.
 const CHATGPT_WEB_MCP_PROMOTION_DEADLINE_MS = 80_000;
 const CHATGPT_WEB_MCP_PROMOTION_MARGIN_MS = 5_000;
+// The nested catalog is a read-only convenience. Answer with the outer registry instead of
+// waiting behind a running call for the full promotion deadline.
+const CHATGPT_WEB_MCP_CATALOG_DEADLINE_MS = 3_000;
+const MAX_CATALOG_CACHE_BINDINGS = 16;
+const MAX_CATALOG_CACHE_ENTRIES_PER_BINDING = 32;
+// On SIGTERM/stdin close, give each live broker lease about a second to be retired.
+export const CHATGPT_WEB_MCP_SHUTDOWN_BUDGET_MS = 1_000;
+// MCP tools whose handler invokes a native call. Their claims let the broker hold a tool batch
+// open briefly so parallel ChatGPT calls reach Codex as one round.
+const INVOKING_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "codex_exec", "codex_write_stdin", "codex_apply_patch", "codex_view_image", "codex_read_thread",
+  "codex_tool_call", "codex_tool_start",
+]);
 const ZERO_RISK_MCP_INSTRUCTIONS = [
   "For each pasted NEKODEX request, begin with codex_turn_start using the request_id in its request block.",
   "Use that request_id with the Codex tools needed for the task.",
@@ -142,9 +157,13 @@ function asMcpResult(value: BrokerToolResult) {
 }
 
 function promotedInvocationResult(tool: string, promoted: BrokerPromotedInvocation["promoted"]) {
+  // Older brokers omit queuedBehind; keep their original wording for an undispatched call.
   const cause = promoted.dispatched
     ? `Codex has not finished ${tool} yet; it may be waiting for the user's approval in Codex or still running.`
-    : `${tool} is queued behind an earlier Codex tool call that is still running; Codex runs one tool batch at a time.`;
+    : promoted.queuedBehind !== false
+      ? `${tool} is queued behind an earlier Codex tool call that is still running; Codex runs one tool batch at a time.`
+      : `${tool} has not been picked up by Codex yet; it stays queued until Codex requests the next tool batch`
+        + " and is cancelled without running if Codex stops requesting tools for this turn.";
   return result({
     state: "running",
     operation_id: promoted.operationId,
@@ -198,6 +217,12 @@ function asOwnedOperationResult(value: BrokerOwnedOperationSnapshot, context: "s
   });
 }
 
+export interface ChatGptMcpServerHandle {
+  /** Retire every live broker lease within the budget; returns how many were settled. */
+  releaseActivities(budgetMs?: number): Promise<number>;
+  liveActivityCount(): number;
+}
+
 export async function runChatGptMcpServer(options: {
   brokerSocketPath: string;
   tunnelId?: string;
@@ -207,7 +232,7 @@ export async function runChatGptMcpServer(options: {
   asyncToolOperations?: boolean;
   /** Adds the Native6 metadata recovery tool without changing Native4/5 schemas. */
   native6?: boolean;
-}): Promise<void> {
+}): Promise<ChatGptMcpServerHandle> {
   const tunnelId = options.tunnelId ?? cliTunnelId;
   if (tunnelId !== undefined && !/^[A-Za-z0-9_-]{1,256}$/.test(tunnelId)) {
     throw new Error("MCP tunnel id is invalid");
@@ -228,6 +253,12 @@ export async function runChatGptMcpServer(options: {
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
   );
 
+  // Leases this process holds. A terminated MCP process otherwise leaves them blocking the turn's
+  // completion fence until the broker's three-minute lease expiry.
+  const liveActivities = new Map<string, string>();
+  // The claimed activity of the running handler, so its invoke can tell the broker it arrived.
+  const activityScope = new AsyncLocalStorage<string>();
+
   const claimTurn = async (
     toolName: string,
     turnToken: string,
@@ -235,10 +266,14 @@ export async function runChatGptMcpServer(options: {
   ): Promise<ClaimedTurn> => {
     console.error(`[chatgpt-web-mcp] ${toolName} scope=${requestScopeSummary(extra)}`);
     const activityId = `activity_${randomBytes(18).toString("base64url")}`;
+    liveActivities.set(activityId, turnToken);
     try {
       const claimed = await callTurnBroker<Omit<ClaimedTurn, "activityId">>(
         options.brokerSocketPath,
-        { method: "claim", token: turnToken, activityId, contract },
+        {
+          method: "claim", token: turnToken, activityId, contract,
+          ...(contract === "native" && INVOKING_TOOL_NAMES.has(toolName) ? { invokeIntent: true } : {}),
+        },
         contract === "safe" ? null : 5_000,
         extra.signal,
       );
@@ -266,11 +301,14 @@ export async function runChatGptMcpServer(options: {
           token: turnToken,
           activityId,
         }, 5_000);
+        liveActivities.delete(activityId);
         return;
       } catch (error) {
         firstError ??= error;
       }
     }
+    // The broker expires a lease it never hears about; do not retry it again at shutdown.
+    liveActivities.delete(activityId);
     throw new AggregateError(
       [firstError],
       "Codex Native broker activity cleanup failed after an idempotent retry",
@@ -288,7 +326,7 @@ export async function runChatGptMcpServer(options: {
     let actionError: unknown;
     let value: T | undefined;
     try {
-      value = await action(claimed);
+      value = await activityScope.run(claimed.activityId, () => action(claimed));
     } catch (error) {
       actionFailed = true;
       actionError = error;
@@ -368,13 +406,23 @@ export async function runChatGptMcpServer(options: {
     tool: CodexTool,
     payload: { arguments?: Record<string, unknown>; input?: string },
     signal?: AbortSignal,
+    invokeOptions: { promotionDeadlineMs?: number } = {},
   ): Promise<{ kind: "result"; value: CallToolResult } | { kind: "promoted"; promoted: BrokerPromotedInvocation["promoted"] }> => {
     const timeoutMs = chatGptMcpInvocationTimeout(bound);
     const softDeadlineMs = promotionCapable
       && timeoutMs > CHATGPT_WEB_MCP_PROMOTION_MARGIN_MS + 1_000
       && await brokerSupportsPromotion()
-      ? Math.min(CHATGPT_WEB_MCP_PROMOTION_DEADLINE_MS, timeoutMs - CHATGPT_WEB_MCP_PROMOTION_MARGIN_MS)
+      ? Math.max(1_000, Math.min(
+        invokeOptions.promotionDeadlineMs ?? CHATGPT_WEB_MCP_PROMOTION_DEADLINE_MS,
+        CHATGPT_WEB_MCP_PROMOTION_DEADLINE_MS,
+        timeoutMs - CHATGPT_WEB_MCP_PROMOTION_MARGIN_MS,
+      ))
       : undefined;
+    // Proposed up front so a lost broker answer can still name the operation retaining the call.
+    const operationId = softDeadlineMs !== undefined
+      ? `operation_${randomBytes(32).toString("base64url")}`
+      : undefined;
+    const activityId = activityScope.getStore();
     try {
       const response = await callTurnBroker<BrokerInvokeResult>(options.brokerSocketPath, {
         method: "invoke",
@@ -382,7 +430,8 @@ export async function runChatGptMcpServer(options: {
         wireName: wireName(tool),
         freeform: tool.freeform === true,
         ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
-        ...(softDeadlineMs !== undefined ? { softDeadlineMs } : {}),
+        ...(softDeadlineMs !== undefined ? { softDeadlineMs, operationId } : {}),
+        ...(activityId !== undefined ? { activityId } : {}),
       }, timeoutMs, signal);
       return isBrokerPromotedInvocation(response)
         ? { kind: "promoted", promoted: response.promoted }
@@ -400,9 +449,11 @@ export async function runChatGptMcpServer(options: {
           value: result({
             code: "codex_tool_unconfirmed",
             tool: toolName,
+            operation_id: operationId,
             retryable: false,
             message: `Codex tool ${toolName} did not answer before the MCP transport deadline. It was not cancelled and may still`
-              + " complete; do not call it again. Its result is retained as an owned operation (see codex_tool_status when available).",
+              + " complete; do not call it again. Its result is retained as this owned operation: call codex_tool_poll with"
+              + " operation_id until it is terminal. If the operation is unknown, the call settled before it could be retained.",
           }, true),
         };
       }
@@ -476,6 +527,46 @@ export async function runChatGptMcpServer(options: {
 
   registerNativeTools(server, { contract, withClaimedTurn, invoke, invokeNestedNative });
 
+  // The nested catalog is stable for a turn binding. Reusing a page avoids queueing another
+  // read-only gateway call behind running work for every inventory request.
+  const catalogCache = new Map<string, Map<string, GatewayToolCatalogPage>>();
+  const cachedCatalog = (bindingId: string, key: string): GatewayToolCatalogPage | undefined => {
+    const entries = catalogCache.get(bindingId);
+    const page = entries?.get(key);
+    if (!entries || !page) return undefined;
+    catalogCache.delete(bindingId);
+    catalogCache.set(bindingId, entries);
+    return page;
+  };
+  const rememberCatalog = (bindingId: string, key: string, page: GatewayToolCatalogPage): void => {
+    const entries = catalogCache.get(bindingId) ?? new Map<string, GatewayToolCatalogPage>();
+    catalogCache.delete(bindingId);
+    catalogCache.set(bindingId, entries);
+    entries.delete(key);
+    entries.set(key, page);
+    while (entries.size > MAX_CATALOG_CACHE_ENTRIES_PER_BINDING) entries.delete(entries.keys().next().value!);
+    while (catalogCache.size > MAX_CATALOG_CACHE_BINDINGS) catalogCache.delete(catalogCache.keys().next().value!);
+  };
+  // A catalog lookup Codex never dispatched is withdrawn and acknowledged, so it neither runs
+  // later nor leaves an unacknowledged result behind the completion fence.
+  const withdrawQueuedCatalog = async (turnToken: string, operationId: string): Promise<boolean> => {
+    try {
+      const cancelled = await callTurnBroker<BrokerOwnedOperationSnapshot>(options.brokerSocketPath, {
+        method: "operation_cancel", token: turnToken, operationId,
+      }, 5_000);
+      if (cancelled.state === "cancelled" || cancelled.state === "failed" || cancelled.state === "completed"
+        || cancelled.state === "expired") {
+        await callTurnBroker(options.brokerSocketPath, {
+          method: "operation_poll", token: turnToken, operationId, deliveryId: cancelled.deliveryId, waitMs: 0,
+        }, 5_000);
+      }
+      return cancelled.state !== "running";
+    } catch (error) {
+      console.error(`[chatgpt-web-mcp] codex_tool_inventory could not withdraw a queued catalog lookup: ${errorMessage(error)}`);
+      return false;
+    }
+  };
+
   server.registerTool(
     "codex_tool_inventory",
     {
@@ -523,31 +614,40 @@ export async function runChatGptMcpServer(options: {
           const excludedGatewayNames = gatewayExcludedNames(bound, routingPolicy);
           const nestedOffset = Math.max(0, offset - directMatches.length);
           const nestedLimit = Math.max(0, limit - directPage.length);
-          const catalogMarker = `codex-tool-catalog:${randomBytes(16).toString("hex")}:`;
-          const outcome = await invokeBroker(claimed.bindingId, bound, gateway, {
-            input: gatewayToolCatalogProgram({
-              marker: catalogMarker,
-              query,
-              offset: nestedOffset,
-              limit: nestedLimit,
-              // A gateway-discovered entry may supplement the outer registry, but it must never
-              // duplicate or reopen an outer tool that this contract deliberately hid (including
-              // our own MCP namespace in Zero Risk).
-              excludedNames: excludedGatewayNames,
-            }),
-          }, extra.signal);
-          if (outcome.kind === "promoted") {
-            // The read-only catalog lookup is queued behind a running call. Answer with the outer
-            // registry now instead of holding this request until the transport deadline.
-            nestedPending = {
-              operation_id: outcome.promoted.operationId,
-              message: "Nested gateway tools could not be listed yet because an earlier Codex tool call is still running."
-                + " The outer tools above are complete; call codex_tool_inventory again after that call finishes.",
-            };
+          const cacheKey = JSON.stringify({ query: query ?? null, nestedOffset, nestedLimit, excludedGatewayNames });
+          let catalog = cachedCatalog(claimed.bindingId, cacheKey);
+          if (!catalog) {
+            const catalogMarker = `codex-tool-catalog:${randomBytes(16).toString("hex")}:`;
+            const outcome = await invokeBroker(claimed.bindingId, bound, gateway, {
+              input: gatewayToolCatalogProgram({
+                marker: catalogMarker,
+                query,
+                offset: nestedOffset,
+                limit: nestedLimit,
+                // A gateway-discovered entry may supplement the outer registry, but it must never
+                // duplicate or reopen an outer tool that this contract deliberately hid (including
+                // our own MCP namespace in Zero Risk).
+                excludedNames: excludedGatewayNames,
+              }),
+            }, extra.signal, { promotionDeadlineMs: CHATGPT_WEB_MCP_CATALOG_DEADLINE_MS });
+            if (outcome.kind === "promoted") {
+              // The read-only catalog lookup is queued behind a running call. Answer with the outer
+              // registry now instead of holding this request until the transport deadline.
+              const withdrawn = !outcome.promoted.dispatched
+                && await withdrawQueuedCatalog(turnReference(contract, input), outcome.promoted.operationId);
+              nestedPending = {
+                ...(withdrawn ? {} : { operation_id: outcome.promoted.operationId }),
+                message: "Nested gateway tools could not be listed yet because Codex has not finished the catalog lookup"
+                  + " (an earlier Codex tool call may still be running). The outer tools above are complete;"
+                  + " call codex_tool_inventory again after that call finishes.",
+              };
+              catalog = { total: 0, tools: [] };
+            } else {
+              catalog = gatewayToolCatalogPage(outcome.value as Parameters<typeof gatewayToolCatalogPage>[0],
+                new Set(excludedGatewayNames), catalogMarker);
+              rememberCatalog(claimed.bindingId, cacheKey, catalog);
+            }
           }
-          const catalog = outcome.kind === "promoted"
-            ? { total: 0, tools: [] }
-            : gatewayToolCatalogPage(outcome.value as Parameters<typeof gatewayToolCatalogPage>[0], new Set(excludedGatewayNames), catalogMarker);
           nestedTotal = catalog.total;
           nestedPage = catalog.tools.map(tool => ({
             wire_name: tool.name,
@@ -694,6 +794,7 @@ export async function runChatGptMcpServer(options: {
             method: "invoke_async",
             token: turn_token,
             bindingId: claimed.bindingId,
+            activityId: claimed.activityId,
             operationId,
             wireName: wireName(invocation.tool),
             freeform: invocation.tool.freeform === true,
@@ -790,4 +891,22 @@ export async function runChatGptMcpServer(options: {
   }
 
   await server.connect(observeMcpTransport(new StdioServerTransport(), BRIDGE_TOOL_NAMES));
+
+  const releaseActivities = async (budgetMs = CHATGPT_WEB_MCP_SHUTDOWN_BUDGET_MS): Promise<number> => {
+    const leases = [...liveActivities];
+    if (leases.length === 0) return 0;
+    let released = 0;
+    const deadline = Math.max(50, budgetMs);
+    const settleAll = Promise.allSettled(leases.map(async ([activityId, turnToken]) => {
+      await callTurnBroker(options.brokerSocketPath, { method: "activity_complete", token: turnToken, activityId }, deadline);
+      liveActivities.delete(activityId);
+      released += 1;
+    }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([settleAll, new Promise<void>(resolveBudget => { timer = setTimeout(resolveBudget, deadline); })]);
+    clearTimeout(timer);
+    console.error(`[chatgpt-web-mcp] shutdown released ${released} of ${leases.length} broker lease(s)`);
+    return released;
+  };
+  return { releaseActivities, liveActivityCount: () => liveActivities.size };
 }

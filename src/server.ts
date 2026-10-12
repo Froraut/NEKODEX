@@ -12,6 +12,8 @@ import { normalizeNativeDelegation } from "./adapters/chatgpt-web/native-delegat
 import { validateChatGptWebInputImage } from "./adapters/chatgpt-web/input-image-validation";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
+import { configureTurnBrokerEventLog } from "./adapters/chatgpt-web/turn-broker-diagnostics";
+import { rejectUnparseableChatGptToolResults } from "./adapters/chatgpt-web/rejected-tool-results";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions, chatGptTurnExecutionKey } from "./adapters/chatgpt-web/turn-execution";
 import {
@@ -33,12 +35,13 @@ import { rememberCompactionContinuation } from "./adapters/chatgpt-web/compactio
 import { clearRetryableTurnHandoff, rememberRetryableTurnFailure } from "./adapters/chatgpt-web/retry-continuation";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AccountCapabilityFields, AppConfig } from "./config";
-import { providerConfig } from "./config";
+import { getConfigDir, providerConfig } from "./config";
 import { parseChatGptWebProModelVersion, type ChatGptWebProModelVersion } from "./chatgpt-web-models";
 import { AsyncEventQueue } from "./event-queue";
 import { createInternalJsonRequest, readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { augmentNativeModelCatalog } from "./model-catalog";
 import { pickerCatalogAgeMs, refreshPickerCatalog } from "./codex-picker-catalog";
 import { startNativeUsageDelivery } from "./native-usage-telemetry";
@@ -294,6 +297,19 @@ function toolBridgeMaps(parsed: CodexParsedRequest): {
   return { toolNsMap, freeformToolNames, toolSearchToolNames };
 }
 
+/**
+ * A rejected follow-up never reaches the adapter. Answer the dispatched calls whose results it
+ * carried, so the waiting ChatGPT tool requests fail now instead of at the MCP deadline.
+ */
+async function settleRejectedToolResults(raw: unknown, message: string): Promise<void> {
+  try {
+    await rejectUnparseableChatGptToolResults(raw, message);
+  } catch (error) {
+    console.error(`[chatgpt-web] could not settle tool calls of a rejected request: ${
+      error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export async function responseRequest(
   req: Request,
   config: AppConfig,
@@ -353,10 +369,15 @@ export async function responseRequest(
       options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
     }
   } catch (error) {
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    await settleRejectedToolResults(raw, message);
+    return formatErrorResponse(400, "invalid_request_error", message);
   }
   const invalidWebImage = findInvalidChatGptWebInputImage(parsed);
-  if (invalidWebImage) return formatErrorResponse(400, "invalid_request_error", invalidWebImage);
+  if (invalidWebImage) {
+    await settleRejectedToolResults(raw, invalidWebImage);
+    return formatErrorResponse(400, "invalid_request_error", invalidWebImage);
+  }
   let requestConfig = config;
   if (route.interactionMode === "automatic" && route.adapterEffort === "max" && options.readProModelVersion) {
     requestConfig = { ...config };
@@ -816,6 +837,10 @@ export function startServer(
   const backgroundRuntime = process.env.CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME === "1";
   let launcherDetached = false;
   const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;
+  // A background daemon runs with stdio ignored; keep broker lifecycle evidence on disk instead.
+  if (turnBroker && backgroundRuntime) {
+    configureTurnBrokerEventLog(join(getConfigDir(), "diagnostics", "turn-broker-events.jsonl"));
+  }
   let brokerState: "not-required" | "starting" | "ready" | "failed" = turnBroker
     ? "starting"
     : "not-required";
