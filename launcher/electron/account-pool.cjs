@@ -678,11 +678,15 @@ class AccountBrowserPool {
   assertAccountTunnelReady(accountId, mode) {
     const tunnel = this.accountTunnel(accountId, mode);
     if (tunnel.required === true && tunnel.ready !== true) {
+      const unreachable = tunnel.reason === 'openai_unreachable';
       throw Object.assign(new Error(tunnel.status === 'unconfigured'
         ? 'Configure this account’s own tool tunnel before starting a tool task. No request was sent.'
-        : 'This account’s own tool tunnel is not ready. Repair it before starting a tool task. No request was sent.'),
+        : unreachable
+          ? 'This account’s tool tunnel is running but cannot reach OpenAI. Check your VPN or network connection; NEKODEX reconnects automatically. No request was sent.'
+          : 'This account’s own tool tunnel is not ready. Repair it before starting a tool task. No request was sent.'),
       { code: 'account_tunnel_unavailable', workStarted: false, accountId,
-        blocker: tunnel.status === 'unconfigured' ? 'account_tunnel_unconfigured' : 'account_tunnel_not_ready' });
+        blocker: tunnel.status === 'unconfigured' ? 'account_tunnel_unconfigured' : 'account_tunnel_not_ready',
+        ...(unreachable ? { reason: tunnel.reason } : {}) });
     }
     return tunnel;
   }
@@ -810,19 +814,45 @@ class AccountBrowserPool {
     this.authenticationRefreshOperations.set(id, tracked);
     return tracked;
   }
+  /**
+   * Startup authentication refresh, evidence restores and account checks each
+   * renew an account's evidence epoch. Join one already running, then verify;
+   * if another check still renews the epoch meanwhile, verify once more.
+   */
+  async awaitAccountEvidenceRefresh(id) {
+    const deadline = Date.now() + (this.options?.evidenceRefreshWaitMs ?? 60_000);
+    while (this.evidenceRefreshing?.has(id) || this.authenticationRefreshOperations?.has(id)) {
+      if (this.inspectionsPaused || this.destroyed) return;
+      if (Date.now() >= deadline) {
+        throw new Error('ChatGPT account readiness is still being checked; retry connector verification shortly');
+      }
+      const pending = this.authenticationRefreshOperations?.get(id) ?? this.evidenceRestores?.get(id)?.done;
+      const tick = new Promise(resolve => setTimeout(resolve, 100));
+      await (pending ? Promise.race([Promise.resolve(pending).catch(() => {}), tick]) : tick);
+    }
+  }
   async verifyConnector(appName) {
     if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
     const id = this.registry.snapshot().selectedId;
     const host = this.getHost(id);
-    this.assertAccountOperationAvailable(id);
-    const epoch = this.evidenceEpoch(id);
-    const result = await host.verifyConnector(appName);
-    if (!this.evidenceIsCurrent(id, epoch) || this.registry.snapshot().selectedId !== id) {
-      throw new Error('ChatGPT account readiness changed while verifying its connector');
+    for (let attempt = 1; ; attempt++) {
+      await this.awaitAccountEvidenceRefresh(id);
+      if (this.inspectionsPaused) throw new Error('Browser checks are paused for launcher restart');
+      this.assertAccountOperationAvailable(id);
+      const epoch = this.evidenceEpoch(id);
+      const result = await host.verifyConnector(appName);
+      if (this.registry.snapshot().selectedId !== id || this.getHost(id) !== host) {
+        throw new Error('ChatGPT account selection changed while verifying its connector');
+      }
+      if (this.evidenceIsCurrent(id, epoch)) {
+        this.connectors.set(id, host.connectorName());
+        this.publish();
+        return result;
+      }
+      if (attempt >= 2) throw new Error('ChatGPT account readiness changed while verifying its connector');
+      this.logger?.info?.('browser.connector_verification_retry', { accountId: id, epoch,
+        currentEpoch: this.evidenceEpoch(id) });
     }
-    this.connectors.set(id, host.connectorName());
-    this.publish();
-    return result;
   }
   async refreshAuthentication() {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.

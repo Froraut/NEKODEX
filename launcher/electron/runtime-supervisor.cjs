@@ -1,4 +1,8 @@
-const { tunnelConnectCanContinue, tunnelControlDiagnostic, managedTunnelConnectArgs } = require("./runtime-tunnel-policy.cjs");
+const {
+  tunnelConnectCanContinue, tunnelControlDiagnostic, managedTunnelConnectArgs,
+  recoveryBackoffDelay, tunnelObservationInconclusive,
+} = require("./runtime-tunnel-policy.cjs");
+const { TunnelPollHealth, parseTunnelPollMetrics } = require("./tunnel-poll-health.cjs");
 const { collectRuntimeLines: collectLines } = require("./runtime-output.cjs");
 const { absolutePath, validateConfig, normalizeSetupConfig } = require("./runtime-config-contract.cjs");
 const fs = require("node:fs");
@@ -28,6 +32,9 @@ const RECOVERY_SHUTDOWN_SETTLEMENT_MS = 3_000;
 const TUNNEL_HEALTH_POLL_INTERVAL_MS = 1_000;
 const TUNNEL_MONITOR_INTERVAL_MS = 10_000;
 const TUNNEL_MONITOR_FAILURE_THRESHOLD = 3;
+// Consecutive unobservable local probes (about one minute) before a live but
+// silent tunnel process counts as failing. Remote lookups never feed this count.
+const TUNNEL_MONITOR_UNKNOWN_LIMIT = 6;
 const TUNNEL_MCP_FAILURE_RECENCY_MS = 2 * 60_000;
 const TUNNEL_REPAIR_HEALTH_FRESH_MS = 5_000;
 const BOOT_TIME_CLOCK_TOLERANCE_MS = 5_000;
@@ -135,11 +142,16 @@ class RuntimeSupervisor {
     this.stopPromise = null;
     this.restartHistory = { daemon: [], tunnel: [] };
     this.restartTimers = { daemon: null, tunnel: null };
+    this.recoveryBackoffMs = { daemon: 0, tunnel: 0 };
     this.tunnelMonitorTimer = null;
     this.tunnelMonitorInFlight = false;
     this.tunnelMonitorFailures = 0;
     this.tunnelMonitorObservationUnavailable = false;
     this.tunnelMonitorGeneration = 0;
+    this.tunnelMonitorUnknownStreak = 0;
+    this.tunnelPollHealth = new TunnelPollHealth();
+    // Set while the tunnel process is healthy locally but cannot reach OpenAI.
+    this.tunnelPollDegraded = null;
     this.tunnelHealthBaseUrl = null;
     this.tunnelControlQueue = Promise.resolve();
     this.tunnelStatusQueue = Promise.resolve();
@@ -285,6 +297,17 @@ class RuntimeSupervisor {
     const active = this.tunnelRepairPromise !== null;
     const unavailable = reason => ({ eligible: false, reason, active });
     if (active) return unavailable("repair-active");
+    if (current?.accountTunnelMode === true && current.mode === "full") {
+      // Account peers reconnect individually; native admission and other
+      // accounts' tunnels are untouched, so no proxy fence or fresh health is needed.
+      if (this.stopping || this.shutdownRequested || this.startPromise || this.stopPromise) {
+        return unavailable("runtime-transition-active");
+      }
+      if (!this.accountTunnelSupervisor) return unavailable("account-tunnels-not-started");
+      return this.accountTunnelSupervisor.reconnectCandidates().length
+        ? { eligible: true, reason: "account-tunnel-reconnect-available", active: false }
+        : unavailable("account-tunnels-not-reconnectable");
+    }
     if (this.launcherProfile !== "production") return unavailable("production-only");
     if (!current || current.mode !== "full") return unavailable("full-mode-required");
     if (current.accountTunnelMode === true) return unavailable("account-tunnel-mode");
@@ -319,7 +342,7 @@ class RuntimeSupervisor {
     const accountTunnels = accountMode ? this.accountPeers().snapshot() : [];
     const tunnelReady = accountMode ? accountTunnels.some(item => item.ready)
       : Boolean(this.tunnel && this.tunnel.exitCode === null && this.tunnel.signalCode === null
-        && this.reportedTunnelReady !== false);
+        && this.reportedTunnelReady !== false && !this.tunnelPollDegraded);
     const webReady = nativeReady && tunnelReady && this.brokerReady === true && this.webAccepting === true;
     return {
       revision: this.capabilityRevision,
@@ -600,13 +623,19 @@ class RuntimeSupervisor {
     this.tunnelStatusRevision = revision;
     const accountStatuses = config.accountTunnelMode === true ? this.accountPeers().snapshot() : null;
     const effectiveReady = accountStatuses ? accountStatuses.some(item => item.ready) : ready === true;
+    // A reason lets the proxy explain refused Web admission (for example a VPN
+    // outage) instead of a generic "not ready". Older proxies ignore the fields.
+    const legacyReason = !accountStatuses && !effectiveReady && this.tunnelPollDegraded
+      ? { reason: this.tunnelPollDegraded.reason, detail: this.tunnelPollDegraded.detail } : {};
     let result;
     try {
       result = await this.control(config, "tunnel-status", {
-        body: { ready: effectiveReady, revision,
+        body: { ready: effectiveReady, revision, ...legacyReason,
           ...(accountStatuses ? { account_tunnels: accountStatuses.map(item => ({
             account_id: item.accountId, interaction_mode: item.interactionMode,
             tunnel_id: item.tunnelId, ready: item.ready,
+            ...(!item.ready && item.reason ? { reason: item.reason } : {}),
+            ...(!item.ready && item.detail ? { detail: String(item.detail).slice(0, 300) } : {}),
           })) } : {}) },
       });
     } catch (error) {
@@ -721,12 +750,16 @@ class RuntimeSupervisor {
 
   async repairWebRoute() {
     if (this.tunnelRepairPromise) return this.tunnelRepairPromise;
-    if (this.stopping || this.shutdownRequested || this.startPromise || this.stopPromise
-      || this.recoveryTasks.size > 0 || this.restartTimers.daemon || this.restartTimers.tunnel) {
+    let accountMode = false;
+    try { accountMode = this.readConfig()?.accountTunnelMode === true; } catch { /* Legacy path reports the config error. */ }
+    if (accountMode ? this.stopping || this.shutdownRequested || this.startPromise || this.stopPromise
+      : this.stopping || this.shutdownRequested || this.startPromise || this.stopPromise
+        || this.recoveryTasks.size > 0 || this.restartTimers.daemon || this.restartTimers.tunnel) {
       return { status: "unavailable", reason: "runtime-transition-active" };
     }
     const controller = new AbortController();
-    const repair = this.performWebRouteRepair(controller.signal).catch(error => {
+    const repair = (accountMode ? this.reconnectAccountTunnels(controller.signal)
+      : this.performWebRouteRepair(controller.signal)).catch(error => {
       const reason = errorMessage(error);
       this.logger.warn("runtime.web_route_repair_unavailable", { message: reason });
       return { status: "unavailable", reason };
@@ -742,6 +775,38 @@ class RuntimeSupervisor {
       this.updateCapabilities(this.runtimeStatus, this.runtimeDetail);
     }).catch(() => {});
     return repair;
+  }
+
+  /** The Reconnect action for account tunnels: restart each failed or backed-off peer now. */
+  async reconnectAccountTunnels(signal) {
+    this.assertRecoveryActive(signal);
+    const config = this.readConfig();
+    if (!config?.accountTunnelMode || config.mode !== "full" || !this.accountTunnelSupervisor) {
+      return { status: "unavailable", reason: "account-tunnels-not-started" };
+    }
+    if (!this.accountTunnelSupervisor.reconnectCandidates().length) {
+      return { status: "unavailable", reason: "account-tunnels-not-reconnectable" };
+    }
+    this.publishOperation?.({ name: "web-route-repair", status: "running",
+      message: "Reconnecting account tool tunnels while keeping the Native route available" });
+    const results = await this.accountTunnelSupervisor.reconnect();
+    this.assertRecoveryActive(signal);
+    this.publishAccountTunnelCapabilities();
+    const recovered = results.filter(item => item.status === "ready");
+    const failed = results.filter(item => item.status !== "ready");
+    this.logger.info("runtime.account_tunnel_reconnect_finished", {
+      recovered: recovered.length, failed: failed.map(item => ({ accountId: item.accountId,
+        interactionMode: item.interactionMode, reason: item.reason })),
+    });
+    if (!failed.length) {
+      this.publishOperation?.({ name: "web-route-repair", status: "completed",
+        message: "Account tool tunnels reconnected; the Native route remained available" });
+      return { status: "recovered", reason: null };
+    }
+    const reason = failed.map(item => item.reason).filter(Boolean).join("; ")
+      || "Account tool tunnel reconnect did not complete";
+    this.publishOperation?.({ name: "web-route-repair", status: "failed", message: reason });
+    return { status: "unavailable", reason };
   }
 
   async performWebRouteRepair(signal) {
@@ -1030,6 +1095,27 @@ class RuntimeSupervisor {
     }
   }
 
+  // Read-only: tunnel-client's Prometheus text carries the control-plane poller
+  // series. Any failure leaves poll health unobserved, never degraded.
+  async probeTunnelPollMetrics(timeoutMs = 2_000) {
+    if (!this.tunnelHealthBaseUrl) return null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${this.tunnelHealthBaseUrl}/metrics`, { method: "GET", signal: controller.signal });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        return null;
+      }
+      const text = await response.text();
+      return text.length > 4 * 1024 * 1024 ? null : parseTunnelPollMetrics(text);
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async probeTunnelMcpTransport(timeoutMs = 2_000) {
     if (!this.tunnelHealthBaseUrl) {
       return { observed: false, ok: false, fatal: false, detail: "local tunnel MCP diagnostics URL is not known" };
@@ -1150,13 +1236,15 @@ class RuntimeSupervisor {
     );
   }
 
-  async readLocalTunnelHealth() {
-    const [healthz, readyz, mcp] = await Promise.all([
+  async readLocalTunnelHealth({ pollHealth = false } = {}) {
+    const [healthz, readyz, mcp, metrics] = await Promise.all([
       this.probeTunnelEndpoint("/healthz"),
       this.probeTunnelEndpoint("/readyz"),
       this.probeTunnelMcpTransport(),
+      pollHealth ? this.probeTunnelPollMetrics() : Promise.resolve(null),
     ]);
     const pid = Number.isInteger(this.tunnel?.pid) ? this.tunnel.pid : null;
+    const poll = pollHealth ? (this.tunnelPollHealth ??= new TunnelPollHealth()).observe(pid, metrics) : null;
     if (pid && !processRunning(pid)) {
       return {
         ready: false,
@@ -1196,19 +1284,20 @@ class RuntimeSupervisor {
       absent: false,
       statusKnown: true,
       fatal: mcp.fatal === true,
+      ...(poll ? { poll } : {}),
       detail: `${healthz.detail}; ${readyz.detail}; ${mcp.detail}`,
     };
   }
 
   async observeTunnelForMonitor(config) {
-    const local = await this.readLocalTunnelHealth();
+    const local = await this.readLocalTunnelHealth({ pollHealth: true });
     if (local.statusKnown) return local;
     try {
       const previousEndpoint = this.tunnelHealthBaseUrl;
       const inventory = await this.readTunnelHealth(config);
       if (tunnelRuntimeStopped(inventory)) return inventory;
       if (this.tunnelHealthBaseUrl && this.tunnelHealthBaseUrl !== previousEndpoint) {
-        return await this.readLocalTunnelHealth();
+        return await this.readLocalTunnelHealth({ pollHealth: true });
       }
       // Inventory can prove that the alias stopped, but its ready flag does not prove MCP health.
       // Unknown observations must not hide failures or trigger a restart without failure evidence.
@@ -1230,7 +1319,14 @@ class RuntimeSupervisor {
     let health;
     do {
       this.assertRecoveryActive(recoverySignal);
-      health = await this.readTunnelHealth(config, recoverySignal);
+      try {
+        health = await this.readTunnelHealth(config, recoverySignal);
+      } catch (error) {
+        // A stalled inventory or status command is an unknown observation; retry
+        // within the deadline instead of failing the whole start or recovery.
+        if (recoverySignal?.aborted || !tunnelObservationInconclusive(error)) throw error;
+        health = { statusKnown: false, detail: errorMessage(error) };
+      }
       this.assertRecoveryActive(recoverySignal);
       if (health.statusKnown) return health;
       await sleep(TUNNEL_HEALTH_POLL_INTERVAL_MS);
@@ -1252,7 +1348,13 @@ class RuntimeSupervisor {
     let lastPublishedDetail;
     while (Date.now() < deadline) {
       this.assertCanStart(recoverySignal);
-      const health = await this.readTunnelHealth(config, recoverySignal);
+      let health;
+      try {
+        health = await this.readTunnelHealth(config, recoverySignal);
+      } catch (error) {
+        if (recoverySignal?.aborted || !tunnelObservationInconclusive(error)) throw error;
+        health = { ready: false, pid: null, statusKnown: false, detail: errorMessage(error) };
+      }
       this.assertCanStart(recoverySignal);
       if (health.pid) {
         this.tunnel = {
@@ -1402,6 +1504,9 @@ class RuntimeSupervisor {
     this.stopTunnelMonitor();
     this.tunnelMonitorFailures = 0;
     this.tunnelMonitorObservationUnavailable = false;
+    this.tunnelMonitorUnknownStreak = 0;
+    // Poll health belongs to one tunnel process; a replacement starts clean.
+    if (this.tunnelPollHealth?.pid !== (this.tunnel?.pid ?? null)) this.tunnelPollDegraded = null;
     const generation = this.tunnelMonitorGeneration;
     const recordFailure = (message, immediate = false) => {
       if (this.stopping || generation !== this.tunnelMonitorGeneration) return;
@@ -1409,6 +1514,7 @@ class RuntimeSupervisor {
       this.tunnelMonitorFailures += 1;
       this.logger.warn("runtime.tunnel_monitor_unhealthy", {
         consecutiveFailures: this.tunnelMonitorFailures,
+        immediate,
         message,
       });
       if (this.tunnelMonitorFailures < TUNNEL_MONITOR_FAILURE_THRESHOLD) return;
@@ -1423,6 +1529,31 @@ class RuntimeSupervisor {
       this.publishOperation?.({ name: "runtime-recovery", status: "running", message });
       this.scheduleRecovery("tunnel");
     };
+    const observationUnknown = (detail) => {
+      if (!this.tunnelMonitorObservationUnavailable) {
+        this.tunnelMonitorObservationUnavailable = true;
+        this.logger.warn("runtime.tunnel_monitor_observation_unavailable", { message: detail });
+      }
+      this.tunnelMonitorUnknownStreak += 1;
+      // Only a live process whose own local endpoints stay silent is failing.
+      // Timed-out remote lookups never reach this branch as failures.
+      if (this.tunnelMonitorUnknownStreak > TUNNEL_MONITOR_UNKNOWN_LIMIT) {
+        recordFailure(`Tunnel local health stayed unobservable for ${this.tunnelMonitorUnknownStreak} checks: ${detail}`);
+      }
+    };
+    const updatePollHealth = (poll) => {
+      const next = poll?.degraded ? { reason: poll.reason, detail: poll.detail } : null;
+      const changed = Boolean(next) !== Boolean(this.tunnelPollDegraded);
+      this.tunnelPollDegraded = next;
+      if (changed) {
+        this.logger[next ? "warn" : "info"]("runtime.tunnel_poll_health_changed", {
+          degraded: Boolean(next), reason: next?.reason ?? null, detail: next?.detail ?? null,
+          silentMs: poll?.silentMs ?? null, errorsTotal: poll?.errorsTotal ?? null,
+          pid: this.tunnel?.pid ?? null,
+        });
+      }
+      return changed;
+    };
     this.tunnelMonitorTimer = setInterval(() => {
       if (this.stopping
         || generation !== this.tunnelMonitorGeneration
@@ -1432,14 +1563,10 @@ class RuntimeSupervisor {
       void this.observeTunnelForMonitor(config).then((health) => {
         if (this.stopping || generation !== this.tunnelMonitorGeneration) return;
         if (!health.statusKnown) {
-          if (!this.tunnelMonitorObservationUnavailable) {
-            this.tunnelMonitorObservationUnavailable = true;
-            this.logger.warn("runtime.tunnel_monitor_observation_unavailable", {
-              message: health.detail,
-            });
-          }
+          observationUnknown(health.detail);
           return;
         }
+        this.tunnelMonitorUnknownStreak = 0;
         if (this.tunnelMonitorObservationUnavailable) {
           this.tunnelMonitorObservationUnavailable = false;
           this.logger.info("runtime.tunnel_monitor_observation_restored", {
@@ -1448,6 +1575,8 @@ class RuntimeSupervisor {
         }
         if (health.ready) {
           this.tunnelMonitorFailures = 0;
+          const pollChanged = updatePollHealth(health.poll);
+          const pollDegraded = this.tunnelPollDegraded;
           const observedTunnelPid = health.pid;
           const ownerChanged = this.tunnel?.pid !== observedTunnelPid;
           if (ownerChanged) {
@@ -1462,22 +1591,32 @@ class RuntimeSupervisor {
           const ownerIsCurrent = () => !this.stopping
             && generation === this.tunnelMonitorGeneration
             && this.tunnel?.pid === observedTunnelPid;
-          void this.reportTunnelStatus(config, true, undefined, ownerIsCurrent).then((result) => {
+          // Lost OpenAI reachability degrades Web admission with its reason but never
+          // restarts a locally healthy tunnel: the next successful poll restores it.
+          void this.reportTunnelStatus(config, !pollDegraded, undefined, ownerIsCurrent).then((result) => {
             if (!ownerIsCurrent() || result?.stale === true) return;
-            if (!ownerChanged && result && result.capabilityChanged !== true) return;
+            if (!ownerChanged && !pollChanged && result && result.capabilityChanged !== true) return;
             // DEV and account peers supervise only the transport. The production
             // parent separately owns broker admission for all account tunnels.
-            const available = this.launcherProfile === "development"
-              || this.webAccepting === true && this.brokerReady === true;
+            const available = !pollDegraded && (this.launcherProfile === "development"
+              || this.webAccepting === true && this.brokerReady === true);
             this.updateCapabilities(available ? "ready" : "degraded",
-              available ? null : "Tool tunnel is ready; local broker admission is still pending", config);
+              available ? null : pollDegraded ? pollDegraded.detail
+                : "Tool tunnel is ready; local broker admission is still pending", config);
           }).catch((error) => {
             this.logger.warn("runtime.tunnel_status_report_failed", { message: errorMessage(error) });
           });
           return;
         }
-        recordFailure(`Tunnel runtime lost readiness: ${health.detail}`, health.fatal === true);
+        // A tunnel-client that exited cannot recover by waiting two more checks.
+        recordFailure(`Tunnel runtime lost readiness: ${health.detail}`,
+          health.fatal === true || health.processRunning === false);
       }).catch((error) => {
+        if (this.stopping || generation !== this.tunnelMonitorGeneration) return;
+        if (tunnelObservationInconclusive(error)) {
+          observationUnknown(`Tunnel health observation was inconclusive: ${errorMessage(error)}`);
+          return;
+        }
         recordFailure(`Tunnel health probe failed: ${errorMessage(error)}`);
       }).finally(() => {
         this.tunnelMonitorInFlight = false;
@@ -1491,6 +1630,7 @@ class RuntimeSupervisor {
     this.tunnelMonitorTimer = null;
     this.tunnelMonitorFailures = 0;
     this.tunnelMonitorObservationUnavailable = false;
+    this.tunnelMonitorUnknownStreak = 0;
     this.tunnelMonitorGeneration += 1;
   }
 
@@ -1836,38 +1976,56 @@ class RuntimeSupervisor {
     if (name === "tunnel" && (this.legacyTunnelTransitioning || this.legacyTunnelTransitionPending)) return;
     if (this.restartTimers[name]) return;
     const attempts = this.recordRestart(name);
-    if (attempts > MAX_RESTARTS_PER_WINDOW) {
+    this.recoveryBackoffMs ??= { daemon: 0, tunnel: 0 };
+    let delay = Math.min(attempts * 1_000, 5_000);
+    if (attempts > MAX_RESTARTS_PER_WINDOW || this.recoveryBackoffMs[name] > 0) {
+      // The fast budget is spent. Keep retrying with a bounded backoff; a network
+      // outage must never leave the tunnel off until the app restarts.
+      delay = recoveryBackoffDelay(this.recoveryBackoffMs[name]);
+      this.recoveryBackoffMs[name] = delay;
       const cause = this.lastChildFailure[name];
-      const message = `${name} stopped more than ${MAX_RESTARTS_PER_WINDOW} times in 60 seconds; automatic restart is disabled`
+      const message = `${name} keeps failing; retrying automatically in ${Math.round(delay / 1_000)}s`
         + (cause ? `; last failure: ${cause}` : "");
+      this.logger.warn("runtime.recovery_backoff", { name, attempts, delayMs: delay, cause: cause ?? null });
       const nativeSurvives = name === "tunnel" && Boolean(this.daemon);
-      this.tryWriteState(nativeSurvives ? "degraded" : "failed", message);
-      this.updateCapabilities(nativeSurvives ? "degraded" : "failed", message);
-      this.publishOperation?.({ name: "runtime-recovery", status: "failed", message });
-      return;
+      const status = nativeSurvives ? "degraded" : "failed";
+      this.tryWriteState(status, message);
+      this.updateCapabilities(status, message);
+      this.publishOperation?.({ name: "runtime-recovery", status: "running", message });
     }
-    const delay = Math.min(attempts * 1_000, 5_000);
     this.restartTimers[name] = setTimeout(() => {
       this.restartTimers[name] = null;
-      if (this.stopping || this.shutdownRequested) return;
-      const controller = new AbortController();
-      this.recoveryControllers.add(controller);
-      const recovery = this.recover(name, controller.signal).catch((error) => {
-        if (controller.signal.aborted || this.stopping || this.shutdownRequested) return;
-        const message = errorMessage(error);
-        this.logger.error(`runtime.${name}_recovery_failed`, { message });
-        const nativeSurvives = name === "tunnel" && Boolean(this.daemon);
-        if (this.tryWriteState(nativeSurvives ? "degraded" : "failed", message)) {
-          this.updateCapabilities(nativeSurvives ? "degraded" : "failed", message);
-          this.scheduleRecovery(name);
-        }
-      });
-      this.recoveryTasks.add(recovery);
-      void recovery.finally(() => {
-        this.recoveryTasks.delete(recovery);
-        this.recoveryControllers.delete(controller);
-      });
+      this.launchRecovery(name);
     }, delay);
+  }
+
+  /** Runs one tracked recovery now; a failure schedules the next attempt itself. */
+  launchRecovery(name) {
+    if (this.stopping || this.shutdownRequested) return null;
+    const controller = new AbortController();
+    this.recoveryControllers.add(controller);
+    const recovery = this.recover(name, controller.signal).catch((error) => {
+      if (controller.signal.aborted || this.stopping || this.shutdownRequested) return;
+      const message = errorMessage(error);
+      this.lastChildFailure[name] = message;
+      this.logger.error(`runtime.${name}_recovery_failed`, { message });
+      const nativeSurvives = name === "tunnel" && Boolean(this.daemon);
+      if (this.tryWriteState(nativeSurvives ? "degraded" : "failed", message)) {
+        this.updateCapabilities(nativeSurvives ? "degraded" : "failed", message);
+        this.scheduleRecovery(name);
+      }
+    });
+    this.recoveryTasks.add(recovery);
+    void recovery.finally(() => {
+      this.recoveryTasks.delete(recovery);
+      this.recoveryControllers.delete(controller);
+    });
+    return recovery;
+  }
+
+  /** Account peers override this with exact local ownership proof. */
+  async localTunnelHealthyForRecovery() {
+    return false;
   }
 
   async recover(name, recoverySignal) {
@@ -1878,9 +2036,15 @@ class RuntimeSupervisor {
     this.updateCapabilities("recovering", `Restarting ${name}`, config);
     this.publishOperation?.({ name: "runtime-recovery", status: "running", message: `Restarting ${name}` });
     const tunnelOnly = this.launcherProfile === "development";
+    let keptHealthyTunnel = false;
     if (name === "tunnel") {
       await this.reportTunnelStatus(config, false, recoverySignal);
-      await this.startTunnel(config, "runtime-recovery", { forceRestart: true, recoverySignal });
+      // Never force-restart a tunnel whose own process is provably alive and
+      // locally healthy; resume supervising it instead.
+      keptHealthyTunnel = await this.localTunnelHealthyForRecovery(config, recoverySignal);
+      this.assertRecoveryActive(recoverySignal);
+      if (keptHealthyTunnel) this.startTunnelMonitor(config);
+      else await this.startTunnel(config, "runtime-recovery", { forceRestart: true, recoverySignal });
       await this.reportTunnelStatus(config, true, recoverySignal);
     }
     else if (tunnelOnly) throw new Error("DEV runtime cannot recover a Responses daemon");
@@ -1919,7 +2083,9 @@ class RuntimeSupervisor {
         : "Recovered runtime could not persist launcher ownership";
       throw new Error(message);
     }
+    if (this.recoveryBackoffMs) this.recoveryBackoffMs[name] = 0;
     this.updateCapabilities(recoveredStatus, null, config);
+    this.logger.info("runtime.recovery_completed", { name, keptHealthyTunnel });
     this.publishOperation?.({ name: "runtime-recovery", status: "completed", message: `${name} recovered` });
   }
 

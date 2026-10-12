@@ -12,9 +12,23 @@ function processAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
 }
 
+// Every event a peer logs, including the shared supervisor's monitor and
+// recovery events, names the account and mode it belongs to.
+function scopedLogger(logger, binding) {
+  if (!logger) return logger;
+  const scope = { accountId: binding.accountId, interactionMode: binding.interactionMode };
+  const wrap = level => (name, data) => logger[level]?.(name, { ...scope, ...data });
+  return { info: wrap("info"), warn: wrap("warn"), error: wrap("error") };
+}
+
 class AccountTunnelPeer extends RuntimeSupervisor {
   constructor(options, binding, onChange) {
-    super({ ...options, launcherProfile: "development", publishOperation: undefined,
+    // Peer operations are per-account diagnostics; the renderer's global
+    // operation banner belongs to the parent runtime, so peers only log them.
+    super({ ...options, launcherProfile: "development", logger: scopedLogger(options.logger, binding),
+      publishOperation: operation => options.logger?.info?.("runtime.account_tunnel_operation", {
+        accountId: binding.accountId, interactionMode: binding.interactionMode,
+        name: operation?.name, status: operation?.status, message: operation?.message }),
       publishCapabilities: () => onChange() });
     this.binding = binding;
     this.statePath = path.join(options.coreHome, "runtime", `account-tunnel-${stateName(binding)}.json`);
@@ -23,6 +37,52 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     this.initialAliasAbsent = false;
     this.restartOwnedAlias = false;
     this.ownedTunnel = null;
+    // PID and start identity proven when this peer last verified ownership.
+    // While they still match, supervision needs no remote lookup at all.
+    this.verifiedTunnel = null;
+    this.reconnectRequested = false;
+    this.connectRanThisStart = false;
+  }
+
+  logContext(extra = {}) {
+    return { accountId: this.binding?.accountId, interactionMode: this.binding?.interactionMode, ...extra };
+  }
+
+  /** "alive", "dead" (exited or PID reused) or "unknown" for the verified process. */
+  verifiedTunnelState() {
+    const verified = this.verifiedTunnel;
+    if (!verified) return { state: "none" };
+    if (!processAlive(verified.pid)) return { state: "dead", pid: verified.pid };
+    const identity = processIdentity(verified.pid);
+    if (identity === null) return { state: "unknown", pid: verified.pid };
+    return identity === verified.identity ? { state: "alive", pid: verified.pid }
+      : { state: "dead", pid: verified.pid, reused: true };
+  }
+
+  // A marker this process wrote for a tunnel it later marked failed or degraded,
+  // with that exact process still alive under the recorded start identity.
+  ownedStaleMarker(marker, pid) {
+    return Boolean(currentProcessMarker(marker) && marker.status !== "ready"
+      && Number.isInteger(pid) && marker.tunnelPid === pid && marker.tunnelIdentity
+      && processIdentity(pid) === marker.tunnelIdentity);
+  }
+
+  /** Exact local proof of this alias's process, without asking tunnel-client or OpenAI. */
+  provenLocalTunnel() {
+    const candidates = [];
+    if (this.verifiedTunnel) candidates.push(this.verifiedTunnel);
+    let marker = null;
+    try { marker = this.readState(); } catch { /* An unreadable record proves nothing. */ }
+    if (marker && Number.isInteger(marker.tunnelPid) && marker.tunnelPid > 0 && marker.tunnelIdentity
+      && (currentProcessMarker(marker) && (this.ownedAliasVerified || !this.tunnel)
+        || !this.tunnel && this.recoverableMarker(marker, marker.tunnelPid))) {
+      candidates.push({ pid: marker.tunnelPid, identity: marker.tunnelIdentity });
+    }
+    for (const candidate of candidates) {
+      const identity = processIdentity(candidate.pid);
+      if (identity !== null && identity === candidate.identity) return { pid: candidate.pid, identity };
+    }
+    return null;
   }
 
   // A failed health probe drops this.tunnel while the detached tunnel-client may
@@ -121,6 +181,11 @@ class AccountTunnelPeer extends RuntimeSupervisor {
       return observation;
     };
     if (health.processRunning === false || Number.isInteger(health.pid) && health.pid > 0) return checked(health);
+    // The exact PID and start identity this launcher recorded identify the alias
+    // process locally. Only without that proof ask `runtimes status`, whose
+    // remote lookup a VPN or DNS blip can stall.
+    const proven = this.provenLocalTunnel();
+    if (proven) return checked({ ...health, pid: proven.pid });
     // tunnel-client 0.0.12 cleanup identifies the alias and tunnel but omits
     // the PID when live_runtime is {found:false}. Its scoped status command
     // exposes process.pid; never adopt that PID without matching every identity.
@@ -161,6 +226,27 @@ class AccountTunnelPeer extends RuntimeSupervisor {
   }
 
   async observeTunnelForMonitor(config) {
+    if (this.ownedAliasVerified && this.verifiedTunnel && this.tunnel?.pid === this.verifiedTunnel.pid) {
+      // Local-only supervision: the owned process is proven by PID and start
+      // identity, so /healthz, /readyz, MCP diagnostics and /metrics decide.
+      const owned = this.verifiedTunnelState();
+      if (owned.state === "dead") {
+        return { ready: false, pid: owned.pid, state: "stopped", processRunning: false, healthy: false,
+          absent: false, statusKnown: true,
+          detail: owned.reused ? `account tunnel process ${owned.pid} was replaced by another process`
+            : `account tunnel process ${owned.pid} exited` };
+      }
+      if (owned.state === "unknown") {
+        return { ready: false, pid: owned.pid, statusKnown: false,
+          detail: "Account tunnel process identity is temporarily unavailable" };
+      }
+      if (!this.tunnelHealthBaseUrl) {
+        try { await this.discoverTunnelHealthBaseUrl(config); }
+        catch (error) { this.logger?.warn?.("runtime.account_tunnel_health_url_unavailable", this.logContext({ message: error.message })); }
+      }
+      const local = await this.readLocalTunnelHealth({ pollHealth: true });
+      return { ...local, pid: owned.pid };
+    }
     const inventory = await this.readTunnelHealth(config);
     if (!inventory.statusKnown || !inventory.ready) return inventory;
     if (!this.ownedAliasVerified) {
@@ -171,16 +257,96 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     return { ...local, pid: inventory.pid };
   }
 
+  async localTunnelHealthyForRecovery(config, signal) {
+    // An explicit Reconnect always restarts; automatic recovery keeps a tunnel
+    // that is provably ours and healthy on every local signal.
+    if (this.reconnectRequested || !this.ownedAliasVerified) return false;
+    const proven = this.provenLocalTunnel();
+    if (!proven) return false;
+    const previous = this.tunnel;
+    this.tunnel = { pid: proven.pid, exitCode: null, signalCode: null, managed: true };
+    try {
+      if (!this.tunnelHealthBaseUrl) await this.discoverTunnelHealthBaseUrl(config, signal);
+      const local = await this.readLocalTunnelHealth();
+      this.assertRecoveryActive(signal);
+      if (local.ready) {
+        this.verifiedTunnel = proven;
+        this.logger?.info?.("runtime.account_tunnel_ready", this.logContext({
+          ms: 0, pid: proven.pid, operation: "runtime-recovery", path: "kept-healthy" }));
+        return true;
+      }
+      this.logger?.info?.("runtime.account_tunnel_recovery_restart", this.logContext({
+        pid: proven.pid, detail: local.detail }));
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.logger?.warn?.("runtime.account_tunnel_recovery_probe_failed", this.logContext({ message: error.message }));
+    }
+    this.tunnel = previous;
+    return false;
+  }
+
+  reconnectBusy() {
+    return Boolean(this.startPromise || this.recoveryTasks.size || this.tunnelControlControllers.size);
+  }
+
+  /** Eligible for the user's Reconnect: failed, backing off, or unable to reach OpenAI. */
+  reconnectEligible() {
+    if (this.stopping || this.shutdownRequested || this.reconnectBusy()) return false;
+    return Boolean(this.restartTimers.tunnel || this.tunnelPollDegraded
+      || ["failed", "degraded"].includes(this.runtimeStatus));
+  }
+
+  async reconnect() {
+    if (this.stopping || this.shutdownRequested) {
+      return { status: "unavailable", reason: "Account tunnel is shutting down" };
+    }
+    if (this.reconnectBusy()) return { status: "unavailable", reason: "Account tunnel is already reconnecting" };
+    if (this.restartTimers.tunnel) {
+      clearTimeout(this.restartTimers.tunnel);
+      this.restartTimers.tunnel = null;
+    }
+    // An explicit request starts a fresh restart budget and backoff.
+    this.restartHistory.tunnel = [];
+    this.recoveryBackoffMs = { ...this.recoveryBackoffMs, tunnel: 0 };
+    this.logger?.info?.("runtime.account_tunnel_reconnect_requested", this.logContext({
+      runtimeStatus: this.runtimeStatus, pid: this.tunnel?.pid ?? null }));
+    this.stopTunnelMonitor();
+    this.reconnectRequested = true;
+    try {
+      await this.launchRecovery("tunnel");
+    } finally {
+      this.reconnectRequested = false;
+    }
+    const ready = this.runtimeStatus === "ready" && Number.isInteger(this.tunnel?.pid);
+    return ready ? { status: "ready", reason: null }
+      : { status: "unavailable", reason: this.runtimeDetail || "Account tunnel reconnect did not complete" };
+  }
+
   async startTunnel(config, operationName, options) {
+    const startedAt = Date.now();
+    this.connectRanThisStart = false;
     // Inventory commands use this directory as their cwd before the SDK's
     // connect command creates a profile. Prepare a first account's private path.
     fs.mkdirSync(config.tunnel.profileDir, { recursive: true, mode: 0o700 });
     const existing = await this.waitForKnownTunnelStatus(config, 10_000, options?.recoverySignal);
     const wasOwnAttempt = this.connectAttempted && this.initialAliasAbsent;
     this.initialAliasAbsent = existing.absent === true || existing.state === "stopped";
-    if (existing.ready && !this.ownedAliasVerified) {
+    let replacedStale = false;
+    if (!this.ownedAliasVerified && !wasOwnAttempt && !this.initialAliasAbsent
+      && Number.isInteger(existing.pid) && existing.pid > 0) {
       const marker = this.readState();
-      if (!wasOwnAttempt && (!(currentProcessMarker(marker) || this.recoverableMarker(marker, existing.pid)) || marker.status !== "ready"
+      // A dead launcher's orphan, or this launcher's own tunnel that a failed
+      // probe marked failed/degraded, is provable by PID and start identity
+      // whatever status the marker holds. Stop it (never adopt it) and connect anew.
+      if (this.recoverableMarker(marker, existing.pid) || this.ownedStaleMarker(marker, existing.pid)) {
+        await this.stopProvenStaleTunnel(config, marker, existing.pid, options?.recoverySignal);
+        this.initialAliasAbsent = true;
+        replacedStale = true;
+      }
+    }
+    if (existing.ready && !this.ownedAliasVerified && !replacedStale) {
+      const marker = this.readState();
+      if (!wasOwnAttempt && (!currentProcessMarker(marker) || marker.status !== "ready"
         || marker.tunnelPid !== existing.pid)) {
         throw new Error("Account tunnel alias is ready without current launcher ownership proof");
       }
@@ -192,9 +358,30 @@ class AccountTunnelPeer extends RuntimeSupervisor {
       // super.startTunnel has checked local inventory, /healthz, /readyz and MCP
       // diagnostics. The identity stays scoped to this alias and profile.
       this.ownedAliasVerified = true;
+      const pid = this.tunnel?.pid;
+      const identity = Number.isInteger(pid) && pid > 0 ? processIdentity(pid) : null;
+      this.verifiedTunnel = identity ? { pid, identity } : null;
+      this.logger?.info?.("runtime.account_tunnel_ready", this.logContext({
+        ms: Date.now() - startedAt, pid: pid ?? null, operation: operationName ?? null,
+        path: replacedStale ? "replaced-stale" : !this.connectRanThisStart ? "adopted"
+          : options?.forceRestart === true ? "restarted" : "connected",
+      }));
     } finally {
       this.restartOwnedAlias = false;
     }
+  }
+
+  async stopProvenStaleTunnel(config, marker, pid, signal) {
+    this.logger?.warn?.("runtime.account_tunnel_stale_stopping", this.logContext({
+      tunnelPid: pid, markerStatus: marker?.status ?? null, ownerPid: marker?.ownerPid ?? null,
+      orphan: marker?.ownerPid !== process.pid,
+    }));
+    const stopped = await this.runTunnelStopCommand(config, signal);
+    if (stopped.code !== 0 && !/not found|not running|unknown alias/i.test(String(stopped.output || ""))) {
+      throw new Error(`Account tunnel stale process refused shutdown: ${String(stopped.output || "").slice(0, 500)}`);
+    }
+    if (stopped.code === 0) await this.waitForTunnelStopped(config, 10_000, signal);
+    this.verifiedTunnel = null;
   }
 
   async runTunnelConnectCommand(config, signal) {
@@ -202,6 +389,7 @@ class AccountTunnelPeer extends RuntimeSupervisor {
       throw new Error("Account tunnel startup refuses an unowned existing alias");
     }
     this.connectAttempted = true;
+    this.connectRanThisStart = true;
     return super.runTunnelConnectCommand(config, signal);
   }
 
@@ -218,8 +406,10 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     // start identity) proves an orphan of this app. Stop it; never adopt it, since
     // it may run the MCP command of a release this launcher has replaced.
     const ownOrphan = !this.tunnel && this.recoverableMarker(marker, health.pid);
+    // This launcher's own process left behind by a failed probe is equally exact.
+    const ownStale = !this.tunnel && this.ownedStaleMarker(marker, health.pid);
     const newAttempt = this.connectAttempted && this.initialAliasAbsent;
-    if (!currentOwner && !ownOrphan && !newAttempt) {
+    if (!currentOwner && !ownOrphan && !ownStale && !newAttempt) {
       throw new Error("Account tunnel shutdown has no current launcher ownership proof");
     }
     if (!Number.isInteger(expectedPid) || expectedPid < 1 || health.pid !== expectedPid) {
@@ -229,6 +419,7 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     if (result.code === 0) {
       this.ownedAliasVerified = false;
       this.connectAttempted = false;
+      this.verifiedTunnel = null;
     }
     return result;
   }
@@ -237,6 +428,14 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     const marker = this.readState();
     if (!currentProcessMarker(marker) || !this.ownedAliasVerified) return;
     if (!Number.isInteger(marker.tunnelPid) || marker.tunnelPid < 1) return;
+    // Quit must not wait on tunnel-client's remote lookup: the marker's exact
+    // PID and start identity already prove which process this launcher owns.
+    if (marker.tunnelIdentity && processIdentity(marker.tunnelPid) === marker.tunnelIdentity) {
+      this.tunnel = { pid: marker.tunnelPid, exitCode: null, signalCode: null, managed: true };
+      this.logger?.info?.("runtime.tunnel_adopted_for_stop", this.logContext({
+        pid: marker.tunnelPid, proof: "local-identity" }));
+      return;
+    }
     await super.adoptConfiguredTunnelForStop(config);
     if (this.tunnel && this.tunnel.pid !== marker.tunnelPid) {
       this.tunnel = null;
@@ -310,17 +509,41 @@ class AccountTunnelSupervisor {
       const identityMatches = peer && JSON.stringify(peer.binding.tunnel) === JSON.stringify(binding.tunnel);
       const localIdentity = Number.isInteger(peer?.tunnel?.pid) && peer.tunnel.pid > 0
         && (peer.ownedAliasVerified === true || this.options.peerFactory);
+      const pollDegraded = identityMatches && live ? peer.tunnelPollDegraded ?? null : null;
       const ready = Boolean(identityMatches && live && localIdentity
         && peer.runtimeStatus === "ready" && peer.tunnelMonitorFailures === 0
-        && peer.tunnelMonitorObservationUnavailable !== true && peer.reportedTunnelReady !== false);
-      const status = ready ? "ready" : peer?.runtimeStatus === "starting" || peer?.runtimeStatus === "recovering"
-        ? "starting" : peer?.runtimeStatus === "failed" || peer?.runtimeStatus === "degraded"
-          ? "error" : peer?.runtimeStatus === "stopped" ? "stopped" : "unknown";
+        && peer.tunnelMonitorObservationUnavailable !== true && peer.reportedTunnelReady !== false
+        && !pollDegraded);
+      const status = ready ? "ready" : pollDegraded ? "error"
+        : peer?.runtimeStatus === "starting" || peer?.runtimeStatus === "recovering"
+          ? "starting" : peer?.runtimeStatus === "failed" || peer?.runtimeStatus === "degraded"
+            ? "error" : peer?.runtimeStatus === "stopped" ? "stopped" : "unknown";
+      // The process stays up while OpenAI is unreachable; say so instead of "repair".
+      const detail = pollDegraded ? pollDegraded.detail
+        : status === "error" ? peer?.restartTimers?.tunnel
+          ? "This account’s tool tunnel needs repair; NEKODEX keeps retrying automatically"
+          : "This account’s tool tunnel needs repair" : null;
       return { accountId: binding.accountId, interactionMode: binding.interactionMode,
         tunnelId: binding.tunnel.tunnelId, status, ready,
         pid: identityMatches ? peer?.tunnel?.pid ?? null : null,
-        ...(status === 'error' ? { detail: 'This account’s tool tunnel needs repair' } : {}) };
+        ...(pollDegraded ? { reason: pollDegraded.reason } : {}),
+        ...(detail ? { detail } : {}) };
     });
+  }
+
+  reconnectCandidates() {
+    return [...this.peers.values()].filter(peer => typeof peer.reconnect === "function"
+      && peer.binding.interactionMode === this.activeMode && peer.reconnectEligible?.() === true);
+  }
+
+  async reconnect() {
+    const results = await Promise.all(this.reconnectCandidates().map(async peer => {
+      const scope = { accountId: peer.binding.accountId, interactionMode: peer.binding.interactionMode };
+      try { return { ...scope, ...await peer.reconnect() }; }
+      catch (error) { return { ...scope, status: "unavailable", reason: error.message }; }
+    }));
+    this.onChange();
+    return results;
   }
 
   getStatus(accountId, mode) {
@@ -336,17 +559,31 @@ class AccountTunnelSupervisor {
         && !peer.tunnelControlControllers?.size
         && ["unconfigured", "stopped", "unknown"].includes(peer.runtimeStatus))
       .map(async peer => {
+      let failure = null;
       try {
         const result = await peer.startIfConfigured();
         if (result.status !== "ready") {
           peer.runtimeStatus = "failed";
           peer.runtimeDetail = result.detail || `Account tunnel startup returned ${result.status}`;
+          // An inactive binding has nothing to recover.
+          if (result.status !== "not-configured") failure = peer.runtimeDetail;
         }
       }
-      catch (error) { this.options.logger.error("runtime.account_tunnel_start_failed", {
-        accountId: peer.binding.accountId, interactionMode: peer.binding.interactionMode, message: error.message,
-      }); }
-      finally { this.onChange(); }
+      catch (error) {
+        failure = error.message;
+        this.options.logger.error("runtime.account_tunnel_start_failed", {
+          accountId: peer.binding.accountId, interactionMode: peer.binding.interactionMode, message: error.message,
+        });
+      }
+      finally {
+        // A failed first start enters the same bounded, never-disabled recovery
+        // as a lost tunnel instead of waiting for an app restart.
+        if (failure && typeof peer.scheduleRecovery === "function" && !peer.stopping && !peer.shutdownRequested) {
+          if (peer.lastChildFailure) peer.lastChildFailure.tunnel = failure;
+          peer.scheduleRecovery("tunnel");
+        }
+        this.onChange();
+      }
     }));
   }
 

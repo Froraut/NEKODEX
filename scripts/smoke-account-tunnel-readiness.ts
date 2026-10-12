@@ -29,7 +29,21 @@ try {
   const degraded = await (await fetch(`${base}/healthz`)).json();
   assert.equal(degraded.native_accepting_turns, true); assert.equal(degraded.tunnel_ready, false);
   assert.equal(degraded.web_accepting_turns, false);
-  console.log('ACCOUNT_TUNNEL_READINESS_OK accurate-aggregate distinct-owners Native-independent');
+  assert.equal(degraded.tunnel_unavailable_reason, undefined);
+  // A running tunnel that cannot poll OpenAI reports its cause; healthz names it.
+  assert.equal((await send({ ready: false, revision: 3, account_tunnels: [{ ...a, ready: false, reason: 'Bad Reason' }, b] })).status, 400);
+  assert.equal((await send({ ready: false, revision: 3, account_tunnels: [{ ...a, ready: false, detail: 'x'.repeat(501) }, b] })).status, 400);
+  const unreachable = { ...a, ready: false, reason: 'openai_unreachable', detail: 'OpenAI unreachable — check VPN or network connection' };
+  assert.equal((await send({ ready: false, revision: 3, account_tunnels: [unreachable, b] })).status, 200);
+  const offline = await (await fetch(`${base}/healthz`)).json();
+  assert.equal(offline.tunnel_unavailable_reason, 'openai_unreachable');
+  assert.deepEqual(offline.account_tunnels, [unreachable, b]);
+  assert.equal(offline.native_accepting_turns, true);
+  assert.equal((await send({ ready: true, revision: 4, account_tunnels: [a, b] })).status, 200);
+  const restored = await (await fetch(`${base}/healthz`)).json();
+  assert.equal(restored.tunnel_unavailable_reason, undefined);
+  assert.deepEqual(restored.account_tunnels, [a, b]);
+  console.log('ACCOUNT_TUNNEL_READINESS_OK accurate-aggregate distinct-owners Native-independent cause-reported');
 } finally {
   server.disposeSignalHandlers(); server.stop(true);
   await TurnBroker.forSocket(config.brokerSocketPath).close();
