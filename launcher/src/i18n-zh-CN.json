@@ -131,7 +131,6 @@
   "skillAttachments": "技能作为文件（实验性）",
   "skillAttachmentsBody": "将明确选择的 Codex 技能作为命名文本文件上传，而不是内联指令。其他技能仍通过工具读取。默认关闭；与图片共用附件数量限制。",
   "manualSkillAttachmentsUnavailable": "上传技能需要自动浏览器交互模式。",
-  "updateCheckCooldown": "一分钟后再次检查",
   "setupNext": "下一步",
   "setupConfirmTitle": "在 Codex 中确认模型",
   "setupConfirmBody": "安装已保存，Codex 已读取模型列表。打开模型选择器并确认 NEKODEX 模型可见，无需重新安装。",

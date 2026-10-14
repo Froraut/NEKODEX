@@ -95,7 +95,6 @@
 .updates-status p { margin: 2px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .updates-note { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .updates-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-.updates-cooldown { color: var(--text-tertiary); font-size: 14px; line-height: 20px; }
 .updates-preserved {
   margin: var(--space-5) 0 0;
   padding-top: var(--space-4);

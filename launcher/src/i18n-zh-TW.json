@@ -1,6 +1,5 @@
 {
   "lastConnectorVerification": "最近一次連接器驗證：{time}",
-  "updateCheckCooldown": "一分鐘後再次檢查",
   "setupNext": "下一步",
   "setupConfirmTitle": "在 Codex 中確認模型",
   "setupConfirmBody": "安裝已儲存，Codex 已讀取模型列表。開啟模型選擇器並確認 NEKODEX 模型可見，無需重新安裝。",

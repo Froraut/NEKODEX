@@ -8,9 +8,9 @@ import "./surfaces/tasks-updates.css";
 
 const installPhases: ReadonlyArray<UpdateState["status"]> = ["downloading", "verifying", "waiting", "installing", "cancelling"];
 
-export function Updates({ language, currentVersion, state, busy, checking, cooldown, error, onCheck, onInstall, cancelling = false, onCancel, transitionBusy = false, platform }: {
+export function Updates({ language, currentVersion, state, busy, checking, error, onCheck, onInstall, cancelling = false, onCancel, transitionBusy = false, platform }: {
   language: Language; currentVersion: string; state: UpdateState; busy: boolean;
-  checking: boolean; cooldown: boolean;
+  checking: boolean;
   /** The last action's outcome from useUpdateControls (a plain string is treated as a failed check). */
   error: UpdateFeedback | string | null;
   onCheck: () => void; onInstall: () => void;
@@ -70,7 +70,6 @@ export function Updates({ language, currentVersion, state, busy, checking, coold
   // Active tasks no longer block the download: the updater waits for them before installing.
   const showWait = transitionBusy && state.status === "available";
   const waitId = useId();
-  const cooldownId = useId();
   const restart = platform === "darwin" ? `${copy.restart} ${copy.restartMac}` : copy.restart;
 
   // The action row changes with the updater state: "Download and restart" and "Check for updates" leave when a
@@ -120,11 +119,10 @@ export function Updates({ language, currentVersion, state, busy, checking, coold
             {state.status === "available" ? <Button variant="primary" icon="update" busy={installPending}
               aria-describedby={showWait ? waitId : undefined} disabled={transitionBusy || busy || checking}
               onClick={onInstall}>{copy.install}</Button> : null}
-            {!busy ? <Button variant={state.status === "available" ? "secondary" : "primary"} icon="reload" busy={checkBusy}
-              aria-describedby={cooldown ? cooldownId : undefined} disabled={transitionBusy || cooldown} onClick={onCheck}>
+            {!busy ? <Button variant={state.status === "available" ? "secondary" : "primary"} icon="reload" busy={checkBusy} disabled={transitionBusy}
+              onClick={onCheck}>
               {checkBusy ? copy.checkBusy : failureSource === "check" ? copy.retryCheck : copy.check}
             </Button> : null}
-            {cooldown && !busy ? <span className="updates-cooldown" id={cooldownId}>{copy.cooldown}</span> : null}
           </div> : null}
         </>}
       </div>

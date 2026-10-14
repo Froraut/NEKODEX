@@ -35,7 +35,6 @@ const USER_AGENT = "codex-web-gpt-launcher-updater";
 const MAX_REDIRECTS = 5;
 const MAX_ASSET_BYTES = 1024 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
-const RECHECK_COOLDOWN_MS = 60_000;
 // NEKODEX usually lives in the tray for days; a startup-only check never
 // surfaces a release published while it is running.
 const BACKGROUND_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
@@ -365,7 +364,6 @@ function createUpdateController({
   let preparation = null;
   let candidate = null;
   let checkPromise = null;
-  let lastCheckFinishedAt = 0;
   let backgroundTimer = null;
   let installFailure;
   const cacheRoot = updateCacheRoot(logsDirectory);
@@ -474,7 +472,6 @@ function createUpdateController({
         logger?.warn("launcher.update_check_failed", { message });
         return transition({ status: "error", message });
       } finally {
-        lastCheckFinishedAt = Date.now();
         scheduleBackgroundCheck();
       }
     })();
@@ -507,9 +504,6 @@ function createUpdateController({
   function recheck() {
     if (checkPromise) return checkPromise;
     if (state.status === "disabled" || pending || ["downloading", "verifying", "installing"].includes(state.status)) {
-      return Promise.resolve(state);
-    }
-    if (lastCheckFinishedAt && Date.now() - lastCheckFinishedAt < RECHECK_COOLDOWN_MS) {
       return Promise.resolve(state);
     }
     checked = true;
