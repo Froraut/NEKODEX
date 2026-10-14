@@ -131,7 +131,6 @@
   "skillAttachments": "Skills as files (experimental)",
   "skillAttachmentsBody": "Upload explicitly selected Codex skills as named text files instead of inline instructions. Other skills still load through tools. Off by default; uses the same attachment limit as images.",
   "manualSkillAttachmentsUnavailable": "Skill uploads require automatic browser interaction.",
-  "updateCheckCooldown": "Check again in a minute",
   "setupNext": "Next step",
   "setupConfirmTitle": "Confirm your models in Codex",
   "setupConfirmBody": "The installation is saved and Codex has loaded the catalog. Open its model picker and confirm that the NEKODEX models are visible. Reinstalling is not needed.",

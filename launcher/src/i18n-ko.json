@@ -1,6 +1,5 @@
 {
   "lastConnectorVerification": "마지막 커넥터 확인: {time}",
-  "updateCheckCooldown": "1분 후 다시 확인",
   "setupNext": "다음 단계",
   "setupConfirmTitle": "Codex에서 모델 확인",
   "setupConfirmBody": "설치가 저장되었고 Codex가 모델 목록을 불러왔습니다. 모델 선택기를 열어 NEKODEX 모델이 표시되는지 확인하세요. 다시 설치할 필요는 없습니다.",

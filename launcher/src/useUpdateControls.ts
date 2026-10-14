@@ -12,25 +12,22 @@ export type UpdateFeedback = { tone: "error" | "info"; source: "check" | "instal
 /** Update check, install and cancel state for the Updates screen. App keeps the panel request and restart state. */
 export function useUpdateControls(api: LauncherApi, transitionBusy: boolean, copy: { cancelTooLate: string; failed: string }) {
   const [updateError, setUpdateError] = useState<UpdateFeedback | null>(null);
-  const [updateCheckCooldown, setUpdateCheckCooldown] = useState(false);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [updateInstallPending, setUpdateInstallPending] = useState(false);
   const [updateCancelPending, setUpdateCancelPending] = useState(false);
   const updateCancelInFlight = useRef(false);
   const updateInstallPendingRef = useRef(false);
-  const updateCheckTimer = useRef<number | undefined>(undefined);
   const updateCheckMounted = useRef(false);
   const updateCheckPendingRef = useRef(false);
   useEffect(() => {
     updateCheckMounted.current = true;
     return () => {
       updateCheckMounted.current = false;
-      window.clearTimeout(updateCheckTimer.current);
     };
   }, []);
 
   const recheckUpdate = async () => {
-    if (transitionBusy || updateCheckCooldown || updateCheckBusy || updateCheckPendingRef.current) return;
+    if (transitionBusy || updateCheckBusy || updateCheckPendingRef.current) return;
     updateCheckPendingRef.current = true;
     setUpdateCheckBusy(true);
     setUpdateError(null);
@@ -38,9 +35,6 @@ export function useUpdateControls(api: LauncherApi, transitionBusy: boolean, cop
       const next = await api.recheckUpdate();
       if (!updateCheckMounted.current) return;
       if (next.status === "error") setUpdateError({ tone: "error", source: "check", message: next.message });
-      setUpdateCheckCooldown(true);
-      window.clearTimeout(updateCheckTimer.current);
-      updateCheckTimer.current = window.setTimeout(() => setUpdateCheckCooldown(false), 60_000);
     } catch (error) {
       if (updateCheckMounted.current) setUpdateError({ tone: "error", source: "check", message: messageOf(error) });
     } finally {
@@ -83,7 +77,7 @@ export function useUpdateControls(api: LauncherApi, transitionBusy: boolean, cop
   };
 
   return {
-    updateError, setUpdateError, updateCheckCooldown, updateCheckBusy, updateInstallPending, updateCancelPending,
+    updateError, setUpdateError, updateCheckBusy, updateInstallPending, updateCancelPending,
     recheckUpdate, installUpdate, cancelUpdate,
   };
 }

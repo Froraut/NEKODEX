@@ -131,7 +131,6 @@
   "skillAttachments": "スキルをファイルで送信（試験的）",
   "skillAttachmentsBody": "明示的に選択した Codex スキルを、インラインの指示ではなく名前付きテキストファイルとしてアップロードします。他のスキルは引き続きツールで読み込みます。初期設定はオフ。画像と添付数の上限を共有します。",
   "manualSkillAttachmentsUnavailable": "スキルのアップロードには自動ブラウザ操作が必要です。",
-  "updateCheckCooldown": "1分後に再確認",
   "setupNext": "次のステップ",
   "setupConfirmTitle": "Codex でモデルを確認",
   "setupConfirmBody": "インストールは保存済みで、Codex はモデル一覧を読み込みました。モデル選択画面に NEKODEX が表示されることを確認してください。再インストールは不要です。",

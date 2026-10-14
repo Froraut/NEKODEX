@@ -556,7 +556,7 @@ function LauncherShell({
   const transitionBusy = Boolean(snapshot.lifecycle?.transition);
   const updateCopy = updateCopyFor(language);
   const {
-    updateError, setUpdateError, updateCheckCooldown, updateCheckBusy, updateInstallPending, updateCancelPending,
+    updateError, setUpdateError, updateCheckBusy, updateInstallPending, updateCancelPending,
     recheckUpdate, installUpdate, cancelUpdate,
   } = useUpdateControls(api!, transitionBusy, updateCopy);
   const [restartPending, setRestartPending] = useState(false);
@@ -1074,7 +1074,7 @@ function LauncherShell({
             ) : null}
             {surface === "updates" ? <Updates loadCopy={copy} language={language} currentVersion={snapshot.version}
               state={snapshot.update} busy={updateBusy} checking={updateCheckBusy}
-              cooldown={updateCheckCooldown} error={updateError} transitionBusy={transitionBusy}
+              error={updateError} transitionBusy={transitionBusy}
               onCheck={() => void recheckUpdate()} onInstall={() => void installUpdate()}
               cancelling={updateCancelPending} onCancel={() => void cancelUpdate()} platform={snapshot.platform} /> : null}
             {surface === "settings" ? (
