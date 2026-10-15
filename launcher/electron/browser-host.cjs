@@ -675,6 +675,7 @@ class BrowserHost {
       this.authGeneration = (this.authGeneration ?? 0) + 1;
       this.authProbeRevision += 1;
       if (this.view?.webContents === contents && !contents?.isDestroyed() && !this.activeTraceId) {
+        if (contents.isLoadingMainFrame?.()) this.primaryNavigationFailed = true;
         try { contents.stop(); } catch {}
       }
     };
@@ -1295,6 +1296,7 @@ class BrowserHost {
         this.setState({ url });
         return;
       }
+      this.primaryNavigationFailed = false;
       this.primaryRendererReady = false;
       this.primaryDeviceEmulationDirty = true;
       this.armHomeNavigationTimeout(contents, url);
@@ -1360,6 +1362,7 @@ class BrowserHost {
     });
     contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {
       if (!mainFrame || errorCode === -3) return;
+      this.primaryNavigationFailed = true;
       this.clearHomeNavigationTimeout();
       this.logger.error(
         this.manualOperation === "ChatGPT login"
@@ -1375,6 +1378,7 @@ class BrowserHost {
       this.setState({ status: "error", message: errorDescription, url, loading: false });
     });
     contents.on("render-process-gone", (_event, details) => {
+      this.primaryNavigationFailed = true;
       this.primaryRendererReady = false;
       this.primaryDeviceEmulationDirty = true;
       this.clearHomeNavigationTimeout();
@@ -1388,6 +1392,7 @@ class BrowserHost {
     this.homeNavigationTimeout = setTimeout(() => {
       this.homeNavigationTimeout = null;
       if (contents.isDestroyed() || !contents.isLoadingMainFrame()) return;
+      this.primaryNavigationFailed = true;
       contents.stop();
       const message = "ChatGPT did not finish loading within 60 seconds. Check your connection and retry.";
       this.logger.error("browser.navigation_timeout", { origin: navigationOriginForLog(url) });
@@ -2381,7 +2386,7 @@ class BrowserHost {
           this.show();
           this.logger.info("browser.login_opened");
           const current = this.view.webContents.getURL();
-          if (!current.startsWith(CHATGPT_ORIGIN)) {
+          if (!current.startsWith(CHATGPT_ORIGIN) || this.primaryNavigationFailed) {
             await awaitInspection(this.view.webContents.loadURL(TEMPORARY_CHAT_URL), controller.signal);
           }
           controller.signal.throwIfAborted();
@@ -2644,12 +2649,19 @@ class BrowserHost {
     const controller = new AbortController();
     this.passkeyLoginController = controller;
     this.authGeneration = (this.authGeneration ?? 0) + 1;
+    let captureState;
+    let captureGeneration;
+    let captureIdentityEpoch;
+    let transferReceived = false;
     const operation = (async () => {
       const handoffDeadline = Date.now() + AUTH_HANDOFF_TIMEOUT_MS;
       if (embeddedLogin) {
         embeddedController.abort();
         for (const view of [this.view, this.authView]) {
-          if (view && !view.webContents.isDestroyed()) view.webContents.stop();
+          if (view && !view.webContents.isDestroyed()) {
+            if (view === this.view && view.webContents.isLoadingMainFrame?.()) this.primaryNavigationFailed = true;
+            view.webContents.stop();
+          }
         }
         // No Chrome session is started until the previous operation releases browser ownership.
         await waitForPreviousAuthentication(embeddedLogin, controller.signal, handoffDeadline - Date.now());
@@ -2668,6 +2680,9 @@ class BrowserHost {
       return await this.withManualOperation("ChatGPT passkey login", async () => {
         controller.signal.throwIfAborted();
         this.authNavigationError = null;
+        captureState = { ...this.state };
+        captureGeneration = this.authGeneration;
+        captureIdentityEpoch = this.authIdentityEpoch;
         this.setState({
           authenticated: false,
           authenticationStatus: "unknown",
@@ -2681,6 +2696,7 @@ class BrowserHost {
         }, { accountId: this.accountId, accountLabel: this.state.accountLabel, signal: controller.signal,
           configureVerificationSession: (verificationSession, accountId) =>
             this.configureAccountSession(verificationSession, accountId) });
+        transferReceived = true;
         this.updatePasskeyProgress({ phase: controller.signal.aborted ? "cancelling" : "verifying", chromePhase: null });
         const result = await this.installPasskeyLogin(transfer, controller.signal);
         this.updatePasskeyProgress({ phase: "completed", error: null });
@@ -2695,8 +2711,25 @@ class BrowserHost {
       });
       const cancelled = phase === "cancelled";
       this.updatePasskeyProgress({ phase, error: errorCode });
+      if (cancelled && !transferReceived && captureState
+        && (this.authGeneration !== captureGeneration || this.authIdentityEpoch !== captureIdentityEpoch)) {
+        // A newer identity observation belongs to its own owner, not this cancelled chooser.
+        this.setState({ loading: false });
+        return this.snapshot();
+      }
+      if (cancelled && !transferReceived && captureState
+        && this.authGeneration === captureGeneration && this.authIdentityEpoch === captureIdentityEpoch
+        && captureState.authenticationStatus !== "unknown") {
+        // Cancelling the profile chooser never changed the owned session. Restore its
+        // last settled verdict instead of leaving a phantom check running forever.
+        const { authenticated, authenticationStatus, authenticationIssue, authenticationCheckedAt,
+          lastVerifiedAt, accountLabel, status, message } = captureState;
+        this.setState({ authenticated, authenticationStatus, authenticationIssue, authenticationCheckedAt,
+          lastVerifiedAt, accountLabel, status, message, loading: false });
+        return this.snapshot();
+      }
       const authenticationStatus = this.state.authenticationStatus === "signed-out"
-        ? "signed-out" : cancelled ? "unknown" : "unavailable";
+        ? "signed-out" : "unavailable";
       if (previousSessionRestored) this.setState({ loading: false });
       else this.setState({ loading: false,
         status: authenticationStatus === "signed-out" ? "signed-out" : authenticationStatus === "unavailable" ? "error" : "idle",
@@ -3069,12 +3102,37 @@ class BrowserHost {
     }
     const operation = this.withReadOnlyInspection("session verification retry", async signal => {
       const generation = this.authGeneration ?? 0;
-      const state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
-      signal.throwIfAborted();
-      if ((this.authGeneration ?? 0) !== generation) {
-        throw new Error("ChatGPT session verification is unavailable: browser session changed");
+      this.setState({ status: "loading", message: "Checking saved ChatGPT session", authenticationStatus: "unknown" });
+      try {
+        // A failed navigation retains its requested URL in Electron. Observing that error
+        // document forever cannot retry the request. Load only an idle or known-failed
+        // home surface; a healthy page may hold an unsent draft and must stay untouched.
+        const contents = this.view.webContents;
+        if (contents.getURL() === IDLE_BROWSER_URL || this.primaryNavigationFailed) {
+          await awaitInspection(contents.loadURL(TEMPORARY_CHAT_URL), signal);
+        }
+        const state = await awaitInspection(this.probeAuthentication({ signal, observationOnly: true }), signal);
+        signal.throwIfAborted();
+        if ((this.authGeneration ?? 0) !== generation) {
+          throw new Error("ChatGPT session verification is unavailable: browser session changed");
+        }
+        if (state.authenticationStatus !== "verified" && state.authenticationStatus !== "signed-out") {
+          throw new Error(state.message || "ChatGPT session verification is unavailable; open Browser and retry after the page loads");
+        }
+        if (state.authenticationStatus === "verified") {
+          this.passkeyProgress = null;
+          this.existingChromeProgress = null;
+        }
+        return state;
+      } catch (error) {
+        if (!signal.aborted && (this.authGeneration ?? 0) === generation
+          && this.state.authenticationStatus === "unknown") {
+          this.setState({ status: "error", authenticated: false, authenticationStatus: "unavailable",
+            authenticationCheckedAt: new Date().toISOString(), loading: false,
+            message: "ChatGPT session verification unavailable; open Browser to check the page and retry" });
+        }
+        throw error;
       }
-      return state;
     }, { preserveSelection: true });
     let tracked;
     tracked = operation.finally(() => {

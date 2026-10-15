@@ -173,6 +173,14 @@ restart request until the picker is confirmed again.
 Chrome profile bindings can retain the observed Chrome user agent for compatible
 session handoff; it never replaces endpoint/principal verification. Sign-in
 mutation receipts are published after the owning lease is released.
+Explicit session retries publish a checking state and reject unresolved observations
+so every retry surface can report the failure. The browser host records primary
+navigation/renderer failures and owned stops of loading pages: retry or embedded sign-in reloads an idle or known-failed
+home, while a healthy loaded page and the selected task tab stay intact. A new embedded
+sign-in, or successful verification, retires terminal external sign-in guides.
+Cancelling a profile chooser before session transfer restores its prior settled
+authentication verdict only while the captured generation and identity remain current;
+an unresolved cancellation remains unavailable, never an ownerless checking state.
 The account pool owns one pending evidence restore per account. Sign-in and
 tunnel receipts coalesce into it; a receipt during a check supersedes that check.
 Waiting for a user operation or tunnel has no elapsed-time expiry and is not an
