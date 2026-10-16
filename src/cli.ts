@@ -431,6 +431,7 @@ async function routeCommand(args: string[]): Promise<void> {
           active: status.active,
           ...(status.routeUrl ? { routeUrl: status.routeUrl } : {}),
           ...(status.chainedRoute ? { chainedRoute: status.chainedRoute } : {}),
+          ...(status.pendingChainedRoute ? { pendingChainedRoute: status.pendingChainedRoute } : {}),
           errors: status.errors,
         };
       })()

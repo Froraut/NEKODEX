@@ -130,6 +130,40 @@ class AccountTunnelPeer extends RuntimeSupervisor {
     return !processAlive(marker.ownerPid) || owner !== null && owner !== marker.ownerIdentity;
   }
 
+  /**
+   * A marker left by a launcher that is gone (exited, or its PID reused) for a tunnel process that
+   * is gone too. It proves no process a stop could act on, so it is no live peer.
+   */
+  deadMarker(marker) {
+    if (!marker || !Number.isInteger(marker.tunnelPid) || marker.tunnelPid < 1) return false;
+    const reused = (pid, recorded) => {
+      if (!recorded) return false;
+      const identity = processIdentity(pid);
+      return identity !== null && identity !== recorded;
+    };
+    const gone = (pid, recorded) => !processAlive(pid) || reused(pid, recorded);
+    if (!gone(marker.tunnelPid, marker.tunnelIdentity)) return false;
+    return marker.ownerPid === process.pid || !Number.isInteger(marker.ownerPid) || marker.ownerPid < 1
+      || gone(marker.ownerPid, marker.ownerIdentity);
+  }
+
+  /** Whether the persisted marker may still name a live owned tunnel. */
+  markerMayOwnTunnel() {
+    const marker = this.readState();
+    return Number.isInteger(marker?.tunnelPid) && !this.deadMarker(marker);
+  }
+
+  /** Remove a dead launcher's marker for a dead tunnel before this launcher supervises the peer. */
+  discardDeadMarker() {
+    let marker;
+    try { marker = this.readState(); } catch { return false; }
+    if (!marker || marker.ownerPid === process.pid || !this.deadMarker(marker)) return false;
+    this.logger?.warn?.("runtime.account_tunnel_dead_marker_discarded", this.logContext({
+      markerStatus: marker.status, ownerPid: marker.ownerPid, tunnelPid: marker.tunnelPid }));
+    this.clearState();
+    return true;
+  }
+
   readState() {
     const state = super.readState();
     if (state && (state.accountId !== this.binding.accountId
@@ -485,6 +519,8 @@ class AccountTunnelSupervisor {
           ? this.options.peerFactory(binding, this.onChange)
           : new AccountTunnelPeer(this.options, binding, this.onChange);
         peer.parentConfig = () => this.options.readConfig();
+        // A new peer has no in-memory ownership yet; only a prior process can have left its marker.
+        peer.discardDeadMarker?.();
         this.peers.set(key, peer);
       }
     }
@@ -604,7 +640,8 @@ class AccountTunnelSupervisor {
       || peer.recoveryTasks?.size || peer.restartTimers?.tunnel
       || peer.recoveryAliasMayBeLive || peer.tunnelControlControllers?.size
       || ["starting", "recovering", "ready"].includes(peer.runtimeStatus)
-      || Number.isInteger(peer.readState?.()?.tunnelPid)).map(([key]) => key);
+      || (peer.markerMayOwnTunnel ? peer.markerMayOwnTunnel()
+        : Number.isInteger(peer.readState?.()?.tunnelPid))).map(([key]) => key);
   }
 
   async restartOwned(keys) {
