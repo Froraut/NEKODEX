@@ -22,6 +22,19 @@ remained untouched past the former deadline, a later Allow resolved it, cancella
 left all decision buttons untouched, and the existing one-time automatic path
 continued to pass. Core TypeScript checking and version synchronization passed.
 
-Installed activation and the remaining Web model results are recorded separately
-in the final all-model tool report. Source, signed local app and live tool execution
-are distinct evidence. No public installer release is part of this correction.
+Installed acceptance completed on 2026-10-17 local time with app and native core
+6.1.32-nekodex.2. The previously failing Web Pro child applied and verified its
+file. The Instant approval card stayed visible for at least 81 seconds; a later
+one-time Allow released the real patch and file verification. All 17 model routes
+passed the shared tool scenario, recorded in the
+[all-model report](https://github.com/Froraut/codex-config/blob/5b61f90/providers/all-model-tools-20261017.md).
+
+The local app also includes the merged upstream PR91 background-route fix. After
+verifying direct first-party access over this host's OS network, the declared
+DIRECT route allowed ordinary Quit to detach the GUI. A fresh native catalog
+request returned HTTP200 with the GUI absent, the native core PID stayed the same,
+and reopening the app restored ready account tunnels. This host's route evidence
+does not automatically authorize DIRECT on other networks.
+
+Source, signed local app and live tool execution are distinct evidence. No public
+installer release is part of this correction.
