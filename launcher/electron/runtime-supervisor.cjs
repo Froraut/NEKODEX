@@ -22,6 +22,7 @@ const {
 const { runtimeInvocation } = require("./runtime-command.cjs");
 const { ASYNC_CONNECTOR_NAME, ASYNC_DEV_CONNECTOR_NAME } = require("./connector-identity.cjs");
 
+const NATIVE_BACKGROUND_ROUTE_KEY = "CODEX_CHATGPT_WEB_NATIVE_BACKGROUND_ROUTE";
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
 const MAX_CONTROL_OUTPUT_BYTES = 1024 * 1024;
@@ -490,6 +491,10 @@ class RuntimeSupervisor {
       cwd: invocation.cwd,
       detached: background || DETACH_OWNED_CHILD,
       env: {
+        // The persisted declaration precedes process.env so an explicit launchctl/shell value wins.
+        ...(name === "daemon" && invocation.nativeBackgroundRoute !== undefined
+          ? { [NATIVE_BACKGROUND_ROUTE_KEY]: invocation.nativeBackgroundRoute }
+          : {}),
         ...process.env,
         ...invocation.env,
         CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
@@ -1660,7 +1665,11 @@ class RuntimeSupervisor {
       const env = await this.nativeProxyEnvironmentProvider();
       if (this.stopping) throw new Error("Responses startup was cancelled while resolving the system proxy");
       this.assertCanStart(recoverySignal);
-      child = this.spawnChild("daemon", { ...this.runtimeCommand(["serve"], config.releaseVersion), env }, recoverySignal);
+      child = this.spawnChild("daemon", {
+        ...this.runtimeCommand(["serve"], config.releaseVersion),
+        env,
+        nativeBackgroundRoute: config.nativeBackgroundRoute,
+      }, recoverySignal);
       await this.waitForProxy(config, 20_000, recoverySignal);
       this.assertCanStart(recoverySignal);
       if (this.daemon !== child) throw new Error("Responses proxy exited immediately after becoming healthy");
