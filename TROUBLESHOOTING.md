@@ -63,6 +63,14 @@ Choose one route owner:
 - To switch away cleanly, use **Settings → Remove Codex integration** first. This restores the exact
   route that existed before Codex Web GPT was installed.
 
+One composition is recognized: a **local gateway chained in front of NEKODEX**. When
+`openai_base_url` points to a loopback `http://` gateway (same `/v1` path), NEKODEX answers at its
+own managed route, and the gateway's `/healthz` reports that runtime as its reachable `upstream`
+(same `version`; `instance_id`/`origin` too when the gateway reports them), route status and doctor
+report the route as active through that gateway. NEKODEX still never rewrites that newer value:
+repair, reconnect and removal keep refusing until you restore the route yourself. If the gateway or
+runtime is down, the original error is shown with a note that the chain could not be verified.
+
 Do not hand-edit the launcher's route journal. It exists so setup and removal can fail closed instead
 of silently destroying another provider's configuration. First-class external-router composition is
 tracked in [#205](https://github.com/miuuyy/codex-chatgpt-web/issues/205), but is not supported today.

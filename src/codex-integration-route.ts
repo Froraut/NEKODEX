@@ -327,12 +327,33 @@ export function installRoute(
   return { text: renderDocument(document), previous, previousRealtimeWebrtcCallBaseUrl };
 }
 
-export function verifyInstalledRoute(text: string, journal: ManagedRouteJournal): void {
+export const BASE_URL_CHANGED_MESSAGE =
+  "Codex openai_base_url changed after setup; refusing to overwrite the user's newer value";
+
+/** The user's newer openai_base_url; `current` lets status callers check it for a verified local chain. */
+export class CodexBaseUrlChangedError extends Error {
+  constructor(readonly current: string | undefined) {
+    super(BASE_URL_CHANGED_MESSAGE);
+    this.name = "CodexBaseUrlChangedError";
+  }
+}
+
+/**
+ * `chainedBaseUrl` is accepted in place of the managed URL only after the caller proved that a
+ * local gateway at that URL forwards to this runtime. Every other managed-state check still applies.
+ */
+export function verifyInstalledRoute(
+  text: string,
+  journal: ManagedRouteJournal,
+  options: { chainedBaseUrl?: string } = {},
+): void {
   text = restoreClientOverlays(text, journal);
   const lines = splitLines(text);
   const current = assignments(lines);
-  if (current.openai_base_url.value !== journal.installed.openai_base_url) {
-    throw new Error("Codex openai_base_url changed after setup; refusing to overwrite the user's newer value");
+  const baseUrl = current.openai_base_url.value;
+  if (baseUrl !== journal.installed.openai_base_url
+    && (options.chainedBaseUrl === undefined || baseUrl !== options.chainedBaseUrl)) {
+    throw new CodexBaseUrlChangedError(current.openai_base_url.present ? baseUrl : undefined);
   }
   const expectedMarker = journalHasRealtimeRoute(journal)
     ? MANAGED_ROUTE_COMMENT

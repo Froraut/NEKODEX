@@ -6,7 +6,7 @@ import {
   loadConfig,
 } from "./config";
 import { join } from "node:path";
-import { inspectCodexIntegration } from "./codex-integration";
+import { inspectCodexIntegrationWithChain } from "./codex-chained-route";
 import { browserLoginStateExists, loginVerificationMarkerPath } from "./browser-login";
 import { getServiceStatus } from "./service";
 import { tunnelStatus } from "./tunnel";
@@ -197,7 +197,7 @@ export async function runDoctor(): Promise<DoctorReport> {
   }
 
   try {
-    const codex = inspectCodexIntegration();
+    const codex = await inspectCodexIntegrationWithChain();
     if (!codex.installed) {
       checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
     } else if (codex.errors.length > 0) {
@@ -210,7 +210,14 @@ export async function runDoctor(): Promise<DoctorReport> {
         detail: "The reversible integration is installed, but Codex is currently using its restored route.",
       });
     } else {
-      checks.push({ id: "codex", status: "ok", message: "NEKODEX Codex route is installed and active" });
+      checks.push(codex.chainedRoute
+        ? {
+            id: "codex",
+            status: "ok",
+            message: "NEKODEX Codex route is active through a verified local gateway",
+            detail: `Codex uses ${codex.chainedRoute.url}, which forwards to ${codex.chainedRoute.upstreamUrl}.`,
+          }
+        : { id: "codex", status: "ok", message: "NEKODEX Codex route is installed and active" });
     }
   } catch (error) {
     checks.push({ id: "codex", status: "error", message: "Codex integration could not be determined", detail: errorDetail(error) });

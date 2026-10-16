@@ -10,6 +10,7 @@ const ORDER: Record<Language, number> = { en: 0, ru: 1, "zh-CN": 2, "zh-TW": 3, 
 
 const TITLES: Record<string, Titles> = {
   // Codex route (bridge)
+  "bridge.route_chained": ["Codex reaches NEKODEX through a verified local gateway", "Codex подключён к NEKODEX через проверенный локальный шлюз", "Codex 通过已验证的本地网关连接 NEKODEX", "Codex 透過已驗證的本機閘道連線至 NEKODEX", "Codex は検証済みのローカルゲートウェイ経由で NEKODEX に接続しています", "Codex가 확인된 로컬 게이트웨이를 통해 NEKODEX에 연결됨"],
   "bridge.route_restore_after_runtime_failure_failed": ["Couldn't restore the Codex route after a runtime failure", "Не удалось восстановить маршрут Codex после сбоя среды выполнения", "运行时故障后无法恢复 Codex 路由", "執行階段故障後無法還原 Codex 路由", "ランタイム障害後に Codex ルートを復元できませんでした", "런타임 오류 후 Codex 경로를 복원할 수 없음"],
   "bridge.route_restored_after_runtime_failure": ["Codex route restored after a runtime failure", "Маршрут Codex восстановлен после сбоя среды выполнения", "运行时故障后已恢复 Codex 路由", "執行階段故障後已還原 Codex 路由", "ランタイム障害後に Codex ルートを復元しました", "런타임 오류 후 Codex 경로 복원됨"],
 
