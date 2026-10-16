@@ -1326,7 +1326,9 @@ class AccountBrowserPool {
       if (!account.enabled || this.accountOperationLabel(account.id) || this.admissionQueue?.accountPaused(account.id)) return false;
       if (host?.state.authenticated !== true) return false;
       if (capabilityRejection(this, account.id, requirement, config.mode)) return false;
-      if (requirement?.connector && (this.connectors.get(account.id) !== requirement.connector
+      // Explicit selection can prove the connector in the real pre-send browser flow.
+      // Balanced routing still needs prior evidence to choose among accounts automatically.
+      if (requirement?.connector && ((config.mode === 'balanced' && this.connectors.get(account.id) !== requirement.connector)
         || (this.accountTunnel(account.id, 'automatic').required === true && !this.accountTunnel(account.id, 'automatic').ready))) return false;
       return true;
     };
@@ -1723,7 +1725,7 @@ class AccountBrowserPool {
     const capability = this.capabilityRejection(id, requirement, config.mode);
     if (capability === 'unchecked') return 'account_unchecked';
     if (capability === 'model') return 'account_model_unavailable';
-    if (request.connector && this.connectors.get(id) !== request.connector) return 'account_connector_unverified';
+    if (config.mode === 'balanced' && request.connector && this.connectors.get(id) !== request.connector) return 'account_connector_unverified';
     return 'account_not_ready';
   }
   releaseUnsentAdmission(request) {
@@ -1829,9 +1831,18 @@ class AccountBrowserPool {
     if (pendingRemoval) this.settleRemovedUnsentAdmission(pendingRemoval);
     this.admissionQueue?.retire(traceId, helperPid);
     this.recordUsage(() => this.usage.finish(traceId, helperPid, settledStatus, undefined, settledFailureCode));
-    // A completed task whose tools returned without an error is the account's tool-execution proof.
-    if (id && settledStatus === 'completed' && connectorBound && toolProof) {
-      try { this.toolProof.record(id, toolProof.tool, owner.authPrincipalFingerprint); }
+    // A completed tool result proves availability on the same identity that started
+    // the turn. Never carry it to a changed sign-in or a newly selected connector.
+    const proofIdentityCurrent = tab && typeof tab.authPrincipalFingerprint === 'string'
+      && tab.authPrincipalFingerprint === owner.authPrincipalFingerprint
+      && tab.authIdentityEpoch === owner.authIdentityEpoch;
+    if (id && settledStatus === 'completed' && connectorBound && toolProof && proofIdentityCurrent) {
+      try {
+        this.toolProof.record(id, toolProof.tool, owner.authPrincipalFingerprint);
+        if (tab.connectorIdentity && tab.connectorIdentity === owner.connectorName()) {
+          this.connectors.set(id, tab.connectorIdentity);
+        }
+      }
       catch (error) {
         this.logger.warn('browser.tool_proof_record_failed', { accountId: id,
           message: error instanceof Error ? error.message : String(error) });

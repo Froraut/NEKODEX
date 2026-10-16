@@ -237,7 +237,7 @@ test("pool: names the concrete cause of the account the task would use", () => {
   expect(poolWith({ caps: { default: null } }).preview()).toMatchObject({ blocker: "account_unchecked" });
   expect(poolWith({ caps: { default: { solAvailable: true, modelCapabilities: { families: { "5.6": ["high"] }, names: {} } } } }).preview())
     .toMatchObject({ blocker: "account_model_unavailable" });
-  expect(poolWith({ connectors: { default: false } }).preview()).toMatchObject({ blocker: "account_connector_unverified" });
+  expect(poolWith({ connectors: { default: false } }).preview()).toBeNull();
 });
 
 test("pool: a task pinned to another account reports that account, not the selected one", () => {
