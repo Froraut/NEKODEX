@@ -175,6 +175,11 @@ retained-history anchors avoid mistaking older remounted rows for new submission
 Answer text, HTML and markdown segments share sanitized roots so hidden suggestion
 sizing labels cannot contaminate delivery or its fingerprint.
 
+Connector approval cards remain owned by the user when automatic approval is disabled.
+The page guard never denies them on a timer; it keeps cancellation and heartbeats active
+until the card resolves. The worker excludes the observed approval wait from the response
+deadline and resets DOM grace tracking before resuming the same submitted turn.
+
 The pinned official tunnel SDK is 0.0.16. CLI, launchd and account peer startup pass
 `MCP_STDIO_SEND_INITIALIZED_NOTIFICATION=true`; control commands preserve their
 existing environment and cancellation semantics. Installation retains integrity and

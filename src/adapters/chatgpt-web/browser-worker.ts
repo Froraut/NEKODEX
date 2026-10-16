@@ -11,7 +11,6 @@ import { ChatGptModelSelectionController } from "./browser-model-selection";
 import { CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_COMPLETION_ACTION_GRACE_MS, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, chatGptExternalProgressSuppressesDomHealth } from "./browser-response-policy";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, throwIfPromptAttachmentAborted, withBrowserTurnAbort, browserStageAbortSignal } from "./browser-operation-support";
 import {
-  CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
   ChatGptSubmissionRejectionObserver,
   chatGptExpiredSessionAlert,
   chatGptRateLimitDialog,
@@ -2475,7 +2474,7 @@ export class ChatGptBrowserWorker {
           maxMessageChars,
         );
       }
-      const deadline = this.config.turnTimeoutMs === undefined
+      let deadline = this.config.turnTimeoutMs === undefined
         ? undefined
         : Date.now() + this.config.turnTimeoutMs;
       let page = await runBrowserStage(turn.traceId, "browser_page", browserStageTimeouts.browserPage, async (abortSignal) => {
@@ -2954,6 +2953,12 @@ export class ChatGptBrowserWorker {
       await diagnostics.capture(page, "send-accepted");
 
       let lastHeartbeat = 0;
+      const heartbeat = (): void => {
+        if (Date.now() - lastHeartbeat >= 10_000) {
+          turn.onHeartbeat?.();
+          lastHeartbeat = Date.now();
+        }
+      };
       let finalText = "";
       let sawRunning = false;
       let loggedCompletionWait = false;
@@ -3004,10 +3009,7 @@ export class ChatGptBrowserWorker {
       for (;;) {
         // The heartbeat is a consumer callback, so it stays outside the observation-fault region:
         // a defect in the caller must not be retried as though the page could not be read.
-        if (Date.now() - lastHeartbeat >= 10_000) {
-          turn.onHeartbeat?.();
-          lastHeartbeat = Date.now();
-        }
+        heartbeat();
        try {
         observedThisIteration = false;
         if (page.isClosed()) {
@@ -3018,23 +3020,32 @@ export class ChatGptBrowserWorker {
           if (await stop.isVisible().catch(() => false)) await stop.press("Enter").catch(() => {});
           throw new DOMException("ChatGPT web turn aborted", "AbortError");
         }
-        if (deadline !== undefined && Date.now() >= deadline) {
-          throw new Error("ChatGPT web turn timed out");
-        }
         await throwIfChatGptSessionFailureAlert(page);
         await throwIfChatGptTerminalErrorAlert(responseTurn.locator);
 
+        let approvalVisibleAt: number | undefined;
         if (mode.localTools && await resolveChatGptToolConfirmation(
           page,
           this.config.appName,
           this.config.autoApproveToolCalls,
           turn.abortSignal,
-          CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
-          () => diagnostics.capture(page, "tool-confirmation-visible"),
+          () => {
+            approvalVisibleAt = Date.now();
+            return diagnostics.capture(page, "tool-confirmation-visible");
+          },
+          heartbeat,
         )) {
+          // The response budget excludes time spent waiting on a person.
+          if (deadline !== undefined && approvalVisibleAt !== undefined) {
+            deadline += Date.now() - approvalVisibleAt;
+          }
+          domHealthTracker.suspendForLiveProgress();
           internalObservationFaults = 0;
           await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
           continue;
+        }
+        if (deadline !== undefined && Date.now() >= deadline) {
+          throw new Error("ChatGPT web turn timed out");
         }
 
         let snapshot: ChatGptResponseDomSnapshot;
