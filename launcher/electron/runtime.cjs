@@ -1047,7 +1047,17 @@ class RuntimeHost {
       successMessage: "Codex bridge route checked",
       timeoutMs: 15_000,
     });
-    return parseBridgeRouteResult(result.stdout, { requireInstalled: true });
+    const status = parseBridgeRouteResult(result.stdout, { requireInstalled: true });
+    // A verified local gateway in front of the managed route is the user's choice, not a failure.
+    const chained = status.chainedRoute;
+    const chainKey = chained ? `${chained.url} -> ${chained.upstreamUrl}` : null;
+    if (chainKey && chainKey !== this.loggedChainedRoute) {
+      this.logger.info("bridge.route_chained", {
+        url: chained.url, upstreamUrl: chained.upstreamUrl, upstreamVersion: chained.upstreamVersion,
+      });
+    }
+    this.loggedChainedRoute = chainKey;
+    return status;
   }
 
   async routeDiagnostics() {

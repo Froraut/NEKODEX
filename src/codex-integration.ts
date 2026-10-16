@@ -78,6 +78,7 @@ import {
   restoreLegacyV2,
   restoreManagedRoute,
   restoreManagedRouteForNativeProtocol,
+  CodexBaseUrlChangedError,
   verifyInstalledRoute,
   verifyManagedJournalState,
   verifyRestoredRoute,
@@ -838,16 +839,25 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   return { changed: true };
 }
 
-export function inspectCodexIntegration(): {
+export interface CodexIntegrationInspection {
   installed: boolean;
   active: boolean;
   configPath: string;
   routeUrl?: string;
   journal?: AnyCodexIntegrationJournal;
   errors: string[];
-} {
+  /** Set when the only reason for an error is a newer user openai_base_url on an active route. */
+  baseUrlChanged?: { current?: string; error: string };
+}
+
+/**
+ * Read-only status. `chainedBaseUrl` is a newer openai_base_url that the caller already proved to be
+ * a local gateway forwarding to this runtime; it never makes install, connect or disconnect accept it.
+ */
+export function inspectCodexIntegration(options: { chainedBaseUrl?: string } = {}): CodexIntegrationInspection {
   const journal = readJournal({ reconcileInactiveHook: false, repair: false });
   const errors: string[] = [];
+  let baseUrlChanged: CodexIntegrationInspection["baseUrlChanged"];
   if (journal) {
     try {
       assertJournalTargetsConfig(journal, getCodexConfigPath());
@@ -860,7 +870,7 @@ export function inspectCodexIntegration(): {
         assertInactiveJsonHookAbsent(journal);
       }
       else if (journalIsManagedRouteV3Plus(journal)) {
-        verifyInstalledRoute(text, journal);
+        verifyInstalledRoute(text, journal, options);
         if (journal.version === 11) {
           verifyManagedJsonHook(journal);
         }
@@ -875,6 +885,9 @@ export function inspectCodexIntegration(): {
         if (!text.includes(journal.providerBlock)) errors.push("Managed legacy Codex provider block no longer matches this installation");
       }
     } catch (error) {
+      if (error instanceof CodexBaseUrlChangedError && errors.length === 0) {
+        baseUrlChanged = { ...(error.current === undefined ? {} : { current: error.current }), error: error.message };
+      }
       errors.push(error instanceof Error ? error.message : String(error));
     }
   }
@@ -890,5 +903,6 @@ export function inspectCodexIntegration(): {
       : {}),
     ...(journal ? { journal } : {}),
     errors,
+    ...(baseUrlChanged ? { baseUrlChanged } : {}),
   };
 }
