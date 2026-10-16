@@ -14,6 +14,20 @@ function windowsPipeEndpoint(value) {
   return /^\\\\\.\\pipe\\[A-Za-z0-9._-]+$/.test(value);
 }
 
+// Persisted operator choice for the route the daemon keeps after the GUI detaches. Setup
+// stores it only when asked; PAC and route-cache evidence never produce it.
+function nativeBackgroundRoute(value) {
+  const invalid = () => new Error("Runtime configuration has an invalid nativeBackgroundRoute");
+  if (value === "DIRECT") return value;
+  if (typeof value !== "string" || !value || value.length > 4096) throw invalid();
+  let url;
+  try { url = new URL(value); } catch { throw invalid(); }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname
+    || url.username || url.password || url.pathname !== "/" || url.search || url.hash
+    || url.origin !== value) throw invalid();
+  return value;
+}
+
 function validateConfig(config, descriptorPath, platform = process.platform, launcherProfile = "production") {
   if (!config || config.version !== 3) throw new Error("Runtime configuration is missing or unsupported");
   if (config.accountTunnelMode !== undefined && typeof config.accountTunnelMode !== 'boolean') throw new Error('Runtime account tunnel mode is invalid');
@@ -104,6 +118,7 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     && (!Number.isFinite(config.stallTimeoutSec) || config.stallTimeoutSec <= 0)) {
     throw new Error("Runtime configuration has an invalid stallTimeoutSec");
   }
+  if (config.nativeBackgroundRoute !== undefined) nativeBackgroundRoute(config.nativeBackgroundRoute);
   if (config.proAvailable && !config.solAvailable) {
     throw new Error("Runtime configuration cannot enable Pro without Sol");
   }
@@ -175,4 +190,4 @@ function normalizeSetupConfig(config, launcherProfile = "production") {
   return { ...config, mode };
 }
 
-module.exports = { absolutePath, validateConfig, normalizeSetupConfig };
+module.exports = { absolutePath, nativeBackgroundRoute, validateConfig, normalizeSetupConfig };
