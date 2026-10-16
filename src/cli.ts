@@ -35,6 +35,7 @@ import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions 
 import { installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
 import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
+import { inspectCodexIntegrationWithChain } from "./codex-chained-route";
 import { runDevCommand } from "./dev-chat/cli";
 import { runCompactionModelConfigCommand } from "./compaction-model-config";
 import { authorizeLauncherControl, runModelCapabilitiesConfigCommand, runProModelVersionConfigCommand } from "./pro-model-config";
@@ -412,12 +413,13 @@ async function routeCommand(args: string[]): Promise<void> {
   }
   assertNoArgs(args);
   const result = action === "status"
-    ? (() => {
-        const status = inspectCodexIntegration();
+    ? await (async () => {
+        const status = await inspectCodexIntegrationWithChain();
         return {
           installed: status.installed,
           active: status.active,
           ...(status.routeUrl ? { routeUrl: status.routeUrl } : {}),
+          ...(status.chainedRoute ? { chainedRoute: status.chainedRoute } : {}),
           errors: status.errors,
         };
       })()
