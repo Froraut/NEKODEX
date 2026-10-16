@@ -36,6 +36,18 @@ function assertTunnelCredentials(reuseSavedCredentials, tunnelId, runtimeKey) {
   }
 }
 
+// Per-account peer changes keep the committed core and its protocol generation.
+// A newer patch launcher can manage that existing Full-mode peer contract without
+// draining unrelated Native requests. Cross-family/channel changes still upgrade first.
+function compatibleAccountTunnelPatch(config, launcherVersion) {
+  if (config?.mode !== "full" || config.accountTunnelMode !== true) return false;
+  const committed = /^(\d+)\.(\d+)\.(\d+)(-nekodex\.\d+)$/.exec(config.releaseVersion ?? "");
+  const launcher = /^(\d+)\.(\d+)\.(\d+)(-nekodex\.\d+)$/.exec(launcherVersion ?? "");
+  return Boolean(committed && launcher && committed[1] === launcher[1]
+    && committed[2] === launcher[2] && committed[4] === launcher[4]
+    && Number(committed[3]) <= Number(launcher[3]));
+}
+
 function usableExecutable(candidate, platform = process.platform) {
   if (typeof candidate !== "string" || !candidate) return false;
   const absolute = platform === "win32" ? path.win32.isAbsolute(candidate) : path.posix.isAbsolute(candidate);
@@ -583,7 +595,8 @@ class RuntimeHost {
       assertTunnelCredentials(input?.reuseSavedCredentials === true, input?.tunnelId, input?.runtimeKey);
       const current = this.runtimeConfigSnapshot();
       if (!current.configured || current.owner !== 'launcher') throw new Error('Set up the local model runtime first');
-      if (this.launcherProfile === 'production' && current.config.releaseVersion !== this.app.getVersion()) {
+      if (this.launcherProfile === 'production' && current.config.releaseVersion !== this.app.getVersion()
+        && !compatibleAccountTunnelPatch(current.config, this.app.getVersion())) {
         throw new Error('Finish the managed runtime upgrade after active tasks before configuring account tunnels');
       }
       const binary = current.config.tunnel?.binaryPath ?? path.join(this.coreHome, 'bin', this.platform === 'win32' ? 'tunnel-client.exe' : 'tunnel-client');
@@ -600,6 +613,14 @@ class RuntimeHost {
       let committed = false;
       this.lifecycleOperation = 'account-tunnel-setup';
       try {
+        // Revalidate the actual generation captured by prepare, rather than granting
+        // a later configuration the compatibility of the earlier UI snapshot.
+        if (this.launcherProfile === 'production' && change.before.config.releaseVersion !== this.app.getVersion()
+          && (!compatibleAccountTunnelPatch(change.before.config, this.app.getVersion())
+            || change.config.mode !== 'full' || change.config.accountTunnelMode !== true
+            || change.config.releaseVersion !== change.before.config.releaseVersion)) {
+          throw new Error('Finish the managed runtime upgrade after active tasks before configuring account tunnels');
+        }
         if (restartCore) {
           // Enabling Full mode creates the tool broker; the first transition needs
           // an idle owned core restart. Existing requests are never cancelled.

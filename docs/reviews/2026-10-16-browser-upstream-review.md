@@ -39,3 +39,5 @@ Graphify snapshot: 641 code files, 6557 nodes,19771 edges, built13:17UTC with co
 ## Follow-up from actual Platform login
 
 After the authorized Cloudflare checkbox succeeded, the old navigation handler blocked a same-source transition and replaced native POST navigation with loadURL(GET). The matching local blocked-operation event established this as an application defect, not merely a slow provider. The handler now reuses the exact same-source/generation owner and allows the browser's original navigation. Three focused event-order tests passed (navigation-first, request-first while verification is pending, and foreign source). The stopped DEV login attempt was closed through its window; no key/tunnel was created. A fresh DEV run verifies the corrected flow.
+
+The installed run exposed an overly broad version-equality gate on account-tunnel setup. Real active Native traffic correctly kept the old core alive, but independent Full-mode peer configuration did not require that core to restart. A narrow patch-family compatibility path now retains the old generation and other peers; two focused constructor/store/subprocess tests passed.

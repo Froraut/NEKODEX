@@ -423,3 +423,5 @@ it excludes generated output, dependencies and type-only/computed import edges.
 It is a navigation/drift aid, not proof that semantic documentation is complete.
 The responsible agent must review those semantic changes. No background watcher
 or scheduled application access is required.
+
+An installed patch launcher may configure an independent account tunnel while a compatible Full-mode account-tunnel core finishes existing Native traffic. This retains the committed releaseVersion and other peers; cross-family/channel or core-mode transitions still require normal generation activation.
