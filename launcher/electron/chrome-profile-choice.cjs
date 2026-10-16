@@ -128,12 +128,15 @@ function validLaunchUrl(url) {
   return !!match && Number(match[1]) >= 1024 && Number(match[1]) <= 65535;
 }
 
-function openProfile(executable, id, url = 'https://chatgpt.com/?temporary-chat=true') {
-  if (!profileId(id) || typeof executable !== 'string' || !path.isAbsolute(executable) || !validLaunchUrl(url)) {
+function openProfile(executable, id, url = 'https://chatgpt.com/?temporary-chat=true', root, spawnChild = spawn) {
+  if (!profileId(id) || typeof executable !== 'string' || !path.isAbsolute(executable) || !validLaunchUrl(url)
+    || typeof root !== 'string' || !path.isAbsolute(root) || root.includes('\0') || root.length > 4096) {
     throw new Error('Invalid Chrome profile launch');
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, [`--profile-directory=${id}`, '--new-window', url],
+    // A separately running Chrome (for example a tool-owned profile) must not receive
+    // a profile ID read from another user-data directory.
+    const child = spawnChild(executable, [`--user-data-dir=${root}`, `--profile-directory=${id}`, '--new-window', url],
       { detached: true, stdio: 'ignore', shell: false });
     child.once('error', reject);
     child.once('spawn', () => { child.unref(); resolve(); });
@@ -175,7 +178,7 @@ function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, exec
     if (!selected) throw new Error('Selected Chrome profile is no longer available');
     lastChoices.set(accountId, selected.id);
     const binding = bindingStore.begin(accountId, selected);
-    try { await launch(executable(), selected.id, 'https://chatgpt.com/?temporary-chat=true'); }
+    try { await launch(executable(), selected.id, 'https://chatgpt.com/?temporary-chat=true', root); }
     catch (error) { binding.rollback(); throw Object.assign(error, { profileChoiceStage: 'launch' }); }
     let claimPrepared = false;
     let claimServer;
@@ -190,7 +193,7 @@ function createChromeProfileChoice({ root, coreHome, BrowserWindow, window, exec
         // one-use loopback page and wait for its GET; spawning Chrome alone is no receipt.
         claimServer = await createProfileClaimServer({ signal });
         try {
-          await launch(executable(), selected.id, claimServer.claim.url);
+          await launch(executable(), selected.id, claimServer.claim.url, root);
           await claimServer.loaded;
           signal?.throwIfAborted();
           return claimServer.claim;

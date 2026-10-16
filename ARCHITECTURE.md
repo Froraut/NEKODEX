@@ -189,6 +189,9 @@ evidence is restored for plain requests. Pool destruction cancels pending waits.
 The profile chooser keeps the last attempted profile ID per account in memory for
 retries, separately from the verified binding on disk. The picker labels these
 states separately; capture progress identifies the selected Chrome profile.
+Both sign-in and the one-use verification page launch Chrome with the same explicit
+user-data directory as that catalog, so another running Chrome profile cannot
+receive a profile ID belonging to the selected directory.
 Cancelling remains independent of the renderer's pending Retry/Continue request;
 the host still owns cancellation, rollback and final settlement.
 
