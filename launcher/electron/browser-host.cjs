@@ -1500,10 +1500,11 @@ class BrowserHost {
       const sessionChanging = owner && (isWorkspaceSessionMutationRequest(details)
         || (this.apiPanelContents.has(owner.contents) && isOpenAiApiSessionMutationRequest(details)));
       if (!sessionChanging) { callback({}); return; }
+      const lease = this.workspaceBrowser?.mutationLeasesByContents.get(owner.contents)
+        ?? this.apiPanelBrowser?.mutationLeasesByContents.get(owner.contents);
       if (this.workspaceSessionMutation.owns({ sourceId: owner.metadata.workspaceId })
-        || ((this.workspaceBrowser?.mutationLeasesByContents.has(owner.contents)
-          || this.apiPanelBrowser?.mutationLeasesByContents.has(owner.contents))
-          && this.workspaceSessionMutation.owns())) { callback({}); return; }
+        || (Number.isInteger(lease?.generation)
+          && this.workspaceSessionMutation.owns({ generation: lease.generation }))) { callback({}); return; }
       try {
         const lease = this.workspaceSessionMutation.begin({
           sourceId: owner.metadata.workspaceId,
@@ -2540,7 +2541,8 @@ class BrowserHost {
         },
         external: (contents, url) => this.externalLinkBroker.open(contents, url, 'home').catch(() => {}),
         ...(this.workspaceSessionMutation
-          ? { beginSessionMutation: request => this.workspaceSessionMutation.begin(request) } : {}),
+          ? { beginSessionMutation: request => this.workspaceSessionMutation.begin(request),
+            ownsSessionMutation: request => this.workspaceSessionMutation.owns(request) } : {}),
         onMutationBlocked: error => this.logger.warn("browser.api_panel_session_mutation_blocked", {
           message: error instanceof Error ? error.message : String(error),
         }),
@@ -2666,7 +2668,8 @@ class BrowserHost {
       },
       external: (contents, url) => this.externalLinkBroker.open(contents, url, 'home').catch(() => {}),
       ...(this.workspaceSessionMutation
-        ? { beginSessionMutation: request => this.workspaceSessionMutation.begin(request) } : {}),
+        ? { beginSessionMutation: request => this.workspaceSessionMutation.begin(request),
+          ownsSessionMutation: request => this.workspaceSessionMutation.owns(request) } : {}),
       onMutationBlocked: error => {
         this.logger.warn("browser.workspace_session_mutation_blocked", {
           accountId: this.accountId,

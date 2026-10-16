@@ -54,6 +54,7 @@ class BrowserWorkspaceWindows {
     unregister,
     external,
     beginSessionMutation,
+    ownsSessionMutation,
     onMutationBlocked,
     onNavigationState,
     onPersistenceError,
@@ -69,7 +70,7 @@ class BrowserWorkspaceWindows {
   }) {
     Object.assign(this, {
       BrowserWindow, session, accountId, label, allowedUrl, register, unregister, external,
-      beginSessionMutation, onMutationBlocked, onNavigationState, onPersistenceError, getVerifiedPrincipal, onChanged, platform, home,
+      beginSessionMutation, ownsSessionMutation, onMutationBlocked, onNavigationState, onPersistenceError, getVerifiedPrincipal, onChanged, platform, home,
       restoreHome, displays, persistLocations, isSessionMutation,
     });
     this.windows = new Set();
@@ -228,9 +229,10 @@ class BrowserWorkspaceWindows {
       }
       if (!this.isSessionMutation(url) || !this.beginSessionMutation) return;
       // Redirects and provider hops remain inside the lease that already fenced this account.
-      if (this.mutationLeasesByContents.has(contents)) return;
-      event.preventDefault();
-      this.resumeMutationNavigation(contents, meta, url);
+      if (this.ownsContentsMutation(contents, meta.id)) return;
+      // Keep the renderer's original method/body. Replacing this navigation with
+      // loadURL(url) would turn an approved form POST into an unrelated GET.
+      if (!this.beginMutationNavigation(contents, meta, url)) event.preventDefault();
     };
     contents.on("will-navigate", navigation);
     contents.on("will-redirect", (event, url, _inPlace, isMainFrame) => {
@@ -354,12 +356,20 @@ class BrowserWorkspaceWindows {
     if (this.mutationLeasesByContents.has(contents)) throw new Error("Wait for this account’s sign-in to finish before reloading");
   }
 
+  ownsContentsMutation(contents, sourceId) {
+    const lease = this.mutationLeasesByContents.get(contents);
+    if (lease && !this.ownsSessionMutation) return true;
+    if (lease && Number.isInteger(lease.generation)
+      && this.ownsSessionMutation?.({ generation: lease.generation })) return true;
+    return this.ownsSessionMutation?.({ sourceId }) === true;
+  }
+
   async loadWindow(win, url) {
     if (!this.windows.has(win) || win.isDestroyed() || !this.allowedUrl(url)) throw new Error("Browser destination is unavailable");
     const meta = this.windowMeta.get(win);
     const generation = meta.loadGeneration = (meta.loadGeneration ?? 0) + 1;
     let settlement = this.mutationLeasesByContents.get(win.webContents);
-    if (this.isSessionMutation(url) && this.beginSessionMutation && !this.mutationLeasesByContents.has(win.webContents)) {
+    if (this.isSessionMutation(url) && this.beginSessionMutation && !this.ownsContentsMutation(win.webContents, meta.id)) {
       const lease = this.beginSessionMutation({ sourceId: meta.id, reason: "workspace-navigation", url });
       settlement = this.bindMutationSettlement(win.webContents, lease);
     }
@@ -384,18 +394,16 @@ class BrowserWorkspaceWindows {
     return true;
   }
 
-  resumeMutationNavigation(contents, meta, url) {
+  beginMutationNavigation(contents, meta, url) {
     let lease;
     try {
       lease = this.beginSessionMutation({ sourceId: meta.id, reason: "workspace-navigation", url });
     } catch (error) {
       this.onMutationBlocked?.(error, { sourceId: meta.id, url });
-      return;
+      return false;
     }
-    const settlement = this.bindMutationSettlement(contents, lease);
-    Promise.resolve(contents.loadURL(url)).catch(error => {
-      if (!abortedNavigation(error)) settlement.fail(error);
-    });
+    this.bindMutationSettlement(contents, lease);
+    return true;
   }
 
   bindMutationSettlement(contents, lease) {

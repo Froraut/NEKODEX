@@ -163,7 +163,7 @@ secondary accounts expose the same supported Chrome profile import as the primar
 
 `BrowserWorkspaceWindows` owns loading, failed and renderer-gone state. Initial
 programmatic account-changing navigation acquires the same session coordinator as
-user navigation. Aborted redirects and subframe failures do not settle that owner;
+user navigation. Browser-originated form navigation reuses its same-source coordinator owner and retains the original method/body; it is never replayed with loadURL. Aborted redirects and subframe failures do not settle that owner;
 a real main-frame failure, renderer death or closure does. API panels verify the
 shared account through its owned ChatGPT surface, not the Platform page's origin.
 A failed bootstrap script reports its HTTP status and offers explicit recovery;
