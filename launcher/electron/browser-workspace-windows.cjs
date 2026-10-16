@@ -408,6 +408,7 @@ class BrowserWorkspaceWindows {
 
   bindMutationSettlement(contents, lease) {
     let settled = false;
+    let finishing = false;
     let owned;
     const cleanup = () => {
       contents.removeListener?.("did-finish-load", finish);
@@ -418,11 +419,15 @@ class BrowserWorkspaceWindows {
       if (this.mutationLeasesByContents.get(contents) === owned) this.mutationLeasesByContents.delete(contents);
     };
     const finish = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      Promise.resolve().then(() => lease.finish?.({ contents, url: contents.getURL?.() ?? null }))
-        .finally(release)
+      if (settled || finishing) return;
+      finishing = true;
+      contents.removeListener?.("did-finish-load", finish);
+      // Loading the document starts verification; it is not a terminal outcome.
+      // Keep close/crash cancellation alive until that verification settles.
+      Promise.resolve().then(() => {
+        if (!settled) return lease.finish?.({ contents, url: contents.getURL?.() ?? null });
+      })
+        .finally(() => { settled = true; cleanup(); release(); })
         .catch(error => this.onMutationBlocked?.(error, { sourceId: null, url: contents.getURL?.() ?? null }));
     };
     const failWith = error => {

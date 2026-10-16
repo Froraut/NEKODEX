@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 const require = createRequire(import.meta.url);
 const { BrowserWorkspaceWindows } = require("../launcher/electron/browser-workspace-windows.cjs");
 const { BrowserHost } = require("../launcher/electron/browser-host.cjs");
+const { AccountSessionMutationCoordinator } = require("../launcher/electron/browser-workspace-session-mutations.cjs");
 const { openAiApiPanelUrl, allowedOpenAiApiPanelUrl, openAiApiSessionMutation } = require("../launcher/electron/openai-api-panel.cjs");
 
 class TestWindow extends EventEmitter {
@@ -159,6 +160,37 @@ test("renderer death settles a sign-in lease once and leaves explicit retry avai
     win.destroy();
     expect(failures).toHaveLength(1);
   } finally { manager.destroy(); }
+});
+
+test("closing or crashing a loaded sign-in page cancels its pending session verification", async () => {
+  for (const terminal of ["close", "crash"]) {
+    let resolveVerification!: (value: unknown) => void;
+    const verification = new Promise(resolve => { resolveVerification = resolve; });
+    let verifying = false, applied = 0;
+    const coordinator = new AccountSessionMutationCoordinator({
+      verify: () => { verifying = true; return verification; },
+      applyVerification: () => { applied++; },
+    });
+    const { manager } = windows({ beginSessionMutation: (request: unknown) => coordinator.begin(request) });
+    try {
+      const win = manager.open({ url: "https://auth.openai.com/log-in" });
+      win.webContents.emit("did-finish-load");
+      await Promise.resolve();
+      expect(verifying).toBe(true);
+      expect(coordinator.snapshot().admissionBlocked).toBe(true);
+      if (terminal === "close") win.destroy();
+      else win.webContents.emit("render-process-gone", {}, { reason: "crashed" });
+      expect(coordinator.snapshot().admissionBlocked).toBe(false);
+      expect(manager.mutationLeasesByContents.has(win.webContents)).toBe(false);
+      resolveVerification({ status: "authenticated" });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(applied).toBe(0);
+      expect(coordinator.snapshot().admissionBlocked).toBe(false);
+    } finally {
+      resolveVerification(null);
+      manager.destroy();
+    }
+  }
 });
 
 test("security recovery preserves a human draft and refuses a changed page owner", async () => {
