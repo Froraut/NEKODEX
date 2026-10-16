@@ -105,6 +105,10 @@ Setup options:
   --retained-conversation      Reuse the current conversation (default)
   --saved-chats                Keep task conversations in ChatGPT history
   --temporary-chats            Use Temporary Chat for task conversations (default)
+  --native-background-route ROUTE
+                               Keep native requests on DIRECT or an exact http(s)://host:port
+                               proxy after the Launcher quits (for TUN VPNs)
+  --no-native-background-route Remove the saved background route
   --allow-web-subagents        Allow delegation from ChatGPT Web tasks
   --no-web-subagents           Disable Web delegation; native models are unchanged
   --standard-context           Disable experimental multi-message context
@@ -284,6 +288,13 @@ async function setupCommand(args: string[]): Promise<void> {
   const temporaryChats = takeFlag(args, "--temporary-chats");
   if (savedChats && temporaryChats) throw new Error("Choose --saved-chats or --temporary-chats");
   if (savedChats || temporaryChats) options.useSavedChats = savedChats;
+  const nativeBackgroundRoute = takeOption(args, "--native-background-route");
+  const noNativeBackgroundRoute = takeFlag(args, "--no-native-background-route");
+  if (nativeBackgroundRoute !== undefined && noNativeBackgroundRoute) {
+    throw new Error("Choose --native-background-route or --no-native-background-route");
+  }
+  if (nativeBackgroundRoute !== undefined) options.nativeBackgroundRoute = nativeBackgroundRoute;
+  if (noNativeBackgroundRoute) options.nativeBackgroundRoute = null;
   const allowWebSubagents = takeFlag(args, "--allow-web-subagents");
   const noWebSubagents = takeFlag(args, "--no-web-subagents");
   if (allowWebSubagents && noWebSubagents) throw new Error("Choose one Web subagent setting");

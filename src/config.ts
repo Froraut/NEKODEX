@@ -80,6 +80,11 @@ export interface AppConfig {
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
   stallTimeoutSec?: number;
+  /**
+   * Operator-declared native route kept after the GUI detaches: DIRECT or an exact HTTP(S)
+   * proxy origin. Only setup writes it; PAC and route-cache evidence never do.
+   */
+  nativeBackgroundRoute?: string;
   autoApproveToolCalls: boolean;
   controlToken: string;
   runtimeCommand: string[];
@@ -131,6 +136,19 @@ export function defaultBrokerEndpoint(home = getConfigDir()): string {
 export function resolveBrokerEndpoint(value: string): string {
   const expanded = expandUserPath(value);
   return isWindowsPipeEndpoint(expanded) ? expanded : resolve(expanded);
+}
+
+/** DIRECT or an exact HTTP(S) proxy origin, as the daemon's background route accepts it. */
+export function parseNativeBackgroundRoute(value: unknown): string {
+  if (value === "DIRECT") return value;
+  if (typeof value !== "string" || !value || value.length > 4096) throw new Error("Native background route must be DIRECT or an exact HTTP(S) origin");
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error("Native background route must be DIRECT or an exact HTTP(S) origin"); }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname || url.username || url.password
+    || url.pathname !== "/" || url.search || url.hash || url.origin !== value) {
+    throw new Error("Native background route must be DIRECT or an exact HTTP(S) origin");
+  }
+  return value;
 }
 
 export function stripUtf8Bom(text: string): string {
@@ -547,6 +565,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.stallTimeoutSec !== undefined
     && (!Number.isFinite(parsed.stallTimeoutSec) || parsed.stallTimeoutSec <= 0)) {
     throw new Error(`Invalid stallTimeoutSec in ${path}`);
+  }
+  if (parsed.nativeBackgroundRoute !== undefined) {
+    try { parseNativeBackgroundRoute(parsed.nativeBackgroundRoute); }
+    catch { throw new Error(`Invalid nativeBackgroundRoute in ${path}`); }
   }
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;

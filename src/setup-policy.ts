@@ -1,4 +1,4 @@
-import type { AppConfig, BrowserInteractionMode, RuntimeMode, SubagentProtocol } from "./config";
+import { parseNativeBackgroundRoute, type AppConfig, type BrowserInteractionMode, type RuntimeMode, type SubagentProtocol } from "./config";
 import { resolveInteractionConnectorIdentities, ZERO_RISK_CHATGPT_CONNECTOR_NAME } from "./config-policy";
 
 export interface SetupOptions {
@@ -16,6 +16,8 @@ export interface SetupOptions {
   allowWebSubagents?: boolean;
   experimentalFreshConversationPerTurn?: boolean;
   useSavedChats?: boolean;
+  /** A declared route to persist, or null to remove it; undefined keeps the saved choice. */
+  nativeBackgroundRoute?: string | null;
   experimentalAsyncToolOperations?: boolean;
   zeroRiskProEnabled?: boolean;
   replaceCodexRoute?: boolean;
@@ -90,6 +92,10 @@ export function transitionSetupConfig(existing: AppConfig | undefined, options: 
     config.experimentalFreshConversationPerTurn = options.experimentalFreshConversationPerTurn;
   }
   config.useSavedChats = options.useSavedChats ?? existing?.useSavedChats ?? false;
+  if (options.nativeBackgroundRoute === null) delete config.nativeBackgroundRoute;
+  else if (options.nativeBackgroundRoute !== undefined) {
+    config.nativeBackgroundRoute = parseNativeBackgroundRoute(options.nativeBackgroundRoute);
+  }
   if (options.allowWebSubagents !== undefined) config.allowWebSubagents = options.allowWebSubagents;
   if (options.experimentalSkillAttachments !== undefined) {
     config.experimentalSkillAttachments = options.experimentalSkillAttachments;
@@ -165,6 +171,8 @@ export function setupRuntimeProjection(config: AppConfig) {
     experimentalSkillAttachments: config.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn,
     useSavedChats: config.useSavedChats,
+    // The daemon receives this only through its spawn environment.
+    nativeBackgroundRoute: config.nativeBackgroundRoute,
     experimentalAsyncToolOperations: config.experimentalAsyncToolOperations,
     zeroRiskProEnabled: config.zeroRiskProEnabled,
     autoApproveToolCalls: config.autoApproveToolCalls,
