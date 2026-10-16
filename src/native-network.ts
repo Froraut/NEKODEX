@@ -7,6 +7,9 @@ import {
 const EXPLICIT_PROXY_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
 const BOOTSTRAP_URL = "https://chatgpt.com/backend-api/codex/responses";
 const NATIVE_FALLBACK_PROXY_KEY = "CODEX_CHATGPT_WEB_NATIVE_FALLBACK_PROXY";
+// Operator opt-in, never written by the launcher: the fallback key above is PAC evidence
+// observed at daemon start, while this one declares the route that survives the GUI.
+const NATIVE_BACKGROUND_ROUTE_KEY = "CODEX_CHATGPT_WEB_NATIVE_BACKGROUND_ROUTE";
 function proxyError(message: string): Error {
   return Object.assign(new Error(message), { code: "NativeProxyConfigurationError" });
 }
@@ -28,6 +31,12 @@ function fallbackProxyOrigin(value: string): string {
   const origin = nativeProxyOrigin(value);
   if (origin !== value) throw proxyError("Native Codex background proxy configuration is invalid");
   return origin;
+}
+
+/** DIRECT or an exact HTTP(S) proxy origin; undefined when not declared, throws when invalid. */
+function declaredBackgroundRoute(): string | undefined {
+  const value = process.env[NATIVE_BACKGROUND_ROUTE_KEY];
+  return value === undefined ? undefined : fallbackProxyOrigin(value);
 }
 
 const routes = new NativeRouteCache();
@@ -57,13 +66,21 @@ export function nativeNetworkBackgroundReady(): boolean {
   // These overrides are interpreted by Bun with its existing HTTP(S)/ALL_PROXY and NO_PROXY
   // semantics. Their presence already makes native transport independent of the launcher.
   if (EXPLICIT_PROXY_KEYS.some(key => process.env[key]?.trim())) return true;
+  try {
+    if (declaredBackgroundRoute() !== undefined) return true;
+  } catch {
+    return false;
+  }
   // Exact-URL bootstrap/cache evidence expires and cannot authorize durable GUI detachment.
   return false;
 }
 
 function requireBackgroundProxy(url: string, cause: unknown): string {
+  // A route the launcher rejected stays rejected; a declared route only replaces expired leases.
   const cached = routes.cached(url);
   if (cached !== undefined) return cached;
+  const declared = declaredBackgroundRoute();
+  if (declared !== undefined) return declared;
   const error = (url === BOOTSTRAP_URL ? backgroundProxyError : undefined)
     ?? proxyError("Native Codex background proxy route is unavailable");
   if (!("cause" in error)) Object.defineProperty(error, "cause", { value: cause, configurable: true });
