@@ -27,3 +27,13 @@ The corrected local app6.1.32 was installed from code85d5a4d1; the installed mod
 The active6.1.32 core remained running throughout interface replacement. Afterwards both account tunnels were ready, Native and Web admission were available, and the selected account again showed Models and Local tools Verified with no active browser task. One prior app is retained as an archive outside app discovery; temporary fixture data and duplicate app bundles were retired. This is a local update without public installable release assets.
 
 Durable receipts: `~/.local/share/nekodex/verification/final-review-native6-20261016/`.
+
+## Follow-up: remove unnecessary admission and pacing blockers
+
+The selected or already pinned account now treats cached model/effort discovery and connector verification as advisory. The worker still selects and verifies the exact requested model, effort and connector before sending. Unbound balanced routing still needs positive discovery evidence; authentication, the account's own tunnel, ownership and sent-turn protection are unchanged.
+
+Pacing-policy edits and Resume no longer wait for active work, session inspection or sign-in. They synchronously update future admission without creating a browser host or changing existing task/lease owners. The UI retains save, transition and unavailable-state guards.
+
+Optional scheduled breaks and session limits no longer persist themselves as unconditional provider cooldown/stop records. Changing or disabling pacing releases its own derived hold. Real rate-limit cooldowns and provider safety stops remain; old ambiguous records are not automatically erased.
+
+Nine unique focused behavior cases passed across model admission, active-owner policy edits and pacing persistence, plus frontend typecheck and a real DEV UI save cycle (enable pacing, save, disable pacing, save). The isolated DEV profile was restored to its original disabled policy and closed normally. Existing passing protocol/image/provider checks were reused because those paths did not change.

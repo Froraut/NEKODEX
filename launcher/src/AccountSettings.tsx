@@ -779,7 +779,7 @@ export function AccountSettings({ copy, language, openBrowser, setError, manual,
                   {account.safety ? <AccountSafetySettings id={account.id} language={language} safety={account.safety} copy={copy}
                     pacingStatus={pacing} onStateChange={report.pacing}
                     resumeRequired={account.availability?.reason === "session-limit"}
-                    disabled={mutationsDisabled || active || loginBoundActive} blockedReason={blockedReason}
+                    disabled={mutationsDisabled} blockedReason={transitionReason ?? loadFailedReason}
                     save={policy => run("safety", account.id, () => api.setAccountSafety(account.id, policy))}
                     resume={() => void run("resume", account.id, () => api.resumeAccount(account.id))} /> : null}
                   {account.proxy ? <AccountProxySettings proxy={account.proxy} copy={copy} language={language}

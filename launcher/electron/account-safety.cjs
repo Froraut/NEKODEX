@@ -175,10 +175,9 @@ class AccountSafety {
     };
     const available = this.availability(id, activeCount, session);
     if (!available.eligible) {
-      if (available.reason === 'session-limit') this.save(id, { ...item, stopped: true });
-      if (available.reason === 'scheduled-break') {
-        this.save(id, { ...item, cooldownUntil: available.retryAt, breakStart: available.retryAt });
-      }
+      // Local pacing holds are derived from the current policy and clocks. Do not
+      // latch them into provider stop/cooldown state: disabling or adjusting the
+      // policy must release its own hold without clearing a real provider limit.
       reject(available.message, available.retryAt ?? undefined);
     }
     if (p.enabled && item.breakStart

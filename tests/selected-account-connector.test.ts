@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
+const { AccountSafety } = require("../launcher/electron/account-safety.cjs");
+const { AccountOperationLeases } = require("../launcher/electron/account-operation-leases.cjs");
 const { AccountToolProof } = require("../launcher/electron/account-tool-proof.cjs");
 const connector = "Codex Native6";
 const principal = "a".repeat(64);
@@ -37,14 +39,40 @@ test("selected account may prove an unverified connector during the real turn wh
   expect(select).toThrow("No enabled ChatGPT account");
   pool.accountTunnel = () => ({ required: true, ready: true });
   pool.capabilities.set("default", { solAvailable: false });
-  expect(select).toThrow("No enabled ChatGPT account");
+  expect(select()).toBe("default");
+  pool.capabilities.clear();
+  expect(select()).toBe("default");
 });
 
 test("balanced routing still chooses a connector-verified account", () => {
   const { pool, select } = admission("balanced");
   expect(select()).toBe(alternate);
+  pool.capabilities.set(alternate, { solAvailable: false });
+  expect(select).toThrow("No enabled ChatGPT account");
+  pool.capabilities.delete(alternate);
+  expect(select).toThrow("No enabled ChatGPT account");
+  pool.capabilities.set(alternate, { solAvailable: true });
   pool.connectors.clear();
   expect(select).toThrow("No enabled ChatGPT account");
+});
+
+test("a pinned account keeps its owner despite stale model discovery in balanced mode", () => {
+  const { pool, hosts } = admission("balanced");
+  for (const host of hosts.values()) (host as any).exactRetainedTurnTab = () => null;
+  pool.traceOwners.set("fixture-trace", alternate);
+  pool.capabilities.set(alternate, { solAvailable: false, modelCapabilities: { families: { "6": [] } } });
+  const requirement = { requestedModel: "chatgpt-web/gpt-6-pro", effort: "max", connector };
+  expect(pool.chooseAccount("fixture-trace", null, false, requirement)).toBe(alternate);
+  pool.capabilities.clear();
+  pool.connectors.clear();
+  expect(pool.chooseAccount("fixture-trace", null, false, requirement)).toBe(alternate);
+  expect(pool.accountReadinessBlocker({ traceId: "fixture-trace", key: null, connector }, requirement, alternate))
+    .toBe("account_not_ready"); // No stale account_model_unavailable/account_unchecked diagnosis.
+  pool.accountTunnel = () => ({ required: true, ready: false });
+  expect(() => pool.chooseAccount("fixture-trace", null, false, requirement)).toThrow("Pinned ChatGPT account is not ready");
+  pool.accountTunnel = () => ({ required: true, ready: true });
+  hosts.get(alternate)!.state.authenticated = false;
+  expect(() => pool.chooseAccount("fixture-trace", null, false, requirement)).toThrow("Pinned ChatGPT account is not ready");
 });
 
 test("only a successful actual tool result promotes the current turn identity's connector proof", async () => {
@@ -74,5 +102,47 @@ test("only a successful actual tool result promotes the current turn identity's 
     await end();
     expect(pool.connectors.get("default")).toBe(connector);
     expect(toolProof.snapshot("default", principal)?.tool).toBe("codex_exec");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+
+test("future pacing edits and resume preserve active owners and reject unknown or closed accounts", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nekodex-active-pacing-"));
+  try {
+    const safety = new AccountSafety(directory);
+    const leases = new AccountOperationLeases();
+    const owner = { activeTraceId: "active-trace", currentOperation: () => "active model check" };
+    const hosts = new Map([["default", owner]]);
+    const traces = new Map([["active-trace", "default"]]);
+    const tunnels = new Map([["default", { ready: true }]]);
+    const pool: any = Object.assign(Object.create(AccountBrowserPool.prototype), {
+      registry: { snapshot: () => ({ accounts: [{ id: "default" }] }) },
+      destroyed: false, safety, operationLeases: leases, hosts, traceOwners: traces, tunnels,
+      getHost() { throw new Error("Must not create or inspect a browser host"); },
+      assertAccountOperationAvailable() { throw new Error("Must not acquire activity ownership"); },
+      publish() {}, accountSnapshot: () => safety.snapshot("default"),
+    });
+    const originalOwners = JSON.stringify({ hosts: [...hosts], traces: [...traces], tunnels: [...tunnels] });
+    const policy = { ...safety.snapshot("default").policy, enabled: true };
+    const releaseRead = leases.acquireRead("default", "Session inspection", () => { throw new Error("Must not cancel read"); });
+    expect(pool.setAccountSafety("default", policy).policy.enabled).toBe(true);
+    expect(leases.readLabel("default")).toBe("Session inspection");
+    pool.resumeAccount("default");
+    releaseRead();
+    const releaseMutation = leases.acquireExclusive("default", "Sign in");
+    expect(pool.setAccountSafety("default", { ...policy, enabled: false }).policy.enabled).toBe(false);
+    pool.resumeAccount("default");
+    expect(leases.exclusiveLabel("default")).toBe("Sign in");
+    expect(JSON.stringify({ hosts: [...hosts], traces: [...traces], tunnels: [...tunnels] })).toBe(originalOwners);
+    const saved = JSON.stringify(safety.state);
+    for (const method of ["setAccountSafety", "resumeAccount"]) {
+      expect(() => pool[method](alternate, policy)).toThrow("Unknown ChatGPT account");
+      expect(() => pool[method]("bad-id", policy)).toThrow("Account id");
+      pool.destroyed = true;
+      expect(() => pool[method]("default", policy)).toThrow("ChatGPT account pool is closed");
+      pool.destroyed = false;
+    }
+    expect(JSON.stringify(safety.state)).toBe(saved);
+    releaseMutation();
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
