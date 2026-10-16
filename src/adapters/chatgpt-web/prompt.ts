@@ -37,6 +37,8 @@ export interface ChatGptWebPromptFile extends ResolvedCodexFile {
 
 export interface CompiledChatGptWebPrompt {
   text: string;
+  /** Compiler-owned current request identity, never inferred from rendered history. */
+  turnToken?: string;
   images: ChatGptWebPromptImage[];
   files?: ChatGptWebPromptFile[];
   skillFiles?: ChatGptSkillFile[];
@@ -568,7 +570,7 @@ export function compileChatGptWebPrompt(
         return { tokens, chars };
       });
       multipart.parts = partitionMultipartContext(records, multipartParts!, budgets);
-      return { text: multipart.commit, images, files, ...attachments, multipart };
+      return { text: multipart.commit, images, files, ...attachments, multipart, ...(turnToken ? { turnToken } : {}) };
     }
     const envelopeJson = withoutRetiredTurnHandles(JSON.stringify({ version: 3, system, messages }));
     const text = [
@@ -591,7 +593,7 @@ export function compileChatGptWebPrompt(
         "</codex_transport_resume>",
       ] : transportResume),
     ].join("\n");
-    return { text, images, files, ...attachments };
+    return { text, images, files, ...attachments, ...(turnToken ? { turnToken } : {}) };
   };
 
   let sourceMessages = withoutSupersededModelSwitchContracts(parsed.context.messages);

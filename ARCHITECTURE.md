@@ -153,6 +153,33 @@ own their continue/cancel/retry controls, retain embedded-sign-in recovery, and
 retire after completion. Expanding the window directory changes the browser slot's
 layout; the existing bounds observer remains responsible for native view placement.
 
+## Browser recovery and navigation
+
+`application-reload.cjs` routes native menu reload to the displayed embedded page,
+its exact workspace/API window, or the trusted shell. An explicit navigation cancels
+and joins a background inspection; a stale testing state does not disable recovery.
+Active submitted turns and account-changing operations retain their owner. macOS
+secondary accounts expose the same supported Chrome profile import as the primary.
+
+`BrowserWorkspaceWindows` owns loading, failed and renderer-gone state. Initial
+programmatic account-changing navigation acquires the same session coordinator as
+user navigation. Aborted redirects and subframe failures do not settle that owner;
+a real main-frame failure, renderer death or closure does. API panels verify the
+shared account through its owned ChatGPT surface, not the Platform page's origin.
+A failed bootstrap script reports its HTTP status and offers explicit recovery;
+lazy-resource failures on an already loaded page do not block it.
+
+Challenge recovery never reloads a human draft or a submitted turn. Source-proven
+collapsed user messages use a compiler-owned token or structured text after expansion;
+retained-history anchors avoid mistaking older remounted rows for new submissions.
+Answer text, HTML and markdown segments share sanitized roots so hidden suggestion
+sizing labels cannot contaminate delivery or its fingerprint.
+
+The pinned official tunnel SDK is 0.0.16. CLI, launchd and account peer startup pass
+`MCP_STDIO_SEND_INITIALIZED_NOTIFICATION=true`; control commands preserve their
+existing environment and cancellation semantics. Installation retains integrity and
+rollback checks, with 0.0.12 recognized as the preceding supported installation.
+
 ## State and persistence
 
 `modelCapabilities` stores timestamped, family-specific selectable efforts through

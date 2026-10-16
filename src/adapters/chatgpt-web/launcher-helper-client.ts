@@ -507,6 +507,7 @@ export class LauncherBrowserHelperClient {
                 id: message.id,
                 prepared: {
                   text: prepared.text,
+                  ...(prepared.turnToken ? { turnToken: prepared.turnToken } : {}),
                   images: prepared.images,
                   ...(prepared.files?.length ? { files: prepared.files } : {}),
                   ...(prepared.skillFiles ? { skillFiles: prepared.skillFiles } : {}),

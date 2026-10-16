@@ -307,6 +307,14 @@ export async function responseDomSnapshot(
       // Also remove the controls/media already excluded by chatGptHtmlToMarkdown, so their
       // accessibility labels cannot become consistency fingerprints for untransmitted text.
       // Ordinary code blocks, surrounding prose and the original observed DOM remain intact.
+      // The suggestion row has hidden sizing copies beside its visible buttons.
+      // Remove only those owned copies, not arbitrary aria-hidden answer content.
+      for (const button of Array.from(content.querySelectorAll("button"))) {
+        if (!button.classList.contains("group/suggested-followup")) continue;
+        for (const sibling of Array.from(button.parentElement?.parentElement?.children ?? [])) {
+          if (sibling.matches('[aria-hidden="true"].pointer-events-none')) sibling.remove();
+        }
+      }
       for (const widget of Array.from(content.querySelectorAll(
         ".chart-widget-container, [data-code-block-preview-pane], button, script, style, svg, img, picture, source",
       ))) widget.remove();
@@ -437,7 +445,8 @@ export async function responseDomSnapshot(
         });
       });
     };
-    renderedRoots.map(candidate => chatGptMarkdownContent(candidate, rememberClone)).forEach((markdownRoot) => {
+    const answerContentRoots = renderedRoots.map(candidate => chatGptMarkdownContent(candidate, rememberClone));
+    answerContentRoots.forEach((markdownRoot) => {
       const children = [...markdownRoot.children] as HTMLElement[];
       const hasBlockChildren = children.some(child => blockMarkdownTags.has(child.tagName.toLowerCase()));
       if (!hasBlockChildren) {
@@ -659,8 +668,8 @@ export async function responseDomSnapshot(
       key: observerKey,
       snapshot: {
         responsePresent: true,
-        visibleText: renderedRoots.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n"),
-        fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join(""),
+        visibleText: answerContentRoots.map(markdownText).filter(Boolean).join("\n\n"),
+        fullHtml: answerContentRoots.map(candidate => candidate.innerHTML).join(""),
         markdownSegments,
         completionActionVisible: completionAction !== undefined,
         stoppedThinkingVisible,

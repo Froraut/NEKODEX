@@ -1,4 +1,8 @@
-function applicationMenu({ name, checkLabel, onCheck, quitLabel, stopLabel, onStop, language = "en" }) {
+function applicationMenu({ name, checkLabel, onCheck, quitLabel, stopLabel, onStop, onReload, language = "en" }) {
+  const reloadItems = [
+    { label: language === "ru" ? "Обновить страницу" : "Reload page", accelerator: "CmdOrCtrl+R", enabled: Boolean(onReload), click: () => onReload?.(false) },
+    { label: language === "ru" ? "Обновить страницу без кеша" : "Reload page without cache", accelerator: "CmdOrCtrl+Shift+R", enabled: Boolean(onReload), click: () => onReload?.(true) },
+  ];
   if (language === "ru") return [
     { label: name, submenu: [
       { role: "about", label: `О программе ${name}` },
@@ -19,7 +23,7 @@ function applicationMenu({ name, checkLabel, onCheck, quitLabel, stopLabel, onSt
       ] },
     ] },
     { label: "Вид", submenu: [
-      { role: "reload", label: "Обновить" }, { role: "forceReload", label: "Обновить без кеша" },
+      ...reloadItems,
       { role: "toggleDevTools", label: "Инструменты разработчика" }, { type: "separator" },
       { role: "resetZoom", label: "Исходный масштаб" }, { role: "zoomIn", label: "Увеличить масштаб" },
       { role: "zoomOut", label: "Уменьшить масштаб" }, { type: "separator" },
@@ -42,7 +46,13 @@ function applicationMenu({ name, checkLabel, onCheck, quitLabel, stopLabel, onSt
       { type: "separator" }, { role: "quit", ...(quitLabel ? { label: quitLabel } : {}) },
       ...(onStop ? [{ label: stopLabel, click: onStop }] : []),
     ] },
-    { role: "editMenu" }, { role: "viewMenu" }, { role: "windowMenu" },
+    { role: "editMenu" },
+    { label: "View", submenu: [
+      ...reloadItems, { role: "toggleDevTools" }, { type: "separator" },
+      { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
+      { type: "separator" }, { role: "togglefullscreen" },
+    ] },
+    { role: "windowMenu" },
   ];
 }
 module.exports = { applicationMenu };

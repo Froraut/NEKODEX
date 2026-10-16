@@ -66,6 +66,8 @@ ${args.map(arg => `    <string>${xml(arg)}</string>`).join("\n")}
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>MCP_STDIO_SEND_INITIALIZED_NOTIFICATION</key>
+    <string>true</string>
     <key>CODEX_CHATGPT_WEB_HOME</key>
     <string>${xml(getConfigDir())}</string>
   </dict>

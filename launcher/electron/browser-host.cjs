@@ -1566,6 +1566,7 @@ class BrowserHost {
       CHATGPT_BACKEND_REQUEST_FILTER,
       details => {
         this.handleWorkspaceSessionMutationCompleted(details);
+        this.handleApiPanelResourceResponse(details);
         return browserInteractionModeFor(this) === "automatic"
           ? this.handleChatGptBackendResponse(details)
           : undefined;
@@ -1573,9 +1574,37 @@ class BrowserHost {
     );
   }
 
+  handleApiPanelResourceResponse(details) {
+    if (!this.apiPanelBrowser || !this.apiPanelContents?.size) return false;
+    if (details?.resourceType !== "script" || details.statusCode < 400 || details.statusCode > 599) return false;
+    let resource;
+    try { resource = new URL(details.url); } catch { return false; }
+    if (resource.origin !== "https://platform.openai.com" || !/^\/static\/index-[^/]+\.js$/.test(resource.pathname)) return false;
+    const contents = [...this.apiPanelContents.keys()].find(item => !item.isDestroyed() && item.id === details.webContentsId);
+    if (!contents) return false;
+    const window = this.apiPanelContents.get(contents);
+    const state = this.apiPanelBrowser.navigationState(window);
+    // A lazy/optional resource must not turn an already usable page into a modal error.
+    if (state?.status !== "loading" && !(state?.status === "failed" && state.failure?.kind === "renderer-script")) return false;
+    this.apiPanelBrowser?.setNavigationState(window, "failed", null, { kind: "renderer-script", httpStatus: details.statusCode });
+    return true;
+  }
+
   handleChatGptBackendResponse(details) {
     const contents = this.view?.webContents;
-    if (!contents || contents.isDestroyed() || details?.webContentsId !== contents.id) return false;
+    if (!contents || contents.isDestroyed()) return false;
+    if (details?.webContentsId !== contents.id) {
+      const managed = [...this.turnTabs.values()].find(tab => tab.view?.webContents?.id === details?.webContentsId
+        && !tab.view.webContents.isDestroyed());
+      if (!managed || !isChatGptCloudflareChallengeResponse(details)) return false;
+      managed.message = "ChatGPT blocked this request with a security check. Complete verification in this browser; the request will not be reloaded or resubmitted.";
+      this.logger.warn("browser.managed_cloudflare_challenge_detected", {
+        statusCode: 403, classification: "owned-provider-security-challenge",
+      });
+      this.scheduleNetworkEgressCheck();
+      publishBrowserSnapshot(this);
+      return true;
+    }
     if (!isChatGptBackendUrl(details.url)) return false;
 
     if (details.statusCode >= 200 && details.statusCode < 400) {
@@ -1604,9 +1633,12 @@ class BrowserHost {
     const recovery = this.reloadHomeAfterCloudflareChallenge();
     const tracked = recovery
       .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error("browser.cloudflare_challenge_recovery_failed", { message });
-        this.setState({ status: "error", message, loading: false });
+        this.logger.error("browser.cloudflare_challenge_recovery_failed", navigationErrorForLog(error));
+        // An account or operation that took ownership while the read was pending owns its UI too.
+        if (error?.code === "CHALLENGE_RECOVERY_SUPERSEDED") return;
+        this.setState({ status: "error",
+          message: "ChatGPT security verification needs attention. Open the browser and complete verification; your draft was kept.",
+          loading: false });
       })
       .finally(() => {
         if (this.cloudflareChallengeRecovery === tracked) this.cloudflareChallengeRecovery = null;
@@ -1658,27 +1690,54 @@ class BrowserHost {
 
   async reloadHomeAfterCloudflareChallenge() {
     const contents = this.view.webContents;
-    this.setState({
-      status: "loading",
-      message: "Refreshing ChatGPT security check",
-      loading: true,
-    });
-    await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS);
-    if (contents.isDestroyed()) throw new Error("ChatGPT browser closed during security-check recovery");
+    const generation = this.authGeneration ?? 0;
     const url = contents.getURL();
-    if (!url.startsWith(CHATGPT_ORIGIN)) {
+    const assertCurrent = () => {
+      if (this.destroyed || this.view?.webContents !== contents || contents.isDestroyed()
+        || contents.getURL() !== url || (this.authGeneration ?? 0) !== generation
+        || this.activeTraceId || this.manualOperation || this.loginOperation || this.readOnlyInspection) {
+        throw Object.assign(new Error("Security-check recovery was superseded by browser work"), { code: "CHALLENGE_RECOVERY_SUPERSEDED" });
+      }
+    };
+    await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS);
+    assertCurrent();
+    if (httpsOrigin(url) !== CHATGPT_ORIGIN) {
       throw new Error("ChatGPT security-check recovery lost its owned browser page");
+    }
+    // A human draft or response has no task lease. Read booleans only; an unknown renderer
+    // is not permission to replace its document. Recheck ownership after this async read.
+    let timer;
+    let work;
+    try {
+      work = await Promise.race([
+        contents.executeJavaScript(`(() => {
+          const visible = el => !!el && el.getClientRects().length > 0;
+          const draft = [...document.querySelectorAll('[contenteditable]:not([contenteditable="false"]), textarea')]
+            .some(el => (el.value || el.innerText || el.textContent || '').trim());
+          const running = [...document.querySelectorAll('button')].some(el =>
+            el.getAttribute('data-testid') === 'stop-button' || (visible(el) &&
+              /^(Stop|Stop generating|Stop streaming|Arrêter|Arrêter la génération|Остановить|Остановить генерацию|停止|停止生成)$/i.test(el.getAttribute('aria-label') || '')));
+          return { draft, running };
+        })()`, false),
+        new Promise(resolve => { timer = setTimeout(() => resolve(null), 1_000); }),
+      ]);
+    } finally { clearTimeout(timer); }
+    assertCurrent();
+    if (!work || typeof work.draft !== "boolean" || typeof work.running !== "boolean" || work.draft || work.running) {
+      throw new Error("Security refresh refused because browser work or idle state is unverified");
     }
 
     // Only responses from this new document may prove that the challenge cleared.
+    this.setState({ status: "loading", message: "Refreshing ChatGPT security check", loading: true });
     this.cloudflareChallengeRecoveryArmed = false;
     await contents.loadURL(url);
     await sleep(CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS);
+    assertCurrent();
     if (!this.cloudflareChallengeRecoveryArmed) {
       throw new Error("ChatGPT security check is still blocking backend requests. Reload ChatGPT and retry.");
     }
     await this.probeAuthentication();
-    this.logger.info("browser.cloudflare_challenge_recovered", { url });
+    this.logger.info("browser.cloudflare_challenge_recovered");
   }
 
   turnTabSnapshots() {
@@ -1726,7 +1785,8 @@ class BrowserHost {
           ]
         : [homeTab],
       maxTabs: this.maxTabs,
-      navigationLocked: Boolean(this.activeTraceId || this.manualOperation || this.loginOperation),
+      navigationLocked: Boolean(this.activeTraceId || this.loginOperation
+        || (this.manualOperation && this.manualOperation !== this.readOnlyInspection?.name)),
       loginInProgress: Boolean(this.loginOperation),
       loginKind: this.existingChromeLoginOperation ? "existing-chrome" : this.passkeyLoginOperation ? "passkey" : this.embeddedLoginController ? "embedded" : null,
       passkeyLogin: publicPasskeyProgress(this.passkeyProgress),
@@ -2192,7 +2252,10 @@ class BrowserHost {
     }
   }
 
-  navigate(action) {
+  async navigate(action) {
+    // Explicit user navigation supersedes a background observation. Join its exact
+    // owner first; active turns and sign-in mutations retain their normal veto below.
+    if (this.readOnlyInspection) await this.cancelReadOnlyInspection();
     this.assertUserNavigationAllowed();
     const contents = this.activeView().webContents;
     navigateBrowser(contents, action);
@@ -2209,6 +2272,7 @@ class BrowserHost {
       await this.externalLinkBroker.openTyped(target.url, "address");
       return this.snapshot();
     }
+    if (this.readOnlyInspection) await this.cancelReadOnlyInspection();
     this.assertUserNavigationAllowed();
     if (this.selectedTabId !== "home" || this.authView) this.selectTab("home");
     const contents = this.view.webContents;
@@ -2480,19 +2544,87 @@ class BrowserHost {
         onMutationBlocked: error => this.logger.warn("browser.api_panel_session_mutation_blocked", {
           message: error instanceof Error ? error.message : String(error),
         }),
+        onNavigationState: (window, state) => {
+          this.logger.info("browser.api_panel_navigation", {
+            status: state.status, errorCode: state.errorCode,
+            section: this.apiPanelSection(window),
+            ...(state.failure ? { failureKind: state.failure.kind, httpStatus: state.failure.httpStatus } : {}),
+          });
+          if (state.status === "failed" || state.status === "renderer-gone") {
+            void this.offerApiPanelRecovery(window, state.revision);
+          }
+        },
         onChanged() {},
       });
     }
     this.apiPanelBrowser.label = `${accountName} — OpenAI API`;
     this.apiPanelWindows ??= new Map();
     const existing = this.apiPanelWindows.get(section);
-    if (existing && !existing.isDestroyed()) { existing.show(); existing.focus(); }
+    if (existing && !existing.isDestroyed()) {
+      existing.show(); existing.focus();
+      const state = this.apiPanelBrowser.navigationState(existing);
+      if (["failed", "renderer-gone"].includes(state?.status)) void this.offerApiPanelRecovery(existing, state.revision);
+    }
     else {
       const window = this.apiPanelBrowser.open({ url });
       this.apiPanelWindows.set(section, window);
       window.once("closed", () => { if (this.apiPanelWindows.get(section) === window) this.apiPanelWindows.delete(section); });
     }
     return { opened: true };
+  }
+
+  apiPanelSection(window) {
+    return [...(this.apiPanelWindows ?? new Map())].find(([, candidate]) => candidate === window)?.[0] ?? null;
+  }
+
+  ownsApiPanelContents(contents) {
+    return this.apiPanelBrowser?.ownsContents(contents) === true;
+  }
+
+  async reloadApiPanelContents(contents) {
+    this.apiPanelBrowser?.assertNavigationAvailable(contents);
+    const window = this.apiPanelBrowser?.windowForContents(contents);
+    const section = window && this.apiPanelSection(window);
+    if (!section) throw new Error("OpenAI API panel is unavailable");
+    // Retry the fixed GET entry point, never replay an OAuth URL or submitted form.
+    await this.apiPanelBrowser.loadWindow(window, openAiApiPanelUrl(section));
+    return true;
+  }
+
+  async openApiPanelContentsExternal(contents) {
+    this.apiPanelBrowser?.assertNavigationAvailable(contents);
+    const window = this.apiPanelBrowser?.windowForContents(contents);
+    const section = window && this.apiPanelSection(window);
+    if (!section) throw new Error("OpenAI API panel is unavailable");
+    await shell.openExternal(openAiApiPanelUrl(section));
+    return true;
+  }
+
+  async offerApiPanelRecovery(window, revision) {
+    this.apiPanelRecoveryDialogs ??= new WeakSet();
+    if (window.isDestroyed() || this.apiPanelRecoveryDialogs.has(window)) return;
+    this.apiPanelRecoveryDialogs.add(window);
+    try {
+      const state = this.apiPanelBrowser?.navigationState(window);
+      const resourceStatus = state?.failure?.kind === "renderer-script" ? state.failure.httpStatus : null;
+      const result = await this.dialog.showMessageBox(window, {
+        type: "warning", title: "OpenAI API page unavailable",
+        message: resourceStatus ? `OpenAI API could not load a required page script (HTTP ${resourceStatus}).`
+          : "The OpenAI API page could not finish loading.",
+        detail: "Retry this page or continue in your regular browser. Check the intended OpenAI organization there. Your NEKODEX account session is kept.",
+        buttons: ["Keep open", "Retry page", "Open in browser"], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      if (window.isDestroyed()) return;
+      const current = this.apiPanelBrowser?.navigationState(window);
+      if (current?.revision !== revision && !["failed", "renderer-gone"].includes(current?.status)) return;
+      if (result.response === 1) await this.reloadApiPanelContents(window.webContents);
+      else if (result.response === 2) await this.openApiPanelContentsExternal(window.webContents);
+    } catch (error) {
+      this.logger.warn("browser.api_panel_recovery_failed", {
+        // Native/transport errors can contain navigation URLs. Publish only a fixed class.
+        reason: this.apiPanelBrowser?.mutationLeasesByContents.has(window.webContents) ? "account-busy" : "recovery-unavailable",
+      });
+    } finally { this.apiPanelRecoveryDialogs.delete(window); }
   }
 
   /** Google refused sign-in in the panel: continue the same fixed Platform page in the system browser. */
@@ -2561,6 +2693,7 @@ class BrowserHost {
 
   async observeWorkspaceSessionMutation({ signal, context } = {}) {
     const deadline = Date.now() + 180_000;
+    const apiPanel = this.apiPanelContents?.has(context?.contents) === true;
     let previous = null;
     let stable = 0;
     while (Date.now() < deadline) {
@@ -2570,15 +2703,23 @@ class BrowserHost {
       const currentUrl = contents?.getURL?.() ?? CHATGPT_ORIGIN;
       let currentOrigin = null;
       try { currentOrigin = new URL(currentUrl).origin; } catch {}
-      if (currentOrigin && currentOrigin !== CHATGPT_ORIGIN) {
+      if (!apiPanel && currentOrigin && currentOrigin !== CHATGPT_ORIGIN) {
         await delay(400, undefined, { signal });
         continue;
+      }
+      // Platform is never the ChatGPT identity endpoint. If its account has no
+      // existing ChatGPT page, fail explicitly rather than holding a futile origin wait.
+      const page = this.chatGptSessionPage(apiPanel ? undefined : contents);
+      if (apiPanel && (!page || page.session !== contents.session)) {
+        throw new Error("Open this account's ChatGPT page before verifying its OpenAI API sign-in");
       }
       try {
         const requestSignal = signal
           ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
           : AbortSignal.timeout(10_000);
-        const page = this.chatGptSessionPage(contents);
+        // Platform's successful login stays on Platform. Verify the same account's
+        // shared session through its existing ChatGPT page, never wait for Platform
+        // to become ChatGPT or import identity from a different account's surface.
         if (!page) throw new Error("ChatGPT session verification needs a loaded ChatGPT page");
         const json = await observeChatGptSession(page, { signal: requestSignal });
         const identity = sessionIdentity(json);

@@ -30,10 +30,12 @@ const {
   session,
   shell,
   Tray,
+  webContents,
 } = require("electron");
 const { nativeFallbackProxyEnvironment, resolveNativeRequestProxy, resolveTunnelProxyEnvironment } = require("./native-proxy.cjs");
 const LANGUAGES = require("./languages.json");
 const { applicationMenu } = require("./application-menu.cjs");
+const { reloadApplicationPage } = require("./application-reload.cjs");
 const { nativeCopyFor, rendererRecoveryCopyFor, updateCheckLabelFor } = require("./native-copy.cjs");
 const { installHermesProvider } = require("./hermes-integration.cjs");
 const { navigationErrorForLog } = require("./browser-host.cjs");
@@ -445,6 +447,20 @@ function updateApplicationMenu(language) {
     quitLabel: nativeCopyFor(language).quit,
     stopLabel: nativeCopyFor(language).stopAndQuit,
     onStop: () => { void requestQuit({ stopRuntime: true }); },
+    onReload: ignoreCache => {
+      void reloadApplicationPage({
+        focusedContents: webContents.getFocusedWebContents(),
+        focusedWindow: BrowserWindow.getFocusedWindow(),
+        mainWindow, browserPool: browserHost, ignoreCache,
+        reloadShell: window => reloadOwnedRenderer(window),
+      }).catch(error => {
+        logger?.warn("browser.menu_reload_rejected", { message: error instanceof Error ? error.message : String(error) });
+        const parent = BrowserWindow.getFocusedWindow();
+        const options = { type: "info", message: language === "ru" ? "Сейчас нельзя обновить эту страницу" : "This page cannot be reloaded now",
+          detail: error instanceof Error ? error.message : String(error) };
+        void (parent && !parent.isDestroyed() ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options));
+      });
+    },
     onCheck: () => {
       updatesPanelRequestRevision += 1;
       showMainWindow({ activateApplication: true });
