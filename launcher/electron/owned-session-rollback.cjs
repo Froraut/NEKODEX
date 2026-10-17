@@ -3,7 +3,10 @@ const COOKIE_URLS = [`${CHATGPT_ORIGIN}/`, 'https://auth.openai.com/'];
 const MAX_COOKIES = 4096;
 const MAX_COOKIE_BYTES = 8 * 1024 * 1024;
 const MAX_LOCAL_STORAGE_ENTRIES = 4096;
-const MAX_LOCAL_STORAGE_BYTES = 4 * 1024 * 1024;
+// ChatGPT can legitimately use more than 4 MiB (for example, its cached workspace
+// state). Keep a bounded in-memory before-image without rejecting a normal
+// Chromium localStorage partition during sign-in recovery.
+const MAX_LOCAL_STORAGE_BYTES = 64 * 1024 * 1024;
 
 function allowedDomain(value) {
   if (typeof value !== 'string' || value.length > 253 || !/^\.?[a-z0-9.-]+$/i.test(value)) return null;
