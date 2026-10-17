@@ -19,4 +19,10 @@ The authorized Chrome import connected successfully on October 17 at 08:10 UTC, 
 
 Ordinary Chrome completed a matched GPT-5.6 Sol Instant request in under nine seconds. After a graceful launcher restart onto the source build, the same account in NEKODEX produced its matched Instant reply within the first two-second observation, with completion subsequently confirmed. No cookies or account data were manually copied, and no user-agent or security override was applied. The running engine remained Chromium 146. The fresh process recovered this session; this does not prove which Cloudflare scoring signal caused the original block. Prior network checks reported one stable egress address shared with the challenge host.
 
-Installed activation and the full Codex-to-Web request check remain separate from this successful development browser check. No public release assets are required for this local update.
+## Installed acceptance
+
+The local app-only update was signed by the existing Developer ID and installed as 6.1.32-nekodex.3. Its runtime activated at the next idle moment, preserving active native work. The new health response reported version 6.1.32-nekodex.3, native/Web admission, broker readiness, and restored account tunnels. The installed app showed the same version and a verified ChatGPT session.
+
+A fresh bundled Codex request through the unchanged provider gateway completed successfully after installation and displayed `NEKODEX_INSTALLED_OK` in the installed browser. It took 20.514 seconds end to end with 32,371 input tokens; the browser trace ran from acquisition at 08:21:33.782 UTC to completion at 08:21:46.120. The response was already visible at 08:21:43.148. This verifies functional recovery, not a guarantee of instant end-to-end latency. Page/model preparation, model input, final-turn verification, and Codex startup remain separate costs. The retained-selection optimization does not eliminate the first selection on a fresh page.
+
+The former app is kept in one verified rollback ZIP, with the previous runtime retained by the app's own version policy. Temporary app bundles and task build outputs were removed. No public release assets were published.
