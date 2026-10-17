@@ -194,7 +194,7 @@ The terminal-only `scripts/install.sh` installer supports macOS arm64 and x86_64
 It requires a preinstalled, trusted Node.js runtime before downloading anything, and embeds the
 same Ed25519 publisher key and signed-metadata verifier as the launcher installer. It pins
 `Froraut/NEKODEX`, the requested version and published GitHub Actions provenance, checks metadata
-and key validity, and authenticates the archive, `LICENSE`, `Bun-1.4.0.md` and
+and key validity, and authenticates the archive, `LICENSE`, `Bun-1.4.3.md` and
 `THIRD_PARTY_NOTICES.txt` before any extraction or downloaded runtime execution. Metadata is
 bounded to 512 KiB and downloads use a private temporary directory. `checksums.txt` is not used
 as publisher authentication. Authentication failure leaves the existing installation untouched;

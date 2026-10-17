@@ -75,7 +75,7 @@ cleanup() {
     fi
     if [ -n "$DOC_STAGE_ROOT" ]; then
       doc_recovery_failed=0
-      for DOC in LICENSE Bun-1.4.0.md THIRD_PARTY_NOTICES.txt; do
+      for DOC in LICENSE Bun-1.4.3.md THIRD_PARTY_NOTICES.txt; do
         if [ -e "$DOC_STAGE_ROOT/$DOC.previous" ] || [ -L "$DOC_STAGE_ROOT/$DOC.previous" ]; then
           rm -f -- "$DOC_DIR/$DOC"
           if ! mv "$DOC_STAGE_ROOT/$DOC.previous" "$DOC_DIR/$DOC"; then
@@ -106,7 +106,7 @@ curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 --max
   "$BASE_URL/release-metadata.json" -o "$TEMP_DIR/release-metadata.json"
 curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 900 --max-filesize 1073741824 \
   "$BASE_URL/$ASSET" -o "$TEMP_DIR/$ASSET"
-for DOC in LICENSE Bun-1.4.0.md THIRD_PARTY_NOTICES.txt; do
+for DOC in LICENSE Bun-1.4.3.md THIRD_PARTY_NOTICES.txt; do
   curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 --max-filesize 1073741824 \
     "$BASE_URL/$DOC" -o "$TEMP_DIR/$DOC"
 done
@@ -114,7 +114,7 @@ done
 # Standalone copy of the launcher's packaged Ed25519 verifier. A checksum file
 # downloaded beside an archive is not publisher authentication.
 "$NODE" - "$TEMP_DIR/release-metadata.json" "$TEMP_DIR" "$VERSION" \
-  "$ASSET" LICENSE Bun-1.4.0.md THIRD_PARTY_NOTICES.txt <<'NODE'
+  "$ASSET" LICENSE Bun-1.4.3.md THIRD_PARTY_NOTICES.txt <<'NODE'
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 
@@ -219,7 +219,7 @@ if [ -L "$TARGET_DIR" ] || { [ -e "$TARGET_DIR" ] && [ ! -d "$TARGET_DIR" ]; }; 
   echo "Refusing to replace a runtime target that is not a regular directory" >&2
   exit 1
 fi
-for file in "$BIN_DIR/codex-chatgpt-web" "$DOC_DIR/LICENSE" "$DOC_DIR/Bun-1.4.0.md" "$DOC_DIR/THIRD_PARTY_NOTICES.txt"; do
+for file in "$BIN_DIR/codex-chatgpt-web" "$DOC_DIR/LICENSE" "$DOC_DIR/Bun-1.4.3.md" "$DOC_DIR/THIRD_PARTY_NOTICES.txt"; do
   if [ -d "$file" ] && [ ! -L "$file" ]; then
     echo "Refusing to replace a directory with an installed file: $file" >&2
     exit 1
@@ -240,7 +240,7 @@ if [ "$("$STAGE_DIR/bin/codex-chatgpt-web" --version)" != "$VERSION" ]; then
   exit 1
 fi
 ln -s "$TARGET_DIR/bin/codex-chatgpt-web" "$BIN_STAGE_ROOT/next"
-for DOC in LICENSE Bun-1.4.0.md THIRD_PARTY_NOTICES.txt; do
+for DOC in LICENSE Bun-1.4.3.md THIRD_PARTY_NOTICES.txt; do
   install -m 0644 "$TEMP_DIR/$DOC" "$DOC_STAGE_ROOT/$DOC.next"
 done
 
@@ -254,7 +254,7 @@ if [ -e "$BIN_DIR/codex-chatgpt-web" ] || [ -L "$BIN_DIR/codex-chatgpt-web" ]; t
 fi
 COMMAND_REPLACEMENT_STARTED=1
 mv "$BIN_STAGE_ROOT/next" "$BIN_DIR/codex-chatgpt-web"
-for DOC in LICENSE Bun-1.4.0.md THIRD_PARTY_NOTICES.txt; do
+for DOC in LICENSE Bun-1.4.3.md THIRD_PARTY_NOTICES.txt; do
   if [ -e "$DOC_DIR/$DOC" ] || [ -L "$DOC_DIR/$DOC" ]; then
     mv "$DOC_DIR/$DOC" "$DOC_STAGE_ROOT/$DOC.previous"
   fi

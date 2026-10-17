@@ -69,7 +69,8 @@ function setAutostart(app, enabled) {
   if (process.platform === "darwin" || process.platform === "win32") {
     app.setLoginItemSettings({
       openAtLogin: Boolean(enabled),
-      openAsHidden: Boolean(enabled),
+      // Electron 44 removed openAsHidden. It only applied on macOS 12 and older,
+      // below this app's macOS 13 minimum. --hidden is the launch path that remains.
       args: ["--hidden"],
     });
     return requireAutostartState({
