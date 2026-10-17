@@ -127,7 +127,13 @@ function regularFileChanged(snapshot, platform = process.platform) {
   return !fs.readFileSync(filePath).equals(snapshot.data);
 }
 
-function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = false } = {}) {
+function pendingChainedRoute(result) {
+  const pending = result?.pendingChainedRoute;
+  return pending && typeof pending.url === "string" && typeof pending.upstreamUrl === "string"
+    && result.active === true && result.routeUrl === pending.upstreamUrl ? pending : null;
+}
+
+function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = false, allowPendingChain = false } = {}) {
   let result;
   try {
     result = JSON.parse(stdout);
@@ -140,7 +146,8 @@ function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = fal
   if (requireInstalled && typeof result.installed !== "boolean") {
     throw new Error("Codex bridge route status did not report whether the integration is installed");
   }
-  if (Array.isArray(result.errors) && result.errors.length > 0) {
+  if (Array.isArray(result.errors) && result.errors.length > 0
+    && !(allowPendingChain && pendingChainedRoute(result))) {
     throw new Error(`Codex bridge route is inconsistent: ${result.errors.join("; ")}`);
   }
   if (typeof expectedActive === "boolean" && result.active !== expectedActive) {
@@ -1064,7 +1071,7 @@ class RuntimeHost {
     };
   }
 
-  async bridgeStatus(operationName = "bridge-status") {
+  async bridgeStatus(operationName = "bridge-status", { allowPendingChain = false } = {}) {
     this.assertProductionProfile("Codex bridge status");
     const result = await this.run(operationName, ["route", "status"], {
       embedded: true,
@@ -1072,7 +1079,7 @@ class RuntimeHost {
       successMessage: "Codex bridge route checked",
       timeoutMs: 15_000,
     });
-    const status = parseBridgeRouteResult(result.stdout, { requireInstalled: true });
+    const status = parseBridgeRouteResult(result.stdout, { requireInstalled: true, allowPendingChain });
     // A verified local gateway in front of the managed route is the user's choice, not a failure.
     const chained = status.chainedRoute;
     const chainKey = chained ? `${chained.url} -> ${chained.upstreamUrl}` : null;
@@ -1102,9 +1109,16 @@ class RuntimeHost {
     return withCatalogObservation(JSON.parse(result.stdout), health, config, this.supervisor.daemon?.pid);
   }
 
-  async restoreBridgeRouteWithinOperation(operationName) {
-    const current = await this.bridgeStatus(operationName);
+  async restoreBridgeRouteWithinOperation(operationName, { keepPendingChain = false } = {}) {
+    const current = await this.bridgeStatus(operationName, { allowPendingChain: keepPendingChain });
     if (!current.installed || !current.active) return current;
+    const pending = keepPendingChain ? pendingChainedRoute(current) : null;
+    if (pending) {
+      // The user's gateway forwards to this runtime and only waits for it to come back. It is
+      // neither a foreign route nor one this fail-safe could restore without overwriting it.
+      this.logger.info("bridge.route_chained_upstream_down", { url: pending.url, upstreamUrl: pending.upstreamUrl });
+      return { ...current, errors: [] };
+    }
     const disconnected = await this.run(operationName, ["route", "disconnect"], {
       embedded: true,
       message: "Restoring the previous Codex route",
@@ -1126,7 +1140,7 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     this.lifecycleOperation = operationName;
     try {
-      return await this.restoreBridgeRouteWithinOperation(operationName);
+      return await this.restoreBridgeRouteWithinOperation(operationName, { keepPendingChain: true });
     } finally {
       this.lifecycleOperation = null;
     }
