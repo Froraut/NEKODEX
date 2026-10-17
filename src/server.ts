@@ -197,22 +197,24 @@ function lunaCompactionDisabled(): Response {
   );
 }
 
-const ACCOUNT_NOT_READY_REPLAY_MS = 10 * 60_000;
-const accountNotReadyTraces = new Map<string, { message: string; at: number }>();
-function rememberAccountNotReady(traceId: string, message: string): void {
+const WEB_BLOCK_REPLAY_MS = 10 * 60_000;
+interface BlockedWebTurn { message: string; at: number; status: number; type: string; code: string; upstreamStatus?: number }
+const blockedWebTraces = new Map<string, BlockedWebTurn>();
+function rememberWebTurnBlock(traceId: string, message: string,
+  failure: Omit<BlockedWebTurn, "message" | "at"> = { status: 400, type: "invalid_request_error", code: "account_not_ready" }): void {
   const now = Date.now();
-  for (const [key, value] of accountNotReadyTraces) {
-    if (now - value.at > ACCOUNT_NOT_READY_REPLAY_MS || accountNotReadyTraces.size > 256) accountNotReadyTraces.delete(key);
+  for (const [key, value] of blockedWebTraces) {
+    if (now - value.at > WEB_BLOCK_REPLAY_MS || blockedWebTraces.size > 256) blockedWebTraces.delete(key);
   }
-  accountNotReadyTraces.set(traceId, { message, at: now });
+  blockedWebTraces.set(traceId, { message, at: now, ...failure });
 }
-function recentAccountNotReady(traceId: string): string | undefined {
-  const entry = accountNotReadyTraces.get(traceId);
+function takeRecentWebTurnBlock(traceId: string): BlockedWebTurn | undefined {
+  const entry = blockedWebTraces.get(traceId);
   if (!entry) return undefined;
   // Consume it: Codex's automatic replay ends here, while a later deliberate retry reaches the
-  // launcher again, which re-checks the account for the same never-sent execution.
-  accountNotReadyTraces.delete(traceId);
-  return Date.now() - entry.at <= ACCOUNT_NOT_READY_REPLAY_MS ? entry.message : undefined;
+  // launcher again, which re-checks the account and retains any rejected submission's ownership.
+  blockedWebTraces.delete(traceId);
+  return Date.now() - entry.at <= WEB_BLOCK_REPLAY_MS ? entry : undefined;
 }
 
 export async function modelsRequest(
@@ -511,11 +513,14 @@ export async function responseRequest(
     if (!message.includes("requires native Codex turn_id metadata")
       && !message.includes("requires a current-turn user message")) throw error;
   }
-  const notReady = traceId ? recentAccountNotReady(traceId) : undefined;
+  const notReady = traceId ? takeRecentWebTurnBlock(traceId) : undefined;
   if (notReady) {
-    // The launcher proved before dispatch that this turn's account cannot run it. Codex retries
-    // a streamed failure; answering its replay with HTTP 400 ends the retries with the cause.
-    return formatErrorResponse(400, "invalid_request_error", notReady);
+    // The account was unready or the browser rejected this exact turn. Codex retries unknown
+    // streamed codes and HTTP 403. HTTP 400 marks this replay invalid; retain the real provider
+    // status and permission-error code in the body instead of relabelling it as a prompt fault.
+    return Response.json({ error: { type: notReady.type, code: notReady.code, message: notReady.message,
+      ...(notReady.upstreamStatus !== undefined ? { upstream_status: notReady.upstreamStatus } : {}) } },
+      { status: notReady.status });
   }
   const cancelledError = traceId ? chatGptTurnSessions.cancelledError(traceId) : undefined;
   if (cancelledError) {
@@ -577,7 +582,14 @@ export async function responseRequest(
         }
       }
       if (traceId && event.type === "error" && event.code === "account_not_ready") {
-        rememberAccountNotReady(traceId, event.message);
+        rememberWebTurnBlock(traceId, event.message);
+      }
+      if (traceId && event.type === "error" && event.code === "chatgpt_security_check"
+        && event.retryable === false && event.status === 403) {
+        // Codex retries unknown streamed error codes even when retryable is false.
+        // Its replay must stop before another browser send; the provider's 403 stays in the body.
+        rememberWebTurnBlock(traceId, event.message,
+          { status: 400, type: "permission_error", code: event.code, upstreamStatus: 403 });
       }
       options.onAdapterEvent?.(event);
       queue.push(event);
@@ -600,7 +612,7 @@ export async function responseRequest(
       const event: AdapterEvent = notReady
         ? { type: "error", message: error.message, status: error.status, errorType: error.errorType, code: error.code, retryable: false }
         : { type: "error", message: error instanceof Error ? error.message : String(error) };
-      if (traceId && notReady) rememberAccountNotReady(traceId, error.message);
+      if (traceId && notReady) rememberWebTurnBlock(traceId, error.message);
       deliverEvent(event);
     } finally {
       queue.close();

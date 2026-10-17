@@ -1,12 +1,16 @@
 import { expect, test } from "bun:test";
 import { captureExistingChromeLogin } from "../src/existing-chrome-login";
 
-test("profile capture without a CDP context ID stays on the exact owned claim target", async () => {
+for (const approvalDelayMs of [0, 250]) {
+test(`profile capture preserves its owned target after a ${approvalDelayMs} ms permission wait`, async () => {
   const nonce = "a".repeat(32), targetId = "c".repeat(32);
   const claim = { version: 1 as const, nonce, url: `http://127.0.0.1:15431/nekodex-profile-claim-v1/${nonce}`, openedAt: new Date().toISOString() };
   const methods: string[] = [], attachments: string[] = [];
   const browser = Bun.serve({ hostname: "127.0.0.1", port: 0,
-    fetch(req, server) { if (server.upgrade(req)) return undefined; return new Response("", { status: 404 }); },
+    async fetch(req, server) {
+      if (approvalDelayMs) await new Promise(resolve => setTimeout(resolve, approvalDelayMs));
+      if (server.upgrade(req)) return undefined; return new Response("", { status: 404 });
+    },
     websocket: { message(socket, message) {
       const request = JSON.parse(String(message)); methods.push(request.method);
       let result: unknown;
@@ -20,11 +24,32 @@ test("profile capture without a CDP context ID stays on the exact owned claim ta
     } },
   });
   try {
-    const captured = await captureExistingChromeLogin({ consent: true, timeoutMs: 2_000,
+    const captured = await captureExistingChromeLogin({ consent: true, timeoutMs: approvalDelayMs ? 150 : 2_000,
       discoveryData: Promise.resolve(`${browser.port}\n/devtools/browser/bbbbbbbb-bbbb-4bbb-abbb-bbbbbbbbbbbb\n`), profileClaim: Promise.resolve(claim) });
     expect(captured.storageState.cookies[0]?.value).toBe("selected-profile-only");
     expect(attachments).toEqual([targetId]);
     expect(methods).not.toContain("Target.createTarget");
     expect(methods.at(-1)).toBe("Target.closeTarget");
   } finally { await browser.stop(true); }
+});
+}
+
+test("pending Chrome permission remains cancellable without opening another target", async () => {
+  const controller = new AbortController();
+  let handshakes = 0;
+  const browser = Bun.serve({hostname: "127.0.0.1", port: 0,
+    async fetch() {
+      handshakes += 1;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return new Response("", {status: 403});
+    },
+  });
+  try {
+    const capture = captureExistingChromeLogin({consent: true, signal: controller.signal, timeoutMs: 50,
+      discoveryData: Promise.resolve(`${browser.port}\n/devtools/browser/bbbbbbbb-bbbb-4bbb-abbb-bbbbbbbbbbbb\n`),
+      onProgress: progress => {if (progress.phase === "waiting-for-chrome") setTimeout(() => controller.abort(), 20);},
+    });
+    await expect(capture).rejects.toMatchObject({code: "cancelled"});
+    expect(handshakes).toBe(1);
+  } finally {await browser.stop(true);}
 });

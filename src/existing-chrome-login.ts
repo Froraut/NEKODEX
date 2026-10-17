@@ -278,24 +278,23 @@ class RestrictedChromeConnection {
   disconnect() { this.fail("chrome-disconnected"); }
 }
 
-async function connect(endpoint: string, timeoutMs: number, signal?: AbortSignal): Promise<RestrictedChromeConnection> {
+async function connect(endpoint: string, signal?: AbortSignal): Promise<RestrictedChromeConnection> {
   if (signal?.aborted) throw failure("cancelled");
   return await new Promise((resolve, reject) => {
     const socket = new WebSocketClient(endpoint, {
       followRedirects: false, perMessageDeflate: false, maxPayload: MAX_FRAME_BYTES,
-      // Our timer produces a stable permission-timeout code; the transport deadline is a backup.
-      handshakeTimeout: timeoutMs + 1000, maxRedirects: 0,
+      // Chrome holds this handshake while its native Allow dialog is open. The user's
+      // decision has no deadline; cancellation and transport failure still settle it.
+      maxRedirects: 0,
     });
     let settled = false;
     const finish = (code?: ExistingChromeLoginErrorCode) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       if (code) { socket.terminate(); reject(failure(code)); }
       else resolve(new RestrictedChromeConnection(socket));
     };
-    const timer = setTimeout(() => finish("chrome-permission-timeout"), timeoutMs);
     const abort = () => finish("cancelled");
     signal?.addEventListener("abort", abort, { once: true });
     socket.once("open", () => finish());
@@ -314,7 +313,7 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
   if (options.consent !== true) throw failure("consent-required");
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw failure("invalid-response");
-  const deadline = Date.now() + timeoutMs;
+  let deadline = Date.now() + timeoutMs;
   const check = () => {
     if (options.signal?.aborted) throw failure("cancelled");
     const remaining = deadline - Date.now();
@@ -333,7 +332,10 @@ export async function captureExistingChromeLogin(options: ExistingChromeLoginOpt
     : discoverEndpoint(existingChromePortFile());
   const profileClaim = await selectedProfileClaim(options.profileClaim, check(), options.signal);
   progress("waiting-for-chrome");
-  const connection = await connect(endpoint, check(), options.signal);
+  const permissionStartedAt = Date.now();
+  const connection = await connect(endpoint, options.signal);
+  // Preserve the network/data-processing budget without charging the time spent in Allow.
+  deadline += Date.now() - permissionStartedAt;
   let targetId: string | undefined;
   let claimTargetId: string | undefined;
   let closing = false;

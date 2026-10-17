@@ -184,7 +184,9 @@ export async function setChatGptThinkMode(
 
 export class ChatGptModelSelectionController {
   constructor(private readonly dependencies: ModelSelectionDependencies) {}
-  private readonly effortSelections = new WeakMap<Page, { label: string; url: string; effort: ChatGptWebModelMode["effort"] }>();
+  private readonly effortSelections = new WeakMap<Page, {
+    label: string; url: string; effort: ChatGptWebModelMode["effort"]; modelVersion?: ChatGptWebModelFamily;
+  }>();
   private readonly observedProVersions = new WeakMap<Page, ChatGptWebModelFamily>();
   private readonly validatedPinnedVersions = new WeakMap<Page, ChatGptWebModelFamily>();
 
@@ -284,9 +286,21 @@ export class ChatGptModelSelectionController {
     await this.dependencies.throwIfChatGptRateLimitDialog(page);
     await captureDiagnostic?.("effort-control-ready");
     await this.dependencies.throwIfChatGptRateLimitDialog(page);
-    let activation = await activateChatGptEffortMenu(page, currentEffort);
     // Multipart preparation uses a lower effort, but must stay on the parent's pinned version.
     const modelVersion = stageModelVersion ?? mode.modelVersion;
+    const retained = this.effortSelections.get(page);
+    if (retained?.effort === mode.effort && retained.modelVersion === modelVersion
+      && retained.url === page.url() && retained.label
+      && await currentEffort.count() === 1
+      && (await currentEffort.innerText()).trim() === retained.label
+      && await currentEffort.getAttribute("aria-expanded") === "false"
+      && await composer.isEditable()) {
+      // This avoids reselecting an unchanged picker on every follow-up. The live family,
+      // slider value and account availability are still checked by verifyBeforeSend.
+      await captureDiagnostic?.("effort-retained");
+      return mode;
+    }
+    let activation = await activateChatGptEffortMenu(page, currentEffort);
     if (modelVersion) {
       try {
         activation = await selectChatGptModelFamily(page, currentEffort, activation, modelVersion, abortSignal);
@@ -394,7 +408,7 @@ export class ChatGptModelSelectionController {
     await captureDiagnostic?.("effort-selected");
     await page.keyboard.press("Escape");
     await this.awaitEffortMenuClosed(page);
-    this.effortSelections.set(page, { label: (await currentEffort.innerText()).trim(), url: page.url(), effort: mode.effort });
+    this.effortSelections.set(page, { label: (await currentEffort.innerText()).trim(), url: page.url(), effort: mode.effort, modelVersion });
     await this.assertEffortSurface(page, mode.effort);
     let confirmation = await activateChatGptEffortMenu(page, currentEffort);
     try {

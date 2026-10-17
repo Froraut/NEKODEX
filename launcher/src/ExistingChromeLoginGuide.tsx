@@ -30,10 +30,10 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
   }, [copied]);
   useEffect(() => {
     setNow(Date.now());
-    if (!progress.active) return;
+    if (!progress.active || ["consent", "file-access", "waiting-for-chrome"].includes(progress.phase)) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [progress.active, progress.startedAt]);
+  }, [progress.active, progress.startedAt, progress.phase, progress.deadlineAt]);
   const seconds = Math.max(0, Math.ceil((Date.parse(progress.deadlineAt) - now) / 1000));
   const remaining = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   const terminal = !progress.active && progress.phase !== "completed";
@@ -103,7 +103,8 @@ export function ExistingChromeLoginGuide({ progress, copy, onRetry, setError, tr
       <p><span>{copy.existingChromeAddress}:</span> <code className="nk-type-code">chrome://inspect/#remote-debugging</code></p>
       {copyButton}
     </div> : null}
-    {progress.active && settings ? <p className="browser-guide__meta">{copy.existingChromeRemaining.replace("{time}", remaining)}</p> : null}
+    {progress.active && settings && !["consent", "file-access", "waiting-for-chrome"].includes(progress.phase)
+      ? <p className="browser-guide__meta">{copy.existingChromeRemaining.replace("{time}", remaining)}</p> : null}
     {progress.active && progress.phase === "preparing" ? <p className="browser-guide__meta">{copy.existingChromeHandoffRemaining.replace("{time}", remaining)}</p> : null}
     {/* The next step comes first: allow file access, else retry; then the other ways forward. */}
     <div className="browser-guide__actions">

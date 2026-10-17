@@ -39,3 +39,23 @@ test("Codex's automatic replay of an unready-account turn ends with HTTP 400; a 
   await send();
   expect(attempts).toBe(2);
 });
+
+test("a browser security denial stops Codex replay and preserves the upstream 403", async () => {
+  const body = turnBody();
+  let attempts = 0;
+  const adapterFactory = () => ({ runTurn: async (_parsed: unknown, _incoming: unknown, emit: (event: unknown) => void) => {
+    attempts += 1;
+    emit({ type: "error", message: "Complete the browser security check.", status: 403,
+      errorType: "permission_error", code: "chatgpt_security_check", retryable: false });
+  } });
+  const send = () => responseRequest(new Request("http://127.0.0.1/v1/responses", { method: "POST", body,
+    headers: { "content-type": "application/json", authorization: "Bearer test" } }), defaultConfig(), adapterFactory as never);
+  const first = await send();
+  expect(first.status).toBe(200);
+  expect(await first.text()).toContain('"code":"chatgpt_security_check"');
+  const replay = await send();
+  expect(replay.status).toBe(400);
+  expect(await replay.json()).toEqual({ error: { type: "permission_error", code: "chatgpt_security_check",
+    message: "Complete the browser security check.", upstream_status: 403 } });
+  expect(attempts).toBe(1);
+});
