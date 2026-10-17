@@ -547,7 +547,9 @@ class BrowserTurnLifecycle {
     if (status === "completed") {
       this.logger.info("browser.tab_completed", { tabId: tab.id, traceId });
     }
-    if (status !== 'completed' && !cancelledByUser && tab.taskRecordId) {
+    const unsent = status !== 'completed' && !cancelledByUser && tab.taskRecordId
+      && this.context.ledger.get?.(tab.taskRecordId)?.submission === 'not-sent';
+    if (status !== 'completed' && !cancelledByUser && tab.taskRecordId && !unsent) {
       // Preserve the exact document for inspection. It is not a reusable continuation and
       // cannot be silently reclaimed as an ordinary completed tab.
       publishBrowserSnapshot(this.presentation); this.presentation.writeDescriptor();
@@ -568,7 +570,9 @@ class BrowserTurnLifecycle {
     }
     // A browser tab represents an active Codex turn, not durable task history. The result already
     // lives in Codex, so release the terminal browser document without touching concurrent turns.
+    // A never-sent failure has nothing to inspect; releasing it lets Codex retry the same turn.
     this.removeTurnTab(tab, false);
+    if (unsent) releaseResult.releasedUnsent = true;
     if (hideAfterTurn && !this.context.activeTraceId) this.presentation.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
     return releaseResult;

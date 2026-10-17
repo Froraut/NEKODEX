@@ -152,12 +152,20 @@ class BrowserAdmissionQueue {
     if (row) {
       if (row.fingerprint !== hash) throw new Error('Queued task requirements changed for the same execution');
       const readinessFailed = row.status === 'failed' && Boolean(row.admissionBlocker);
-      if (!readinessFailed && row.request.helperPid !== input.helperPid && (!row.needsOwner || this.alive(row.request.helperPid))) throw new Error('Queued task belongs to another live helper');
+      // The ledger proved the previous attempt never reached ChatGPT (for example a crashed
+      // page that has since been reloaded). Codex retries the same execution; let it run.
+      const unsentRetry = row.status === 'finished' && row.notSent === true;
+      if (!readinessFailed && !unsentRetry && row.request.helperPid !== input.helperPid && (!row.needsOwner || this.alive(row.request.helperPid))) throw new Error('Queued task belongs to another live helper');
       if (readinessFailed && row.blockerReported) {
         // The failed attempt already returned its cause. A later attempt for the same never-sent
         // execution, typically a retry after the user fixed the account, gets a fresh check.
         Object.assign(row, { status: 'waiting', reason: 'checking', admissionBlocker: undefined, blockerAccountId: undefined,
           blockerReported: false, blocker: undefined, notReadySince: undefined, retryAt: undefined, needsOwner: false, lastSeen: this.clock() });
+        row.request.helperPid = input.helperPid; this.save(); this.publish();
+      } else if (unsentRetry) {
+        Object.assign(row, { status: 'waiting', reason: 'checking', notSent: undefined, result: undefined,
+          admissionBlocker: undefined, blockerAccountId: undefined, blockerReported: false, blocker: undefined,
+          notReadySince: undefined, retryAt: undefined, needsOwner: false, lastSeen: this.clock() });
         row.request.helperPid = input.helperPid; this.save(); this.publish();
       } else if (row.needsOwner && ['waiting', 'paused'].includes(row.status)) {
         // A live owner that only missed polls (for example while the Mac slept) continues. Work
@@ -288,6 +296,12 @@ class BrowserAdmissionQueue {
     if (typeof traceId !== 'string' || !tracePattern.test(traceId) || !Number.isSafeInteger(helperPid) || helperPid < 1) throw new Error('Invalid queue cancellation owner');
     const row = this.entries.find(item => item.request.traceId === traceId);
     if (row && row.request.helperPid !== helperPid) throw new Error('Queue cancellation owner mismatch');
+    // A row that already ended has nothing left to cancel. Journaling its owner here would make
+    // every later attempt of the same execution fail as "cancelled before admission".
+    if (row && ['interrupted', 'finished'].includes(row.status)) return { cancelled: false, notSent: row.notSent === true, terminal: true };
+    if (row && row.status === 'failed' && !(row.admissionBlocker || row.terminalFailure?.workStarted === false)) {
+      return { cancelled: false, notSent: false, terminal: true };
+    }
     if (this.cancelledOwners.size >= 4096) this.cancelledOwners = new Set([...this.cancelledOwners].filter(key => this.alive(Number(key.split(':')[0]))));
     if (this.cancelledOwners.size >= 4096) throw new Error('Pending cancellation journal is full');
     this.cancelledOwners.add(`${helperPid}:${traceId}`); this.save();
@@ -296,7 +310,6 @@ class BrowserAdmissionQueue {
     }
     // An audited predispatch failure proves that nothing reached ChatGPT.
     if (row.status === 'failed' && (row.admissionBlocker || row.terminalFailure?.workStarted === false)) return { cancelled: true, notSent: true };
-    if (['interrupted', 'failed', 'finished'].includes(row.status)) return { cancelled: false, notSent: false };
     if (row.status === 'admitted' || row.status === 'running') {
       const released = await this.releaseUnsent(row.request);
       if (!released) return { cancelled: false, notSent: false };
@@ -336,10 +349,11 @@ class BrowserAdmissionQueue {
     if (row.status === 'admitted') { row.status = 'running'; this.save(); this.publish(); }
     return { acknowledged: true };
   }
-  retire(traceId, helperPid) {
+  retire(traceId, helperPid, notSent = false) {
     const row = this.entries.find(item => item.request.traceId === traceId && item.request.helperPid === helperPid);
     if (row && ['admitted', 'running'].includes(row.status)) {
       row.status = 'finished';
+      if (notSent === true) row.notSent = true;
       // The task result is already authoritative. A queue-history write failure must
       // disable admission and surface storageIssue, not discard a completed answer.
       try { this.save(); } catch { /* save records the storage failure */ }

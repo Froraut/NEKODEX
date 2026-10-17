@@ -1833,12 +1833,13 @@ class AccountBrowserPool {
     const settledFailureCode = settledStatus === 'failed' && result?.authenticationRequired
       ? 'chatgpt_sign_in_required' : failureCode;
     // A failed turn may retain its inspection surface; host end must succeed before refund.
-    if (tab && owner.turnTabs.get(tab.id) === tab
+    const unsent = Boolean(tab && (owner.turnTabs.get(tab.id) === tab || result?.releasedUnsent === true)
       && owner.taskLedger?.get(tab.taskRecordId)?.terminal
-      && owner.taskLedger.get(tab.taskRecordId).submission === 'not-sent') this.rollbackUnsentAdmission(traceId, helperPid);
+      && owner.taskLedger.get(tab.taskRecordId).submission === 'not-sent');
+    if (unsent) this.rollbackUnsentAdmission(traceId, helperPid);
     const pendingRemoval = this.unsentAdmissions?.get(traceId)?.removedOwner;
     if (pendingRemoval) this.settleRemovedUnsentAdmission(pendingRemoval);
-    this.admissionQueue?.retire(traceId, helperPid);
+    this.admissionQueue?.retire(traceId, helperPid, unsent && settledStatus !== 'aborted');
     this.recordUsage(() => this.usage.finish(traceId, helperPid, settledStatus, undefined, settledFailureCode));
     // A completed tool result proves availability on the same identity that started
     // the turn. Never carry it to a changed sign-in or a newly selected connector.

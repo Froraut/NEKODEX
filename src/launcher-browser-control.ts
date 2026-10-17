@@ -392,8 +392,10 @@ export async function notifyLauncherTurn(
     for (let attempt = 0; attempt < 8; attempt++) {
       const response = await postLauncherControl(descriptor, '/v1/turn/start-cancel',
         JSON.stringify({ traceId: activity.traceId, helperPid: activity.helperPid }), AbortSignal.timeout(2500));
-      const receipt = await response.json() as { cancelling?: boolean; cancelled?: boolean; notSent?: boolean };
+      const receipt = await response.json() as { cancelling?: boolean; cancelled?: boolean; notSent?: boolean; terminal?: boolean };
       if (response.status === 202 && receipt.cancelling) { await new Promise(resolve => setTimeout(resolve, 250)); continue; }
+      // The queue row already ended: nothing is left to clean up and the original error stands.
+      if (response.ok && receipt.terminal === true) return;
       if (!response.ok || receipt.cancelled !== true || receipt.notSent !== true) throw new Error('Queued task cancellation was not confirmed; inspect Task center before retrying');
       return;
     }
@@ -539,7 +541,8 @@ export async function notifyLauncherTurn(
     // retry into "cancelled before admission" instead of repeating the actionable cause.
     if (error instanceof LauncherAccountNotReadyError) throw error;
     try { await cancelAdmission(); } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], 'Browser admission did not finish cleanly; inspect Task center before retrying');
+      const cause = error instanceof Error ? error.message : String(error);
+      throw new AggregateError([error, cleanupError], `Browser admission did not finish cleanly (${cause}); inspect Task center before retrying`);
     }
     throw error;
   }

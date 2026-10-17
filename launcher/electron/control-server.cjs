@@ -522,7 +522,9 @@ class BrowserControlServer {
             body.failureCode,
             body.status === "completed" && body.toolProof ? { tool: body.toolProof.tool } : undefined,
           );
-          this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
+          this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status,
+            ...(body.status === "failed" && typeof body.failureCode === "string" ? { failureCode: body.failureCode } : {}),
+            ...(body.status === "failed" && typeof body.message === "string" ? { message: body.message.slice(0, 400) } : {}) });
           return { ok: true, ...release };
         });
         writeJson(response, 200, result);
