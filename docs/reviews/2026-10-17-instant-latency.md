@@ -42,11 +42,16 @@ already-running account.
 
 With accounts ready, the same full input (32,371 input tokens) produced:
 
-| Boundary | Baseline | Updated |
+| Boundary | Baseline 6.1.32.3 | Final 6.1.32.5 |
 | --- | ---: | ---: |
-| Gateway request to first text | 12.742 s | 10.941 s |
-| Fresh CLI start to first text | 16.071 s | 14.842 s |
-| Fresh CLI start to completion | 16.187 s | 15.584 s |
+| Gateway request to first text | 12.742 s | 10.889 s |
+| Fresh CLI start to first text | 16.071 s | 13.566 s |
+| Fresh CLI start to completion | 16.187 s | 14.302 s |
+
+These are observed individual runs, not a latency percentile or a provider speed
+guarantee. All three successful comparison runs used 32,371 input tokens; the
+final decoded request was 158,173 bytes. An intermediate warm 6.1.32.4 run took
+10.941 s from gateway request to first text, consistent with the final result.
 
 An ordinary user follow-up in the same retained conversation reached first text
 7.198 s after the gateway request and 10.052 s after starting a fresh CLI. It
@@ -62,3 +67,11 @@ account's sequential initialization. Version 6.1.32-nekodex.5 prioritizes the
 selected account while preserving sequential ownership and all remaining
 account checks. A focused owner-level test verifies that its model/tool readiness
 is available while the background account is still pending.
+
+## Activation and cleanup
+
+Both the installed app and active core were verified on 6.1.32-nekodex.5, with
+native/Web admission, broker and both account tunnels ready. The installed UI
+showed the final successful response. One verified 6.1.32-nekodex.4 rollback
+archive is retained; older task backup bundles, generated app stages and build
+intermediates were removed. The temporary retained-conversation test was archived.
