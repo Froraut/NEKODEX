@@ -1,5 +1,6 @@
 const { createHash } = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { renameAtomicFile } = require("./atomic-file.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
@@ -347,6 +348,40 @@ function compareReleaseVersions(left, right) {
   return 0;
 }
 
+const MAX_SERVICE_DEFINITION_BYTES = 256 * 1024;
+
+// Service definitions outside NEKODEX (a launchd agent or systemd user unit for a local
+// gateway, say) may run a runtime's bundled Bun by its versioned path. Removing that
+// version makes the service fail at its next start, typically the next login, so any
+// version such a definition names is kept.
+function externallyReferencedRuntimeVersions({
+  coreHome, home = os.homedir(), platform = process.platform, arch = process.arch,
+  directories = platform === "darwin" ? [path.join(home, "Library", "LaunchAgents")]
+    : platform === "linux" ? [path.join(home, ".config", "systemd", "user")] : [],
+}) {
+  const prefix = `${path.join(coreHome, "versions")}${path.sep}`;
+  const suffix = `-${platform}-${arch}`;
+  const versions = new Set();
+  for (const directory of directories) {
+    let names;
+    try { names = fs.readdirSync(directory); } catch { continue; }
+    for (const name of names) {
+      let text;
+      try {
+        const file = path.join(directory, name);
+        const stat = fs.statSync(file);
+        if (!stat.isFile() || stat.size > MAX_SERVICE_DEFINITION_BYTES) continue;
+        text = fs.readFileSync(file, "utf8");
+      } catch { continue; }
+      for (let index = text.indexOf(prefix); index >= 0; index = text.indexOf(prefix, index + 1)) {
+        const entry = text.slice(index + prefix.length).split(/[/\\<"'\s]/, 1)[0];
+        if (entry.endsWith(suffix)) versions.add(entry.slice(0, -suffix.length));
+      }
+    }
+  }
+  return [...versions];
+}
+
 // Every release leaves a ~150 MB runtime under versions/. Keep the versions that
 // something may still execute (the app's own, the configured one, a pending
 // generation's endpoints) plus the newest older release for a manual rollback,
@@ -413,6 +448,7 @@ function pruneRuntimeVersions({
 module.exports = {
   compareReleaseVersions,
   ensurePackagedRuntime,
+  externallyReferencedRuntimeVersions,
   installedRuntimeRoot,
   pruneRuntimeVersions,
   validateRuntimeBundle,

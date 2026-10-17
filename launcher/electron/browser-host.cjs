@@ -87,6 +87,7 @@ const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Ch
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
 const { DEFAULT_BROWSER_CAPACITY, validateBrowserCapacity } = require("./browser-capacity.cjs");
+const { cancelSessionRecheck, syncSessionRecheck } = require("./session-recheck.cjs");
 const INTERACTION_MODE_CHANGE_OPERATION = "browser interaction mode change";
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 800, height: 600 });
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
@@ -1811,6 +1812,11 @@ class BrowserHost {
       surfaceActive: this.surfaceActive,
     };
     publishBrowserSnapshot(this);
+    syncSessionRecheck(this);
+  }
+
+  sessionRecheckEnabled() {
+    return browserInteractionModeFor(this) === "automatic";
   }
 
   retireAuthenticatedIdentity() {
@@ -3777,6 +3783,7 @@ class BrowserHost {
     this.destroyed = true;
     clearTimeout(this.authenticationRefreshTimer);
     clearTimeout(this.networkEgressRecheckTimer);
+    cancelSessionRecheck(this);
     if (this.authenticationCookieListener && !this.view.webContents.isDestroyed()) {
       this.view.webContents.session.cookies.off("changed", this.authenticationCookieListener);
     }
