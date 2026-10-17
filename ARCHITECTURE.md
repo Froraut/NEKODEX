@@ -180,6 +180,11 @@ collapsed user messages use a compiler-owned token or structured text after expa
 retained-history anchors avoid mistaking older remounted rows for new submissions.
 Answer text, HTML and markdown segments share sanitized roots so hidden suggestion
 sizing labels cannot contaminate delivery or its fingerprint.
+The worker may mark a stable final paragraph streamable after the owned response stream
+stops and completed-turn actions render. Markdown retains its normal stability and
+mutable-reference guards; the completion tracker and broker fence still own terminal
+delivery and wait for tool work. Picker selection checks live state before closing, then
+verifies persisted family/effort immediately before Send, without an intermediate reopening.
 
 Connector approval cards remain owned by the user when automatic approval is disabled.
 The page guard never denies them on a timer; it keeps cancellation and heartbeats active

@@ -210,7 +210,6 @@ export class ChatGptModelSelectionController {
    * assertEffortSurface still verifies the exact selection afterwards.
    */
   private async awaitEffortMenuClosed(page: Page): Promise<void> {
-    await this.dependencies.settleChatGptUi();
     const deadline = Date.now() + 3_000;
     for (;;) {
       const composer = await this.dependencies.activeComposer(page, 1_000).catch(() => undefined);
@@ -282,10 +281,8 @@ export class ChatGptModelSelectionController {
     } finally {
       effortWaitAbort.abort();
     }
-    await this.dependencies.settleChatGptUi();
     await this.dependencies.throwIfChatGptRateLimitDialog(page);
     await captureDiagnostic?.("effort-control-ready");
-    await this.dependencies.throwIfChatGptRateLimitDialog(page);
     // Multipart preparation uses a lower effort, but must stay on the parent's pinned version.
     const modelVersion = stageModelVersion ?? mode.modelVersion;
     const retained = this.effortSelections.get(page);
@@ -385,7 +382,6 @@ export class ChatGptModelSelectionController {
         },
         press: (key, options) => sliderControl.press(key, options),
       });
-      await this.dependencies.settleChatGptUi();
       await this.dependencies.throwIfChatGptSessionFailureAlert(page);
       await this.dependencies.throwIfChatGptRateLimitDialog(page);
       await this.dependencies.throwIfChatGptEffortCapabilityDialog(page, mode, abortSignal);
@@ -410,21 +406,8 @@ export class ChatGptModelSelectionController {
     await this.awaitEffortMenuClosed(page);
     this.effortSelections.set(page, { label: (await currentEffort.innerText()).trim(), url: page.url(), effort: mode.effort, modelVersion });
     await this.assertEffortSurface(page, mode.effort);
-    let confirmation = await activateChatGptEffortMenu(page, currentEffort);
-    try {
-      const confirmed = await readChatGptEffortSnapshot(confirmation.sliderContainer);
-      if (confirmed.min !== sliderState.min || confirmed.value !== targetValue
-        || (confirmed.available && !confirmed.available[uiEffortIndex])) {
-        throw chatGptModelControlUnavailableAdapterError("ChatGPT did not persist the requested effort after closing its menu");
-      }
-      if (modelVersion) {
-        confirmation = await assertSelectedChatGptModelFamily(page, currentEffort, confirmation, modelVersion, abortSignal);
-        await assertChatGptSelectedModelVersion(page, confirmation.slider, modelVersion, mode.effort === "max", mode.effort, 1_000,
-          stageMayRunOtherVersion(confirmation, mode));
-      }
-    } finally { await page.keyboard.press("Escape"); }
-    await this.awaitEffortMenuClosed(page);
-    await this.assertEffortSurface(page, mode.effort);
+    // verifyBeforeSend independently reopens the persisted family/effort after prompt and
+    // connector attachment. Reopening here adds a redundant menu cycle before those changes.
     return mode;
   }
 
