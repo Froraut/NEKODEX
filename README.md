@@ -103,7 +103,7 @@ NEKODEX is an unofficial integration. ChatGPT processes prompts remotely; accoun
 
 ## Develop
 
-Development requires Bun 1.4.0. Node.js runs the development UI server. The DEV launcher uses isolated configuration and browser storage.
+Development requires Bun 1.4.3. Node.js runs the development UI server. The DEV launcher uses isolated configuration and browser storage.
 
 ```bash
 git clone https://github.com/Froraut/NEKODEX.git nekodex

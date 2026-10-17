@@ -14,7 +14,7 @@
   "bugs": {
     "url": "https://github.com/Froraut/NEKODEX/issues"
   },
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.3",
   "type": "module",
   "bin": {
     "codex-chatgpt-web": "./src/cli.ts"
@@ -60,34 +60,34 @@
   },
   "dependencies": {
     "@mixmark-io/domino": "2.2.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "chromium-bidi": "12.1.0",
     "fflate": "^0.8.2",
-    "playwright-core": "^1.62.0",
+    "playwright-core": "^1.64.1",
     "tiktoken": "1.0.22",
     "toml-eslint-parser": "1.0.3",
-    "turndown": "7.2.0",
+    "turndown": "7.2.4",
     "turndown-plugin-gfm": "1.0.2",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/bun": "1.4.0",
-    "@types/turndown": "5.0.5",
-    "typescript": "5.9.3"
+    "@types/bun": "1.4.3",
+    "@types/turndown": "5.0.6",
+    "typescript": "7.0.2"
   },
   "engines": {
-    "bun": "1.4.0"
+    "bun": "1.4.3"
   },
   "overrides": {
-    "@hono/node-server": "2.0.12",
+    "@hono/node-server": "2.1.5",
     "fast-uri": "3.1.8",
-    "hono": "4.13.5",
-    "ip-address": "10.7.2",
+    "hono": "4.13.13",
+    "ip-address": "10.7.4",
     "proxy-addr": "2.0.8",
-    "qs": "6.16.0",
-    "zod-to-json-schema": "3.25.1"
+    "qs": "6.16.1",
+    "zod-to-json-schema": "3.25.2"
   },
   "keywords": [
     "codex",

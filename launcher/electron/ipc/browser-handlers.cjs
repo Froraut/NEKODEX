@@ -70,8 +70,8 @@ function registerBrowserHandlers({
     const browser = await getBrowserHost().allowExistingChromeFileAccess(signal => selectChromeConnectionFile(signal));
     return browser;
   });
-  handle("launcher:browser-existing-chrome-settings-copy", () => {
-    copyChromeSettingsAddress();
+  handle("launcher:browser-existing-chrome-settings-copy", async () => {
+    await copyChromeSettingsAddress();
     return true;
   });
   handle("launcher:browser-logout", async () => {
