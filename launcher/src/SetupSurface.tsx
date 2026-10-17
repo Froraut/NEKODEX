@@ -98,7 +98,7 @@ export function SetupSurface({
     await api!.openLogin();
   });
   const useExistingChrome = !manualInteraction && ["darwin", "win32", "linux"].includes(snapshot.platform)
-    && (!browser?.accountId || browser.accountId === "default");
+    && (snapshot.platform === "darwin" || !browser?.accountId || browser.accountId === "default");
   const openExistingChromeLogin = () => run(async () => {
     await activateBrowser(false);
     await api!.openExistingChromeLogin();
@@ -202,7 +202,8 @@ export function SetupSurface({
   const optional = <Badge tone="outline">{copy.optional}</Badge>;
 
   const installAction = confirmPending ? confirmModels : catalogPending ? showTroubleshooting : install;
-  const installDisabled = busy || toolsFirst || (confirmPending && pendingContext) || (!manualInteraction && !browser?.authenticated)
+  const installDisabled = busy || toolsFirst || (confirmPending && pendingContext)
+    || (!manualInteraction && !browser?.authenticated && !snapshot.state.coreSetupComplete)
     || (!snapshot.state.coreSetupComplete && !snapshot.smokePassed && !manualInteraction);
   // Codex reads the catalog only at startup; until the picker is confirmed, a changed list needs a restart.
   const confirmBody = snapshot.state.codexRestartRequired === true ? copy.setupConfirmRestartBody : copy.setupConfirmBody;
@@ -287,7 +288,7 @@ export function SetupSurface({
               title={copy.stepAccount}
             />
             <SetupRow
-              actions={<Button disabled={busy || !browser?.authenticated} onClick={smoke} size="sm" variant={variant("smoke")}>
+              actions={<Button disabled={busy || !browser || browser.authenticationStatus === "signed-out"} onClick={smoke} size="sm" variant={variant("smoke")}>
                 {copy.runSmoke}
               </Button>}
               complete={complete.smoke}

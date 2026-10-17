@@ -43,9 +43,13 @@ function newWebSessionReservationId(accountId, traceId, nonce = randomUUID()) {
 /** One browser session per account; shared global capacity and sticky conversation routing. */
 /**
  * Why an account's model evidence rejects a requirement: 'unchecked' when there is no evidence to
- * decide, 'model' when the evidence lacks the requested model or level, null when it allows it.
+ * decide, 'model' when the evidence lacks the requested model or level. Selected
+ * and pinned accounts bypass cached evidence, leaving availability to the live picker.
  */
 function capabilityRejection(pool, id, requirement, mode) {
+  // Cached discovery helps choose an account; an explicitly chosen account can prove
+  // its requested model and effort in the worker's exact pre-send picker check.
+  if (mode === 'selected') return null;
   const caps = pool.capabilities.get(id);
   const missing = caps ? 'model' : 'unchecked';
   const family = taskModelFamily(requirement?.requestedModel);
@@ -468,15 +472,15 @@ class AccountBrowserPool {
     }
   }
   setAccountSafety(id, policy) {
-    const host = this.getHost(id);
-    this.assertAccountOperationAvailable(id);
-    if (host.activeTraceId || host.currentOperation()) throw new Error('Wait for account activity before changing pacing');
+    if (this.destroyed) throw new Error('ChatGPT account pool is closed');
+    validateAccountId(id);
+    if (!this.registry.snapshot().accounts.some(account => account.id === id)) throw new Error('Unknown ChatGPT account');
     this.safety.setPolicy(id, policy); this.publish(); return this.accountSnapshot();
   }
   resumeAccount(id) {
-    const host = this.getHost(id);
-    this.assertAccountOperationAvailable(id);
-    if (host.activeTraceId || host.currentOperation()) throw new Error('Wait for account activity before resuming');
+    if (this.destroyed) throw new Error('ChatGPT account pool is closed');
+    validateAccountId(id);
+    if (!this.registry.snapshot().accounts.some(account => account.id === id)) throw new Error('Unknown ChatGPT account');
     this.safety.resume(id); this.publish(); return this.accountSnapshot();
   }
   evidenceEpoch(id) { return this.evidenceEpochs.get(id) ?? 0; }
@@ -1325,8 +1329,10 @@ class AccountBrowserPool {
       const host = this.hosts.get(account.id);
       if (!account.enabled || this.accountOperationLabel(account.id) || this.admissionQueue?.accountPaused(account.id)) return false;
       if (host?.state.authenticated !== true) return false;
-      if (capabilityRejection(this, account.id, requirement, config.mode)) return false;
-      if (requirement?.connector && (this.connectors.get(account.id) !== requirement.connector
+      if (capabilityRejection(this, account.id, requirement, pinned ? 'selected' : config.mode)) return false;
+      // Selected and pinned accounts can prove the connector in the real pre-send browser flow.
+      // Balanced routing still needs prior evidence to choose among accounts automatically.
+      if (requirement?.connector && ((config.mode === 'balanced' && !pinned && this.connectors.get(account.id) !== requirement.connector)
         || (this.accountTunnel(account.id, 'automatic').required === true && !this.accountTunnel(account.id, 'automatic').ready))) return false;
       return true;
     };
@@ -1720,10 +1726,11 @@ class AccountBrowserPool {
       if (tunnel.required === true && tunnel.status === 'unconfigured') return 'account_tunnel_unconfigured';
       if (tunnel.required === true && tunnel.ready !== true) return 'account_tunnel_not_ready';
     }
-    const capability = this.capabilityRejection(id, requirement, config.mode);
+    const pinned = pinnedAccount(this, request.traceId, request.key ?? undefined, requirement).pinned;
+    const capability = this.capabilityRejection(id, requirement, pinned === id ? 'selected' : config.mode);
     if (capability === 'unchecked') return 'account_unchecked';
     if (capability === 'model') return 'account_model_unavailable';
-    if (request.connector && this.connectors.get(id) !== request.connector) return 'account_connector_unverified';
+    if (config.mode === 'balanced' && pinned !== id && request.connector && this.connectors.get(id) !== request.connector) return 'account_connector_unverified';
     return 'account_not_ready';
   }
   releaseUnsentAdmission(request) {
@@ -1829,9 +1836,18 @@ class AccountBrowserPool {
     if (pendingRemoval) this.settleRemovedUnsentAdmission(pendingRemoval);
     this.admissionQueue?.retire(traceId, helperPid);
     this.recordUsage(() => this.usage.finish(traceId, helperPid, settledStatus, undefined, settledFailureCode));
-    // A completed task whose tools returned without an error is the account's tool-execution proof.
-    if (id && settledStatus === 'completed' && connectorBound && toolProof) {
-      try { this.toolProof.record(id, toolProof.tool, owner.authPrincipalFingerprint); }
+    // A completed tool result proves availability on the same identity that started
+    // the turn. Never carry it to a changed sign-in or a newly selected connector.
+    const proofIdentityCurrent = tab && typeof tab.authPrincipalFingerprint === 'string'
+      && tab.authPrincipalFingerprint === owner.authPrincipalFingerprint
+      && tab.authIdentityEpoch === owner.authIdentityEpoch;
+    if (id && settledStatus === 'completed' && connectorBound && toolProof && proofIdentityCurrent) {
+      try {
+        this.toolProof.record(id, toolProof.tool, owner.authPrincipalFingerprint);
+        if (tab.connectorIdentity && tab.connectorIdentity === owner.connectorName()) {
+          this.connectors.set(id, tab.connectorIdentity);
+        }
+      }
       catch (error) {
         this.logger.warn('browser.tool_proof_record_failed', { accountId: id,
           message: error instanceof Error ? error.message : String(error) });

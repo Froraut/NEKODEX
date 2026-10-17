@@ -43,7 +43,18 @@ export function chatGptNewTurnIdentity(
   current: readonly string[],
 ): string | undefined {
   const previous = new Set(initial);
-  const added = current.filter(identity => !previous.has(identity));
+  const observed = new Set(current);
+  const retainedInitial = initial.filter(identity => observed.has(identity));
+  const retainedCurrent = current.filter(identity => previous.has(identity));
+  if (retainedInitial.length !== retainedCurrent.length
+    || retainedInitial.some((identity, index) => identity !== retainedCurrent[index])) {
+    throw new Error("ChatGPT conversation history order changed after Send");
+  }
+  // A retained identity separates restored older history from post-Send turns.
+  // Without that anchor, every unknown identity remains a possible new turn.
+  const anchor = retainedInitial.at(-1);
+  const boundary = anchor === undefined ? -1 : current.lastIndexOf(anchor);
+  const added = current.slice(boundary + 1).filter(identity => !previous.has(identity));
   if (added.length > 1) {
     throw new Error(`ChatGPT exposed ${added.length} new conversation turns for one submitted message`);
   }

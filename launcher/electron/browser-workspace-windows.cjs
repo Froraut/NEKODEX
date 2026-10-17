@@ -12,6 +12,7 @@ const allWindows = new Set();
 const HOME = "https://chatgpt.com/?temporary-chat=true";
 const RESTORE_HOME = "https://chatgpt.com/";
 const SESSION_MUTATION_PATH = /^\/(?:auth|login|logout|sign-in|signin|sign-up|signup|api\/auth)(?:\/|$)/i;
+const abortedNavigation = error => error?.errno === -3 || error?.code === "ERR_ABORTED";
 
 function potentialSessionMutation(value) {
   try {
@@ -53,7 +54,9 @@ class BrowserWorkspaceWindows {
     unregister,
     external,
     beginSessionMutation,
+    ownsSessionMutation,
     onMutationBlocked,
+    onNavigationState,
     onPersistenceError,
     getVerifiedPrincipal = () => null,
     onChanged,
@@ -67,7 +70,7 @@ class BrowserWorkspaceWindows {
   }) {
     Object.assign(this, {
       BrowserWindow, session, accountId, label, allowedUrl, register, unregister, external,
-      beginSessionMutation, onMutationBlocked, onPersistenceError, getVerifiedPrincipal, onChanged, platform, home,
+      beginSessionMutation, ownsSessionMutation, onMutationBlocked, onNavigationState, onPersistenceError, getVerifiedPrincipal, onChanged, platform, home,
       restoreHome, displays, persistLocations, isSessionMutation,
     });
     this.windows = new Set();
@@ -119,6 +122,8 @@ class BrowserWorkspaceWindows {
 
   open({ asTab = false, url = this.home, restored = null, anchorWindow = null } = {}) {
     this.ensureManifestLoaded();
+    const target = restored?.location ?? url;
+    if (!this.allowedUrl(target)) throw new Error("Browser destination is unavailable");
     if (asTab && this.platform !== "darwin") {
       throw new Error("Browser tabs are available on macOS. Open another browser window on this platform.");
     }
@@ -132,16 +137,24 @@ class BrowserWorkspaceWindows {
       ? this.windowMeta.get(anchor)?.groupId
       : `nekodex-browser-${this.accountId}-${randomUUID()}`);
     const bounds = visibleBounds(normalizeBounds(restored?.bounds), this.displays());
-    const win = new this.BrowserWindow(this.options(groupId, bounds));
-    this.bind(win, { id, groupId, preserveOnClose: false });
+    let lease;
+    if (this.isSessionMutation(target) && this.beginSessionMutation) {
+      lease = this.beginSessionMutation({ sourceId: id, reason: "workspace-navigation", url: target });
+    }
+    let win;
+    try {
+      win = new this.BrowserWindow(this.options(groupId, bounds));
+      this.bind(win, { id, groupId, preserveOnClose: false }, lease);
+    } catch (error) {
+      (win && this.mutationLeasesByContents.get(win.webContents) || lease)?.fail?.(error);
+      if (win && !win.isDestroyed()) win.destroy();
+      throw error;
+    }
     if (asTab && anchor && this.platform === "darwin") anchor.addTabbedWindow(win);
-    const target = restored?.location ?? url;
-    win.loadURL(target).then(() => {
+    this.loadWindow(win, target).then(() => {
       if (restored?.maximized) win.maximize?.();
       if (restored?.fullscreen) win.setFullScreen?.(true);
-    }).catch(() => {
-      if (!win.isDestroyed()) win.setTitle(`${this.label} — Page unavailable`);
-    });
+    }).catch(() => {}); // loadWindow publishes the owned navigation failure.
     win.show();
     win.focus();
     this.capture(win);
@@ -154,6 +167,7 @@ class BrowserWorkspaceWindows {
     this.windows.add(win);
     allWindows.add(win);
     this.windowMeta.set(win, meta);
+    meta.navigation = { status: "idle", revision: 0, errorCode: null };
     this.lastWindow = win;
     this.register(contents, win, { workspaceId: meta.id, accountId: this.accountId });
     if (mutationLease) this.bindMutationSettlement(contents, mutationLease);
@@ -189,9 +203,24 @@ class BrowserWorkspaceWindows {
     });
     contents.on("page-title-updated", (event, title) => {
       event.preventDefault();
-      win.setTitle(`${this.label} — ${title || "NEKODEX Browser"}`);
+      meta.documentTitle = title;
+      this.updateWindowTitle(win);
       this.changed();
     });
+    contents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
+      if (mainFrame && !inPlace) this.setNavigationState(win, "loading");
+    });
+    contents.on("did-finish-load", () => {
+      // An error-page finish or a stale renderer event cannot revive a failed navigation.
+      if (this.navigationState(win)?.status === "loading") this.setNavigationState(win, "loaded");
+    });
+    contents.on("did-stop-loading", () => {
+      if (this.navigationState(win)?.status === "loading") this.setNavigationState(win, "idle");
+    });
+    contents.on("did-fail-load", (_event, code, _description, _url, mainFrame) => {
+      if (mainFrame && code !== -3) this.setNavigationState(win, "failed", code);
+    });
+    contents.on("render-process-gone", () => this.setNavigationState(win, "renderer-gone"));
     const navigation = (event, url) => {
       if (!this.allowedUrl(url)) {
         event.preventDefault();
@@ -200,9 +229,10 @@ class BrowserWorkspaceWindows {
       }
       if (!this.isSessionMutation(url) || !this.beginSessionMutation) return;
       // Redirects and provider hops remain inside the lease that already fenced this account.
-      if (this.mutationLeasesByContents.has(contents)) return;
-      event.preventDefault();
-      this.resumeMutationNavigation(contents, meta, url);
+      if (this.ownsContentsMutation(contents, meta.id)) return;
+      // Keep the renderer's original method/body. Replacing this navigation with
+      // loadURL(url) would turn an approved form POST into an unrelated GET.
+      if (!this.beginMutationNavigation(contents, meta, url)) event.preventDefault();
     };
     contents.on("will-navigate", navigation);
     contents.on("will-redirect", (event, url, _inPlace, isMainFrame) => {
@@ -259,6 +289,8 @@ class BrowserWorkspaceWindows {
       }
       const childMeta = { id: randomUUID(), groupId: meta.groupId, preserveOnClose: false };
       this.bind(child, childMeta, lease);
+      // The popup's initial navigation can have started before did-create-window was delivered.
+      this.setNavigationState(child, "loading");
       if (this.platform === "darwin" && !win.isDestroyed()) win.addTabbedWindow(child);
       child.show();
       child.focus();
@@ -284,45 +316,139 @@ class BrowserWorkspaceWindows {
     });
   }
 
-  resumeMutationNavigation(contents, meta, url) {
+  ownsContents(contents) {
+    return [...this.windows].some(win => !win.isDestroyed() && win.webContents === contents);
+  }
+
+  windowForContents(contents) {
+    return [...this.windows].find(win => !win.isDestroyed() && win.webContents === contents) ?? null;
+  }
+
+  navigationState(win) {
+    const state = this.windowMeta.get(win)?.navigation;
+    return state ? { ...state } : null;
+  }
+
+  updateWindowTitle(win) {
+    const meta = this.windowMeta.get(win);
+    if (!meta || win.isDestroyed()) return;
+    const label = { loading: "Loading…", failed: "Page unavailable", "renderer-gone": "Page stopped" }[meta.navigation?.status];
+    win.setTitle?.(`${this.label} — ${label || meta.documentTitle || "NEKODEX Browser"}`);
+  }
+
+  setNavigationState(win, status, errorCode = null, failure = null) {
+    const meta = this.windowMeta.get(win);
+    if (!meta || win.isDestroyed()) return;
+    const code = Number.isInteger(errorCode) ? errorCode : null;
+    const resourceFailure = failure?.kind === "renderer-script" && Number.isInteger(failure.httpStatus)
+      ? { kind: "renderer-script", httpStatus: failure.httpStatus } : null;
+    if (meta.navigation.status === status && meta.navigation.errorCode === code
+      && JSON.stringify(meta.navigation.failure ?? null) === JSON.stringify(resourceFailure)) return;
+    meta.navigation = { status, revision: meta.navigation.revision + 1, errorCode: code,
+      ...(resourceFailure ? { failure: resourceFailure } : {}) };
+    this.updateWindowTitle(win);
+    this.onNavigationState?.(win, this.navigationState(win));
+    this.changed();
+  }
+
+  assertNavigationAvailable(contents) {
+    if (!this.ownsContents(contents) || contents.isDestroyed()) throw new Error("Browser window is unavailable");
+    if (this.mutationLeasesByContents.has(contents)) throw new Error("Wait for this account’s sign-in to finish before reloading");
+  }
+
+  ownsContentsMutation(contents, sourceId) {
+    const lease = this.mutationLeasesByContents.get(contents);
+    if (lease && !this.ownsSessionMutation) return true;
+    if (lease && Number.isInteger(lease.generation)
+      && this.ownsSessionMutation?.({ generation: lease.generation })) return true;
+    return this.ownsSessionMutation?.({ sourceId }) === true;
+  }
+
+  async loadWindow(win, url) {
+    if (!this.windows.has(win) || win.isDestroyed() || !this.allowedUrl(url)) throw new Error("Browser destination is unavailable");
+    const meta = this.windowMeta.get(win);
+    const generation = meta.loadGeneration = (meta.loadGeneration ?? 0) + 1;
+    let settlement = this.mutationLeasesByContents.get(win.webContents);
+    if (this.isSessionMutation(url) && this.beginSessionMutation && !this.ownsContentsMutation(win.webContents, meta.id)) {
+      const lease = this.beginSessionMutation({ sourceId: meta.id, reason: "workspace-navigation", url });
+      settlement = this.bindMutationSettlement(win.webContents, lease);
+    }
+    this.setNavigationState(win, "loading");
+    try { await win.loadURL(url); }
+    catch (error) {
+      // ERR_ABORTED accompanies redirects and explicit navigation replacement, not a failed page.
+      if (!abortedNavigation(error) && !win.isDestroyed() && meta.loadGeneration === generation) {
+        settlement?.fail(error);
+        this.setNavigationState(win, "failed", error?.errno);
+      }
+      throw error;
+    }
+  }
+
+  reloadContents(contents, { ignoreCache = false } = {}) {
+    this.assertNavigationAvailable(contents);
+    const url = contents.getURL();
+    if (!this.allowedUrl(url) || this.isSessionMutation(url)) throw new Error("Finish this account’s sign-in before reloading");
+    this.setNavigationState(this.windowForContents(contents), "loading");
+    ignoreCache ? contents.reloadIgnoringCache() : contents.reload();
+    return true;
+  }
+
+  beginMutationNavigation(contents, meta, url) {
     let lease;
     try {
       lease = this.beginSessionMutation({ sourceId: meta.id, reason: "workspace-navigation", url });
     } catch (error) {
       this.onMutationBlocked?.(error, { sourceId: meta.id, url });
-      return;
+      return false;
     }
-    const settlement = this.bindMutationSettlement(contents, lease);
-    Promise.resolve(contents.loadURL(url)).catch(error => settlement.fail(error));
+    this.bindMutationSettlement(contents, lease);
+    return true;
   }
 
   bindMutationSettlement(contents, lease) {
     let settled = false;
-    this.mutationLeasesByContents.set(contents, lease);
+    let finishing = false;
+    let owned;
+    const cleanup = () => {
+      contents.removeListener?.("did-finish-load", finish);
+      contents.removeListener?.("did-fail-load", fail);
+      contents.removeListener?.("render-process-gone", rendererGone);
+    };
     const release = () => {
-      if (this.mutationLeasesByContents.get(contents) === lease) this.mutationLeasesByContents.delete(contents);
+      if (this.mutationLeasesByContents.get(contents) === owned) this.mutationLeasesByContents.delete(contents);
     };
     const finish = () => {
-      if (settled) return;
-      settled = true;
-      contents.removeListener?.("did-fail-load", fail);
-      Promise.resolve(lease.finish?.({ contents, url: contents.getURL?.() ?? null }))
-        .finally(release)
+      if (settled || finishing) return;
+      finishing = true;
+      contents.removeListener?.("did-finish-load", finish);
+      // Loading the document starts verification; it is not a terminal outcome.
+      // Keep close/crash cancellation alive until that verification settles.
+      Promise.resolve().then(() => {
+        if (!settled) return lease.finish?.({ contents, url: contents.getURL?.() ?? null });
+      })
+        .finally(() => { settled = true; cleanup(); release(); })
         .catch(error => this.onMutationBlocked?.(error, { sourceId: null, url: contents.getURL?.() ?? null }));
     };
     const failWith = error => {
       if (settled) return;
       settled = true;
-      contents.removeListener?.("did-finish-load", finish);
-      contents.removeListener?.("did-fail-load", fail);
-      lease.fail?.(error);
-      release();
+      cleanup();
+      try { lease.fail?.(error); }
+      finally { release(); }
     };
-    const fail = (_event, code, description) => failWith(
-      new Error(`Session-changing page failed to load (${code}: ${description})`),
-    );
+    const fail = (_event, code, description, _url, mainFrame) => {
+      if (!mainFrame || code === -3) return;
+      failWith(new Error(`Session-changing page failed to load (${code}: ${description})`));
+    };
+    const rendererGone = () => failWith(new Error("Sign-in page renderer stopped before the account change completed"));
+    // Window closure and renderer death share this terminal owner, so either releases
+    // the exact lease once and removes the other pending terminal listeners.
+    owned = { ...lease, fail: failWith };
+    this.mutationLeasesByContents.set(contents, owned);
     contents.once("did-finish-load", finish);
-    contents.once("did-fail-load", fail);
+    contents.on("did-fail-load", fail);
+    contents.once("render-process-gone", rendererGone);
     return { fail: failWith };
   }
 
@@ -405,6 +531,7 @@ class BrowserWorkspaceWindows {
         id: entry.id,
         groupId: entry.groupId,
         state: win ? "open" : "saved",
+        ...(win ? { navigation: this.navigationState(win) } : {}),
         kind: this.platform === "darwin"
           && values.some(other => other.id !== entry.id && other.groupId === entry.groupId) ? "tab" : "window",
         title: win && !win.isDestroyed() ? win.getTitle?.() ?? this.label : null,

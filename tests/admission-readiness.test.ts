@@ -234,10 +234,10 @@ test("pool: names the concrete cause of the account the task would use", () => {
   expect(poolWith({ tunnels: { default: "unconfigured" } }).preview()).toEqual({ reason: "account-not-ready", blocker: "account_tunnel_unconfigured", accountId: "default" });
   expect(poolWith({ tunnels: { default: "starting" } }).preview()).toMatchObject({ blocker: "account_tunnel_not_ready" });
   expect(poolWith({ authenticated: { default: false } }).preview()).toMatchObject({ blocker: "account_signed_out" });
-  expect(poolWith({ caps: { default: null } }).preview()).toMatchObject({ blocker: "account_unchecked" });
-  expect(poolWith({ caps: { default: { solAvailable: true, modelCapabilities: { families: { "5.6": ["high"] }, names: {} } } } }).preview())
+  expect(poolWith({ mode: "balanced", caps: { default: null } }).preview()).toMatchObject({ blocker: "account_unchecked" });
+  expect(poolWith({ mode: "balanced", caps: { default: { solAvailable: true, modelCapabilities: { families: { "5.6": ["high"] }, names: {} } } } }).preview())
     .toMatchObject({ blocker: "account_model_unavailable" });
-  expect(poolWith({ connectors: { default: false } }).preview()).toMatchObject({ blocker: "account_connector_unverified" });
+  expect(poolWith({ connectors: { default: false } }).preview()).toBeNull();
 });
 
 test("pool: a task pinned to another account reports that account, not the selected one", () => {

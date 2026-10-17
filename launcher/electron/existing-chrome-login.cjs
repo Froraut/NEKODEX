@@ -106,7 +106,10 @@ function openExistingChromeLogin(host, confirmImport, { selectConnectionFile } =
     if (embeddedLogin) {
       embeddedController.abort();
       for (const view of [host.view, host.authView]) {
-        if (view && !view.webContents.isDestroyed()) view.webContents.stop();
+        if (view && !view.webContents.isDestroyed()) {
+          if (view === host.view && view.webContents.isLoadingMainFrame?.()) host.primaryNavigationFailed = true;
+          view.webContents.stop();
+        }
       }
       await waitForPreviousAuthentication(embeddedLogin, controller.signal, handoffDeadline - Date.now());
       host.closeAuthView(host.authView, true, false);

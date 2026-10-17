@@ -77,8 +77,8 @@ test("every advertised named model survives admission and durable task history",
   } finally { queue.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("account admission uses the requested family's efforts independently of the legacy aggregate", () => {
-  const pool = { registry: { snapshot: () => ({ mode: 'selected', selectedId: 'default', accounts: [{ id: 'default', enabled: true }] }) },
+test("balanced account admission uses the requested family's efforts independently of the legacy aggregate", () => {
+  const pool = { safety: { availability: () => ({ eligible: true }) }, registry: { snapshot: () => ({ mode: 'balanced', selectedId: 'default', accounts: [{ id: 'default', enabled: true }] }) },
     hosts: new Map([['default', { state: { authenticated: true }, turnTabs: new Map() }]]),
     capabilities: new Map([['default', { solAvailable: true, proAvailable: false, extraHighAvailable: false, modelCapabilities: evidence }]]),
     traceOwners: new Map(), affinity: new Map(), pendingAffinity: new Map(), reservations: new Map(), lastAssigned: new Map(),

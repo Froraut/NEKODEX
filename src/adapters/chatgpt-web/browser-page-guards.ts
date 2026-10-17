@@ -3,8 +3,6 @@ import { ChatGptWebAdapterError } from "./adapter-error";
 import { throwIfPromptAttachmentAborted, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
 import type { ChatGptWebModelMode } from "./model";
 
-export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
-
 export const chatGptRateLimitDialog = (page: Page): Locator => page.locator('[role="dialog"]')
   .filter({ hasText: /Too many requests|Trop de requêtes|太多要求|太多请求|リクエストが多すぎます|요청이 너무 많습니다|요청을 너무 빠르게 보내고 있습니다/i })
   .filter({ hasText: /making requests too quickly|Vous envoyez des demandes trop rapidement|過於頻繁|过于频繁|リクエストの頻度が高すぎます|요청을 너무 빠르게 보내고 있습니다/i })
@@ -268,8 +266,8 @@ export async function resolveChatGptToolConfirmation(
   appName: string,
   autoApprove: boolean,
   signal?: AbortSignal,
-  timeoutMs = CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
   onVisible?: () => Promise<void>,
+  onWaiting?: () => void,
 ): Promise<boolean> {
   const escapedAppName = appName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const dialogs = page.locator('[role="dialog"], [data-testid="tool-approval-card"], [data-codex-approval-surface="true"]')
@@ -300,17 +298,12 @@ export async function resolveChatGptToolConfirmation(
     return true;
   }
 
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  // A person's reading/approval time is not a tool failure or an implied denial.
+  // Keep the owner alive until the user resolves the card or cancels the turn.
+  for (;;) {
     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     if (!await dialog.isVisible().catch(() => false)) return true;
-    await new Promise(resolveSleep => setTimeout(resolveSleep, Math.min(100, Math.max(1, deadline - Date.now()))));
+    onWaiting?.();
+    await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
   }
-
-  if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-  if (!await dialog.isVisible().catch(() => false)) return true;
-  if (await deny.count() !== 1) throw new Error("ChatGPT approval does not expose a unique Deny action");
-  await deny.click({ timeout: 5_000 });
-  await dialog.waitFor({ state: "hidden", timeout: 10_000 });
-  return true;
 }

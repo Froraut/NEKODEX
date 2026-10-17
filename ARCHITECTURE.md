@@ -56,7 +56,7 @@ separate facts.
 | Electron composition | [main](launcher/electron/main.cjs), [preload](launcher/electron/preload.cjs), [IPC registrars](launcher/electron/ipc), [control server](launcher/electron/control-server.cjs) | Main owns guarded IPC and composition. Renderer inputs and helper calls cross validation/admission boundaries. |
 | Browser ownership | [host](launcher/electron/browser-host.cjs), [turn lifecycle](launcher/electron/browser-turn-lifecycle.cjs), [Manual turns](launcher/electron/browser-manual-turns.cjs), [artifact transfers](launcher/electron/browser-artifact-transfers.cjs), [workspaces](launcher/electron/browser-workspace-windows.cjs), [navigation policy](launcher/electron/browser-navigation-policy.cjs), [session probe script](launcher/electron/browser-auth-probe.cjs), [in-page session check](launcher/electron/browser-session-observation.cjs), [app user agent](launcher/electron/browser-user-agent.cjs), [network egress check](launcher/electron/network-egress-check.cjs), [announcement dismissal](launcher/electron/browser-announcements.cjs) | One shared tab map. Ledger settlement precedes removal receipts. Concrete task auth redirects retire cached identity and emit an authentication-required release receipt; a false completion becomes a retained failure, while explicit cancellation keeps its own outcome. Manual policy uses explicit ports; artifact delivery rechecks exact ownership after awaiting download. URL policy (including the toolbar address resolution), the page probe, the in-page session check and the automatic-surface announcement dismissal are stateless leaves; a typed ChatGPT address always loads in the ChatGPT tab so retained task tabs keep their conversation. The app presents one stable Chromium user agent on every view and cross-site frame because Cloudflare binds its clearance to it. After a Cloudflare challenge the host checks, at most every ten minutes and in a throwaway session with the account's network settings, whether the public address changes between connections, and publishes only the verdict; the host owns probe sequencing, dismissal enablement and published authentication state. |
 | OpenAI API panel | [panel policy](launcher/electron/openai-api-panel.cjs), [workspace window owner](launcher/electron/browser-workspace-windows.cjs), [host](launcher/electron/browser-host.cjs), [account pool](launcher/electron/account-pool.cjs) | Human-operated Tunnels/API keys windows use the explicitly selected account session and fixed Platform destinations. The panel stays outside task descriptors, does not persist portal/OAuth URLs in ChatGPT workspace manifests, and participates in account authentication mutation leases. Opening a panel does not establish tunnel access or create a ChatGPT connector. |
-| Accounts/authentication | [account pool](launcher/electron/account-pool.cjs), [browser display projection](launcher/electron/account-browser-snapshot.cjs), [registry](launcher/electron/account-registry.cjs), [operation leases](launcher/electron/account-operation-leases.cjs), [Codex login](launcher/electron/codex-login.cjs), [browser login](src/browser-login.ts) | Preserve account/principal/flow identity and exact operation leases. Only the selected host supplies full navigation observations; other hosts supply turn rows. Display projection has no session authority. Temporary verification failure does not establish logout. |
+| Accounts/authentication | [account pool](launcher/electron/account-pool.cjs), [browser display projection](launcher/electron/account-browser-snapshot.cjs), [registry](launcher/electron/account-registry.cjs), [operation leases](launcher/electron/account-operation-leases.cjs), [Codex login](launcher/electron/codex-login.cjs), [browser login](src/browser-login.ts) | Preserve account/principal/flow identity and exact operation leases. Only the selected host supplies full navigation observations; other hosts supply turn rows. Display projection has no session authority. Temporary verification failure does not establish logout. Synchronous pacing-policy edits and resume validate an existing account and open pool but do not acquire browser-operation ownership; they affect future admission while current reads, sign-in and turns retain their owners. Optional session limits and scheduled breaks remain derived from the enabled policy; they never latch into provider stop/cooldown fields. An explicitly selected or already pinned account treats cached model discovery as advisory: the worker selects and verifies the exact model and effort before sending. Unbound balanced routing still requires model evidence. An explicitly selected or already pinned account may establish connector availability during the real pre-send flow; unbound balanced routing still requires prior connector evidence. A completed tool result can promote the exact connector only while the captured principal and identity epoch still match. |
 | Runtime supervision | [runtime host](launcher/electron/runtime.cjs), [supervisor](launcher/electron/runtime-supervisor.cjs), [generation store](launcher/electron/runtime-generation.cjs), [tunnel policy](launcher/electron/runtime-tunnel-policy.cjs), [poll health](launcher/electron/tunnel-poll-health.cjs), [output decoder](launcher/electron/runtime-output.cjs) | RuntimeHost owns setup transitions; supervisor owns daemon/tunnel processes and readiness. The tunnel monitor counts only local evidence as failure: timed-out control commands are unknown, an exited process fails at once, and a long silent local endpoint fails after about a minute. tunnel-client `/metrics` poll series mark a locally healthy tunnel degraded with reason `openai_unreachable` (no restart) after 75 s without a successful poll; the reason reaches `/admin/tunnel-status`, `/healthz` and the Web admission message. Recovery never disables itself: after the fast budget it backs off from 15 s to 5 min. Decode split UTF-8 once and bound every log line independently of raw capture. |
 | Updates | [controller](launcher/electron/update.cjs), [release policy](launcher/electron/update-release-policy.cjs), [staging](launcher/electron/update-staging.cjs), [validation](launcher/electron/update-validation.cjs), [worker](launcher/electron/update-worker.cjs), [commit observation](launcher/electron/update-commit.cjs) | Packaged repository/channel selects candidates; signature validation, preparation, handoff and detached installation are separate owners. Discovery falls back from the REST API to the signed Atom feed on any failure. The replacement launcher owns in-session runtime activation after the worker commits. |
 | Usage | [Native contract](src/usage/native-contract.ts), [outbox](src/native-usage-outbox.ts), [durable store](launcher/electron/usage-store.cjs), [report projection](launcher/electron/usage-report.cjs) | Receipt validation and persistence remain independent of UI aggregation. Preserve unknown fields and source/account scope. |
@@ -153,6 +153,38 @@ own their continue/cancel/retry controls, retain embedded-sign-in recovery, and
 retire after completion. Expanding the window directory changes the browser slot's
 layout; the existing bounds observer remains responsible for native view placement.
 
+## Browser recovery and navigation
+
+`application-reload.cjs` routes native menu reload to the displayed embedded page,
+its exact workspace/API window, or the trusted shell. An explicit navigation cancels
+and joins a background inspection; a stale testing state does not disable recovery.
+Active submitted turns and account-changing operations retain their owner. macOS
+secondary accounts expose the same supported Chrome profile import as the primary.
+
+`BrowserWorkspaceWindows` owns loading, failed and renderer-gone state. Initial
+programmatic account-changing navigation acquires the same session coordinator as
+user navigation. Browser-originated form navigation reuses its same-source coordinator owner and retains the original method/body; it is never replayed with loadURL. Aborted redirects and subframe failures do not settle that owner;
+a real main-frame failure, renderer death or closure does. API panels verify the
+shared account through its owned ChatGPT surface, not the Platform page's origin.
+A failed bootstrap script reports its HTTP status and offers explicit recovery;
+lazy-resource failures on an already loaded page do not block it.
+
+Challenge recovery never reloads a human draft or a submitted turn. Source-proven
+collapsed user messages use a compiler-owned token or structured text after expansion;
+retained-history anchors avoid mistaking older remounted rows for new submissions.
+Answer text, HTML and markdown segments share sanitized roots so hidden suggestion
+sizing labels cannot contaminate delivery or its fingerprint.
+
+Connector approval cards remain owned by the user when automatic approval is disabled.
+The page guard never denies them on a timer; it keeps cancellation and heartbeats active
+until the card resolves. The worker excludes the observed approval wait from the response
+deadline and resets DOM grace tracking before resuming the same submitted turn.
+
+The pinned official tunnel SDK is 0.0.16. CLI, launchd and account peer startup pass
+`MCP_STDIO_SEND_INITIALIZED_NOTIFICATION=true`; control commands preserve their
+existing environment and cancellation semantics. Installation retains integrity and
+rollback checks, with 0.0.12 recognized as the preceding supported installation.
+
 ## State and persistence
 
 `modelCapabilities` stores timestamped, family-specific selectable efforts through
@@ -161,8 +193,10 @@ picker row and every unlocked level, and attributes each level to the model
 version its slider description names (a Latest row's lower levels describe
 GPT-5.6 Sol); `names` keeps the model name shown with a version. The shared picker
 helpers restore the selected row, effort and draft after inspection, including
-menus whose rows unmount. Catalog and account admission use that family
-evidence; the older aggregate flags remain compatibility data. Setup refreshes
+menus whose rows unmount. Catalog and unbound balanced account admission use that family
+evidence; selected and pinned accounts defer model availability to the exact pre-send
+picker check, so stale or missing discovery cannot prevent an explicit attempt.
+The older aggregate flags remain compatibility data. Setup refreshes
 missing or stale observations; the launcher also saves the selected account's
 evidence after each browser check and re-reads an idle, out-of-view picker every
 six hours through `config model-capabilities`. The daemon reads the saved
@@ -173,6 +207,14 @@ restart request until the picker is confirmed again.
 Chrome profile bindings can retain the observed Chrome user agent for compatible
 session handoff; it never replaces endpoint/principal verification. Sign-in
 mutation receipts are published after the owning lease is released.
+Explicit session retries publish a checking state and reject unresolved observations
+so every retry surface can report the failure. The browser host records primary
+navigation/renderer failures and owned stops of loading pages: retry or embedded sign-in reloads an idle or known-failed
+home, while a healthy loaded page and the selected task tab stay intact. A new embedded
+sign-in, or successful verification, retires terminal external sign-in guides.
+Cancelling a profile chooser before session transfer restores its prior settled
+authentication verdict only while the captured generation and identity remain current;
+an unresolved cancellation remains unavailable, never an ownerless checking state.
 The account pool owns one pending evidence restore per account. Sign-in and
 tunnel receipts coalesce into it; a receipt during a check supersedes that check.
 Waiting for a user operation or tunnel has no elapsed-time expiry and is not an
@@ -181,6 +223,9 @@ evidence is restored for plain requests. Pool destruction cancels pending waits.
 The profile chooser keeps the last attempted profile ID per account in memory for
 retries, separately from the verified binding on disk. The picker labels these
 states separately; capture progress identifies the selected Chrome profile.
+Both sign-in and the one-use verification page launch Chrome with the same explicit
+user-data directory as that catalog, so another running Chrome profile cannot
+receive a profile ID belonging to the selected directory.
 Cancelling remains independent of the renderer's pending Retry/Continue request;
 the host still owns cancellation, rollback and final settlement.
 
@@ -385,3 +430,5 @@ it excludes generated output, dependencies and type-only/computed import edges.
 It is a navigation/drift aid, not proof that semantic documentation is complete.
 The responsible agent must review those semantic changes. No background watcher
 or scheduled application access is required.
+
+An installed patch launcher may configure an independent account tunnel while a compatible Full-mode account-tunnel core finishes existing Native traffic. This retains the committed releaseVersion and other peers; cross-family/channel or core-mode transitions still require normal generation activation.

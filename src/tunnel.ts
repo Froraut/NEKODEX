@@ -15,8 +15,10 @@ import {
 } from "./config";
 import { runCommand, runChecked } from "./process";
 
-export const TUNNEL_VERSION = "0.0.12";
-const MIGRATABLE_TUNNEL_VERSIONS = new Set(["0.0.10"]);
+export const TUNNEL_VERSION = "0.0.16";
+// SHA256SUMS.txt from the official v0.0.16 release, pinned with the SDK version.
+const TUNNEL_CHECKSUMS_SHA256 = "fcce864a5935655534cc3d981257509579dbb5c71dbaec64c17a157ca9d65e56";
+const MIGRATABLE_TUNNEL_VERSIONS = new Set(["0.0.10", "0.0.12"]);
 const RELEASE_BASE = `https://github.com/openai/tunnel-client/releases/download/v${TUNNEL_VERSION}`;
 const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES = 1024 * 1024;
@@ -343,6 +345,9 @@ export async function installTunnelClient(
     fetchBytes(`${RELEASE_BASE}/${asset}`),
     fetchBytes(`${RELEASE_BASE}/SHA256SUMS.txt`, MAX_CHECKSUM_BYTES),
   ]);
+  if (sha256(sums) !== TUNNEL_CHECKSUMS_SHA256) {
+    throw new Error("Tunnel release checksum manifest does not match the pinned release");
+  }
   const expected = parseExpectedChecksum(new TextDecoder().decode(sums), asset);
   const archiveHash = sha256(archive);
   if (archiveHash !== expected) throw new Error(`Checksum mismatch for ${asset}`);
@@ -559,7 +564,10 @@ export function connectTunnel(config: AppConfig, signal?: AbortSignal): void {
     "--runtime-api-key", `file:${settings.runtimeKeyFile}`,
     "--mcp-command", mcpCommand(config),
     "--json",
-  ], { timeout: TUNNEL_READY_TIMEOUT_MS, signal });
+  ], {
+    timeout: TUNNEL_READY_TIMEOUT_MS, signal,
+    env: { ...process.env, MCP_STDIO_SEND_INITIALIZED_NOTIFICATION: "true" },
+  });
   throwIfAborted(signal);
   const structuredOutput = result.stdout.trim();
   const launchError = structuredOutput

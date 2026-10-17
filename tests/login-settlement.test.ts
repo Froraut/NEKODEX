@@ -3,11 +3,12 @@ import { createRequire } from "node:module";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { EventEmitter } from "node:events";
 const require = createRequire(import.meta.url);
 const { AccountBrowserPool } = require("../launcher/electron/account-pool.cjs");
 const { createChromeProfileBindingStore } = require("../launcher/electron/chrome-profile-binding.cjs");
 const { publicPasskeyProgress, passkeyLoginFailure } = require("../launcher/electron/passkey-login-progress.cjs");
-const { createChromeProfileChoice, readProfilesWithPermission } = require("../launcher/electron/chrome-profile-choice.cjs");
+const { createChromeProfileChoice, openProfile, readProfilesWithPermission } = require("../launcher/electron/chrome-profile-choice.cjs");
 const { captureProfileSession } = require("../launcher/electron/profile-first-login.cjs");
 
 test("retry keeps the user's last profile choice without changing the verified binding or another account", async () => {
@@ -47,6 +48,43 @@ test("successful sign-in returns the settled pool receipt instead of a stale loc
   expect(await AccountBrowserPool.prototype.openPasskeyLogin.call(pool)).toEqual({ navigationLocked: false, accountId: 'default', authenticated: true });
   expect(published).toBe(true);
 });
+
+test("selected Chrome profile stays bound to its catalog root for both sign-in and capture", async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'nekodex-profile-root-'));
+  const root = join(directory, 'Chrome With Spaces');
+  mkdirSync(join(root, 'Profile 2'), { recursive: true });
+  writeFileSync(join(root, 'Local State'), JSON.stringify({ profile: { info_cache: { 'Profile 2': { name: 'Selected' } } } }));
+  const launches: any[] = [];
+  const choose = createChromeProfileChoice({ root, coreHome: directory, window: () => null,
+    executable: () => '/unused/chrome', language: () => 'en',
+    picker: async ({ profiles }: any) => ({ kind: 'existing', profile: profiles[0] }),
+    launch: async (...args: any[]) => {
+      launches.push(args);
+      if (args[2].startsWith('http://127.0.0.1:')) await fetch(args[2]);
+    } });
+  let attempt;
+  try {
+    attempt = await choose({ accountId: 'default' });
+    const claim = await attempt.prepareCapture();
+    expect(launches).toEqual([
+      ['/unused/chrome', 'Profile 2', 'https://chatgpt.com/?temporary-chat=true', root],
+      ['/unused/chrome', 'Profile 2', claim.url, root],
+    ]);
+    const captured: any[] = [];
+    await openProfile('/unused/chrome', 'Profile 2', claim.url, root, (...args: any[]) => {
+      captured.push(args);
+      const child = Object.assign(new EventEmitter(), { unref() {} });
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    });
+    expect(captured[0][1]).toEqual([`--user-data-dir=${root}`, '--profile-directory=Profile 2', '--new-window', claim.url]);
+    expect(captured[0][2].shell).toBe(false);
+    expect(() => openProfile('/unused/chrome', 'Profile 2', claim.url, 'relative-root')).toThrow('Invalid Chrome profile launch');
+  } finally {
+    attempt?.cleanupCapture(); attempt?.rollbackBinding();
+    rmSync(directory, { recursive: true, force: true });
+  }
+}, 5000);
 
 test("verified Chrome compatibility metadata persists and permission failures retain actionable codes", () => {
   const directory = mkdtempSync(join(tmpdir(), 'nekodex-binding-'));

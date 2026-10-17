@@ -2403,7 +2403,13 @@ class RuntimeSupervisor {
           child = spawn(tunnel.binaryPath, args, {
             cwd: tunnel.profileDir,
             detached: DETACH_OWNED_CHILD,
-            env: { ...process.env, ...proxyEnvironment },
+            env: {
+              ...process.env, ...proxyEnvironment,
+              // Account peers inherit this same managed-startup path. Control
+              // commands keep their existing environment and cancellation owner.
+              ...(args[0] === "runtimes" && args[1] === "connect"
+                ? { MCP_STDIO_SEND_INITIALIZED_NOTIFICATION: "true" } : {}),
+            },
             stdio: ["ignore", "pipe", "pipe"],
             windowsHide: true,
           });
