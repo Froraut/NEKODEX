@@ -91,6 +91,15 @@ const { cancelSessionRecheck, syncSessionRecheck } = require("./session-recheck.
 const INTERACTION_MODE_CHANGE_OPERATION = "browser interaction mode change";
 const HIDDEN_TURN_VIEWPORT = Object.freeze({ width: 800, height: 600 });
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
+// A crashed or hung primary ChatGPT page never heals on its own: Electron keeps the dead
+// WebContents (and its CDP target) until something reloads it, so every later turn and
+// readiness probe stalls on it. Reload it with backoff, bounded per window.
+const PRIMARY_RENDERER_RECOVERY_DELAYS_MS = [1_000, 5_000, 15_000, 60_000];
+const PRIMARY_RENDERER_RECOVERY_WINDOW_MS = 10 * 60_000;
+const PRIMARY_RENDERER_RECOVERY_MAX_ATTEMPTS = 6;
+const PRIMARY_RENDERER_UNRESPONSIVE_GRACE_MS = 30_000;
+const PRIMARY_RENDERER_WATCHDOG_MS = 15_000;
+const PRIMARY_RENDERER_LIVE_WAIT_MS = 30_000;
 const AUTH_HANDOFF_TIMEOUT_MS = 15_000;
 const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore"];
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [
@@ -499,6 +508,15 @@ class BrowserHost {
     this.powerSaveBlockerId = null;
     this.turnLeaseSweep = setInterval(() => this.reapExpiredTurnTabs(), TURN_HEARTBEAT_SWEEP_MS);
     this.turnLeaseSweep.unref?.();
+    this.primaryRendererRecoveryTimer = null;
+    this.primaryRendererRecoveryAttempts = [];
+    this.primaryRendererRecovering = false;
+    this.primaryRendererRecoveryExhausted = false;
+    this.primaryUnresponsiveTimer = null;
+    // Catches a crash whose render-process-gone event was missed (for example during a
+    // launcher-side restart) before the next turn depends on the page.
+    this.primaryRendererWatchdog = setInterval(() => this.checkPrimaryRendererLiveness(), PRIMARY_RENDERER_WATCHDOG_MS);
+    this.primaryRendererWatchdog.unref?.();
     this.resumeListener = () => this.refreshTurnLeases("system_resume");
     if (powerMonitor && typeof powerMonitor.on === "function") {
       powerMonitor.on("resume", this.resumeListener);
@@ -1313,6 +1331,7 @@ class BrowserHost {
     });
     contents.on("did-finish-load", () => {
       this.primaryRendererReady = true;
+      this.notePrimaryRendererRecovered(contents);
       this.syncViewVisibility();
       this.clearHomeNavigationTimeout();
       if (this.manualOperation === "ChatGPT login") {
@@ -1364,6 +1383,9 @@ class BrowserHost {
     contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {
       if (!mainFrame || errorCode === -3) return;
       this.primaryNavigationFailed = true;
+      // The renderer is alive again (it shows the error page); ordinary navigation retry
+      // paths own a failed load, so crash recovery is finished.
+      this.primaryRendererRecovering = false;
       this.clearHomeNavigationTimeout();
       this.logger.error(
         this.manualOperation === "ChatGPT login"
@@ -1385,6 +1407,165 @@ class BrowserHost {
       this.clearHomeNavigationTimeout();
       this.logger.error("browser.renderer_gone", { reason: details.reason, exitCode: details.exitCode });
       this.setState({ status: "error", message: `Browser renderer stopped: ${details.reason}`, loading: false });
+      this.clearPrimaryUnresponsiveTimer();
+      this.primaryRendererRecovering = false;
+      this.schedulePrimaryRendererRecovery("renderer-gone");
+    });
+    contents.on("unresponsive", () => {
+      if (this.primaryUnresponsiveTimer || this.destroyed) return;
+      this.logger.warn("browser.renderer_unresponsive", {});
+      this.primaryUnresponsiveTimer = setTimeout(() => {
+        this.primaryUnresponsiveTimer = null;
+        if (this.destroyed || contents.isDestroyed()) return;
+        this.logger.error("browser.renderer_unresponsive_recovery", { graceMs: PRIMARY_RENDERER_UNRESPONSIVE_GRACE_MS });
+        // A hung renderer cannot be reloaded in place; crashing it hands recovery to the
+        // render-process-gone path. Schedule directly too in case that event never arrives.
+        try { contents.forcefullyCrashRenderer?.(); } catch {}
+        this.schedulePrimaryRendererRecovery("renderer-unresponsive");
+      }, PRIMARY_RENDERER_UNRESPONSIVE_GRACE_MS);
+      this.primaryUnresponsiveTimer.unref?.();
+    });
+    contents.on("responsive", () => {
+      if (!this.primaryUnresponsiveTimer) return;
+      this.clearPrimaryUnresponsiveTimer();
+      this.logger.info("browser.renderer_responsive", {});
+    });
+  }
+
+  clearPrimaryUnresponsiveTimer() {
+    if (!this.primaryUnresponsiveTimer) return;
+    clearTimeout(this.primaryUnresponsiveTimer);
+    this.primaryUnresponsiveTimer = null;
+  }
+
+  primaryRendererCrashed() {
+    const contents = this.view?.webContents;
+    return Boolean(contents && !contents.isDestroyed() && contents.isCrashed?.() === true);
+  }
+
+  primaryRendererRecoveryPending() {
+    // A reload that neither finished nor failed must not block admission forever.
+    if (this.primaryRendererRecovering
+      && Date.now() - (this.primaryRendererRecoveryAttempts?.at(-1) ?? 0) > BROWSER_NAVIGATION_TIMEOUT_MS + PRIMARY_RENDERER_LIVE_WAIT_MS) {
+      this.primaryRendererRecovering = false;
+    }
+    return Boolean(this.primaryRendererRecoveryTimer || this.primaryRendererRecovering);
+  }
+
+  checkPrimaryRendererLiveness() {
+    if (this.destroyed || this.primaryRendererRecoveryPending() || !this.primaryRendererCrashed()) return;
+    this.schedulePrimaryRendererRecovery("crashed-renderer-detected");
+  }
+
+  /** Returns false when recovery is impossible or its retry budget is spent. */
+  schedulePrimaryRendererRecovery(reason, immediate = false) {
+    const contents = this.view?.webContents;
+    if (this.destroyed || !contents || contents.isDestroyed()) return false;
+    if (this.primaryRendererRecoveryTimer) {
+      if (!immediate) return true;
+      clearTimeout(this.primaryRendererRecoveryTimer);
+      this.primaryRendererRecoveryTimer = null;
+    }
+    const now = Date.now();
+    const attempts = (this.primaryRendererRecoveryAttempts ?? [])
+      .filter(at => now - at < PRIMARY_RENDERER_RECOVERY_WINDOW_MS);
+    this.primaryRendererRecoveryAttempts = attempts;
+    if (attempts.length >= PRIMARY_RENDERER_RECOVERY_MAX_ATTEMPTS) {
+      if (!this.primaryRendererRecoveryExhausted) {
+        this.primaryRendererRecoveryExhausted = true;
+        this.logger.error("browser.renderer_recovery_exhausted", { reason, attempts: attempts.length });
+        this.setState({ status: "error", loading: false,
+          message: "The ChatGPT page keeps crashing. Reload it from Browser or restart NEKODEX." });
+      }
+      return false;
+    }
+    const delay = immediate ? 0
+      : PRIMARY_RENDERER_RECOVERY_DELAYS_MS[Math.min(attempts.length, PRIMARY_RENDERER_RECOVERY_DELAYS_MS.length - 1)];
+    this.primaryRendererRecoveryTimer = setTimeout(() => {
+      this.primaryRendererRecoveryTimer = null;
+      this.recoverPrimaryRenderer(reason);
+    }, delay);
+    this.primaryRendererRecoveryTimer.unref?.();
+    return true;
+  }
+
+  recoverPrimaryRenderer(reason) {
+    const contents = this.view?.webContents;
+    if (this.destroyed || !contents || contents.isDestroyed()) return;
+    this.primaryRendererRecoveryAttempts = [...(this.primaryRendererRecoveryAttempts ?? []), Date.now()];
+    this.primaryRendererRecovering = true;
+    const url = contents.getURL();
+    const reloadInPlace = url.startsWith(CHATGPT_ORIGIN) || url === IDLE_BROWSER_URL;
+    this.logger.warn("browser.renderer_recovery_started", {
+      reason,
+      attempt: this.primaryRendererRecoveryAttempts.length,
+      origin: navigationOriginForLog(url),
+    });
+    const failed = (error) => {
+      if (!this.primaryRendererRecovering) return;
+      this.primaryRendererRecovering = false;
+      this.logger.error("browser.renderer_recovery_failed", {
+        reason,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      this.schedulePrimaryRendererRecovery(reason);
+    };
+    try {
+      if (reloadInPlace) contents.reload();
+      else void Promise.resolve(contents.loadURL(IDLE_BROWSER_URL)).catch(failed);
+    } catch (error) {
+      failed(error);
+    }
+  }
+
+  notePrimaryRendererRecovered(contents) {
+    if (!this.primaryRendererRecovering || contents.isCrashed?.() === true) return;
+    this.primaryRendererRecovering = false;
+    this.primaryRendererRecoveryExhausted = false;
+    this.logger.info("browser.renderer_recovered", { attempts: this.primaryRendererRecoveryAttempts?.length ?? 0 });
+  }
+
+  /**
+   * A turn must not start against a crashed primary page: readiness probes and model checks
+   * would hang on it until the turn times out. Heal it first, bounded, before anything is sent.
+   */
+  async ensurePrimaryRendererLive(signal, timeoutMs = PRIMARY_RENDERER_LIVE_WAIT_MS) {
+    signal?.throwIfAborted();
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    const crashed = this.primaryRendererCrashed();
+    if (!crashed && !this.primaryRendererRecoveryPending()) return;
+    this.logger.warn("browser.renderer_recovery_before_turn", { crashed });
+    if (crashed && !this.primaryRendererRecovering
+      && !this.schedulePrimaryRendererRecovery("turn-admission", true)) {
+      throw new Error("The ChatGPT page keeps crashing; this prompt was not sent. Reload it from Browser or restart NEKODEX.");
+    }
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        clearInterval(poll);
+        contents.off("did-finish-load", onLoaded);
+        signal?.removeEventListener("abort", onAbort);
+        if (error) reject(error); else resolve();
+      };
+      const settledLive = () => !this.primaryRendererRecoveryPending() && !this.primaryRendererCrashed();
+      const onLoaded = () => { if (settledLive()) finish(); };
+      const onAbort = () => finish(signal.reason ?? new DOMException("Turn admission aborted", "AbortError"));
+      const timeout = setTimeout(() => finish(new Error(
+        `The ChatGPT page crashed and did not recover within ${Math.round(timeoutMs / 1000)} seconds; this prompt was not sent`)), timeoutMs);
+      timeout.unref?.();
+      // did-finish-load may fire before this listener attaches, or recovery may give up.
+      const poll = setInterval(() => {
+        if (settledLive()) finish();
+        else if (this.primaryRendererRecoveryExhausted) finish(new Error(
+          "The ChatGPT page keeps crashing; this prompt was not sent. Reload it from Browser or restart NEKODEX."));
+      }, 250);
+      poll.unref?.();
+      contents.on("did-finish-load", onLoaded);
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
 
@@ -2388,6 +2569,7 @@ class BrowserHost {
     taskModel = null,
     signal,
   ) {
+    await this.ensurePrimaryRendererLive(signal);
     return turnLifecycleFor(this).beginTurn(traceId, reveal, helperPid, conversationKey, connectorIdentity, requireRetainedConversation, taskProgressVersion, taskModel, signal);
   }
 
@@ -3810,6 +3992,10 @@ class BrowserHost {
     this.closeAuthView(this.authView, true);
     this.clearHomeNavigationTimeout();
     if (this.turnLeaseSweep) clearInterval(this.turnLeaseSweep);
+    if (this.primaryRendererWatchdog) clearInterval(this.primaryRendererWatchdog);
+    clearTimeout(this.primaryRendererRecoveryTimer);
+    this.primaryRendererRecoveryTimer = null;
+    this.clearPrimaryUnresponsiveTimer();
     if (this.resumeListener && powerMonitor && typeof powerMonitor.removeListener === "function") {
       powerMonitor.removeListener("resume", this.resumeListener);
       this.resumeListener = null;

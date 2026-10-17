@@ -1,6 +1,6 @@
 {
   "name": "codex-chatgpt-web",
-  "version": "6.1.32-nekodex.6",
+  "version": "6.1.32-nekodex.7",
   "publishedReleaseVersion": "6.1.28-nekodex.1",
   "publishedLinuxReleaseVersion": "6.1.12-nekodex.1",
   "private": true,
@@ -56,7 +56,7 @@
     "launcher:typecheck": "bun run --cwd launcher typecheck",
     "launcher:build": "bun run --cwd launcher build",
     "verify": "bun run scripts/verify.ts",
-    "test:regressions": "bun test tests/account-tunnel-supervision.test.ts tests/account-tunnel-dead-marker.test.ts tests/codex-chained-route.test.ts tests/reasoning-replay.test.ts tests/response-rebinding.test.ts tests/account-not-ready-replay.test.ts tests/tool-proof.test.ts tests/api-panel-google.test.ts tests/reply-alignment.test.ts tests/update-recheck.test.ts tests/boot-recovery.test.ts"
+    "test:regressions": "bun test tests/account-tunnel-supervision.test.ts tests/account-tunnel-dead-marker.test.ts tests/codex-chained-route.test.ts tests/reasoning-replay.test.ts tests/response-rebinding.test.ts tests/account-not-ready-replay.test.ts tests/tool-proof.test.ts tests/api-panel-google.test.ts tests/reply-alignment.test.ts tests/update-recheck.test.ts tests/boot-recovery.test.ts tests/unsent-turn-retry.test.ts"
   },
   "dependencies": {
     "@mixmark-io/domino": "2.2.0",
