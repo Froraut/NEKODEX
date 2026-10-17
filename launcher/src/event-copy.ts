@@ -10,6 +10,8 @@ const ORDER: Record<Language, number> = { en: 0, ru: 1, "zh-CN": 2, "zh-TW": 3, 
 
 const TITLES: Record<string, Titles> = {
   // Codex route (bridge)
+  "bridge.chained_gateway_waiting": ["Waiting for the local Codex gateway to start", "Ожидание запуска локального шлюза Codex", "正在等待本地 Codex 网关启动", "正在等待本機 Codex 閘道啟動", "ローカルの Codex ゲートウェイの起動を待っています", "로컬 Codex 게이트웨이 시작 대기 중"],
+  "bridge.chained_gateway_ready": ["Local Codex gateway started", "Локальный шлюз Codex запущен", "本地 Codex 网关已启动", "本機 Codex 閘道已啟動", "ローカルの Codex ゲートウェイが起動しました", "로컬 Codex 게이트웨이 시작됨"],
   "bridge.route_chained": ["Codex reaches NEKODEX through a verified local gateway", "Codex подключён к NEKODEX через проверенный локальный шлюз", "Codex 通过已验证的本地网关连接 NEKODEX", "Codex 透過已驗證的本機閘道連線至 NEKODEX", "Codex は検証済みのローカルゲートウェイ経由で NEKODEX に接続しています", "Codex가 확인된 로컬 게이트웨이를 통해 NEKODEX에 연결됨"],
   "bridge.route_restore_after_runtime_failure_failed": ["Couldn't restore the Codex route after a runtime failure", "Не удалось восстановить маршрут Codex после сбоя среды выполнения", "运行时故障后无法恢复 Codex 路由", "執行階段故障後無法還原 Codex 路由", "ランタイム障害後に Codex ルートを復元できませんでした", "런타임 오류 후 Codex 경로를 복원할 수 없음"],
   "bridge.route_restored_after_runtime_failure": ["Codex route restored after a runtime failure", "Маршрут Codex восстановлен после сбоя среды выполнения", "运行时故障后已恢复 Codex 路由", "執行階段故障後已還原 Codex 路由", "ランタイム障害後に Codex ルートを復元しました", "런타임 오류 후 Codex 경로 복원됨"],
@@ -46,6 +48,9 @@ const TITLES: Record<string, Titles> = {
   "browser.cloudflare_challenge_recovered": ["Cloudflare check passed", "Проверка Cloudflare пройдена", "已通过 Cloudflare 验证", "已通過 Cloudflare 驗證", "Cloudflare の確認を通過しました", "Cloudflare 확인 통과"],
   "browser.cloudflare_challenge_recovery_failed": ["Couldn't get past the Cloudflare check", "Не удалось пройти проверку Cloudflare", "无法通过 Cloudflare 验证", "無法通過 Cloudflare 驗證", "Cloudflare の確認を通過できませんでした", "Cloudflare 확인을 통과할 수 없음"],
   "browser.network_egress_check_failed": ["Network check failed", "Не удалось проверить сеть", "网络检查失败", "網路檢查失敗", "ネットワークを確認できませんでした", "네트워크 확인 실패"],
+  "browser.session_recheck_started": ["Rechecking the ChatGPT session", "Повторная проверка сессии ChatGPT", "正在重新检查 ChatGPT 会话", "正在重新檢查 ChatGPT 工作階段", "ChatGPT セッションを再確認しています", "ChatGPT 세션 다시 확인 중"],
+  "browser.session_recheck_completed": ["ChatGPT session recheck finished", "Повторная проверка сессии ChatGPT завершена", "ChatGPT 会话重新检查完成", "ChatGPT 工作階段重新檢查完成", "ChatGPT セッションの再確認が完了しました", "ChatGPT 세션 재확인 완료"],
+  "browser.session_recheck_failed": ["ChatGPT session still unavailable; will retry", "Сессия ChatGPT пока недоступна; повторим позже", "ChatGPT 会话仍不可用；稍后重试", "ChatGPT 工作階段仍無法使用；稍後重試", "ChatGPT セッションはまだ利用できません。後で再試行します", "ChatGPT 세션을 아직 사용할 수 없음; 나중에 다시 시도"],
   "browser.network_egress_checked": ["Network checked", "Сеть проверена", "已检查网络", "已檢查網路", "ネットワークを確認しました", "네트워크 확인됨"],
   "browser.navigation_timeout": ["Page load timed out", "Время загрузки страницы истекло", "页面加载超时", "頁面載入逾時", "ページの読み込みがタイムアウトしました", "페이지 로드 시간 초과"],
 

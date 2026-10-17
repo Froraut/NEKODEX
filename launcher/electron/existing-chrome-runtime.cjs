@@ -75,7 +75,8 @@ async function captureExistingChromeLogin(host, onProgress, options = {}) {
       ...(privateMessages.length === 0 ? {} : { privateControlMessage: `${privateMessages.map(message => JSON.stringify(message)).join("\n")}\n` }),
       message: "Waiting for Chrome permission to import the existing ChatGPT sign-in",
       successMessage: "Existing Chrome session captured for private Launcher verification",
-      timeoutMs: IMPORT_TIMEOUT_MS + 10_000,
+      // The helper bounds discovery and CDP reads. A parent wall-clock timeout would
+      // incorrectly expire Chrome's native permission dialog while the user reads it.
       onStdoutLine: line => {
         if (line.startsWith('@codex-chrome-cookie-scope:') && line.length < 256) {
           try {

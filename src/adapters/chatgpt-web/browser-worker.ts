@@ -1729,7 +1729,6 @@ export class ChatGptBrowserWorker {
       .locator("xpath=ancestor::form[1]")
       .locator(CHATGPT_SEND_BUTTON_SELECTOR);
     await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.sendButton });
-    await settleChatGptUi();
     const sendEnableDeadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
     for (;;) {
       if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
@@ -3150,7 +3149,12 @@ export class ChatGptBrowserWorker {
           }
           const textDelta = (() => {
             try {
-              return markdownBuffer.observe(snapshot.markdownSegments);
+              return markdownBuffer.observe(snapshot.markdownSegments, {
+                // Deliver a stable final paragraph while the completion tracker and broker
+                // fence keep checking. This cannot complete the turn or retire its tools.
+                tailReady: snapshot.completionActionVisible && !running
+                  && !externalToolCallsInFlight && !submissionRejection.hasActiveResponse(),
+              });
             } catch (error) {
               return throwMarkdownConsistencyError(error);
             }

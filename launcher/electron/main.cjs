@@ -51,7 +51,8 @@ const {
 } = require("./logging.cjs");
 const { RuntimeHost } = require("./runtime.cjs");
 const { createContextChangeQueue } = require("./context-change-queue.cjs");
-const { ensurePackagedRuntime, installedRuntimeRoot: resolveInstalledRuntimeRoot, pruneRuntimeVersions,
+const { ensurePackagedRuntime, externallyReferencedRuntimeVersions, installedRuntimeRoot: resolveInstalledRuntimeRoot,
+  pruneRuntimeVersions,
   waitForPackagedRuntimeSource } = require("./runtime-install.cjs");
 const { waitForUpdateCommit } = require("./update-commit.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
@@ -1684,7 +1685,8 @@ function pruneInstalledRuntimeVersions(previousVersion) {
       // The version just replaced is the natural rollback target, even when an
       // intermediate release was installed but never activated.
       keepVersions: [app.getVersion(), runtimeSupervisor?.readConfig()?.releaseVersion, previousVersion,
-        pending?.journal?.fromVersion, pending?.journal?.toVersion],
+        pending?.journal?.fromVersion, pending?.journal?.toVersion,
+        ...externallyReferencedRuntimeVersions({ coreHome: CORE_HOME })],
       logger,
     });
   } catch (error) {

@@ -69,6 +69,12 @@ separate facts.
 
 ## Important end-to-end flows
 
+An owned Web security-check failure remains a permission denial. Because Codex retries unknown streamed error codes and HTTP 403, the next matching replay is rejected before adapter dispatch with HTTP 400, preserving `chatgpt_security_check`, `permission_error`, and `upstream_status: 403`. The bounded replay marker is consumed so a later deliberate retry can re-check the account. It does not authorize replaying the rejected browser submission.
+
+On retained browser pages, an unchanged closed model control may reuse its prior selection only when the page URL, requested family, effort and visible label still match. The final pre-send family, slider-value and availability check always remains live; the cache only avoids redundant selection actions.
+
+Existing-Chrome sign-in separates machine work from human consent: discovery and CDP reads retain bounded deadlines, while Chrome's native Allow handshake waits until permission, explicit cancellation, or a transport failure. The capture budget resumes after consent, and the parent process does not impose a wall-clock deadline over that human wait. The guide hides its countdown while waiting for consent or file access.
+
 1. **Web request:** parse and route → derive continuation/environment ownership →
    create or recover turn session → compile prompt/attachments → acquire the owned
    browser page → submit once → observe browser/MCP progress → journal events →
@@ -174,8 +180,16 @@ collapsed user messages use a compiler-owned token or structured text after expa
 retained-history anchors avoid mistaking older remounted rows for new submissions.
 Answer text, HTML and markdown segments share sanitized roots so hidden suggestion
 sizing labels cannot contaminate delivery or its fingerprint.
+The worker may mark a stable final paragraph streamable after the owned response stream
+stops and completed-turn actions render. Markdown retains its normal stability and
+mutable-reference guards; the completion tracker and broker fence still own terminal
+delivery and wait for tool work. Picker selection checks live state before closing, then
+verifies persisted family/effort immediately before Send, without an intermediate reopening.
 
 Connector approval cards remain owned by the user when automatic approval is disabled.
+Startup account authentication and connector checks stay sequential under their existing
+owners, but the selected enabled account is checked first so unrelated account startup
+does not delay its first task. Remaining enabled accounts are still checked afterwards.
 The page guard never denies them on a timer; it keeps cancellation and heartbeats active
 until the card resolves. The worker excludes the observed approval wait from the response
 deadline and resets DOM grace tracking before resuming the same submitted turn.

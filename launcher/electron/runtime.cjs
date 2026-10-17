@@ -158,6 +158,10 @@ function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = fal
 
 
 const CAPABILITY_WRITE_TIMEOUT_MS = 30_000;
+// Matches UNVERIFIED_CHAIN_DETAIL in src/codex-chained-route.ts.
+const UNVERIFIED_CHAINED_GATEWAY = "no local gateway at the newer openai_base_url confirmed";
+const CHAINED_GATEWAY_WAIT_MS = 60_000;
+const CHAINED_GATEWAY_POLL_MS = 3_000;
 
 /** Run one short runtime CLI command without publishing a launcher operation; resolves its stdout. */
 function runQuietRuntimeCommand(invocation, environment, timeoutMs) {
@@ -1142,13 +1146,37 @@ class RuntimeHost {
     }
   }
 
+  // At login a user's gateway in front of the managed route (Codex -> gateway -> runtime)
+  // starts alongside NEKODEX and may not answer yet. Wait a bounded time for it to vouch
+  // for this runtime instead of failing startup on a race; other drift still fails at once.
+  async bridgeStatusAwaitingChainedGateway(name, {
+    waitMs = CHAINED_GATEWAY_WAIT_MS, intervalMs = CHAINED_GATEWAY_POLL_MS, now = Date.now,
+    sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  } = {}) {
+    const deadline = now() + waitMs;
+    let waiting = false;
+    for (;;) {
+      try {
+        const status = await this.bridgeStatus(name);
+        if (waiting) this.logger.info("bridge.chained_gateway_ready", {});
+        return status;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes(UNVERIFIED_CHAINED_GATEWAY) || now() + intervalMs > deadline) throw error;
+        if (!waiting) this.logger.warn("bridge.chained_gateway_waiting", { waitMs });
+        waiting = true;
+        await sleep(intervalMs);
+      }
+    }
+  }
+
   async connectBridgeRoute() {
     this.assertProductionProfile("Codex bridge routing");
     const name = "bridge-connect";
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     this.lifecycleOperation = name;
     try {
-      const current = await this.bridgeStatus(name);
+      const current = await this.bridgeStatusAwaitingChainedGateway(name);
       if (!current.installed) throw new Error("Install the Codex integration before connecting the bridge route");
       if (current.active) return current;
       try {

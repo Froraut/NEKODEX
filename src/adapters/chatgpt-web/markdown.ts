@@ -327,7 +327,7 @@ export class ChatGptMarkdownBuffer {
 
   constructor(private readonly delivery: "stream" | "complete" = "stream") {}
 
-  observe(segments: ChatGptMarkdownSegment[]): string {
+  observe(segments: ChatGptMarkdownSegment[], options: { tailReady?: boolean } = {}): string {
     const now = Date.now();
     // Candidates and the latest snapshot both retain DOM records before Markdown is emitted.
     const snapshotBytes = 2 * segments.reduce((bytes, segment) => bytes + retainedRecordBytes(segment), 0);
@@ -365,10 +365,15 @@ export class ChatGptMarkdownBuffer {
         && previous.group === segment.group
         && previous.sourceStart === segment.sourceStart
         && previous.sourceEnd === segment.sourceEnd;
+      // A following block normally establishes the boundary. The owning browser may also
+      // prove that the stream stopped and completed-turn actions rendered. Keep the same
+      // stability window for that tail; this does not declare the whole turn complete.
+      const streamable = segment.streamable || options.tailReady === true;
       this.candidates.set(candidateId, {
         ...segment,
+        streamable,
         changedAt: unchanged ? previous.changedAt : now,
-        ...(segment.streamable ? {
+        ...(streamable ? {
           streamableAt: unchanged && previous.streamableAt !== undefined
             ? previous.streamableAt
             : now,
