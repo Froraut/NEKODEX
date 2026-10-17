@@ -33,4 +33,32 @@ headless picker case passed with retained selection, a live pre-send check and
 rejection of a changed visible selection. Root/launcher typechecking and the
 development renderer/helper builds passed. The architecture map stayed current.
 
-Installed comparison and a real read-only tool/context check are pending.
+## Installed comparison and preserved tools
+
+The first request immediately after runtime replacement included roughly ten
+seconds of account/connector initialization before browser acquisition. It is
+recorded separately as a cold start; it is not comparable to the baseline's
+already-running account.
+
+With accounts ready, the same full input (32,371 input tokens) produced:
+
+| Boundary | Baseline | Updated |
+| --- | ---: | ---: |
+| Gateway request to first text | 12.742 s | 10.941 s |
+| Fresh CLI start to first text | 16.071 s | 14.842 s |
+| Fresh CLI start to completion | 16.187 s | 15.584 s |
+
+An ordinary user follow-up in the same retained conversation reached first text
+7.198 s after the gateway request and 10.052 s after starting a fresh CLI. It
+correctly repeated the earlier response; the canonical follow-up request still
+contained the preceding conversation. A separate real terminal-tool request read
+a generated file and returned its exact random value plus the context sentinel.
+The observed tool event was `command_execution`; no tool or instruction was
+disabled. Its tool-result continuation produced first text 3.950 s after that
+continuation request.
+
+The startup trace also showed the selected account waiting behind another
+account's sequential initialization. Version 6.1.32-nekodex.5 prioritizes the
+selected account while preserving sequential ownership and all remaining
+account checks. A focused owner-level test verifies that its model/tool readiness
+is available while the background account is still pending.

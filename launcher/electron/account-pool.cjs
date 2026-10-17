@@ -861,7 +861,11 @@ class AccountBrowserPool {
   async refreshAuthentication() {
     // Authenticate enabled saved sessions, without treating persisted metadata as proof.
     this.evidenceRefreshing ??= new Set();
-    const accounts = this.registry.snapshot().accounts.filter(account => account.enabled);
+    const registry = this.registry.snapshot();
+    // These checks are intentionally serial. Make the selected account usable first rather
+    // than holding its first request behind another account's sign-in and connector probes.
+    const accounts = registry.accounts.filter(account => account.enabled)
+      .sort((left, right) => Number(right.id === registry.selectedId) - Number(left.id === registry.selectedId));
     const pending = accounts.map(account => account.id).filter(id => !this.evidenceRefreshing.has(id));
     for (const id of pending) this.evidenceRefreshing.add(id);
     try {

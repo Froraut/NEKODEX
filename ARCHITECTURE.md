@@ -187,6 +187,9 @@ delivery and wait for tool work. Picker selection checks live state before closi
 verifies persisted family/effort immediately before Send, without an intermediate reopening.
 
 Connector approval cards remain owned by the user when automatic approval is disabled.
+Startup account authentication and connector checks stay sequential under their existing
+owners, but the selected enabled account is checked first so unrelated account startup
+does not delay its first task. Remaining enabled accounts are still checked afterwards.
 The page guard never denies them on a timer; it keeps cancellation and heartbeats active
 until the card resolves. The worker excludes the observed approval wait from the response
 deadline and resets DOM grace tracking before resuming the same submitted turn.
