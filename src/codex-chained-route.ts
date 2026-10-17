@@ -21,6 +21,17 @@ export interface ChainedRouteProof {
   gatewayVersion?: string;
 }
 
+/**
+ * The same chain while this runtime is down: the gateway answers but reports its upstream as
+ * unreachable, so it cannot vouch for the runtime yet. Only a runtime-failure fail-safe may leave
+ * such a route alone; status still reports the unverified base URL.
+ */
+export interface PendingChainedRoute {
+  url: string;
+  upstreamUrl: string;
+  gatewayVersion?: string;
+}
+
 export const UNVERIFIED_CHAIN_DETAIL =
   "no local gateway at the newer openai_base_url confirmed that it forwards to this NEKODEX runtime";
 
@@ -55,12 +66,15 @@ async function readHealth(origin: string, fetcher: HealthFetcher, timeoutMs: num
   }
 }
 
-/** Proves `currentUrl` is a loopback gateway whose reachable upstream is the runtime at `managedUrl`. */
-export async function verifyChainedCodexRoute(
+type ChainObservation =
+  | { kind: "verified"; proof: ChainedRouteProof }
+  | { kind: "pending"; pending: PendingChainedRoute };
+
+async function observeChain(
   currentUrl: string,
   managedUrl: string,
-  { fetcher = fetch as HealthFetcher, timeoutMs = 3_000 }: { fetcher?: HealthFetcher; timeoutMs?: number } = {},
-): Promise<ChainedRouteProof | undefined> {
+  { fetcher = fetch as HealthFetcher, timeoutMs = 3_000 }: { fetcher?: HealthFetcher; timeoutMs?: number },
+): Promise<ChainObservation | undefined> {
   const gatewayUrl = loopbackHttpUrl(currentUrl);
   const runtimeUrl = loopbackHttpUrl(managedUrl);
   if (!gatewayUrl || !runtimeUrl || gatewayUrl.origin === runtimeUrl.origin) return undefined;
@@ -69,44 +83,64 @@ export async function verifyChainedCodexRoute(
     readHealth(runtimeUrl.origin, fetcher, timeoutMs),
     readHealth(gatewayUrl.origin, fetcher, timeoutMs),
   ]);
-  if (runtime?.status !== "ok" || runtime.service !== RUNTIME_SERVICE || typeof runtime.version !== "string") {
-    return undefined;
-  }
   // Another runtime instance is not a gateway: its own /healthz has no upstream to vouch for.
   if (gateway?.status !== "ok" || gateway.service === RUNTIME_SERVICE) return undefined;
   const upstream = record(gateway.upstream);
+  // Gateways that also echo the upstream origin must name exactly this runtime.
+  if (upstream?.origin !== undefined && upstream.origin !== runtimeUrl.origin) return undefined;
+  const gatewayVersion = typeof gateway.version === "string" ? { gatewayVersion: gateway.version } : {};
+  if (runtime === undefined) {
+    return upstream?.reachable === false
+      ? { kind: "pending", pending: { url: currentUrl, upstreamUrl: managedUrl, ...gatewayVersion } }
+      : undefined;
+  }
+  if (runtime.status !== "ok" || runtime.service !== RUNTIME_SERVICE || typeof runtime.version !== "string") {
+    return undefined;
+  }
   if (upstream?.reachable !== true || upstream.version !== runtime.version) return undefined;
-  // Gateways that also echo the upstream identity must name exactly this runtime.
   if (upstream.instance_id !== undefined && upstream.instance_id !== runtime.instance_id) return undefined;
-  if (upstream.origin !== undefined && upstream.origin !== runtimeUrl.origin) return undefined;
   return {
-    url: currentUrl,
-    upstreamUrl: managedUrl,
-    upstreamVersion: runtime.version,
-    ...(typeof gateway.version === "string" ? { gatewayVersion: gateway.version } : {}),
+    kind: "verified",
+    proof: { url: currentUrl, upstreamUrl: managedUrl, upstreamVersion: runtime.version, ...gatewayVersion },
   };
+}
+
+/** Proves `currentUrl` is a loopback gateway whose reachable upstream is the runtime at `managedUrl`. */
+export async function verifyChainedCodexRoute(
+  currentUrl: string,
+  managedUrl: string,
+  options: { fetcher?: HealthFetcher; timeoutMs?: number } = {},
+): Promise<ChainedRouteProof | undefined> {
+  const observed = await observeChain(currentUrl, managedUrl, options);
+  return observed?.kind === "verified" ? observed.proof : undefined;
 }
 
 /**
  * Status for an active route that also accepts a verified local gateway chain. Without proof the
  * original refusal is kept and explains what was checked; the user's openai_base_url is never changed.
+ * A gateway waiting for this (down) runtime is named in `pendingChainedRoute` next to that refusal.
  */
 export async function inspectCodexIntegrationWithChain(
   options: { fetcher?: HealthFetcher; timeoutMs?: number } = {},
   inspect: typeof inspectCodexIntegration = inspectCodexIntegration,
-): Promise<CodexIntegrationInspection & { chainedRoute?: ChainedRouteProof }> {
+): Promise<CodexIntegrationInspection & { chainedRoute?: ChainedRouteProof; pendingChainedRoute?: PendingChainedRoute }> {
   const status = inspect();
   const changed = status.baseUrlChanged;
   if (!changed || !status.active || !status.routeUrl) return status;
-  const proof = changed.current === undefined
+  const observed = changed.current === undefined
     ? undefined
-    : await verifyChainedCodexRoute(changed.current, status.routeUrl, options);
-  if (!proof) {
+    : await observeChain(changed.current, status.routeUrl, options);
+  if (observed?.kind !== "verified") {
+    // The pending chain is named only when nothing but the base URL differs from the installation.
+    const pending = observed?.kind === "pending"
+      && inspect({ chainedBaseUrl: observed.pending.url }).errors.length === 0
+      ? { pendingChainedRoute: observed.pending } : {};
     return {
       ...status,
       errors: status.errors.map(error => error === changed.error ? `${error} (${UNVERIFIED_CHAIN_DETAIL})` : error),
+      ...pending,
     };
   }
-  const chained = inspect({ chainedBaseUrl: proof.url });
-  return chained.errors.length === 0 ? { ...chained, chainedRoute: proof } : chained;
+  const chained = inspect({ chainedBaseUrl: observed.proof.url });
+  return chained.errors.length === 0 ? { ...chained, chainedRoute: observed.proof } : chained;
 }

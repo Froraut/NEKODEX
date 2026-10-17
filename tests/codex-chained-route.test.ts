@@ -134,3 +134,64 @@ test("the launcher treats a chained status as connected and logs the chain once"
     errors: [`${BASE_URL_CHANGED_MESSAGE} (${UNVERIFIED_CHAIN_DETAIL})`] }) });
   await expect(host.bridgeStatus()).rejects.toThrow(/Codex bridge route is inconsistent/);
 });
+
+test.serial("a gateway waiting for this down runtime is named as a pending chain, still unverified", isolated(async ({ config }) => {
+  installCodexIntegration(defaultConfig("full"));
+  const managed = inspectCodexIntegration().routeUrl!;
+  writeFileSync(config, readFileSync(config, "utf8").replace(`openai_base_url = ${JSON.stringify(managed)}`,
+    `openai_base_url = ${JSON.stringify(GATEWAY)}`));
+  const unverified = `${BASE_URL_CHANGED_MESSAGE} (${UNVERIFIED_CHAIN_DETAIL})`;
+  const runtimeDown = (upstream: Record<string, unknown>) =>
+    healthFetcher({ "http://127.0.0.1:17844": gatewayHealth(upstream) });
+
+  const pending = await inspectCodexIntegrationWithChain({ fetcher: runtimeDown({ reachable: false }) });
+  expect(pending.errors).toEqual([unverified]);
+  expect(pending.chainedRoute).toBeUndefined();
+  expect(pending.pendingChainedRoute).toEqual({ url: GATEWAY, upstreamUrl: managed, gatewayVersion: "0.4.1" });
+  expect(await verifyChainedCodexRoute(GATEWAY, managed, { fetcher: runtimeDown({ reachable: false }) })).toBeUndefined();
+
+  // A running runtime the gateway cannot reach, a gateway naming another upstream, a second
+  // runtime instance or no gateway at all are not a pending chain.
+  for (const fetcher of [
+    chain(managed, { reachable: false }),
+    runtimeDown({ reachable: false, origin: "http://127.0.0.1:17900" }),
+    runtimeDown({ reachable: true, version: runtimeHealth.version }),
+    healthFetcher({ "http://127.0.0.1:17844": { ...runtimeHealth, upstream: { reachable: false } } }),
+    healthFetcher({}),
+  ]) {
+    const status = await inspectCodexIntegrationWithChain({ fetcher });
+    expect(status.errors).toEqual([unverified]);
+    expect(status.pendingChainedRoute).toBeUndefined();
+  }
+}));
+
+function launcherHost(status: Record<string, unknown>, logged: Array<[string, unknown]>, runs: string[][]) {
+  const { RuntimeHost } = require("../launcher/electron/runtime.cjs");
+  return Object.assign(Object.create(RuntimeHost.prototype), {
+    assertProductionProfile() {},
+    currentOperation: () => null,
+    run: async (_name: string, args: string[]) => { runs.push(args); return { stdout: JSON.stringify(status) }; },
+    logger: { info: (event: string, details: unknown) => logged.push([event, details]) },
+  });
+}
+
+test("the runtime-failure fail-safe leaves a pending gateway chain alone without an error", async () => {
+  const logged: Array<[string, unknown]> = [];
+  const runs: string[][] = [];
+  const status = { installed: true, active: true, routeUrl: RUNTIME,
+    errors: [`${BASE_URL_CHANGED_MESSAGE} (${UNVERIFIED_CHAIN_DETAIL})`],
+    pendingChainedRoute: { url: GATEWAY, upstreamUrl: RUNTIME, gatewayVersion: "0.4.4" } };
+  const host = launcherHost(status, logged, runs);
+  expect(await host.restoreBridgeRoute("runtime-start-fail-safe"))
+    .toMatchObject({ installed: true, active: true, errors: [], pendingChainedRoute: { url: GATEWAY } });
+  expect(runs).toEqual([["route", "status"]]);
+  expect(logged).toEqual([["bridge.route_chained_upstream_down", { url: GATEWAY, upstreamUrl: RUNTIME }]]);
+
+  // Everything else stays strict: plain status, uninstall's restore, and a pending chain for another route.
+  await expect(host.bridgeStatus()).rejects.toThrow(/Codex bridge route is inconsistent/);
+  await expect(host.restoreBridgeRouteWithinOperation("uninstall-integration")).rejects.toThrow(/inconsistent/);
+  const foreign = launcherHost({ ...status, pendingChainedRoute: { url: GATEWAY, upstreamUrl: "http://127.0.0.1:17900/v1" } }, [], []);
+  await expect(foreign.restoreBridgeRoute("runtime-start-fail-safe")).rejects.toThrow(/inconsistent/);
+  const unchained = launcherHost({ ...status, pendingChainedRoute: undefined }, [], []);
+  await expect(unchained.restoreBridgeRoute("runtime-start-fail-safe")).rejects.toThrow(/inconsistent/);
+});
