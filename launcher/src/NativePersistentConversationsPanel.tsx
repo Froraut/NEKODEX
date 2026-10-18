@@ -95,8 +95,14 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
     if (!selected || selected.status !== 'idle' || !selected.ownerAvailable || prompt.trim() || !context) return;
     void mutate({ action: 'fork', actionId: crypto.randomUUID(), conversationId: selected.id, revision: selected.revision, expectedContext: context });
   };
+  const changeConnection = (action: 'closeIdle' | 'resume') => {
+    const context = expectedContext();
+    if (!selected || !context || prompt.trim() || (action === 'resume' ? !selected.resumeAvailable : !ready)) return;
+    void mutate({ action, actionId: crypto.randomUUID(), conversationId: selected.id, revision: selected.revision, expectedContext: context });
+  };
   const statusText = (status: string) => ({ idle: ru ? 'Готов' : 'Ready', running: ru ? 'Выполняется' : 'Running',
-    unknown: ru ? 'Исход требует проверки' : 'Outcome needs inspection', unavailable: ru ? 'Исполнитель закрыт' : 'Owner closed' })[status] || status;
+    unknown: ru ? 'Исход требует проверки' : 'Outcome needs inspection', unavailable: ru ? 'Исполнитель закрыт' : 'Owner closed',
+    unloaded: ru ? 'Подключение закрыто' : 'Connection closed' })[status] || status;
   const ready = selected?.status === 'idle' && selected.ownerAvailable;
 
   return <Panel className="native-persistent" title={ru ? 'Сохранённые диалоги Native' : 'Retained Native conversations'}
@@ -131,8 +137,10 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
           <div><Badge>{statusText(selected.status)}</Badge> <code>{selected.threadId || selected.id}</code></div>
           {selected.lastSummary !== undefined ? <pre className="native-persistent__answer">{selected.lastSummary}</pre> : null}
           {!selected.ownerAvailable ? <Notice title={ru ? 'Контекст сохранён, исполнитель недоступен' : 'Context retained; owner unavailable'}>
-            {ru ? 'Автоматического возобновления после перезапуска нет. Сохранённая запись не означает действующее подключение.'
-              : 'Restart does not automatically resume this conversation. A retained record does not establish a live connection.'}
+            {selected.resumeAvailable ? (ru ? 'Можно явно возобновить подключение. При этом новое сообщение не отправляется.'
+              : 'You can explicitly resume the connection. This does not send a new message.')
+              : (ru ? 'Для возобновления нужен прежний подтверждённый аккаунт и определённый исход предыдущих действий. Автоматического запуска нет.'
+                : 'Resuming requires the same verified account and resolved prior outcomes. There is no automatic execution.')}
           </Notice> : null}
         </> : <>
           <Select label={ru ? 'Модель сохранённого диалога' : 'Retained conversation model'} value={model}
@@ -149,10 +157,16 @@ export function NativePersistentConversationsPanel({ api, language, disabled = f
           <Button variant="primary" disabled={locked || !textAllowed || !snapshot?.available || (selected ? !ready : !consent || !model)}
             busy={busy} onClick={selected ? send : create}>{selected ? (ru ? 'Продолжить диалог' : 'Continue conversation') : (ru ? 'Создать и отправить' : 'Create and send')}</Button>
           {selected ? <Button disabled={locked || !ready || Boolean(prompt.trim())} onClick={fork}>{ru ? 'Ответвить сохранённый контекст' : 'Fork retained context'}</Button> : null}
+          {selected && ready ? <Button disabled={locked || Boolean(prompt.trim())} onClick={() => changeConnection('closeIdle')}>
+            {ru ? 'Закрыть подключение к диалогу' : 'Close conversation connection'}</Button> : null}
+          {selected?.resumeAvailable ? <Button disabled={locked || Boolean(prompt.trim())} onClick={() => changeConnection('resume')}>
+            {ru ? 'Возобновить сохранённый диалог' : 'Resume retained conversation'}</Button> : null}
+          {prompt ? <Button disabled={disabled || busy} onClick={() => setPrompt('')}>
+            {ru ? 'Очистить черновик' : 'Clear draft'}</Button> : null}
         </div>
-        {selected && prompt.trim() ? <small>{ru ? 'Перед ответвлением отправьте или очистите черновик сообщения.' : 'Send or clear the draft before forking.'}</small> : null}
-        <p className="native-persistent__hint">{ru ? 'Сообщение отправляется только по нажатию. Инструменты Native отключены. Ответвление сохраняет контекст, но само не отправляет сообщение. Передача стороннему клиенту пока недоступна.'
-          : 'Messages are sent only by clicking. Native tools are disabled. Forking retains context without sending a message. Handoff to another client is not available yet.'}</p>
+        {selected && prompt.trim() ? <small>{ru ? 'Перед ответвлением или закрытием подключения отправьте или очистите черновик сообщения.' : 'Send or clear the draft before forking or closing the connection.'}</small> : null}
+        <p className="native-persistent__hint">{ru ? 'Сообщение отправляется только по нажатию. Инструменты Native отключены. Ответвление и возобновление сами не отправляют сообщение. Закрытие подключения сохраняет контекст. Передача стороннему клиенту пока недоступна.'
+          : 'Messages are sent only by clicking. Native tools are disabled. Forking and resuming do not send a message. Closing the connection retains context. Handoff to another client is not available yet.'}</p>
       </div>
     </div>
   </Panel>;

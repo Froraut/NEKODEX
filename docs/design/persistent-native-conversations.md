@@ -45,11 +45,21 @@ draining together with shutdown of the exact shared account server. Both must
 settle before completion; a missing creation acknowledgement cannot prevent the
 transport shutdown needed to resolve it. The account owner releases its profile
 lease only after its physical process closes.
-Restart does not automatically resume retained conversations. Records whose
-original owner is no longer available are labelled unavailable. A supported
-restart-resume protocol and cooperative handoff to a third-party client remain
-separate work; neither a persisted thread ID nor an idle metadata status grants
-that authority.
+An explicit idle Close connection retires its loaded binding while retaining
+context. Explicit Resume uses the public `thread/resume` route for a proven v2
+owned record: exact account/history identity, current revision, settled prior
+actions and no existing live subscription are required. The new binding uses
+the current admission and a new journal; its response must confirm the original
+Native thread and permissions. Resume itself sends no message. Only a later
+explicit Send starts another model turn.
+
+Restart never automatically resumes or sends. A retained v2 record can become
+explicitly resumable after the same account is qualified again. Legacy v1
+prototype records without proven history identity, unknown outcomes and foreign
+threads remain unavailable. A thread ID alone is not execution authority.
+Closing and resuming do not discard an unsent draft; the UI provides a separate
+local Clear draft action. Cooperative external-client handoff and attachment
+parity remain separate work.
 
 Actual macOS development GUI acceptance on 18 October 2026 completed a first
 turn, a follow-up recalling context absent from its canonical input, an explicit
@@ -59,5 +69,13 @@ authorship. An earlier retained record was unavailable after restart without
 automatic sending. See the [real acceptance report](../reviews/2026-10-18-real-persistent-native-conversations.md)
 for source-bound receipts, checks and remaining limits. The exact Native process,
 core and GUI were subsequently confirmed closed, with the registry retained and
-its owner lock released. This is development evidence, not installed `.9` delivery,
-restart Resume, external-client handoff or general outcome verification.
+its owner lock released.
+
+The subsequent [real Resume acceptance](../reviews/2026-10-18-real-native-resume.md)
+passed idle Close→Resume→recall and full application restart→Resume→recall:
+one Native thread, three bindings, two admitted server generations, three model
+offers and seven completed actions. Both follow-up inputs omitted the recalled
+marker; Resume itself made no model offer. Final core/GUI exit0, physical Native
+absence and released registry lock were independently recorded. This remains
+development evidence, not installed `.9` delivery, external-client handoff or
+general business outcome verification.

@@ -77,7 +77,7 @@ export function createOwnedNativeWorkerService(options: {
 
 /** Trusted main composition only. Private sender/request methods are never returned. */
 export function createOwnedNativeAccountServer(options:{
-  admission:{serverGeneration:string;paths:{cwd:string};prestart():unknown;checkEffective(read:unknown,requirements:unknown):void;
+  admission:{serverGeneration:string;paths:{cwd:string};historySource?:import('./agent-native-protocol.cjs').AgentNativeHistorySource;prestart():unknown;checkEffective(read:unknown,requirements:unknown):void;
     checkAccount(account:unknown,usage:unknown):void;forBinding(binding:import('./agent-native-bridge.cjs').AgentNativeBinding):unknown;
     compileOutputSchema?:(schema:Record<string,unknown>)=>(value:unknown)=>boolean};
   requestTimeoutMs?:number;terminalTimeoutMs?:number;stopGraceMs?:number;maxConcurrentThreads?:number;onChange?:()=>void;
@@ -87,6 +87,7 @@ export function createOwnedNativeAccountServer(options:{
   persistentOperation<T>(action:(operation:{
     createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void,forkThreadId?:string):ReturnType<typeof createOwnedNativeWorkerService>;
     useWorker(worker:ReturnType<typeof createOwnedNativeWorkerService>):ReturnType<typeof createOwnedNativeWorkerService>;
+    prepareResume(input:{registryPath:string;conversationId:string;revision:number}):(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void)=>ReturnType<typeof createOwnedNativeWorkerService>;
   })=>Promise<T>):Promise<T>;
   inspect():{serverGeneration:string;pid:number|null;closed:boolean;accepting:boolean;threadIds:string[];bindings:string[];activeCount:number};
   currentOperation():string|null;destroy():Promise<void>;

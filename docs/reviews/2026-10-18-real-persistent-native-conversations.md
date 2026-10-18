@@ -49,3 +49,7 @@ history capture or export.
 Private workspace evidence: `reviews/evidence/full-adoption/native-persistent-real-20261018.json`.
 It retains actual identities and source hashes; account identifiers and credential
 contents are not reproduced in this public report.
+
+Subsequent work added and verified explicit idle-close and Resume, including
+context recall after a full application restart. See the separate
+[Resume acceptance](2026-10-18-real-native-resume.md) for that expanded scope.

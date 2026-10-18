@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { canonical, digest, fail, privateDirectory, regular } = require('./owned-native-admission.cjs');
 const { uuid } = require('./owned-native-journal.cjs');
 const { PERSISTENT_NATIVE_FINAL_SCHEMA: FINAL_SCHEMA } = require('./owned-native-worker.cjs');
+const { isAgentNativeHistorySource } = require('./agent-native-protocol.cjs');
 const textInput = value => {
   if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value) > 32768 || value.includes('\0')) throw fail('invalid_intent', 'Provide nonempty conversation text of at most 32 KiB');
   return value;
@@ -21,12 +22,12 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   let state;
   try {
     const bytes = regular(file, 4 * 1024 * 1024); lastDigest = digest(bytes); state = JSON.parse(bytes);
-    if (state.version !== 1 || !Array.isArray(state.conversations) || !Array.isArray(state.actions) || state.conversations.length > 128 || state.actions.length > 512) throw new Error();
+    if (![1, 2].includes(state.version) || !Array.isArray(state.conversations) || !Array.isArray(state.actions) || state.conversations.length > 128 || state.actions.length > 512) throw new Error();
     for (const row of state.conversations) { uuid(row.id); uuid(row.profileId); uuid(row.epoch); uuid(row.serverGeneration); if (!Number.isSafeInteger(row.revision) || row.revision < 0) throw new Error(); }
     for (const row of state.actions) { uuid(row.actionId); uuid(row.conversationId); }
   } catch (reason) {
     if (reason.code !== 'ENOENT') throw fail('registry_unavailable', 'Persistent Native registry is unavailable');
-    state = { version: 1, conversations: [], actions: [], selected: null };
+    state = { version: 2, conversations: [], actions: [], selected: null };
   }
   const notify = () => { try { onChange?.(); } catch {} };
   function acquire() {
@@ -38,6 +39,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
   }
   function save() {
     acquire();
+    state.version = 2;
     if (regular(lock, 4096).toString() !== owner) throw fail('owner_changed', 'Persistent Native registry owner changed');
     let observed;
     try { observed = digest(regular(file, 4 * 1024 * 1024)); } catch (reason) { if (reason.code !== 'ENOENT') throw reason; }
@@ -53,18 +55,30 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     notify();
   }
   const sameScope = (row, context) => context && row.profileId === context.profileId && row.epoch === context.epoch && row.serverGeneration === context.serverGeneration;
+  function resumeReason(row, context) {
+    if (row.contextVersion !== 2 || !isAgentNativeHistorySource(row.historySource)) return 'legacy_identity_unproven';
+    if (state.actions.some(action => action.conversationId === row.id && (['prepared', 'unknown'].includes(action.state) || action.ownerHeld === true))) return 'prior_outcome_unresolved';
+    if (!row.threadId || !['idle', 'unloaded'].includes(row.status)) return 'retained_context_unavailable';
+    if (!context || destroyed || !context.server.inspect().accepting) return 'account_owner_unavailable';
+    if (row.profileId !== context.profileId || row.epoch !== context.epoch) return 'account_scope_changed';
+    const model = context.models.find(value => value.id === row.model);
+    if (!model || !isAgentNativeHistorySource(model.historySource) || canonical(model.historySource) !== canonical(row.historySource)) return 'account_identity_changed';
+    if (sameScope(row, context) && live.has(row.id)) return 'already_loaded';
+    return null;
+  }
   function list() {
     const context = getExecution(), selected = context || state.selected;
     const conversations = state.conversations.filter(row => selected && row.profileId === selected.profileId && row.epoch === selected.epoch).map(row => {
       const worker = live.get(row.id), available = !destroyed && sameScope(row, context) && worker && !context.server.inspect().closed && context.server.inspect().accepting;
       return { id: row.id, revision: row.revision, threadId: row.threadId, model: row.model,
-        status: available ? row.status : 'unavailable', ownerAvailable: Boolean(available), createdAt: row.createdAt, updatedAt: row.updatedAt,
+        status: available ? row.status : row.status === 'unloaded' ? 'unloaded' : 'unavailable', ownerAvailable: Boolean(available), createdAt: row.createdAt, updatedAt: row.updatedAt,
+        resumeAvailable: resumeReason(row, context) === null, resumeReason: resumeReason(row, context),
         ...(row.parentId ? { parentId: row.parentId } : {}), ...(row.lastSummary ? { lastSummary: row.lastSummary } : {}) };
     });
     const ids = new Set(conversations.map(row => row.id));
     return { conversations, actions: state.actions.filter(row => ids.has(row.conversationId)).map(row => ({ actionId: row.actionId, kind: row.kind,
       conversationId: row.conversationId, state: row.state, ownerHeld: row.ownerHeld === true, ...(row.reasonCode ? { reasonCode: row.reasonCode } : {}) })),
-      busy, retention: 'explicit-native-context', resumeSupported: false };
+      busy, retention: 'explicit-native-context', resumeSupported: true };
   }
   function recordNative(action, row, receipt) {
     if (receipt.actionId !== action.turnActionId) return;
@@ -105,45 +119,59 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
       let source;
       if (kind !== 'create') {
         uuid(input.conversationId); source = state.conversations.find(row => row.id === input.conversationId);
-        if (!source || !sameScope(source, context) || !live.has(source.id)) throw fail('owner_unavailable', 'This retained conversation has no current owner; restart Resume is unsupported');
-        if (source.status !== 'idle' || source.revision !== input.revision) throw fail('stale_conversation', 'Select the current idle conversation revision');
+        if (!source || source.revision !== input.revision) throw fail('stale_conversation', 'Select the exact current conversation revision');
+        if (kind === 'resume') { const reason = resumeReason(source, context); if (reason) throw fail('resume_unavailable', reason); }
+        else {
+          if (!sameScope(source, context) || !live.has(source.id)) throw fail('owner_unavailable', 'This retained conversation has no current owner; explicitly Resume first');
+          if (source.status !== 'idle') throw fail('stale_conversation', 'Select the current idle conversation revision');
+          if (state.actions.some(action => action.conversationId === source.id && (['prepared', 'unknown'].includes(action.state) || action.ownerHeld === true))) throw fail('resume_unavailable', 'Prior conversation outcome is unresolved');
+        }
       }
       if (kind === 'create' && input.retainContext !== true) throw fail('retention_consent_required', 'Explicit consent to retain full Native context is required');
-      if (kind !== 'fork') textInput(input.text);
+      if (kind === 'create' || kind === 'send') textInput(input.text);
       const selectedModel = context.models.find(model => model.id === (source?.model || input.model));
       if (!selectedModel) throw fail('model_unavailable', 'Select a model from the current qualified account');
-      if (state.actions.length >= 512 || kind !== 'send' && state.conversations.length >= 128) throw fail('registry_quota', 'Persistent Native registry quota reached');
+      if (!isAgentNativeHistorySource(selectedModel.historySource) || selectedModel.historySource.profileId !== context.profileId || selectedModel.historySource.authEpoch !== context.epoch) throw fail('account_identity_unavailable', 'Qualified Native account identity is required for retained context');
+      if (state.actions.length >= 512 || ['create', 'fork'].includes(kind) && state.conversations.length >= 128) throw fail('registry_quota', 'Persistent Native registry quota reached');
       busy = true; notify();
       try {
         return await context.server.persistentOperation(async operation => {
           assertContext();
           acquire();
+          const makeResumedWorker = kind === 'resume' ? operation.prepareResume({ registryPath: file, conversationId: source.id, revision: source.revision }) : null;
           const now = Date.now();
-          const row = kind === 'send' ? source : { id: randomUUID(), revision: 0, threadId: null, model: selectedModel.id,
+          const row = !['create', 'fork'].includes(kind) ? source : { id: randomUUID(), revision: 0, threadId: null, model: selectedModel.id,
             profileId: context.profileId, epoch: context.epoch, serverGeneration: context.serverGeneration, status: 'running', createdAt: now, updatedAt: now,
+            contextVersion: 2, historySource: structuredClone(selectedModel.historySource), forkedFromThreadId: kind === 'fork' ? source.threadId : null,
             ...(kind === 'fork' ? { parentId: source.id } : {}) };
           const action = { actionId: input.actionId, kind, fingerprint, conversationId: row.id, state: 'prepared', ownerHeld: false,
-            createActionId: randomUUID(), turnActionId: randomUUID(), createdAt: now };
-          if (kind !== 'send') state.conversations.push(row);
+            createActionId: randomUUID(), turnActionId: randomUUID(), closeActionId: randomUUID(), createdAt: now };
+          if (['create', 'fork'].includes(kind)) state.conversations.push(row);
           state.actions.push(action); state.selected = { profileId: context.profileId, epoch: context.epoch };
           row.revision++; row.status = 'running'; row.updatedAt = now; row.activeActionId = action.actionId; action.revision = row.revision;
           recorded = true; save();
           let worker;
           try {
-            if (kind === 'send') worker = operation.useWorker(live.get(row.id));
+            if (kind === 'send' || kind === 'closeIdle') worker = operation.useWorker(live.get(row.id));
             else {
-              const binding = { workerBindingId: row.id, workerGeneration: 1, taskId: row.id, familyId: row.id, generation: 1,
+              const binding = { workerBindingId: randomUUID(), workerGeneration: 1, taskId: row.id, familyId: row.id, generation: 1,
                 agentWorkerId: row.id, admissionId: selectedModel.admissionId, model: selectedModel.id };
-              worker = operation.createWorker(binding, receipt => {
+              const onReceipt = receipt => {
                 const currentAction = state.actions.find(value => value.turnActionId === receipt.actionId && value.conversationId === row.id);
                 if (currentAction) recordNative(currentAction, row, receipt);
-              }, kind === 'fork' ? source.threadId : undefined);
+              };
+              worker = makeResumedWorker ? makeResumedWorker(binding, onReceipt) : operation.createWorker(binding, onReceipt, kind === 'fork' ? source.threadId : undefined);
               live.set(row.id, worker);
               assertContext();
               const created = await worker.createOwnedWorker({ actionId: action.createActionId });
-              row.threadId = created.threadId; save();
+              row.threadId = created.threadId; row.bindingId = binding.workerBindingId; row.admissionId = selectedModel.admissionId; row.serverGeneration = context.serverGeneration; save();
             }
-            if (kind === 'fork') { action.state = 'completed'; row.status = 'idle'; row.updatedAt = Date.now(); save(); }
+            if (kind === 'closeIdle') {
+              await worker.retireOwnedWorker({ workerHandle: worker.inspectOwnedWorker().workerHandle, actionId: action.closeActionId });
+              await worker.destroy(); live.delete(row.id);
+              action.state = 'completed'; row.status = 'unloaded'; row.updatedAt = Date.now(); save();
+            }
+            else if (kind === 'fork' || kind === 'resume') { action.state = 'completed'; row.status = 'idle'; row.updatedAt = Date.now(); save(); }
             else {
               assertContext();
               const receipt = await worker.offerOwnedTurn({ workerHandle: worker.inspectOwnedWorker().workerHandle, actionId: action.turnActionId,
@@ -156,13 +184,18 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
             if (worker) {
               try {
                 const snapshot = worker.inspectOwnedWorker();
-                const exactId = row.threadId && kind !== 'fork' ? action.turnActionId : action.createActionId;
+                const exactId = kind === 'resume' || kind === 'fork' ? action.createActionId : row.threadId ? action.turnActionId : action.createActionId;
                 const exact = snapshot.receipts.find(receipt => receipt.actionId === exactId);
-                provablyNotSent = snapshot.storageOwner === 'current' && !exact;
+                provablyNotSent = kind !== 'closeIdle' && snapshot.storageOwner === 'current' && !exact;
                 knownLeafFailure = snapshot.storageOwner === 'current' && exact?.state === 'failed' && exact.ownerHeld === false;
               } catch { /* Receipt storage uncertainty is never permission to retry. */ }
             }
-            if (action.state !== 'completed') { action.state = reason.authoritative || provablyNotSent || knownLeafFailure ? 'failed' : 'unknown'; action.reasonCode = reason.code || 'native_outcome_unknown'; row.status = action.state === 'unknown' ? 'unknown' : 'unavailable'; row.updatedAt = Date.now(); save(); }
+            if (action.state !== 'completed') {
+              action.state = reason.authoritative || provablyNotSent || knownLeafFailure ? 'failed' : 'unknown'; action.reasonCode = reason.code || 'native_outcome_unknown';
+              row.status = action.state === 'unknown' ? 'unknown' : kind === 'resume' ? 'unloaded' : 'unavailable';
+              if (kind === 'resume' && action.state === 'failed') live.delete(row.id);
+              row.updatedAt = Date.now(); save();
+            }
             throw reason;
           }
         });
@@ -181,6 +214,7 @@ function createPersistentNativeConversations({ getExecution, storageRoot, storag
     return closing;
   }
   return Object.freeze({ list, create: input => execute('create', input), send: input => execute('send', input), fork: input => execute('fork', input),
+    closeIdle: input => execute('closeIdle', input), resume: input => execute('resume', input),
     inspectAction: actionId => {
       uuid(actionId); const row = state.actions.find(value => value.actionId === actionId);
       return row ? { actionId: row.actionId, kind: row.kind, conversationId: row.conversationId, state: row.state,

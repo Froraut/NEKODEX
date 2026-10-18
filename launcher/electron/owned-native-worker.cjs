@@ -3,7 +3,8 @@ const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { StringDecoder } = require('node:string_decoder');
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require('./process-tree.cjs');
-const { makeAdmission, digest, canonical, fail, plain, freeze } = require('./owned-native-admission.cjs');
+const { makeAdmission, digest, canonical, fail, plain, freeze, regular } = require('./owned-native-admission.cjs');
+const { isAgentNativeHistorySource } = require('./agent-native-protocol.cjs');
 const { createOwnedNativeJournal, uuid } = require('./owned-native-journal.cjs');
 const { prepareOwnedNativeInput } = require('./owned-native-images.cjs');
 const MAX_LINE = 1024 * 1024, MAX_TEXT = 128 * 1024, MAX_PAGE = 384 * 1024;
@@ -286,12 +287,14 @@ function createWorkerService(options = {}, shared) {
       if (destroyed) throw fail('client_closed', 'Native owner was closed before thread creation');
       row = journal.begin({ actionId, workerHandle: handle, threadId: null, inputHash: admission.admissionId, kind: 'create' });
       const forkThreadId = shared?.persistent?.forkThreadId;
-      const result = await worker.rpc.request(forkThreadId ? 'thread/fork' : 'thread/start', { ephemeral: !shared?.persistent, model: admission.modelId,
+      const resumeThreadId = shared?.persistent?.resumeThreadId;
+      const result = await worker.rpc.request(resumeThreadId ? 'thread/resume' : forkThreadId ? 'thread/fork' : 'thread/start', { ...(resumeThreadId ? {} : { ephemeral: !shared?.persistent }), model: admission.modelId,
         modelProvider: admission.provider, cwd: admission.paths.cwd, approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: 'read-only',
         developerInstructions: `${NEKO_DEVELOPER_INSTRUCTIONS}\n${NEKO_OUTPUT_FORMAT}`,
-        ...(forkThreadId ? { threadId: forkThreadId, excludeTurns: true } : {}) },
+        ...(resumeThreadId || forkThreadId ? { threadId: resumeThreadId || forkThreadId, excludeTurns: true } : {}) },
       requestId => { row = update(actionId, { state: 'offered', requestId }); });
-      if (!safeId(result?.thread?.id) || result.thread.ephemeral !== !shared?.persistent || result.thread.forkedFromId !== (forkThreadId ?? null)
+      if (!safeId(result?.thread?.id) || resumeThreadId && result.thread.id !== resumeThreadId || result.thread.ephemeral !== !shared?.persistent
+        || result.thread.forkedFromId !== (resumeThreadId ? shared.persistent.forkedFromThreadId : forkThreadId ?? null)
         || result.thread.parentThreadId !== null || result.thread.status?.type !== 'idle'
         || result.model !== admission.modelId || result.modelProvider !== admission.provider
         || result.approvalPolicy !== 'never' || result.approvalsReviewer !== 'user'
@@ -401,8 +404,9 @@ function createWorkerService(options = {}, shared) {
 }
 function createOwnedNativeWorkerService(options = {}) { return createWorkerService(options); }
 
-/** Trusted account owner. One private sender/AuthManager process; binding facades own
- * only freshly-created ephemeral threads and their separate durable journals. */
+/** Trusted account owner. One private sender/AuthManager process; Agent facades
+ * retain their fresh ephemeral contract. Explicit persistent facades own only
+ * created/forked or registry-proven resumed contexts, each with a new journal. */
 function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, terminalTimeoutMs = 120000,
   stopGraceMs = 1000, maxConcurrentThreads = 2, onChange, testHooks = {} } = {}) {
   if (!admission?.prestart || !admission?.forBinding || !admission?.checkAccount || !Number.isInteger(maxConcurrentThreads)
@@ -419,7 +423,16 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
     const row = threadState(id); row.closed = true; row.resolve?.();
   };
   function notify(method, params) {
-    if (method === 'thread/closed' && threads.has(params?.threadId)) signalClose(params.threadId);
+    if (method === 'thread/closed' && threads.has(params?.threadId)) {
+      const row = threads.get(params.threadId);
+      if (row.closed) return; // Duplicate historical close cannot retire another binding.
+      if (!row.requested) {
+        fault ||= fail('unexpected_thread_close', 'Native closed a subscription without its current owner request');
+        for (const listener of listeners) listener.failure(fault);
+        changed(); return; // Only physical account close can release this uncertain owner.
+      }
+      signalClose(params.threadId);
+    }
     for (const listener of listeners) {
       if (method === 'thread/closed') {
         if (listener.id() === params?.threadId) listener.failure(fail('thread_closed', 'Exact Native thread closed'));
@@ -470,7 +483,13 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
     const scopedAdmission = admission.forBinding(binding);
     let scopedListener;
     const shared = { admission: scopedAdmission, ...(persistent ? { persistent } : {}),
-      created() { if (scopedListener) scopedListener.creationUnknown = false; changed(); },
+      created(id) {
+        if (persistent?.resumeThreadId) {
+          if (threads.has(id) && !threads.get(id).closed) throw fail('thread_receipt_mismatch', 'Native resumed a thread with an existing live subscription');
+          threads.set(id, { closed: false, requested: false, resolve: null, promise: null });
+        }
+        if (scopedListener) scopedListener.creationUnknown = false; changed();
+      },
       rpcFor(id, notification, failure) {
         const listener = { id, notification, failure, creationUnknown: false, threadStartWritten: false, locallyClosed: false }; scopedListener = listener; listeners.add(listener);
         return {
@@ -479,12 +498,13 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
             await ready();
           },
           request: async (method, params, beforeWrite, onWaitTimeout) => {
-            const allowed = persistent ? ['config/read', 'configRequirements/read', 'thread/start', 'thread/fork', 'turn/start'] : ['config/read', 'configRequirements/read', 'thread/start', 'turn/start'];
+            const allowed = persistent ? ['config/read', 'configRequirements/read', 'thread/start', 'thread/fork', 'thread/resume', 'turn/start'] : ['config/read', 'configRequirements/read', 'thread/start', 'turn/start'];
             if (!allowed.includes(method)) throw fail('unsupported_method', 'Native account facade method is unavailable');
             if (persistentGate && persistent?.token !== persistentGate) throw fail('worker_busy', 'Native account conversation operation is active');
             if (!persistent && [...persistentFacades.keys()].some(value => value.currentOperation() || value.inspectOwnedWorker().state === 'unknown')) throw fail('worker_busy', 'Native persistent conversation has an unsettled owner');
             if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
-            if (method === 'thread/start' || method === 'thread/fork' || method === 'turn/start') {
+            const creation = ['thread/start', 'thread/fork', 'thread/resume'].includes(method);
+            if (creation || method === 'turn/start') {
               admission.checkAccount(await rpc.request('account/read', { refreshToken: false }), await rpc.request('account/rateLimits/read', {}));
               if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
             }
@@ -492,24 +512,24 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
             try {
               result = await rpc.request(method, params, requestId => {
                 beforeWrite?.(requestId);
-                if (method === 'thread/start' || method === 'thread/fork') listener.threadStartWritten = true;
-              }, method === 'thread/start' || method === 'thread/fork' ? () => {
+                if (creation) listener.threadStartWritten = true;
+              }, creation ? () => {
                 // Retain this pending request for its exact late ACK. Additional bindings
                 // cannot consume capacity while creation has an unknown physical outcome.
                 listener.creationUnknown = true; changed(); onWaitTimeout?.();
               } : onWaitTimeout);
             } catch (reason) {
-              if ((method === 'thread/start' || method === 'thread/fork') && !reason.authoritative && !physicallyClosed()) { listener.creationUnknown = true; changed(); }
+              if (creation && !reason.authoritative && !physicallyClosed()) { listener.creationUnknown = true; changed(); }
               throw reason;
             }
-            if ((method === 'thread/start' || method === 'thread/fork') && typeof result?.thread?.id === 'string') threadState(result.thread.id);
+            if (creation && method !== 'thread/resume' && typeof result?.thread?.id === 'string') threadState(result.thread.id);
             return result;
           },
           destroy: () => {
             if (!listener.threadStartWritten) {
               listener.locallyClosed = true; listeners.delete(listener); return Promise.resolve();
             }
-            return closeThread(id());
+            return closeThread(id()).then(() => { listener.locallyClosed = true; listeners.delete(listener); });
           },
           get closed() { return listener.locallyClosed || physicallyClosed() || Boolean(id() && threads.get(id())?.closed); },
           get cleanupPending() { return !this.closed && (stopped || listener.creationUnknown || Boolean(id() && threads.get(id())?.requested)); },
@@ -535,6 +555,22 @@ function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, t
           if (!source) throw fail('invalid_intent', 'Fork requires an exact idle persistent conversation owned by this account');
         }
         return createWorker(binding, onReceipt, { token, forkThreadId });
+      },
+      prepareResume: ({ registryPath, conversationId, revision }) => {
+        uuid(conversationId);
+        const registry = JSON.parse(regular(registryPath, 4 * 1024 * 1024));
+        const row = Array.isArray(registry.conversations) && registry.conversations.find(value => value.id === conversationId);
+        if (!row || row.contextVersion !== 2 || row.revision !== revision || !['idle', 'unloaded'].includes(row.status)
+          || !isAgentNativeHistorySource(row.historySource) || canonical(row.historySource) !== canonical(admission.historySource)
+          || row.profileId !== row.historySource.profileId || row.epoch !== row.historySource.authEpoch
+          || !Array.isArray(registry.actions) || registry.actions.some(value => value.conversationId === conversationId && (['prepared', 'unknown'].includes(value.state) || value.ownerHeld === true))
+          || threads.has(row.threadId) && !threads.get(row.threadId).closed) throw fail('resume_unavailable', 'Resume requires a proven owned retained conversation with settled prior actions');
+        uuid(row.threadId); let consumed = false;
+        return (binding, onReceipt) => {
+          if (consumed || persistentGate !== token || binding.model !== row.model) throw fail('invalid_intent', 'Resume capability is not current');
+          consumed = true;
+          return createWorker(binding, onReceipt, { token, resumeThreadId: row.threadId, forkedFromThreadId: row.forkedFromThreadId ?? null });
+        };
       },
       useWorker: facade => { const owned = persistentFacades.get(facade); if (!owned) throw fail('invalid_intent', 'Persistent conversation owner is unavailable'); owned.token = token; return facade; },
     }); }

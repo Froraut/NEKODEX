@@ -52,8 +52,25 @@ async function main() {
     await page.getByText('FOLLOWUP_RESULT', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Fork retained context' }).click();
     await page.getByText('FORK_CONTEXT_RETAINED', { exact: true }).waitFor();
+    await page.getByLabel('Native message').fill('Unsent branch draft');
+    await page.evaluate(() => {
+      const row = window.persistentFixture.snapshot.conversations.at(-1);
+      row.status = 'unloaded'; row.ownerAvailable = false; row.resumeAvailable = true; row.revision++;
+    });
+    await page.getByRole('button', { name: 'Refresh conversations' }).click();
+    assert.equal(await page.getByLabel('Native message').isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Resume retained conversation' }).isEnabled(), false);
+    await page.getByRole('button', { name: 'Clear draft' }).click();
+    await page.getByRole('button', { name: 'Resume retained conversation' }).click();
+    assert.equal(await page.getByLabel('Native message').isEnabled(), true);
+    await page.getByRole('button', { name: 'Close conversation connection' }).click();
+    await page.getByRole('button', { name: 'Resume retained conversation' }).waitFor();
+    assert.equal(await page.getByLabel('Native message').isDisabled(), true);
+    await page.getByRole('button', { name: 'Resume retained conversation' }).click();
+    await page.getByRole('button', { name: 'Close conversation connection' }).waitFor();
+    assert.equal(await page.getByLabel('Native message').isEnabled(), true);
     const calls = await page.evaluate(() => window.persistentFixture.calls);
-    assert.deepEqual(calls.filter(row => row.action !== 'snapshot').map(row => row.action), ['create', 'send', 'fork']);
+    assert.deepEqual(calls.filter(row => row.action !== 'snapshot').map(row => row.action), ['create', 'send', 'fork', 'resume', 'closeIdle', 'resume']);
     assert.equal(calls.filter(row => row.action === 'create').length, 1);
     assert.equal(calls.find(row => row.action === 'create').expectedContext.epoch, '0199a001-0000-7000-8000-000000000004');
     assert(calls.some(row => row.action === 'snapshot' && row.actionId === calls.find(row => row.action === 'create').actionId));
@@ -62,7 +79,7 @@ async function main() {
     assert.deepEqual(errors, []);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     console.log(JSON.stringify({ consentRequired: true, accountChangeResetsConsent: true, lostResponseReconciledWithoutReplay: true,
-      explicitFollowupAndFork: true, narrowOverflow: false, mutationCount: 3 }));
+      explicitFollowupAndFork: true, unavailableDraftCanBeCleared: true, closeAndResumeWithoutSend: true, narrowOverflow: false, mutationCount: 6 }));
   } finally {
     if (browser) await browser.close();
     if (server) await new Promise(resolve => server.close(resolve));

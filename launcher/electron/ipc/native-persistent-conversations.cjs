@@ -5,6 +5,8 @@ const KEYS = {
   create: ['action', 'actionId', 'model', 'text', 'retainContext', 'expectedContext'],
   send: ['action', 'actionId', 'conversationId', 'revision', 'text', 'expectedContext'],
   fork: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
+  closeIdle: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
+  resume: ['action', 'actionId', 'conversationId', 'revision', 'expectedContext'],
 };
 const invalid = () => Object.assign(new Error('Invalid persistent Native conversation request'), { code: 'invalid_request' });
 
@@ -27,10 +29,12 @@ function registerPersistentNativeConversations({ handle, getService, getContext 
         ...(row.parentId ? { parentId: row.parentId } : {}),
         ...(typeof row.lastSummary === 'string' ? { lastSummary: row.lastSummary } : {}),
         ownerAvailable: row.ownerAvailable === true,
+        resumeAvailable: row.resumeAvailable === true,
+        ...(typeof row.resumeReason === 'string' ? { resumeReason: row.resumeReason } : {}),
       })),
       actions: source.actions.map(projectAction),
       ...(observed ? { observedAction: projectAction(observed) } : {}),
-      busy: source.busy === true, retention: 'explicit-native-context', resumeSupported: false,
+      busy: source.busy === true, retention: 'explicit-native-context', resumeSupported: source.resumeSupported === true,
     };
     if (Buffer.byteLength(JSON.stringify(result)) > 2 * 1024 * 1024) throw Object.assign(new Error('Native snapshot exceeds its bound'), { code: 'response_too_large' });
     return result;
@@ -57,7 +61,7 @@ function registerPersistentNativeConversations({ handle, getService, getContext 
       if (body.action === 'create') {
         if (body.retainContext !== true || typeof body.model !== 'string' || !body.model || body.model.length > 200) throw invalid();
       } else if (!UUID.test(body.conversationId) || !Number.isSafeInteger(body.revision) || body.revision < 0) throw invalid();
-      if (body.action !== 'fork' && (typeof body.text !== 'string' || !body.text.trim()
+      if (['create', 'send'].includes(body.action) && (typeof body.text !== 'string' || !body.text.trim()
         || Buffer.byteLength(body.text) > 32 * 1024 || body.text.includes('\0'))) throw invalid();
       const { action, ...intent } = body;
       const service = getService();

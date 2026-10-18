@@ -10,7 +10,7 @@ const child = '0199a001-0000-7000-8000-000000000002';
 const snapshot: NativePersistentSnapshot = { available: true, profileId: id, epoch: child,
   serverGeneration: '0199a001-0000-7000-8000-000000000003',
   models: [{ id: 'fixture-model' }], conversations: [], actions: [], busy: false,
-  retention: 'explicit-native-context', resumeSupported: false };
+  retention: 'explicit-native-context', resumeSupported: true };
 const fixture = { calls: [] as unknown[], loseCreateResponse: true, snapshot };
 Object.assign(window, { persistentFixture: fixture });
 const api: NativePersistentApi = { async nativePersistentRequest(body) {
@@ -27,10 +27,17 @@ const api: NativePersistentApi = { async nativePersistentRequest(body) {
     if (row.revision !== body.revision) throw new Error('Stale fixture revision');
     row.revision++; row.lastSummary = 'FOLLOWUP_RESULT';
     snapshot.actions.push({ actionId: body.actionId, kind: 'send', conversationId: row.id, state: 'completed' });
-  } else {
+  } else if (body.action === 'fork') {
     snapshot.conversations.push({ ...snapshot.conversations[0]!, id: child, threadId: child,
       revision: 1, parentId: id, lastSummary: 'FORK_CONTEXT_RETAINED' });
     snapshot.actions.push({ actionId: body.actionId, kind: 'fork', conversationId: child, state: 'completed' });
+  } else {
+    const row = snapshot.conversations.find(row => row.id === body.conversationId)!;
+    row.revision++;
+    row.status = body.action === 'closeIdle' ? 'unloaded' : 'idle';
+    row.ownerAvailable = body.action === 'resume';
+    row.resumeAvailable = body.action === 'closeIdle';
+    snapshot.actions.push({ actionId: body.actionId, kind: body.action, conversationId: row.id, state: 'completed' });
   }
   return { ok: true, value: structuredClone(snapshot) };
 } };

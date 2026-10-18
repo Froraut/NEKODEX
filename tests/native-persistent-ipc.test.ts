@@ -13,7 +13,9 @@ test('persistent Native IPC projects owned metadata and refuses renderer authori
     createdAt: 1, updatedAt: 2, ownerAvailable: true, lastSummary: 'Done', messages: [{ text: 'private full context' }], auth: 'excluded' }],
   actions: [{ actionId, kind: 'create', conversationId: id, state: 'completed', secret: 'excluded' }], busy: false };
   const service = { list: () => source, inspectAction: (id: string) => source.actions.find(row => row.actionId === id),
-    create: async (input: unknown) => { calls.push(input); return source; } };
+    create: async (input: unknown) => { calls.push(input); return source; },
+    closeIdle: async (input: unknown) => { calls.push({ kind: 'closeIdle', input }); return source; },
+    resume: async (input: unknown) => { calls.push({ kind: 'resume', input }); return source; } };
   registerPersistentNativeConversations({ handle: (_: string, value: Function) => { handler = value; },
     getService: () => service, getContext: () => context });
   const request = (body: unknown) => handler(null, body);
@@ -33,6 +35,12 @@ test('persistent Native IPC projects owned metadata and refuses renderer authori
     .toMatchObject({ ok: false, error: { code: 'context_changed', knownNotStarted: true } });
   expect((await request(intent)).ok).toBe(true);
   expect(calls).toEqual([{ actionId, model: 'native-one', text: 'First message', retainContext: true, expectedContext }]);
+  for (const action of ['closeIdle', 'resume']) {
+    const control = { action, actionId: randomUUID(), conversationId: id, revision: 1, expectedContext };
+    expect(await request({ ...control, text: 'must not be sent' })).toMatchObject({ ok: false, error: { knownNotStarted: true } });
+    expect((await request(control)).ok).toBe(true);
+    expect(calls.at(-1)).toEqual({ kind: action, input: { actionId: control.actionId, conversationId: id, revision: 1, expectedContext } });
+  }
   const retainedAction = source.actions[0];
   service.inspectAction = id => id === actionId ? retainedAction : undefined;
   source.actions = []; source.conversations = []; context.profileId = randomUUID();
