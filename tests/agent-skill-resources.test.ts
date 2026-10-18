@@ -29,7 +29,7 @@ test("explicit selected resources remain digest-bound across review, immutable u
     expect(snapshot.resources.map(row => row.relativePath)).toEqual(["assets/template.csv", "references/format.md", "references/nested/deeper/example.txt"]);
     expect(JSON.stringify(snapshot.resources)).not.toContain(root);
     expect(snapshot.resources.every(row => row.role === "selected-skill-source-material")).toBe(true);
-    for (const path of ["../outside.md", "/outside.md", "references/../outside.md", "scripts/unsupported.sh", "assets/photo.png", "references/secrets.txt", "assets/example.constructor", "assets/example.__proto__", "assets/example.toString"]) {
+    for (const path of ["../outside.md", "/outside.md", "references/../outside.md", "scripts/unsupported.sh", "assets/photo.webp", "references/secrets.txt", "assets/example.constructor", "assets/example.__proto__", "assets/example.toString"]) {
       expect(classifySkillResourcePath(path).supported).toBe(false);
       expect(() => snapshotSkillPackageSource(grant, { identity, resources: [path] })).toThrow("unsupported");
     }

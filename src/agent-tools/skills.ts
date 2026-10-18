@@ -2,7 +2,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdir
 import { isAbsolute, join, relative, sep } from "node:path";
 import { homedir } from "node:os";
 import { sha256 } from "./config";
-import type { SkillPackageManifest, SkillResourceText } from "./skill-resources";
+import type { SkillPackageManifest, SkillResourceDescriptor } from "./skill-resources";
 
 export interface SkillRootGrant {
   id: string;
@@ -16,7 +16,10 @@ export interface SelectedSkill extends SkillIdentity {
   content: string; role: "selected-skill-instructions"; precedence: "below-system-developer-user";
   /** Explicit bounded source material. No file path here grants execution or new authority. */
   packageDigest?: string;
-  resources?: SkillResourceText[];
+  versionId?: string;
+  /** Instruction/text bytes plus image metadata, excluding retained image bytes. */
+  promptBytes?: number;
+  resources?: SkillResourceDescriptor[];
   unsupportedResources?: readonly string[];
 }
 function inside(root: string, path: string): boolean {

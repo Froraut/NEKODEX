@@ -5,6 +5,10 @@ export interface OwnedNativeImageMetadata {
 export interface OwnedNativeImage extends OwnedNativeImageMetadata { data: string }
 export const MAX_IMAGES: 2;
 export const MAX_IMAGE_BYTES: number;
+/** Pure bounded structure/CRC/header inspection, not a full codec decode. */
+export function inspectBoundedImageBytes(bytes: Buffer, mimeType: 'image/png' | 'image/jpeg'): {
+  mimeType: 'image/png' | 'image/jpeg'; byteLength: number; sha256: string; width: number; height: number;
+};
 export function validateOwnedNativeImages(images?: unknown): OwnedNativeImage[];
 export function validateOwnedNativeImageMetadata(images: unknown): OwnedNativeImageMetadata[];
 export function ownedNativeImageMetadata(images?: OwnedNativeImage[]): OwnedNativeImageMetadata[];

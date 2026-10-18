@@ -69,6 +69,15 @@ function dimensions(bytes, mimeType) {
   }
   bad();
 }
+/** Pure shared byte inspection; no provenance, filesystem, decoding process or Native owner is created. */
+function inspectBoundedImageBytes(bytes, mimeType) {
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_IMAGE_BYTES || !['image/png', 'image/jpeg'].includes(mimeType)) bad();
+  const actual = dimensions(bytes, mimeType);
+  if (!Number.isSafeInteger(actual.width) || actual.width < 1 || actual.width > MAX_DIMENSION
+    || !Number.isSafeInteger(actual.height) || actual.height < 1 || actual.height > MAX_DIMENSION
+    || actual.width * actual.height > MAX_PIXELS) bad();
+  return freeze({ mimeType, byteLength: bytes.length, sha256: digest(bytes), ...actual });
+}
 function validateOwnedNativeImages(images = []) {
   if (!Array.isArray(images) || images.length > MAX_IMAGES) bad();
   const metadata = validateOwnedNativeImageMetadata(images.map(image => {
@@ -80,7 +89,7 @@ function validateOwnedNativeImages(images = []) {
       || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(image.data)) bad();
     const bytes = Buffer.from(image.data, 'base64');
     if (bytes.length !== image.byteLength || bytes.toString('base64') !== image.data || digest(bytes) !== image.sha256) bad();
-    const actual = dimensions(bytes, image.mimeType);
+    const actual = inspectBoundedImageBytes(bytes, image.mimeType);
     if (actual.width !== image.width || actual.height !== image.height) bad();
     return { data: image.data, ...metadata[index] };
   }));
@@ -99,5 +108,5 @@ function prepareOwnedNativeInput(text, images = []) {
   return { inputHash, imageAttachments, input: [{ type: 'text', text, text_elements: [] },
     ...validated.map(image => ({ type: 'image', url: `data:${image.mimeType};base64,${image.data}`, detail: 'high' }))] };
 }
-module.exports = { MAX_IMAGES, MAX_IMAGE_BYTES, validateOwnedNativeImages, validateOwnedNativeImageMetadata,
+module.exports = { MAX_IMAGES, MAX_IMAGE_BYTES, inspectBoundedImageBytes, validateOwnedNativeImages, validateOwnedNativeImageMetadata,
   ownedNativeImageMetadata, ownedNativeInputHash, prepareOwnedNativeInput };

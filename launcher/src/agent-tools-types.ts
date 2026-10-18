@@ -27,14 +27,21 @@ export interface ManagedSkillVersionView {
   packageDigest?: string;
   resourceCount?: number;
 }
-export interface ManagedSkillResourceView {
+export interface ManagedSkillTextResourceView {
   relativePath: string;
   mediaType: 'text/markdown' | 'text/plain' | 'application/json' | 'text/csv';
   digest: string;
   bytes: number;
   content: string;
+  kind?: never;
   role?: 'selected-skill-source-material';
 }
+export interface ManagedSkillImageResourceView {
+  kind: 'image'; relativePath: string; mediaType: 'image/png' | 'image/jpeg';
+  digest: string; bytes: number; width: number; height: number; data: string;
+  role?: 'selected-skill-source-material';
+}
+export type ManagedSkillResourceView = ManagedSkillTextResourceView | ManagedSkillImageResourceView;
 export interface ManagedSkillReviewView {
   action: { actionId: string; state: string; versionId: string; lineageId: string; label: string; reviewDigest: string; manifestDigest: string; manifest: unknown };
   content?: string;
@@ -47,7 +54,7 @@ export interface AgentToolsStatus {
   descriptors: ToolDescriptor[];
   skillRoots: SkillRootGrant[];
   selections: { scope: ToolScope; skills: SkillIdentity[] }[];
-  capabilities: { stdio: boolean; install: boolean; oauth: boolean; secrets: boolean; nativeSandbox: boolean; mcpSandboxAvailable?: boolean; skillWrites: boolean; managedSkillImports?: boolean; pendingToolCalls: boolean };
+  capabilities: { stdio: boolean; install: boolean; oauth: boolean; secrets: boolean; nativeSandbox: boolean; mcpSandboxAvailable?: boolean; skillWrites: boolean; managedSkillImports?: boolean; skillResourceReads?: boolean; pendingToolCalls: boolean };
   installCatalog: { id: string; label: string; package: string; version: string; integrity: string; source: string; capabilities: string }[];
   installations: { rows: { actionId: string; catalogId: string; state: string; allowedRoot: string; graphSha256?: string; childPid?: number }[]; truncated: boolean };
   serverConfigDigests: Record<string, string>;

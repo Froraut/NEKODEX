@@ -633,6 +633,29 @@ remained in history. This proves the selected file-SHA property and current-fact
 recovery, not automatic Goal or arbitrary business semantics. A file property proves only the declared property,
 not the semantic completion of every requirement.
 
+**Selected skill image resources:** mixed v2 retains explicit PNG/JPEG raw0400
+fsynced files with full hashes/whole-tree checks; text-only v1 IDs/digests are
+unchanged. Complete retained `bytes` include pixels and quota reservation;
+`promptBytes` includes instruction/text plus image metadata. Selected skills never
+automatically inject pixels. Static four-field `skill-resource/read` uses current
+attached version/package/path/digest and active generation/root reader, with the
+same ToolJournal exact approval and duplicate receipt. Results enter existing
+canonical Web/Native image projection, not a generic verification observer.
+
+Limits are16 resources,text32 KiB each/128 KiB incl SKILL,image160 KiB each,
+8 images/32 Mi package pixels (8192 axis/16 Mi each),mixed512 KiB. Native retains
+its distinct cumulative2/160 KiB binding cap. UI hashes bytes before local preview,
+then requires all images' successful natural-dimension decode; sticky errors/stale
+review callbacks cannot unlock import. Existing user MCP namespaces have priority,
+and attached-resource discovery works with MCP off. Store1/47,reader1/49 and
+actualHTTP/runtime/ToolJournal/fakeNative1/62 and actualChromeDOM1/31 passed.
+The DOM flow imported one valid chart/unattached and blocked a structurally/hash
+valid unknown-critical-chunk PNG after decode failure; header/CRC validation is
+not a full-codec guarantee. BothTS/renderer19619:39,CLI644exact `.9`19:41 and
+map731/finalcheck/paths passed; source commit/CI remain pending. Official/vendor copies, scripts/PDF/other binaries/network
+remain unsupported. See [contract](docs/design/standalone-skills-resources.md)
+and [evidence](docs/reviews/2026-10-18-skill-image-resources.md).
+
 **Additional surfaces:** standalone MCP host and read-only skill library are
 composed lazily in the daemon, with guarded main IPC and mounted UI. Only explicitly
 configured recipes/granted skill roots are available. The managed installer

@@ -19,6 +19,7 @@ import { readPrivateMetadata, writePrivateMetadata } from "./private-metadata";
 import { ManagedMcpInstaller, OFFICIAL_MCP_CATALOG } from "./installer";
 import { reviewTrustedSandboxConfig, sandboxProviderAvailable } from "./sandbox";
 import { ManagedSkillStore } from "./managed-skills";
+import { createSkillResourceToolsProvider, type AttachedSkillResource } from "./skill-resource-tools";
 
 export interface AgentToolsCompositionOptions {
   home: string;
@@ -62,12 +63,18 @@ export class AgentToolsComposition {
   private journalPath: string;
   private skillStatePath: string;
   private managedSkillStore?: ManagedSkillStore;
+  private readonly skillResourceTools: StandaloneBuiltinToolsProvider;
   readonly installer: ManagedMcpInstaller;
   readonly toolsPort: StandaloneToolsPort;
   readonly handle: (request: Request) => Promise<Response | undefined>;
   constructor(readonly options: AgentToolsCompositionOptions) {
     this.configPath = join(options.home, "agent-tools.json"); this.journalPath = join(options.home, "agent-tool-calls.sqlite");
     this.skillStatePath = join(options.home, "agent-skills.json");
+    this.skillResourceTools = createSkillResourceToolsProvider({
+      isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope),
+      resources: scope => this.attachedSkillResources(scope),
+      readResource: (scope, versionId, packageDigest, path, digest) => this.managedSkills().readResource(scope, versionId, packageDigest, path, digest),
+    });
     this.installer = new ManagedMcpInstaller(options.home);
     const persisted = readPrivateMetadata(this.skillStatePath);
     if (persisted !== undefined) { const saved = savedSkills.parse(persisted); this.skillRoots = saved.roots; this.selections = new Map(saved.selections.map(row => [JSON.stringify([row.scope.taskId, row.scope.generation]), row])); }
@@ -75,7 +82,7 @@ export class AgentToolsComposition {
     this.toolsPort = {
       discover: (scope, opts) => this.track(async () => {
         this.scope(scope);
-        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.options.builtins?.length) return [];
+        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.options.builtins?.length) return [];
         this.descriptors = await this.getHost().discover(scope, opts); return structuredClone(this.descriptors);
       }),
       invoke: (request, opts) => this.track(() => this.getHost().invoke(request, opts)),
@@ -92,7 +99,8 @@ export class AgentToolsComposition {
       // Existing user MCP configuration keeps its namespace; remote attachment
       // remains unavailable until that explicit collision is resolved by its owner.
       const remote = this.options.remoteTools && !config.servers.some(server => server.id === this.options.remoteTools!.serverId) ? [this.options.remoteTools] : [];
-      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote] });
+      const resources = config.servers.some(server => server.id === this.skillResourceTools.serverId) ? [] : [this.skillResourceTools];
+      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources] });
     }
     return this.host;
   }
@@ -107,6 +115,26 @@ export class AgentToolsComposition {
     if (!this.closing && existsSync(join(this.options.home, "managed-skills", "metadata.sqlite"))) return this.managedSkills().list();
     return { versions: [], attachments: [], actions: [], retainedVersions: 0, forgottenVersions: 0, cleanup: "not-performed; immutable referenced versions retained" };
   }
+  /** Metadata-only model catalog; image bytes require an approved resource read. */
+  private attachedSkillResources(scope: ToolScope): AttachedSkillResource[] {
+    this.scope(scope);
+    if (!this.managedSkillStore && !existsSync(join(this.options.home, "managed-skills", "metadata.sqlite"))) return [];
+    return this.managedSkills().selected(scope).flatMap(skill => {
+      const versionId = skill.versionId ?? (skill.id.startsWith('managed:') ? skill.id.slice('managed:'.length) : undefined);
+      if (!versionId || !skill.packageDigest) return [];
+      return (skill.resources ?? []).map(resource => {
+        const { role: _role, ...metadata } = resource;
+        if (metadata.kind !== 'image') { const { content: _content, ...identity } = metadata; return { ...identity, versionId, packageDigest: skill.packageDigest! }; }
+        return { ...metadata, versionId, packageDigest: skill.packageDigest! };
+      });
+    });
+  }
+  hasSkillResourceTools(): boolean {
+    if (this.closing || this.changing || readToolsConfig(this.configPath).servers.some(server => server.id === this.skillResourceTools.serverId)) return false;
+    const state = this.managedSkillStatus();
+    const versions = new Set(state.versions.filter(version => !version.revoked && !version.forgotten && (version.resourceCount ?? 0) > 0).map(version => version.versionId));
+    return state.attachments.some(packet => this.options.isScopeActive(packet.scope) && packet.versionIds.some(id => versions.has(id)));
+  }
   status() {
     const config = readToolsConfig(this.configPath);
     return { config, runtime: this.host?.snapshot() ?? { enabled: config.enabled, servers: config.servers.map(server => ({ id: server.id, connected: false, pid: null })), sandbox: "external-server-process" },
@@ -116,7 +144,7 @@ export class AgentToolsComposition {
       browserTools: this.options.browserTools?.status() ?? null,
       desktopTools: this.options.desktopTools?.status() ?? null,
       remoteTools: this.options.remoteTools?.status() ?? null,
-      capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", pendingToolCalls: Boolean(this.options.resolveToolCall) } };
+      capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", skillResourceReads: process.platform !== 'win32' && !config.servers.some(server => server.id === this.skillResourceTools.serverId), pendingToolCalls: Boolean(this.options.resolveToolCall) } };
   }
   private reviewedSandbox(input: { codeRoots: string[]; readRoots: string[]; writeRoots: string[] }, ownedReadRoots: string[] = [], ownedCodeRoots: string[] = []) {
     const contains = (root: string, path: string) => { const rel = relative(root, path); return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`)); };
@@ -128,7 +156,7 @@ export class AgentToolsComposition {
   reviewServer(input: unknown, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing || this.changing) throw new Error("Explicit trusted configuration review required");
     const value = recipeInput.parse(input);
-    if (value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || value.id === this.options.remoteTools?.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
+    if (value.id === this.options.browserTools?.serverId || value.id === this.options.desktopTools?.serverId || value.id === this.options.remoteTools?.serverId || value.id === this.skillResourceTools.serverId || this.options.builtins?.some(provider => provider.serverId === value.id)) throw new Error("Reserved builtin tool namespace cannot be used by an MCP server");
     const command = realpathSync(value.command); const cwd = realpathSync(value.cwd);
     if (["sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "npx", "bunx", "uvx", "npm", "pnpm", "yarn", "pip", "pip3"].includes(basename(command).toLowerCase()) || value.args.some(arg => ["-e", "--eval", "-c", "--command"].includes(arg))) throw new Error("Installers, shell commands and inline evaluation are unsupported server recipes");
     const recipe: ServerRecipe = { id: value.id, enabled: false, transport: "stdio", source: { kind: "user-installed", label: value.label, version: value.version }, command, commandSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, args: value.args, pinnedFiles: value.pinnedFiles.map(path => pinnedFile(path, 32 * 1024 * 1024)), cwd, envSecretRefs: {} };
@@ -298,7 +326,7 @@ export class AgentToolsComposition {
     if (next.length > 16) throw new Error("Selected skill limit exceeded");
     const library = new ReadOnlySkillLibrary(this.skillRoots); if (next.reduce((bytes, row) => bytes + library.select(row).bytes, 0) > 128 * 1024) throw new Error("Selected skill content limit exceeded");
     const managed = this.managedSkillStore || existsSync(join(this.options.home, "managed-skills", "metadata.sqlite")) ? this.managedSkills().selected(scope) : [];
-    if (next.length + managed.length > 16 || next.reduce((bytes, row) => bytes + row.bytes, 0) + managed.reduce((bytes, row) => bytes + row.bytes, 0) > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
+    if (next.length + managed.length > 16 || next.reduce((bytes, row) => bytes + row.bytes, 0) + managed.reduce((bytes, row) => bytes + (row.promptBytes ?? row.bytes), 0) > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
     const selections = new Map(this.selections); selections.set(key, { scope, skills: structuredClone(next) });
     if (selections.size > 64) throw new Error("Selected skill task scope limit exceeded");
     writePrivateMetadata(this.skillStatePath, { version: 1, roots: this.skillRoots, selections: [...selections.values()] }); this.selections = selections; return selected;
@@ -310,7 +338,7 @@ export class AgentToolsComposition {
     const library = selections.length ? new ReadOnlySkillLibrary(roots) : undefined;
     const local = selections.map(identity => library!.select(identity));
     const managed = this.managedSkillStore || existsSync(join(this.options.home, "managed-skills", "metadata.sqlite")) ? this.managedSkills().selected(scope) : [];
-    if (local.length + managed.length > 16 || [...local, ...managed].reduce((bytes, row) => bytes + row.bytes, 0) > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
+    if (local.length + managed.length > 16 || [...local, ...managed].reduce((bytes, row) => bytes + (row.promptBytes ?? row.bytes), 0) > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
     return [...local, ...managed];
   }
   reviewSkillImport(actionId: string, identity: SkillIdentity, label: string, updateLineageId: string | undefined, explicitUserAction: boolean) {
@@ -338,7 +366,7 @@ export class AgentToolsComposition {
     const local = this.selections.get(JSON.stringify([scope.taskId, scope.generation]))?.skills ?? [];
     const existing = this.managedSkills().selected(scope); const incoming = this.managedSkills().content(versionId); const version = this.managedSkills().version(versionId)!;
     const retained = existing.filter(skill => skill.grantId !== `managed:${version.lineageId}`);
-    if (local.length + retained.length + 1 > 16 || local.reduce((bytes, row) => bytes + row.bytes, 0) + retained.reduce((bytes, row) => bytes + row.bytes, 0) + incoming.bytes > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
+    if (local.length + retained.length + 1 > 16 || local.reduce((bytes, row) => bytes + row.bytes, 0) + retained.reduce((bytes, row) => bytes + (row.promptBytes ?? row.bytes), 0) + (incoming.promptBytes ?? incoming.bytes) > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
     return this.managedSkills().attach(scope, versionId);
   }
   detachManagedSkill(scope: ToolScope, versionId: string, explicitUserAction: boolean) {

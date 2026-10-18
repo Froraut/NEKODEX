@@ -6,7 +6,7 @@ import { readPrivateMetadata, writePrivateMetadata } from "./private-metadata";
 import { snapshotLocalSkillSource, type LocalSkillSourceManifest, type SelectedSkill, type SkillIdentity, type SkillRootGrant } from "./skills";
 import { validateToolScope } from "./journal";
 import type { ToolScope } from "./types";
-import { readRetainedSkillResources, snapshotSkillPackageSource, UNSUPPORTED_SKILL_RESOURCES, type SkillPackageSelection, type SkillResourceText } from "./skill-resources";
+import { readRetainedSkillResources, snapshotSkillPackageSource, UNSUPPORTED_SKILL_RESOURCES, skillResourceDescriptors, selectedSkillPromptBytes, type SkillPackageSelection, type SkillResource } from "./skill-resources";
 
 export interface ManagedSkillVersion {
   versionId: string; lineageId: string; label: string; contentDigest: string; bytes: number;
@@ -18,8 +18,8 @@ export interface ManagedSkillAction {
   versionId: string; lineageId: string; label: string; manifest: LocalSkillSourceManifest; manifestDigest: string;
   reviewDigest: string; stage: string; target: string; createdAt: number;
 }
-export interface ManagedSkillLimits { maxActions: number; maxRetainedTextBytes: number }
-export interface ManagedSkillReview { action: ManagedSkillAction; content?: string; resources?: SkillResourceText[] }
+export interface ManagedSkillLimits { maxActions: number; /** Historical option name; includes all retained text and binary bytes. */ maxRetainedTextBytes: number }
+export interface ManagedSkillReview { action: ManagedSkillAction; content?: string; resources?: SkillResource[] }
 function identity(value: string): void { if (!/^[a-zA-Z0-9_-]{1,128}$/.test(value)) throw new Error("Invalid managed skill action identity"); }
 function digest(value: string): void { if (!/^[a-f0-9]{64}$/.test(value)) throw new Error("Invalid managed skill version digest"); }
 function privateText(path: string): string {
@@ -34,7 +34,7 @@ function privateText(path: string): string {
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, count));
   } finally { closeSync(fd); }
 }
-/** One durable metadata owner plus immutable selected text trees. No code execution. */
+/** One durable metadata owner plus immutable selected text/image trees. No code execution. */
 export class ManagedSkillStore {
   private db: Database;
   private root: string;
@@ -54,7 +54,7 @@ export class ManagedSkillStore {
     identity(actionId); const row = this.db.query("SELECT receipt FROM skill_actions WHERE id=?").get(actionId) as { receipt: string } | null; return row ? JSON.parse(row.receipt) : undefined;
   }
   private saveAction(action: ManagedSkillAction): void { this.db.query("INSERT INTO skill_actions VALUES(?,?) ON CONFLICT(id) DO UPDATE SET receipt=excluded.receipt").run(action.actionId, JSON.stringify(action)); }
-  private packetAt(path: string, action: ManagedSkillAction): { manifest: LocalSkillSourceManifest; content: string; resources: SkillResourceText[] } {
+  private packetAt(path: string, action: ManagedSkillAction): { manifest: LocalSkillSourceManifest; content: string; resources: SkillResource[] } {
     if (realpathSync(path) !== path || !lstatSync(path).isDirectory()) throw new Error("Managed skill version directory changed");
     const marker = readPrivateMetadata(join(path, "manifest.json")) as { versionId: string; lineageId: string; manifest: LocalSkillSourceManifest; manifestDigest: string };
     if (!marker || marker.versionId !== action.versionId || marker.lineageId !== action.lineageId || marker.manifestDigest !== action.manifestDigest || sha256(JSON.stringify(marker.manifest)) !== action.manifestDigest) throw new Error("Managed skill version manifest identity mismatch");
@@ -97,11 +97,11 @@ export class ManagedSkillStore {
   review(actionId: string, grant: SkillRootGrant, selected: SkillIdentity, label: string, updateLineageId?: string): { action: ManagedSkillAction; content: string } {
     return this.reviewSource(actionId, grant, selected, label, updateLineageId);
   }
-  reviewPackage(actionId: string, grant: SkillRootGrant, selection: SkillPackageSelection, label: string, updateLineageId?: string): { action: ManagedSkillAction; content: string; resources: SkillResourceText[] } {
+  reviewPackage(actionId: string, grant: SkillRootGrant, selection: SkillPackageSelection, label: string, updateLineageId?: string): { action: ManagedSkillAction; content: string; resources: SkillResource[] } {
     const reviewed = this.reviewSource(actionId, grant, selection.identity, label, updateLineageId, selection.resources);
     return { ...reviewed, resources: reviewed.resources ?? [] };
   }
-  private reviewSource(actionId: string, grant: SkillRootGrant, selected: SkillIdentity, label: string, updateLineageId?: string, resourcePaths?: string[]): { action: ManagedSkillAction; content: string; resources?: SkillResourceText[] } {
+  private reviewSource(actionId: string, grant: SkillRootGrant, selected: SkillIdentity, label: string, updateLineageId?: string, resourcePaths?: string[]): { action: ManagedSkillAction; content: string; resources?: SkillResource[] } {
     identity(actionId); if (typeof label !== "string" || !label.trim() || label.length > 200) throw new Error("Managed skill label must be bounded text");
     const snapshot = resourcePaths === undefined ? { ...snapshotLocalSkillSource(grant, selected), resources: [] } : snapshotSkillPackageSource(grant, { identity: selected, resources: resourcePaths });
     const lineageId = sha256(JSON.stringify(["local-user-text", snapshot.manifest.locator]));
@@ -132,7 +132,7 @@ export class ManagedSkillStore {
       for (const resource of snapshot.resources) {
         const path = join(resourceRoot, resource.relativePath); mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
         for (let directory = dirname(path); directory !== resourceRoot; directory = dirname(directory)) directories.add(directory);
-        const fd = openSync(path, "wx", 0o400); try { writeFileSync(fd, resource.content); fsyncSync(fd); } finally { closeSync(fd); }
+        const fd = openSync(path, "wx", 0o400); try { writeFileSync(fd, resource.kind === "image" ? Buffer.from(resource.data, "base64") : resource.content); fsyncSync(fd); } finally { closeSync(fd); }
       }
       for (const directory of [...directories].sort((a, b) => b.length - a.length)) { const fd = openSync(directory, "r"); try { fsyncSync(fd); } finally { closeSync(fd); } }
     }
@@ -170,22 +170,29 @@ export class ManagedSkillStore {
     // Reserve both a retained review copy and a published immutable copy; no reclamation is assumed.
     return { actions: usage.n, reservedTextBytes: usage.bytes * 2 };
   }
-  content(versionId: string): SelectedSkill {
+  private retainedVersion(versionId: string) {
     const version = this.version(versionId); if (!version || version.revoked || version.forgotten) throw new Error("Managed skill version is revoked, forgotten or unavailable");
-    const actionRow = (this.db.query("SELECT receipt FROM skill_actions WHERE json_extract(receipt,'$.versionId')=? AND json_extract(receipt,'$.state')='imported' LIMIT 1").get(versionId) as { receipt: string } | null);
-    if (!actionRow) throw new Error("Managed skill immutable import receipt missing"); const action = JSON.parse(actionRow.receipt) as ManagedSkillAction;
-    const packet = this.packetAt(action.target, action);
-    return { id: `managed:${versionId}`, grantId: `managed:${version.lineageId}`, relativePath: `${versionId}/SKILL.md`, source: "user", digest: version.contentDigest, bytes: version.bytes, content: packet.content, role: "selected-skill-instructions", precedence: "below-system-developer-user",
-      ...(action.manifest.package ? { packageDigest: action.manifest.package.packageDigest, resources: packet.resources, unsupportedResources: UNSUPPORTED_SKILL_RESOURCES } : {}) };
+    const actionRow = this.db.query("SELECT receipt FROM skill_actions WHERE json_extract(receipt,'$.versionId')=? AND json_extract(receipt,'$.state')='imported' LIMIT 1").get(versionId) as { receipt: string } | null;
+    if (!actionRow) throw new Error("Managed skill immutable import receipt missing");
+    const action = JSON.parse(actionRow.receipt) as ManagedSkillAction;
+    return { version, action, packet: this.packetAt(action.target, action) };
+  }
+  content(versionId: string): SelectedSkill {
+    const { version, action, packet } = this.retainedVersion(versionId);
+    const resources = skillResourceDescriptors(packet.resources);
+    return { id: `managed:${versionId}`, grantId: `managed:${version.lineageId}`, relativePath: `${versionId}/SKILL.md`, source: "user", digest: version.contentDigest, bytes: version.bytes, versionId,
+      ...(packet.resources.some(resource => resource.kind === "image") ? { promptBytes: selectedSkillPromptBytes(action.manifest.identity.bytes, resources) } : {}),
+      content: packet.content, role: "selected-skill-instructions", precedence: "below-system-developer-user",
+      ...(action.manifest.package ? { packageDigest: action.manifest.package.packageDigest, resources, unsupportedResources: UNSUPPORTED_SKILL_RESOURCES } : {}) };
   }
   /** Internal read of an already selected immutable package, never a general filesystem API. */
-  readResource(scope: ToolScope, versionId: string, packageDigest: string, relativePath: string, resourceDigest: string): SkillResourceText {
+  readResource(scope: ToolScope, versionId: string, packageDigest: string, relativePath: string, resourceDigest: string): SkillResource {
     validateToolScope(scope); digest(versionId); digest(packageDigest); digest(resourceDigest);
     const row = this.db.query("SELECT packet FROM skill_attachments WHERE scope_key=?").get(JSON.stringify([scope.taskId, scope.generation])) as { packet: string } | null;
     if (!row || !(JSON.parse(row.packet).versionIds as string[]).includes(versionId)) throw new Error("Managed skill package is not attached to this task generation");
-    const content = this.content(versionId);
-    const resource = content.resources?.find(row => row.relativePath === relativePath);
-    if (content.packageDigest !== packageDigest || !resource || resource.digest !== resourceDigest) throw new Error("Managed skill selected resource identity or package digest changed");
+    const { action, packet } = this.retainedVersion(versionId);
+    const resource = packet.resources.find(row => row.relativePath === relativePath);
+    if (action.manifest.package?.packageDigest !== packageDigest || !resource || resource.digest !== resourceDigest) throw new Error("Managed skill selected resource identity or package digest changed");
     return resource;
   }
   attach(scope: ToolScope, versionId: string): SelectedSkill {
@@ -196,7 +203,7 @@ export class ManagedSkillStore {
       const prior = row ? JSON.parse(row.packet).versionIds as string[] : [];
       // Replacing a lineage is itself an explicit attachment; imports/updates never do this.
       const versionIds = [...prior.filter(id => this.version(id)?.lineageId !== version.lineageId), versionId];
-      if (versionIds.length > 16 || versionIds.reduce((sum, id) => sum + this.content(id).bytes, 0) > 128 * 1024) throw new Error("Managed skill selected content limit exceeded");
+      if (versionIds.length > 16 || versionIds.reduce((sum, id) => { const packet = this.content(id); return sum + (packet.promptBytes ?? packet.bytes); }, 0) > 128 * 1024) throw new Error("Managed skill selected content limit exceeded");
       const count = (this.db.query("SELECT count(*) n FROM skill_attachments").get() as { n: number }).n; if (!row && count >= 64) throw new Error("Managed skill task scope limit reached");
       this.db.query("INSERT INTO skill_attachments VALUES(?,?) ON CONFLICT(scope_key) DO UPDATE SET packet=excluded.packet").run(key, JSON.stringify({ scope, versionIds }));
     })(); return content;

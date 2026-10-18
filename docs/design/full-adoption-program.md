@@ -64,11 +64,11 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
   завершились успешно. Установленная версия остаётся `6.1.32-nekodex.8`.
   Следующие DW1/P07/DW5/P16 изменения — новая исходная партия после baseline;
   его CI не является проверкой новых bytes и не означает installed update.
-- **Последний опубликованный baseline:** `70ffe3b`, четыре CI jobs точного source
-  [завершились успешно](https://github.com/Froraut/NEKODEX/actions/runs/39154875227).
+- **Последний опубликованный baseline:** `bbf9108`, четыре CI jobs точного source
+  [завершились успешно](https://github.com/Froraut/NEKODEX/actions/runs/39157473126).
   Source версия остаётся `6.1.32-nekodex.9`, установленная D01 — `.8`.
   Owned final-summary history и bounded Native images входят в этот baseline.
-  Новая Agent remote партия идёт после него; прежний CI не проверяет её bytes
+  Agent remote входит в этот baseline. Новая mixedPNG/JPEG skill-resource партия идёт после него; прежний CI не проверяет её bytes
   и не доказывает реальный SSH/model outcome.
 - **Owned Native integration теперь реализована в source:** Rust DEV wrapper на
   public Codex app-server entrypoint собран и прошёл local fake-wire proof. Это
@@ -149,6 +149,20 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
   пять counted canonical model requests, duplicate без второго эффекта и restart
   с retained receipt без rebind/replay. Это inert model adapter, не аккаунтный model
   turn и не actual DEV UI новой browser attachment поверхности.
+- **P16 selected PNG/JPEG — новая source партия:** v1text identity unchanged;
+  mixedv2 raw0400/fsync/fullhash/whole-tree,16resources/text32KiB+128KiBinclSKILL,
+  images160KiB each/8images/32Mipackagepixels,mixed512KiB. Retainedbytes все,
+  selectedSkills только metadata/promptBytes. Explicit four-field skill-resource/read
+  через sameToolJournal approval и exactattached activegeneration/rootreader;
+  canonical Web/Native image ports, Native2cumulative160KiB остаётся.
+  Store1/47, legacy1/54, reader1/49, actualpublicHTTP/Runtime/ToolJournal/fakeNative1/62
+  passed89ms; image source peer no findings. UIhash-beforedecode+all-natural-load gate
+  actualChromeDOM1/31 passed1.50s: chart imported once/unattached; validCRC/SHA/zlib
+  unknowncriticalFAILchunk faileddecode→importdisabled/no2ndcommit. Header/structure
+  не fullcodec guarantee; initialbadzlibChromeaccepted. BothTS/renderer19619:39,
+  CLI644exact9/map731finalcheck+paths passed19:41; newcommitCI pending.
+  PDF/другие binary/scripts/network/officialvendor copies остаются открыты.
+  [Evidence](../reviews/2026-10-18-skill-image-resources.md).
 - **P16 selected text resources реализованы следующим source batch:** явный `SKILL.md`
   плюс до16 UTF-8 справочных/шаблонных файлов под `references/` или `assets/`;
  32 KiB каждый,128 KiB весь пакет. Version/review/package digest связывают все bytes,
@@ -352,7 +366,7 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 | P13 | Desktop automation macOS/Windows | Computer Use в самостоятельной среде | Actual owned-background-fixture capture/JPEG→literal AX type+Cuaexact и отдельный fresh1120×624→approved click280,290→AXPress/CuaCounter1→canonical final3/3review_required подтверждены | Real provider/account, Windows/installed delivery отдельно; generic CG pixel fallback не упражнялся, execution/application fixture outcome не general verified task | P14/P17; OS facility; DW3/P20; отдельная поддержка каждой ОС | Реальная capture→input→fresh observation в exact window/process; stale input отклонён; permission unavailable виден; успех одной ОС не объявляет поддержку другой | F4, по платформам |
 | P14 | Input связан с наблюдением | Защита от действий в старой вкладке/чужом окне | Actual native capture/type/freshclick и pendingmetadata fixes сохранены; bounded old-host-tool-pixel projection source реализована, connected provider+parser2/156 с4observe/5FAKErequests, source.input-only provenance fix reviewed | Новая bounded Native images source+leaf3/38+Bun1/22+actualwrapper2fake requests готовы; root integrated mainHTTP1/40 passed(fakeleaf), обаTS+renderer195/CLI638exact9/finalmap paths PASS, no realmodel/UI; mandatory human/new/unrecognized images remain or fail, caps unchanged | Реальный consumer P11–P13; один action owner | Refs/coordinates другого или устаревшего наблюдения отклоняются до input; partial batch не называется rollback; новая observation не даёт новых разрешений | F4, до первого provider input |
 | P15 | MCP/plugin discovery, install и runtime | Инструменты собственного Agent mode с понятным источником | Managed official npm installer + MCP host/UI подключены; filesystem 1.0.0 реально frozen-installed:104 packages/4691 entries, review disabled/MCP PID null; fullgraph/tree/archive fixes проверены | Отдельные enable/connect и real requested tool proof; OAuth пока unsupported; catalog расширять явно, не называть install успешным запуском MCP | DW3; P17/P20; credential owner; official distribution policy | Advertised tool не равен execution proof; exact server/process/account; uninstall/stop не теряет active operation; не восстановлены исключённые overlays; unsupported install явен | F3 |
-| P16 | Skill discovery/import/update/routing | Явно выбранные инструкции для собственного composer | Immutable local text + до16 явно выбранных UTF-8 reference/template файлов; package digest/quota/revalidation; actual264-byte package UI import/attach/revoke/detach; HTTP/composer1case19asserts → одинFAKE offer | Official/vendor imports, executable/binary/network resources/OAuth и physical cleanup unsupported; real model composition отдельно, update не auto-attach | DW3/P15; разрешённые roots; официальный plugin источник | Выбранный skill соответствует canonical identity/digest; scan только разрешённых roots; metadata не даёт файловых прав; update сохраняет нужные local adaptations | F3 |
+| P16 | Skill discovery/import/update/routing | Явно выбранные инструкции для собственного composer | Immutable local text + до16 явно выбранных UTF-8 reference/template файлов; package digest/quota/revalidation; actual264-byte package UI import/attach/revoke/detach; HTTP/composer1case19asserts → одинFAKE offer | SelectedPNG/JPEG binary sourceDONE: store1/47,reader1/49,actualHTTP1/62 fakeNative; ActualChromeDOM1/31 и bothTS/renderer196/CLI644exact9/map731finalcheck+paths passed; newcommitCI pending. PDF/other binary/scripts/network/officialvendor/OAuth/physical cleanup и real model остаются; update не auto-attach | DW3/P15; разрешённые roots; официальный plugin источник | Выбранный skill соответствует canonical identity/digest; scan только разрешённых roots; metadata не даёт файловых прав; update сохраняет нужные local adaptations | F3 |
 | P17 | Command sandbox и filesystem policy | Настоящие ограничения собственного tool host | Custom macOS Seatbelt для MCP реально kernel-blocked outside FS/network; C fork inheritance при живом parent, Bun private HOME/SDK read+counter подтверждены; native-policy arbitrary executor unsupported | Win/Linux sandbox; post-parent lifecycle proof; раскрытые metadata/systemlib/sysctl grants и deprecated interface учитывать; native command executor не заявлять | DW3; workspace registry; platform-specific sandbox facility | Denied действие не исполняется; symlink/root escape закрыт; native exec не назван изолированным без OS proof; unavailable sandbox блокирует соответствующую route | F3; необходимый контракт для F2 mutations |
 | P18 | QuickJS/WASM composition | Меньше round trips у клиента без подходящей composition | Gateway/native composition существуют; конкретный дополнительный interpreter не реализован | При измеримом gap — один bounded interpreter и allowlisted tool callback; без собственной FS/network authority | Конкретный consumer/сравнение; P17/P20 для callback; поддержанный runtime | CPU/memory/call/output limits реально останавливают JS; callback перепроверяет authority; timeout не отменяет уже accepted external operation | F5, условно по gap |
 | P19 | Поддержанный локальный read-only API | Внешний monitor/integration получает правдивый status | Versioned local-control-api routes/policy, separate credential, passive bounded sources и UI подключены | Наблюдение реального named consumer; unknown/unopened sources не запускать ради чтения; history content только отдельным scope | Existing passive owners; отделение от P20 | Host/origin/auth checks; unavailable/stale сохраняются; reads не repair/start/send; stalled reads ограничены; секреты и raw transcript не выходят | F3; возможно раньше executor |
