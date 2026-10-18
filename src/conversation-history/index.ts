@@ -6,3 +6,5 @@ export type {
 
 export { captureValidatedNativeResponse } from "./capture";
 export type { ValidatedHistoryTurn, ValidatedUserText } from "./capture";
+
+export type { CanonicalCaptureLease } from './canonical';

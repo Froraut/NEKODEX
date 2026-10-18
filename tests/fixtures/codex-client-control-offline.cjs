@@ -1,5 +1,5 @@
 // Opt-in installed-protocol fixture. No credentials, real thread, turn/start or model request.
-// node tests/fixtures/codex-client-control-offline.cjs /absolute/path/to/codex
+// node tests/fixtures/codex-client-control-offline.cjs /absolute/path/to/codex [--canonical-only]
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -10,6 +10,8 @@ const { createCodexClientControl } = require('../../launcher/electron/codex-clie
 
 const executable = process.argv[2];
 assert(executable && path.isAbsolute(executable), 'Provide an absolute installed Codex executable');
+const canonicalOnly = process.argv[3] === '--canonical-only';
+assert(process.argv[3] === undefined || canonicalOnly, 'Unsupported fixture mode');
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-client-control-offline-')));
 const home = path.join(root, 'codex');
 fs.mkdirSync(home);
@@ -74,6 +76,41 @@ async function main() {
     child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
     const start = await request('thread/start', { cwd: root });
     assert.equal(start.thread.status.type, 'idle');
+    if (canonicalOnly) {
+      const expected = ['DW5 inert offline user text.', 'DW5 inert offline assistant text.'];
+      await request('thread/inject_items', { threadId: start.thread.id, items: [
+        { type: 'message', id: 'dw5-offline-user', role: 'user',
+          content: [{ type: 'input_text', text: expected[0] }] },
+        { type: 'message', id: 'dw5-offline-assistant', role: 'assistant', phase: 'final_answer',
+          content: [{ type: 'output_text', text: expected[1] }] },
+      ] });
+      await stopCreator(); lines.close();
+      port = createCodexClientControl({ executable, codexHome: home, cwd: root, environment, requestTimeoutMs: 10_000 });
+      let canonical;
+      try { canonical = await port.readThreadConversation(start.thread.id); }
+      catch (reason) {
+        console.log(JSON.stringify({ mode: 'canonical-only', canonicalProducer: reason.rpcCode === -32601
+          ? 'unsupported-method' : 'unavailable', errorCode: reason.code, rpcCode: reason.rpcCode,
+        modelTurnStarted: false }));
+        process.exitCode = 2; return;
+      }
+      console.log(JSON.stringify({ mode: 'canonical-only', installedProtocol: port.snapshot().userAgent,
+        threadIdMatches: canonical.threadId === start.thread.id, messages: canonical.messages,
+        complete: canonical.complete, nextCursor: canonical.nextCursor, excludedItems: canonical.excludedItems,
+        modelTurnStarted: false }));
+      assert.equal(canonical.threadId, start.thread.id);
+      if (!canonical.messages.length) {
+        console.log(JSON.stringify({ canonicalProducer: 'unavailable-from-injected-history',
+          itemsEndpoint: 'supported-empty-page',
+          reason: 'thread/inject_items materializes model-visible history without canonical visible thread items; no fallback or turn was started' }));
+        process.exitCode = 2; return;
+      }
+      assert.deepEqual(canonical.messages.map(message => message.text), expected);
+      assert.deepEqual(canonical.messages.map(message => message.role), ['user', 'assistant']);
+      assert(canonical.messages.every(message => message.messageId && message.turnId && message.compactionId === null));
+      assert(canonical.messages.every(message => message.timestampMs === null || Number.isSafeInteger(message.timestampMs)));
+      return;
+    }
     // Empty, unmaterialized threads have no rollout to fork. This is a known API rejection.
     await assert.rejects(request('thread/fork', { threadId: start.thread.id, excludeTurns: true }),
       reason => reason.rpcCode === -32600);

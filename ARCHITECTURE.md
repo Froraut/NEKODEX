@@ -54,16 +54,16 @@ separate facts.
 | Account tunnels | [binding store](launcher/electron/account-tunnels.cjs), [peer supervisor](launcher/electron/account-tunnel-supervisor.cjs), [account pool](launcher/electron/account-pool.cjs), [runtime host](launcher/electron/runtime.cjs) | `accountTunnelMode` enables strict one-account/one-mode ownership. `accountTunnels` holds distinct cloud IDs, aliases, profiles and scoped protected references (or explicit legacy key paths). A captured config generation and immutable credential are prepared before only the affected peer stops; commit checks the captured config bytes and link target. Peer startup creates the private profile before inventory; healthy peer monitoring describes transport readiness while the production parent owns broker admission. Missing/unready bindings never borrow another account's tunnel. New or explicitly reconfigured bindings derive SDK-global aliases from the canonical application home, account and mode so DEV and production cannot collide; loading a saved binding does not silently rename it. Changed sign-in fingerprints retire readiness. Native forwarding and healthy peers remain independent. A peer records the PID and start identity it verified; while they match, supervision, recovery and Quit use only local signals, never tunnel-client's remote `runtimes status` lookup. A failed first start enters the same backoff recovery, and the parent's Web repair action reconnects failed or backed-off peers. |
 | Tunnel | [installation/control](src/tunnel.ts), [status interpretation](src/tunnel-status.ts), [service](src/tunnel-service.ts) with [LaunchAgent helpers](src/launch-agent.ts) | Inventory/diagnostics parsing has no process authority. Scoped stopped proof requires successful inspection, an explicitly non-running process and stopped state; the SDK's missing/null/empty error values mean no status error. Installation, credentials and readiness remain separate steps. |
 | Electron composition | [main](launcher/electron/main.cjs), [preload](launcher/electron/preload.cjs), [IPC registrars](launcher/electron/ipc), [control server](launcher/electron/control-server.cjs) | Main owns guarded IPC and composition. Renderer inputs and helper calls cross validation/admission boundaries. |
-| Native plan content | [source observer](src/adapters/chatgpt-web/task-plan-observation.ts), [capture policy](src/adapters/chatgpt-web/task-plan-policy.ts), [wire validator](launcher/electron/task-plan-observation.cjs), [store](launcher/electron/task-plans.cjs), [TaskPlans](launcher/src/TaskPlans.tsx) | Separate opt-in content store, never the metadata ledger. `/v1/turn/plan` validates the exact live trace/helper/surface/task and recorded native thread/turn before capture; observed plan claims remain unverified. |
-| Conversation text history | [store](src/conversation-history/store.ts), [HTTP actions](src/conversation-history/http.ts), [validated producer adapter](src/conversation-history/capture.ts), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | The Bun daemon owns the SQLite/FTS writer. Current admin actions accept explicitly selected, sensitivity-confirmed partial text; automatic transcript capture is unavailable. Native capture requires a trusted in-process producer and is not inferred from an HTTP role or prompt. |
-| Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx) | Main's native picker grants an opaque root ID; renderer paths stay relative. The service owns private persisted roots/drafts, bounded reads and revision-aware writes. Its bounded in-memory Git comparison snapshots are read-only, not recoverable code checkpoints. |
-| Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Supported app-server list/read returns metadata only; status is scoped to the configured connection/server. Fork is an explicit user action; start/interrupt/approve are unsupported. Executable/home/socket are main-owned dependencies. |
+| Native plan content | [source observer](src/adapters/chatgpt-web/task-plan-observation.ts), [capture policy](src/adapters/chatgpt-web/task-plan-policy.ts), [wire validator](launcher/electron/task-plan-observation.cjs), [store](launcher/electron/task-plans.cjs), [requirements](launcher/electron/task-plan-requirements.cjs), [TaskPlans](launcher/src/TaskPlans.tsx) | Separate opt-in content store, never the metadata ledger. `/v1/turn/plan` validates the exact live trace/helper/surface/task and recorded native thread/turn before capture; observed plan claims remain unverified. Explicit requirements/corrections and CAS-bound associations retain trusted action metadata separately from personal user confirmation; property verification is unavailable here. |
+| Conversation text history | [store](src/conversation-history/store.ts), [HTTP actions](src/conversation-history/http.ts), [validated producer adapter](src/conversation-history/capture.ts), [canonical capture](src/conversation-history/canonical.ts), [main recorder](launcher/electron/canonical-native-history.cjs), [filter](launcher/electron/canonical-history-policy.cjs), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | The Bun daemon owns the SQLite/FTS writer. Manual selected text and explicitly refreshed native canonical pages have separate policies. Per-thread consent/recording epoch invalidates late capture; known-pattern exclusions do not guarantee removal of unknown secrets. All corpus coverage remains partial; native empty-page proof is not text proof. |
+| Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx) | Main's native picker grants an opaque root ID; renderer paths stay relative. The service owns private persisted roots/drafts, bounded reads and revision-aware writes. Opaque captured base choices support HEAD/local/remote-tracking comparisons with stale reference checks, no fetch/checkout. Actual DEV UI showed HEAD and older-base working diffs/full OIDs without moving main. Bounded in-memory comparisons remain read-only, not recoverable code checkpoints. |
+| Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Public native thread list/read UI remains metadata-only; the main-only canonical recorder separately reads supported items under explicit consent. Status is scoped to the configured connection/server. Fork is an explicit user action; start/interrupt/approve are unsupported. Executable/home/socket are main-owned dependencies. |
 | Standalone Agent mode | [store](src/agent-mode/store.ts), [runner](src/agent-mode/runner.ts), [runtime](src/agent-mode/runtime.ts), [Responses port](src/agent-mode/provider.ts), [HTTP actions](src/agent-mode/http.ts), [IPC](launcher/electron/ipc/agent-mode.cjs), [surface](launcher/src/AgentModeSurface.tsx) | A separate task family owns stages, durable mailbox/dispatch/command receipts and bounded Goal/Loop. The existing Responses owner executes configured Web routes and advertises explicitly enabled MCP descriptors. Durable pending tool calls require exact approval/results before canonical continuation; snapshot grants grant no tool/filesystem authority. Monetary cost remains unknown without an actual receipt. |
 | Human workspace terminal | [PTY service](launcher/electron/workspace-terminal.cjs), [IPC](launcher/electron/ipc/workspace-terminal.cjs) | Main-owned session/generation and picker grant; bounded output/ack/backpressure and exact PTY lifecycle. Main/preload/Workspace UI and xterm are wired; native `node-pty` availability/ABI remains platform-specific. Human input is not an Agent tool. |
 | Project worktrees and manual restore | [Git mutations](launcher/electron/workspace-git-mutations.cjs), [file capture](launcher/electron/workspace-file-capture.cjs), [IPC](launcher/electron/ipc/workspace-git.cjs) | One main owner serializes worktree create/archive and snapshot/restore receipts, retaining recovery state outside the user's branch. Read-only Git diff snapshots remain distinct. |
 | Remote project workspace | [SSH/SFTP owner](launcher/electron/remote-workspace.cjs), [remote worktrees](launcher/electron/remote-worktrees.cjs), [IPC](launcher/electron/ipc/remote-workspace.cjs), [surface](launcher/src/RemoteWorkspaceSurface.tsx) | System SSH owns authentication/known-host policy; selected host/root identity binds reads, drafts, commands and remote Git. One-use approvals and signed durable receipts distinguish completed/unknown; reconnect does not replay mutations. |
 | Agent snapshot authority | [main grant signer](launcher/electron/agent-workspace-grant.cjs), [Bun snapshot store](src/agent-workspace/store.ts) | Picker-authorized exact paths are signed for task/family/generation, scope `pre-turn-snapshot-only`. The Bun before-offer hook persists one immutable dispatch baseline before execution; this grants no executor filesystem access. |
-| Standalone MCP and skills | [composition](src/agent-tools/composition.ts), [MCP host](src/agent-tools/mcp-host.ts), [journal](src/agent-tools/journal.ts), [skills](src/agent-tools/skills.ts), [installer](src/agent-tools/installer.ts), [package tree](src/agent-tools/package-tree.ts), [macOS MCP sandbox](src/agent-tools/sandbox.ts), [native policy](src/agent-tools/native-policy.ts) | Managed official package graph/tree receipts, pinned server recipes, schema validation and exact approval remain separate install/enable/connect/effect transitions. Reviewed MCP recipes can use the custom macOS Seatbelt boundary; OAuth, Windows/Linux sandbox and arbitrary native executor remain unsupported. Skills use granted roots/digest identity. |
+| Standalone MCP and skills | [composition](src/agent-tools/composition.ts), [MCP host](src/agent-tools/mcp-host.ts), [journal](src/agent-tools/journal.ts), [skills](src/agent-tools/skills.ts), [managed text versions](src/agent-tools/managed-skills.ts), [installer](src/agent-tools/installer.ts), [package tree](src/agent-tools/package-tree.ts), [macOS MCP sandbox](src/agent-tools/sandbox.ts), [native policy](src/agent-tools/native-policy.ts) | Managed official package graph/tree receipts, pinned server recipes, schema validation and exact approval remain separate install/enable/connect/effect transitions. Reviewed MCP recipes can use the custom macOS Seatbelt boundary; OAuth, Windows/Linux sandbox and arbitrary native executor remain unsupported. Skills use granted roots/digest identity; explicitly reviewed local text imports/updates become immutable managed versions with current task-generation attachments and retained revoke/forget state. |
 | Browser companion/providers | [host](src/browser-companion/host.ts), [runtime](src/browser-companion/runtime.ts), [protocol/providers](src/browser-companion/providers.ts), [extension](browser-companion/manifest.json), [IPC](launcher/electron/ipc/browser-companion.cjs) | Explicit Chrome extension ID/pair/revoke and exact observation-bound browser actions; restart policy off, ChatGPT send unsupported. Desktop MCP binding is a provider contract, not an installed real OS capture/input implementation. |
 | Local control API | [routes](src/local-control-api/http.ts), [policy](src/local-control-api/policy.ts), [IPC](launcher/electron/ipc/local-control-api.cjs) | Separate revocable bearer, versioned bounded passive reads and explicit history-content scope. Opt-in scoped Agent actions reuse the existing task owner/command receipts; default reads never start work. |
 | Cross-client usage | [import/projection](launcher/electron/external-usage.cjs), [IPC](launcher/electron/ipc/external-usage.cjs), [surface](launcher/src/ExternalUsageSurface.tsx) | Explicitly picked Codex/Claude roots, incremental bounded source-scoped imports and optional versioned pricing. Estimates are API-equivalent comparisons, never bills or provider savings; overlapping/unknown sources stay outside the aggregate. |
@@ -314,7 +314,11 @@ isolated Electron shell crash check verify their separate boundaries.
 ## Plans, history, project workspace and standalone execution
 
 These new source modules extend the maintained runtime; their presence does not
-prove a released or installed feature. The
+prove a released or installed feature. Source baseline [PR #98](https://github.com/Froraut/NEKODEX/pull/98)
+(`137399d`, `6.1.32-nekodex.9`) passed all four baseline CI jobs; installed D01
+remains `6.1.32-nekodex.8`. The later requirements/base-selection/canonical-history/
+managed-skills batch has its own fixture evidence and four completed DEV UI flows,
+while its source publication remains separate from the earlier baseline CI. The
 [full adoption program](docs/design/full-adoption-program.md) records the broader
 36-capability scope. Keep composition evidence separate from contract fixtures,
 development UI, live provider results and installed delivery.
@@ -329,12 +333,21 @@ default off; unreadable/unsafe policy disables capture. Account/task-scoped
 records live under `task-plans/records`, retain immutable observed revisions and
 stop at quota. Disabling capture retains saved content; selected deletion is
 explicit. Model `completed` is a claim, never verified outcome evidence.
+`task-plan-requirements.cjs` composes a private account/task/native-thread/turn
+book with explicit original-input consent, corrections, CAS and plan/requirement
+revision invalidation. Selected actions resolve only from successful bound-ledger
+metadata; personal confirmations remain `user-confirmed`. Historical corrections
+and associations survive invalidation; shared content quota failures preserve data.
+The real-ledger fixture passed. Actual DEV UI saved explicit requirements with
+consent, associated plan/action metadata and personal confirmation, then corrected
+the requirements: current counts reset while both requirement revisions and
+coverage history remained. Property verification stayed visibly unavailable.
 
 **History:** `/admin/conversation-history` uses existing local/control-token
 admission and one lazy daemon-owned `conversation-history/history.sqlite`.
 Electron's registrar calls only the already-owned ready runtime. SQLite/FTS
 records message/revision identity, explicit author/source/sensitivity and bounded
-coverage; search/export read the same retained corpus. The current HTTP import
+coverage; search/export read the same retained corpus. The manual HTTP import
 requires user consent and sensitivity confirmation, fixes the source to
 `manual-selection` / `manual-import`, and marks coverage partial. It does not
 claim automatic redaction or a complete native transcript. Unknown sensitivity
@@ -344,6 +357,24 @@ in-process port, not permission to capture every incoming Responses request.
 Exact revision links identify stored records and do not themselves establish OS
 protocol registration. Clipboard/save delivery remains an explicit UI action;
 cancelled save returns `saved: false`.
+
+`canonical-native-history.cjs` now coordinates explicit metadata load and selected
+thread refresh through the existing main-owned Codex client. `thread/read` binds
+the exact thread and one supported `thread/items/list` supplies canonical role/text
+items; no turn/resume/fork or rollout-file fallback is used. Per-thread consent
+and a global recording epoch are leased before read and revalidated in the sole
+history SQLite transaction, including revoke/re-enable and global off/on. The
+renderer cannot submit leases or canonical message batches. Known-pattern policy
+excludes whole unsafe items without storing/hashing bodies; unfamiliar secrets
+can remain, with separate explicit risk acknowledgement. Native authorship and
+compaction remain unknown unless established; observed timestamp fallback is
+labelled and corpus coverage is always partial. Connected native-shaped RPC/SQLite
+fixture passed. Actual official 0.163.0 returned an empty canonical page, so real
+nonempty text/IDs/timestamps are not yet proved. Actual DEV UI confirmed global
+opt-in, exact-thread scoped consent with both acknowledgements, explicit empty
+canonical-page guidance, revoke disabling refresh and global recording off. It
+did not claim an empty original conversation or saved canonical text. See
+[the canonical history contract](docs/development/conversation-history-canonical.md).
 
 **Project files:** `local-workspace.cjs` is distinct from ChatGPT browser workspace
 windows. Main captures the picker and private registry path; IPC accepts opaque
@@ -413,6 +444,23 @@ Git inspect/prepare/create/archive has a separate owner-bound worktree lifecycle
 Unknown disconnect outcomes require explicit reconciliation, not reconnect replay.
 Remote command/Git helpers require the selected server's supported environment;
 local picker/Agent grants do not confer remote authority.
+
+**Managed local skill text:** `managed-skills.ts` owns bounded private SQLite
+metadata and immutable text-version directories. Review pins source grant,
+canonical inode/timestamps/digest; commit revalidates before a durable exact
+stage/target intent. A lost receipt is reconciled from the verified published
+version, never replayed blindly. Explicit update retains a new lineage version
+without changing old task attachments. Attachments bind exact digest/task/generation;
+revoke/forget disables future composition and retains bytes/receipts. The existing
+`selectedSkillContent` port combines read-only and managed selections within one
+budget. Limits preserve admitted retries and old state: 512 action intents,
+256 versions, 64 MiB reserved text, 64 attachment packets and combined 16 items /
+128 KiB. Official/vendor plugin-cache imports, resources, network/OAuth and physical
+cleanup are unsupported; no official plugin/account registry is changed. The new
+Actual DEV UI selected a local SKILL.md, discovered/reviewed its digest/text,
+imported an unattached immutable version, explicitly attached it to one task/
+generation, revoked it with retained bytes and disabled reattachment, then detached.
+No model/MCP execution or external calls were used for that UI observation.
 
 **MCP OS boundary:** `sandbox.ts` creates a fixed custom Seatbelt profile for
 explicitly reviewed MCP recipes on macOS, with pinned executable/code roots,

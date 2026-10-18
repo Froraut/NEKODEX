@@ -2,13 +2,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { assertTaskPlanObservation } = require('./task-plan-observation.cjs');
+const { createTaskRequirementStore, MAX_REQUIREMENT_BYTES } = require('./task-plan-requirements.cjs');
 
 // The Electron main process is the single writer. Content never enters the
 // metadata-only task ledger. Disabling capture retains explicitly recorded data.
-function createTaskPlanStore({ coreHome, maxBytes = 16 * 1024 * 1024 }) {
+function createTaskPlanStore({ coreHome, maxBytes = 16 * 1024 * 1024, resolveTask, clock = Date.now }) {
   const root = path.join(coreHome, 'task-plans');
   const policyPath = path.join(root, 'policy.json');
   const records = path.join(root, 'records');
+  const requirements = path.join(root, 'requirements');
   let storageIssue = null;
   let policyIssue = false;
   const privateStat = (file, directory) => {
@@ -21,7 +23,7 @@ function createTaskPlanStore({ coreHome, maxBytes = 16 * 1024 * 1024 }) {
     return stat;
   };
   const ensure = () => {
-    for (const dir of [root, records]) {
+    for (const dir of [root, records, requirements]) {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { mode: 0o700 });
       privateStat(dir, true);
     }
@@ -72,7 +74,32 @@ function createTaskPlanStore({ coreHome, maxBytes = 16 * 1024 * 1024 }) {
     return row.observation;
   };
   const status = () => ({ ...policy(), storageIssue });
+  const commit = (file, value) => {
+    ensure();
+    let total = 0; let retainedStaging = false;
+    for (const directory of [records, requirements]) {
+      privateStat(directory, true);
+      for (const name of fs.readdirSync(directory)) {
+        const entry = path.join(directory, name);
+        if (/^\.plan-[a-f0-9-]{36}\.tmp$/.test(name)) {
+          const pending = privateStat(entry, false);
+          if (pending.size > (directory === records ? 10_000 : MAX_REQUIREMENT_BYTES)) throw new Error('Unexpected plan staging size');
+          total += pending.size; retainedStaging = true; continue;
+        }
+        if (!/^[a-f0-9]{64}\.json$/.test(name)) throw new Error('Unexpected plan storage entry');
+        if (entry !== file) total += privateStat(entry, false).size;
+      }
+    }
+    if (total + Buffer.byteLength(JSON.stringify(value)) > maxBytes) { storageIssue = 'Plan storage quota reached; remove selected records to resume'; return false; }
+    atomic(file, value);
+    storageIssue = retainedStaging ? 'Uncommitted plan staging bytes were retained after an interrupted write' : null;
+    return true;
+  };
+  const requirementStore = createTaskRequirementStore({ resolveTask, clock, getPlan: get, commit,
+    fileFor: input => path.join(requirements, path.basename(identity(input.accountId, input.taskId))),
+    read: (file, limit) => { privateStat(root, true); privateStat(requirements, true); return read(file, limit); } });
   return {
+    ...requirementStore,
     enabled: () => policy().enabled,
     status,
     setEnabled(enabled, expectedRevision) {
@@ -100,24 +127,7 @@ function createTaskPlanStore({ coreHome, maxBytes = 16 * 1024 * 1024 }) {
         }
       }
       const value = { version: 1, accountId, taskId, observation };
-      const bytes = Buffer.byteLength(JSON.stringify(value));
-      let total = 0;
-      let retainedStaging = false;
-      for (const name of fs.readdirSync(records)) {
-        const entry = path.join(records, name);
-        if (/^\.plan-[a-f0-9-]{36}\.tmp$/.test(name)) {
-          // A previous process may have stopped before rename. Preserve these
-          // uncommitted bytes and account for them without blocking other plans.
-          const pending = privateStat(entry, false);
-          if (pending.size > 10_000) throw new Error('Unexpected plan staging size');
-          total += pending.size; retainedStaging = true; continue;
-        }
-        if (!/^[a-f0-9]{64}\.json$/.test(name)) throw new Error('Unexpected plan storage entry');
-        if (entry !== file) total += privateStat(entry, false).size;
-      }
-      if (total + bytes > maxBytes) { storageIssue = 'Plan storage quota reached; remove selected records to resume'; return { recorded: false, reason: 'quota' }; }
-      atomic(file, value);
-      storageIssue = retainedStaging ? 'Uncommitted plan staging bytes were retained after an interrupted write' : null;
+      if (!commit(file, value)) return { recorded: false, reason: 'quota' };
       return { recorded: true };
     },
     delete({ accountId, taskId }) {

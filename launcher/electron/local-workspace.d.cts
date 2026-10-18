@@ -15,12 +15,18 @@ export type WorkspaceSaveResult =
   | { state: "saved"; path: string; revision: string; draftId: string; draftRetained: boolean }
   | { state: "conflict"; draftId: string; currentRevision: string | null; currentState: WorkspacePreview["state"] }
   | { state: "blocked"; draftId: string; code: string; message: string };
+export interface WorkspaceGitBaseChoice {
+  baseId: string; ref: string | null; oid: string; kind: "head" | "local" | "remote";
+}
+export type WorkspaceGitBases =
+  | { state: "ready"; headOid: string; headRef: string | null; choices: WorkspaceGitBaseChoice[]; truncated: boolean }
+  | { state: "unavailable"; reason: string };
 export type WorkspaceGitStatus =
-  | { state: "ready"; snapshotId: string; headOid: string; baseOid: string; status: string[];
+  | { state: "ready"; snapshotId: string; headOid: string; headRef: string | null; baseOid: string; baseRef: string | null; status: string[];
       statusTruncated: boolean; truncated: boolean; binary: boolean }
   | { state: "unavailable"; reason: string };
 export interface WorkspaceGitDiff {
-  state: "current" | "stale" | "unavailable"; snapshotId: string; headOid: string; baseOid: string;
+  state: "current" | "stale" | "unavailable"; snapshotId: string; headOid: string; headRef: string | null; baseOid: string; baseRef: string | null;
   text: string; truncated: boolean; binary: boolean; reason?: string;
 }
 export interface LocalWorkspaceService {
@@ -43,7 +49,8 @@ export interface LocalWorkspaceService {
   retainDraft(workspaceId: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): WorkspaceDraft;
   listDrafts(workspaceId: string): WorkspaceDraft[];
   discardDraft(workspaceId: string, draftId: string): boolean;
-  gitStatus(workspaceId: string, options?: { baseOid?: string }): Promise<WorkspaceGitStatus>;
+  gitBases(workspaceId: string): Promise<WorkspaceGitBases>;
+  gitStatus(workspaceId: string, options?: { baseOid?: string; baseId?: string }): Promise<WorkspaceGitStatus>;
   gitDiff(workspaceId: string, snapshotId: string): Promise<WorkspaceGitDiff>;
 }
 /** The picker and registry path are trusted main-process dependencies, never IPC payloads. */
@@ -53,4 +60,4 @@ export function createLocalWorkspaceService(options: {
   resolveManagedWorktree?: ((sourceRootId: string, worktreeId: string) => Promise<{ id: string; path: string }>) | null;
 }): LocalWorkspaceService;
 export const LIMITS: Readonly<{ roots: number; entries: number; treeEntries: number; depth: number;
-  previewBytes: number; gitBytes: number; drafts: number; snapshots: number }>;
+  previewBytes: number; gitBytes: number; drafts: number; snapshots: number; baseRefs: number; bases: number }>;

@@ -5,6 +5,7 @@ import type { AgentToolsApi, AgentToolsStatus, ServerRecipe, SkillIdentity, Tool
 import { stripIpcErrorPrefix } from './ipc-error';
 import './surfaces/agent-tools.css';
 import { AgentToolsInstaller } from './AgentToolsInstaller';
+import { AgentManagedSkills } from './AgentManagedSkills';
 
 function Area({ label, value, onChange, hint }: { label: string; value: string; onChange: (value: string) => void; hint?: string }) {
   const id = useId(); return <div className="nk-field"><label htmlFor={id}>{label}</label><textarea id={id} className="nk-input" rows={3} value={value} onChange={event => onChange(event.target.value)} maxLength={32768} aria-describedby={hint ? `${id}-hint` : undefined} />{hint ? <p className="nk-field__hint" id={`${id}-hint`}>{hint}</p> : null}</div>;
@@ -83,5 +84,6 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
       {skills.length ? <ul className="agent-tools-records">{skills.map(skill => <li key={skill.id}><strong>{skill.relativePath}</strong><small>{skill.source} · SHA-256 {skill.digest}</small><Button size="sm" disabled={locked || !selectedTask} onClick={() => void act(async () => { const selected = await transport.current.request({ action: 'skillsSelect', scope: scope(`skill:${skill.id}`), identity: skill, explicitUserAction: true }) as { content: string }; if (mounted.current) setPreview(selected.content); await refresh(); })}>{choose('Select for this task and preview', 'Выбрать для задачи и просмотреть')}</Button></li>)}</ul> : null}
       {preview ? <pre className="agent-tools-skill-preview">{preview}</pre> : null}
     </Panel>
+    <AgentManagedSkills api={api} status={status} sources={skills} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'managed-skill-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
   </Page>;
 }

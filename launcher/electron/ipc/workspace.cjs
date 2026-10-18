@@ -46,7 +46,20 @@ function registerWorkspaceIpc({ registerIpcHandler, service, beforeForget = () =
   handle("launcher:workspace-retain-draft", (workspaceId, input) => service.retainDraft(id(workspaceId), draft(input)));
   handle("launcher:workspace-drafts", (workspaceId) => service.listDrafts(id(workspaceId)));
   handle("launcher:workspace-discard-draft", (workspaceId, draftId) => service.discardDraft(id(workspaceId), id(draftId)));
-  handle("launcher:workspace-git-status", (workspaceId) => service.gitStatus(id(workspaceId)));
+  handle("launcher:workspace-git-bases", (...args) => {
+    if (args.length !== 1) throw new Error("Select one workspace for Git base choices");
+    return service.gitBases(id(args[0]));
+  });
+  handle("launcher:workspace-git-status", (...args) => {
+    if (args.length < 1 || args.length > 2) throw new Error("Select one workspace and an optional captured base");
+    const [workspaceId, options] = args;
+    if (options === undefined) return service.gitStatus(id(workspaceId));
+    if (!options || typeof options !== "object" || Array.isArray(options)
+        || Object.keys(options).length !== 1 || Object.keys(options)[0] !== "baseId") {
+      throw new Error("Select a captured repository base; Git expressions are not accepted");
+    }
+    return service.gitStatus(id(workspaceId), { baseId: id(options.baseId) });
+  });
   handle("launcher:workspace-git-diff", (workspaceId, snapshotId) => service.gitDiff(id(workspaceId), id(snapshotId)));
 }
 

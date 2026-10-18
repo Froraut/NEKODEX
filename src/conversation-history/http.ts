@@ -13,6 +13,10 @@ export async function conversationHistoryRequest(req: Request, getStore: () => C
     const page = { limit: body.limit, offset: body.offset } as {limit?:number;offset?:number};
     let value: unknown;
     switch (body.action) {
+      case "canonical-status": value=store.canonical.status(body.sourceId as string,body.threadId as string); break;
+      case "canonical-consent": value=store.canonical.setConsent({sourceId:body.sourceId as string,threadId:body.threadId as string,enabled:body.enabled as boolean,consent:body.consent as boolean,acknowledgeUnknownSecrets:body.acknowledgeUnknownSecrets as boolean}); break;
+      case "canonical-lease": value=store.canonical.lease(body.sourceId as string,body.threadId as string); break;
+      case "canonical-record": value=store.canonical.recordPage(body.lease as import("./canonical").CanonicalCaptureLease,body.page as import("../../launcher/electron/canonical-history-policy.cjs").SanitizedCanonicalPage); break;
       case "status": value = { ...store.status(), captureMode: "explicit-selected-text", automaticCaptureAvailable: false }; break;
       case "set-recording":
         if (typeof body.enabled !== "boolean" || (body.enabled && body.consent !== true)) throw new Error("Explicit consent to private selected-text history is required");

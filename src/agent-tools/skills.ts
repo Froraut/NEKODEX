@@ -1,5 +1,6 @@
-import { closeSync, constants, fstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
+import { homedir } from "node:os";
 import { sha256 } from "./config";
 
 export interface SkillRootGrant {
@@ -36,8 +37,9 @@ export class ReadOnlySkillLibrary {
       while (count <= this.maxBytes) { const read = readSync(fd, bytes, count, bytes.length - count, null); if (!read) break; count += read; }
       const currentPath = realpathSync(join(grant.root, relativePath));
       const currentStat = statSync(currentPath);
-      if (count > this.maxBytes || !inside(grant.root, currentPath) || currentPath !== path || currentStat.dev !== stat.dev || currentStat.ino !== stat.ino || realpathSync(grant.root) !== grant.root) throw new Error("Skill content changed or escaped its root");
-      const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, count));
+      const end = fstatSync(fd);
+      if (count > this.maxBytes || !inside(grant.root, currentPath) || currentPath !== path || currentStat.dev !== stat.dev || currentStat.ino !== stat.ino || realpathSync(grant.root) !== grant.root || end.size !== stat.size || end.mtimeMs !== stat.mtimeMs || end.ctimeMs !== stat.ctimeMs) throw new Error("Skill content changed or escaped its root");
+      const content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, count));
       const canonicalPath = relative(grant.root, path).split(sep).join("/");
       return { id: `${grant.id}:${canonicalPath}`, grantId: grant.id, relativePath: canonicalPath, source: grant.source, digest: sha256(bytes.subarray(0, count)), bytes: count, content, role: "selected-skill-instructions", precedence: "below-system-developer-user" };
     } finally { closeSync(fd); }
@@ -65,7 +67,36 @@ export class ReadOnlySkillLibrary {
   select(identity: SkillIdentity): SelectedSkill {
     const grant = this.roots.get(identity.grantId); if (!grant) throw new Error("Skill root is not granted");
     const current = this.read(grant, identity.relativePath);
-    if (current.id !== identity.id || current.digest !== identity.digest || current.source !== identity.source) throw new Error("Selected skill identity or digest changed");
+    if (current.id !== identity.id || current.digest !== identity.digest || current.source !== identity.source || current.bytes !== identity.bytes) throw new Error("Selected skill identity or digest changed");
     return current;
   }
+}
+
+export interface LocalSkillSourceManifest {
+  version: 1;
+  kind: "local-user-text";
+  grant: SkillRootGrant;
+  identity: SkillIdentity;
+  root: { path: string; dev: string; ino: string };
+  file: { path: string; dev: string; ino: string; size: number; mtimeNs: string; ctimeNs: string };
+  locator: string;
+}
+/** Explicit text import only. Plugin distributions/resources stay with their installation owner. */
+export function snapshotLocalSkillSource(grant: SkillRootGrant, identity: SkillIdentity): { manifest: LocalSkillSourceManifest; content: string } {
+  if (!["user", "workspace"].includes(grant.source)) throw new Error("Managed skill import supports explicitly selected local user/workspace text only");
+  const library = new ReadOnlySkillLibrary([grant]);
+  if (typeof identity.relativePath !== "string" || isAbsolute(identity.relativePath) || identity.relativePath.split(/[\\/]/).some(part => part === "..") || !identity.relativePath.endsWith("SKILL.md")) throw new Error("Invalid managed skill source path");
+  const path = join(grant.root, identity.relativePath);
+  if (lstatSync(path).isSymbolicLink() || realpathSync(path) !== path) throw new Error("Managed skill source must be a canonical regular file");
+  if (!inside(grant.root, path)) throw new Error("Managed skill source escapes its root grant");
+  const pluginRoots = [...new Set([join(process.env.CODEX_HOME || join(homedir(), ".codex"), "plugins"), join(homedir(), ".codex", "plugins")])].map(root => { try { return realpathSync(root); } catch { return root; } });
+  if (pluginRoots.some(root => inside(root, path))) throw new Error("Official/vendor plugin distributions cannot be imported as managed skill copies");
+  const selected = library.select(identity);
+  const rootStat = statSync(grant.root, { bigint: true }); const fileStat = statSync(path, { bigint: true });
+  if (!fileStat.isFile() || Number(fileStat.size) !== selected.bytes) throw new Error("Skill source changed during manifest capture");
+  const current = new ReadOnlySkillLibrary([grant]).select(identity);
+  const after = statSync(path, { bigint: true });
+  if (current.digest !== selected.digest || after.dev !== fileStat.dev || after.ino !== fileStat.ino || after.mtimeNs !== fileStat.mtimeNs || after.ctimeNs !== fileStat.ctimeNs) throw new Error("Skill source changed during manifest capture");
+  return { content: selected.content, manifest: { version: 1, kind: "local-user-text", grant: structuredClone(grant), identity: { id: selected.id, grantId: selected.grantId, relativePath: selected.relativePath, source: selected.source, digest: selected.digest, bytes: selected.bytes }, root: { path: grant.root, dev: rootStat.dev.toString(), ino: rootStat.ino.toString() },
+    file: { path, dev: fileStat.dev.toString(), ino: fileStat.ino.toString(), size: Number(fileStat.size), mtimeNs: fileStat.mtimeNs.toString(), ctimeNs: fileStat.ctimeNs.toString() }, locator: sha256(JSON.stringify([grant.root, selected.relativePath, grant.source])) } };
 }

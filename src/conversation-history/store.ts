@@ -1,3 +1,4 @@
+import { CanonicalHistoryCapture } from "./canonical";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -36,8 +37,14 @@ function validate(record: CaptureRecord) {
   if (!["user", "assistant"].includes(record.role)) throw new Error("Only user/assistant message text is accepted");
   if (!["human", "assistant", "agent", "unknown"].includes(record.author)) throw new Error("Explicit author required");
   if (!["responses", "native", "chatgpt-web", "manual-import", "unknown"].includes(record.source)) throw new Error("Explicit source required");
-  if (!["caller-validated", "unknown"].includes(record.sensitivity)) throw new Error("Explicit sensitivity state required");
-  if (record.capturePolicy !== "user-assistant-text-v1") throw new Error("Caller-validated capture policy required");
+  if (!["caller-validated", "unknown", "known-pattern-filtered"].includes(record.sensitivity)) throw new Error("Explicit sensitivity state required");
+  if (!["user-assistant-text-v1","canonical-thread-text-v1"].includes(record.capturePolicy)) throw new Error("Explicit capture policy required");
+  if(record.capturePolicy === "canonical-thread-text-v1") {
+    const canonical=record.canonical;
+    if(record.sensitivity!=="known-pattern-filtered"||record.source!=="native"||record.author!=="unknown"||record.coverage!=="partial"||!canonical||canonical.policyVersion!=="known-pattern-filter-v1"||!/^[a-f0-9]{64}$/.test(canonical.fingerprint)||!["native","observed-at"].includes(canonical.timestampSource)||!["complete","partial"].includes(canonical.sourceCoverage))throw new Error("Invalid canonical text policy");
+    integer(canonical.observedAt,"canonical observation time");integer(canonical.originalBytes,"canonical original bytes");
+    if(canonical.originalBytes>16*1024*1024||canonical.exclusionReason!==null&&typeof canonical.exclusionReason!=="string"||canonical.exclusionReason&&record.text!==""||!canonical.exclusionReason&&canonical.originalBytes!==bytes(record.text))throw new Error("Invalid canonical exclusion metadata");
+  } else if(record.sensitivity==="known-pattern-filtered"||record.canonical!==undefined)throw new Error("Manual records cannot claim canonical filtering");
   if (!["complete", "partial"].includes(record.coverage) || typeof record.text !== "string") throw new Error("Invalid text coverage");
   if (record.coverageReason !== undefined && (typeof record.coverageReason !== "string" || bytes(record.coverageReason) > 1024)) throw new Error("Invalid coverageReason");
   if (record.coverage === "partial" && !record.coverageReason?.trim()) throw new Error("Partial text needs a coverage reason");
@@ -59,6 +66,7 @@ function message(row: StoredRow): HistoryMessage {
  * No transcript discovery, background jobs, automatic retention/purge, or network. */
 export class ConversationHistoryStore {
   readonly path: string;
+  readonly canonical: CanonicalHistoryCapture;
   private db: Database;
   private closed = false;
   private maxMessageBytes: number;
@@ -91,6 +99,7 @@ export class ConversationHistoryStore {
           timestamp INTEGER NOT NULL, incomplete INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS messages_thread ON messages(client_id, thread_id, timestamp, message_key);
         CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(message_key UNINDEXED, text, tokenize='unicode61');`);
+      this.canonical = new CanonicalHistoryCapture({db:this.db,record:record=>this.record(record),getMessage:identity=>this.getMessage(identity),status:()=>this.status()});
       owners.add(this.path);
     } catch (error) { this.db.close(); throw error; }
   }
@@ -108,12 +117,12 @@ export class ConversationHistoryStore {
     return { recordingEnabled: !!state.enabled, quotaReached: !!state.quota_reached, quotaRejected: state.quota_rejected,
       storedBytes: state.stored_bytes, maxStoredBytes: this.maxStoredBytes, maxMessageBytes: this.maxMessageBytes,
       totalMessages: counts.total, indexedMessages: indexed.count, incompleteMessages: counts.incomplete,
-      revisions: revisions.count, captureScope: "caller-validated-user-assistant-text", transcriptCoverage: "unknown" };
+      revisions: revisions.count, captureScope: "explicit-policy-user-assistant-text", transcriptCoverage: "unknown" };
   }
   setRecordingEnabled(enabled: boolean): HistoryStatus {
     this.assertOpen();
     if (typeof enabled !== "boolean") throw new Error("Recording setting must be boolean");
-    this.db.query("UPDATE settings SET enabled=? WHERE id=1").run(enabled ? 1 : 0);
+    this.db.query("UPDATE settings SET recording_epoch=recording_epoch+CASE WHEN enabled!=? THEN 1 ELSE 0 END,enabled=? WHERE id=1").run(enabled ? 1 : 0,enabled ? 1 : 0);
     return this.status();
   }
   record(record: CaptureRecord): RecordResult {
@@ -124,10 +133,10 @@ export class ConversationHistoryStore {
     const canonical: CaptureRecord = { clientId: record.clientId, threadId: record.threadId, messageId: record.messageId,
       revisionId: record.revisionId, revisionNumber: record.revisionNumber, turnId: record.turnId, compactionId: record.compactionId,
       role: record.role, author: record.author, source: record.source, text: record.text, timestamp: record.timestamp,
-      coverage: record.coverage, ...(record.coverageReason === undefined ? {} : { coverageReason: record.coverageReason }), capturePolicy: record.capturePolicy, sensitivity: record.sensitivity };
+      coverage: record.coverage, ...(record.coverageReason === undefined ? {} : { coverageReason: record.coverageReason }), capturePolicy: record.capturePolicy, sensitivity: record.sensitivity, ...(record.canonical?{canonical:record.canonical}:{}) };
     const messageKey = key(record);
-    const originalBytes = bytes(record.text);
-    const rejectionReason = record.sensitivity === "unknown" ? "sensitivity-unverified" : originalBytes > this.maxMessageBytes ? "message-size-limit" : null;
+    const originalBytes = record.canonical?.originalBytes ?? bytes(record.text);
+    const rejectionReason = record.canonical?.exclusionReason ?? (record.sensitivity === "unknown" ? "sensitivity-unverified" : originalBytes > this.maxMessageBytes ? "message-size-limit" : null);
     const rejected = rejectionReason !== null;
     const stored = rejected ? { ...canonical, text: null, coverage: "rejected", coverageReason: rejectionReason } : canonical;
     const recordJson = JSON.stringify(stored);
@@ -259,7 +268,7 @@ export class ConversationHistoryStore {
     const hasMore = rows.length < total;
     const partial = true; // Full transcript coverage cannot be inferred from recorded rows.
     const lines = ["# NEKODEX conversation text export", "", `Client: ${JSON.stringify(options.clientId)}`, `Thread: ${JSON.stringify(options.threadId)}`, "",
-      "Scope: caller-validated user/assistant text only. System/developer/tool content and credentials are excluded by the capture contract; the store does not detect or redact secrets.",
+      "Scope: explicitly retained user/assistant text. Manual selections are caller-checked. Native canonical capture excludes structured machine items and known sensitive/generated patterns; unknown secrets may remain. The store does not certify exhaustive redaction.",
       "PARTIAL CORPUS — transcript coverage is unknown. Recording may have been disabled or messages may not have reached the capture boundary.",
       `Selection: ${exact ? "selected exact revisions" : selected ? "selected messages" : "thread latest messages"}; exported ${rows.length}/${total}; incomplete text ${incompleteMessages}${hasMore ? "; PARTIAL: some selected messages are unavailable or the 1000-message export limit was reached" : ""}.`, ""];
     for (const row of rows) lines.push(`## ${row.role} — ${JSON.stringify(row.messageId)}`, "", `[Open exact message revision](${row.link})`, "",

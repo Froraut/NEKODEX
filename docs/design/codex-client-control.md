@@ -128,6 +128,48 @@ from NEKODEX Web scheduling. No background polling or subscription is started
 by this module. A main-process UI controller can refresh metadata in response
 to explicit user navigation without acquiring native execution ownership.
 
+## Canonical selected-thread history
+
+The main-only `readThreadConversation(threadId, {cursor?, limit?, signal?})`
+method supplies the opt-in history recorder with real app-server canonical
+message text. The recorder must obtain an explicit selected-thread recording
+lease before calling it and revalidate that lease before persistence. This
+method is not exposed by the generic native-thread renderer IPC and has no
+automatic callback, watcher, capture policy, or secondary transport.
+
+The installed 0.163.0 public schema deprecates full `thread/read` hydration in
+favor of `thread/turns/list` and `thread/items/list`. This producer first binds
+the exact thread through metadata-only `thread/read`, then reads one bounded
+`thread/items/list` page, newest first, and returns retained messages in
+chronological order. It projects only `userMessage.content` text parts and
+`agentMessage.text`, retaining native message/turn IDs and recorded item times.
+It does not pass raw Responses, tool/command output, reasoning, hooks, plans,
+citations, attachments, or arbitrary nested metadata to the recorder. User-role
+does not establish human authorship or secret-free text. The trusted recorder
+owns sensitivity checks, opaque configured-source identity, author labels,
+revision storage, opt-in and revocation.
+
+Each read is limited to 100 native entries, 128 KiB per text message and
+384 KiB of projected output including envelope reserve. Whole messages are
+omitted rather than truncated when a bound is reached. Missing completion
+times and excluded nontext parts remain explicit partial coverage. Compaction
+identity is `null` because these public message entries provide none.
+`excludedItems`, `nextCursor` and `complete` describe this bounded page;
+they do not claim complete recorded history. There is no automatic page crawl.
+
+## Native continuation boundary
+
+The public schema also exposes `thread/resume` and `turn/start` with
+`clientUserMessageId`, but does not promise that field is an idempotency key.
+`turn/start` can add input to an already-active turn, so it cannot be treated
+as a guaranteed new independent worker turn. A separate stdio metadata client
+has no demonstrated exclusive ownership or cooperative handoff from the current
+native executor. This batch therefore keeps start-turn, interrupt and approval
+capabilities false. Safe native continuation requires an agreed current-owner
+handoff/proxy contract, durable exact send intent, native approval routing and
+unknown-outcome reconciliation before implementation; metadata status alone
+does not establish reusable-worker readiness.
+
 ## Forks and failures
 
 `forkThread({ threadId, lastTurnId?, userInitiated: true })` sends only the thread
@@ -163,6 +205,7 @@ provide authentication refresh tokens.
 ```sh
 bun test tests/codex-client-control.test.ts
 node tests/fixtures/codex-client-control-offline.cjs /Users/alex/.local/bin/codex
+node tests/fixtures/codex-client-control-offline.cjs /Users/alex/.local/bin/codex --canonical-only
 node tests/fixtures/native-threads-ui.cjs
 ```
 
@@ -187,6 +230,21 @@ and the exact temporary state is removed. On 0.163.0 the synthetic no-turn
 fixture's list page is empty; populated listing/tree projection is established
 by the RPC fixture, not claimed as real account-history evidence. No actual
 user thread or installed application is changed by these checks.
+
+The separate `--canonical-only` route does not repeat the fork flow. It starts
+one disposable empty thread, injects inert synthetic user/assistant Responses
+items through the supported app-server method, closes that creator, then calls
+the actual owned `readThreadConversation`. On installed 0.163.0 the metadata
+read and `thread/items/list` both succeeded, but the canonical page was empty:
+`thread/inject_items` materializes model-visible history without creating
+canonical visible thread items. This route therefore exits with code 2 and an
+explicit `unavailable-from-injected-history` receipt. It does not claim real text,
+message-ID or timestamp projection evidence, and does not fall back to reading
+raw Responses, rollout files, or starting a model turn. The public empty-page
+response shape is verified; canonical projection remains established by the
+focused schema/RPC fixture until a separately authorized canonical producer is
+available. Both creator/client processes closed and the exact temporary profile
+was removed in the observed installed-protocol check.
 
 The standalone headless browser fixture builds only this surface, using inert
 metadata and no Electron/provider bridge. It confirms no initial requests,

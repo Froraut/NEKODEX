@@ -205,6 +205,80 @@ revoked explicitly without editing source files. There is no global
 edit/import/update writer. Official plugin
 installation and preserving local adaptations remain with their existing owner.
 
+### Managed local text lifecycle
+
+`ManagedSkillStore` in `src/agent-tools/managed-skills.ts` owns a separate private
+`managed-skills/metadata.sqlite` and version directories. It does not change the
+existing read-only root grants, source files, Codex skills, plugin distributions
+or account/client registries. Only explicitly selected local user/workspace
+SKILL.md text is supported. Official/vendor source tags and canonical resolved
+ancestry under the effective/default Codex plugin roots are rejected before
+reading import content. This is not a plugin installer, official distribution
+replacement, folder/resource importer or background source watcher.
+
+The review captures canonical root/file path and device/inode identities, file
+timestamps, bounded UTF-8 bytes (including a preserved BOM), content SHA-256 and
+the selected source identity. The file descriptor and source pins are rechecked
+around reads and again at commit. The returned full-text preview is precisely
+the staged text. A separate explicit commit must match its review digest and
+retain a currently granted original source root. Source changes require a new
+review; copying model-provided body text or arbitrary ungranted paths is not an
+admin route.
+
+Each review has a stable action identity. The private SQLite owner admits the
+intent before copying, then stores an exact staged/target manifest and content
+digest. Commit records `committing` before publishing its uniquely named
+version directory. A lost terminal receipt can be re-observed from the exact
+marked, digest-matching target without a new copy or rename. An admitted intent
+whose target is absent/conflicting stays `outcome_unknown`; retries cannot
+automatically commit it. Files are created private/read-only and never replaced
+by updates; current bytes are checked every time they are composed. Same-user
+manual file modification is detected, not represented as OS immutability.
+
+An update retains the same selected source lineage and creates a new version.
+It neither overwrites old referenced bytes nor changes any task attachment.
+Attaching an exact version is a further explicit action bound to the current
+owned task and generation; it may explicitly replace that lineage's attachment.
+A later task generation starts without those grants. Imported text keeps the
+same selected-instructions precedence below system/developer/user instructions,
+and grants no filesystem, tool, network or execution authority. Combined
+read-only and managed selections remain bounded to 16 items/128 KiB.
+
+Revoke and forget deny subsequent composition/attachment of that exact version.
+Existing reference records, version bytes and receipts remain retained; an
+attached revoked version causes a clear refusal until explicitly detached or
+resolved. Already offered model input cannot be withdrawn. Forget additionally
+hides the version from the ordinary catalog; retained receipt inspection is
+still available. No automatic garbage collection, overwrite, purge or physical
+deletion is performed.
+
+New actions are `reviewSkillImport`, `commitSkillImport`, `managedSkillAction`,
+`attachManagedSkill`, `detachManagedSkill`, `revokeManagedSkill`. The composition
+needs no new options or provider hook: `selectedSkillContent(scope)` supplies
+the combined exact selections through the existing integration. Its managed
+store is opened lazily. The UI shows source/name/bytes/digests and exact text
+before commit, keeps full receipt JSON and recovery identity in a disclosure,
+and exposes import/update, separate attach/detach, revoke and forget through the
+same guarded generic IPC transport.
+
+Capacity is reserved atomically before each new review intent: at most 512
+actions, 256 retained versions and 64 MiB of conservatively reserved text
+(review plus possible immutable-copy bytes). Existing exact review retries run
+before quota checks. Capacity errors preserve existing reviews/versions/refs;
+constructor-only smaller limits support focused fixtures and cannot be raised
+by model/admin payload. Metadata and source paths/content have independent
+bounds. The UI never infers disposal or source/plugin-update permission from a
+capacity error.
+
+`tests/agent-managed-skills.test.ts` exercises actual temporary filesystem and
+authenticated admin review/commit/attachment: source mutation, explicit update,
+unchanged old attachment, generation isolation, source-grant revocation,
+version revoke/forget with retained bytes/references, and lost terminal receipt
+after observed published bytes. It also checks missing-target unknown/no replay,
+canonical symlinked plugin-cache refusal and small action/text capacity limits
+without a large import loop. It reads/imports no actual personal skill text and
+performs no provider request or MCP installation.
+
 Native execution requires a trusted exact workspace/call grant, per-operation
 approval and a platform-matching OS facility enforcing filesystem, network and
 child-process restrictions. The module reports that facility unavailable on

@@ -134,3 +134,55 @@ test("Git inspection disables repository callbacks and keeps an immutable stale 
     expect(existsSync(filterMarker)).toBe(false);
   } finally { f.close(); }
 }, 15000);
+
+test("captured branch bases drive working diffs and stale branch or HEAD observations never shift the saved diff", async () => {
+  const f = fixture();
+  try {
+    const originalOid = f.git("rev-parse", "HEAD");
+    f.git("branch", "baseline", originalOid);
+    f.git("update-ref", "refs/remotes/origin/baseline", originalOid);
+    f.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/baseline");
+    writeFileSync(join(f.root, "note.txt"), "committed second\n");
+    f.git("add", "note.txt"); f.git("commit", "-qm", "second");
+    const headOid = f.git("rev-parse", "HEAD");
+    writeFileSync(join(f.root, "note.txt"), "working third\n");
+    const service = f.open(); const selected = (await service.pickRoot())!;
+    const bases = await service.gitBases(selected.id);
+    expect(bases.state).toBe("ready");
+    if (bases.state !== "ready") throw new Error("Expected captured repository bases");
+    expect(bases.headOid).toBe(headOid);
+    const base = bases.choices.find((entry) => entry.ref === "refs/heads/baseline")!;
+    expect(base.oid).toBe(originalOid); expect(base.kind).toBe("local");
+    expect(bases.choices.find((entry) => entry.ref === "refs/remotes/origin/baseline")).toMatchObject({ oid: originalOid, kind: "remote" });
+    expect(bases.choices.some((entry) => entry.ref === "refs/remotes/origin/HEAD")).toBe(false);
+    const captured = await service.gitStatus(selected.id, { baseId: base.baseId });
+    const headCapture = await service.gitStatus(selected.id, { baseId: bases.choices.find((entry) => entry.kind === "head")!.baseId });
+    if (captured.state !== "ready" || headCapture.state !== "ready") throw new Error("Expected selected-base captures");
+    expect(captured).toMatchObject({ baseOid: originalOid, baseRef: "refs/heads/baseline", headOid });
+    const diff = await service.gitDiff(selected.id, captured.snapshotId);
+    expect(diff).toMatchObject({ state: "current", baseOid: originalOid });
+    expect(diff.text).toContain("-original"); expect(diff.text).toContain("+working third");
+    expect((await service.gitDiff(selected.id, headCapture.snapshotId)).text).toContain("-committed second");
+    f.git("update-ref", "refs/heads/baseline", headOid);
+    const staleBase = await service.gitDiff(selected.id, captured.snapshotId);
+    expect(staleBase.state).toBe("stale"); expect(staleBase.text).toBe(diff.text);
+    expect(staleBase.reason).toContain("base branch changed");
+    expect(await service.gitStatus(selected.id, { baseId: base.baseId })).toMatchObject({ state: "unavailable" });
+    const updatedBases = await service.gitBases(selected.id);
+    if (updatedBases.state !== "ready") throw new Error("Expected refreshed bases");
+    const refreshed = await service.gitStatus(selected.id, { baseId: updatedBases.choices.find((entry) => entry.ref === "refs/heads/baseline")!.baseId });
+    if (refreshed.state !== "ready") throw new Error("Expected refreshed selected-base snapshot");
+    expect(refreshed.baseOid).toBe(headOid);
+    expect((await service.gitDiff(selected.id, refreshed.snapshotId)).text).toContain("-committed second");
+    f.git("update-ref", "HEAD", originalOid);
+    expect((await service.gitDiff(selected.id, refreshed.snapshotId)).state).toBe("stale");
+    expect(await service.gitStatus(selected.id, { baseId: updatedBases.choices[0].baseId })).toMatchObject({ state: "unavailable" });
+    await expect(service.gitStatus(selected.id, { baseOid: "--help" })).rejects.toThrow("full commit OID");
+    const { registerWorkspaceIpc } = require("../launcher/electron/ipc/workspace.cjs");
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    registerWorkspaceIpc({ registerIpcHandler: (channel: string, handler: (...args: unknown[]) => unknown) => handlers.set(channel, handler), service });
+    expect(() => handlers.get("launcher:workspace-git-status")!({}, selected.id, { baseRef: "HEAD~1" })).toThrow("Git expressions");
+    expect(() => handlers.get("launcher:workspace-git-status")!({}, selected.id, { baseOid: originalOid })).toThrow("Git expressions");
+    expect(() => handlers.get("launcher:workspace-git-bases")!({}, selected.id, "--help")).toThrow("one workspace");
+  } finally { f.close(); }
+}, 15000);

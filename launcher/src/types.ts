@@ -1,5 +1,5 @@
 import languages from "../electron/languages.json";
-import type { TaskPlanObservation, TaskPlanPolicy } from './task-plan-types';
+import type { TaskPlanObservation, TaskPlanPolicy, TaskRequirementBook, TaskRequirementSaveInput, TaskRequirementCoverageInput } from './task-plan-types';
 import type { NativeThreadsApi } from './native-threads-types';
 import type { WorkspaceTerminalApi } from './workspace-terminal-types';
 import type { RemoteWorkspaceApi } from '../electron/remote-workspace.cjs';
@@ -9,7 +9,7 @@ import type { AgentWorkspaceRoot, AgentWorkspaceGrantSummary } from './agent-mod
 import type { AgentToolsApi } from './agent-tools-types';
 import type { BrowserCompanionApi } from './browser-companion-types';
 import type { LocalControlApiAdminApi } from './local-control-api-types';
-import type { LocalWorkspaceRoot, WorkspaceDraft, WorkspaceGitDiff, WorkspaceGitStatus,
+import type { LocalWorkspaceRoot, WorkspaceDraft, WorkspaceGitBases, WorkspaceGitDiff, WorkspaceGitStatus,
   WorkspaceListing, WorkspacePreview, WorkspaceSaveResult } from "../electron/local-workspace.cjs";
 
 export type Language = keyof typeof languages;
@@ -611,7 +611,8 @@ export interface LauncherApi extends NativeThreadsApi, WorkspaceTerminalApi, Rem
   workspaceRetainDraft(id: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): Promise<WorkspaceDraft>;
   workspaceDrafts(id: string): Promise<WorkspaceDraft[]>;
   workspaceDiscardDraft(id: string, draftId: string): Promise<boolean>;
-  workspaceGitStatus(id: string): Promise<WorkspaceGitStatus>;
+  workspaceGitBases(id: string): Promise<WorkspaceGitBases>;
+  workspaceGitStatus(id: string, options?: { baseId: string }): Promise<WorkspaceGitStatus>;
   workspaceGitDiff(id: string, snapshotId: string): Promise<WorkspaceGitDiff>;
   restartLauncher(): Promise<boolean>;
   taskPlanPolicy(): Promise<TaskPlanPolicy>;
@@ -632,6 +633,10 @@ export interface LauncherApi extends NativeThreadsApi, WorkspaceTerminalApi, Rem
   externalUsagePick(selection: ExternalUsageSelection): Promise<ExternalUsageSnapshot>;
   setTaskPlanCapture(enabled: boolean, expectedRevision: number): Promise<TaskPlanPolicy>;
   taskPlan(accountId: string, taskId: string): Promise<TaskPlanObservation | null>;
+  taskRequirements(accountId: string, taskId: string): Promise<TaskRequirementBook | null>;
+  saveTaskRequirements(input: TaskRequirementSaveInput): Promise<TaskRequirementBook>;
+  updateTaskRequirementCoverage(input: TaskRequirementCoverageInput): Promise<TaskRequirementBook>;
+  deleteTaskRequirements(accountId: string, taskId: string, expectedRevision: number): Promise<{ deleted: boolean }>;
   deleteTaskPlan(accountId: string, taskId: string): Promise<{ deleted: boolean }>;
   cancelContextChange(): Promise<LauncherState>;
   confirmCodexModels(): Promise<LauncherState>;

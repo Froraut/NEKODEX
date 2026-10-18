@@ -32,6 +32,26 @@ export interface CodexForkAction {
   reasonCode: string | null;
   observedForkId: string | null;
 }
+export interface CodexConversationMessage {
+  messageId: string;
+  turnId: string;
+  role: 'user' | 'assistant';
+  text: string;
+  /** Native item timestamp only; null is not replaced with an invented native time. */
+  timestampMs: number | null;
+  compactionId: null;
+  coverage: 'complete' | 'partial';
+  coverageReason?: string;
+}
+export interface CodexConversationPage {
+  threadId: string;
+  observedAt: number;
+  messages: CodexConversationMessage[];
+  nextCursor: string | null;
+  /** This bounded canonical page only. Never proof of complete recorded history. */
+  complete: boolean;
+  excludedItems: number;
+}
 export interface CodexClientControlSnapshot {
   state: 'closed' | 'closing' | 'unavailable' | 'ready' | 'connecting' | 'disconnected';
   transport: 'existing-server-proxy' | 'owned-stdio-server';
@@ -52,6 +72,9 @@ export interface CodexClientControl {
       statusScope: CodexStatusScope }>;
   readThread(threadId: string, options?: { signal?: AbortSignal }): Promise<{
     thread: CodexThreadMetadata; statusScope: CodexStatusScope }>;
+  /** Main-only; a trusted recorder owns selected-thread consent and sensitivity. */
+  readThreadConversation(threadId: string, options?: { cursor?: string | null; limit?: number;
+    signal?: AbortSignal }): Promise<CodexConversationPage>;
   /** Call only from a guarded, explicit user action. No turn starts or approval overrides. */
   forkThread(params: { threadId: string; lastTurnId?: string; userInitiated: true }): Promise<{
     thread: CodexThreadMetadata; actionId: string; statusScope: CodexStatusScope }>;

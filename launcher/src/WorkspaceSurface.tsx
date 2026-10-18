@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { WorkspaceTerminal } from './WorkspaceTerminal';
 import { WorktreeControls } from './WorktreeControls';
-import type { LocalWorkspaceRoot, WorkspaceDraft, WorkspaceGitDiff, WorkspaceGitStatus,
+import type { LocalWorkspaceRoot, WorkspaceDraft, WorkspaceGitBases, WorkspaceGitDiff, WorkspaceGitStatus,
   WorkspaceListing, WorkspacePreview } from "../electron/local-workspace.cjs";
 import type { Language } from "./types";
 import { Badge, Button, Dialog, Notice, Page, Panel, Select, SurfaceHeader, TextField } from "./design";
@@ -20,6 +20,10 @@ const copy = {
     truncated: "The preview is truncated. Open this file in an editor that supports its full size.",
     missing: "This file does not exist yet. Saving will create it in this folder.", blocked: "Symbolic links and special files are not opened.",
     refresh: "Refresh", loading: "Loading…", unavailable: "Unavailable", git: "Git review", gitRefresh: "Capture changes",
+    gitBase: "Compare working files against", gitHead: "Current HEAD", gitBranch: "Current branch", detached: "Detached HEAD",
+    gitLocal: "Local branch", gitRemote: "Remote-tracking branch", gitRefsLimited: "Only the first 128 branch references are listed.",
+    gitReadOnly: "Uses local branches and saved remote-tracking references. Selecting a base reads changes; it does not fetch or switch branches.",
+    gitBaseMissing: "The selected base branch is no longer available. Choose a base and capture changes again.",
     gitCheck: "Check snapshot freshness", current: "Current snapshot", stale: "Snapshot is stale — capture changes again",
     noChanges: "No tracked changes in this captured diff.", noStatus: "The working tree is clean.",
     noGit: "Capture the folder's Git status to review changes.", limited: "Output is truncated.", gitBinary: "Includes binary changes.",
@@ -37,6 +41,10 @@ const copy = {
     truncated: "Предпросмотр сокращён. Откройте файл в редакторе с поддержкой полного размера.",
     missing: "Такого файла ещё нет. Сохранение создаст его внутри этой папки.", blocked: "Ссылки и специальные файлы не открываются.",
     refresh: "Обновить", loading: "Загрузка…", unavailable: "Недоступно", git: "Изменения Git", gitRefresh: "Получить снимок изменений",
+    gitBase: "Сравнить рабочие файлы с", gitHead: "Текущий HEAD", gitBranch: "Текущая ветка", detached: "Отсоединённый HEAD",
+    gitLocal: "Локальная ветка", gitRemote: "Сохранённая удалённая ветка", gitRefsLimited: "Показаны первые 128 ссылок на ветки.",
+    gitReadOnly: "Используются локальные и сохранённые удалённые ветки. Выбор базы читает изменения без загрузки данных и переключения ветки.",
+    gitBaseMissing: "Выбранная базовая ветка больше недоступна. Выберите базу и получите изменения заново.",
     gitCheck: "Проверить актуальность снимка", current: "Актуальный снимок", stale: "Снимок устарел — получите изменения заново",
     noChanges: "В этом снимке нет изменений отслеживаемых файлов.", noStatus: "Рабочее дерево чистое.",
     noGit: "Получите состояние Git этой папки для просмотра изменений.", limited: "Результат сокращён.", gitBinary: "Есть двоичные изменения.",
@@ -236,16 +244,34 @@ function WorkspaceEditor({ workspaceId, path, c, onChanged, onClose }: {
 }
 
 function GitReview({ workspaceId, c, language, onOpenWorktree }: { workspaceId: string; c: Copy; language: Language; onOpenWorktree: (root: LocalWorkspaceRoot) => void }) {
+  const [bases, setBases] = useState<WorkspaceGitBases | null>(null);
+  const [selectedBase, setSelectedBase] = useState("HEAD");
   const [snapshot, setSnapshot] = useState<WorkspaceGitStatus | null>(null);
   const [diff, setDiff] = useState<WorkspaceGitDiff | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const sequence = useRef(0);
-  useEffect(() => () => { sequence.current++; }, []);
-  async function read(refresh: boolean) {
+  useEffect(() => {
+    const request = ++sequence.current; setBusy(true);
+    api().workspaceGitBases(workspaceId).then((value) => { if (request === sequence.current) setBases(value); })
+      .catch((reason) => { if (request === sequence.current) setError(message(reason)); })
+      .finally(() => { if (request === sequence.current) setBusy(false); });
+    return () => { sequence.current++; };
+  }, [workspaceId]);
+  async function read(refresh: boolean, requestedBase = selectedBase) {
     const request = ++sequence.current; setBusy(true); setError("");
+    if (refresh) { setSnapshot(null); setDiff(null); }
     try {
-      const captured = refresh ? await api().workspaceGitStatus(workspaceId) : snapshot;
+      let captured = snapshot;
+      if (refresh) {
+        const available = await api().workspaceGitBases(workspaceId);
+        if (request !== sequence.current) return;
+        setBases(available);
+        if (available.state !== "ready") { setSnapshot(available); return; }
+        const choice = available.choices.find((entry) => (entry.ref || "HEAD") === requestedBase);
+        if (!choice) { setSelectedBase("HEAD"); setError(c.gitBaseMissing); return; }
+        captured = await api().workspaceGitStatus(workspaceId, { baseId: choice.baseId });
+      }
       if (request !== sequence.current) return;
       setSnapshot(captured);
       if (captured?.state === "ready") {
@@ -255,15 +281,26 @@ function GitReview({ workspaceId, c, language, onOpenWorktree }: { workspaceId: 
     } catch (reason) { if (request === sequence.current) setError(message(reason)); }
     finally { if (request === sequence.current) setBusy(false); }
   }
+  const choices = bases?.state === "ready" ? bases.choices : [];
+  const headRef = snapshot?.state === "ready" ? snapshot.headRef : bases?.state === "ready" ? bases.headRef : null;
   return <><Panel title={c.git} actions={<div className="nk-workspace__actions">
     <Button size="sm" busy={busy} onClick={() => void read(true)}>{c.gitRefresh}</Button>
     {snapshot?.state === "ready" && <Button size="sm" disabled={busy} onClick={() => void read(false)}>{c.gitCheck}</Button>}
   </div>}>
     {error && <Notice tone="error">{error}</Notice>}
+    <p>{c.gitBranch}: <strong>{headRef ? headRef.replace(/^refs\/heads\//, "") : bases?.state === "ready" ? c.detached : "—"}</strong></p>
+    <Select label={c.gitBase} value={selectedBase} disabled={busy || !choices.length} options={choices.length ? choices.map((entry) => ({
+      value: entry.ref || "HEAD", label: `${entry.kind === "head" ? c.gitHead : `${entry.kind === "local" ? c.gitLocal : c.gitRemote}: ${entry.ref!.replace(/^refs\/(heads|remotes)\//, "")}`} · ${entry.oid.slice(0, 12)}`,
+    })) : [{ value: "HEAD", label: c.gitHead }]} onChange={(value) => {
+      setSelectedBase(value); setSnapshot(null); setDiff(null); void read(true, value);
+    }} />
+    <p className="nk-workspace__note">{c.gitReadOnly}</p>
+    {bases?.state === "unavailable" && <Notice tone="warning">{bases.reason}</Notice>}
+    {bases?.state === "ready" && bases.truncated && <Notice tone="warning">{c.gitRefsLimited}</Notice>}
     {!snapshot && <p>{c.noGit}</p>}
     {snapshot?.state === "unavailable" && <Notice tone="warning">{snapshot.reason}</Notice>}
     {snapshot?.state === "ready" && <>
-      <p className="nk-workspace__oids"><span>HEAD <code>{snapshot.headOid}</code></span><span>BASE <code>{snapshot.baseOid}</code></span></p>
+      <p className="nk-workspace__oids"><span>HEAD <code>{snapshot.headOid}</code></span><span>BASE {snapshot.baseRef && <strong>{snapshot.baseRef.replace(/^refs\/(heads|remotes)\//, "")}</strong>} <code>{snapshot.baseOid}</code></span></p>
       <pre className="nk-workspace__status">{snapshot.status.join("\n") || c.noStatus}</pre>
       {snapshot.statusTruncated && <Notice tone="warning">{c.limited}</Notice>}
     </>}
@@ -271,6 +308,7 @@ function GitReview({ workspaceId, c, language, onOpenWorktree }: { workspaceId: 
       <Notice tone={diff.state === "current" ? "success" : "warning"}>
         {diff.state === "current" ? c.current : diff.state === "stale" ? c.stale : diff.reason || c.unavailable}
       </Notice>
+      {diff.reason && diff.state === "stale" && <p>{diff.reason}</p>}
       {(diff.truncated || diff.binary) && <p>{diff.truncated ? c.limited : ""} {diff.binary ? c.gitBinary : ""}</p>}
       <pre className="nk-workspace__diff" tabIndex={0} aria-label={c.git}>{diff.text || c.noChanges}</pre>
     </>}

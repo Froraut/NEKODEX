@@ -13,6 +13,7 @@ const { createTaskPlanStore } = require('./task-plans.cjs');
 const { createLocalWorkspaceService } = require('./local-workspace.cjs');
 const { registerWorkspaceIpc } = require('./ipc/workspace.cjs');
 const { registerConversationHistory } = require('./ipc/conversation-history.cjs');
+const { createCanonicalNativeHistoryRecorder } = require('./canonical-native-history.cjs');
 const { registerAgentMode } = require('./ipc/agent-mode.cjs');
 const { createCodexClientControl } = require('./codex-client-control.cjs');
 const { registerCodexClientControlIpc } = require('./ipc/codex-client-control.cjs');
@@ -37,6 +38,7 @@ const { CAPACITY_ENV, MAX_BROWSER_CAPACITY, readBrowserCapacity, saveBrowserCapa
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
+const { createHash } = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const {
@@ -133,7 +135,10 @@ const SOURCE_ROOT = path.resolve(__dirname, "../..");
 const LAUNCHER_PROFILE = resolveLauncherProfile({ appData: app.getPath("appData") });
 const IS_DEV_PROFILE = LAUNCHER_PROFILE.kind === DEVELOPMENT_PROFILE;
 const CORE_HOME = LAUNCHER_PROFILE.coreHome;
-const taskPlans = createTaskPlanStore({ coreHome: CORE_HOME });
+const taskPlans = createTaskPlanStore({
+  coreHome: CORE_HOME,
+  resolveTask: ({ accountId, taskId }) => browserHost?.taskLedgers.get(accountId)?.get(taskId) ?? null,
+});
 let localWorkspaceService = null;
 let nativeClientControl = null;
 let workspaceTerminalService = null;
@@ -973,6 +978,10 @@ function registerIpc({ logger, stateStore }) {
   handle('launcher:task-plan-capture', async (_event, enabled, revision) => taskPlans.setEnabled(enabled, revision));
   handle('launcher:task-plan-read', async (_event, accountId, taskId) => taskPlans.get({ accountId, taskId }));
   handle('launcher:task-plan-delete', async (_event, accountId, taskId) => taskPlans.delete({ accountId, taskId }));
+  handle('launcher:task-requirements-read', async (_event, accountId, taskId) => taskPlans.requirements({ accountId, taskId }));
+  handle('launcher:task-requirements-save', async (_event, input) => taskPlans.saveRequirements(input));
+  handle('launcher:task-requirements-coverage', async (_event, input) => taskPlans.updateCoverage(input));
+  handle('launcher:task-requirements-delete', async (_event, accountId, taskId, expectedRevision) => taskPlans.deleteRequirements({ accountId, taskId, expectedRevision }));
   localWorkspaceService ??= createLocalWorkspaceService({
     registryPath: path.join(app.getPath('userData'), 'workspace-private', 'registry.json'),
     agentWorkspaceGrantKeyPath: path.join(CORE_HOME, 'agent-workspace', 'grant-key'),
@@ -1003,7 +1012,30 @@ function registerIpc({ logger, stateStore }) {
     currentOperation: () => workspaceTerminalService.currentOperation?.() ?? null,
     destroy: async () => { await workspaceTerminalService.destroy(); },
   });
-  registerConversationHistory({ handle, runtimeHost, clipboard, dialog });
+  const getNativeClient = () => {
+    nativeClientControl ??= createCodexClientControl({
+      executable: resolveCodexExecutable({ environment: process.env }),
+      codexHome: LAUNCHER_PROFILE.codexHome,
+      cwd: LAUNCHER_PROFILE.codexHome,
+      journalPath: path.join(CORE_HOME, 'native-thread-control', 'forks.json'),
+    });
+    return nativeClientControl;
+  };
+  const canonicalRecorder = createCanonicalNativeHistoryRecorder({
+    sourceId: createHash('sha256').update(JSON.stringify({
+      kind: 'native-codex', profile: LAUNCHER_PROFILE.codexHome, transport: 'owned-stdio-server',
+    })).digest('hex'),
+    getClient: getNativeClient,
+    requestHistory: async body => {
+      const supervisor = runtimeHost.supervisor;
+      const config = supervisor.readConfig();
+      if (!await supervisor.ownedRuntimeReady(config)) throw new Error('Start the current NEKODEX runtime to record selected native history');
+      const receipt = await supervisor.control(config, 'conversation-history', { body });
+      if (!receipt || receipt.ok !== true) throw new Error('Selected native history operation failed');
+      return receipt.value;
+    },
+  });
+  registerConversationHistory({ handle, runtimeHost, clipboard, dialog, canonicalRecorder });
   remoteWorkspaceService ??= createRemoteWorkspaceService({ storagePath: path.join(CORE_HOME, 'remote-workspaces', 'registry.json') });
   registerRemoteWorkspaceIpc({ registerIpcHandler: handle, service: remoteWorkspaceService });
   registerLifecycleParticipant('remote-workspaces', {
@@ -1026,15 +1058,7 @@ function registerIpc({ logger, stateStore }) {
     },
   });
   registerExternalUsageIpc({ handle, service: externalUsageService });
-  registerCodexClientControlIpc({ handle, getClient: () => {
-    nativeClientControl ??= createCodexClientControl({
-      executable: resolveCodexExecutable({ environment: process.env }),
-      codexHome: LAUNCHER_PROFILE.codexHome,
-      cwd: LAUNCHER_PROFILE.codexHome,
-      journalPath: path.join(CORE_HOME, 'native-thread-control', 'forks.json'),
-    });
-    return nativeClientControl;
-  } });
+  registerCodexClientControlIpc({ handle, getClient: getNativeClient });
   registerLifecycleParticipant('native-thread-control', {
     currentOperation: () => nativeClientControl?.currentOperation?.() ?? null,
     destroy: async () => { await nativeClientControl?.destroy(); },

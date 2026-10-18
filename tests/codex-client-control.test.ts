@@ -293,3 +293,56 @@ test('invalid fork association retains its observed thread ID without inventing 
   expect(f.client.snapshot().uncertainForks).toMatchObject([{ threadId: ROOT, observedForkId: CHILD, state: 'unknown' }]);
   await f.client.destroy();
 });
+
+test('selected canonical conversation read uses one bounded native page and excludes machine payloads without sending work', async () => {
+  const f = fixture();
+  try {
+    const reading = f.client.readThreadConversation(ROOT, { limit: 12 });
+    const metadata = await f.next('thread/read');
+    expect(metadata.params).toEqual({ threadId: ROOT, includeTurns: false });
+    f.respond(metadata, { thread: thread(ROOT) });
+    const history = await f.next('thread/items/list');
+    expect(history.params).toEqual({ threadId: ROOT, limit: 12, sortDirection: 'desc' });
+    const item = (message: any, extra = {}) => ({ turnId: 'native-turn', startedAtMs: 1000,
+      completedAtMs: 2000, item: message, ...extra });
+    f.respond(history, { data: [
+      item({ type: 'agentMessage', id: 'newest-answer', text: 'The canonical answer', memoryCitation: { private: 'machine citation' } }),
+      item({ type: 'userMessage', id: 'user-with-image', content: [{ type: 'text', text: 'Canonical selected question' },
+        { type: 'localImage', path: '/private/image-path' }] }),
+      item({ type: 'agentMessage', id: 'unfinished', text: 'Partial assistant text' }, { completedAtMs: null, startedAtMs: null }),
+      item({ type: 'mcpToolCall', id: 'tool', arguments: { private: 'tool secret payload' }, result: 'raw tool output' }),
+      item({ type: 'hookPrompt', id: 'hook', fragments: ['system developer hook instructions'] }),
+      item({ type: 'reasoning', id: 'reasoning', content: ['private reasoning payload'] }),
+      item({ type: 'userMessage', id: 'oversized', content: [{ type: 'text', text: 'x'.repeat(128 * 1024 + 1) }] }),
+      item({ type: 'userMessage', id: 'older-user', content: [{ type: 'text', text: 'Earlier canonical text', text_elements: [] }] }),
+      item({ type: 'userMessage', id: 'cleared-user', content: [{ type: 'text', text: '', text_elements: [] }] }),
+      item({ type: 'agentMessage', id: 'cleared-answer', text: '' }),
+    ], nextCursor: 'older-native-items', backwardsCursor: null });
+    const page = await reading;
+    expect(page.threadId).toBe(ROOT);
+    expect(page.messages.map((message: any) => message.messageId)).toEqual(['cleared-answer', 'cleared-user', 'older-user', 'unfinished', 'user-with-image', 'newest-answer']);
+    expect(page.messages.filter((message: any) => message.messageId.startsWith('cleared-'))).toMatchObject([
+      { messageId: 'cleared-answer', role: 'assistant', text: '' }, { messageId: 'cleared-user', role: 'user', text: '' },
+    ]);
+    expect(page.messages.find((message: any) => message.messageId === 'unfinished')).toMatchObject({ role: 'assistant', timestampMs: null, coverage: 'partial', compactionId: null });
+    expect(page.messages.find((message: any) => message.messageId === 'user-with-image')).toMatchObject({ role: 'user', text: 'Canonical selected question', timestampMs: 2000,
+      coverage: 'partial', coverageReason: 'native-nontext-content-excluded' });
+    expect(page).toMatchObject({ complete: false, nextCursor: 'older-native-items', excludedItems: 4 });
+    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(384 * 1024);
+    expect(JSON.stringify(page)).not.toMatch(/private|tool secret|raw tool|machine citation|system developer/);
+    expect(f.received.filter(message => message.method)).toHaveLength(4); // initialize, initialized, metadata, page.
+    expect(f.received.some(message => /turn\/start|thread\/resume|thread\/fork/.test(message.method || ''))).toBe(false);
+    expect(f.client.snapshot().capabilities).toMatchObject({ startTurn: false, interruptTurn: false, approve: false });
+    // Reach the aggregate projection boundary with individually valid messages.
+    const boundedRead = f.client.readThreadConversation(ROOT, { limit: 4 });
+    f.respond(await f.next('thread/read', 2), { thread: thread(ROOT) });
+    f.respond(await f.next('thread/items/list', 2), { data: [0, 1, 2, 3].map(index => item({
+      type: 'agentMessage', id: `recent-${index}`, text: String(index).repeat(120 * 1024),
+    })), nextCursor: null });
+    const bounded = await boundedRead;
+    expect(bounded.messages.map((message: any) => message.messageId)).toEqual(['recent-2', 'recent-1', 'recent-0']);
+    expect(bounded).toMatchObject({ complete: false, excludedItems: 1, nextCursor: null });
+    expect(Buffer.byteLength(JSON.stringify(bounded))).toBeLessThanOrEqual(384 * 1024);
+    expect(bounded.messages.every((message: any) => Buffer.byteLength(message.text) === 120 * 1024)).toBe(true);
+  } finally { await f.client.destroy(); }
+});

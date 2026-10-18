@@ -8,7 +8,7 @@ const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { createAgentWorkspaceGrantAuthority } = require("./agent-workspace-grant.cjs");
 
 const LIMITS = Object.freeze({ roots: 32, entries: 300, treeEntries: 600, depth: 4,
-  previewBytes: 256 * 1024, gitBytes: 512 * 1024, drafts: 40, snapshots: 24 });
+  previewBytes: 256 * 1024, gitBytes: 512 * 1024, drafts: 40, snapshots: 24, baseRefs: 128, bases: 512 });
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const sameNode = (a, b) => String(a.dev) === String(b.dev) && String(a.ino) === String(b.ino);
 const identity = (stat) => ({ dev: String(stat.dev), ino: String(stat.ino) });
@@ -53,6 +53,7 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
   const roots = new Map();
   const drafts = new Map();
   const snapshots = new Map();
+  const gitBaseChoices = new Map();
   const managedOpenings = new Map();
   const agentGrants = agentWorkspaceGrantKeyPath ? createAgentWorkspaceGrantAuthority({ keyPath: agentWorkspaceGrantKeyPath }) : null;
   let picking = false;
@@ -360,7 +361,7 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
         "-c", "submodule.recurse=false", "-c", "protocol.allow=never", "-c", "protocol.ssh.allow=never",
         "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never", "-c", "credential.helper=",
         "-c", "core.askPass=", "-c", "core.sshCommand=", ...filterOverrides, "-C", root.path, ...args],
-      { env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      { env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, shell: false });
       const output = []; let bytes = 0; let truncated = false; let timedOut = false;
       const timer = setTimeout(() => { timedOut = true; child.kill(); }, 5000);
       child.stdout.on("data", (chunk) => {
@@ -399,34 +400,94 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
     ]) overrides.push("-c", `filter.${driver}.${key}=${value}`);
     return runGit(root, args, overrides);
   }
-  async function captureGit(id, baseOid) {
+  const fullOid = (value) => typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
+  async function headReference(root) {
+    const result = await git(root, ["symbolic-ref", "--quiet", "HEAD"]);
+    if (!result.ok && result.exitCode !== 1) return { ok: false, ref: null };
+    return { ok: true, ref: result.ok ? result.output.trim() : null };
+  }
+  async function gitBases(id) {
     const root = rootFor(id);
-    if (baseOid !== undefined && (typeof baseOid !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(baseOid))) fail("INVALID_BASE", "Use a captured full commit OID.");
     const head = await git(root, ["rev-parse", "--verify", "HEAD^{commit}"]);
-    if (!head.ok) return { state: "unavailable", reason: "No readable committed Git HEAD." };
+    if (!head.ok || !fullOid(head.output.trim())) return { state: "unavailable", reason: "No readable committed Git HEAD." };
+    const branch = await headReference(root);
+    const refs = await git(root, ["for-each-ref", "--sort=refname", `--count=${LIMITS.baseRefs + 1}`,
+      "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(symref)", "refs/heads/", "refs/remotes/"]);
+    const after = await git(root, ["rev-parse", "--verify", "HEAD^{commit}"]);
+    const branchAfter = await headReference(root);
+    rootFor(id);
+    if (!branch.ok || !refs.ok || refs.truncated || !after.ok || head.output !== after.output
+        || !branchAfter.ok || branch.ref !== branchAfter.ref) {
+      return { state: "unavailable", reason: "Git references changed or could not be read. Refresh base choices." };
+    }
     const headOid = head.output.trim();
+    const records = [{ ref: null, oid: headOid, kind: "head" }];
+    const refLines = refs.output.split("\n").filter(Boolean);
+    let truncated = refLines.length > LIMITS.baseRefs;
+    for (const line of refLines) {
+      const [ref, oid, type, symbolic] = line.split("\0");
+      if (symbolic || type !== "commit" || !fullOid(oid) || !/^refs\/(heads|remotes)\/[^\x00-\x20]+$/.test(ref)) continue;
+      if (records.length > LIMITS.baseRefs) { truncated = true; break; }
+      records.push({ ref, oid, kind: ref.startsWith("refs/heads/") ? "local" : "remote" });
+    }
+    const choices = records.map((record) => {
+      const baseId = randomUUID();
+      gitBaseChoices.set(baseId, { ...record, workspaceId: id, headOid, headRef: branch.ref });
+      return { baseId, ...record };
+    });
+    while (gitBaseChoices.size > LIMITS.bases) gitBaseChoices.delete(gitBaseChoices.keys().next().value);
+    return { state: "ready", headOid, headRef: branch.ref, choices, truncated };
+  }
+  async function captureGit(id, baseOid, baseRef = null, expectedHead = null) {
+    const root = rootFor(id);
+    if (baseOid !== undefined && !fullOid(baseOid)) fail("INVALID_BASE", "Use a captured full commit OID.");
+    const head = await git(root, ["rev-parse", "--verify", "HEAD^{commit}"]);
+    if (!head.ok || !fullOid(head.output.trim())) return { state: "unavailable", reason: "No readable committed Git HEAD." };
+    const branch = await headReference(root);
+    if (!branch.ok) return { state: "unavailable", reason: "The current Git branch could not be read." };
+    const headOid = head.output.trim();
+    if (expectedHead && (expectedHead.headOid !== headOid || expectedHead.headRef !== branch.ref)) {
+      return { state: "unavailable", reason: "Git HEAD changed after the base choices were captured. Refresh choices." };
+    }
     const base = baseOid || headOid;
-    const resolved = await git(root, ["rev-parse", "--verify", `${base}^{commit}`]);
+    if (baseRef) {
+      // This ref came from our bounded repository enumeration, never from a renderer Git expression.
+      const selected = await git(root, ["rev-parse", "--verify", "--end-of-options", `${baseRef}^{commit}`]);
+      if (!selected.ok || selected.output.trim() !== base) {
+        return { state: "unavailable", staleBase: true, reason: "The selected base branch changed. Capture changes again." };
+      }
+    }
+    const resolved = await git(root, ["rev-parse", "--verify", "--end-of-options", `${base}^{commit}`]);
     if (!resolved.ok || resolved.output.trim() !== base) return { state: "unavailable", reason: "The captured base commit is unavailable." };
     const status = await git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all"]);
     const diff = await git(root, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--ignore-submodules=all", base, "--"]);
     const after = await git(root, ["rev-parse", "--verify", "HEAD^{commit}"]);
+    const branchAfter = await headReference(root);
     const statusAfter = await git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all"]);
+    const baseAfter = baseRef ? await git(root, ["rev-parse", "--verify", "--end-of-options", `${baseRef}^{commit}`]) : null;
     rootFor(id);
-    if (!after.ok || head.output !== after.output || status.output !== statusAfter.output) {
+    if (!after.ok || head.output !== after.output || !branchAfter.ok || branch.ref !== branchAfter.ref
+        || status.output !== statusAfter.output || (baseAfter && (!baseAfter.ok || baseAfter.output.trim() !== base))) {
       return { state: "unavailable", reason: "Git changed while reading. Refresh the snapshot." };
     }
-    if ((!status.ok && !status.truncated) || (!diff.ok && !diff.truncated)) {
+    if ((!status.ok && !status.truncated) || (!statusAfter.ok && !statusAfter.truncated) || (!diff.ok && !diff.truncated)) {
       return { state: "unavailable", reason: "Git inspection failed or exceeded its read deadline." };
     }
-    return { state: "ready", headOid, baseOid: base, status: status.output.split("\0").filter(Boolean),
-      statusTruncated: status.truncated, diff: diff.output, truncated: diff.truncated,
-      binary: /(?:^|\n)Binary files .* differ(?:\n|$)/.test(diff.output),
-      fingerprint: digest(`${headOid}\0${base}\0${status.output}\0${diff.output}`) };
+    return { state: "ready", headOid, headRef: branch.ref, baseOid: base, baseRef,
+      status: status.output.split("\0").filter(Boolean), statusTruncated: status.truncated, diff: diff.output,
+      truncated: diff.truncated, binary: /(?:^|\n)Binary files .* differ(?:\n|$)/.test(diff.output),
+      fingerprint: digest(`${headOid}\0${branch.ref || ""}\0${baseRef || ""}\0${base}\0${status.output}\0${diff.output}`) };
   }
-  async function gitStatus(id, { baseOid } = {}) {
-    const captured = await captureGit(id, baseOid);
-    if (captured.state !== "ready") return captured;
+  async function gitStatus(id, { baseOid, baseId } = {}) {
+    if (baseOid !== undefined && baseId !== undefined) fail("INVALID_BASE", "Select one captured base.");
+    let selection = null;
+    if (baseId !== undefined) {
+      if (typeof baseId !== "string" || !/^[a-f0-9-]{36}$/.test(baseId)) fail("INVALID_BASE", "Select a captured repository base.");
+      selection = gitBaseChoices.get(baseId);
+      if (!selection || selection.workspaceId !== id) fail("BASE_UNKNOWN", "Refresh the repository base choices before selecting one.");
+    }
+    const captured = await captureGit(id, selection?.oid || baseOid, selection?.ref || null, selection);
+    if (captured.state !== "ready") return { state: "unavailable", reason: captured.reason };
     const snapshotId = randomUUID();
     snapshots.set(snapshotId, { workspaceId: id, ...captured });
     while (snapshots.size > LIMITS.snapshots) snapshots.delete(snapshots.keys().next().value);
@@ -437,12 +498,13 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
     rootFor(id);
     const captured = snapshots.get(snapshotId);
     if (!captured || captured.workspaceId !== id) fail("SNAPSHOT_UNKNOWN", "Refresh Git status before opening a diff.");
-    const current = await captureGit(id, captured.baseOid);
-    const state = current.state !== "ready" ? "unavailable"
+    const current = await captureGit(id, captured.baseOid, captured.baseRef);
+    const state = current.state !== "ready" ? current.staleBase ? "stale" : "unavailable"
       : current.fingerprint !== captured.fingerprint || current.truncated || current.statusTruncated ? "stale" : "current";
-    return { state, snapshotId, headOid: captured.headOid, baseOid: captured.baseOid,
+    return { state, snapshotId, headOid: captured.headOid, headRef: captured.headRef,
+      baseOid: captured.baseOid, baseRef: captured.baseRef,
       text: captured.diff, truncated: captured.truncated, binary: captured.binary,
-      ...(state === "unavailable" ? { reason: current.reason } : {}) };
+      ...(current.state !== "ready" ? { reason: current.reason } : {}) };
   }
 
   return Object.freeze({ pickRoot, openManagedRoot,
@@ -480,6 +542,7 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
       const previous = roots.get(id); roots.delete(id);
       try { persist(); } catch (error) { roots.set(id, previous); throw error; }
       for (const [key, value] of snapshots) if (value.workspaceId === id) snapshots.delete(key);
+      for (const [key, value] of gitBaseChoices) if (value.workspaceId === id) gitBaseChoices.delete(key);
       return true;
     },
     list, preview: readFile, save, retainDraft,
@@ -507,7 +570,7 @@ function createLocalWorkspaceService({ pickDirectory, registryPath = null, agent
       try { persist(); } catch (error) { drafts.set(draftId, draft); throw error; }
       return true;
     },
-    gitStatus, gitDiff,
+    gitBases, gitStatus, gitDiff,
   });
 }
 

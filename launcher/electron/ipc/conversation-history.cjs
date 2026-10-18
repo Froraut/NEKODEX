@@ -2,8 +2,17 @@ const fs = require('node:fs/promises');
 const ACTIONS = new Set(['status', 'set-recording', 'threads', 'thread', 'message', 'search', 'delete-thread', 'delete-message', 'export', 'import-selected']);
 /** Guarded main handle is injected by the composition root. The current daemon
  * remains the only DB writer; this registrar never launches/probes another app. */
-function registerConversationHistory({ handle, runtimeHost, clipboard, dialog }) {
+function registerConversationHistory({ handle, runtimeHost, clipboard, dialog, canonicalRecorder }) {
   handle('launcher:conversation-history', async (_event, body) => {
+    if (body && ['canonical-status','canonical-consent','canonical-refresh','canonical-list'].includes(body.action)) {
+      if(typeof body!=='object'||Array.isArray(body)||!canonicalRecorder)throw new Error('Canonical native history is unavailable');
+      const allowed=body.action==='canonical-list'?['action','cursor','limit']:body.action==='canonical-status'?['action','threadId']:body.action==='canonical-consent'?['action','threadId','enabled','consent','acknowledgeUnknownSecrets']:['action','threadId','cursor','limit'];
+      if(Object.keys(body).some(key=>!allowed.includes(key)))throw new Error('Canonical history accepts only an exact selected-thread action');
+      if(body.action==='canonical-list')return canonicalRecorder.list({cursor:body.cursor??null,limit:body.limit??30});
+      if(body.action==='canonical-status')return canonicalRecorder.status(body.threadId);
+      if(body.action==='canonical-consent')return canonicalRecorder.setConsent(body.threadId,{enabled:body.enabled,consent:body.consent,acknowledgeUnknownSecrets:body.acknowledgeUnknownSecrets});
+      return canonicalRecorder.refresh(body.threadId,{cursor:body.cursor??null,limit:body.limit??50});
+    }
     if (!body || !ACTIONS.has(body.action) || JSON.stringify(body).length > 600000) throw new Error('Invalid history request');
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();

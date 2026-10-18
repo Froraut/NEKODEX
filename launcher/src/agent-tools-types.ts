@@ -16,6 +16,14 @@ export interface ManagedInstallReceipt {
   graphSha256?: string; lockSha256?: string; graph?: { name: string; version: string; integrity: string }[];
   runtime?: string; archive?: string; tree?: { sha256: string; files: number }; reason?: string;
 }
+export interface ManagedSkillVersionView {
+  versionId: string; lineageId: string; label: string; contentDigest: string; bytes: number;
+  manifestDigest: string; sourceLocator: string; createdAt: number; revoked: boolean; forgotten: boolean;
+}
+export interface ManagedSkillReviewView {
+  action: { actionId: string; state: string; versionId: string; lineageId: string; label: string; reviewDigest: string; manifestDigest: string; manifest: unknown };
+  content?: string;
+}
 export interface AgentToolsStatus {
   config: { version: 1; enabled: boolean; servers: ServerRecipe[] };
   runtime: { enabled: boolean; servers: { id: string; connected: boolean; pid: number | null; sandbox?: string; boundary?: unknown }[]; sandbox: string };
@@ -23,8 +31,9 @@ export interface AgentToolsStatus {
   descriptors: ToolDescriptor[];
   skillRoots: SkillRootGrant[];
   selections: { scope: ToolScope; skills: SkillIdentity[] }[];
-  capabilities: { stdio: boolean; install: boolean; oauth: boolean; secrets: boolean; nativeSandbox: boolean; mcpSandboxAvailable?: boolean; skillWrites: boolean; pendingToolCalls: boolean };
+  capabilities: { stdio: boolean; install: boolean; oauth: boolean; secrets: boolean; nativeSandbox: boolean; mcpSandboxAvailable?: boolean; skillWrites: boolean; managedSkillImports?: boolean; pendingToolCalls: boolean };
   installCatalog: { id: string; label: string; package: string; version: string; integrity: string; source: string; capabilities: string }[];
   installations: { rows: { actionId: string; catalogId: string; state: string; allowedRoot: string; graphSha256?: string; childPid?: number }[]; truncated: boolean };
   serverConfigDigests: Record<string, string>;
+  managedSkills?: { versions: ManagedSkillVersionView[]; retainedVersions: number; forgottenVersions: number; cleanup: string; attachments: { scope: ToolScope; versionIds: string[] }[]; actions: { actionId: string; label: string; state: string; versionId: string; lineageId: string; reviewDigest: string }[] };
 }

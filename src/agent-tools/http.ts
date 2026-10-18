@@ -25,6 +25,12 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("skillsDiscover"), grantId: z.string().min(1).max(80) }).strict(),
   z.object({ action: z.literal("removeSkillRoot"), grantId: z.string().min(1).max(80), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("skillsSelect"), scope, identity, explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("reviewSkillImport"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/), identity, label: z.string().trim().min(1).max(200), updateLineageId: z.string().regex(/^[a-f0-9]{64}$/).optional(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("commitSkillImport"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/), reviewDigest: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("managedSkillAction"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/) }).strict(),
+  z.object({ action: z.literal("attachManagedSkill"), scope, versionId: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("detachManagedSkill"), scope, versionId: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("revokeManagedSkill"), versionId: z.string().regex(/^[a-f0-9]{64}$/), forget: z.boolean(), explicitUserAction: z.literal(true) }).strict(),
 ]);
 /** Mount behind the existing local-request guard; every action also checks control auth. */
 export function createAgentToolsRoutes(composition: AgentToolsComposition, path = "/admin/agent-tools") {
@@ -56,12 +62,18 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "skillsDiscover": value = composition.discoverSkills(body.grantId); break;
         case "removeSkillRoot": value = composition.removeSkillRoot(body.grantId, body.explicitUserAction); break;
         case "skillsSelect": value = composition.selectSkill(body.scope, body.identity, body.explicitUserAction); break;
+        case "reviewSkillImport": value = composition.reviewSkillImport(body.actionId, body.identity, body.label, body.updateLineageId, body.explicitUserAction); break;
+        case "commitSkillImport": value = composition.commitSkillImport(body.actionId, body.reviewDigest, body.explicitUserAction); break;
+        case "managedSkillAction": value = composition.managedSkillAction(body.actionId) ?? null; break;
+        case "attachManagedSkill": value = composition.attachManagedSkill(body.scope, body.versionId, body.explicitUserAction); break;
+        case "detachManagedSkill": composition.detachManagedSkill(body.scope, body.versionId, body.explicitUserAction); value = { detached: true }; break;
+        case "revokeManagedSkill": value = composition.revokeManagedSkill(body.versionId, body.forget, body.explicitUserAction); break;
       }
       return Response.json({ ok: true, value });
     } catch (error) {
       const invalid = error instanceof z.ZodError;
       // Fixed domain strings are safe; arbitrary filesystem/SDK errors can contain private paths.
-      const message = error instanceof Error && /^(?:Explicit |Current owned|No exact |Pending Agent|Wait for owned|Configuration review|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
+      const message = error instanceof Error && /^(?:Explicit |Current owned|No exact |Pending Agent|Wait for owned|Configuration review|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
       return Response.json({ ok: false, error: invalid ? "invalid_request" : "agent_tools_conflict", message }, { status: invalid ? 400 : 409 });
     }
   };

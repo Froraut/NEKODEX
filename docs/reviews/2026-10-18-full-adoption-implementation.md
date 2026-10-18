@@ -17,15 +17,20 @@ Source identity: `6.1.32-nekodex.9`. Это development/source результа�
 - SSH/SFTP, remote editing, явно подтверждаемые команды и remote worktrees
   с durable started/completed/unknown receipts и reconciliation.
 - Отдельная opt-in политика plan content, canonical current-turn `update_plan`,
-  private storage и Task Center projection, не выдающая claimed status за verified.
+  private storage и Task Center projection, не выдающая claimed status за verified;
+  явно введённые требования/исправления с CAS, связями с планом и отдельно
+  обозначенными наблюдениями действий и подтверждениями пользователя.
 - Selected-text history, immutable revisions, FTS и Markdown export; supported
-  native Codex metadata/read/fork с durable uncertain fork journal.
+  native Codex metadata/read/fork с durable uncertain fork journal. Native history
+  recorder сохраняет одну canonical page после явного обновления выбранного чата,
+  отдельного content consent и acknowledgement ограничений secret filter.
 - Agent mode: tasks, stages, corrections, workers/mailboxes, finite dispatch,
   approved MCP continuation, Goal и mailbox-driven Loop через одного sender.
 - Signed pre-turn workspace snapshot grants и выбранные file-property observers
   с exact scope, immutable evidence, supersession и synchronous pre-Verify check.
 - MCP/skills host, pinned official filesystem installer, disabled-by-default
-  configuration и opt-in reviewed macOS MCP Seatbelt boundary.
+  configuration и opt-in reviewed macOS MCP Seatbelt boundary; managed immutable
+  local skill text versions с отдельными import/update/attach/revoke actions.
 - MV3 Chrome companion artifact/pairing/observation-bound actions, scoped local
   control API и metadata-only cross-client usage с отдельными estimates.
 
@@ -94,14 +99,69 @@ Development GUI, Vite и fixture core закрыты штатными owned shut
 notarization, release assets, merge и replacement установленного приложения
 не выполнялись этой source-партией.
 
+## Следующая связанная партия: требования, canonical history, Git base и skills
+
+После source commit `137399d` / [draft PR #98](https://github.com/Froraut/NEKODEX/pull/98)
+добавлены четыре расширения. Четыре CI jobs baseline commit прошли; эта квитанция
+не переносит их результат автоматически на последующие source bytes.
+
+| Область | Новая connected DEV evidence |
+| --- | --- |
+| P07 | Native picker выбрал свой fixture repository. HEAD diff показал `head → working`; выбор `older-base` показал `base → working`, с точными разными base OIDs и прежним HEAD. Выбор не делал fetch/checkout. |
+| DW1 | Задача `e54cf9dd965234ead3fe98e82d3ea24f`: собственный текст и отдельное согласие → revision 1 → связь с plan step/ledger action и manual user-confirmed → counts 1/1. Correction revision 2 сбросила оба counts до 0/1, сохранив две редакции требований и историю подтверждения. Property verification остаётся явно unavailable. Это synthetic native ledger fixture. |
+| DW5 | Global opt-in плюс два per-thread acknowledgement для своего inert thread → consent → actual Codex 0.163.0 canonical endpoint вернул пустую страницу. UI сообщил, что текст не сохранён и исходная переписка не доказана пустой. Revoke заблокировал refresh, затем global recording выключен. Непустой actual transcript этим не доказан. |
+| P16 | Native picker выбрал только `user-skills/demo/SKILL.md`; discover/review показали 187 bytes, SHA-256 и точный текст. Import создал immutable version без attachment; отдельное действие прикрепило её к `managed-skill-dev-task`, generation 1. Revoke сохранил bytes и заблокировал attachment; затем fixture attachment снят. Модель и MCP не запускались. |
+
+Native checklist хранит исходные требования и corrections отдельно от metadata
+ledger. Backend согласует текущую plan revision до CAS mutation; plan/correction
+исключают старые связи из текущего покрытия. История ограничена, но не удаляется
+автоматически. Model completion, observed action, user-confirmed и verified
+property имеют разные значения; resolver последнего для native tasks не выдуман.
+
+Canonical recorder использует тот же main-owned client, exact thread metadata и
+один supported `thread/items/list` page. Private record/lease API не доступен
+generic renderer proxy. Durable global recording epoch и per-thread revision
+отклоняют позднее чтение после revoke/re-enable или global off/on. Известные
+credential/generated-instruction patterns исключают весь item без сохранения
+его тела или content hash; неизвестные секреты всё ещё возможны, что требует
+отдельного acknowledgement. Сохранённый corpus всегда partial, authorship unknown.
+Фонового watcher и model turn нет. Explicit empty-text edits создают новую revision,
+убирают старый текст из latest FTS и сохраняют прежнюю immutable revision.
+
+Managed skill review закрепляет canonical source identity и UTF-8 content pins;
+commit перепроверяет их. Update создаёт отдельную версию без автоматического
+attachment. Неизвестный import outcome не повторяет copy/rename; опубликованный
+marked target восстанавливает receipt наблюдением. До нового intent атомарно
+проверяются 512 actions, 256 versions, 64 MiB conservative text reservation и
+64 task-generation attachments; combined selection ограничен 16 items / 128 KiB.
+Exact retry возвращается до quota checks. Official/vendor plugin ancestry,
+resources, scripts и registry changes не входят в этот text-import contract.
+
+Проверки новой партии: P07 actual Git 1 case / 23 assertions; DW1 real ledger/private
+store 1 / 36; native canonical producer 1 / 17; connected canonical RPC → recorder
+→ guarded IPC → actual SQLite 1 / 43; managed skills с двумя affected existing
+cases 5 / 69. Полные root и renderer project TypeScript checks 09:55 UTC переиспользованы;
+после них изменялся только localized label. Renderer build прошёл (188 modules),
+development CLI bundle (240 modules) фактически вернул `.9`, architecture map
+обновлён и проверен. Unchanged feature suites не повторялись.
+
+Первый новый DEV fixture запуск имел ошибочный `browserHost`; исправленная
+конфигурация прошла существующий ownership preflight до следующего запуска.
+Отложенный quit после исправления завершился exit 0. CUA binding/input восстановлены
+без перезапуска control service или изменения OS permissions; точная папка затем
+выбрана через настоящий native picker. Это fixture/control observations, не
+новые application-source findings. Оба новых GUI/core runs закрыты с exit 0,
+проверены завершённые PID и освобождённые listeners.
+
 ## Оставшиеся реализации и границы
 
-Следующие содержательные изменения: native requirements/corrections → outcome
-coverage; trusted automatic transcript producer с sensitivity policy; поддержанный
-native continue/reuse; branch/base selection; Agent remote authority; skill
-import/update и OAuth; standalone browser consumer, ChatGPT companion send,
-реальный desktop provider. Generic external watcher отсутствует; mailbox Loop
-имеет конкретный уже работающий source contract.
+Следующие содержательные изменения: поддержанный native continue/reuse с
+cooperative exclusive-owner handoff; trusted property verifier native requirements;
+Agent remote authority; skill resources/update distribution и OAuth; standalone
+browser consumer, ChatGPT companion send, реальный desktop provider. Generic
+external watcher отсутствует; mailbox Loop имеет конкретный работающий source
+contract. Canonical capture подключён в scope explicit selected-thread refresh;
+реальный непустой transcript и фоновое subscription capture не заявлены.
 
 Реальные Web/SSH/provider connected outcomes требуют выбранной среды и остаются
 отдельными наблюдениями. Windows/Linux protected credentials/private ACL, PTY ABI

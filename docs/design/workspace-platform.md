@@ -32,8 +32,9 @@ requires a fresh capture.
 | `save(id, {path, expectedRevision, text, draftId?})` | Retain the draft first, compare the revision that produced the candidate, then write an adjacent temporary file, sync it and replace the selected file. A conflict returns the current revision while retaining the candidate. Resolving it requires an explicit reopened revision. New files use `expectedRevision: null`. |
 | `listDrafts(id)` / `discardDraft(id, draftId)` | Recover full text after service restart; discard applies only to the matching workspace/draft. A changed/unavailable root does not prevent reading the retained draft. |
 | `retainDraft(id, input)` | Persist bounded editor text without changing a workspace file. Repeated recovery writes for one workspace/path reuse its draft identity. |
-| `gitStatus(id, {baseOid?})` | Read-only capture of full HEAD/base commit IDs, bounded porcelain status and diff bytes under a new opaque snapshot ID. An unborn/unavailable HEAD remains unavailable. A supplied base is a full captured OID, never a rev expression or command. |
-| `gitDiff(id, snapshotId)` | Return that snapshot's captured text and HEAD/base IDs. Compare a fresh observation and report current/stale/unavailable; never silently replace the old diff. Binary and truncation flags remain explicit. A truncated observation cannot claim to be current. |
+| `gitBases(id)` | Bounded read-only enumeration of captured HEAD plus up to 128 local and saved remote-tracking branch references. Choices carry opaque IDs, exact commit OIDs and ref labels; symbolic remote HEAD aliases are omitted. No fetch, checkout or arbitrary revision expression is accepted. |
+| `gitStatus(id, {baseId?})` | Capture full HEAD/base commit IDs and refs, bounded porcelain status and working diff under an opaque snapshot ID. A selected base ID must belong to this workspace and still match the captured HEAD, branch and base OID. Main-only callers retain the prior exact `baseOid` option; renderer IPC accepts only an enumerated `baseId`. An unborn/unavailable HEAD remains unavailable. |
+| `gitDiff(id, snapshotId)` | Return that snapshot's captured text and HEAD/base IDs and refs. Compare a fresh observation and report current/stale/unavailable; a moved/deleted selected base branch or changed HEAD invalidates the observation without replacing the old diff. Binary and truncation flags remain explicit. A truncated observation cannot claim to be current. |
 
 All file calls use workspace-relative paths. Absolute paths, traversal,
 backslashes/drive paths and `.git` components are rejected. Every operation
@@ -55,7 +56,7 @@ isolating arbitrary native execution. The service serializes its own synchronous
 saves; it does not claim to lock other programs out of the repository.
 
 Git inspection starts only fixed read commands, with no shell: `rev-parse`,
-`status`, `diff` and a bounded config-key enumeration. Before inspection it reads
+`symbolic-ref`, `for-each-ref`, `status`, `diff` and a bounded config-key enumeration. Before inspection it reads
 filter key names without comparing worktree bytes, then overrides each discovered
 driver's clean/smudge/process command to empty and required flag to false.
 Unrepresentable driver names, excessive driver count or failed/truncated config
@@ -87,7 +88,16 @@ workspace surface; it does not silently change Codex/tool-host permissions.
 `ipc/workspace.cjs` receives the existing sender-authorized/lifecycle-guarded
 `registerIpcHandler` function. Its no-argument picker method rejects incoming
 path/provenance payloads, while file methods validate IDs, relative paths and
-bounded draft shapes. `preload.cjs` exposes the narrow `workspace*` methods;
+bounded draft shapes. `preload.cjs` exposes the narrow `workspace*` methods.
+
+Git base discovery returns labels and exact OIDs, while selection sends back only
+the workspace-bound opaque choice ID. The Git review shows the current branch,
+lets the user compare working files with HEAD, a local branch or an existing
+remote-tracking branch, and captures a fresh connected diff on selection.
+Changing the selected base immediately retires the previous displayed capture.
+The freshness action retains captured bytes while exposing changed HEAD/base
+state. This flow reads local Git state and does not switch branches or fetch.
+
 `resolveGrant(id)` stays main-only for other trusted workspace owners to
 revalidate the same selected root. It is not a new renderer authority channel.
 

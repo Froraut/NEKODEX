@@ -1,6 +1,7 @@
-/** Only caller-validated user/assistant text belongs here. Never pass credentials,
- * system/developer instructions, tool calls, or raw tool output. Role filtering
- * alone does not validate/redact text; this store performs no secret detection. */
+/** Manual selections require caller validation. Canonical text requires the
+ * selected-thread consent + known-pattern policy; it is not certified secret-free.
+ * Never pass structured system/developer/tool payloads. Canonical role filtering
+ * alone is not secret redaction; unfamiliar secrets can remain after pattern checks. */
 export interface CaptureRecord extends MessageIdentity {
   revisionId: string;
   revisionNumber: number;
@@ -14,9 +15,10 @@ export interface CaptureRecord extends MessageIdentity {
   /** Describes this message's text only, never the entire thread or transcript. */
   coverage: "complete" | "partial";
   coverageReason?: string;
-  capturePolicy: "user-assistant-text-v1";
+  capturePolicy: "user-assistant-text-v1" | "canonical-thread-text-v1";
   /** Caller assertion, not a redaction claim. Unknown sensitivity retains metadata only. */
-  sensitivity: "caller-validated" | "unknown";
+  sensitivity: "caller-validated" | "unknown" | "known-pattern-filtered";
+  canonical?: {policyVersion:"known-pattern-filter-v1";fingerprint:string;observedAt:number;timestampSource:"native"|"observed-at";originalBytes:number;exclusionReason:string|null;sourceCoverage:"complete"|"partial"};
 }
 
 export interface ThreadIdentity { clientId: string; threadId: string }
@@ -39,7 +41,7 @@ export interface HistoryStatus {
   indexedMessages: number;
   incompleteMessages: number;
   revisions: number;
-  captureScope: "caller-validated-user-assistant-text";
+  captureScope: "explicit-policy-user-assistant-text";
   transcriptCoverage: "unknown";
 }
 export interface HistoryPage<T> {

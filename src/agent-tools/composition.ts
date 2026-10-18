@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { z } from "zod";
 import { defaultToolsConfig, readToolsConfig, sha256, verifyRecipeFiles, writeToolsConfig, type ServerRecipe, type ToolsConfig } from "./config";
 import { StandaloneMcpHost } from "./mcp-host";
@@ -12,6 +12,7 @@ import { createAgentToolsRoutes } from "./http";
 import { readPrivateMetadata, writePrivateMetadata } from "./private-metadata";
 import { ManagedMcpInstaller, OFFICIAL_MCP_CATALOG } from "./installer";
 import { reviewTrustedSandboxConfig, sandboxProviderAvailable } from "./sandbox";
+import { ManagedSkillStore } from "./managed-skills";
 
 export interface AgentToolsCompositionOptions {
   home: string;
@@ -45,6 +46,7 @@ export class AgentToolsComposition {
   private configPath: string;
   private journalPath: string;
   private skillStatePath: string;
+  private managedSkillStore?: ManagedSkillStore;
   readonly installer: ManagedMcpInstaller;
   readonly toolsPort: StandaloneToolsPort;
   readonly handle: (request: Request) => Promise<Response | undefined>;
@@ -78,12 +80,19 @@ export class AgentToolsComposition {
     void pending.then(() => this.pending.delete(pending), () => this.pending.delete(pending)); return pending;
   }
   get activeCount(): number { return this.pending.size + (this.changing ? 1 : 0) + this.installer.activeCount; }
+  private managedSkills() { if (this.closing) throw new Error("Managed skill store is closing"); return this.managedSkillStore ??= new ManagedSkillStore(this.options.home); }
+  private managedSkillStatus() {
+    if (this.managedSkillStore) return this.managedSkillStore.list();
+    if (!this.closing && existsSync(join(this.options.home, "managed-skills", "metadata.sqlite"))) return this.managedSkills().list();
+    return { versions: [], attachments: [], actions: [], retainedVersions: 0, forgottenVersions: 0, cleanup: "not-performed; immutable referenced versions retained" };
+  }
   status() {
     const config = readToolsConfig(this.configPath);
     return { config, runtime: this.host?.snapshot() ?? { enabled: config.enabled, servers: config.servers.map(server => ({ id: server.id, connected: false, pid: null })), sandbox: "external-server-process" },
       activeCount: this.activeCount, descriptors: structuredClone(this.descriptors), skillRoots: structuredClone(this.skillRoots), selections: [...this.selections.values()].map(row => structuredClone(row)),
       installCatalog: OFFICIAL_MCP_CATALOG, installations: this.installer.list(), serverConfigDigests: Object.fromEntries(config.servers.map(server => [server.id, sha256(JSON.stringify(server))])),
-      capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, pendingToolCalls: Boolean(this.options.resolveToolCall) } };
+      managedSkills: this.managedSkillStatus(),
+      capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", pendingToolCalls: Boolean(this.options.resolveToolCall) } };
   }
   private reviewedSandbox(input: { codeRoots: string[]; readRoots: string[]; writeRoots: string[] }, ownedReadRoots: string[] = [], ownedCodeRoots: string[] = []) {
     const contains = (root: string, path: string) => { const rel = relative(root, path); return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`)); };
@@ -207,13 +216,49 @@ export class AgentToolsComposition {
     const previous = this.selections.get(key)?.skills ?? []; const next = [...previous.filter(row => row.id !== identity.id), identity];
     if (next.length > 16) throw new Error("Selected skill limit exceeded");
     const library = new ReadOnlySkillLibrary(this.skillRoots); if (next.reduce((bytes, row) => bytes + library.select(row).bytes, 0) > 128 * 1024) throw new Error("Selected skill content limit exceeded");
+    const managed = this.managedSkillStore || existsSync(join(this.options.home, "managed-skills", "metadata.sqlite")) ? this.managedSkills().selected(scope) : [];
+    if (next.length + managed.length > 16 || next.reduce((bytes, row) => bytes + row.bytes, 0) + managed.reduce((bytes, row) => bytes + row.bytes, 0) > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
     const selections = new Map(this.selections); selections.set(key, { scope, skills: structuredClone(next) });
     if (selections.size > 64) throw new Error("Selected skill task scope limit exceeded");
     writePrivateMetadata(this.skillStatePath, { version: 1, roots: this.skillRoots, selections: [...selections.values()] }); this.selections = selections; return selected;
   }
   selectedSkillContent(scope: ToolScope): SelectedSkill[] {
-    this.scope(scope); const library = new ReadOnlySkillLibrary(this.skillRoots);
-    return (this.selections.get(JSON.stringify([scope.taskId, scope.generation]))?.skills ?? []).map(identity => library.select(identity));
+    this.scope(scope);
+    const selections = this.selections.get(JSON.stringify([scope.taskId, scope.generation]))?.skills ?? [];
+    const roots = this.skillRoots.filter(root => selections.some(identity => identity.grantId === root.id));
+    const library = selections.length ? new ReadOnlySkillLibrary(roots) : undefined;
+    const local = selections.map(identity => library!.select(identity));
+    const managed = this.managedSkillStore || existsSync(join(this.options.home, "managed-skills", "metadata.sqlite")) ? this.managedSkills().selected(scope) : [];
+    if (local.length + managed.length > 16 || [...local, ...managed].reduce((bytes, row) => bytes + row.bytes, 0) > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
+    return [...local, ...managed];
+  }
+  reviewSkillImport(actionId: string, identity: SkillIdentity, label: string, updateLineageId: string | undefined, explicitUserAction: boolean) {
+    if (!explicitUserAction || this.closing) throw new Error("Explicit managed skill source review required");
+    const grant = this.skillRoots.find(row => row.id === identity.grantId); if (!grant) throw new Error("Skill source root is not currently granted");
+    return this.managedSkills().review(actionId, grant, identity, label, updateLineageId);
+  }
+  commitSkillImport(actionId: string, reviewDigest: string, explicitUserAction: boolean) {
+    if (!explicitUserAction || this.closing) throw new Error("Explicit reviewed managed skill import approval required");
+    const store = this.managedSkills(); const action = store.action(actionId); if (!action) throw new Error("Managed skill review receipt missing");
+    if (action.reviewDigest !== reviewDigest) throw new Error("Exact reviewed managed skill approval required");
+    if (action.state === "imported") return action;
+    const grant = this.skillRoots.find(row => row.id === action.manifest.grant.id); if (!grant) throw new Error("Skill source root was revoked after review");
+    return store.commit(actionId, reviewDigest, grant);
+  }
+  managedSkillAction(actionId: string) { return this.managedSkills().inspect(actionId); }
+  attachManagedSkill(scope: ToolScope, versionId: string, explicitUserAction: boolean) {
+    if (!explicitUserAction) throw new Error("Explicit managed skill attachment required"); this.scope(scope);
+    const local = this.selections.get(JSON.stringify([scope.taskId, scope.generation]))?.skills ?? [];
+    const existing = this.managedSkills().selected(scope); const incoming = this.managedSkills().content(versionId); const version = this.managedSkills().version(versionId)!;
+    const retained = existing.filter(skill => skill.grantId !== `managed:${version.lineageId}`);
+    if (local.length + retained.length + 1 > 16 || local.reduce((bytes, row) => bytes + row.bytes, 0) + retained.reduce((bytes, row) => bytes + row.bytes, 0) + incoming.bytes > 128 * 1024) throw new Error("Selected skill combined content limit exceeded");
+    return this.managedSkills().attach(scope, versionId);
+  }
+  detachManagedSkill(scope: ToolScope, versionId: string, explicitUserAction: boolean) {
+    if (!explicitUserAction) throw new Error("Explicit managed skill detachment required"); this.scope(scope); this.managedSkills().detach(scope, versionId);
+  }
+  revokeManagedSkill(versionId: string, forget: boolean, explicitUserAction: boolean) {
+    if (!explicitUserAction || this.closing) throw new Error("Explicit managed skill revoke/forget required"); return this.managedSkills().revoke(versionId, forget);
   }
   resolveEvidence(task: AgentTask, reference: AgentEvidenceReference) { return this.getHost().resolveTerminalEvidence(task, reference); }
   async close(): Promise<void> {
@@ -221,6 +266,7 @@ export class AgentToolsComposition {
     await this.configSettling;
     await this.installer.close();
     await this.host?.close(); await Promise.allSettled([...this.pending]); this.host = undefined;
+    this.managedSkillStore?.close(); this.managedSkillStore = undefined;
   }
 }
 export const createAgentToolsComposition = (options: AgentToolsCompositionOptions) => new AgentToolsComposition(options);

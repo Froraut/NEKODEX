@@ -8,3 +8,4 @@ export * from "./evidence";
 export * from "./composition";
 export * from "./http";
 export * from "./installer";
+export * from "./managed-skills";

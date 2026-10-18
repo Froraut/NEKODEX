@@ -5,6 +5,8 @@ const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require('./process-tre
 const { createCodexForkJournal } = require('./codex-fork-journal.cjs');
 
 const MAX_LINE_BYTES = 1024 * 1024;
+const MAX_CONVERSATION_MESSAGE_BYTES = 128 * 1024;
+const MAX_CONVERSATION_PAGE_BYTES = 384 * 1024;
 const SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview',
   'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther', 'unknown'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -252,6 +254,71 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
     if (thread.id !== id) throw error('invalid_response', 'Codex returned a different thread');
     return { thread, statusScope: snapshot().statusScope };
   }
+  /** Main-only canonical text producer. The history owner must obtain and
+   * revalidate explicit per-thread recording consent around this read. */
+  async function readThreadConversation(id, { cursor, limit = 50, signal } = {}) {
+    threadId(id);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw error('invalid_parameters', 'Invalid native conversation page size');
+    }
+    const params = { threadId: id, limit, sortDirection: 'desc' };
+    if (cursor != null) params.cursor = optionalString(cursor, 'conversation cursor');
+    // Metadata binds the exact selected thread without hydrating all turns or
+    // loading/resuming native execution. One bounded recent item page follows.
+    await readThread(id, { signal });
+    const result = await request('thread/items/list', params, { signal });
+    if (!record(result) || !Array.isArray(result.data) || result.data.length > limit
+      || (result.nextCursor !== null && (typeof result.nextCursor !== 'string'
+        || result.nextCursor.length > 4096 || /[\u0000-\u001f]/.test(result.nextCursor)))) {
+      throw error('invalid_response', 'Codex returned an invalid conversation page');
+    }
+    const messages = [];
+    const seen = new Set();
+    // Reserve room for envelope/cursor metadata; newest messages win if a page
+    // reaches the projection bound, then the retained page is chronological.
+    let excludedItems = 0, projectedBytes = 8192;
+    for (const entry of result.data) {
+      const item = entry?.item;
+      if (!record(entry) || !record(item) || !['userMessage', 'agentMessage'].includes(item.type)) {
+        excludedItems++; continue;
+      }
+      // Native canonical item IDs, never output indexes or guessed turn links.
+      if (typeof item.id !== 'string' || !item.id || item.id.length > 512 || /[\u0000-\u001f]/.test(item.id)
+        || typeof entry.turnId !== 'string' || !entry.turnId || entry.turnId.length > 512
+        || /[\u0000-\u001f]/.test(entry.turnId) || seen.has(item.id)) {
+        excludedItems++; continue;
+      }
+      let text, contentOmitted = false;
+      if (item.type === 'userMessage') {
+        if (!Array.isArray(item.content)) { excludedItems++; continue; }
+        const parts = item.content.filter(part => record(part) && part.type === 'text' && typeof part.text === 'string');
+        contentOmitted = parts.length !== item.content.length;
+        if (!parts.length) { excludedItems++; continue; }
+        text = parts.map(part => part.text).join('\n');
+      } else text = item.text;
+      // Never truncate into a misleading partial text or expose attachment/tool
+      // payloads. The consent/sensitivity owner still validates canonical text.
+      if (typeof text !== 'string' || Buffer.byteLength(text) > MAX_CONVERSATION_MESSAGE_BYTES) {
+        excludedItems++; continue;
+      }
+      const completed = Number.isSafeInteger(entry.completedAtMs) && entry.completedAtMs >= 0;
+      const started = Number.isSafeInteger(entry.startedAtMs) && entry.startedAtMs >= 0;
+      const partial = contentOmitted || !completed;
+      const message = { messageId: item.id, turnId: entry.turnId,
+        role: item.type === 'userMessage' ? 'user' : 'assistant', text,
+        timestampMs: completed ? entry.completedAtMs : started ? entry.startedAtMs : null,
+        compactionId: null, coverage: partial ? 'partial' : 'complete',
+        ...(partial ? { coverageReason: contentOmitted ? 'native-nontext-content-excluded' : 'native-item-completion-unreported' } : {}),
+      };
+      const bytes = Buffer.byteLength(JSON.stringify(message)) + 1;
+      if (projectedBytes + bytes > MAX_CONVERSATION_PAGE_BYTES) { excludedItems++; continue; }
+      projectedBytes += bytes; seen.add(item.id); messages.push(message);
+    }
+    messages.reverse();
+    return { threadId: id, observedAt: Date.now(), messages, nextCursor: result.nextCursor,
+      complete: cursor == null && result.nextCursor === null && excludedItems === 0
+        && messages.every(message => message.coverage === 'complete'), excludedItems };
+  }
   async function forkThread({ threadId: id, lastTurnId, userInitiated } = {}) {
     if (userInitiated !== true) throw error('user_action_required', 'Fork requires an explicit user action');
     const params = { threadId: threadId(id), excludeTurns: true };
@@ -325,7 +392,7 @@ function createCodexClientControl({ executable, codexHome, controlSocket, journa
     journal.acknowledge(actionId, threadId(id));
     return snapshot();
   }
-  return Object.freeze({ connect, listThreads, readThread, forkThread, acknowledgeFork, snapshot, currentOperation, destroy });
+  return Object.freeze({ connect, listThreads, readThread, readThreadConversation, forkThread, acknowledgeFork, snapshot, currentOperation, destroy });
 }
 
 module.exports = { createCodexClientControl };
