@@ -51,6 +51,9 @@ contract. No credential, profile or storage-format migration occurs here.
 
 Passing targeted evidence was retained across the coherent implementation;
 unchanged tests were not rerun as a finishing ritual.
+`bun run test:selective-adoption` groups only the six feature-boundary test files
+below and is included in ordinary Linux pull-request CI. It does not enable the
+separately authorized broad verification/packaging workflow.
 
 - `tests/support-report.test.ts` and `tests/support-report-sources.test.ts`: actual
   saved file/privacy/bounds, source-log alias protection, private permissions,
