@@ -58,7 +58,7 @@ export function createLocalResponsesExecutionPort(options: LocalResponsesProvide
         try { input = buildAgentToolContinuationInput(source, request.continuation.outcomes); }
         catch (error) {
           if (!(error instanceof AgentToolImageProjectionError)) throw error;
-          return { receiptId: `not-sent:${request.dispatch.id}`, outcome: "not_sent", summary: "The retained tool image is invalid, unsupported or exceeds the bounded image budget; no model request was sent.", actualSpend: 0 };
+          return { receiptId: `not-sent:${request.dispatch.id}`, outcome: "not_sent", summary: "Tool image content or the bounded continuation is invalid, unsupported or exceeds its request budget; no model request was sent.", actualSpend: 0 };
         }
       } else {
         const descriptors = options.tools ? await options.tools.discover({ taskId: task.id, generation: task.generation, toolCallId: request.dispatch.id }, { signal: request.signal }) : [];
@@ -87,12 +87,17 @@ export function createLocalResponsesExecutionPort(options: LocalResponsesProvide
       const record = body as Record<string, unknown>;
       if (typeof record.id !== "string" || !record.id.trim() || record.id.length > 120 || !["completed", "failed", "incomplete"].includes(String(record.status)) || !Array.isArray(record.output)) throw new Error("Agent Responses terminal identity is unavailable");
       acknowledge(record.id);
-      const output: string[] = []; let unsupportedTools = false;
+      const output: string[] = []; let unsupportedTools = false; let unsupportedProvenance = false;
       const pending: AgentToolRequest[] = [];
       const priorCallIds = new Set(input.filter(item => item.type === "function_call").map(item => item.call_id));
       for (const item of record.output) {
         if (!item || typeof item !== "object") continue;
         const row = item as Record<string, unknown>;
+        if (row.type === "function_call_output" || row.type === "message" && row.role !== "assistant") {
+          // The provider has already answered and been acknowledged. This is a held terminal,
+          // not a not-sent request; model output cannot manufacture client results or authorship.
+          unsupportedProvenance = true; continue;
+        }
         if (row.type === "function_call") {
           const mapped = toolMap.find(tool => tool.wireName === row.name);
           if (!mapped || typeof row.call_id !== "string" || !row.call_id || row.call_id.length > 120 || typeof row.arguments !== "string" || Buffer.byteLength(row.arguments) > 64 * 1024) unsupportedTools = true;
@@ -108,9 +113,10 @@ export function createLocalResponsesExecutionPort(options: LocalResponsesProvide
       }
       const actualSpend = options.actualSpend?.(record) ?? null;
       if (actualSpend !== null && (!Number.isSafeInteger(actualSpend) || actualSpend < 0)) throw new Error("Invalid actual monetary receipt");
-      const outcome: ExecutionResult["outcome"] = unsupportedTools || pending.length || record.status === "incomplete" ? "awaiting_input" : record.status === "failed" ? "failed" : "completed";
-      const summary = (unsupportedTools ? "Tool execution is unavailable in this Agent provider. Human action or a configured tool host is required.\n" : "") + output.join("\n");
-      const continuation: AgentContinuation | undefined = pending.length && !unsupportedTools ? { responseId: record.id, rootDispatchId, input, output: record.output as Record<string, unknown>[], tools, toolMap, pending } : undefined;
+      const outcome: ExecutionResult["outcome"] = unsupportedTools || unsupportedProvenance || pending.length || record.status === "incomplete" ? "awaiting_input" : record.status === "failed" ? "failed" : "completed";
+      const summary = (unsupportedProvenance ? "Provider output attempted to supply a client-owned tool result or non-assistant message. No continuation was retained; human review is required.\n" : "")
+        + (unsupportedTools ? "Tool execution is unavailable in this Agent provider. Human action or a configured tool host is required.\n" : "") + output.join("\n");
+      const continuation: AgentContinuation | undefined = pending.length && !unsupportedTools && !unsupportedProvenance ? { responseId: record.id, rootDispatchId, input, output: record.output as Record<string, unknown>[], tools, toolMap, pending } : undefined;
       return { receiptId: `response:${record.id}`, outcome, actualSpend, summary: boundedSummary(summary || (pending.length ? "Model requested configured tools; exact human approval is required before execution." : `Responses turn ${record.status}; no assistant text was returned.`)), ...(continuation ? { continuation } : {}) };
     },
   };

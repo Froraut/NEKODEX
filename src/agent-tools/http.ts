@@ -91,7 +91,7 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
     } catch (error) {
       const invalid = error instanceof z.ZodError;
       // Fixed domain strings are safe; arbitrary filesystem/SDK errors can contain private paths.
-      const message = error instanceof Error && /^(?:Explicit |Current owned|No exact |Pending Agent|Wait for owned|Configuration review|Reserved (?:builtin|browser|desktop)|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
+      const message = error instanceof Error && /^(?:Explicit |Current owned|Local tools admission|No exact |Pending Agent|Wait for owned|Configuration review|Reserved (?:builtin|browser|desktop)|Installers,|Interpreter recipes|Pinned server|Tools host|Standalone tool|Tool |Selected skill|Skill root|Skill source|Managed skill|Exact reviewed managed|Official\/vendor plugin|Native OS|Invalid secret|Unsupported server)/.test(error.message) ? error.message : "The tools action could not be completed. Inspect the current saved configuration and receipt before retrying.";
       return Response.json({ ok: false, error: invalid ? "invalid_request" : "agent_tools_conflict", message }, { status: invalid ? 400 : 409 });
     }
   };

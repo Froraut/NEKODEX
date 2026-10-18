@@ -313,6 +313,17 @@ actual installed CLIs with disposable profiles and inert model adapters. The UI
 preview supplies synthetic client settings, while live browser smoke and the
 isolated Electron shell crash check verify their separate boundaries.
 
+## Platform delivery order
+
+The user explicitly selected on18 October2026 at12:11 UTC: the entire agreed
+capability set first on macOS, then Windows/Linux. Stage1 therefore retains open
+native execution/real-provider/Automatic Goal/remote authentication/skill-resource
+work; it is not complete merely because the existing macOS subset passes. Stage2
+retains the corresponding Windows/Linux adapters and parity. Unsupported routes
+stay explicit until implemented. This priority does not prove installed `.9` or
+release and does not authorize broad verification; development, source publication,
+installation and live-provider evidence remain separate.
+
 ## Plans, history, project workspace and standalone execution
 
 These new source modules extend the maintained runtime; their presence does not
@@ -548,9 +559,21 @@ cases /14 assertions. Windows native provider is absent.
 `buildAgentToolContinuationInput` preserves source input/output/call order and
 puts standard PNG/JPEG image results into `function_call_output.output` beside
 metadata, never a fabricated human message. Limits include earlier canonical
-images: at most two and 160 KiB combined; malformed/unsupported/over-budget image
-returns confirmed not_sent before fetch. Existing result/canonical byte limits
-remain in force. `reconcileToolReceipt` reads only an exact original retained
+images: at most two and160 KiB combined, with512 KiB canonical payload. The
+request-only builder may omit older pixels only from `source.input` recognized
+host tool-output envelopes bound to exact preceding call/tool-map/turn; provider
+`source.output` cannot supply historical host provenance. It retains
+explicit omission notice, image hash/size/dimensions, call/turn/receipt and recomputed
+attachment indices in that same function output. Original receipts and canonical
+continuation remain immutable. Human/new/unrecognized images are mandatory; if
+those cannot fit or data is malformed/unsupported, return not_sent before fetch.
+The connected production-provider/parser fixture progressed through four observations
+and a terminal fifth FAKE request; the updated focused file passed two cases /
+156 assertions, including reviewed provenance correction. Forged function outputs
+or non-assistant messages returned after provider fetch/ACK become awaiting_input
+without continuation; retained legacy-tainted `source.output` returns not_sent
+before a new fetch. This proves request/provenance projection, not a new UI, native
+capture or real model/account result. `reconcileToolReceipt` reads only an exact original retained
 receipt; `agent_tool_reconciliations` appends immutable facts and preserves old
 unknown. Effective current-generation matching continuation may become ready;
 old-generation late result never reactivates a task/worker or replays input.
@@ -564,13 +587,32 @@ projection correction does not replay an operation. Original DEV task stayed pau
 new click-only flow independently exercised current pending-call UI and canonical
 continuation; the earlier large two-image UI case was not rerun after the metadata
 fix. Focused HTTP/UI regressions cover that projection. Old raw JPEGs remain in
-private evidence; the two-image/160 KiB canonical limit remains meaningful for
-future image-history strategy, not permission to enlarge budgets silently.
+private evidence. The newer bounded old-tool-pixel projection implements image
+history handling within the same caps; original big-image UI/native flow was not
+repeated and the new source needs its own review/TS/CLI evidence.
 Private fake-supervisor one-shot readiness belongs only to that DEV harness;
 actual Web/tunnel readiness and the production admission gate are separate.
 
 Browser/desktop tool receipts remain excluded from task business-evidence
 projection until a separate trusted application observer establishes its outcome.
+
+**Local tool admission:** `server.ts` supplies tool/controller admission from
+`admission.accepting && !launcherDetached`, independently of Web broker/tunnel
+readiness. Agent model execution retains its existing Web admission gate. Desktop
+permission inspection, window listing and enable(true) use local admission;
+disable/revoke and cleanup remain possible while draining. The isolated actual
+server HTTP fixture observed offline-Web/MCP-off inventory without synthetic
+readiness, refused model execution and drain-time tool starts, and allowed cleanup.
+Detach refuses while either active Agent turns or active Agent tools remain;
+the actual held-MCP SDK fixture now observed counter1 with Web false and all
+other active counters zero: active_agent_tools alone refused detach409. Explicit
+release produced the terminal receipt, idle detach200 then blocked discovery until
+reattach; inert Native HTTP remained200 without real network. Duplicate approval
+kept counter1, exact SDK PID was reaped and the temporary home removed. Its pending
+call was prepared through a synthetic Agent execution port, not a real model.
+Root project TypeScript, the 245-module CLI development bundle, its exact `.9`
+version and architecture-map checks passed for this batch. Unchanged renderer
+evidence is reused; CI and installed delivery remain separate evidence.
 
 Local control routes use a separate policy/bearer and bounded passive snapshots;
 unopened sources remain unavailable rather than being started by a read. Explicit

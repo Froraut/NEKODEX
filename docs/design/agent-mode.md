@@ -94,12 +94,36 @@ keeps its exact call ID and turn binding; an `input_text` block carries receipt
 and non-image metadata, and `input_image` blocks carry validated inline PNG/JPEG
 data. The original retained ToolOutcome is immutable. Canonical base64, image
 signature/dimension headers, at most two images and 160 KiB of combined image
-bytes are checked before sending, including images already in canonical history.
-Unsupported or malformed image content and oversized continuations produce a
-confirmed not-sent outcome. The 256 KiB tool-result and 512 KiB continuation caps
-are unchanged. Frame dimensions and original screenshot-hash metadata remain
-available beside the actual image; projection does not certify screenshot
-contents as a verified business result.
+bytes are checked before sending. The request projection keeps the current
+batch's images and every human or unrecognized image mandatory. Only historical
+host-built tool images may lose their pixel bytes: the oldest yield first to the
+two-image/160 KiB budget and, if needed, the 512 KiB serialized continuation
+budget. Their same function output retains receipt, call/turn identity, dimensions
+and SHA256, sets attachmentIndex to null, and explicitly says that historical
+pixels were omitted and are not a fresh observation. Included image indices are
+recomputed for the actual request. The original outcomes and all previously
+saved canonical records remain immutable; later canonical inputs retain the
+explicit request projection. No new message, observation, permission or evidence
+is invented.
+
+Historical omission requires the host's outer metadata envelope, a matching
+preceding function call and turn, and image summary metadata matching the actual
+MIME/hash/size/dimensions. Nested tool annotations cannot establish that origin.
+Only prior host inputs may supply historical tool outputs. A provider response
+that returns a client-owned function_call_output or a non-assistant message is
+acknowledged as received and held for human review without retaining a
+continuation; it is never classified as not-sent after fetch. The projector also
+refuses such model output in an older saved continuation before any new fetch,
+even when it copies an otherwise exact host envelope, receipt, hash and turn.
+The original host envelope without the newer projection marker is recognized
+with the same checks, so existing saved image history can continue. Human images
+and unrecognized tool images are never silently removed. Base64 inside diagnostic
+text remains text and counts toward the serialized payload; it is neither decoded
+as an image nor truncated to fit. Unsupported/malformed images, a current batch
+that alone exceeds the limits, or mandatory content that still cannot fit produce
+a confirmed not-sent outcome before fetch. The 256 KiB tool-result, two-image/
+160 KiB request and 512 KiB continuation caps are unchanged. Projection does not
+certify screenshot contents as a verified business result.
 
 ## Durable schema and owner
 
@@ -354,9 +378,17 @@ for a committed correction, late-result retention without reactivation, immutabl
 unknown rows across reopen and no effect replay. It uses no real provider, app
 window or browser input.
 
-`tests/agent-mode-tool-images.test.ts` exercises the canonical projection and the
-production Responses parser without any model request. It checks actual tool
-image parts, exact call/order/turn identity, one base64 copy outside text,
-immutable original results and frame/hash metadata, rejected unsupported or
-malformed images, image-count bounds and two individually bounded receipts that
-exceed the combined image budget.
+`tests/agent-mode-tool-images.test.ts` exercises the canonical projection and
+production Responses parser without any real model request. Its connected injected
+Responses flow completes four successive synthetic observations and a terminal
+report, keeping the newest bounded tool images and explicit omission metadata
+for older pixels. It checks exact call/order/turn/receipt identity, immutable
+original outcomes and canonical records, reindexed attachments, preserved human
+images and diagnostic base64 text, recognition of the original host envelope, and
+refusal before fetch when mandatory/unsupported content cannot fit. The same
+focused check covers decoded-image and serialized-payload pressure, mismatched
+host summaries, nested annotation spoofing, malformed images and oversized
+current batches. Adversarial provider outputs cannot manufacture tool-result or
+human provenance; copied legacy model outputs are refused before another fetch,
+while a newly fetched/acknowledged counterfeit is held without a continuation.
+It uses no real desktop, tool execution, account or model.

@@ -21,6 +21,7 @@ import { ManagedSkillStore } from "./managed-skills";
 export interface AgentToolsCompositionOptions {
   home: string;
   authorize: (request: Request) => boolean;
+  /** Local owner admission (running and attached), independent of Web broker/tunnel readiness. */
   canStart?: () => boolean;
   isScopeActive: (scope: ToolScope) => boolean;
   resolveToolCall?: (scope: ToolScope) => { tool: string; arguments: Record<string, unknown>; idempotencyKey: string } | undefined;
@@ -202,10 +203,14 @@ export class AgentToolsComposition {
     this.options.desktopTools?.invalidate(taskId);
     for (const provider of this.options.builtins ?? []) provider.invalidate?.(taskId);
   }
-  private desktopControl(explicitUserAction: boolean) { if (!explicitUserAction || this.closing || !this.options.desktopTools) throw new Error("Explicit native desktop controller action is unavailable"); return this.options.desktopTools; }
-  inspectDesktopPermissions(explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction).inspectPermissions(explicitUserAction); return this.status().desktopTools; }); }
-  listDesktopWindows(explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction).listWindows(explicitUserAction); return this.status().desktopTools; }); }
-  setDesktopEnabled(enabled: boolean, explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction).setEnabled(enabled, explicitUserAction); return this.status().desktopTools; }); }
+  private desktopControl(explicitUserAction: boolean, newWork = false) {
+    if (!explicitUserAction || this.closing || !this.options.desktopTools) throw new Error("Explicit native desktop controller action is unavailable");
+    if (newWork && (this.changing || this.options.canStart?.() === false)) throw new Error("Local tools admission is closed");
+    return this.options.desktopTools;
+  }
+  inspectDesktopPermissions(explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction, true).inspectPermissions(explicitUserAction); return this.status().desktopTools; }); }
+  listDesktopWindows(explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction, true).listWindows(explicitUserAction); return this.status().desktopTools; }); }
+  setDesktopEnabled(enabled: boolean, explicitUserAction: boolean) { return this.track(async () => { await this.desktopControl(explicitUserAction, enabled).setEnabled(enabled, explicitUserAction); return this.status().desktopTools; }); }
   selectDesktopWindow(scope: ToolScope, expectedSelection: MacosWindowSelection, explicitUserAction: boolean) {
     this.scope(scope);
     if (readToolsConfig(this.configPath).servers.some(server => server.id === this.options.desktopTools?.serverId)) throw new Error("Reserved desktop namespace conflicts with an existing MCP server; no source was replaced");

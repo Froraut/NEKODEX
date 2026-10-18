@@ -32,6 +32,27 @@ supplies Agent runtime `resolveToolCall` and `recordToolOutcome` through
 `onOutcome`. The host only authorizes the exact privately persisted pending
 call, never caller-provided arguments or a caller-provided result.
 
+The server supplies `canStart` from local tools admission:
+`admission.accepting && !launcherDetached`. It does not depend on the Web
+broker or tool tunnel being ready. An attached, running local owner can prepare
+task-generation browser/desktop bindings, select skills and discover the passive
+unsupported descriptors while offline. New desktop permission inspection,
+window listing, enablement and selection also require this local admission;
+inspection can start the native helper only after its explicit user action.
+Drain, committed shutdown and launcher detachment prevent new admitted work.
+Status and explicit desktop disable/revoke remain available during drain for
+cleanup, and closing the composition drains its existing owners.
+
+Agent model admission is separate: `AgentModeRuntime.canStart` still uses
+`acceptingTurns`, including Web broker/tunnel readiness. Offline local setup
+does not offer a model request, create a pending tool call or authorize tool
+execution. Invoking a previously recorded call still requires the exact active
+task/generation, separately approved arguments, one-use grant and durable
+journal admission. An already accepted tool owner can finish and retain its
+receipt through a Web outage; another model stage waits for Web admission.
+Launcher detachment refuses active Agent turns/tools rather than abandoning
+their accepted owners.
+
 Admin actions are `status`, `reviewServer`, `saveServer`, `setEnabled`,
 `removeServer`, `discover`, `approveInvoke`, `receipt`, `skillRoot`,
 `removeSkillRoot`, `skillsDiscover`, `skillsSelect`. Configuration review pins
@@ -403,6 +424,24 @@ separate sandbox fixture; host integration also initializes, discovers and calls
 the SDK fixture through its requested profile and verifies parent PID reaping.
 
 ## Focused evidence
+
+`tests/agent-tools-offline-admission.test.ts` uses an isolated actual Full-mode
+server with launcher browser hosting, a ready private broker, and tunnel
+readiness false at revision zero. With MCP disabled, a ready Agent task can
+inspect inventory and discover unsupported browser/desktop descriptors without
+starting the desktop helper or a model request. A model step is refused. After
+drain, discovery and new desktop inspect/list/enable/select actions are refused,
+while status, disable and revoke still succeed. The fixture verifies zero model
+requests, zero dispatches and no native resource creation, and closes the server
+and disposable private home. A second focused case uses an actual held MCP SDK
+operation in an isolated background runtime with an explicit DIRECT declaration.
+With Web still unavailable, the approved tool writes its private counter once;
+the real active tool owner alone refuses detach. Explicit release produces a
+terminal receipt, then idle detach succeeds. New discovery stays closed until
+attach, an inert Native HTTP request remains available, and duplicate approval
+returns the retained receipt without another counter effect. The exact SDK child
+is reaped before cleanup. The synthetic prepared model call is not a real Web
+provider proof; no counter or owner was injected into the server's activity view.
 
 `bun test tests/agent-tools.test.ts tests/agent-tools-ipc.test.ts tests/agent-tools-installer.test.ts --timeout 10000` runs an actual owned local
 stdio server implemented with the official SDK. It verifies file pins/private

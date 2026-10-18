@@ -899,6 +899,9 @@ export function startServer(
   let tunnelStatusRevision = 0;
   const brokerReady = () => !turnBroker || brokerState === "ready";
   const acceptingNative = () => admission.accepting;
+  // Local task setup and already approved tools do not depend on Web transport.
+  // Detach/drain still prevent new local work; model offers keep the Web gate.
+  const acceptingAgentTools = () => admission.accepting && !launcherDetached;
   const acceptingTurns = () => admission.accepting && !launcherDetached && brokerReady() && tunnelReady;
   const admissionFailure = () => formatErrorResponse(
     503,
@@ -1052,7 +1055,7 @@ export function startServer(
         isScopeActive: isAgentScopeActive });
     },
   });
-  const getAgentTools = () => agentTools ??= createAgentToolsComposition({ home: historyHome, authorize: controlAuthorized, canStart: acceptingTurns,
+  const getAgentTools = () => agentTools ??= createAgentToolsComposition({ home: historyHome, authorize: controlAuthorized, canStart: acceptingAgentTools,
     browserTools: getAgentBrowserTools(),
     desktopTools: getAgentDesktopTools(),
     isScopeActive: isAgentScopeActive, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
@@ -1201,14 +1204,15 @@ export function startServer(
         if (!body || typeof body.action !== "string" || !["status", "attach", "detach"].includes(body.action)
           || body.instanceId !== instanceId) return new Response("Runtime identity changed", { status: 409 });
         if (body.action === "detach") {
-          // Close Web admission before inspecting owners. Native HTTP streams do not depend
+          // Close Web/local-tool admission before inspecting owners. Native HTTP streams do not depend
           // on Electron and must neither be drained nor cancelled by an interface exit.
           const previous = launcherDetached;
           launcherDetached = true;
           turnBroker?.setExternalOwnersAccepted(false);
           const current = activity();
           if (!backgroundRuntime || !nativeNetworkBackgroundReady() || admission.draining
-            || current.active_web_http_turns || current.active_browser_turns || current.active_compaction_runs) {
+            || current.active_web_http_turns || current.active_browser_turns || current.active_compaction_runs
+            || current.active_agent_turns || current.active_agent_tools) {
             launcherDetached = previous;
             turnBroker?.setExternalOwnersAccepted(acceptingTurns());
             return Response.json({ status: "refused", ...current }, { status: 409 });
