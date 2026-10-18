@@ -5,6 +5,8 @@ import type { Language } from './types';
 import type { CodexClientControlSnapshot, CodexStatusScope, CodexThreadMetadata, NativeThreadsApi,
   NativeThreadsResult } from './native-threads-types';
 import './surfaces/native-threads.css';
+import { NativePersistentConversationsPanel } from './NativePersistentConversationsPanel';
+import type { NativePersistentApi } from './native-persistent-types';
 
 const en = {
   title: 'Native Codex threads', subtitle: 'Read Codex thread metadata and create a fork from existing history.',
@@ -59,7 +61,7 @@ const ru: typeof en = {
 type SafeError = { code: string; message: string; rpcCode?: number };
 
 export function NativeThreadsSurface({ language, disabled = false, api }: {
-  language: Language; disabled?: boolean; api: NativeThreadsApi;
+  language: Language; disabled?: boolean; api: NativeThreadsApi & Partial<NativePersistentApi>;
 }) {
   const text = language === 'ru' ? ru : en;
   const [threads, setThreads] = useState<CodexThreadMetadata[]>([]);
@@ -160,6 +162,8 @@ export function NativeThreadsSurface({ language, disabled = false, api }: {
     [text.cwd, selected.cwd], [text.updated, selected.updatedAt ? dateFormat.format(selected.updatedAt * 1000) : null]] : [];
 
   return <Page width="wide" className="native-threads">
+    {api.nativePersistentRequest ? <NativePersistentConversationsPanel api={{ nativePersistentRequest: api.nativePersistentRequest }}
+      language={language} disabled={disabled} /> : null}
     <SurfaceHeader title={text.title} subtitle={text.subtitle} actions={<Button variant="primary"
       busy={busy === 'list'} disabled={isDisabled} onClick={() => load()}>{loaded ? text.reload : text.load}</Button>} />
     <Notice title={text.scopeTitle} meta={client?.userAgent ? `${text.version}: ${client.userAgent}` : undefined}>

@@ -40,7 +40,7 @@ test('Native account IPC keeps opaque action scope and opens/copies only its cur
 
 test('Native inventory IPC admits only inspected visible models and closes the exact account generation', async () => {
   const handlers = new Map<string, Function>(), profileId = randomUUID(), epoch = randomUUID();
-  let ran = 0, admitted = 0, destroyed = 0, closed = 0;
+  let ran = 0, admitted = 0, destroyed = 0, closed = 0, beforeClosed = 0;
   let held = true;
   const authority = { inspect: () => ({ available: true, profiles: [], receipts: [] }) };
   const inventory = { async run(body: any) { expect(body).toMatchObject({ profileId, epoch, explicitUserAction: true }); ran++; },
@@ -49,7 +49,9 @@ test('Native inventory IPC admits only inspected visible models and closes the e
   const execution = { async admit(body: any) { expect(body).toMatchObject({ profileId, epoch, modelIds: ['native-one', 'native-two'] }); admitted++; },
     inspect: () => ({ profileId, epoch, ownerHeld: held, models: [] }), async destroy() { destroyed++; held = false; } };
   registerNativeAccounts({ handle: (name: string, handler: Function) => handlers.set(name, handler), getAuthority: () => authority,
-    getInventory: () => inventory, getExecution: () => execution, onExecutionClosed: (owner: any) => { expect(owner).toBe(execution); closed++; },
+    getInventory: () => inventory, getExecution: () => execution,
+    beforeExecutionClosed: async (owner: any) => { expect(owner).toBe(execution); expect(destroyed).toBe(0); beforeClosed++; },
+    onExecutionClosed: (owner: any) => { expect(beforeClosed).toBe(1); expect(owner).toBe(execution); closed++; },
     openExternal: async () => {}, clipboard: { writeText() {} } });
   const request = (body: any) => handlers.get('launcher:native-accounts')!(null, body);
   await request({ action: 'inspect-models', actionId: randomUUID(), profileId, epoch });

@@ -10,7 +10,7 @@ const ACTION_KEYS = {
   'close-execution': ['action', 'actionId', 'profileId', 'epoch'],
 };
 /** The guarded main handle owns login. Renderer supplies only opaque IDs and intent. */
-function registerNativeAccounts({ handle, getAuthority, getInventory, getExecution, onExecutionClosed, openExternal, clipboard }) {
+function registerNativeAccounts({ handle, getAuthority, getInventory, getExecution, beforeExecutionClosed, onExecutionClosed, openExternal, clipboard }) {
   // Known pre-intent refusals are observations, not a command retry. Retain them
   // in this main instance so a lost refusal response can be read back by action ID.
   const rejected = new Map();
@@ -43,6 +43,7 @@ function registerNativeAccounts({ handle, getAuthority, getInventory, getExecuti
       if (!UUID.test(body.profileId) || !UUID.test(body.epoch) || !getExecution) throw new Error('Invalid Native account selection');
       const execution = getExecution(), current = execution.inspect();
       if (current.profileId !== body.profileId || current.epoch !== body.epoch) throw new Error('Native execution scope changed');
+      await beforeExecutionClosed?.(execution);
       await execution.destroy();
       if (closed.size >= 128) closed.delete(closed.keys().next().value);
       closed.set(body.actionId, { actionId: body.actionId, kind: 'close-execution', profileId: body.profileId, epoch: body.epoch, state: 'completed' });

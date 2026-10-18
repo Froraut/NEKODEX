@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   externalUsageRequest: body => ipcRenderer.invoke('launcher:external-usage', body),
   externalUsagePick: selection => ipcRenderer.invoke('launcher:external-usage-pick', selection),
   nativeThreadsSnapshot: () => ipcRenderer.invoke('launcher:native-threads-snapshot'),
+  nativePersistentRequest: body => ipcRenderer.invoke('launcher:native-persistent-conversations', body),
   nativeThreadsList: params => ipcRenderer.invoke('launcher:native-threads-list', params),
   nativeThreadRead: threadId => ipcRenderer.invoke('launcher:native-thread-read', threadId),
   nativeThreadFork: params => ipcRenderer.invoke('launcher:native-thread-fork', params),

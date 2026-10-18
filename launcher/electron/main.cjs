@@ -24,7 +24,9 @@ const { fileDigest: nativeFileDigest, regular: nativeRegular, VERSION: NATIVE_CL
 const { registerNativeAccounts } = require('./ipc/native-accounts.cjs');
 const { createNativeAccountInventoryService } = require('./native-account-inventory.cjs');
 const { reviewedOwnedNativeDevPin } = require('./owned-native-dev-pin.cjs');
-const { createNativeAccountExecutionService } = require('./native-account-execution.cjs');
+const { createNativeAccountExecutionService, settleNativeConversationOwners } = require('./native-account-execution.cjs');
+const { createPersistentNativeConversations } = require('./persistent-native-conversations.cjs');
+const { registerPersistentNativeConversations } = require('./ipc/native-persistent-conversations.cjs');
 const { registerCodexClientControlIpc } = require('./ipc/codex-client-control.cjs');
 const { resolveCodexExecutable } = require('./codex-login.cjs');
 const { createWorkspaceTerminalService } = require('./workspace-terminal.cjs');
@@ -156,6 +158,14 @@ let agentRemoteDescriptor = null;
 let nativeAccountAuthority = null;
 let nativeAccountInventory = null;
 let nativeAccountExecution = null;
+let persistentNativeConversations = null;
+async function closeNativeConversationOwners(execution = nativeAccountExecution) {
+  const conversations = persistentNativeConversations;
+  // Stop admission synchronously in both owners, then let account transport
+  // closure settle a lost creation ACK instead of awaiting that ACK first.
+  await settleNativeConversationOwners(execution, conversations);
+  if (persistentNativeConversations === conversations) persistentNativeConversations = null;
+}
 let lastNativeModelPublication = null;
 async function validateRemoteCoreAuthority(action, body, allowDraining = false) {
   if (!allowDraining && (quitting || shutdownInProgress || exitCommitted || lifecycleAdmission.busy())) throw new Error('Remote admission is closed');
@@ -1101,8 +1111,10 @@ function registerIpc({ logger, stateStore }) {
     destroy: async () => { await nativeClientControl?.destroy(); },
   });
   registerLifecycleParticipant('agent-native', {
-    currentOperation: () => agentNativeBridge?.status().activeCount ? 'Native Agent inference' : null,
-    destroy: async () => { await nativeAccountExecution?.destroy(); await agentNativeBridge?.destroy(); },
+    currentOperation: () => persistentNativeConversations?.currentOperation()
+      || nativeAccountExecution?.currentOperation()
+      || (agentNativeBridge?.status().activeCount ? 'Native Agent inference' : null),
+    destroy: async () => { await closeNativeConversationOwners(); await agentNativeBridge?.destroy(); },
   });
   const getNativeAccountAuthority = () => {
     if (nativeAccountAuthority) return nativeAccountAuthority;
@@ -1145,8 +1157,19 @@ function registerIpc({ logger, stateStore }) {
   };
   registerNativeAccounts({ handle, getAuthority: getNativeAccountAuthority, getInventory: getNativeAccountInventory,
     getExecution: getNativeAccountExecution,
+    beforeExecutionClosed: execution => closeNativeConversationOwners(execution),
     onExecutionClosed: execution => { if (nativeAccountExecution === execution) nativeAccountExecution = null; publishNativeAccountModels(); },
     openExternal: url => shell.openExternal(url), clipboard });
+  registerPersistentNativeConversations({ handle,
+    getContext: () => nativeAccountExecution?.persistentContext() ?? null,
+    getService: () => {
+      persistentNativeConversations ??= createPersistentNativeConversations({
+        getExecution: () => nativeAccountExecution?.persistentContext() ?? null,
+        storageRoot: path.join(CORE_HOME, 'native-conversations'),
+      });
+      return persistentNativeConversations;
+    },
+  });
   registerLifecycleParticipant('native-account-inventory', {
     currentOperation: () => nativeAccountInventory?.currentOperation() ?? null,
     destroy: async () => { await nativeAccountInventory?.destroy(); },

@@ -1,6 +1,7 @@
 import languages from "../electron/languages.json";
 import type { TaskPlanObservation, TaskPlanPolicy, TaskRequirementBook, TaskRequirementSaveInput, TaskRequirementCoverageInput } from './task-plan-types';
 import type { NativeThreadsApi } from './native-threads-types';
+import type { NativePersistentApi } from './native-persistent-types';
 import type { WorkspaceTerminalApi } from './workspace-terminal-types';
 import type { RemoteWorkspaceApi } from '../electron/remote-workspace.cjs';
 import type { WorkspaceGitControlsApi } from './WorktreeControls';
@@ -600,7 +601,7 @@ export interface RouteDiagnosticsReport {
   };
 }
 
-export interface LauncherApi extends NativeThreadsApi, WorkspaceTerminalApi, RemoteWorkspaceApi, WorkspaceGitControlsApi {
+export interface LauncherApi extends NativeThreadsApi, NativePersistentApi, WorkspaceTerminalApi, RemoteWorkspaceApi, WorkspaceGitControlsApi {
   workspaceRoots(): Promise<LocalWorkspaceRoot[]>;
   workspaceOpenWorktree(sourceRootId: string, worktreeId: string): Promise<LocalWorkspaceRoot>;
   workspacePick(): Promise<LocalWorkspaceRoot | null>;

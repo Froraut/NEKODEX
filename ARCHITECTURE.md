@@ -58,6 +58,7 @@ separate facts.
 | Conversation text history | [store](src/conversation-history/store.ts), [HTTP actions](src/conversation-history/http.ts), [validated producer adapter](src/conversation-history/capture.ts), [canonical capture](src/conversation-history/canonical.ts), [owned Native final projection](src/conversation-history/owned-native.ts), [main recorder](launcher/electron/canonical-native-history.cjs), [filter](launcher/electron/canonical-history-policy.cjs), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | The Bun daemon owns the SQLite/FTS writer. Manual selected text, explicitly refreshed native canonical pages and future validated owned Native final summaries have separate default-off policies. Owned final capture requires global recording, exact task-generation consent, risk acknowledgement and a pre-offer lease; trusted admission provenance and current task authority are revalidated at write. Source-unavailable revocation persists across source return; unavailable status never asserts consent is off. Per-thread consent/recording epoch invalidates late capture; known-pattern exclusions do not guarantee removal of unknown secrets. All corpus coverage remains partial; native empty-page proof is not text proof. |
 | Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx) | Main's native picker grants an opaque root ID; renderer paths stay relative. The service owns private persisted roots/drafts, bounded reads and revision-aware writes. Opaque captured base choices support HEAD/local/remote-tracking comparisons with stale reference checks, no fetch/checkout. Actual DEV UI showed HEAD and older-base working diffs/full OIDs without moving main. Bounded in-memory comparisons remain read-only, not recoverable code checkpoints. |
 | Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Public native thread list/read UI remains metadata-only; the main-only canonical recorder separately reads supported items under explicit consent. Status is scoped to the configured connection/server. Fork is an explicit user action; start/interrupt/approve are unsupported. Executable/home/socket are main-owned dependencies. |
+| Retained owned Native conversations | [owner](launcher/electron/persistent-native-conversations.cjs), [IPC](launcher/electron/ipc/native-persistent-conversations.cjs), [panel](launcher/src/NativePersistentConversationsPanel.tsx), [contract](docs/design/persistent-native-conversations.md) | Explicit retention for new conversations, exact-context/revision follow-up and fork share the qualified account's sender and lease. The normal Agent lifetime remains ephemeral. Reads and restart never send; unavailable old owners are not adopted. This is separate from legacy configured-profile metadata and third-party client handoff. |
 | Owned Native inference leaf | [admission](launcher/electron/owned-native-admission.cjs), [worker](launcher/electron/owned-native-worker.cjs), [receipts](launcher/electron/owned-native-journal.cjs) | The trusted [auth authority](launcher/electron/native-account-authority.cjs) owns explicit fresh-profile official CLI device login; the [inventory owner](launcher/electron/native-account-inventory.cjs) qualifies only its own exact personal-Pro-family profile (`pro`, `prolite`, `promax`), native account/usage and original catalog; the actual plan value is retained. The [execution owner](launcher/electron/native-account-execution.cjs) seals qualified model metadata and resolves model/admission pairs into one account stdio process/AuthManager/sender with up to two new isolated task threads. Main/Bun/Agent UI use a private descriptor and fixed protocol. An isolated personal Pro (Max) account and two real models have been admitted and exercised; this does not establish all-account or installed-app acceptance. The pinned public-library Rust wrapper keeps mandatory policy; network-denied `--account-info` classification is separate from cloud-aware startup checks. Fixture-route official-account refusal remains unchanged. Existing metadata/fork authority is unchanged; neither fake-provider evidence nor a compiled wrapper proves real delivery. |
 | Standalone Agent mode | [store](src/agent-mode/store.ts), [runner](src/agent-mode/runner.ts), [runtime](src/agent-mode/runtime.ts), [Responses port](src/agent-mode/provider.ts), [Native port](src/agent-mode/native-provider.ts), [main bridge](launcher/electron/agent-native-bridge.cjs), [HTTP actions](src/agent-mode/http.ts), [IPC](launcher/electron/ipc/agent-mode.cjs), [surface](launcher/src/AgentModeSurface.tsx) | A separate task family owns stages, durable mailbox/dispatch/command receipts and bounded Goal/Loop. The existing Responses owner executes configured Web routes and advertises explicitly enabled MCP descriptors. Durable pending tool calls require exact approval/results before canonical continuation; snapshot grants grant no tool/filesystem authority. Monetary cost remains unknown without an actual receipt. |
 | Human workspace terminal | [PTY service](launcher/electron/workspace-terminal.cjs), [IPC](launcher/electron/ipc/workspace-terminal.cjs) | Main-owned session/generation and picker grant; bounded output/ack/backpressure and exact PTY lifecycle. Main/preload/Workspace UI and xterm are wired; native `node-pty` availability/ABI remains platform-specific. Human input is not an Agent tool. |
@@ -489,6 +490,16 @@ observed fork ID when retaining the receipt fails; explicit inspection acknowled
 that exact journal action. Destroy waits for its owned
 client process and never stops an existing server daemon.
 
+**Retained owned conversations:** the separate explicit-retention panel uses
+`persistent-native-conversations.cjs` and the existing account server. Every
+mutation binds the observed profile, epoch and server generation. A shared gate
+excludes active or uncertain Agent work. Native receipts remain authoritative
+for actual offers; the private registry associates them with a conversation and
+revision. A passive exact-action lookup resolves a lost reply even after the
+selected account changes. Both conversation drain and account transport shutdown
+start together and must settle before completion. Restart-resume and external
+client handoff are not exposed by this mode.
+
 **Agent mode:** the store owns SQLite tasks, workers, mailbox revisions, commands,
 dispatches and receipts. Runner/runtime own one task-family generation and an
 explicit execution port; opening/status reads perform no execution. Stable action
@@ -496,12 +507,13 @@ IDs deduplicate commands; offered/unknown sends require reconciliation, and late
 results remain attached to their dispatch. Corrections, pause/stop and bounded
 Goal/Loop respect current generation and real outcomes. Mailbox work packets
 provide the recurring-work source with durable work identity, deduplication and
-pause/generation boundaries. Core two-cycle behavior has focused fixture evidence. Actual bounded UI with an
-inert adapter reached the initial stage (1/2), waited for substantive mailbox work
-without empty Continue, then settled a declared packet (2/2). Re-enqueueing its
-exact key retained two runs/two turns; Pause advanced generation to 3 and removed
-Run consent. This proves that UI/durable boundary, not an external model or
-business outcome. External watchers remain unavailable. The provided
+pause/generation boundaries. Core two-cycle behavior has focused fixture evidence.
+The actual GPT-6.1-Sol mailbox Loop also completed two cycles with distinct final
+summaries, waiting for a substantive new packet between them. Re-enqueueing the
+same key/text retained two dispatches while the bound still allowed a third;
+Pause advanced generation to 3 and removed Run consent. This establishes real
+model scheduling and duplicate suppression, not a business outcome. External
+watchers remain unavailable. The provided
 Responses adapter calls a fixed configured loopback endpoint without redirects
 or implicit retries. `server.ts` routes an explicit `local-responses` or
 `owned-native` execution choice through the same runtime, runner and ToolJournal.

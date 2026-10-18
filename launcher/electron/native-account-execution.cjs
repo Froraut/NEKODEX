@@ -48,6 +48,13 @@ function createNativeAccountExecutionService({ authority, inventory, getWrapperP
   }
   function models() { return !destroyed && !current?.failed && current?.server?.inspect().accepting ? current.admission.models.map(row => ({ ...row })) : []; }
   return Object.freeze({ admit, models,
+    // Trusted main-only view of the already admitted owner. This accessor never
+    // starts a process or reopens a profile and is never exposed through IPC.
+    persistentContext() {
+      if (destroyed || preparing || closing || !current || current.failed || !current.server?.inspect().accepting) return null;
+      return { server: current.server, models: models(), serverGeneration: current.serverGeneration,
+        profileId: current.lease.profileId, epoch: current.lease.epoch };
+    },
     resolveAdmission(admissionId, model) {
       const row = models().find(row => row.id === model && row.admissionId === admissionId);
       if (!row) return undefined;
@@ -72,4 +79,11 @@ function createNativeAccountExecutionService({ authority, inventory, getWrapperP
     },
   });
 }
-module.exports = { createNativeAccountExecutionService };
+async function settleNativeConversationOwners(execution, conversations) {
+  // Both destroy methods stop admission synchronously. The account transport
+  // must be allowed to close while a conversation awaits its missing ACK.
+  const results = await Promise.allSettled([conversations?.destroy(), execution?.destroy()]);
+  const failed = results.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
+}
+module.exports = { createNativeAccountExecutionService, settleNativeConversationOwners };

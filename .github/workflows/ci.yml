@@ -59,6 +59,9 @@ jobs:
       - name: Run focused tunnel credential regressions
         if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
         run: bun run test:tunnel-credentials
+      - name: Run persistent Native ownership regressions
+        if: runner.os == 'Linux' && github.event_name != 'workflow_dispatch'
+        run: bun test tests/persistent-native-conversations.test.ts tests/native-persistent-ipc.test.ts tests/native-account-ipc.test.ts --timeout 10000
       - name: Validate launcher installer with Windows PowerShell 5.1
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: powershell

@@ -5,7 +5,7 @@ export interface OwnedNativeCanonicalItem {
   text: string;
   timestampMs: number;
   phase?: string | null;
-  authorship: 'automatic-host' | 'native-assistant';
+  authorship: 'automatic-host' | 'direct-user' | 'native-assistant';
   imageAttachments?: import('./owned-native-images.cjs').OwnedNativeImageMetadata[];
 }
 export interface OwnedNativeUsage {
@@ -24,7 +24,7 @@ export interface OwnedNativeReceipt {
   /** Append-only bounded state facts; held uncertainty is retained after exact reconciliation. */
   observations: Array<{ state: OwnedNativeReceipt['state']; ownerHeld: boolean; turnId: string | null;
     timestampMs: number; reasonCode?: string }>;
-  inputAuthorship: 'automatic-host'; usage: OwnedNativeUsage | null;
+  inputAuthorship: 'automatic-host' | 'direct-user'; usage: OwnedNativeUsage | null;
   reasonCode?: string; nativeStatus?: 'completed' | 'failed' | 'interrupted';
   canonicalItems?: OwnedNativeCanonicalItem[];
   structuredOutput?: unknown;
@@ -33,7 +33,7 @@ export interface OwnedNativeReceipt {
 export interface OwnedNativeSnapshot {
   availability: { available: boolean; reasonCode: string | null };
   storageOwner: 'current' | 'elsewhere-or-unverified' | 'stale' | 'unclaimed';
-  scope: 'private-owned-ephemeral';
+  scope: 'private-owned-ephemeral' | 'private-owned-persistent';
   delivery: 'local-fixture-only' | 'qualified-account';
   state: 'disconnected' | 'creating' | 'ready' | 'offering' | 'unknown' | 'retiring' | 'retired';
   workerHandle: string | null;
@@ -83,6 +83,11 @@ export function createOwnedNativeAccountServer(options:{
   requestTimeoutMs?:number;terminalTimeoutMs?:number;stopGraceMs?:number;maxConcurrentThreads?:number;onChange?:()=>void;
 }):{
   createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void):ReturnType<typeof createOwnedNativeWorkerService>;
+  /** Main-only exclusive account operation. No raw RPC or foreign-thread adoption. */
+  persistentOperation<T>(action:(operation:{
+    createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void,forkThreadId?:string):ReturnType<typeof createOwnedNativeWorkerService>;
+    useWorker(worker:ReturnType<typeof createOwnedNativeWorkerService>):ReturnType<typeof createOwnedNativeWorkerService>;
+  })=>Promise<T>):Promise<T>;
   inspect():{serverGeneration:string;pid:number|null;closed:boolean;accepting:boolean;threadIds:string[];bindings:string[];activeCount:number};
   currentOperation():string|null;destroy():Promise<void>;
 };
