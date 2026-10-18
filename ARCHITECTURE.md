@@ -320,9 +320,9 @@ prove a released or installed feature. Source baseline [PR #98](https://github.c
 (`137399d`, `6.1.32-nekodex.9`) passed all four baseline CI jobs; installed D01
 remains `6.1.32-nekodex.8`. The later requirements/base-selection/canonical-history/
 managed-skills batch has its own fixture evidence and four completed DEV UI flows,
-while its source publication remains separate from the earlier baseline CI. Source commit
-`09383bb` contains that follow-up; the newer builtin browser/native desktop batch
-is uncommitted and has no real model/account turn; actual fixture capture/type is
+with its own source publication in `09383bb`. The builtin browser/native desktop batch
+is published in `6f6b171`, whose macOS/Linux/Windows/actionlint CI jobs all passed.
+It has no real model/account turn; actual fixture capture/type is
 observed, including a separate fresh observe→click→canonical-final flow. Real
 model/account and generic CG pixel fallback remain unverified. The
 [full adoption program](docs/design/full-adoption-program.md) records the broader

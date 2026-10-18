@@ -42,10 +42,11 @@ outbox; usage — отдельные источники и честные estima
   завершились успешно. Установленная версия остаётся `6.1.32-nekodex.8`.
   Следующие DW1/P07/DW5/P16 изменения — новая исходная партия после baseline;
   его CI не является проверкой новых bytes и не означает installed update.
-- **Текущая browser/desktop партия ещё не committed:** после source commit
+- **Browser/desktop source партия опубликована в `6f6b171`:** после source commit
   `09383bb` добавлены P12 standalone browser tools через существующий host/journal,
   P13/P14 macOS helper/provider/controller/admin UI, canonical tool images и
-  append-only late reconciliation. Source остаётся `.9`, installed — `.8`.
+  append-only late reconciliation. Все четыре CI jobs точного `6f6b171` прошли:
+  macOS, Ubuntu, Windows, actionlint. Source остаётся `.9`, installed — `.8`.
   Реальный Chromium/MV3 composition fixture прошёл 1 / 49: observe→type→observe→click,
   пять counted canonical model requests, duplicate без второго эффекта и restart
   с retained receipt без rebind/replay. Это inert model adapter, не аккаунтный model
@@ -56,7 +57,7 @@ outbox; usage — отдельные источники и честные estima
   exact fixture, inspected permissions все true; desktop discovery работал при
   выключенном MCP. Первый actual JPEG —70027 bytes; AX literal type completed и
   поле через CUA содержало точный ожидаемый текст; второй JPEG —78916 bytes.
-  Native click ещё не вызывался: 128 KiB history projection исключила целый latest
+  Первый click тогда не вызывался: 128 KiB history projection исключила целый latest
   dispatch с pending call. HTTP/UI теперь имеют отдельные compact `pendingToolCalls`
   и coverage независимо от истории (1 / 19 HTTP, 1 / 4 UI); лимиты и retained
   original images не расширены, outcomes не replay. Original task paused на4/6,
@@ -100,8 +101,8 @@ outbox; usage — отдельные источники и честные estima
 - P07 actual Git boundary (1 / 23), DW1 real ledger (1 / 36) и P16 5 focused cases /
   69 assertions переиспользованы; обе полные project TS проверки от 09:55 остаются
   passing, renderer build —188 modules, architecture update/check прошли у root.
-  Эти development результаты относятся к новой ещё не опубликованной партии,
-  а не к прежнему PR CI или установленному приложению.
+  Эта партия опубликована в `09383bb`; её development результаты отделены от
+  более раннего baseline CI и установленного приложения.
 - **DW5 actual native boundary:** официальный Codex 0.163.0 подтвердил
   `thread/read` + `thread/items/list`, но inert injected history вернул пустую
   canonical page. `--canonical-only` честно завершает этот исход кодом 2

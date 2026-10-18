@@ -2,11 +2,12 @@
 
 Use this feature map with the maintained [architecture](../../ARCHITECTURE.md) and [module map](module-map.json). Start a feature at its domain boundary and keep its lifecycle owner in charge. Existing facade exports remain available to avoid forcing every caller to migrate at once.
 
-Current published source baseline is [PR #98](https://github.com/Froraut/NEKODEX/pull/98),
-`137399d` / `6.1.32-nekodex.9`, with four successful baseline CI jobs. Installed
-D01 remains `6.1.32-nekodex.8`; later DW1/P07/DW5/P16 source changes have distinct
-fixture evidence and four completed integrated DEV UI flows, not inherited
-CI/install proof; publication of those later bytes remains a separate result.
+Current published implementation is [PR #98](https://github.com/Froraut/NEKODEX/pull/98),
+`6f6b171` / `6.1.32-nekodex.9`, with four successful CI jobs for that exact code.
+It follows the workspace foundation `137399d` and requirements/history/skills batch
+`09383bb`. Installed D01 remains `6.1.32-nekodex.8`. The browser and native desktop
+fixtures and actual macOS DEV capture/AX results are separate from real provider,
+other platform and installed delivery evidence.
 
 ## Where changes belong
 
