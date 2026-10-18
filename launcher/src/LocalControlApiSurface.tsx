@@ -1,0 +1,30 @@
+import { useEffect, useRef, useState } from 'react';
+import { Button, Checkbox, Notice, Panel } from './design';
+import type { Language } from './types';
+import type { LocalControlApiAdminApi,LocalControlApiStatus } from './local-control-api-types';
+import './surfaces/local-control-api.css';
+export function LocalControlApiSurface({api,language='en'}:{api:LocalControlApiAdminApi;language?:Language}) {
+  const ru=language==='ru';
+  const [status,setStatus]=useState<LocalControlApiStatus|null>(null),[consent,setConsent]=useState(false),[historyConsent,setHistoryConsent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const alive=useRef(true);
+  const generation=useRef(0);
+  useEffect(()=>{const token=++generation.current;alive.current=true;setError('');api.request({action:'status'}).then(value=>{if(alive.current&&token===generation.current)setStatus(value.status);}).catch(reason=>{if(alive.current&&token===generation.current)setError(reason instanceof Error?reason.message:String(reason));});return()=>{alive.current=false;generation.current++;};},[api]);
+  const run=async(body:Parameters<LocalControlApiAdminApi['request']>[0])=>{
+    if(busy)return;setBusy(true);setError('');setNotice('');
+    try{const value=await api.request(body);if(alive.current){setStatus(value.status);if(value.tokenCopied)setNotice(ru?'Новый токен скопирован один раз. В приложении хранится только его хеш.':'New token copied once. The app stores only its hash.');}}
+    catch(reason){if(alive.current)setError(reason instanceof Error?reason.message:String(reason));}
+    finally{if(alive.current)setBusy(false);}
+  };
+  return <section className="local-control-api" aria-label={ru?'Локальный API управления':'Local control API'}><Panel title={ru?'Локальный API только для чтения':'Read-only local control API'}>
+    <p>{ru?'Отдельный токен открывает версию API /api/v1 только на этом компьютере. Он позволяет читать состояние и метаданные задач; не позволяет запускать модели, выполнять команды, управлять задачами или менять настройки.':'A separate token opens /api/v1 on this computer only. It can read status and task metadata; it cannot run models, execute commands, control tasks or change settings.'}</p>
+    <p>{ru?'Токен создаётся и копируется однократно. Сохраните его безопасно. Приложение хранит только хеш; потерянный токен заменяется явной ротацией. Отключение немедленно отзывает доступ.':'The token is created and copied once. Store it safely. The app retains only its hash; a lost token requires explicit rotation. Disabling revokes access immediately.'}</p>
+    {error?<Notice tone="error" title={error} role="alert"/>:null}{notice?<p role="status">{notice}</p>:null}
+    {status?<><p role="status">{status.enabled?(ru?'Включён':'Enabled'):(ru?'Отключён':'Disabled')} · API v{status.apiVersion}</p><p className="local-control-api__path">{status.baseUrl}</p><p className="local-control-api__path">{status.policyPath}</p><ul>{status.permissions.map(permission=><li key={permission}><code>{permission}</code></li>)}</ul></>:null}
+    {!status?.enabled?<Checkbox label={ru?'Я разрешаю отдельным локальным клиентам с токеном читать состояние и метаданные задач.':'I allow separate local clients holding the token to read status and task metadata.'} checked={consent} onChange={setConsent} disabled={busy}/>:null}
+    <div className="local-control-api__actions"><Button disabled={busy||!status||!status.enabled&&!consent} onClick={()=>void run({action:status?.enabled?'disable':'enable',consent})}>{status?.enabled?(ru?'Отключить API':'Disable API'):(ru?'Включить и скопировать токен':'Enable and copy token')}</Button><Button disabled={busy||!status?.enabled} onClick={()=>void run({action:'rotate',consent:true})}>{ru?'Заменить и скопировать токен':'Rotate and copy token'}</Button><Button disabled={busy} onClick={()=>void run({action:'status'})}>{ru?'Обновить':'Refresh'}</Button></div>
+  </Panel><Panel title={ru?'Отдельное разрешение на содержимое истории':'Separate history-content permission'}>
+    <p>{ru?'По умолчанию API отдаёт только счётчики покрытия истории. Разрешение ниже открывает сохранённый текст, идентификаторы переписок и сообщений всем держателям токена API. В тексте могут быть чувствительные сведения; автоматического удаления секретов нет. Это разрешение не включает запись новой истории.':'By default the API exposes only history coverage counts. The permission below exposes saved text and thread/message identities to every API token holder. Text can be sensitive and is not automatically redacted. This permission does not enable new history recording.'}</p>
+    {!status?.historyContent?<Checkbox disabled={busy||!status?.enabled} checked={historyConsent} onChange={setHistoryConsent} label={ru?'Я явно разрешаю этому токену читать сохранённое содержимое истории.':'I explicitly permit this token to read saved conversation content.'}/>:null}
+    <Button disabled={busy||!status?.enabled||!status.historyContent&&!historyConsent} onClick={()=>void run({action:'history-consent',enabled:!status?.historyContent,consent:historyConsent})}>{status?.historyContent?(ru?'Отозвать доступ к тексту':'Revoke content access'):(ru?'Разрешить чтение текста':'Allow content reads')}</Button>
+  </Panel><Panel title={ru?'Поддерживаемые маршруты':'Supported routes'}><ul><li><code>GET /api/v1/status</code></li><li><code>GET /api/v1/tasks?limit=30&amp;offset=0</code></li><li><code>GET /api/v1/agent-tasks</code></li><li><code>GET /api/v1/history?view=coverage</code></li><li><code>GET /api/v1/history?view=threads</code></li><li><code>GET /api/v1/history?view=messages&amp;clientId=…&amp;threadId=…</code></li></ul><p>{ru?'Действия Agent Mode используют отдельную административную авторизацию и существующего владельца выполнения. Токен чтения не повышает свои права.':'Agent Mode actions require separate administrative authority and use the existing execution owner. A read token cannot upgrade its permissions.'}</p></Panel></section>;
+}

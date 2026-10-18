@@ -1808,6 +1808,7 @@ class AccountBrowserPool {
     }
     return result;
   }
+  taskPlan(traceId, ...args) { return this.ownerForTrace(traceId).taskPlan(traceId, ...args); }
   dismissTask(accountId, id) {
     const host = this.getHost(accountId);
     const record = host.taskLedger.get(id);

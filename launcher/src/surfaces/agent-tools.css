@@ -1,0 +1,10 @@
+.agent-tools-surface { display: grid; gap: var(--space-5); }
+.agent-tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: var(--space-4); }
+.agent-tools-state, .agent-tools-root { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
+.agent-tools-root { justify-content: space-between; padding-block: var(--space-3); }
+.agent-tools-records { padding: 0; list-style: none; display: grid; gap: var(--space-3); }
+.agent-tools-records li { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+.agent-tools-surface pre { max-height: 24rem; max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-control); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); font-size: 13px; }
+.agent-tools-surface textarea { resize: vertical; width: 100%; }
+.agent-tools-muted { color: var(--text-secondary); }
+.agent-tools-review { display: grid; gap: var(--space-3); margin-top: var(--space-4); }

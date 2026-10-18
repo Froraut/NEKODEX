@@ -9,6 +9,26 @@ const { showChromeProfilePicker } = require("./chrome-profile-picker.cjs");
 const { createProfileFirstLogin } = require("./profile-first-login.cjs");
 const { catalogReceipt } = require("./catalog-receipt.cjs");
 const { AccountBrowserPool } = require("./account-pool.cjs");
+const { createTaskPlanStore } = require('./task-plans.cjs');
+const { createLocalWorkspaceService } = require('./local-workspace.cjs');
+const { registerWorkspaceIpc } = require('./ipc/workspace.cjs');
+const { registerConversationHistory } = require('./ipc/conversation-history.cjs');
+const { registerAgentMode } = require('./ipc/agent-mode.cjs');
+const { createCodexClientControl } = require('./codex-client-control.cjs');
+const { registerCodexClientControlIpc } = require('./ipc/codex-client-control.cjs');
+const { resolveCodexExecutable } = require('./codex-login.cjs');
+const { createWorkspaceTerminalService } = require('./workspace-terminal.cjs');
+const { registerWorkspaceTerminalIpc } = require('./ipc/workspace-terminal.cjs');
+const { createRemoteWorkspaceService } = require('./remote-workspace.cjs');
+const { registerRemoteWorkspaceIpc } = require('./ipc/remote-workspace.cjs');
+const { createWorkspaceGitService } = require('./workspace-git-mutations.cjs');
+const { registerWorkspaceGitIpc } = require('./ipc/workspace-git.cjs');
+const { createExternalUsageService } = require('./external-usage.cjs');
+const { registerExternalUsageIpc } = require('./ipc/external-usage.cjs');
+const { registerAgentTools } = require('./ipc/agent-tools.cjs');
+const { registerBrowserCompanion } = require('./ipc/browser-companion.cjs');
+const { registerLocalControlApi } = require('./ipc/local-control-api.cjs');
+const { createAgentWorkspaceEvidenceAuthority } = require('./agent-workspace-evidence.cjs');
 const { currentPickerContract, pickerReconciliationPatch } = require("./codex-picker-contract.cjs");
 const { syncConversationPreferences, changeConversationPreference } = require("./conversation-preferences.cjs");
 const { createCodexAccountTools } = require("./codex-account-tools.cjs");
@@ -113,6 +133,14 @@ const SOURCE_ROOT = path.resolve(__dirname, "../..");
 const LAUNCHER_PROFILE = resolveLauncherProfile({ appData: app.getPath("appData") });
 const IS_DEV_PROFILE = LAUNCHER_PROFILE.kind === DEVELOPMENT_PROFILE;
 const CORE_HOME = LAUNCHER_PROFILE.coreHome;
+const taskPlans = createTaskPlanStore({ coreHome: CORE_HOME });
+let localWorkspaceService = null;
+let nativeClientControl = null;
+let workspaceTerminalService = null;
+let remoteWorkspaceService = null;
+let workspaceGitService = null;
+let externalUsageService = null;
+let workspaceEvidenceService = null;
 const ACTIVE_BROWSER_CAPACITY = readBrowserCapacity(CORE_HOME);
 process.env[CAPACITY_ENV] = String(ACTIVE_BROWSER_CAPACITY);
 function browserCapacitySnapshot() {
@@ -941,6 +969,76 @@ function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(
     ipcMain, logger, channel, lifecycleAdmission.guard(channel, handler), authorize,
   );
+  handle('launcher:task-plan-policy', async () => taskPlans.status());
+  handle('launcher:task-plan-capture', async (_event, enabled, revision) => taskPlans.setEnabled(enabled, revision));
+  handle('launcher:task-plan-read', async (_event, accountId, taskId) => taskPlans.get({ accountId, taskId }));
+  handle('launcher:task-plan-delete', async (_event, accountId, taskId) => taskPlans.delete({ accountId, taskId }));
+  localWorkspaceService ??= createLocalWorkspaceService({
+    registryPath: path.join(app.getPath('userData'), 'workspace-private', 'registry.json'),
+    agentWorkspaceGrantKeyPath: path.join(CORE_HOME, 'agent-workspace', 'grant-key'),
+    resolveManagedWorktree: (sourceRootId, worktreeId) => workspaceGitService.resolveManagedRoot(sourceRootId, worktreeId),
+    pickDirectory: async () => {
+      const chosen = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+      return chosen.canceled ? null : chosen.filePaths[0] || null;
+    },
+  });
+  workspaceTerminalService ??= createWorkspaceTerminalService();
+  workspaceGitService ??= createWorkspaceGitService({
+    resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
+    storagePath: path.join(app.getPath('userData'), 'workspace-git'),
+    canArchiveWorktree: (sourceRootId, worktreeId) => !localWorkspaceService.hasManagedRootGrant(sourceRootId, worktreeId),
+  });
+  registerLifecycleParticipant('workspace-git', {
+    currentOperation: () => workspaceGitService.currentOperation(),
+    destroy: () => workspaceGitService.destroy(),
+  });
+  registerWorkspaceGitIpc({ registerIpcHandler: handle, service: workspaceGitService });
+  registerWorkspaceIpc({ registerIpcHandler: handle, service: localWorkspaceService, beforeForget: id => {
+    if (workspaceGitService.hasRetainedState(id)) throw new Error('Keep this folder registered to access its worktrees, archives and snapshots');
+    if (workspaceTerminalService.list(id).some(row => ['running', 'closing'].includes(row.state))) throw new Error('Close this folder’s terminal sessions before forgetting it');
+  } });
+  registerWorkspaceTerminalIpc({ registerIpcHandler: handle, service: workspaceTerminalService,
+    resolveGrant: id => localWorkspaceService.resolveGrant(id) });
+  registerLifecycleParticipant('workspace-terminal', {
+    currentOperation: () => workspaceTerminalService.currentOperation?.() ?? null,
+    destroy: async () => { await workspaceTerminalService.destroy(); },
+  });
+  registerConversationHistory({ handle, runtimeHost, clipboard, dialog });
+  remoteWorkspaceService ??= createRemoteWorkspaceService({ storagePath: path.join(CORE_HOME, 'remote-workspaces', 'registry.json') });
+  registerRemoteWorkspaceIpc({ registerIpcHandler: handle, service: remoteWorkspaceService });
+  registerLifecycleParticipant('remote-workspaces', {
+    currentOperation: () => remoteWorkspaceService.currentOperation?.() ?? null,
+    destroy: async () => { await remoteWorkspaceService.destroy(); },
+  });
+  workspaceEvidenceService ??= createAgentWorkspaceEvidenceAuthority({
+    keyPath: path.join(CORE_HOME, 'agent-workspace', 'grant-key'),
+    resolveWorkspace: id => localWorkspaceService.resolveGrant(id),
+  });
+  registerAgentMode({ handle, runtimeHost, workspaceService: localWorkspaceService, workspaceEvidenceService });
+  registerAgentTools({ handle, runtimeHost, dialog, getWindow: () => mainWindow });
+  registerBrowserCompanion({ handle, runtimeHost, clipboard });
+  registerLocalControlApi({ handle, runtimeHost, clipboard });
+  externalUsageService ??= createExternalUsageService({
+    statePath: path.join(CORE_HOME, 'external-usage', 'state.json'),
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    },
+  });
+  registerExternalUsageIpc({ handle, service: externalUsageService });
+  registerCodexClientControlIpc({ handle, getClient: () => {
+    nativeClientControl ??= createCodexClientControl({
+      executable: resolveCodexExecutable({ environment: process.env }),
+      codexHome: LAUNCHER_PROFILE.codexHome,
+      cwd: LAUNCHER_PROFILE.codexHome,
+      journalPath: path.join(CORE_HOME, 'native-thread-control', 'forks.json'),
+    });
+    return nativeClientControl;
+  } });
+  registerLifecycleParticipant('native-thread-control', {
+    currentOperation: () => nativeClientControl?.currentOperation?.() ?? null,
+    destroy: async () => { await nativeClientControl?.destroy(); },
+  });
   const syncConversationState = owner => {
     if (owner) lifecycleAdmission.assertOwner(owner);
     return syncConversationPreferences({
@@ -2197,6 +2295,7 @@ async function start() {
     }),
   });
   browserHost = new AccountBrowserPool({
+    taskPlans,
     skipInitialNavigation: launcherSmokeTest,
     getManualSubmitTimeoutSec: () => stateStore.read().manualSubmitTimeoutSec,
     coreHome: CORE_HOME,

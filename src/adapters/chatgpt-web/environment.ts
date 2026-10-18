@@ -40,7 +40,7 @@ export { extractCodexTurnIdentityFromBody, isCodexComposerPrediction } from "./b
 export type { ChatGptTurnIdentity } from "./browser-request-contract";
 
 export interface ChatGptTurnEnvironment {
-  producer?: "codex" | "hermes" | "claude" | "api";
+  producer?: "codex" | "hermes" | "claude" | "api" | "agent";
   cwd: string;
   roots: string[];
   writableRoots: string[];

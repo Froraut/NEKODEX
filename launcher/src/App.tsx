@@ -37,8 +37,35 @@ const ActivitySurface = deferredSurface(async () => ({ default: (await import('.
 const AccountSettings = deferredSurface(async () => ({ default: (await import('./AccountSettings')).AccountSettings }));
 const SettingsSurface = deferredSurface(async () => ({ default: (await import('./SettingsSurface')).SettingsSurface }));
 const TaskCenter = deferredSurface(async () => ({ default: (await import('./TaskCenter')).TaskCenter }));
+const WorkspaceSurface = deferredSurface(async () => ({ default: (await import('./WorkspaceSurface')).WorkspaceSurface }));
+const RemoteWorkspaceSurface = deferredSurface(async () => ({ default: (await import('./RemoteWorkspaceSurface')).default }));
+const ConversationHistorySurface = deferredSurface(async () => ({ default: (await import('./ConversationHistorySurface')).ConversationHistorySurface }));
+const NativeThreadsSurface = deferredSurface(async () => ({ default: (await import('./NativeThreadsSurface')).NativeThreadsSurface }));
+const AgentModeSurface = deferredSurface(async () => ({ default: (await import('./AgentModeSurface')).AgentModeSurface }));
+const ExternalUsageSurface = deferredSurface(async () => ({ default: (await import('./ExternalUsageSurface')).ExternalUsageSurface }));
+const AgentToolsSurface = deferredSurface(async () => ({ default: (await import('./AgentToolsSurface')).AgentToolsSurface }));
+const BrowserCompanionSurface = deferredSurface(async () => ({ default: (await import('./BrowserCompanionSurface')).BrowserCompanionSurface }));
+const LocalControlApiSurface = deferredSurface(async () => ({ default: (await import('./LocalControlApiSurface')).LocalControlApiSurface }));
 const Updates = deferredSurface(async () => ({ default: (await import('./Updates')).Updates }));
 const api = window.codexWebLauncher;
+const historyApi = {
+  request: (body: { action: string; [key: string]: unknown }) => api!.conversationHistoryRequest(body),
+  copyText: (text: string) => api!.copyConversationHistoryText(text),
+  saveMarkdown: (markdown: string) => api!.saveConversationHistoryMarkdown(markdown),
+};
+const agentModeApi = { request: (body: Record<string, unknown>) => api!.agentMode(body),
+  workspaceRoots: () => api!.agentWorkspaceRoots(), workspaceGrants: () => api!.agentWorkspaceGrants(),
+  revokeWorkspaceGrant: (grantId: string) => api!.revokeAgentWorkspaceGrant(grantId) };
+const agentToolsApi: import('./agent-tools-types').AgentToolsApi = {
+  request: body => api!.agentTools(body), pickSkillRoot: () => api!.pickAgentSkillRoot(),
+  pickInstallRoot: () => api!.pickAgentToolsInstallRoot(),
+  attachEvidence: (taskId, evidence) => api!.agentMode({ action: 'evidence', taskId, actionId: crypto.randomUUID(), evidence }),
+  listTasks: () => api!.agentMode({ action: 'list' }) as ReturnType<import('./agent-tools-types').AgentToolsApi['listTasks']>,
+  getTask: taskId => api!.agentMode({ action: 'get', taskId }) as ReturnType<import('./agent-tools-types').AgentToolsApi['getTask']>,
+};
+const browserCompanionApi = { request: api!.browserCompanion, copyPairing: api!.copyBrowserPairing };
+const localControlApi = { request: api!.localControlApiRequest };
+const externalUsageApi = { request: api!.externalUsageRequest, selectRoot: api!.externalUsagePick };
 
 function smokePassedForState(state: LauncherState, version: string): boolean {
   return state.browserSmokePassed === true && state.browserSmokeVersion === version;
@@ -882,8 +909,17 @@ function LauncherShell({
             />
             <SidebarItem active={surface === "activity"} icon="activity" label={copy.activity} onClick={() => navigateSurface("activity")} />
             <SidebarItem active={surface === 'tasks'} icon="logs" label={taskCenterTitle(language)} onClick={() => navigateSurface('tasks')} />
+            <SidebarItem active={surface === 'workspace'} icon="setup" label={language === 'ru' ? 'Проекты и файлы' : 'Projects and files'} onClick={() => navigateSurface('workspace')} />
+            <SidebarItem active={surface === 'remote-workspace'} icon="globe" label={language === 'ru' ? 'Удалённые проекты' : 'Remote projects'} onClick={() => navigateSurface('remote-workspace')} />
+            <SidebarItem active={surface === 'history'} icon="logs" label={language === 'ru' ? 'История текста' : 'Text history'} onClick={() => navigateSurface('history')} />
+            <SidebarItem active={surface === 'native-threads'} icon="accounts" label={language === 'ru' ? 'Чаты Codex' : 'Codex threads'} onClick={() => navigateSurface('native-threads')} />
+            <SidebarItem active={surface === 'agent-mode'} icon="mcp" label="Agent mode" onClick={() => navigateSurface('agent-mode')} />
+            <SidebarItem active={surface === 'external-usage'} icon="activity" label={language === 'ru' ? 'Расход клиентов' : 'Client usage'} onClick={() => navigateSurface('external-usage')} />
           </SidebarGroup>
           <SidebarGroup label={copy.configuration}>
+            <SidebarItem active={surface === 'agent-tools'} icon="mcp" label={language === 'ru' ? 'Инструменты агентов' : 'Agent tools'} onClick={() => navigateSurface('agent-tools')} />
+            <SidebarItem active={surface === 'browser-companion'} icon="browser" label={language === 'ru' ? 'Расширение Chrome' : 'Chrome companion'} onClick={() => navigateSurface('browser-companion')} />
+            <SidebarItem active={surface === 'local-control-api'} icon="setup" label={language === 'ru' ? 'Локальный API' : 'Local API'} onClick={() => navigateSurface('local-control-api')} />
             <SidebarItem
               active={surface === "setup" || surface === "mcp"}
               badge={connectionsAttention === "required"
@@ -969,6 +1005,15 @@ function LauncherShell({
             {surface === "overview" ? <Overview copy={copy} browser={browser} catalogFailure={catalogFailure}
               snapshot={snapshot} toolsReady={toolProof} logStore={logStore} navigate={navigateSurface}
               openTab={(tabId) => void openBrowserTab(tabId)} onMuteNetworkNotice={muteNetworkNotice} /> : null}
+            {surface === 'workspace' ? <WorkspaceSurface loadCopy={copy} language={language} /> : null}
+            {surface === 'remote-workspace' ? <RemoteWorkspaceSurface loadCopy={copy} language={language} api={api!} /> : null}
+            {surface === 'history' ? <ConversationHistorySurface loadCopy={copy} language={language} api={historyApi} /> : null}
+            {surface === 'native-threads' ? <NativeThreadsSurface loadCopy={copy} language={language} api={api!} disabled={transitionBusy} /> : null}
+            {surface === 'agent-mode' ? <AgentModeSurface loadCopy={copy} language={language} api={agentModeApi} disabled={transitionBusy} /> : null}
+            {surface === 'external-usage' ? <ExternalUsageSurface loadCopy={copy} language={language} api={externalUsageApi} /> : null}
+            {surface === 'agent-tools' ? <AgentToolsSurface loadCopy={copy} language={language} api={agentToolsApi} disabled={transitionBusy} /> : null}
+            {surface === 'browser-companion' ? <BrowserCompanionSurface loadCopy={copy} language={language} api={browserCompanionApi} disabled={transitionBusy} /> : null}
+            {surface === 'local-control-api' ? <LocalControlApiSurface loadCopy={copy} language={language} api={localControlApi} /> : null}
             {surface === "accounts" ? <AccountSettings loadCopy={copy} copy={copy} language={language} openBrowser={() => navigateSurface("browser")}
               setError={setError} manual={snapshot.state.browserInteractionMode === "manual"} transitionBusy={transitionBusy}
               focusAccountId={accountToolsTargetId}

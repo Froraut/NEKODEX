@@ -1,0 +1,30 @@
+import { useState } from 'react';
+import { Badge, Button, Checkbox, Notice, Panel, TextField } from './design';
+import type { AgentToolsApi, AgentToolsStatus, ManagedInstallReceipt, ServerRecipe } from './agent-tools-types';
+export function AgentToolsInstaller({ api, status, locked, choose, act, refresh, onReview }: {
+  api: AgentToolsApi; status: AgentToolsStatus | null; locked: boolean;
+  choose: (en: string, ru: string) => string;
+  act: (operation: () => Promise<void>) => Promise<void>;
+  refresh: () => Promise<void>;
+  onReview: (review: { reviewId: string; recipe: ServerRecipe; trust: string }) => void;
+}) {
+  const [actionId, setActionId] = useState<string>(() => crypto.randomUUID());
+  const [root, setRoot] = useState(''); const [consent, setConsent] = useState(false);
+  const [receipt, setReceipt] = useState<ManagedInstallReceipt | null>(null);
+  const inspect = async (id = actionId) => { setReceipt(await api.request({ action: 'installReceipt', actionId: id }) as ManagedInstallReceipt | null); await refresh(); };
+  return <Panel title={choose('Install the official filesystem server', 'Установить официальный filesystem-сервер')}>
+    <p>{choose('Limited catalog: official MCP Filesystem only. Preparation resolves an exact dependency graph without running scripts. Install, file review, save disabled, enable, and connection are separate actions.', 'Ограниченный каталог: только официальный MCP Filesystem. Подготовка закрепляет граф зависимостей без запуска скриптов. Установка, проверка файлов, сохранение выключенным, включение и подключение — отдельные действия.')}</p>
+    {status?.installCatalog?.map(recipe => <div key={recipe.id}><strong>{recipe.package}@{recipe.version}</strong><p>{recipe.capabilities}</p><code>{recipe.integrity}</code></div>)}
+    <TextField label={choose('Explicit filesystem read/write directory', 'Явный каталог для чтения и записи')} value={root} onChange={event => { setRoot(event.target.value); setConsent(false); }} action={api.pickInstallRoot ? <Button disabled={locked} onClick={() => void act(async () => { const chosen = await api.pickInstallRoot!(); if (!chosen.cancelled && chosen.root) { setRoot(chosen.root); setConsent(false); } })}>{choose('Choose directory', 'Выбрать каталог')}</Button> : undefined} />
+    <Checkbox checked={consent} onChange={setConsent} label={choose('I select this official package and directory. Its tools may read and write here after separate enablement and call approval.', 'Я выбираю этот официальный пакет и каталог. После отдельного включения и подтверждения вызовов инструменты смогут читать и записывать здесь файлы.')} />
+    <TextField label={choose('Stable installation action ID', 'Постоянный ID установки')} value={actionId} onChange={event => { setActionId(event.target.value); setReceipt(null); }} />
+    <div className="agent-tools-state"><Button disabled={locked || !consent || !root || !status?.capabilities.install} onClick={() => void act(async () => { setReceipt(await api.request({ action: 'prepareInstall', actionId, catalogId: 'official-filesystem', allowedRoot: root, explicitUserAction: true }) as ManagedInstallReceipt); await refresh(); })}>{choose('Prepare dependency graph', 'Подготовить граф зависимостей')}</Button><Button disabled={locked || !actionId} onClick={() => void act(() => inspect())}>{choose('Inspect owned transaction', 'Посмотреть состояние операции')}</Button></div>
+    {status?.installations?.rows.map(row => <div className="agent-tools-root" key={row.actionId}><span>{row.catalogId} · {row.state}</span><code>{row.actionId}</code><Button size="sm" disabled={locked} onClick={() => void act(async () => { setActionId(row.actionId); await inspect(row.actionId); })}>{choose('Inspect receipt', 'Посмотреть квитанцию')}</Button></div>)}
+    {receipt ? <div><Badge tone={receipt.state === 'installed' ? 'success' : 'neutral'}>{receipt.state}</Badge><pre>{JSON.stringify(receipt, null, 2)}</pre>
+      {receipt.state === 'prepared' ? <Button disabled={locked} onClick={() => void act(async () => { setReceipt(await api.request({ action: 'installReviewed', actionId: receipt.actionId, graphSha256: receipt.graphSha256, explicitUserAction: true }) as ManagedInstallReceipt); await refresh(); })}>{choose('Install this exact reviewed graph without scripts', 'Установить этот граф без package scripts')}</Button> : null}
+      {receipt.state === 'installed' ? <><Notice>{choose('Package bytes are installed. Installation did not start or enable a server.', 'Файлы пакета установлены. Установка не включала и не запускала сервер.')}</Notice><Button disabled={locked} onClick={() => void act(async () => { onReview(await api.request({ action: 'reviewInstalled', actionId: receipt.actionId, explicitUserAction: true }) as Parameters<typeof onReview>[0]); })}>{choose('Review installed files before configuring', 'Проверить установленные файлы')}</Button><Button disabled={locked} onClick={() => void act(async () => { setReceipt(await api.request({ action: 'uninstallManaged', actionId: receipt.actionId, explicitUserAction: true }) as ManagedInstallReceipt); await refresh(); })}>{choose('Disable and archive owned package runtime', 'Выключить и архивировать свой runtime пакета')}</Button></> : null}
+      {['preparing', 'prepared', 'installing', 'failed', 'cancelled'].includes(receipt.state) ? <Button disabled={locked} onClick={() => void act(async () => { setReceipt(await api.request({ action: 'cancelInstall', actionId: receipt.actionId, explicitUserAction: true }) as ManagedInstallReceipt); await refresh(); })}>{choose('Cancel owned work and archive staging', 'Остановить свою операцию и архивировать staging')}</Button> : null}
+      {receipt.state === 'outcome_unknown' ? <Notice tone="warning">{choose('The prior owner or final receipt is unestablished. No automatic replay is allowed. Retained staging/runtime needs reconciliation.', 'Предыдущий владелец или итоговая квитанция не установлены. Автоматический повтор запрещён. Сохранённые staging/runtime требуют сверки.')}</Notice> : null}
+    </div> : null}
+  </Panel>;
+}

@@ -39,6 +39,7 @@ interface RunMessage {
   turn: {
     traceId: string;
     observation?: BrowserTurn["observation"];
+    planObservation?: BrowserTurn["planObservation"];
     modelId: string;
     requestedModel?: string;
     reasoning?: string;
@@ -271,6 +272,7 @@ async function run(message: RunMessage): Promise<void> {
   const turn: BrowserTurn = {
     traceId: message.turn.traceId,
     ...(message.turn.observation ? { observation: message.turn.observation } : {}),
+    ...(message.turn.planObservation ? { planObservation: message.turn.planObservation } : {}),
     modelId: message.turn.modelId,
     requestedModel: message.turn.requestedModel,
     reasoning: message.turn.reasoning,

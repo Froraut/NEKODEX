@@ -2,6 +2,7 @@ import { Disclosure, Badge } from './design';
 import { taskDetailCopy } from './task-detail-copy';
 import { taskCenterCopy } from './task-center-copy';
 import type { BrowserTaskState, Language } from './types';
+import { TaskPlanView } from './TaskPlans';
 
 /** This projection reads only bounded owner-provided metadata, never prompts or tool arguments. */
 export function TaskDetails({ task, language, timeFormat }: { task: BrowserTaskState; language: Language; timeFormat: Intl.DateTimeFormat }) {
@@ -12,6 +13,7 @@ export function TaskDetails({ task, language, timeFormat }: { task: BrowserTaskS
   const submission = { 'not-sent': text.notSent, unknown: text.unknown, uncertain: text.uncertain, 'context-accepted': text.contextAccepted, accepted: text.accepted };
   const time = (value: number) => <time dateTime={new Date(value).toISOString()}>{timeFormat.format(value)}</time>;
   return <Disclosure title={text.details} className="task-details">
+    <TaskPlanView key={`${task.accountId}:${task.id}`} task={task} language={language} />
     <section className="task-details__section">
       <h3>{text.delivery}</h3>
       <dl className="task-details__facts">

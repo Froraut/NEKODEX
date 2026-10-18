@@ -86,6 +86,14 @@ if (!browserHelperBuild.success) {
   throw new Error(`Browser helper bundle failed: ${browserHelperBuild.logs.map(log => log.message).join("; ")}`);
 }
 
+// Keep the reviewed MV3 artifact adjacent to cli.js, where the bundled runtime resolves it.
+// Copy only its shipped resources; session pairing data never belongs to this source tree.
+const companionDir = join(appDir, "browser-companion");
+mkdirSync(companionDir, { recursive: true });
+for (const name of ["manifest.json", "popup.html", "popup.css", "popup.js", "page.js", "README.md"]) {
+  copyFileSync(join(root, "browser-companion", name), join(companionDir, name));
+}
+
 copyFileSync(join(root, "package.json"), join(appDir, "package.json"));
 copyFileSync(join(root, "bun.lock"), join(appDir, "bun.lock"));
 const install = Bun.spawnSync([process.execPath, "install", "--production", "--frozen-lockfile", "--ignore-scripts"], {

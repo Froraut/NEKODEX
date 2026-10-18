@@ -1,0 +1,38 @@
+import type { AgentTask, AgentWorker, AgentDispatch, MailMessage, AgentToolOutcome, AgentWorkPacket } from '../../src/agent-mode/types';
+export type { AgentTask, AgentWorker, AgentDispatch, MailMessage, AgentToolOutcome };
+
+/** Transport is injected by App; this surface never reaches a provider directly. */
+export interface AgentWorkspaceRoot { id: string; name: string }
+export interface AgentWorkspaceGrantSummary { id: string; workspaceId: string; taskId: string; familyId: string; generation: number; paths: string[]; state: 'active' | 'revoked' }
+export interface AgentArtifactObservation {
+  evidence: AgentTask['evidence'][number];
+  reference: { observedAt?: string; actualSha256?: string | null; exists?: boolean };
+}
+export interface AgentModeApi {
+  request(body: Record<string, unknown>): Promise<unknown>;
+  workspaceRoots?(): Promise<AgentWorkspaceRoot[]>;
+  workspaceGrants?(): Promise<AgentWorkspaceGrantSummary[]>;
+  revokeWorkspaceGrant?(grantId: string): Promise<unknown>;
+}
+export interface AgentModeStatus {
+  configured: boolean;
+  accepting?: boolean;
+  ownerId?: string;
+  models: { id: string; label?: string }[];
+  capabilities: { tools: boolean; workspace: boolean; autoSchedule: boolean; observedEvidence?: boolean; loopSource?: 'mailbox'; externalWatchers?: boolean };
+  tasks: AgentTask[];
+  total?: number;
+  truncated?: boolean;
+}
+export interface AgentModeDetail {
+  task: AgentTask;
+  workers: AgentWorker[];
+  dispatches: AgentDispatch[];
+  messages: MailMessage[];
+  receipts: { id: string; kind: string; body: unknown }[];
+  toolOutcomes?: AgentToolOutcome[];
+  workPackets?: AgentWorkPacket[];
+  loopSource?: 'mailbox';
+  snapshotReceipts?: Array<{ dispatchId: string; state: string; failure: string | null; receipt: { id: string; snapshotId: string; grantId: string; generation: number; totalBytes: number; files: Array<{ path: string; revision: string | null; missing: boolean; size: number }> } | null }>;
+  coverage?: Record<'dispatches' | 'messages' | 'receipts', { total: number; truncated: boolean }>;
+}

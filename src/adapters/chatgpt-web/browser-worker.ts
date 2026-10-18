@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { boundTaskObservation, taskObservationWithProgress, type TaskObservation } from "./task-observation";
+import type { TaskPlanObservation } from "./task-plan-observation";
 import { assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, resolveChatGptWebMultipartStagingMode } from "./browser-input-policy";
 import { CHATGPT_DOM_REVISION_ATTRIBUTES } from "./browser-dom-revision";
 import { CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, ChatGptBrowserObservationTimeoutError, CHATGPT_SEND_ENABLE_GRACE_MS, settleChatGptUi, withChatGptBrowserObservationTimeout } from "./browser-operation-support";
@@ -242,6 +243,7 @@ async function waitForOperationalChatGptViewport(page: Page, signal?: AbortSigna
 
 export interface BrowserTurn {
   observation?: TaskObservation;
+  planObservation?: TaskPlanObservation;
   requestedModel?: string;
   accountRoutingKey?: string;
   traceId: string;
@@ -2271,6 +2273,15 @@ export class ChatGptBrowserWorker {
         lastPhase = phase; lastObservation = signature;
       };
       await onTaskProgress('preparing');
+      if (turn.planObservation?.native && lease.taskRecordId) {
+        // Plan capture is optional observation; a storage/policy failure cannot decide the turn outcome.
+        await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+          phase: 'plan', traceId: turn.traceId, helperPid: process.pid, surfaceId,
+          taskRecordId: lease.taskRecordId, planObservation: turn.planObservation,
+        }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS).catch(() => {
+          console.warn('[chatgpt-web] optional native plan observation unavailable');
+        });
+      }
       try {
         return await this.runBrowserTurn({ ...turn, onTaskProgress }, surfaceId, undefined, reused);
       } finally {

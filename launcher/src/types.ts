@@ -1,4 +1,16 @@
 import languages from "../electron/languages.json";
+import type { TaskPlanObservation, TaskPlanPolicy } from './task-plan-types';
+import type { NativeThreadsApi } from './native-threads-types';
+import type { WorkspaceTerminalApi } from './workspace-terminal-types';
+import type { RemoteWorkspaceApi } from '../electron/remote-workspace.cjs';
+import type { WorkspaceGitControlsApi } from './WorktreeControls';
+import type { ExternalUsageRequest, ExternalUsageSelection, ExternalUsageSnapshot } from '../electron/external-usage.cjs';
+import type { AgentWorkspaceRoot, AgentWorkspaceGrantSummary } from './agent-mode-types';
+import type { AgentToolsApi } from './agent-tools-types';
+import type { BrowserCompanionApi } from './browser-companion-types';
+import type { LocalControlApiAdminApi } from './local-control-api-types';
+import type { LocalWorkspaceRoot, WorkspaceDraft, WorkspaceGitDiff, WorkspaceGitStatus,
+  WorkspaceListing, WorkspacePreview, WorkspaceSaveResult } from "../electron/local-workspace.cjs";
 
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
@@ -8,7 +20,7 @@ export type Appearance = "system" | "dark" | "light";
 export type ResolvedTheme = "dark" | "light";
 export type AuthenticationStatus = "unknown" | "verified" | "signed-out" | "unavailable";
 export type ProModelVersion = "5.6" | "5.5" | "6";
-export type Surface = "overview" | "accounts" | "browser" | "tasks" | "setup" | "mcp" | "activity" | "settings" | "updates";
+export type Surface = "overview" | "accounts" | "browser" | "tasks" | "workspace" | "remote-workspace" | "history" | "native-threads" | "agent-mode" | "agent-tools" | "browser-companion" | "local-control-api" | "external-usage" | "setup" | "mcp" | "activity" | "settings" | "updates";
 
 export interface LauncherState {
   version: 1;
@@ -588,8 +600,39 @@ export interface RouteDiagnosticsReport {
   };
 }
 
-export interface LauncherApi {
+export interface LauncherApi extends NativeThreadsApi, WorkspaceTerminalApi, RemoteWorkspaceApi, WorkspaceGitControlsApi {
+  workspaceRoots(): Promise<LocalWorkspaceRoot[]>;
+  workspaceOpenWorktree(sourceRootId: string, worktreeId: string): Promise<LocalWorkspaceRoot>;
+  workspacePick(): Promise<LocalWorkspaceRoot | null>;
+  workspaceForget(id: string): Promise<boolean>;
+  workspaceList(id: string, path?: string): Promise<WorkspaceListing>;
+  workspacePreview(id: string, path: string): Promise<WorkspacePreview>;
+  workspaceSave(id: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): Promise<WorkspaceSaveResult>;
+  workspaceRetainDraft(id: string, input: { path: string; expectedRevision: string | null; text: string; draftId?: string }): Promise<WorkspaceDraft>;
+  workspaceDrafts(id: string): Promise<WorkspaceDraft[]>;
+  workspaceDiscardDraft(id: string, draftId: string): Promise<boolean>;
+  workspaceGitStatus(id: string): Promise<WorkspaceGitStatus>;
+  workspaceGitDiff(id: string, snapshotId: string): Promise<WorkspaceGitDiff>;
   restartLauncher(): Promise<boolean>;
+  taskPlanPolicy(): Promise<TaskPlanPolicy>;
+  conversationHistoryRequest(body: { action: string; [key: string]: unknown }): Promise<unknown>;
+  copyConversationHistoryText(text: string): Promise<unknown>;
+  saveConversationHistoryMarkdown(markdown: string): Promise<{ saved: boolean; path?: string }>;
+  agentMode(body: Record<string, unknown>): Promise<unknown>;
+  agentWorkspaceRoots(): Promise<AgentWorkspaceRoot[]>;
+  agentWorkspaceGrants(): Promise<AgentWorkspaceGrantSummary[]>;
+  revokeAgentWorkspaceGrant(grantId: string): Promise<unknown>;
+  agentTools: AgentToolsApi['request'];
+  pickAgentSkillRoot: AgentToolsApi['pickSkillRoot'];
+  pickAgentToolsInstallRoot(): Promise<{ cancelled: boolean; root?: string }>;
+  browserCompanion: BrowserCompanionApi['request'];
+  copyBrowserPairing: NonNullable<BrowserCompanionApi['copyPairing']>;
+  localControlApiRequest: LocalControlApiAdminApi['request'];
+  externalUsageRequest(body: ExternalUsageRequest): Promise<ExternalUsageSnapshot>;
+  externalUsagePick(selection: ExternalUsageSelection): Promise<ExternalUsageSnapshot>;
+  setTaskPlanCapture(enabled: boolean, expectedRevision: number): Promise<TaskPlanPolicy>;
+  taskPlan(accountId: string, taskId: string): Promise<TaskPlanObservation | null>;
+  deleteTaskPlan(accountId: string, taskId: string): Promise<{ deleted: boolean }>;
   cancelContextChange(): Promise<LauncherState>;
   confirmCodexModels(): Promise<LauncherState>;
   getClientConnections(): Promise<ClientConnectionsSnapshot>;

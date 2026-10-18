@@ -1,0 +1,18 @@
+.conversation-history { display: grid; gap: 16px; min-width: 0; }
+.conversation-history p { overflow-wrap: anywhere; }
+.conversation-history__muted { color: var(--text-secondary); font-size: 12px; }
+.conversation-history__actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.conversation-history__actions .nk-field { flex: 1; min-width: 160px; }
+.conversation-history__columns { display: grid; grid-template-columns: minmax(190px, .65fr) minmax(0, 2fr); gap: 16px; }
+.conversation-history__threads { padding: 0; list-style: none; display: grid; gap: 6px; }
+.conversation-history__threads .nk-btn { width: 100%; justify-content: flex-start; text-align: left; }
+.conversation-history__threads .nk-btn strong, .conversation-history__threads .nk-btn span span { display: block; overflow-wrap: anywhere; }
+.conversation-history__message { margin-block: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-panel); }
+.conversation-history__message pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-family: var(--font-mono, monospace); font-size: 12px; user-select: text; }
+.conversation-history__import { display: grid; gap: 12px; }
+.conversation-history__import label { display: grid; gap: 6px; }
+.conversation-history textarea { box-sizing: border-box; width: 100%; resize: vertical; color: var(--text-primary); background: var(--bg-control); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font: inherit; }
+.conversation-history textarea:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.conversation-history details { margin-block: 12px; }
+.conversation-history summary { cursor: pointer; }
+@media (max-width: 800px) { .conversation-history__columns { grid-template-columns: minmax(0, 1fr); } }

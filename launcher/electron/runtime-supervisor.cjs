@@ -2223,7 +2223,43 @@ class RuntimeSupervisor {
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        // Agent mode opts into bounded, fixed error receipts. Other control
+        // callers keep their existing HTTP-error contract. Never forward an
+        // arbitrary daemon message, response body, path, or credential.
+        if (action === 'agent-mode' && options.returnErrorReceipt === true) {
+          const reader = response.body?.getReader();
+          if (reader) {
+            const chunks = []; let size = 0;
+            try {
+              while (true) {
+                const part = await reader.read();
+                if (part.done) break;
+                size += part.value.byteLength;
+                if (size > 8192) { await reader.cancel(); throw new Error('Agent error receipt exceeds limit'); }
+                chunks.push(Buffer.from(part.value));
+              }
+              const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+              const messages = {
+                unauthorized: 'Agent mode administrative authorization is unavailable.',
+                method_not_allowed: 'The Agent mode request method is unsupported.',
+                invalid_request: 'The Agent action does not match its bounded schema.',
+                explicit_action_required: 'An explicit user action is required.',
+                workspace_observer_unavailable: 'Trusted workspace artifact observation is unavailable.',
+                observed_evidence_unavailable: 'A trusted outcome observer is not configured.',
+                agent_action_conflict: 'The Agent action could not be completed; inspect its current durable state before retrying.',
+              };
+              if (receipt?.ok === false && typeof receipt.error === 'string' && Object.prototype.hasOwnProperty.call(messages, receipt.error)) {
+                const staleFile = 'The workspace file changed after observation. Inspect its current revision and observe it again before verification.';
+                const message = receipt.error === 'agent_action_conflict' && receipt.message === staleFile ? staleFile : messages[receipt.error];
+                return { ok: false, error: receipt.error, message };
+              }
+            } catch { /* Preserve the existing generic HTTP error for malformed or oversized bodies. */ }
+            finally { reader.releaseLock(); }
+          }
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
       return await response.json();
     } finally {
       clearTimeout(timeout);

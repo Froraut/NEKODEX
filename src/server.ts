@@ -1,3 +1,11 @@
+import { ConversationHistoryStore } from "./conversation-history";
+import { conversationHistoryRequest } from "./conversation-history/http";
+import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort } from "./agent-mode";
+import { createAgentToolsComposition, type AgentToolsComposition } from "./agent-tools/composition";
+import { browserCompanionRequest, createBrowserCompanionRuntime, type BrowserCompanionRuntime } from "./browser-companion";
+import { createLocalControlApiRoutes } from "./local-control-api";
+import { createAgentWorkspaceSnapshots } from "./agent-workspace/store";
+import { createAgentWorkspaceEvidence } from "./agent-workspace/evidence";
 import { externalClientContext, type ExternalClientContext } from "./external-client-context";
 import { localApiKey } from "./local-api-access";
 import { chatCompletionApiKey, chatCompletionRequestGuard, chatCompletionErrorResponse, chatCompletionModels, chatCompletionRequest } from "./chat-completions/http";
@@ -56,6 +64,7 @@ import {
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   isChatGptWebModelSlug,
   newestChatGptWebProFamily,
+  availableChatGptWebModelRoutes,
   requireChatGptWebModelRoute,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
@@ -832,6 +841,17 @@ export function startServer(
   if (config.purpose === "dev-harness") {
     throw new Error("DEV harness configuration cannot start a Responses listener");
   }
+  const historyHome = getConfigDir();
+  let historyStore: ConversationHistoryStore | undefined;
+  const getHistoryStore = () => historyStore ??= new ConversationHistoryStore({ coreHome: historyHome });
+  // Standalone Agent mode has its own task owner and private store. Typical inference never opens it.
+  let agentRuntime: AgentModeRuntime | undefined;
+  let agentRoutes: ReturnType<typeof createAgentModeRoutes> | undefined;
+  let agentTools: AgentToolsComposition | undefined;
+  let browserCompanion: BrowserCompanionRuntime | undefined;
+  let localControlRoutes: ReturnType<typeof createLocalControlApiRoutes> | undefined;
+  let agentSnapshots: ReturnType<typeof createAgentWorkspaceSnapshots> | undefined;
+  let agentEvidence: ReturnType<typeof createAgentWorkspaceEvidence> | undefined;
   startNativeUsageDelivery();
   const startedAt = Date.now();
   // Model discovery runs in the launcher while this daemon serves Codex. Each catalog build and
@@ -944,6 +964,8 @@ export function startServer(
     active_web_http_turns: httpTurns.webCount(),
     active_browser_turns: chatGptTurnSessions.activeCount() + activeChatCompletionTurns() + (turnBroker?.externalOwnerActiveCount() ?? 0),
     active_compaction_runs: activeStructuredCompactionCount(),
+    active_agent_turns: agentRuntime?.activeCount ?? 0,
+    active_agent_tools: agentTools?.activeCount ?? 0,
   });
   const controlAuthorized = (req: Request): boolean => {
     const header = req.headers.get("authorization") ?? "";
@@ -951,6 +973,69 @@ export function startServer(
     const actual = Buffer.from(header);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   };
+  const getAgentRoutes = () => {
+    if (agentRoutes) return agentRoutes;
+    const models = () => availableChatGptWebModelRoutes(liveConfig())
+      .filter(route => route.interactionMode === "automatic")
+      .map(route => ({ id: route.slug, label: route.displayName }));
+    const store = new AgentModeStore(join(historyHome, "agent-mode", "state.sqlite"));
+    // A PID proven absent is a stopped-owner receipt. A live/reused/inaccessible PID remains
+    // unresolved; neither elapsed time nor opening this page authorizes taking its task.
+    for (const task of store.listTasks()) if (task.ownerId) {
+      const match = /^agent:([1-9]\d*):[a-f0-9-]+$/.exec(task.ownerId);
+      if (!match) continue;
+      const pid = Number(match[1]);
+      if (!Number.isSafeInteger(pid) || pid === process.pid) continue;
+      try { process.kill(pid, 0); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") store.recoverOwner(task.id, { ownerId: task.ownerId, stopped: true, receiptId: `recovery:${randomUUID()}` });
+      }
+    }
+    const executionPort = createLocalResponsesExecutionPort({ models,
+      endpoint: () => `http://127.0.0.1:${server.port}/v1/responses`,
+      requestHeaders: request => ({ authorization: `Bearer ${config.controlToken}`, "x-nekodex-agent-dispatch": request.dispatch.id }),
+      tools: { discover: (scope, options) => getAgentTools().toolsPort.discover(scope, options) },
+      selectedSkills: request => getAgentTools().selectedSkillContent({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }),
+      // This route offers configured Web models only. A control bearer is never native OAuth.
+    });
+    agentRuntime = new AgentModeRuntime({ store, models, executionPort,
+      ownerId: `agent:${process.pid}:${instanceId}`, canStart: acceptingTurns,
+      beforeOffer: async ({ task, dispatch }) => {
+        if (task.workspaceSnapshotGrant === undefined || task.workspaceSnapshotGrant === null) return;
+        await getAgentSnapshots().beforeTurn({ task, generation: dispatch.generation, dispatchId: dispatch.id });
+      }, snapshotReceipts: task => task.workspaceSnapshotGrant === undefined ? [] : getAgentSnapshots().listTask(task.id),
+      lookupToolOutcome: key => getAgentTools().receipt(key),
+      beforeVerify: task => {
+        for (const evidence of activeTaskEvidence(task)) if (evidence.observer === "workspace-file-observer-v1") getAgentEvidence().assertCurrent(task, evidence);
+      }, workspaceEvidenceReferences: task => task.evidence.some(evidence => evidence.observer === "workspace-file-observer-v1") ? getAgentEvidence().listTask(task.id) : [],
+      toolsAvailable: () => getAgentTools().status().config.enabled });
+    agentRoutes = createAgentModeRoutes({ runtime: agentRuntime, authorize: controlAuthorized,
+      observeWorkspaceEvidence: (task, proof) => getAgentEvidence().observe(task, proof),
+      resolveEvidence: (task, reference) => {
+        if (reference.sourceEventId.startsWith("workspace-file:")) return getAgentEvidence().resolve(task, reference);
+        if (reference.sourceEventId.startsWith("mcp:")) return getAgentTools().resolveEvidence(task, reference);
+        throw new Error("Unsupported observed evidence source");
+      } });
+    return agentRoutes;
+  };
+  const getAgentTools = () => agentTools ??= createAgentToolsComposition({ home: historyHome, authorize: controlAuthorized, canStart: acceptingTurns,
+    isScopeActive: scope => {
+      if (!agentRuntime) return false;
+      try { const task = agentRuntime.store.getTask(scope.taskId); return task.generation === scope.generation && ["ready", "running", "awaiting_input"].includes(task.status); }
+      catch { return false; }
+    }, resolveToolCall: scope => agentRuntime?.resolveToolCall(scope),
+    onOutcome: outcome => { if (!agentRuntime) throw new Error("Agent task owner unavailable"); agentRuntime.recordToolOutcome(outcome); },
+  });
+  const getAgentSnapshots = () => agentSnapshots ??= createAgentWorkspaceSnapshots({ storagePath: join(historyHome, "agent-workspace", "task-snapshots.sqlite"), keyPath: join(historyHome, "agent-workspace", "grant-key") });
+  const getAgentEvidence = () => agentEvidence ??= createAgentWorkspaceEvidence({ storagePath: join(historyHome, "agent-workspace", "evidence.sqlite"), keyPath: join(historyHome, "agent-workspace", "grant-key") });
+  const getLocalControlRoutes = (): ReturnType<typeof createLocalControlApiRoutes> => localControlRoutes ??= createLocalControlApiRoutes({ coreHome: historyHome,
+    authorizeAdmin: controlAuthorized, localGuard: localHttpRequestRejection, port: (): number => server.port!, peerAddress: request => server.requestIP(request)?.address,
+    sources: {
+      status: () => ({ version: VERSION, ready: admission.accepting, activeHttpTurns: httpTurns.count(), activeAgentTasks: agentRuntime?.activeCount ?? 0 }),
+      agentTasks: () => agentRuntime?.store.listTasks().map(task => ({ id: task.id, state: task.status, kind: "agent", mode: task.mode, generation: task.generation, revision: task.revision, createdAt: task.createdAt, updatedAt: task.updatedAt })),
+      history: () => historyStore,
+    }, agentAction: input => { getAgentRoutes(); return agentRuntime!.executeScopedAction(input); },
+  });
   const trackInference = (
     req: Request,
     policy: InferenceRoutePolicy,
@@ -991,6 +1076,21 @@ export function startServer(
       const policy = inferenceRoutePolicy(req.method, url.pathname);
       const rejection = localHttpRequestRejection(req, url, server.port!);
       if (rejection) return rejection;
+      if (url.pathname.startsWith("/api/v1/") || url.pathname.startsWith("/admin/local-control-api") || /^Bearer nk-read-/i.test(req.headers.get("authorization") ?? "")) {
+        const response = await getLocalControlRoutes()(req); if (response) return response;
+      }
+      if (url.pathname === "/admin/browser-companion") {
+        if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+        return browserCompanionRequest(req, () => browserCompanion ??= createBrowserCompanionRuntime());
+      }
+      if (url.pathname === "/admin/agent-tools") {
+        if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+        return (await getAgentTools().handle(req))!;
+      }
+      if (url.pathname === "/admin/agent-mode") {
+        if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+        return (await getAgentRoutes()(req))!;
+      }
       const localApiRequest = url.pathname === "/v1/chat/completions" || url.pathname.startsWith("/v1/messages")
         || url.pathname.startsWith("/claude/") || req.headers.has("x-api-key")
         || /^Bearer sk-local-/i.test(req.headers.get("authorization") ?? "");
@@ -1056,6 +1156,10 @@ export function startServer(
           last_successful_model_catalog_request_at: lastSuccessfulModelCatalogRequestAt,
           ...activity(),
         });
+      }
+      if (req.method === "POST" && url.pathname === "/admin/conversation-history") {
+        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        return conversationHistoryRequest(req, getHistoryStore);
       }
       if (req.method === "POST" && url.pathname === "/admin/runtime-session") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
@@ -1294,7 +1398,7 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/shutdown") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         const current = activity();
-        if (!admission.draining || current.active_http_turns > 0 || current.active_browser_turns > 0
+        if (!admission.draining || current.active_http_turns > 0 || current.active_browser_turns > 0 || current.active_agent_turns > 0 || current.active_agent_tools > 0
           || current.active_compaction_runs > 0) {
           return Response.json(
             {
@@ -1354,11 +1458,26 @@ export function startServer(
         });
       }
       if (policy?.endpoint === "responses" || policy?.endpoint === "compact") {
-        refreshPickerCatalogFromTraffic(req);
+        let agentContext: ExternalClientContext | undefined;
+        const agentDispatchId = req.headers.get("x-nekodex-agent-dispatch");
+        if (agentDispatchId) {
+          if (policy.endpoint !== "responses" || !controlAuthorized(req) || !agentRuntime) return formatErrorResponse(403, "permission_error", "Agent Responses authority is unavailable");
+          try {
+            const dispatch = agentRuntime.store.getDispatch(agentDispatchId);
+            const task = agentRuntime.store.getTask(dispatch.taskId);
+            const body = await readJsonRequestBody(req.clone(), 768 * 1024, 768 * 1024) as { model?: unknown };
+            if (dispatch.ownerId !== agentRuntime.runner.ownerId || dispatch.generation !== task.generation || dispatch.state !== "offered" || task.status !== "running"
+              || typeof body.model !== "string" || body.model !== task.execution?.model || !isChatGptWebModelSlug(body.model)) throw new Error("Agent dispatch scope changed");
+            agentRuntime.store.claimTransport(dispatch.id, agentRuntime.runner.ownerId, createHash("sha256").update(JSON.stringify(body)).digest("hex"));
+            const source = dispatch.continuationOf ? agentRuntime.store.getDispatch(dispatch.continuationOf).result?.continuation : undefined;
+            agentContext = { producer: "agent", threadId: `agent_thread_${createHash("sha256").update(task.id).digest("hex")}`,
+              turnId: `agent_turn_${source?.rootDispatchId ?? dispatch.id}`, root: join(historyHome, "agent-mode", "virtual") };
+          } catch { return formatErrorResponse(403, "permission_error", "Agent Responses dispatch does not match its live owner"); }
+        } else refreshPickerCatalogFromTraffic(req);
         const handler = policy.endpoint === "responses" ? responseRequest : compactRequest;
         return trackInference(req, policy, (signal, bindIdentity, bindWeb) => handler(
           new Request(req, { signal }), liveConfig(), dependencies.adapterFactory,
-          responseOptions(bindIdentity, bindWeb),
+          { ...responseOptions(bindIdentity, bindWeb), ...(agentContext ? { clientContext: agentContext, rememberState: false } : {}) },
         ));
       }
       if (policy?.endpoint === "search") {
@@ -1379,6 +1498,7 @@ export function startServer(
     disposeSignalHandlers();
     turnBroker?.setExternalOwnersAccepted(false);
     const reason = new Error("Runtime shutting down");
+    agentRuntime?.beginShutdown();
     // Signal-driven shutdown can arrive without an idle drain. Revoke detached compaction
     // owners before retiring their source sessions, otherwise a fallback can start fresh work.
     const compactionCancellation = cancelAllStructuredCompactions(reason);
@@ -1415,9 +1535,33 @@ export function startServer(
   // Embedders stop the returned Bun server directly. Releasing this listener must also
   // release its process hooks, otherwise later signals act on already-stopped instances.
   const stop = server.stop.bind(server);
+  let stopPrepared = false;
+  let ownedResourcesFinalizer: Promise<void> | undefined;
+  const finalizeOwnedResources = (): Promise<void> => ownedResourcesFinalizer ??= (async () => {
+      historyStore?.close();
+      await browserCompanion?.close();
+      await agentTools?.close();
+      if (!agentRuntime) { agentSnapshots?.close(); agentEvidence?.close(); return; }
+      // Abort-aware transports normally settle at once. A misbehaving injected port must not
+      // hang listener shutdown or lose a late receipt by closing SQLite underneath its owner.
+      const runtime = agentRuntime;
+      const settled = runtime.waitForIdle();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = await Promise.race([settled.then(() => true), new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 1_000); })]);
+      if (timer) clearTimeout(timer);
+      if (idle) { runtime.finishShutdown(); runtime.store.close(); agentSnapshots?.close(); agentEvidence?.close(); }
+      else void settled.then(() => { runtime.finishShutdown(); runtime.store.close(); agentSnapshots?.close(); agentEvidence?.close(); });
+  })();
   server.stop = (...args: Parameters<typeof stop>) => {
-    disposeSignalHandlers();
-    return stop(...args);
+    if (!stopPrepared) {
+      stopPrepared = true;
+      disposeSignalHandlers();
+      admission.beginShutdown();
+      agentRuntime?.beginShutdown();
+    }
+    // Every request still reaches Bun: stop(true) can escalate an earlier stop(false)
+    // while that listener drains. Only the owned-resource finalizer is shared.
+    return stop(...args).finally(finalizeOwnedResources);
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);

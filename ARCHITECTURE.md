@@ -54,6 +54,19 @@ separate facts.
 | Account tunnels | [binding store](launcher/electron/account-tunnels.cjs), [peer supervisor](launcher/electron/account-tunnel-supervisor.cjs), [account pool](launcher/electron/account-pool.cjs), [runtime host](launcher/electron/runtime.cjs) | `accountTunnelMode` enables strict one-account/one-mode ownership. `accountTunnels` holds distinct cloud IDs, aliases, profiles and scoped protected references (or explicit legacy key paths). A captured config generation and immutable credential are prepared before only the affected peer stops; commit checks the captured config bytes and link target. Peer startup creates the private profile before inventory; healthy peer monitoring describes transport readiness while the production parent owns broker admission. Missing/unready bindings never borrow another account's tunnel. New or explicitly reconfigured bindings derive SDK-global aliases from the canonical application home, account and mode so DEV and production cannot collide; loading a saved binding does not silently rename it. Changed sign-in fingerprints retire readiness. Native forwarding and healthy peers remain independent. A peer records the PID and start identity it verified; while they match, supervision, recovery and Quit use only local signals, never tunnel-client's remote `runtimes status` lookup. A failed first start enters the same backoff recovery, and the parent's Web repair action reconnects failed or backed-off peers. |
 | Tunnel | [installation/control](src/tunnel.ts), [status interpretation](src/tunnel-status.ts), [service](src/tunnel-service.ts) with [LaunchAgent helpers](src/launch-agent.ts) | Inventory/diagnostics parsing has no process authority. Scoped stopped proof requires successful inspection, an explicitly non-running process and stopped state; the SDK's missing/null/empty error values mean no status error. Installation, credentials and readiness remain separate steps. |
 | Electron composition | [main](launcher/electron/main.cjs), [preload](launcher/electron/preload.cjs), [IPC registrars](launcher/electron/ipc), [control server](launcher/electron/control-server.cjs) | Main owns guarded IPC and composition. Renderer inputs and helper calls cross validation/admission boundaries. |
+| Native plan content | [source observer](src/adapters/chatgpt-web/task-plan-observation.ts), [capture policy](src/adapters/chatgpt-web/task-plan-policy.ts), [wire validator](launcher/electron/task-plan-observation.cjs), [store](launcher/electron/task-plans.cjs), [TaskPlans](launcher/src/TaskPlans.tsx) | Separate opt-in content store, never the metadata ledger. `/v1/turn/plan` validates the exact live trace/helper/surface/task and recorded native thread/turn before capture; observed plan claims remain unverified. |
+| Conversation text history | [store](src/conversation-history/store.ts), [HTTP actions](src/conversation-history/http.ts), [validated producer adapter](src/conversation-history/capture.ts), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | The Bun daemon owns the SQLite/FTS writer. Current admin actions accept explicitly selected, sensitivity-confirmed partial text; automatic transcript capture is unavailable. Native capture requires a trusted in-process producer and is not inferred from an HTTP role or prompt. |
+| Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx) | Main's native picker grants an opaque root ID; renderer paths stay relative. The service owns private persisted roots/drafts, bounded reads and revision-aware writes. Its bounded in-memory Git comparison snapshots are read-only, not recoverable code checkpoints. |
+| Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Supported app-server list/read returns metadata only; status is scoped to the configured connection/server. Fork is an explicit user action; start/interrupt/approve are unsupported. Executable/home/socket are main-owned dependencies. |
+| Standalone Agent mode | [store](src/agent-mode/store.ts), [runner](src/agent-mode/runner.ts), [runtime](src/agent-mode/runtime.ts), [Responses port](src/agent-mode/provider.ts), [HTTP actions](src/agent-mode/http.ts), [IPC](launcher/electron/ipc/agent-mode.cjs), [surface](launcher/src/AgentModeSurface.tsx) | A separate task family owns stages, durable mailbox/dispatch/command receipts and bounded Goal/Loop. The existing Responses owner executes configured Web routes and advertises explicitly enabled MCP descriptors. Durable pending tool calls require exact approval/results before canonical continuation; snapshot grants grant no tool/filesystem authority. Monetary cost remains unknown without an actual receipt. |
+| Human workspace terminal | [PTY service](launcher/electron/workspace-terminal.cjs), [IPC](launcher/electron/ipc/workspace-terminal.cjs) | Main-owned session/generation and picker grant; bounded output/ack/backpressure and exact PTY lifecycle. Main/preload/Workspace UI and xterm are wired; native `node-pty` availability/ABI remains platform-specific. Human input is not an Agent tool. |
+| Project worktrees and manual restore | [Git mutations](launcher/electron/workspace-git-mutations.cjs), [file capture](launcher/electron/workspace-file-capture.cjs), [IPC](launcher/electron/ipc/workspace-git.cjs) | One main owner serializes worktree create/archive and snapshot/restore receipts, retaining recovery state outside the user's branch. Read-only Git diff snapshots remain distinct. |
+| Remote project workspace | [SSH/SFTP owner](launcher/electron/remote-workspace.cjs), [remote worktrees](launcher/electron/remote-worktrees.cjs), [IPC](launcher/electron/ipc/remote-workspace.cjs), [surface](launcher/src/RemoteWorkspaceSurface.tsx) | System SSH owns authentication/known-host policy; selected host/root identity binds reads, drafts, commands and remote Git. One-use approvals and signed durable receipts distinguish completed/unknown; reconnect does not replay mutations. |
+| Agent snapshot authority | [main grant signer](launcher/electron/agent-workspace-grant.cjs), [Bun snapshot store](src/agent-workspace/store.ts) | Picker-authorized exact paths are signed for task/family/generation, scope `pre-turn-snapshot-only`. The Bun before-offer hook persists one immutable dispatch baseline before execution; this grants no executor filesystem access. |
+| Standalone MCP and skills | [composition](src/agent-tools/composition.ts), [MCP host](src/agent-tools/mcp-host.ts), [journal](src/agent-tools/journal.ts), [skills](src/agent-tools/skills.ts), [installer](src/agent-tools/installer.ts), [package tree](src/agent-tools/package-tree.ts), [macOS MCP sandbox](src/agent-tools/sandbox.ts), [native policy](src/agent-tools/native-policy.ts) | Managed official package graph/tree receipts, pinned server recipes, schema validation and exact approval remain separate install/enable/connect/effect transitions. Reviewed MCP recipes can use the custom macOS Seatbelt boundary; OAuth, Windows/Linux sandbox and arbitrary native executor remain unsupported. Skills use granted roots/digest identity. |
+| Browser companion/providers | [host](src/browser-companion/host.ts), [runtime](src/browser-companion/runtime.ts), [protocol/providers](src/browser-companion/providers.ts), [extension](browser-companion/manifest.json), [IPC](launcher/electron/ipc/browser-companion.cjs) | Explicit Chrome extension ID/pair/revoke and exact observation-bound browser actions; restart policy off, ChatGPT send unsupported. Desktop MCP binding is a provider contract, not an installed real OS capture/input implementation. |
+| Local control API | [routes](src/local-control-api/http.ts), [policy](src/local-control-api/policy.ts), [IPC](launcher/electron/ipc/local-control-api.cjs) | Separate revocable bearer, versioned bounded passive reads and explicit history-content scope. Opt-in scoped Agent actions reuse the existing task owner/command receipts; default reads never start work. |
+| Cross-client usage | [import/projection](launcher/electron/external-usage.cjs), [IPC](launcher/electron/ipc/external-usage.cjs), [surface](launcher/src/ExternalUsageSurface.tsx) | Explicitly picked Codex/Claude roots, incremental bounded source-scoped imports and optional versioned pricing. Estimates are API-equivalent comparisons, never bills or provider savings; overlapping/unknown sources stay outside the aggregate. |
 | Browser ownership | [host](launcher/electron/browser-host.cjs), [turn lifecycle](launcher/electron/browser-turn-lifecycle.cjs), [Manual turns](launcher/electron/browser-manual-turns.cjs), [artifact transfers](launcher/electron/browser-artifact-transfers.cjs), [workspaces](launcher/electron/browser-workspace-windows.cjs), [navigation policy](launcher/electron/browser-navigation-policy.cjs), [session probe script](launcher/electron/browser-auth-probe.cjs), [in-page session check](launcher/electron/browser-session-observation.cjs), [app user agent](launcher/electron/browser-user-agent.cjs), [network egress check](launcher/electron/network-egress-check.cjs), [announcement dismissal](launcher/electron/browser-announcements.cjs) | One shared tab map. Ledger settlement precedes removal receipts. Concrete task auth redirects retire cached identity and emit an authentication-required release receipt; a false completion becomes a retained failure, while explicit cancellation keeps its own outcome. Manual policy uses explicit ports; artifact delivery rechecks exact ownership after awaiting download. URL policy (including the toolbar address resolution), the page probe, the in-page session check and the automatic-surface announcement dismissal are stateless leaves; a typed ChatGPT address always loads in the ChatGPT tab so retained task tabs keep their conversation. The app presents one stable Chromium user agent on every view and cross-site frame because Cloudflare binds its clearance to it. After a Cloudflare challenge the host checks, at most every ten minutes and in a throwaway session with the account's network settings, whether the public address changes between connections, and publishes only the verdict; the host owns probe sequencing, dismissal enablement and published authentication state. |
 | OpenAI API panel | [panel policy](launcher/electron/openai-api-panel.cjs), [workspace window owner](launcher/electron/browser-workspace-windows.cjs), [host](launcher/electron/browser-host.cjs), [account pool](launcher/electron/account-pool.cjs) | Human-operated Tunnels/API keys windows use the explicitly selected account session and fixed Platform destinations. The panel stays outside task descriptors, does not persist portal/OAuth URLs in ChatGPT workspace manifests, and participates in account authentication mutation leases. Opening a panel does not establish tunnel access or create a ChatGPT connector. |
 | Accounts/authentication | [account pool](launcher/electron/account-pool.cjs), [browser display projection](launcher/electron/account-browser-snapshot.cjs), [registry](launcher/electron/account-registry.cjs), [operation leases](launcher/electron/account-operation-leases.cjs), [Codex login](launcher/electron/codex-login.cjs), [browser login](src/browser-login.ts) | Preserve account/principal/flow identity and exact operation leases. Only the selected host supplies full navigation observations; other hosts supply turn rows. Display projection has no session authority. Temporary verification failure does not establish logout. Synchronous pacing-policy edits and resume validate an existing account and open pool but do not acquire browser-operation ownership; they affect future admission while current reads, sign-in and turns retain their owners. Optional session limits and scheduled breaks remain derived from the enabled policy; they never latch into provider stop/cooldown fields. An explicitly selected or already pinned account treats cached model discovery as advisory: the worker selects and verifies the exact model and effort before sending. Unbound balanced routing still requires model evidence. An explicitly selected or already pinned account may establish connector availability during the real pre-send flow; unbound balanced routing still requires prior connector evidence. A completed tool result can promote the exact connector only while the captured principal and identity epoch still match. |
@@ -298,6 +311,172 @@ actual installed CLIs with disposable profiles and inert model adapters. The UI
 preview supplies synthetic client settings, while live browser smoke and the
 isolated Electron shell crash check verify their separate boundaries.
 
+## Plans, history, project workspace and standalone execution
+
+These new source modules extend the maintained runtime; their presence does not
+prove a released or installed feature. The
+[full adoption program](docs/design/full-adoption-program.md) records the broader
+36-capability scope. Keep composition evidence separate from contract fixtures,
+development UI, live provider results and installed delivery.
+
+**Plan content:** the native observer reads only the canonical current turn's
+built-in `update_plan`; request identity is not a content source. The helper
+publishes bounded content through `/v1/turn/plan`, separately from metadata-only
+`/v1/turn/progress`. `browser-turn-lifecycle.cjs` rechecks the live tab's
+trace/helper PID/surface/task record and native thread/turn before calling the
+Electron-owned store. `task-plans/policy.json` is private, revision-checked and
+default off; unreadable/unsafe policy disables capture. Account/task-scoped
+records live under `task-plans/records`, retain immutable observed revisions and
+stop at quota. Disabling capture retains saved content; selected deletion is
+explicit. Model `completed` is a claim, never verified outcome evidence.
+
+**History:** `/admin/conversation-history` uses existing local/control-token
+admission and one lazy daemon-owned `conversation-history/history.sqlite`.
+Electron's registrar calls only the already-owned ready runtime. SQLite/FTS
+records message/revision identity, explicit author/source/sensitivity and bounded
+coverage; search/export read the same retained corpus. The current HTTP import
+requires user consent and sensitivity confirmation, fixes the source to
+`manual-selection` / `manual-import`, and marks coverage partial. It does not
+claim automatic redaction or a complete native transcript. Unknown sensitivity
+does not persist or hash text; quota stops recording without silently purging
+saved messages. The trusted `captureValidatedNativeResponse` adapter is a separate
+in-process port, not permission to capture every incoming Responses request.
+Exact revision links identify stored records and do not themselves establish OS
+protocol registration. Clipboard/save delivery remains an explicit UI action;
+cancelled save returns `saved: false`.
+
+**Project files:** `local-workspace.cjs` is distinct from ChatGPT browser workspace
+windows. Main captures the picker and private registry path; IPC accepts opaque
+workspace IDs and relative paths, not arbitrary roots. The private registry
+persists grants and recovery drafts. Renderer mutation queues serialize edits
+for the same file; the main service retains the draft before staging/flush/rename
+and checks current revision/parent identity. Conflicts retain user text. Actual
+DEV managed-worktree Open selected the exact owned root and rendered its file
+tree; this observation is distinct from archive lifecycle proof. Git
+status/diff captures exact HEAD/base OIDs plus bounded comparison data in memory;
+freshness checks can return stale. These read-only comparisons are separate from `workspace-git-mutations.cjs`,
+which owns manual snapshots, selected restore before-images and durable worktree
+create/archive receipts. Native-picker grant resolution remains in main; the
+retained-state guard prevents forgetting a root with snapshots/worktrees. Restore
+rechecks exact file revisions and retains a recovery snapshot before writing.
+
+**Native client:** `codex-client-control.cjs` uses an explicitly configured
+existing-server proxy or its own stdio app-server connection, checks the chosen
+profile, and calls supported `thread/list`, `thread/read` (`includeTurns: false`)
+and user-requested `thread/fork`. A separate connection's `notLoaded` state says
+nothing about a task running in another process. Method discovery distinguishes
+unverified/supported/unsupported. Unknown fork outcome is retained as an error
+requiring inspection, not retried as a new fork. `codex-fork-journal.cjs` privately
+persists begin/completed/uncertain state before and after mutation, including an
+observed fork ID when retaining the receipt fails; explicit inspection acknowledges
+that exact journal action. Destroy waits for its owned
+client process and never stops an existing server daemon.
+
+**Agent mode:** the store owns SQLite tasks, workers, mailbox revisions, commands,
+dispatches and receipts. Runner/runtime own one task-family generation and an
+explicit execution port; opening/status reads perform no execution. Stable action
+IDs deduplicate commands; offered/unknown sends require reconciliation, and late
+results remain attached to their dispatch. Corrections, pause/stop and bounded
+Goal/Loop respect current generation and real outcomes. Mailbox work packets
+provide the recurring-work source with durable work identity, deduplication and
+pause/generation boundaries. Core two-cycle behavior has focused fixture evidence. Actual bounded UI with an
+inert adapter reached the initial stage (1/2), waited for substantive mailbox work
+without empty Continue, then settled a declared packet (2/2). Re-enqueueing its
+exact key retained two runs/two turns; Pause advanced generation to 3 and removed
+Run consent. This proves that UI/durable boundary, not an external model or
+business outcome. External watchers remain unavailable. The provided
+Responses adapter calls a fixed configured loopback endpoint without redirects
+or implicit retries. `server.ts` admits an owned Agent dispatch and uses configured
+Web model routes; the control bearer is never used as Native OAuth. Configured
+MCP descriptors and selected skill content are attached through explicit ports.
+
+Canonical provider input/output/tool-map/pending calls are retained with the
+result. An exact human approval invokes the pending call through the MCP host;
+its known durable output can be used after restart without another tool effect.
+Unknown effect cannot be retried or silently continued. Actual MCP receipts feed
+the evidence resolver; model claims are not proof, and the local coverage helper
+is not an independent semantic audit. Monetary quotes are unavailable for this
+subscription route: use explicit turn bounds, preserve unknown spend, and never
+turn token counts into a fabricated bill.
+
+`agent-workspace-grant.cjs` signs only main-derived picker paths for the current
+task/family/generation. `src/agent-workspace/store.ts` checks signature, revocation,
+ancestry and scope and writes a durable preparing/admitted/failed pre-offer attempt.
+Repeated dispatch admission reuses its immutable baseline; changed bytes do not
+silently replace it. Capture is bounded and opt-in; the snapshot-only grant never
+becomes MCP execution, remote access or a general client pre-write hook.
+
+**Remote projects:** system SSH/SFTP preserves normal authentication and strict
+host-key checks. The main registry owns exact host/root and drafts; remote commands
+use one-use approval payloads and signed durable started/outcome receipts. Remote
+Git inspect/prepare/create/archive has a separate owner-bound worktree lifecycle.
+Unknown disconnect outcomes require explicit reconciliation, not reconnect replay.
+Remote command/Git helpers require the selected server's supported environment;
+local picker/Agent grants do not confer remote authority.
+
+**MCP OS boundary:** `sandbox.ts` creates a fixed custom Seatbelt profile for
+explicitly reviewed MCP recipes on macOS, with pinned executable/code roots,
+canonical inode-bound read/write grants, private HOME/TMP and no inherited secret
+environment. Writable grants cannot overlap executable/code roots. Kernel denial
+of outside data reads/writes/new network sockets, fork inheritance while parent
+lives, and actual SDK host read/counter have separate observed evidence. The
+reported boundary explicitly exposes global filesystem metadata, ancestor/system
+library reads and selected sysctls. It uses Apple's deprecated `sandbox-exec`
+interface. Windows/Linux support, arbitrary native command execution and
+post-parent-exit descendant cleanup are not claimed; `native-policy.ts` still
+rejects the unsupported generic native executor.
+
+**Selected workspace outcome evidence:** `agent-workspace-evidence.cjs` is a
+main-owned signer over a stable observation action, exact picker root/path,
+task/family/generation/revision/requirement and selected existence/absence/SHA-256
+property. It rechecks root ancestry and captured revision/hash without persisting
+raw file content. `src/agent-mode/evidence.ts` retains immutable evidence history
+while explicitly superseded facts leave current coverage. The integration's
+synchronous `beforeVerify` boundary must revalidate selected current files before
+verification, including a duplicate command receipt. Actual Manual DEV UI passed
+SHA observation/Review, external drift with Verify 409 refusal, restored bytes plus
+a new observation/Review, then `verified_complete`; superseded immutable facts
+remained in history. This proves the selected file-SHA property and current-fact
+recovery, not automatic Goal or arbitrary business semantics. A file property proves only the declared property,
+not the semantic completion of every requirement.
+
+**Additional surfaces:** standalone MCP host and read-only skill library are
+composed lazily in the daemon, with guarded main IPC and mounted UI. Only explicitly
+configured recipes/granted skill roots are available. The managed installer
+prepares an official pinned npm graph (Bun lock versions 1/2), then installs the
+reviewed frozen graph with lifecycle scripts disabled. The full managed tree is
+pinned and checked again at each launch. Installation is private and separate
+from saving a disabled recipe, enabling it, connecting and proving a tool effect.
+Archive/uninstall records an exact pre-intent source/target before rename and
+reconciles interrupted outcomes; changed targets are not overwritten. The
+[official install receipt](docs/reviews/2026-10-18-agent-tools-official-install.json)
+records filesystem server 1.0.0, 104 packages/4691 tree entries and disabled
+host/server with no MCP PID. OAuth and a real installed desktop provider remain gaps.
+Chrome companion has explicit pair/revoke UI and an owned loopback listener; its
+selected tab/document/frame/observation contracts do not imply ChatGPT transport
+send support (`chatGptSendSupported: false`). The desktop MCP adapter requires a
+real provider implementing the pinned observation-input protocol.
+
+Local control routes use a separate policy/bearer and bounded passive snapshots;
+unopened sources remain unavailable rather than being started by a read. Explicit
+scoped Agent actions enter the same `store.command`/dispatch owner, never another
+sender. Cross-client usage imports only selected log roots and stores usage facts,
+not transcript content. Its pricing catalog/version/coverage stays attached to
+`estimated-api-equivalent` values; only user-declared external-only sources enter
+that comparison aggregate, separately from NEKODEX receipts.
+
+Main/preload/App register the feature surfaces and `src/server.ts` owns their lazy
+admin/runtime composition. Contract fixtures, source wiring and actual DEV/provider
+results remain separate evidence. Runtime bundling follows reachable static
+imports from CLI/browser-helper, including the CJS snapshot helper imports;
+Electron packages `electron/**`, Vite bundles renderer imports. Native PTY ABI and
+other platform helpers still need their target-specific proof. The browser
+companion extension artifact is copied beside bundled `cli.js` by the runtime
+builder; `browserCompanionArtifactDirectory` resolves that layout without fallback
+to a different checkout. This has a bundled fixture proof, separate from installed
+distribution. Actual Chrome MV3 activeTab/pair/select/observe/type/click/revoke
+was observed through a headless popup document, not a visible toolbar popup.
+
 ## Model and conversation state
 
 Web model identities are resolved in `chatgpt-web-models.ts` before browser
@@ -466,6 +645,13 @@ its existing read receipt so export never creates a new probe to fill that secti
 | Turn journal, broker operations, tab/task ledger | Each layer retains its own delivery/ownership evidence; none may infer that another layer completed solely from a local counter. |
 | Browser sessions and account registry | Account-bound storage and verification markers; inspected bytes must match the snapshot being attested. |
 | Workspaces | Durable saved rows remain retry targets when live-window deletion cannot persist. |
+| Native plan content | Electron `task-plans.cjs`; private default-off policy and immutable account/task/native-turn records, separate from metadata task ledger. |
+| Conversation history | Daemon-only Bun SQLite/FTS writer; explicit consent, caller-validated sensitivity, partial/unknown coverage and selected deletion. |
+| Local project roots/drafts | Main `local-workspace.cjs` private registry; picker grants and recovery drafts persist, read-only Git comparison snapshots are bounded in memory. |
+| Agent tasks/mail/commands | `AgentModeStore` owns durable commands, dispatches, mailbox packets, canonical pending tool continuations and receipts; runner owns live dispatches. Unknown effect/delivery requires reconciliation. |
+| Manual/Agent snapshots | Main Git mutation owner retains manual restore recovery; Bun Agent snapshot writer retains signed, exact-dispatch pre-turn baselines. Neither grants general filesystem execution authority. |
+| Remote mutations | Main remote workspace/worktree owners retain signed started/outcome receipts; reconnect does not replay unknown operations. |
+| Native fork journal | Private main-process journal records begin/completed/uncertain and explicit inspection acknowledgement before another fork. |
 | Usage | Native outbox plus launcher durable store; report projections do not rewrite receipts. |
 | Rolling checkpoints | Original file snapshot + committed receipt; cache publication follows the successful disk write. |
 | Installed runtime / updates | Versioned generation and transaction evidence; source HEAD, built bundle, installed app and active process may differ. |

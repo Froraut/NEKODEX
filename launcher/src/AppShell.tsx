@@ -99,7 +99,15 @@ export function TitleBar({
   sidebarToggle: RefObject<HTMLButtonElement | null>;
   toggleSidebar: () => void;
 }) {
-  const surfaceLabel = ({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language), setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface];
+  const surfaceLabel = ({ overview: copy.overview, accounts: copy.accountsNav, browser: copy.browser, tasks: taskCenterTitle(language),
+    workspace: language === 'ru' ? 'Проекты и файлы' : 'Projects and files', history: language === 'ru' ? 'История текста' : 'Text history',
+    'remote-workspace': language === 'ru' ? 'Удалённые проекты' : 'Remote projects',
+    'external-usage': language === 'ru' ? 'Расход клиентов' : 'Client usage',
+    'agent-tools': language === 'ru' ? 'Инструменты агентов' : 'Agent tools',
+    'browser-companion': language === 'ru' ? 'Расширение Chrome' : 'Chrome companion',
+    'local-control-api': language === 'ru' ? 'Локальный API' : 'Local API',
+    'native-threads': language === 'ru' ? 'Чаты Codex' : 'Codex threads', 'agent-mode': 'Agent mode',
+    setup: copy.connectionsNav, mcp: copy.connectionsNav, activity: copy.activity, settings: copy.settings, updates: updateCopyFor(language).title })[surface];
   // Nested surfaces add one crumb: Connections / Models and Codex route · Local tools connector.
   const nested = surface === "setup" ? copy.modelsConnectionTab : surface === "mcp" ? copy.toolsConnectionTab : null;
   const trail = [copy.product, surfaceLabel, ...(nested ? [nested] : [])];

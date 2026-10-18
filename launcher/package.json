@@ -1,6 +1,6 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "6.1.32-nekodex.8",
+  "version": "6.1.32-nekodex.9",
   "private": true,
   "description": "NEKODEX \u2014 a desktop workspace for ChatGPT accounts, coding agents, and local tools.",
   "author": "FroRaut",
@@ -12,7 +12,7 @@
     "audit": "bun audit",
     "typecheck": "tsc --noEmit",
     "build:renderer": "vite build",
-    "build": "bun run typecheck && bun run build:renderer && bun run build:credential-helper",
+    "build": "bun run typecheck && bun run build:terminal && bun run build:renderer && bun run build:credential-helper",
     "build:runtime": "bun run scripts/prepare-runtime.cjs",
     "package": "bun run build && bun run build:runtime && bun run scripts/package.cjs",
     "package:mac": "bun run build && bun run build:runtime && bun run scripts/package.cjs --mac",
@@ -20,14 +20,18 @@
     "package:linux": "bun run build && bun run build:runtime && bun run scripts/package.cjs --linux",
     "smoke:package": "bun run scripts/smoke-package.cjs",
     "start": "electron .",
-    "build:credential-helper": "node ../scripts/build-credential-helper.cjs --development"
+    "build:credential-helper": "node ../scripts/build-credential-helper.cjs --development",
+    "build:terminal": "node scripts/build-workspace-terminal.cjs"
   },
   "dependencies": {
+    "@xterm/xterm": "6.0.0",
     "motion": "^12.42.2",
+    "node-pty": "1.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "4.2.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -49,7 +53,8 @@
     "asar": true,
     "asarUnpack": [
       "assets/linux-appimage-runner.sh",
-      "electron/credential-helper/**"
+      "electron/credential-helper/**",
+      "node_modules/node-pty/**"
     ],
     "directories": {
       "output": "release"

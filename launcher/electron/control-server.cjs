@@ -3,6 +3,7 @@ const { createHash, randomBytes, timingSafeEqual } = require("node:crypto");
 const { validateNativeUsageSample } = require("./usage-store.cjs");
 
 const { assertTaskObservation } = require("./task-observation.cjs");
+const { assertTaskPlanObservation } = require("./task-plan-observation.cjs");
 const { isTaskModel } = require("./browser-task-ledger.cjs");
 const { READINESS_CODES } = require("./admission-failure-copy.cjs");
 
@@ -146,6 +147,7 @@ class BrowserControlServer {
       || request.url === "/v1/turn/start-cancel"
       || request.url === "/v1/turn/start-ack"
       || request.url === "/v1/turn/progress"
+      || request.url === "/v1/turn/plan"
       || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/end";
@@ -255,6 +257,10 @@ class BrowserControlServer {
         if (request.url !== '/v1/turn/progress') throw new Error('Task observation requires exact progress owner');
         assertTaskObservation(body.observation);
       }
+      if (body.planObservation !== undefined) {
+        if (request.url !== '/v1/turn/plan') throw new Error('Task plan requires exact plan owner');
+        assertTaskPlanObservation(body.planObservation);
+      }
       if (body.toolProof !== undefined && (request.url !== "/v1/turn/end" || !body.toolProof
         || typeof body.toolProof !== "object" || Array.isArray(body.toolProof)
         || Object.keys(body.toolProof).length !== 1 || typeof body.toolProof.tool !== "string"
@@ -268,7 +274,7 @@ class BrowserControlServer {
         throw new Error("refreshViewport is only valid for a turn heartbeat");
       }
       if (body.surfaceId !== undefined
-        && (!["/v1/turn/heartbeat", "/v1/turn/progress", "/v1/turn/start-ack",
+        && (!["/v1/turn/heartbeat", "/v1/turn/progress", "/v1/turn/plan", "/v1/turn/start-ack",
           "/v1/turn/artifact-register", "/v1/turn/artifact-wait", "/v1/turn/artifact-cancel"].includes(request.url)
           || typeof body.surfaceId !== "string"
           || !/^[A-Za-z0-9_-]{32}$/.test(body.surfaceId))) {
@@ -495,6 +501,15 @@ class BrowserControlServer {
       } else if (request.url === '/v1/turn/start-ack') {
         const result = host.acknowledgeQueuedOwner(body.traceId, body.helperPid, body.surfaceId);
         writeJson(response, 200, { ok: true, ...result }); return;
+      } else if (request.url === '/v1/turn/plan') {
+        if (typeof body.surfaceId !== 'string' || typeof body.taskRecordId !== 'string'
+          || !/^[a-f0-9]{32}$/.test(body.taskRecordId) || body.planObservation === undefined
+          || Object.keys(body).some(key => !['phase', 'traceId', 'helperPid', 'surfaceId', 'taskRecordId', 'planObservation', 'mutationId'].includes(key))) {
+          throw new Error('Invalid exact task plan owner');
+        }
+        const result = await this.reconcileAutomaticMutation('plan', body, async () => ({ ok: true,
+          ...await host.taskPlan(body.traceId, body.helperPid, body.surfaceId, body.taskRecordId, body.planObservation) }));
+        writeJson(response, 200, result); return;
       } else if (request.url === '/v1/turn/progress') {
         const result = await this.reconcileAutomaticMutation('progress', body, () => {
           host.taskProgress(body.traceId, body.helperPid, body.surfaceId, body.taskPhase, body.sequence, body.observation);

@@ -1,0 +1,13 @@
+.nk-remote__host-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; align-items: end; }
+.nk-remote__actions { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
+.nk-remote__columns { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(300px, 2fr); gap: 16px; }
+.nk-remote__columns > * { min-width: 0; }
+.nk-remote__files { display: flex; flex-direction: column; max-height: 360px; overflow: auto; }
+.nk-remote__files button { text-align: start; color: inherit; background: transparent; border: 0; border-radius: 6px; padding: 7px; cursor: pointer; overflow-wrap: anywhere; }
+.nk-remote__files button:hover { background: var(--surface-hover, rgba(128,128,128,.12)); }
+.nk-remote__files button:disabled { opacity: .5; cursor: default; }
+.nk-remote__editor, .nk-remote__command { display: block; box-sizing: border-box; width: 100%; min-height: 220px; padding: 12px; border: 1px solid var(--border, rgba(128,128,128,.3)); border-radius: 10px; background: var(--surface, transparent); color: inherit; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; resize: vertical; }
+.nk-remote__command { min-height: 92px; }
+.nk-remote__output { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.nk-remote__receipt { border-bottom: 1px solid var(--border, rgba(128,128,128,.3)); padding-block: 10px; overflow-wrap: anywhere; }
+@media (max-width: 850px) { .nk-remote__columns { grid-template-columns: 1fr; } }

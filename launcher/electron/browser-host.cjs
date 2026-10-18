@@ -259,6 +259,7 @@ function turnLifecycleFor(host) {
     logger: host.logger,
     context: {
       get ledger() { return host.taskLedger; },
+      get taskPlans() { return host.taskPlans; },
       get accountId() { return host.accountId; },
       get maxTabs() { return host.maxTabs; },
       get authIdentityEpoch() { return host.authIdentityEpoch; },
@@ -412,6 +413,7 @@ class BrowserHost {
     workspaceChanged = () => {},
     workspaceDisplays = () => [],
     taskLedger = null,
+    taskPlans = null,
     onTurnTabRemoved = () => {},
     onTurnTabOwned = () => {},
     coreHome = path.dirname(path.dirname(descriptorPath)),
@@ -426,6 +428,7 @@ class BrowserHost {
     this.window = window;
     this.descriptorPath = descriptorPath;
     this.coreHome = path.resolve(coreHome);
+    this.taskPlans = taskPlans;
     if (path.dirname(path.resolve(descriptorPath)) !== path.join(this.coreHome, 'runtime')) {
       throw new Error('Browser host descriptor does not belong to its configured core home');
     }
@@ -830,6 +833,10 @@ class BrowserHost {
 
   taskProgress(traceId, helperPid, surfaceId, phase, sequence, observation) {
     return turnLifecycleFor(this).taskProgress(traceId, helperPid, surfaceId, phase, sequence, observation);
+  }
+
+  taskPlan(traceId, helperPid, surfaceId, taskRecordId, observation) {
+    return turnLifecycleFor(this).taskPlan(traceId, helperPid, surfaceId, taskRecordId, observation);
   }
 
   createAutomaticTurnView() {

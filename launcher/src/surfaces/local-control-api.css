@@ -1,0 +1,5 @@
+.local-control-api {display:grid;gap:16px;min-width:0;}
+.local-control-api__actions {display:flex;flex-wrap:wrap;gap:8px;margin-block:12px;}
+.local-control-api__path {font-family:var(--font-mono,monospace);font-size:12px;color:var(--text-secondary);overflow-wrap:anywhere;user-select:text;}
+.local-control-api code {overflow-wrap:anywhere;white-space:normal;}
+.local-control-api li {margin-block:6px;}
