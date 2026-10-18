@@ -9,6 +9,7 @@ const { READINESS_CODES } = require("./admission-failure-copy.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
+const MAX_AGENT_NATIVE_BODY_BYTES = 512 * 1024;
 const MANUAL_SENT_OBSERVER_TIMEOUT_MS = 35_000;
 const MAX_AUTOMATIC_MUTATION_RECEIPTS = 4096;
 const SETTLED_MUTATION_RECEIPT_TTL_MS = 5 * 60 * 1000;
@@ -45,11 +46,15 @@ function writeJson(response, status, body) {
 }
 
 class BrowserControlServer {
-  constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy }) {
+  constructor({ logger, getBrowserHost, getPreferences, resolveNativeProxy,
+    getAgentNativeBridge, getAgentNativeInstance, validateNativeInvalidation }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
     this.resolveNativeProxy = resolveNativeProxy;
+    this.getAgentNativeBridge = getAgentNativeBridge;
+    this.getAgentNativeInstance = getAgentNativeInstance;
+    this.validateNativeInvalidation = validateNativeInvalidation;
     this.token = randomBytes(32).toString("base64url");
     this.automaticMutationReceipts = new Map();
     this.port = 0;
@@ -139,6 +144,14 @@ class BrowserControlServer {
   async handle(request, response) {
     if (!secureTokenMatches(this.token, request.headers.authorization)) {
       writeJson(response, 401, { error: "unauthorized" });
+      return;
+    }
+    const nativeAction = new Map([
+      ['/v1/agent-native/offer', 'offer'], ['/v1/agent-native/receipt', 'receipt'],
+      ['/v1/agent-native/wait', 'wait'], ['/v1/agent-native/invalidate', 'invalidate'],
+    ]).get(request.url);
+    if (nativeAction) {
+      await this.handleAgentNative(request, response, nativeAction);
       return;
     }
     const isNativeProxy = request.url === "/v1/network/resolve-proxy";
@@ -581,6 +594,51 @@ class BrowserControlServer {
         },
       );
     }
+  }
+
+  /** The existing private listener transports Native work independently of browser readiness.
+   * Disconnect cancels only an observation; the bridge retains the physical inference owner. */
+  async handleAgentNative(request, response, action) {
+    if (request.method !== 'POST') { writeJson(response, 405, { error: 'method_not_allowed' }); return; }
+    const instanceId = this.getAgentNativeInstance?.();
+    if (typeof instanceId !== 'string' || request.headers['x-nekodex-native-instance'] !== instanceId) {
+      writeJson(response, 403, { error: 'native_scope_unavailable' }); return;
+    }
+    const bridge = this.getAgentNativeBridge?.();
+    if (!bridge) { writeJson(response, 503, { error: 'native_unavailable', instanceId }); return; }
+    const observer = new AbortController();
+    const closed = () => { if (!response.writableEnded) observer.abort(); };
+    response.once('close', closed);
+    try {
+      const chunks = []; let bytes = 0;
+      for await (const chunk of request) {
+        bytes += chunk.length;
+        if (bytes > MAX_AGENT_NATIVE_BODY_BYTES) throw new Error('Native body exceeds its bound');
+        chunks.push(chunk);
+      }
+      const raw = Buffer.concat(chunks);
+      const body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
+      let value;
+      if (action === 'offer') {
+        // Main validates this exact raw digest against a pre-existing Bun transport claim.
+        // Reply on the first durable projection; the same owned operation and observer
+        // continue until settlement. HTTP completion/disconnect is never cancellation.
+        value = await bridge.offer(body, { payloadDigest: createHash('sha256').update(raw).digest('hex'),
+          onReceipt: receipt => {
+            if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, value: receipt, instanceId });
+          } });
+      } else if (action === 'receipt') value = await bridge.readReceipt(body);
+      else if (action === 'wait') value = await bridge.waitReceipt(body, { signal: observer.signal });
+      else {
+        if (typeof this.validateNativeInvalidation !== 'function') throw new Error('Native scope validation is unavailable');
+        const scope = await this.validateNativeInvalidation(body);
+        value = await bridge.invalidateTask(scope.taskId, { familyId: scope.familyId, beforeGeneration: scope.beforeGeneration });
+      }
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 200, { ok: true, value: value ?? null, instanceId });
+    } catch {
+      // RPC/config/provider messages may contain private context. Never log or return them.
+      if (!response.destroyed && !response.writableEnded) writeJson(response, 409, { ok: false, error: 'native_conflict', instanceId });
+    } finally { response.off('close', closed); }
   }
 
   async close() {

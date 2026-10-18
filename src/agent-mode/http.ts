@@ -2,7 +2,7 @@ import { z } from "zod";
 import { NativeRequestBodyError, readJsonRequestBody } from "../http-body";
 import { AgentModeRuntime } from "./runtime";
 import { activeTaskEvidence } from "./evidence";
-import type { AgentDispatch, AgentTask, AgentToolRequest, OutcomeEvidence } from "./types";
+import type { AgentDispatch, AgentTask, AgentPendingToolRequest, OutcomeEvidence } from "./types";
 
 const identity = z.string().min(1).max(128);
 const boundedText = z.string().trim().min(1).max(16_384);
@@ -13,7 +13,8 @@ const taskScope = z.object({ familyId: identity, generation: z.number().int().po
 const create = z.object({ ownerMode: z.literal("agent"), id: identity, familyId: identity.optional(), mode, recurringAuthorized: z.boolean().optional(), originalRequest: boundedText,
   requirements: z.array(requirement).min(1).max(128), stages: z.array(stage).min(1).max(128),
   bounds: z.object({ maxConcurrent: z.number().int().min(1).max(32), maxTurns: z.number().int().min(1).max(10_000), maxSpend: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable() }).strict(),
-  execution: z.object({ provider: z.literal("local-responses"), model: identity }).strict(),
+  execution: z.discriminatedUnion("provider", [z.object({ provider: z.literal("local-responses"), model: identity }).strict(),
+    z.object({ provider: z.literal("owned-native"), model: identity, admissionId: identity }).strict()]),
   workspaceSnapshotGrant: z.unknown().optional(),
 }).strict();
 const control = z.discriminatedUnion("action", [
@@ -50,7 +51,7 @@ function listing(runtime: AgentModeRuntime) {
 function pendingToolCalls(runtime: AgentModeRuntime, task: AgentTask, dispatches: AgentDispatch[]) {
   const recorded = new Set(runtime.store.listToolOutcomes(task.id).map(row => row.idempotencyKey));
   const seen = new Set<string>();
-  const pending: AgentToolRequest[] = [];
+  const pending: AgentPendingToolRequest[] = [];
   for (const dispatch of dispatches) {
     if (dispatch.generation !== task.generation || dispatch.taskRevision !== task.revision || dispatch.state !== "settled") continue;
     for (const call of dispatch.result?.continuation?.pending ?? []) {

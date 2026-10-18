@@ -15,7 +15,7 @@ test('Agent control preserves a fixed stale-file reason while bounding and sanit
     let handler: (_event: unknown, body: unknown) => Promise<unknown>;
     registerAgentMode({
       handle: (_channel: string, callback: typeof handler) => { handler = callback; },
-      runtimeHost: { supervisor: { readConfig: () => config, ownedRuntimeReady: async () => true, control } },
+      runtimeHost: { supervisor: { readConfig: () => config, ownedAgentRuntimeReady: async () => true, control } },
     });
     // Exact backend fixed reason survives control -> registrar -> renderer error.
     await expect(handler!(undefined, { action: 'verify', taskId: 'task', actionId: 'action', reviewId: 'review' })).rejects.toThrow(stale);

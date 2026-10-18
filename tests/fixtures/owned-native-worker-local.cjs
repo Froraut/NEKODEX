@@ -1,6 +1,6 @@
 'use strict';
-// Opt-in ONE owned stock-CLI/local-fake Responses proof. No real account/profile/model.
-// node tests/fixtures/owned-native-worker-local.cjs /absolute/official/0.163.0/bin/codex
+// Opt-in ONE local-fake Responses proof. No real account/profile/model.
+// node tests/fixtures/owned-native-worker-local.cjs /absolute/executable [--owned-wrapper]
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -11,12 +11,26 @@ const { randomUUID } = require('node:crypto');
 const { PassThrough } = require('node:stream');
 const { StringDecoder } = require('node:string_decoder');
 const { createOwnedNativeWorkerService } = require('../../launcher/electron/owned-native-worker.cjs');
-const { digest, makeAdmission, canonical } = require('../../launcher/electron/owned-native-admission.cjs');
+const { digest, fileDigest, makeAdmission, canonical } = require('../../launcher/electron/owned-native-admission.cjs');
 const catalog = require('./owned-native-model.cjs');
 const Ajv = require('ajv'); // Fixture dependency only; Electron leaf has no Ajv/package dependency.
 const executable = process.argv[2];
+const ownedWrapper = process.argv[3] === '--owned-wrapper';
+assert(process.argv.length <= 4 && (process.argv[3] === undefined || ownedWrapper), 'Unsupported fixture variant');
 assert.equal(process.platform, 'darwin', 'Owned Native worker contract is Mac-first');
-assert(executable && path.isAbsolute(executable), 'Provide the exact official 0.163.0 executable');
+assert(executable && path.isAbsolute(executable), 'Provide the exact reviewed executable');
+let executableAdmission;
+if (ownedWrapper) {
+  // Test-only input capture from the just-built, reviewed DEV artifact. Product
+  // main must supply its independent fixed build pins; renderer cannot select it.
+  const sourceRoot = fs.realpathSync(path.resolve(__dirname, '../../launcher/native/owned-worker'));
+  const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`;
+  const metadataPath = path.join(sourceRoot, 'build', target, 'build-info.json');
+  const bytes = fs.readFileSync(metadataPath), metadata = JSON.parse(bytes);
+  executableAdmission = { executableVariant: 'owned-wrapper', executableSha256: metadata.sha256,
+    wrapperBuildPin: { sourceRoot, metadataPath, metadataSha256: digest(bytes),
+      sourcePinSha256: fileDigest(path.join(sourceRoot, 'source-pin.json'), 16384) } };
+} else executableAdmission = { executableSha256: fileDigest(executable) };
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nekodex-owned-native-local-')));
 let owner, child, childClosed = false, launches = 0, turnOffers = 0, droppedAck = false;
 const requests = [], receipts = [], faults = [];
@@ -52,21 +66,21 @@ const server = http.createServer(async (request, response) => {
 async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
-    owner = createOwnedNativeWorkerService({ executable, executableSha256: digest(fs.readFileSync(executable)),
+    const shared = { executable, ...executableAdmission,
       authorityHome: path.join(root, 'authority'), catalog: { ...catalog, sha256: digest(catalog.json) },
-      route: { kind: 'local-fixture', baseUrl: `http://127.0.0.1:${server.address().port}/v1` },
+      route: { kind: 'local-fixture', baseUrl: `http://127.0.0.1:${server.address().port}/v1` } };
+    const expected = makeAdmission(shared).config;
+    owner = createOwnedNativeWorkerService({ ...shared,
       requestTimeoutMs: 5000, terminalTimeoutMs: 15_000, stopGraceMs: 1000,
       compileOutputSchema: schema => new Ajv({ strict: true, allErrors: false }).compile(schema),
       onReceipt: receipt => receipts.push(receipt),
       testHooks: { observeEffective(read, requirements) {
-        const expected = makeAdmission({ executable, executableSha256: digest(fs.readFileSync(executable)),
-          authorityHome: path.join(root, 'authority'), catalog: { ...catalog, sha256: digest(catalog.json) },
-          route: { kind: 'local-fixture', baseUrl: `http://127.0.0.1:${server.address().port}/v1` } }).config;
         effectiveSummary = { differingFields: Object.keys(expected).filter(key => canonical(expected[key]) !== canonical(read.config?.[key])),
           features: read.config?.features,
           layerTypes: read.layers?.map(layer => ({ type: layer.name?.type, keys: Object.keys(layer.config || {}), disabled: layer.disabledReason !== null })),
           requirementKeys: Object.entries(requirements.requirements || {}).filter(([, value]) => value !== null).map(([key]) => key) };
       }, spawnProcess(binary, args, options) {
+        assert.deepEqual(args, ownedWrapper ? ['--stdio'] : ['app-server', '--stdio', '--strict-config']);
         launches++; assert.equal(launches, 1); child = spawn(binary, args, options);
         child.stderr.on('data', chunk => { if (diagnostics.length < 8192) diagnostics += chunk.toString().slice(0, 8192 - diagnostics.length); });
         child.once('close', () => { childClosed = true; });
@@ -113,11 +127,12 @@ async function main() {
     const third = await owner.offerOwnedTurn({ workerHandle: worker.workerHandle, actionId: unknownId,
       text: 'Automatic local receipt loss three.' });
     assert.equal(third.state, 'unknown'); assert.equal(third.turnId, null); assert(droppedAck);
+    assert.equal(third.ownerHeld, true);
     await assert.rejects(owner.offerOwnedTurn({ workerHandle: worker.workerHandle, actionId: unknownId,
       text: 'Do not replay.' }));
     assert.equal(requests.length, 3); assert.equal(turnOffers, 3); assert.deepEqual(faults, []);
     assert(receipts.some(receipt => receipt.state === 'acknowledged' && receipt.turnId === first.turnId));
-    console.log(JSON.stringify({ proof: 'stock-cli-0.163-local-fake-only', realOpenAI: false, realAccountAuth: false,
+    console.log(JSON.stringify({ proof: ownedWrapper ? 'owned-wrapper-0.163-local-fake-only' : 'stock-cli-0.163-local-fake-only', realOpenAI: false, realAccountAuth: false,
       toolsExactlyEmpty: requests.every(request => Array.isArray(request.tools) && request.tools.length === 0),
       canonicalMessages: first.canonicalItems.length + second.canonicalItems.length, nativeTimestamps: true,
       sameThreadContinuation: true, ownedChildCount: launches, providerRequests: requests.length,

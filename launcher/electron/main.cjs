@@ -16,6 +16,14 @@ const { registerConversationHistory } = require('./ipc/conversation-history.cjs'
 const { createCanonicalNativeHistoryRecorder } = require('./canonical-native-history.cjs');
 const { registerAgentMode } = require('./ipc/agent-mode.cjs');
 const { createCodexClientControl } = require('./codex-client-control.cjs');
+const { createAgentNativeBridge } = require('./agent-native-bridge.cjs');
+const { createAgentNativeDescriptorPublisher } = require('./agent-native-descriptor.cjs');
+const { createNativeAccountAuthority } = require('./native-account-authority.cjs');
+const { fileDigest: nativeFileDigest, regular: nativeRegular, VERSION: NATIVE_CLI_VERSION } = require('./owned-native-admission.cjs');
+const { registerNativeAccounts } = require('./ipc/native-accounts.cjs');
+const { createNativeAccountInventoryService } = require('./native-account-inventory.cjs');
+const { reviewedOwnedNativeDevPin } = require('./owned-native-dev-pin.cjs');
+const { createNativeAccountExecutionService } = require('./native-account-execution.cjs');
 const { registerCodexClientControlIpc } = require('./ipc/codex-client-control.cjs');
 const { resolveCodexExecutable } = require('./codex-login.cjs');
 const { createWorkspaceTerminalService } = require('./workspace-terminal.cjs');
@@ -141,6 +149,20 @@ const taskPlans = createTaskPlanStore({
 });
 let localWorkspaceService = null;
 let nativeClientControl = null;
+let agentNativeBridge = null;
+let agentNativeDescriptor = null;
+let nativeAccountAuthority = null;
+let nativeAccountInventory = null;
+let nativeAccountExecution = null;
+let lastNativeModelPublication = null;
+function publishNativeAccountModels() {
+  if (!agentNativeDescriptor) return;
+  const models = nativeAccountExecution?.models() ?? [];
+  const value = { models, accepting: models.length > 0 && !quitting && !shutdownInProgress && !exitCommitted };
+  const identity = JSON.stringify(value);
+  if (identity === lastNativeModelPublication) return;
+  agentNativeDescriptor.publish(value); lastNativeModelPublication = identity;
+}
 let workspaceTerminalService = null;
 let remoteWorkspaceService = null;
 let workspaceGitService = null;
@@ -1062,6 +1084,61 @@ function registerIpc({ logger, stateStore }) {
   registerLifecycleParticipant('native-thread-control', {
     currentOperation: () => nativeClientControl?.currentOperation?.() ?? null,
     destroy: async () => { await nativeClientControl?.destroy(); },
+  });
+  registerLifecycleParticipant('agent-native', {
+    currentOperation: () => agentNativeBridge?.status().activeCount ? 'Native Agent inference' : null,
+    destroy: async () => { await nativeAccountExecution?.destroy(); await agentNativeBridge?.destroy(); },
+  });
+  const getNativeAccountAuthority = () => {
+    if (nativeAccountAuthority) return nativeAccountAuthority;
+    try {
+      const target = { arm64: 'aarch64-apple-darwin', x64: 'x86_64-apple-darwin' }[process.arch];
+      if (process.platform !== 'darwin' || !target) throw new Error('Unsupported Native login platform');
+      // Use the already installed official, version-specific standalone package.
+      // A current/Desktop resolver could silently select a different protocol version.
+      const root = fs.realpathSync(path.join(app.getPath('home'), '.codex', 'packages', 'standalone', 'releases', `${NATIVE_CLI_VERSION}-${target}`));
+      const metadata = JSON.parse(nativeRegular(path.join(root, 'codex-package.json'), 16384));
+      if (metadata.version !== NATIVE_CLI_VERSION || metadata.target !== target || metadata.variant !== 'codex'
+        || metadata.layoutVersion !== 1 || metadata.entrypoint !== 'bin/codex') throw new Error('Native CLI package changed');
+      const executable = fs.realpathSync(path.join(root, 'bin', 'codex'));
+      nativeAccountAuthority = createNativeAccountAuthority({ authorityHome: path.join(CORE_HOME, 'native-accounts'),
+        executable, executableSha256: nativeFileDigest(executable) });
+      return nativeAccountAuthority;
+    } catch {
+      const unavailable = () => { throw new Error('The admitted official Native CLI is unavailable'); };
+      return { inspect: () => ({ available: false, reasonCode: 'admitted_cli_unavailable', profiles: [], receipts: [], activeCount: 0, executionAvailable: false }),
+        prepareProfile: unavailable, beginDeviceLogin: unavailable, cancelLogin: unavailable };
+    }
+  };
+  const getNativeAccountInventory = () => {
+    if (!IS_DEV_PROFILE) throw new Error('Native inventory requires the reviewed development worker');
+    const authority = getNativeAccountAuthority();
+    nativeAccountInventory ??= createNativeAccountInventoryService({ authority,
+      getWrapperPin: () => reviewedOwnedNativeDevPin(SOURCE_ROOT),
+      acquireProfileOwner: input => authority.acquireProfileOwner(input),
+      storageRoot: path.join(CORE_HOME, 'native-account-inventories') });
+    return nativeAccountInventory;
+  };
+  const getNativeAccountExecution = () => {
+    if (!IS_DEV_PROFILE) throw new Error('Native execution requires the reviewed development worker');
+    const authority = getNativeAccountAuthority();
+    nativeAccountExecution ??= createNativeAccountExecutionService({ authority, inventory: getNativeAccountInventory(),
+      getWrapperPin: () => reviewedOwnedNativeDevPin(SOURCE_ROOT),
+      storageRoot: path.join(CORE_HOME, 'native-account-execution'), maxConcurrentThreads: 2,
+      onChange: publishNativeAccountModels });
+    return nativeAccountExecution;
+  };
+  registerNativeAccounts({ handle, getAuthority: getNativeAccountAuthority, getInventory: getNativeAccountInventory,
+    getExecution: getNativeAccountExecution,
+    onExecutionClosed: execution => { if (nativeAccountExecution === execution) nativeAccountExecution = null; publishNativeAccountModels(); },
+    openExternal: url => shell.openExternal(url), clipboard });
+  registerLifecycleParticipant('native-account-inventory', {
+    currentOperation: () => nativeAccountInventory?.currentOperation() ?? null,
+    destroy: async () => { await nativeAccountInventory?.destroy(); },
+  });
+  registerLifecycleParticipant('native-account-login', {
+    currentOperation: () => nativeAccountAuthority?.currentOperation() ?? null,
+    destroy: async () => { await nativeAccountAuthority?.destroy(); },
   });
   const syncConversationState = owner => {
     if (owner) lifecycleAdmission.assertOwner(owner);
@@ -2218,6 +2295,18 @@ async function start() {
     logger,
     getBrowserHost: () => browserHost,
     getPreferences: () => stateStore.read(),
+    getAgentNativeBridge: () => agentNativeBridge,
+    getAgentNativeInstance: () => agentNativeDescriptor?.instanceId,
+    validateNativeInvalidation: async body => {
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).some(key => !['actionId', 'taskId', 'familyId', 'beforeGeneration'].includes(key))) throw new Error('Invalid Native invalidation');
+      const config = runtimeSupervisor.readConfig();
+      if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config, { allowDraining: true })) throw new Error('Native runtime owner is unavailable');
+      const receipt = await runtimeSupervisor.control(config, 'agent-native', { body: { action: 'validate-invalidation',
+        taskId: body.taskId, familyId: body.familyId, beforeGeneration: body.beforeGeneration } });
+      if (receipt?.ok !== true) throw new Error('Native invalidation scope changed');
+      return receipt.value;
+    },
     // A dedicated system-proxy session must not inherit any account's fixed/PAC proxy.
     resolveNativeProxy: url => resolveNativeRequestProxy(
       session.fromPartition(`nekodex-native-network-${LAUNCHER_PROFILE.kind}`), url),
@@ -2262,6 +2351,31 @@ async function start() {
     supervisor: runtimeSupervisor,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
   });
+  agentNativeBridge = createAgentNativeBridge({
+    canStart: () => !quitting && !shutdownInProgress && !exitCommitted && !lifecycleAdmission.busy(),
+    validateOffer: async (envelope, payloadDigest) => {
+      const config = runtimeSupervisor.readConfig();
+      if (!config || !await runtimeSupervisor.ownedAgentRuntimeReady(config)) throw new Error('Native runtime owner is unavailable');
+      const receipt = await runtimeSupervisor.control(config, 'agent-native', { body: { action: 'validate-offer',
+        scope: envelope.scope, model: envelope.model, admissionId: envelope.admissionId, payloadDigest } });
+      if (receipt?.ok !== true) throw new Error('Native offer scope changed');
+      return receipt.value;
+    },
+    // Only qualified own-profile metadata can create a model admission. Readiness
+    // never starts a profile, child, thread, inventory transaction or login.
+    resolveAdmission: (admissionId, model) => nativeAccountExecution?.resolveAdmission(admissionId, model),
+  });
+  if (process.platform === 'darwin') {
+    try {
+      agentNativeDescriptor = createAgentNativeDescriptorPublisher({ coreHome: CORE_HOME, profile: LAUNCHER_PROFILE.kind,
+        control: browserControl.descriptor() });
+      agentNativeDescriptor.publish({ models: [], accepting: false });
+    } catch {
+      // Optional Native admission cannot prevent unrelated launcher functions from opening.
+      agentNativeDescriptor = null;
+      logger.warn('agent_native.descriptor_unavailable', { reasonCode: 'private-profile-unavailable' });
+    }
+  }
   const configuredInteractionMode = runtimeHost.runtimeConfigSnapshot().config?.browserInteractionMode;
   contextChangeQueue?.stop();
   contextChangeQueue = createContextChangeQueue({

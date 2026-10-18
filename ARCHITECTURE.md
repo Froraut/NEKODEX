@@ -58,8 +58,8 @@ separate facts.
 | Conversation text history | [store](src/conversation-history/store.ts), [HTTP actions](src/conversation-history/http.ts), [validated producer adapter](src/conversation-history/capture.ts), [canonical capture](src/conversation-history/canonical.ts), [main recorder](launcher/electron/canonical-native-history.cjs), [filter](launcher/electron/canonical-history-policy.cjs), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | The Bun daemon owns the SQLite/FTS writer. Manual selected text and explicitly refreshed native canonical pages have separate policies. Per-thread consent/recording epoch invalidates late capture; known-pattern exclusions do not guarantee removal of unknown secrets. All corpus coverage remains partial; native empty-page proof is not text proof. |
 | Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx) | Main's native picker grants an opaque root ID; renderer paths stay relative. The service owns private persisted roots/drafts, bounded reads and revision-aware writes. Opaque captured base choices support HEAD/local/remote-tracking comparisons with stale reference checks, no fetch/checkout. Actual DEV UI showed HEAD and older-base working diffs/full OIDs without moving main. Bounded in-memory comparisons remain read-only, not recoverable code checkpoints. |
 | Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Public native thread list/read UI remains metadata-only; the main-only canonical recorder separately reads supported items under explicit consent. Status is scoped to the configured connection/server. Fork is an explicit user action; start/interrupt/approve are unsupported. Executable/home/socket are main-owned dependencies. |
-| Owned Native inference leaf | [admission](launcher/electron/owned-native-admission.cjs), [worker](launcher/electron/owned-native-worker.cjs), [receipts](launcher/electron/owned-native-journal.cjs) | A separate private stdio child/new ephemeral thread owns Native inference and exact canonical event correlation. The current leaf is fixture-only and not composed into main/Bun/UI; official-account startup policy admission remains unavailable. Existing metadata/fork authority is unchanged. A local fake Responses proof using stock CLI is separate from real account/model delivery. |
-| Standalone Agent mode | [store](src/agent-mode/store.ts), [runner](src/agent-mode/runner.ts), [runtime](src/agent-mode/runtime.ts), [Responses port](src/agent-mode/provider.ts), [HTTP actions](src/agent-mode/http.ts), [IPC](launcher/electron/ipc/agent-mode.cjs), [surface](launcher/src/AgentModeSurface.tsx) | A separate task family owns stages, durable mailbox/dispatch/command receipts and bounded Goal/Loop. The existing Responses owner executes configured Web routes and advertises explicitly enabled MCP descriptors. Durable pending tool calls require exact approval/results before canonical continuation; snapshot grants grant no tool/filesystem authority. Monetary cost remains unknown without an actual receipt. |
+| Owned Native inference leaf | [admission](launcher/electron/owned-native-admission.cjs), [worker](launcher/electron/owned-native-worker.cjs), [receipts](launcher/electron/owned-native-journal.cjs) | The trusted [auth authority](launcher/electron/native-account-authority.cjs) owns explicit fresh-profile official CLI device login; the [inventory owner](launcher/electron/native-account-inventory.cjs) qualifies only its own exact personal-Pro profile, native account/usage and original catalog. The [execution owner](launcher/electron/native-account-execution.cjs) seals qualified model metadata and resolves model/admission pairs into one account stdio process/AuthManager/sender with up to two new isolated task threads. Main/Bun/Agent UI use a private descriptor and fixed protocol. No actual account/model has been admitted yet. The pinned public-library Rust wrapper keeps mandatory policy; network-denied `--account-info` classification is separate from cloud-aware startup checks. Fixture-route official-account refusal remains unchanged. Existing metadata/fork authority is unchanged; neither fake-provider evidence nor a compiled wrapper proves real delivery. |
+| Standalone Agent mode | [store](src/agent-mode/store.ts), [runner](src/agent-mode/runner.ts), [runtime](src/agent-mode/runtime.ts), [Responses port](src/agent-mode/provider.ts), [Native port](src/agent-mode/native-provider.ts), [main bridge](launcher/electron/agent-native-bridge.cjs), [HTTP actions](src/agent-mode/http.ts), [IPC](launcher/electron/ipc/agent-mode.cjs), [surface](launcher/src/AgentModeSurface.tsx) | A separate task family owns stages, durable mailbox/dispatch/command receipts and bounded Goal/Loop. The existing Responses owner executes configured Web routes and advertises explicitly enabled MCP descriptors. Durable pending tool calls require exact approval/results before canonical continuation; snapshot grants grant no tool/filesystem authority. Monetary cost remains unknown without an actual receipt. |
 | Human workspace terminal | [PTY service](launcher/electron/workspace-terminal.cjs), [IPC](launcher/electron/ipc/workspace-terminal.cjs) | Main-owned session/generation and picker grant; bounded output/ack/backpressure and exact PTY lifecycle. Main/preload/Workspace UI and xterm are wired; native `node-pty` availability/ABI remains platform-specific. Human input is not an Agent tool. |
 | Project worktrees and manual restore | [Git mutations](launcher/electron/workspace-git-mutations.cjs), [file capture](launcher/electron/workspace-file-capture.cjs), [IPC](launcher/electron/ipc/workspace-git.cjs) | One main owner serializes worktree create/archive and snapshot/restore receipts, retaining recovery state outside the user's branch. Read-only Git diff snapshots remain distinct. |
 | Remote project workspace | [SSH/SFTP owner](launcher/electron/remote-workspace.cjs), [remote worktrees](launcher/electron/remote-worktrees.cjs), [IPC](launcher/electron/ipc/remote-workspace.cjs), [surface](launcher/src/RemoteWorkspaceSurface.tsx) | System SSH owns authentication/known-host policy; selected host/root identity binds reads, drafts, commands and remote Git. One-use approvals and signed durable receipts distinguish completed/unknown; reconnect does not replay mutations. |
@@ -435,9 +435,40 @@ exact key retained two runs/two turns; Pause advanced generation to 3 and remove
 Run consent. This proves that UI/durable boundary, not an external model or
 business outcome. External watchers remain unavailable. The provided
 Responses adapter calls a fixed configured loopback endpoint without redirects
-or implicit retries. `server.ts` admits an owned Agent dispatch and uses configured
-Web model routes; the control bearer is never used as Native OAuth. Configured
-MCP descriptors and selected skill content are attached through explicit ports.
+or implicit retries. `server.ts` routes an explicit `local-responses` or
+`owned-native` execution choice through the same runtime, runner and ToolJournal.
+Native requires an explicitly admitted model/admission pair. Bun commits the exact
+complete envelope digest before one private main HTTP offer; main checks that
+already-durable claim before worker creation and again before inference. Initial
+prepared receipts release HTTP observation while the same operation continues.
+Receipt reads and bounded event waits never offer again. Generation fences retire
+only older bindings. Main's matching-core check is independent of Web tunnel
+health; cleanup authority remains valid during drain. The control bearer is never
+Native OAuth. Configured MCP descriptors and selected skill content are attached
+through explicit ports.
+
+The shared fixed `neko-agent-result-v1` schema encodes NEKODEX `tool_request` or
+`final` assistant text. Native tools stay empty; Bun checks exact announced tool
+schemas and remains the only effect owner. Native continuations retain binding,
+generation and previous completed native-turn identity rather than fabricating
+Responses function outputs. Current Native input is text only, task concurrency
+is one, cost is unknown and max-turns counts native offers, not internal provider
+requests. Main resolves admission through the qualified Native account execution owner and
+publishes only its current model rows. Explicit Inspect models runs the selected
+profile inventory and admits at most the first two nonhidden actual picker models,
+without inference. There are currently no real admitted rows. The auth UI reached
+the official browser/passkey boundary, but its CLI attempt ended unsuccessfully;
+no saved login, real inventory or real inference is proved. A fresh explicit epoch
+is required for another login attempt. The account server supports two isolated
+threads across separate tasks; this does not raise the current one-worker limit
+inside each Native task. Retiring a binding requires its exact thread-closed event
+or physical process closure; unsubscribe acknowledgement alone cannot release it.
+Unknown/lost ACK never permits replay. Whole-app cleanup closes the account
+process before binding facades and auth storage; an idle execution lease is not
+itself active inference. The optional Rust helper is a development artifact, outside packaging.
+Its exact source/build/binary pins are checked before a static probe; stock CLI
+admission retains its previous identity. See the [protocol](docs/design/agent-native-protocol.md),
+[main bridge](docs/design/agent-native-bridge.md) and [build guide](docs/development/owned-native-worker-build.md).
 
 Canonical provider input/output/tool-map/pending calls are retained with the
 result. An exact human approval invokes the pending call through the MCP host;
@@ -819,6 +850,7 @@ its existing read receipt so export never creates a new probe to fill that secti
 | Agent tasks/mail/commands | `AgentModeStore` owns durable commands, dispatches, mailbox packets, canonical pending tool continuations and receipts; runner owns live dispatches. Unknown effect/delivery requires reconciliation. |
 | Manual/Agent snapshots | Main Git mutation owner retains manual restore recovery; Bun Agent snapshot writer retains signed, exact-dispatch pre-turn baselines. Neither grants general filesystem execution authority. |
 | Remote mutations | Main remote workspace/worktree owners retain signed started/outcome receipts; reconnect does not replay unknown operations. |
+| Owned Native Agent state | Bun owns task/dispatch/transport claims and effect receipts. Main owns private descriptor/binding projections and one sender; the leaf owns durable Native intents/ACK/canonical results. Lost main mappings never rehydrate or replay implicitly. |
 | Native fork journal | Private main-process journal records begin/completed/uncertain and explicit inspection acknowledgement before another fork. |
 | Usage | Native outbox plus launcher durable store; report projections do not rewrite receipts. |
 | Rolling checkpoints | Original file snapshot + committed receipt; cache publication follows the successful disk write. |
@@ -865,3 +897,5 @@ The responsible agent must review those semantic changes. No background watcher
 or scheduled application access is required.
 
 An installed patch launcher may configure an independent account tunnel while a compatible Full-mode account-tunnel core finishes existing Native traffic. This retains the committed releaseVersion and other peers; cross-family/channel or core-mode transitions still require normal generation activation.
+
+The module map excludes `launcher/native/owned-worker/target` as generated Cargo cache while retaining the Rust source, manifests and build-owner code. Keeping that reusable cache during the active Native batch must not change the committed source map.

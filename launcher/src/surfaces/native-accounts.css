@@ -1,0 +1,7 @@
+.native-accounts { display: grid; gap: var(--space-4); min-width: 0; }
+.native-accounts__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.native-accounts__prepare { display: grid; gap: var(--space-3); }
+.native-accounts__profiles { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
+.native-accounts__profile { display: grid; gap: var(--space-3); padding-block: var(--space-3); border-top: 1px solid var(--border); min-width: 0; overflow-wrap: anywhere; }
+.native-accounts__profile p { margin: 0; color: var(--text-secondary); }
+.native-accounts__code { font-size: var(--font-size-lg, 18px); letter-spacing: 0.12em; user-select: all; }

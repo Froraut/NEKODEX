@@ -10,9 +10,9 @@ const safeId = value => typeof value === 'string' && value.length > 0 && value.l
 const number = value => Number.isSafeInteger(value) && value >= 0;
 
 // Private transport: no exported arbitrary-RPC API, no proxy, no process-global sender.
-function createTransport({ admitted, requestTimeoutMs, stopGraceMs, onNotification, onFailure,
+function createTransport({ admitted, requestTimeoutMs, stopGraceMs, onNotification, onFailure, onClosed,
   spawnProcess = spawn, terminateProcess = terminateOwnedProcessTree }) {
-  let child, failure, closing, nextId = 1, buffer = '', bytes = 0, closed = false;
+  let child, failure, closing, nextId = 1, buffer = '', bytes = 0, closed = false, retirementRequested = false;
   const decoder = new StringDecoder('utf8'), pending = new Map();
   let resolveClosed; const closedPromise = new Promise(resolve => { resolveClosed = resolve; });
   function poison(reason) {
@@ -82,7 +82,7 @@ function createTransport({ admitted, requestTimeoutMs, stopGraceMs, onNotificati
     child.stdin.on('error', () => poison(fail('transport_error', 'Native input stream failed')));
     child.stdout.on('data', consume); child.stdout.on('error', () => poison(fail('transport_error', 'Native output stream failed')));
     child.once('error', () => poison(fail('spawn_failed', 'Native worker could not start')));
-    child.once('close', () => { closed = true; buffer = ''; bytes = 0; poison(fail('client_closed', 'Native worker closed')); resolveClosed(); });
+    child.once('close', () => { closed = true; buffer = ''; bytes = 0; poison(fail('client_closed', 'Native worker closed')); resolveClosed(); onClosed?.(); });
     const response = await request('initialize', { clientInfo: { name: 'nekodex-owned-native', title: 'NEKODEX', version: '1' },
       capabilities: { experimentalApi: false, requestAttestation: false } });
     if (response?.codexHome !== admitted.paths.codexHome || typeof response.userAgent !== 'string'
@@ -98,6 +98,7 @@ function createTransport({ admitted, requestTimeoutMs, stopGraceMs, onNotificati
   }
   function destroy() {
     if (closing) return closing;
+    retirementRequested = true;
     closing = (async () => {
       if (!child || closed) return;
       poison(fail('client_closed', 'Native worker is retiring'));
@@ -105,21 +106,21 @@ function createTransport({ admitted, requestTimeoutMs, stopGraceMs, onNotificati
       if (await wait(stopGraceMs)) return;
       terminateProcess(child, 'SIGTERM'); if (await wait(stopGraceMs)) return;
       terminateProcess(child, 'SIGKILL'); if (!await wait(stopGraceMs)) throw fail('process_not_settled', 'Owned native process did not settle');
-    })();
+    })().catch(reason => { closing = undefined; throw reason; });
     // A stream callback can initiate teardown; caller still awaits the same rejecting promise.
     closing.catch(() => {}); return closing;
   }
-  return { connect, request, destroy, get closed() { return closed; } };
+  return { connect, request, destroy, get closed() { return closed; }, get pid() { return child?.pid ?? null; }, get cleanupPending() { return retirementRequested && !!child && !closed; } };
 }
 
-function createOwnedNativeWorkerService(options = {}) {
+function createWorkerService(options = {}, shared) {
   const { onReceipt, compileOutputSchema, requestTimeoutMs = 15_000, terminalTimeoutMs = 120_000, stopGraceMs = 1000, testHooks = {} } = options;
   for (const [value, max] of [[requestTimeoutMs, 120_000], [terminalTimeoutMs, 600_000], [stopGraceMs, 10_000]]) {
     if (!Number.isSafeInteger(value) || value < 1 || value > max) throw fail('invalid_admission', 'Invalid native lifetime bound');
   }
-  const admission = makeAdmission(options);
+  const admission = shared?.admission ?? makeAdmission(options);
   const journal = createOwnedNativeJournal({ directory: admission.paths.journal, admissionId: admission.admissionId });
-  let worker = null, state = 'disconnected', busy = null, active = null, destroyed = false;
+  let worker = null, state = 'disconnected', busy = null, active = null, destroyed = false, closing;
   const notify = receipt => {
     try { const value = onReceipt?.(structuredClone(receipt)); if (value?.catch) value.catch(() => {}); }
     catch { /* Receipt is durable; observer failure is not authority to repeat a turn. */ }
@@ -134,7 +135,7 @@ function createOwnedNativeWorkerService(options = {}) {
     if (availability.available && ['stale', 'elsewhere-or-unverified'].includes(storageOwner)) {
       availability = { available: false, reasonCode: storageOwner === 'stale' ? 'stale_owner_recovery_required' : 'owner_exists' };
     }
-    return { availability, storageOwner, scope: 'private-owned-ephemeral', delivery: 'local-fixture-only',
+    return { availability, storageOwner, scope: 'private-owned-ephemeral', delivery: shared ? 'qualified-account' : 'local-fixture-only',
       state, workerHandle: worker?.handle || null, threadId: worker?.threadId || null,
       admissionId: admission.admissionId, receipts,
       capabilities: { textInput: true, imageInput: false, nativeTools: false, foreignThreadAdoption: false, replay: false, realProviderVerified: false } };
@@ -230,15 +231,17 @@ function createOwnedNativeWorkerService(options = {}) {
   }
   async function createOwnedWorker({ actionId } = {}) {
     uuid(actionId);
-    if (destroyed || busy || worker && state !== 'retired') throw fail('worker_busy', 'Native worker owner is not available for creation');
+    if (destroyed || busy || worker && (state !== 'retired' || !worker.rpc.closed)) throw fail('worker_busy', 'Native worker owner is not available for creation');
     if (journal.snapshot().some(row => row.actionId === actionId)) throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
     if (journal.snapshot().some(row => row.state === 'unknown' && !row.retired)) throw fail('reconciliation_required', 'Retire the previous uncertain worker before creating another');
     busy = 'Creating private native worker'; state = 'creating';
     let row;
     try {
-      const admitted = admission.prestart(); journal.acquire();
+      const admitted = shared ? null : admission.prestart(); journal.acquire();
       const handle = randomUUID();
-      worker = { handle, threadId: null, rpc: createTransport({ admitted, requestTimeoutMs, stopGraceMs,
+      worker = { handle, threadId: null, rpc: shared ? shared.rpcFor(() => worker?.threadId, onNotification, reason => {
+        if (worker?.rpc.closed) unknown(reason.code || 'owner_closed'); else held(reason.code || 'transport_error');
+      }) : createTransport({ admitted, requestTimeoutMs, stopGraceMs,
         onNotification, onFailure: reason => { unknown(reason.code || 'transport_error'); },
         spawnProcess: testHooks.spawnProcess, terminateProcess: testHooks.terminateProcess }) };
       await worker.rpc.connect(); await effective(worker.rpc);
@@ -255,7 +258,7 @@ function createOwnedNativeWorkerService(options = {}) {
         || !Array.isArray(result.instructionSources) || result.instructionSources.length) {
         throw fail('thread_receipt_mismatch', 'Native thread did not confirm its admitted identity and permissions');
       }
-      uuid(result.thread.id); worker.threadId = result.thread.id;
+      uuid(result.thread.id); worker.threadId = result.thread.id; shared?.created(worker.threadId);
       const receipt = update(actionId, { state: 'completed', threadId: worker.threadId }); state = 'ready';
       return { workerHandle: handle, threadId: worker.threadId, admissionId: admission.admissionId, receipt };
     } catch (reason) {
@@ -326,17 +329,161 @@ function createOwnedNativeWorkerService(options = {}) {
     if (busy && !active) throw fail('worker_busy', 'Native creation or admission is still pending');
     const known = worker?.handle === workerHandle || journal.snapshot().some(row => row.workerHandle === workerHandle);
     if (!known) throw fail('invalid_intent', 'Native worker handle is unknown');
+    if (shared) destroyed = true;
     journal.retire(workerHandle, actionId);
-    if (worker?.handle === workerHandle) unknown('worker_retired');
-    if (worker?.handle === workerHandle) { await worker.rpc.destroy(); state = 'retired'; }
+    if (worker?.handle === workerHandle) { if (shared && !worker.rpc.closed) held('worker_retiring'); else unknown('worker_retired'); }
+    if (worker?.handle === workerHandle) {
+      state = 'retiring';
+      try { await worker.rpc.destroy(); unknown('worker_retired'); state = 'retired'; }
+      catch (reason) { state = 'unknown'; throw reason; }
+    }
     return inspectOwnedWorker(workerHandle);
   }
-  async function destroy() {
+  function destroy() {
+    if (closing) return closing;
     destroyed = true;
-    unknown('owner_closed');
-    try { await worker?.rpc.destroy(); state = 'retired'; } finally { journal.release(); }
+    if (shared && worker && !worker.rpc.closed) held('owner_retiring'); else unknown('owner_closed');
+    state = 'retiring';
+    closing = (async () => {
+      await worker?.rpc.destroy();
+      unknown('owner_closed');
+      // The exact process close, not a cleanup attempt or timeout, releases this owner.
+      state = 'retired'; journal.release();
+    })().catch(reason => { state = 'unknown'; closing = undefined; throw reason; });
+    return closing;
   }
   return Object.freeze({ createOwnedWorker, offerOwnedTurn, inspectOwnedWorker, retireOwnedWorker,
-    currentOperation: () => busy || (active ? 'Awaiting private native inference outcome' : null), destroy });
+    currentOperation: () => busy || (worker?.rpc.cleanupPending ? 'Awaiting exact native process cleanup' : active ? 'Awaiting private native inference outcome' : null), destroy });
 }
-module.exports = { createOwnedNativeWorkerService };
+function createOwnedNativeWorkerService(options = {}) { return createWorkerService(options); }
+
+/** Trusted account owner. One private sender/AuthManager process; binding facades own
+ * only freshly-created ephemeral threads and their separate durable journals. */
+function createOwnedNativeAccountServer({ admission, requestTimeoutMs = 15000, terminalTimeoutMs = 120000,
+  stopGraceMs = 1000, maxConcurrentThreads = 2, onChange, testHooks = {} } = {}) {
+  if (!admission?.prestart || !admission?.forBinding || !admission?.checkAccount || !Number.isInteger(maxConcurrentThreads)
+    || maxConcurrentThreads < 1 || maxConcurrentThreads > 32) throw fail('invalid_admission', 'Qualified Native account admission is required');
+  const listeners = new Set(), threads = new Map(), facades = new Map();
+  let rpc, starting, closing, stopped = false, fault;
+  const changed = () => { try { onChange?.(); } catch {} };
+  const threadState = id => {
+    if (!threads.has(id)) threads.set(id, { closed: false, requested: false, resolve: null, promise: null });
+    return threads.get(id);
+  };
+  const physicallyClosed = () => Boolean(rpc?.closed);
+  const signalClose = id => {
+    const row = threadState(id); row.closed = true; row.resolve?.();
+  };
+  function notify(method, params) {
+    if (method === 'thread/closed' && threads.has(params?.threadId)) signalClose(params.threadId);
+    for (const listener of listeners) {
+      if (method === 'thread/closed') {
+        if (listener.id() === params?.threadId) listener.failure(fail('thread_closed', 'Exact Native thread closed'));
+      } else listener.notification(method, params);
+    }
+    if (method === 'thread/closed') changed();
+  }
+  async function ready() {
+    if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+    if (starting) return starting;
+    starting = (async () => {
+      const admitted = admission.prestart();
+      rpc = createTransport({ admitted, requestTimeoutMs, stopGraceMs, onNotification: notify,
+        onFailure: reason => { fault ||= reason; for (const listener of listeners) listener.failure(reason); changed(); },
+        onClosed: () => { for (const id of threads.keys()) signalClose(id); for (const listener of listeners) listener.failure(fail('client_closed', 'Native account process closed')); changed(); },
+        spawnProcess: testHooks.spawnProcess, terminateProcess: testHooks.terminateProcess });
+      await rpc.connect(); changed();
+      admission.checkEffective(await rpc.request('config/read', { includeLayers: true, cwd: admission.paths.cwd }), await rpc.request('configRequirements/read', {}));
+      admission.checkAccount(await rpc.request('account/read', { refreshToken: false }), await rpc.request('account/rateLimits/read', {}));
+      if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+    })().catch(async reason => {
+      fault ||= reason; changed();
+      // Startup preflight precedes every thread. Close only its one owned process;
+      // a failed close remains explicit account activity and keeps the profile lease.
+      try { await rpc?.destroy(); } catch {}
+      throw reason;
+    });
+    return starting;
+  }
+  async function closeThread(id) {
+    if (physicallyClosed()) return;
+    if (!id) throw fail('thread_close_unavailable', 'Unacknowledged Native thread creation requires account-owner reconciliation');
+    const row = threadState(id);
+    if (row.closed) return;
+    row.promise ??= new Promise(resolve => { row.resolve = resolve; });
+    if (!row.requested) {
+      row.requested = true; changed();
+      // The reply is only an unsubscribe ACK. Retain this exact owner until its
+      // thread/closed notification or the shared physical process closes.
+      rpc.request('thread/unsubscribe', { threadId: id }, undefined, () => {}).catch(() => {});
+    }
+    await row.promise;
+  }
+  function createWorker(binding, onReceipt) {
+    if (stopped || fault || facades.has(binding.workerBindingId)) throw fail('worker_busy', 'Native account binding is unavailable');
+    const scopedAdmission = admission.forBinding(binding);
+    let scopedListener;
+    const shared = { admission: scopedAdmission,
+      created() { if (scopedListener) scopedListener.creationUnknown = false; changed(); },
+      rpcFor(id, notification, failure) {
+        const listener = { id, notification, failure, creationUnknown: false, threadStartWritten: false, locallyClosed: false }; scopedListener = listener; listeners.add(listener);
+        return {
+          connect: async () => {
+            if ([...facades.values()].filter(value => value.currentOperation() || value.inspectOwnedWorker().threadId && !value.inspectOwnedWorker().receipts.every(row => row.retired)).length > maxConcurrentThreads) throw fail('worker_busy', 'Native account thread capacity reached');
+            await ready();
+          },
+          request: async (method, params, beforeWrite, onWaitTimeout) => {
+            if (!['config/read', 'configRequirements/read', 'thread/start', 'turn/start'].includes(method)) throw fail('unsupported_method', 'Native account facade method is unavailable');
+            if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+            if (method === 'thread/start' || method === 'turn/start') {
+              admission.checkAccount(await rpc.request('account/read', { refreshToken: false }), await rpc.request('account/rateLimits/read', {}));
+              if (stopped || fault) throw fault || fail('client_closed', 'Native account server is closing');
+            }
+            let result;
+            try {
+              result = await rpc.request(method, params, requestId => {
+                beforeWrite?.(requestId);
+                if (method === 'thread/start') listener.threadStartWritten = true;
+              }, method === 'thread/start' ? () => {
+                // Retain this pending request for its exact late ACK. Additional bindings
+                // cannot consume capacity while creation has an unknown physical outcome.
+                listener.creationUnknown = true; changed(); onWaitTimeout?.();
+              } : onWaitTimeout);
+            } catch (reason) {
+              if (method === 'thread/start' && !reason.authoritative && !physicallyClosed()) { listener.creationUnknown = true; changed(); }
+              throw reason;
+            }
+            if (method === 'thread/start' && typeof result?.thread?.id === 'string') threadState(result.thread.id);
+            return result;
+          },
+          destroy: () => {
+            if (!listener.threadStartWritten) {
+              listener.locallyClosed = true; listeners.delete(listener); return Promise.resolve();
+            }
+            return closeThread(id());
+          },
+          get closed() { return listener.locallyClosed || physicallyClosed() || Boolean(id() && threads.get(id())?.closed); },
+          get cleanupPending() { return !this.closed && (stopped || listener.creationUnknown || Boolean(id() && threads.get(id())?.requested)); },
+        };
+      },
+    };
+    const facade = createWorkerService({ requestTimeoutMs, terminalTimeoutMs, stopGraceMs,
+      onReceipt: row => { onReceipt?.(row); queueMicrotask(changed); }, compileOutputSchema: admission.compileOutputSchema }, shared);
+    facades.set(binding.workerBindingId, facade); return facade;
+  }
+  return Object.freeze({ createWorker,
+    inspect: () => ({ serverGeneration: admission.serverGeneration, pid: rpc?.pid ?? null, closed: physicallyClosed(), accepting: !stopped && !fault && ![...listeners].some(value => value.creationUnknown),
+      threadIds: [...threads.keys()], bindings: [...facades.keys()], activeCount: [...facades.values()].filter(value => value.currentOperation()).length }),
+    currentOperation: () => closing && !physicallyClosed() ? 'Closing Native account process' : fault && rpc && !physicallyClosed() ? 'Native account preflight reconciliation' : [...facades.values()].some(value => value.currentOperation()) ? 'Native account threads' : null,
+    destroy() {
+      if (closing) return closing; stopped = true; changed();
+      closing = (async () => {
+        // A startup already owns the exact child. Do not replace it or release its lease.
+        if (starting) { try { await starting; } catch {} }
+        await rpc?.destroy();
+        await Promise.all([...facades.values()].map(value => value.destroy()));
+      })().catch(reason => { closing = undefined; throw reason; }); return closing;
+    },
+  });
+}
+module.exports = { createOwnedNativeWorkerService, createOwnedNativeAccountServer };

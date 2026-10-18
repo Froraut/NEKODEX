@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentContinuation, AgentToolOutcome } from "./types";
+import type { AgentContinuation, AgentResponsesContinuation, AgentToolOutcome } from "./types";
 
 const MAX_IMAGE_BYTES = 160 * 1024;
 const MAX_IMAGES = 2;
@@ -66,7 +66,7 @@ function descriptor(value: unknown): value is RecordValue {
     || value.imageDelivery.state === "omitted" && value.imageDelivery.reason === "bounded-tool-image-history" && keys(value.imageDelivery, ["state", "reason"]) && value.attachmentIndex === null;
 }
 /** Recognize only our outer tool-output envelope, never annotations nested in untrusted results. */
-function hostImageOutput(item: RecordValue, preceding: RecordValue[], source: AgentContinuation, turnId: string, images: ProjectedImage[]): HostImageOutput | undefined {
+function hostImageOutput(item: RecordValue, preceding: RecordValue[], source: AgentResponsesContinuation, turnId: string, images: ProjectedImage[]): HostImageOutput | undefined {
   if (item.type !== "function_call_output" || typeof item.call_id !== "string" || !keys(item, ["type", "call_id", "output", "internal_chat_message_metadata_passthrough"])) return;
   const binding = item.internal_chat_message_metadata_passthrough;
   if (!record(binding) || !keys(binding, ["turn_id"]) || binding.turn_id !== turnId) return;
@@ -105,6 +105,7 @@ function provenance(owner: HostImageOutput, turnId: string): RecordValue {
 
 /** Request-only projection: immutable receipts retain pixels; only old host tool pixels may be omitted. */
 export function buildAgentToolContinuationInput(source: AgentContinuation, outcomes: AgentToolOutcome[]): RecordValue[] {
+  if (source.kind === "owned-native") reject();
   // source.output came from the model. It can never introduce a client-owned tool result
   // or human message, even when its fields mimic a valid host envelope from earlier input.
   if (source.output.some(item => !record(item) || item.type === "function_call_output" || item.type === "message" && item.role !== "assistant")) reject();

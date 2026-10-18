@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { AgentModeRunner } from "./runner";
 import { AgentModeStore } from "./store";
 import { activeTaskEvidence } from "./evidence";
-import { agentModelConfigured, type AgentModelOption } from "./provider";
+import { agentModelConfigured, agentModelAccepting, type AgentModelOption } from "./provider";
+import { nativeScopeOf, sameNativeScope, type AgentNativeScope } from "./native-protocol";
 import type { AgentControl, AgentDispatch, AgentExecutionPort, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliationResult, AgentWorkPacket, CreateAgentTask, OutcomeEvidence, OutcomeReview } from "./types";
 
 export interface AgentModeRuntimeOptions {
@@ -13,6 +14,8 @@ export interface AgentModeRuntimeOptions {
   configured?: () => boolean;
   /** Shared service admission; draining or shutdown cannot schedule another stage. */
   canStart?: () => boolean;
+  /** Provider-specific admission. Native availability must not be inferred from Web readiness. */
+  canExecute?: (task: AgentTask) => boolean;
   beforeOffer?: (input: { task: AgentTask; dispatch: AgentDispatch }) => Promise<void>;
   toolsAvailable?: () => boolean;
   snapshotReceipts?: (task: AgentTask) => unknown[];
@@ -48,18 +51,21 @@ export class AgentModeRuntime {
     this.store = options.store;
     this.runner = new AgentModeRunner(options.store, options.executionPort, options.ownerId, { beforeOffer: async input => {
       if (this.stopping || options.canStart?.() === false) throw new Error("Task runtime admission is closed");
+      this.assertExecutionAvailable(input.task);
       await options.beforeOffer?.(input);
       if (this.stopping || options.canStart?.() === false) throw new Error("Task runtime admission is closed");
+      this.assertExecutionAvailable(this.store.getTask(input.task.id));
     } });
   }
   status() {
     return { configured: this.options.configured?.() ?? this.options.models().length > 0,
-      models: this.options.models(), capabilities: { tools: this.options.toolsAvailable?.() ?? false, workspace: false, autoSchedule: true, monetaryQuotes: Boolean(this.options.reserveSpend), loopSource: "mailbox", externalWatchers: false, toolReconciliation: Boolean(this.options.reconcileToolReceipt) },
+      models: this.options.models(), capabilities: { tools: this.options.toolsAvailable?.() ?? false, workspace: false, autoSchedule: true, monetaryQuotes: Boolean(this.options.reserveSpend), loopSource: "mailbox", externalWatchers: false, toolReconciliation: Boolean(this.options.reconcileToolReceipt),
+        ownedNative: { configured: this.options.models().some(row => row.provider === "owned-native" && row.available === true && Boolean(row.admissionId)), imageInput: false, turnUnit: "native-offers", actualProviderRequestCount: null } },
       ownerId: this.runner.ownerId, activeDispatchIds: this.runner.liveDispatchIds, accepting: !this.stopping && (this.options.canStart?.() ?? true) };
   }
   create(actionId: string, input: CreateAgentTask): AgentTask {
     if (!input.id) throw new Error("Stable task identity required");
-    if (!input.execution || !this.options.models().some(row => row.id === input.execution?.model)) throw new Error("Select a configured Agent model");
+    if (!agentModelConfigured(input, this.options.models())) throw new Error("Select a configured Agent model");
     return this.store.command(input.id, actionId, "create", input, () => this.store.createTask(input)).result;
   }
   control(taskId: string, actionId: string, control: AgentControl, scope?: AgentActionScope): AgentTask {
@@ -71,7 +77,8 @@ export class AgentModeRuntime {
     if (input.explicitUserAction !== true) throw new Error("A user action is required to start Agent execution");
     if (this.stopping || this.options.canStart?.() === false) throw new Error("Task runtime admission is closed");
     const task = this.store.getTask(taskId);
-    if (!agentModelConfigured(task, this.options.models()) || this.options.configured?.() === false) throw new Error("Agent provider/model is unavailable");
+    this.assertExecutionAvailable(task);
+    if (task.execution?.provider === "owned-native" && task.bounds.maxSpend !== null) throw new Error("This provider has no monetary quote; choose an explicit Native offer bound and no monetary budget");
     if (input.automatic && task.mode === "manual") throw new Error("Manual mode runs one explicit stage at a time");
     let command: { result: AgentDispatch | undefined; duplicate: boolean };
     try { command = this.store.command(taskId, actionId, input.automatic ? "run" : "step", scope ? { input, scope } : input, () => {
@@ -94,13 +101,15 @@ export class AgentModeRuntime {
   private prepare(taskId: string, input: { explicitUserAction: boolean; workerName?: string }): AgentDispatch | undefined {
     if (this.stopping || this.options.canStart?.() === false) throw new Error("Task runtime admission is closed");
     const task = this.store.getTask(taskId);
+    this.assertExecutionAvailable(task);
+    if (task.execution?.provider === "owned-native" && task.bounds.maxSpend !== null) throw new Error("This provider has no monetary quote; choose an explicit Native offer bound and no monetary budget");
     if (task.bounds.maxSpend !== null && !this.options.reserveSpend) throw new Error("This provider has no monetary quote; choose an explicit turn bound and no monetary budget");
     return this.runner.prepareNext(taskId, { explicitUserAction: input.explicitUserAction, workerName: input.workerName, reservedSpend: task.bounds.maxSpend === null ? 0 : this.options.reserveSpend!(task) });
   }
   private launch(dispatch: AgentDispatch, automatic: boolean): void {
     const promise = this.runner.executeDispatch(dispatch.id).then(() => {
       const task = this.store.getTask(dispatch.taskId);
-      if (!automatic || this.stopping || this.options.canStart?.() === false || task.generation !== dispatch.generation || task.mode === "manual") return;
+      if (!automatic || this.stopping || this.options.canStart?.() === false || this.options.canExecute?.(task) === false || !agentModelAccepting(task, this.options.models()) || task.generation !== dispatch.generation || task.mode === "manual") return;
       if (task.mode === "loop" && task.status === "review_required") { this.advanceLoop(task.id); return; }
       if (task.status !== "ready") return;
       const input = { explicitUserAction: false, workerName: this.store.listWorkers(task.id).find(row => row.id === dispatch.workerId)?.name };
@@ -134,6 +143,30 @@ export class AgentModeRuntime {
     return this.store.command(taskId, actionId, "observed_evidence", evidence, () => this.store.recordEvidence(taskId, evidence)).result;
   }
   resolveToolCall(scope: AgentToolOutcome["scope"]) { return this.store.resolveToolCall(scope); }
+  /** Trusted provider seam, never an HTTP action that accepts a caller-chosen new digest. */
+  claimNativeTransport(request: import("./types").ExecutionRequest, payloadDigest: string): void {
+    const task = this.store.getTask(request.task.id); const dispatch = this.store.getDispatch(request.dispatch.id);
+    const execution = task.execution;
+    if (execution?.provider !== "owned-native" || request.task.execution?.provider !== "owned-native" || execution.model !== request.task.execution.model || execution.admissionId !== request.task.execution.admissionId
+      || !sameNativeScope(nativeScopeOf(request), { taskId: task.id, familyId: task.familyId, generation: task.generation, revision: task.revision,
+        dispatchId: dispatch.id, ownerId: dispatch.ownerId, agentWorkerId: dispatch.workerId })
+      || dispatch.taskId !== task.id || dispatch.generation !== task.generation || dispatch.taskRevision !== task.revision || dispatch.ownerId !== this.runner.ownerId || task.ownerId !== this.runner.ownerId
+      || dispatch.state !== "offered" || task.status !== "running" || !this.runner.liveDispatchIds.includes(dispatch.id) || this.stopping || this.options.canStart?.() === false) throw new Error("Stale Native execution claim");
+    this.assertExecutionAvailable(task);
+    this.store.claimTransport(dispatch.id, this.runner.ownerId, payloadDigest);
+  }
+  /** Main's read-only cross-check of an ALREADY committed exact offer, never authority by bearer alone. */
+  validateNativeOffer(input: { scope: AgentNativeScope; payloadDigest: string; model: string; admissionId: string }): { claimId: string; payloadDigest: string; scope: AgentNativeScope } {
+    const task = this.store.getTask(input.scope.taskId); const dispatch = this.store.getDispatch(input.scope.dispatchId);
+    const execution = task.execution;
+    if (execution?.provider !== "owned-native" || execution.model !== input.model || execution.admissionId !== input.admissionId
+      || !sameNativeScope(input.scope, { taskId: task.id, familyId: task.familyId, generation: task.generation, revision: task.revision, dispatchId: dispatch.id, ownerId: dispatch.ownerId, agentWorkerId: dispatch.workerId })
+      || dispatch.taskId !== task.id || dispatch.generation !== task.generation || dispatch.taskRevision !== task.revision || task.status !== "running" || task.ownerId !== this.runner.ownerId || dispatch.ownerId !== this.runner.ownerId
+      || !["offered", "acked"].includes(dispatch.state) || !this.runner.liveDispatchIds.includes(dispatch.id) || !dispatch.transportClaim || !/^[a-f0-9]{64}$/.test(input.payloadDigest) || dispatch.transportClaim.payloadDigest !== input.payloadDigest
+      || this.stopping || this.options.canStart?.() === false) throw new Error("Stale Native execution claim");
+    this.assertExecutionAvailable(task);
+    return { claimId: dispatch.transportClaim.id, payloadDigest: input.payloadDigest, scope: { ...input.scope } };
+  }
   recordToolOutcome(outcome: AgentToolOutcome): AgentTask { return this.store.recordToolOutcome(outcome); }
   async reconcileTool(taskId: string, actionId: string, scope: AgentActionScope, idempotencyKey: string): Promise<AgentToolReconciliationResult> {
     if (this.stopping) throw new Error("Task runtime admission is closed");
@@ -197,7 +230,9 @@ export class AgentModeRuntime {
   }
   private advanceLoop(taskId: string): void {
     if (this.stopping || this.options.canStart?.() === false) return;
-    const generation = this.store.getTask(taskId).generation;
+    const current = this.store.getTask(taskId);
+    if (this.options.canExecute?.(current) === false || !agentModelAccepting(current, this.options.models())) return;
+    const generation = current.generation;
     const next = this.store.claimNextWork(taskId, { ownerId: this.runner.ownerId, automatic: true });
     if (!next) return;
     if (next.generation !== generation) this.options.onTaskScopeInvalidated?.(taskId);
@@ -262,5 +297,8 @@ export class AgentModeRuntime {
     if (!scope) return;
     const task = this.store.getTask(taskId);
     if (task.familyId !== scope.familyId || task.generation !== scope.generation || task.revision !== scope.revision) throw new Error("Stale task action scope");
+  }
+  private assertExecutionAvailable(task: AgentTask): void {
+    if (!agentModelAccepting(task, this.options.models()) || this.options.configured?.() === false || this.options.canExecute?.(task) === false) throw new Error("Agent provider/model is unavailable");
   }
 }

@@ -24,7 +24,7 @@ function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvi
     if (owns(body, 'evidenceSelection') && body.action !== 'workspace-evidence') throw new Error('Invalid Agent evidence action');
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();
-    if (!await supervisor.ownedRuntimeReady(config)) throw new Error('Start the current NEKODEX runtime to use Agent mode');
+    if (!config || !await supervisor.ownedAgentRuntimeReady(config)) throw new Error('Start the current NEKODEX runtime to use Agent mode');
     const send = async payload => {
       const receipt = await supervisor.control(config, 'agent-mode', { body: payload, returnErrorReceipt: true });
       if (!receipt || receipt.ok !== true) throw new Error(receipt?.message || receipt?.error || 'Agent mode operation failed');

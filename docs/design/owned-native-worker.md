@@ -1,6 +1,6 @@
 # Private owned Native worker
 
-This leaf is a Mac-first, trusted-main implementation candidate for a **new** private Codex worker. It is not integrated into main, Bun, renderer, Agent mode, or the installed app. Windows/Linux remain phase 2. Existing native metadata control retains `startTurn:false`, `interruptTurn:false`, and `approve:false`.
+This leaf is a Mac-first, trusted-main implementation candidate for a **new** private Codex worker. It is composed into main/Bun and the Agent provider-selection contracts through the separate Native bridge, but real model admissions remain empty. It is not delivered to the installed app. Windows/Linux remain phase 2. Existing native metadata control retains `startTurn:false`, `interruptTurn:false`, and `approve:false`.
 
 The implemented available route is explicitly **local-fixture-only**. `official-openai` reports `official_policy_preflight_unverified` before profile creation or CLI launch. Real account login, authenticated cloud-policy admission, and actual OpenAI delivery remain separate unverified work. No existing credentials are read or copied.
 
@@ -12,7 +12,7 @@ The implemented available route is explicitly **local-fixture-only**. `official-
 - `tests/owned-native-worker.test.ts`: focused synthetic RPC boundary cases.
 - `tests/fixtures/owned-native-worker-local.cjs`: opt-in actual stock-CLI/local-fake Responses proof; never part of a default test run.
 
-`createOwnedNativeWorkerService` is main-only. Constructor inputs include the exact executable SHA256, private authority home, single-model catalog JSON/hash/ID, and a fixed route. A renderer/Bun-facing integration must resolve admitted identifiers in main instead of accepting these inputs directly.
+`createOwnedNativeWorkerService` is main-only. Constructor inputs include the exact executable SHA256, private authority home, single-model catalog JSON/hash/ID, and a fixed route. The main bridge resolves admitted identifiers instead of accepting these constructor inputs from renderer/Bun. The current resolver deliberately admits no real profile.
 
 The public leaf methods are `createOwnedWorker({actionId})`, `offerOwnedTurn({workerHandle,actionId,text,outputSchema?})`, passive `inspectOwnedWorker(workerHandle?)`, `retireOwnedWorker({workerHandle,actionId})`, `currentOperation()`, and `destroy()`. Handles are opaque UUIDs; callers cannot adopt/proxy/resume a foreign native thread or override its model/home/config. Text input is supported; image input is explicitly unsupported. Do not send base64 images as text and call that image delivery.
 
@@ -40,13 +40,13 @@ An ACK persists the exact native turn ID. Only matching thread/turn events are p
 
 The request/terminal wait limits are **observation waits, not inference deadlines**. On expiry an offer can return `{state:'unknown',ownerHeld:true}` while the same child, pending request, exact-ID event queue and `currentOperation()` remain owned. New offers and new workers are blocked. A late exact ACK/terminal can durably reconcile that same action and trigger `onReceipt`; no second sender or replay is used. There is no timer-driven interruption/process destruction. A physically closed/lost owner or explicit retire/destroy records unknown with `ownerHeld:false`. A restart turns retained nonterminal/held records into owner-lost uncertainty, never replay; explicit retirement is required before a different worker can be created. Retiring uncertainty does not assert success or zero usage.
 
-The journal preserves bounded terminal receipts, including canonical results, and fails closed on external writes/quota/invalid source. Each receipt has at most32 append-only state observations (state, reason, held ownership, exact turn ID, timestamp; no repeated raw text). Late reconciliation changes the latest projection while retaining the earlier unknown fact. A second passive service object checks only lock/PID metadata and reports an elsewhere/unverified owner rather than inventing owner loss. Scope retirement closes only the exact owned process group using the existing process-tree helper. There is no Desktop daemon stop, foreign-thread cancel, broad process kill, or automatic state deletion. The final integration must register a separate lifecycle participant and preserve held inference ownership in quit/scope-revocation decisions.
+The journal preserves bounded terminal receipts, including canonical results, and fails closed on external writes/quota/invalid source. Each receipt has at most32 append-only state observations (state, reason, held ownership, exact turn ID, timestamp; no repeated raw text). Late reconciliation changes the latest projection while retaining the earlier unknown fact. A second passive service object checks only lock/PID metadata and reports an elsewhere/unverified owner rather than inventing owner loss. Scope retirement closes only the exact owned process group using the existing process-tree helper. There is no Desktop daemon stop, foreign-thread cancel, broad process kill, or automatic state deletion. Main registers a separate Native lifecycle participant and preserves held inference ownership in quit/scope-revocation decisions. Bun/main claim, observation and generation-fence contracts are described in `agent-native-bridge.md`; profile authentication/inventory and real admission remain separate work.
 
 An existing owner lock is never automatically stolen, unlinked or replaced, including a proved-stopped PID. Passive status exposes stale ownership and actions fail closed with `stale_owner_recovery_required`. Controlled main recovery can allocate a fresh authority generation while preserving the old receipts; this leaf does not claim a read/unlink sequence is cross-process compare-and-swap. Normal release removes only the current owner's exact nonce, and every durable write checks that ownership still matches.
 
 ## Structured output and effect authority
 
-The exact public field is top-level `outputSchema` in `turn/start`, constraining the final assistant message. The host must still validate JSON with the pinned schema. A future closed JSON union for `tool_request`/`final` is a declared NEKODEX adapter protocol, not a native function call. Native tools remain empty. Bun ToolJournal must remain sole effect admission/approval/execution/reconciliation owner, and a tool result would be a separately counted text continuation. Do not fabricate native toolOutput. Existing Machine dispatch authentication and Web provider routing remain unchanged; they require an explicit separate Native adapter admission.
+The exact public field is top-level `outputSchema` in `turn/start`, constraining the final assistant message. The host must still validate JSON with the pinned schema. The fixed closed JSON union for `tool_request`/`final` is a declared NEKODEX adapter protocol, not a native function call. Native tools remain empty. Bun ToolJournal remains sole effect admission/approval/execution/reconciliation owner; a tool result is a separately counted text continuation. Do not fabricate native toolOutput. Existing Machine dispatch authentication and Web provider routing remain unchanged; they require an explicit separate Native adapter admission.
 
 ## Focused evidence, 2026-10-18
 
@@ -65,7 +65,7 @@ One successful connected stock-CLI/local-fake run then observed:
 
 The third actual turn's ACK was deliberately filtered inside the fixture's one owned stdio stream. No extra sender was created. Exactly three local requests were observed and zero replay. The later observation-wait lifetime correction changes held-owner behavior, not the proven model/schema/tools wire request; that stock fixture was not repeated. The dedicated late-event case verifies the changed lifetime instead.
 
-This is not real model quality, OpenAI/account authentication, real provider delivery, UI integration, packaging or release proof. The fixture is opt-in:
+This leaf fixture is not real model quality, OpenAI/account authentication, real provider delivery, UI integration, packaging or release proof. The following main/Bun HTTP fixture separately proves the integrated dispatch/receipt boundary; neither fixture proves actual account use. The fixture is opt-in:
 
 ```sh
 node tests/fixtures/owned-native-worker-local.cjs /absolute/official/0.163.0/bin/codex

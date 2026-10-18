@@ -529,6 +529,7 @@ class RuntimeSupervisor {
         ...process.env,
         ...invocation.env,
         CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
+        CODEX_CHATGPT_WEB_LAUNCHER_PROFILE: this.launcherProfile,
         ...(background ? { CODEX_CHATGPT_WEB_BACKGROUND_RUNTIME: "1" } : {}),
       },
       // A GUI-owned pipe can close underneath a surviving daemon after an app crash.
@@ -2208,6 +2209,20 @@ class RuntimeSupervisor {
       return false;
     }
     return true;
+  }
+
+  async ownedAgentRuntimeReady(config, { allowDraining = false } = {}) {
+    // Agent Native inference owns its own provider admission. Web tunnel health
+    // cannot authorize it, and a drain must still allow exact-owner cleanup.
+    const health = await this.proxyHealthPayload(config);
+    const daemon = this.daemon;
+    const owned = this.launcherProfile === "development"
+      ? health?.service === "codex-chatgpt-web" && health.status === "ok"
+        && health.version === config.releaseVersion && health.mode === config.mode
+        && Number.isInteger(health.pid) && processRunning(health.pid)
+      : this.ownedHealthMatches(config, health, daemon)
+        && processRunning(daemon.pid);
+    return Boolean(owned && (allowDraining || this.nativeHealthAccepting(health)));
   }
 
   async control(config, action, options = {}) {

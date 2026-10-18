@@ -1,0 +1,44 @@
+[package]
+name = "nekodex-owned-native-worker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+license = "MIT"
+
+# This is a separate Cargo root. No upstream fork or vendored source tree.
+[workspace]
+
+[dependencies]
+codex-app-server = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+codex-arg0 = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+codex-async-utils = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+codex-config = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+codex-core = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+codex-login = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+codex-protocol = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+codex-utils-cli = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+codex-websocket-auth = { git = "https://github.com/openai/codex.git", rev = "83086188ae0614bd882818ff1aa23f3194962012" }
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "net", "time", "io-util", "signal", "sync"] }
+serde_json = "=1.0.154"
+# Pinned Codex uses ZipFile<'_>; zip2.6 removed that compatible type shape.
+# Match the official 0.163 lock without patching or copying Codex source.
+zip = { version = "=2.4.2", default-features = false }
+
+# Exact root patch table from pinned codex-rs/Cargo.toml L641–652.
+# Cargo intentionally ignores patch tables declared by git dependencies.
+[patch.crates-io]
+crossterm = { git = "https://github.com/openai-oss-forks/crossterm", rev = "ed1cdab335221515706178d68495bba2aed1924f" }
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
+
+[patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
+
+# Focused DEV helper build. No upstream test/release/voice/V8-host targets.
+[profile.dev]
+debug = 0
+incremental = false
+# Rust 1.95's implicit strip=debuginfo can misalign Mach-O proc-macro
+# LINKEDIT on the installed macOS27 SDK/linker. Keep stripping explicitly off.
+strip = "none"

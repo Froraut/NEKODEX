@@ -5,6 +5,7 @@ import type { AgentModeApi, AgentModeStatus, AgentModeDetail, AgentTask, AgentWo
 import { agentModeCopy } from './agent-mode-copy';
 import { stripIpcErrorPrefix } from './ipc-error';
 import './surfaces/agent-mode.css';
+import { NativeAccountsPanel } from './NativeAccountsPanel';
 
 const lines = (text: string) => text.split('\n').map(value => value.trim()).filter(Boolean);
 const requirementRows = (text: string) => lines(text).map((value, index) => ({ id: `r${index + 1}`, text: value }));
@@ -13,6 +14,11 @@ const stageRows = (text: string, requirementIds: string[]) => lines(text).map((i
 }));
 const errorText = (error: unknown) => stripIpcErrorPrefix(error instanceof Error ? error.message : String(error));
 const terminal = (task: AgentTask) => task.status === 'stopped' || task.status === 'verified_complete';
+type ModelRow = AgentModeStatus['models'][number];
+const modelChoice = (row: ModelRow) => row.provider === 'owned-native' ? JSON.stringify([row.provider, row.id, row.admissionId]) : row.id;
+const matchesModel = (task: AgentTask, row: ModelRow) => row.id === task.execution?.model
+  && (row.provider ?? 'local-responses') === task.execution?.provider
+  && (task.execution?.provider !== 'owned-native' || row.available === true && row.admissionId === task.execution.admissionId);
 
 function TextArea({ label, value, onChange, hint, disabled, required, rows = 3 }: {
   label: string; value: string; onChange: (value: string) => void; hint?: string; disabled?: boolean; required?: boolean; rows?: number;
@@ -112,7 +118,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     const result = await transport.current.request({ action: 'status' }) as AgentModeStatus;
     if (!mounted.current) return;
     setStatus(result);
-    setModel(current => result.models.some(row => row.id === current) ? current : result.models[0]?.id ?? '');
+    setModel(current => result.models.some(row => modelChoice(row) === current) ? current : result.models[0] ? modelChoice(result.models[0]) : '');
     const id = result.tasks.some(row => row.id === preferredId) ? preferredId : result.tasks[0]?.id ?? '';
     if (selectedRef.current !== id) setDetail(null);
     selectedRef.current = id; setSelected(id);
@@ -154,15 +160,19 @@ export function AgentModeSurface({ language, api, disabled = false }: {
 
   const create = () => void act('create', async () => {
     const maxTurns = Number(turns), maxConcurrent = Number(concurrent);
-    if (!request.trim() || !lines(requirements).length || lines(requirements).length > 128 || !lines(stages).length || lines(stages).length > 128 || !status?.models.some(row => row.id === model)
+    const selectedModel = status?.models.find(row => modelChoice(row) === model);
+    if (!request.trim() || !lines(requirements).length || lines(requirements).length > 128 || !lines(stages).length || lines(stages).length > 128 || !selectedModel
       || !Number.isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 10000
       || !Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 32) throw new Error(text.invalid);
     if (mode === 'loop' && !recurring) throw new Error(text.recurringRequired);
+    if (selectedModel.provider === 'owned-native' && (selectedModel.available !== true || !selectedModel.admissionId || maxConcurrent !== 1)) throw new Error(text.invalid);
     const rows = requirementRows(requirements);
     const input = {
       id: createId.current, familyId: createId.current, ownerMode: 'agent', mode, recurringAuthorized: mode === 'loop' && recurring,
       originalRequest: request.trim(), requirements: rows, stages: stageRows(stages, rows.map(row => row.id)),
-      bounds: { maxConcurrent, maxTurns, maxSpend: null }, execution: { provider: 'local-responses', model },
+      bounds: { maxConcurrent, maxTurns, maxSpend: null }, execution: selectedModel.provider === 'owned-native'
+        ? { provider: 'owned-native', model: selectedModel.id, admissionId: selectedModel.admissionId }
+        : { provider: 'local-responses', model: selectedModel.id },
     };
     const workspaceSelection = snapshotOptIn ? selectedWorkspace(snapshotRoot, snapshotPaths) : undefined;
     await mutate({ action: 'create', input, ...(workspaceSelection ? { workspaceSelection } : {}) });
@@ -282,17 +292,21 @@ export function AgentModeSurface({ language, api, disabled = false }: {
     void act('get', async () => { await getDetail(id); });
   };
   const task = detail?.task;
+  const nativeSelection = status?.models.find(row => modelChoice(row) === model)?.provider === 'owned-native';
+  const nativeTurnHint = language === 'ru'
+    ? 'Лимит считает ходы, отправленные в Native. Точное число внутренних запросов Codex и их денежная стоимость пока недоступны. В этой версии у Native-задачи один исполнитель.'
+    : 'The bound counts turns offered to Native. Exact internal Codex requests and monetary cost are unavailable. This version admits one worker per Native task.';
   useEffect(() => { if (detail?.task.id) heading.current?.focus(); }, [detail?.task.id]);
   useEffect(() => {
     setEvidenceMapped(false);
     setEvidenceRequirement(current => task?.requirements.some(row => row.id === current) ? current : task?.requirements[0]?.id ?? '');
   }, [task?.id, task?.generation, task?.revision]);
-  const canExecute = Boolean(task && status?.configured && status.accepting !== false && status.models.some(row => row.id === task.execution?.model)
+  const canExecute = Boolean(task && status?.configured && status.accepting !== false && status.models.some(row => matchesModel(task, row) && row.accepting !== false)
     && !terminal(task) && ['ready', 'running'].includes(task.status) && task.turns < task.bounds.maxTurns
     && task.stages.some(stage => stage.status === 'pending' && (stage.dependsOn ?? []).every(id => task.stages.some(row => row.id === id && row.status === 'completed')))
     && !detail?.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state)));
   const canRunLoop = Boolean(task?.mode === 'loop' && task.status === 'review_required' && status?.configured && status.accepting !== false
-    && status.models.some(row => row.id === task.execution?.model) && task.turns < task.bounds.maxTurns
+    && status.models.some(row => matchesModel(task, row) && row.accepting !== false) && task.turns < task.bounds.maxTurns
     && !detail?.dispatches.some(row => ['unknown', 'offered', 'admitted', 'acked'].includes(row.state)));
   const loopRunActive = Boolean(task?.loopRun && task.loopRun.generation === task.generation && task.loopRun.ownerId === status?.ownerId);
   const taskState = (value: AgentTask) => text.taskStates[value.status] ?? value.status;
@@ -308,6 +322,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
 
   return <Page width="wide" className="agent-mode-surface">
     <SurfaceHeader title={text.title} subtitle={text.subtitle} actions={<Button disabled={locked} busy={pending === 'refresh'} onClick={() => void act('refresh', () => refresh())}>{text.refresh}</Button>} />
+    {api.nativeAccounts ? <NativeAccountsPanel language={language} api={api.nativeAccounts} disabled={disabled} /> : null}
     {error ? <Notice tone="error" title={text.error}>{error} {text.readAfterError}</Notice> : null}
     {notice ? <Notice>{notice}</Notice> : null}
     {status?.accepting === false ? <Notice tone="warning">{text.admissionHold}</Notice> : null}
@@ -333,12 +348,13 @@ export function AgentModeSurface({ language, api, disabled = false }: {
             <p className="nk-field__hint">{text.modeHint}</p>
           </div>
           <div className="nk-field"><label htmlFor="agent-mode-model">{text.model}</label>
-            <Select id="agent-mode-model" value={model} options={status?.models.length ? status.models.map(row => ({ value: row.id, label: row.label || row.id })) : [{ value: '', label: text.noModels }]}
-              onChange={setModel} disabled={locked || !status?.models.length} />
+            <Select id="agent-mode-model" value={model} options={status?.models.length ? status.models.map(row => ({ value: modelChoice(row), label: `${row.label || row.id}${row.provider === 'owned-native' ? ' · Native' : ''}` })) : [{ value: '', label: text.noModels }]}
+              onChange={value => { setModel(value); if (status?.models.find(row => modelChoice(row) === value)?.provider === 'owned-native') setConcurrent('1'); }} disabled={locked || !status?.models.length} />
           </div>
           <TextField type="number" label={text.turns} value={turns} onChange={event => setTurns(event.target.value)} min={1} max={10000} step={1} required disabled={locked} />
-          <TextField type="number" label={text.concurrent} value={concurrent} onChange={event => setConcurrent(event.target.value)} min={1} max={32} step={1} required disabled={locked} />
+          <TextField type="number" label={text.concurrent} value={concurrent} onChange={event => setConcurrent(event.target.value)} min={1} max={nativeSelection ? 1 : 32} step={1} required disabled={locked || nativeSelection} />
         </div>
+        {nativeSelection ? <p className="agent-mode-muted">{nativeTurnHint}</p> : null}
         {mode === 'loop' ? <Checkbox label={text.recurrence} checked={recurring} onChange={setRecurring} disabled={locked} /> : null}
         <Checkbox label={text.snapshotOptIn} checked={snapshotOptIn} onChange={setSnapshotOptIn} disabled={locked || !workspaceControls || !workspaceRoots.length} />
         {snapshotOptIn ? workspaceFields('create', snapshotRoot, setSnapshotRoot, snapshotPaths, setSnapshotPaths) : <p className="agent-mode-muted">{workspaceControls ? (workspaceRoots.length ? text.snapshotHint : text.noWorkspace) : text.snapshotUnavailable}</p>}
@@ -374,6 +390,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
               {task.mode !== 'manual' ? <Button size="sm" disabled={locked || (!canExecute && !canRunLoop) || !status?.capabilities.autoSchedule} busy={pending === 'run'} onClick={() => execute('run')}>{task.mode === 'loop' ? text.loopRun : text.run}</Button> : null}
             </div>
             <p className="agent-mode-muted">{text.stepHint}</p>
+            {task.execution?.provider === 'owned-native' ? <p className="agent-mode-muted">{nativeTurnHint}</p> : null}
             {task.bounds.maxSpend === null ? <p className="agent-mode-muted">{text.money}</p> : null}
             {detail.coverage && Object.values(detail.coverage).some(row => row.truncated) ? <Notice tone="warning">{text.truncated}</Notice> : null}
             <dl className="agent-mode-meta">

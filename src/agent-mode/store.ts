@@ -4,6 +4,7 @@ import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { activeTaskEvidence } from "./evidence";
 import { invocationFingerprint } from "../agent-tools/journal";
+import { AGENT_NATIVE_PROTOCOL, nativeDigest, nativeToolCallId } from "./native-protocol";
 import type { AgentControl, AgentDispatch, AgentTask, AgentToolOutcome, AgentToolReceiptRequest, AgentToolReconciliation, AgentWorker, AgentWorkPacket, CreateAgentTask, ExecutionResult, MailMessage, OutcomeEvidence, OutcomeReview, Requirement, StageInput } from "./types";
 
 function text(value: string, name: string, max = 16_384): void {
@@ -131,8 +132,13 @@ export class AgentModeStore {
     if (!["manual", "goal", "loop"].includes(input.mode) || (input.mode === "loop" && input.recurringAuthorized !== true)) throw new Error("Loop requires explicit recurrence authorization");
     text(input.originalRequest, "original request"); plan(input.requirements, input.stages);
     integer(input.bounds.maxConcurrent, "concurrency", 1, 32); integer(input.bounds.maxTurns, "turn bound", 1, 10_000); if (input.bounds.maxSpend !== null) integer(input.bounds.maxSpend, "spend bound", 1);
-    if (input.execution) { if (input.execution.provider !== "local-responses") throw new Error("Unsupported execution provider"); id(input.execution.model); }
+    if (input.execution) {
+      if (!["local-responses", "owned-native"].includes(input.execution.provider)) throw new Error("Unsupported execution provider");
+      id(input.execution.model);
+      if (input.execution.provider === "owned-native") { id(input.execution.admissionId); if (input.bounds.maxConcurrent !== 1) throw new Error("Native adapter requires one concurrent offer per task"); }
+    }
     const task: AgentTask = { schemaVersion: 1, id: input.id ?? randomUUID(), familyId: input.familyId ?? randomUUID(), ownerMode: "agent", mode: input.mode, status: "ready", generation: 1, revision: 1, originalRequest: input.originalRequest, corrections: [], requirements: structuredClone(input.requirements), stages: input.stages.map(stage => ({ ...structuredClone(stage), status: "pending" })), bounds: { ...input.bounds }, turns: 0, spent: 0, reserved: 0, unpricedTurns: 0, ...(input.execution ? { execution: { ...input.execution } } : {}), evidenceRevision: 0, evidence: [], cycle: 1, createdAt: this.now(), updatedAt: this.now() };
+    task.turnUnit = input.execution?.provider === "owned-native" ? "native-offers" : "responses-requests";
     id(task.id); id(task.familyId);
     if (input.workspaceSnapshotGrant !== undefined) {
       if (Buffer.byteLength(JSON.stringify(input.workspaceSnapshotGrant)) > 32 * 1024) throw new Error("Workspace snapshot grant exceeds limit");
@@ -375,10 +381,24 @@ export class AgentModeStore {
     if (result.outcome === "not_sent" && result.actualSpend !== 0) throw new Error("Not-sent requires zero known spend");
     if (result.continuation) {
       const next = result.continuation;
-      id(next.responseId); id(next.rootDispatchId);
-      if (result.outcome !== "awaiting_input" || !Array.isArray(next.input) || !Array.isArray(next.output) || !Array.isArray(next.tools) || !Array.isArray(next.toolMap) || !Array.isArray(next.pending) || !next.pending.length || next.pending.length > 16 || Buffer.byteLength(JSON.stringify(next)) > 512 * 1024) throw new Error("Invalid bounded tool continuation");
+      id(next.rootDispatchId);
+      if (result.outcome !== "awaiting_input" || !Array.isArray(next.pending) || !next.pending.length || next.pending.length > 16 || Buffer.byteLength(JSON.stringify(next)) > 512 * 1024) throw new Error("Invalid bounded tool continuation");
       const calls = new Set<string>();
-      for (const call of next.pending) { id(call.toolCallId); text(call.tool, "tool identity", 240); id(call.wireName); if (calls.has(call.toolCallId) || !call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)) throw new Error("Invalid tool call identity"); calls.add(call.toolCallId); }
+      for (const call of next.pending) { id(call.toolCallId); text(call.tool, "tool identity", 240); if (calls.has(call.toolCallId) || !call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)) throw new Error("Invalid tool call identity"); calls.add(call.toolCallId); }
+      if (next.kind === "owned-native") {
+        const source = this.getDispatch(dispatchId);
+        if (this.getTask(source.taskId).execution?.provider !== "owned-native" || next.version !== 1 || next.protocol !== AGENT_NATIVE_PROTOCOL || next.pending.length !== 1
+          || next.taskGeneration !== source.generation || next.taskRevision !== source.taskRevision || !Array.isArray(next.catalog) || next.catalog.length > 64
+          || next.catalogDigest !== nativeDigest(next.catalog) || !Array.isArray(next.requestIds) || !next.requestIds.length || next.requestIds.length > 128 || new Set(next.requestIds).size !== next.requestIds.length) throw new Error("Invalid Native tool continuation");
+        id(next.workerBindingId); integer(next.workerGeneration, "Native worker generation", 1); id(next.nativeTurnReceiptId);
+        for (const requestId of next.requestIds) id(requestId);
+        for (const call of next.pending) {
+          if (call.protocol !== AGENT_NATIVE_PROTOCOL || !next.requestIds.includes(call.requestId) || call.toolCallId !== nativeToolCallId(dispatchId, call.requestId)) throw new Error("Invalid Native adapter call identity");
+        }
+      } else {
+        if (next.kind !== undefined && next.kind !== "responses" || !Array.isArray(next.input) || !Array.isArray(next.output) || !Array.isArray(next.tools) || !Array.isArray(next.toolMap)) throw new Error("Invalid Responses tool continuation");
+        id(next.responseId); for (const call of next.pending) id(call.wireName);
+      }
     }
     return this.atomic(() => {
       const row = this.getDispatch(dispatchId);
@@ -492,6 +512,7 @@ export class AgentModeStore {
       const task = this.getTask(taskId); const source = this.getDispatch(sourceId);
       const stage = task.stages.find(stage => stage.continuationFrom === sourceId);
       const outcomes = this.effectiveToolOutcomes(taskId);
+      if (source.result?.continuation?.kind === "owned-native" && source.generation !== task.generation) throw new Error("Current complete Native binding cannot resume across generations");
       if (source.taskId !== taskId || source.taskRevision !== task.revision || !source.result?.continuation || !stage || ["stopped", "verified_complete"].includes(task.status)
         || this.listDispatches(taskId).some(row => unsettled.has(row.state)) || outcomes.some(row => row.state === "outcome_unknown")
         || source.result.continuation.pending.some(call => !outcomes.some(row => row.scope.generation === source.generation && row.scope.toolCallId === call.toolCallId && row.tool === call.tool && row.state !== "outcome_unknown"))) throw new Error("Current complete tool receipts required to resume this continuation");

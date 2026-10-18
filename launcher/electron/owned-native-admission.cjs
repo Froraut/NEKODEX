@@ -6,6 +6,12 @@ const { execFileSync } = require('node:child_process');
 
 const VERSION = '0.163.0';
 const SOURCE = '83086188ae0614bd882818ff1aa23f3194962012';
+const WRAPPER_INFO = Object.freeze({ schemaVersion: 1, artifact: 'nekodex-owned-native-worker', developmentOnly: true,
+  codexVersion: VERSION, codexRepository: 'https://github.com/openai/codex.git', codexRevision: SOURCE,
+  rustToolchain: '1.95.0', sessionSource: 'nekodex-owned-worker', transport: 'stdio', ownerMaxLineBytes: 1048576,
+  childInternalLineBound: false, strictConfig: true, pluginStartupTasks: 'skip',
+  remoteControl: 'disabled-ephemeral', managedDaemon: false, managedPolicyBypass: false,
+  runtimeVerified: false, realProviderVerified: false, authClassifier: true, authClassifierVersion: 1 });
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -45,6 +51,58 @@ function regular(file, maxBytes) {
   }
   return fs.readFileSync(file);
 }
+function fileDigest(file, maxBytes = 512 * 1024 * 1024) {
+  // The DEV wrapper is large. Hash bounded chunks instead of retaining a second
+  // full executable Buffer in Electron's main process.
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > maxBytes || stat.uid !== process.getuid() || (stat.mode & 0o022)) {
+      throw fail('invalid_admission', 'Native digest input is not an admitted regular file');
+    }
+    const hash = createHash('sha256'), chunk = Buffer.allocUnsafe(1024 * 1024);
+    for (;;) { const count = fs.readSync(fd, chunk, 0, chunk.length, null); if (!count) break; hash.update(chunk.subarray(0, count)); }
+    const after = fs.fstatSync(fd);
+    if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) {
+      throw fail('admission_changed', 'Native digest input changed while being checked');
+    }
+    return hash.digest('hex');
+  } finally { fs.closeSync(fd); }
+}
+function verifyWrapper(executable, executableSha256, pin) {
+  const sourceRoot = pin.sourceRoot;
+  if (fs.realpathSync(sourceRoot) !== sourceRoot) throw fail('invalid_admission', 'Wrapper source root must be canonical');
+  const target = { arm64: 'aarch64-apple-darwin', x64: 'x86_64-apple-darwin' }[process.arch];
+  const output = path.join(sourceRoot, 'build', target || 'unsupported');
+  if (executable !== path.join(output, WRAPPER_INFO.artifact) || pin.metadataPath !== path.join(output, 'build-info.json')) {
+    throw fail('invalid_admission', 'Wrapper executable and build metadata must share the fixed owned output');
+  }
+  const bytes = regular(pin.metadataPath, 16384);
+  if (digest(bytes) !== pin.metadataSha256) throw fail('admission_changed', 'Wrapper build metadata pin changed');
+  let metadata;
+  try { metadata = JSON.parse(bytes); } catch { throw fail('invalid_admission', 'Wrapper build metadata is invalid'); }
+  for (const [key, expected] of Object.entries(WRAPPER_INFO)) if (metadata[key] !== expected) {
+    throw fail('unsupported_wrapper', 'Wrapper build does not match its admitted runtime options');
+  }
+  if (metadata.target !== target || metadata.executable !== executable || metadata.sha256 !== executableSha256
+    || metadata.bytes !== fs.statSync(executable).size) throw fail('admission_changed', 'Wrapper binary is not bound to its build metadata');
+  for (const [file, key] of [['Cargo.toml', 'manifestSha256'], ['Cargo.lock', 'cargoLockSha256'], ['src/main.rs', 'mainSha256']]) {
+    if (!/^[a-f0-9]{64}$/.test(metadata[key] || '') || fileDigest(path.join(sourceRoot, file), 2 * 1024 * 1024) !== metadata[key]) {
+      throw fail('admission_changed', 'Wrapper source input no longer matches the admitted build');
+    }
+  }
+  const sourceBytes = regular(path.join(sourceRoot, 'source-pin.json'), 16384);
+  if (digest(sourceBytes) !== pin.sourcePinSha256 || canonical(JSON.parse(sourceBytes)) !== canonical(WRAPPER_INFO)) {
+    throw fail('admission_changed', 'Wrapper fixed source metadata changed');
+  }
+  // All binary/source/build pins above pass BEFORE executing even this static
+  // branch. No profile/auth environment is present and no app-server is started.
+  let reported;
+  try { reported = JSON.parse(execFileSync(executable, ['--build-info'], { encoding: 'utf8', timeout: 10_000,
+    maxBuffer: 16384, env: { PATH: '/usr/bin:/bin' }, stdio: ['ignore', 'pipe', 'ignore'] })); }
+  catch { throw fail('wrapper_probe_failed', 'Pinned wrapper static metadata is unavailable'); }
+  if (canonical(reported) !== canonical(WRAPPER_INFO)) throw fail('unsupported_wrapper', 'Wrapper reported unsupported runtime options');
+}
 function privateDirectory(directory) {
   const parent = path.dirname(directory);
   if (parent !== directory && !fs.existsSync(parent)) privateDirectory(parent);
@@ -78,7 +136,7 @@ function probeManagedPreferences() {
     throw fail('unsupported_startup_policy', 'Managed native policy requires explicit admission');
   }
 }
-function makeAdmission({ executable, executableSha256, authorityHome, catalog, route,
+function makeAdmission({ executable, executableSha256, executableVariant = 'stock-cli', wrapperBuildPin, authorityHome, catalog, route,
   testHooks = {} } = {}) {
   executable = absolute(executable); authorityHome = absolute(authorityHome);
   if (!/^[a-f0-9]{64}$/.test(executableSha256 || '') || !plain(catalog)
@@ -90,6 +148,15 @@ function makeAdmission({ executable, executableSha256, authorityHome, catalog, r
   // Admission binds immutable bytes/identity, never caller-owned mutable objects.
   catalog = Object.freeze({ json: catalog.json, sha256: catalog.sha256, modelId: catalog.modelId });
   testHooks = Object.freeze({ ...testHooks });
+  if (!['stock-cli', 'owned-wrapper'].includes(executableVariant) || executableVariant === 'stock-cli' && wrapperBuildPin !== undefined) {
+    throw fail('invalid_admission', 'Native executable variant requires explicit trusted admission');
+  }
+  if (executableVariant === 'owned-wrapper') {
+    if (!plain(wrapperBuildPin) || !/^[a-f0-9]{64}$/.test(wrapperBuildPin.metadataSha256 || '')
+      || !/^[a-f0-9]{64}$/.test(wrapperBuildPin.sourcePinSha256 || '')) throw fail('invalid_admission', 'Wrapper build pins are required');
+    wrapperBuildPin = Object.freeze({ metadataPath: absolute(wrapperBuildPin.metadataPath),
+      metadataSha256: wrapperBuildPin.metadataSha256, sourceRoot: absolute(wrapperBuildPin.sourceRoot), sourcePinSha256: wrapperBuildPin.sourcePinSha256 });
+  }
   let parsed;
   try { parsed = JSON.parse(catalog.json); } catch { throw fail('invalid_admission', 'Invalid native model catalog'); }
   const model = parsed?.models?.[0];
@@ -139,8 +206,11 @@ function makeAdmission({ executable, executableSha256, authorityHome, catalog, r
   } };
   freeze(config);
   const configText = Object.entries(config).map(([key, value]) => `${key} = ${toml(value)}\n`).join('');
-  const admissionId = digest(canonical({ version: VERSION, source: SOURCE, executableSha256,
-    catalogSha256: catalog.sha256, config, route: route.kind }));
+  const identity = { version: VERSION, source: SOURCE, executableSha256,
+    catalogSha256: catalog.sha256, config, route: route.kind };
+  // Preserve existing stock receipt identity; only the new variant adds pins.
+  if (executableVariant === 'owned-wrapper') Object.assign(identity, { executableVariant, wrapperBuildPin });
+  const admissionId = digest(canonical(identity));
   function availability() {
     if (process.platform !== 'darwin') return { available: false, reasonCode: 'mac_only' };
     if (route.kind === 'official-openai') return { available: false, reasonCode: 'official_policy_preflight_unverified' };
@@ -152,12 +222,14 @@ function makeAdmission({ executable, executableSha256, authorityHome, catalog, r
     // No profile/auth read: system sources are refused on presence, including unreadable/symlink sources.
     for (const file of ['/etc/codex/config.toml', '/etc/codex/managed_config.toml', '/etc/codex/requirements.toml']) absent(file);
     (testHooks.probeManagedPreferences || probeManagedPreferences)();
-    const binary = regular(executable, 512 * 1024 * 1024);
-    if (digest(binary) !== executableSha256) throw fail('admission_changed', 'Native executable pin changed');
-    const metadata = JSON.parse(regular(path.join(path.dirname(path.dirname(executable)), 'codex-package.json'), 16384));
-    if (metadata.version !== VERSION || metadata.layoutVersion !== 1 || metadata.entrypoint !== 'bin/codex'
-      || metadata.variant !== 'codex' || !['aarch64-apple-darwin', 'x86_64-apple-darwin'].includes(metadata.target)) {
-      throw fail('unsupported_version', 'This native worker requires the admitted official CLI 0.163.0 layout');
+    if (fileDigest(executable) !== executableSha256) throw fail('admission_changed', 'Native executable pin changed');
+    if (executableVariant === 'owned-wrapper') verifyWrapper(executable, executableSha256, wrapperBuildPin);
+    else {
+      const metadata = JSON.parse(regular(path.join(path.dirname(path.dirname(executable)), 'codex-package.json'), 16384));
+      if (metadata.version !== VERSION || metadata.layoutVersion !== 1 || metadata.entrypoint !== 'bin/codex'
+        || metadata.variant !== 'codex' || !['aarch64-apple-darwin', 'x86_64-apple-darwin'].includes(metadata.target)) {
+        throw fail('unsupported_version', 'This native worker requires the admitted official CLI 0.163.0 layout');
+      }
     }
     // Reject possible checkout/project configuration before Codex can discover it.
     for (let dir = paths.cwd;; dir = path.dirname(dir)) {
@@ -175,7 +247,7 @@ function makeAdmission({ executable, executableSha256, authorityHome, catalog, r
         CODEX_SQLITE_HOME: paths.sqliteHome, TMPDIR: paths.home, NO_PROXY: '127.0.0.1',
         NEKODEX_NATIVE_FIXTURE_TOKEN: 'nekodex-dummy-fixture-auth',
         HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9', ALL_PROXY: 'http://127.0.0.1:9' },
-      args: ['app-server', '--stdio', '--strict-config'],
+      args: executableVariant === 'owned-wrapper' ? ['--stdio'] : ['app-server', '--stdio', '--strict-config'],
     });
   }
   function checkEffective(read, requirements) {
@@ -231,4 +303,4 @@ function freeze(value) {
   if (value && typeof value === 'object') { for (const entry of Object.values(value)) freeze(entry); Object.freeze(value); }
   return value;
 }
-module.exports = { makeAdmission, digest, canonical, fail, plain, freeze, privateDirectory, regular, VERSION, SOURCE };
+module.exports = { makeAdmission, digest, fileDigest, canonical, fail, plain, freeze, privateDirectory, regular, VERSION, SOURCE, verifyWrapper, probeManagedPreferences, DISABLED_FEATURES, toml, contains, absent };

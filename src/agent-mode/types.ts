@@ -2,6 +2,8 @@
 export type AgentMode = "manual" | "goal" | "loop";
 export type TaskStatus = "ready" | "running" | "paused" | "awaiting_input" | "review_required" | "verified_complete" | "stopped";
 export type StageStatus = "pending" | "running" | "blocked" | "completed" | "failed";
+export type AgentExecutionConfig = { provider: "local-responses"; model: string }
+  | { provider: "owned-native"; model: string; admissionId: string };
 export interface AgentBounds {
   maxConcurrent: number;
   maxTurns: number;
@@ -55,7 +57,9 @@ export interface AgentTask {
   reserved: number;
   /** Count of terminal turns whose monetary price remains unavailable. spent is a known subtotal. */
   unpricedTurns: number;
-  execution?: { provider: "local-responses"; model: string };
+  execution?: AgentExecutionConfig;
+  /** Native bounds count admitted offers, not unobserved internal retries/compaction requests. */
+  turnUnit?: "responses-requests" | "native-offers";
   workspaceSnapshotGrant?: unknown;
   ownerId?: string;
   reason?: string;
@@ -79,7 +83,7 @@ export interface CreateAgentTask {
   bounds: AgentBounds;
   /** Recurrence is a separate, explicit user instruction. */
   recurringAuthorized?: boolean;
-  execution?: { provider: "local-responses"; model: string };
+  execution?: AgentExecutionConfig;
   workspaceSnapshotGrant?: unknown;
 }
 export interface AgentWorker {
@@ -123,8 +127,12 @@ export interface ExecutionResult {
   continuation?: AgentContinuation;
 }
 export interface AgentToolRequest { toolCallId: string; tool: string; arguments: Record<string, unknown>; wireName: string }
+export interface AgentNativeToolRequest { protocol: "neko-agent-v1"; toolCallId: string; requestId: string; tool: string; arguments: Record<string, unknown> }
+export type AgentPendingToolRequest = AgentToolRequest | AgentNativeToolRequest;
 /** Private canonical Responses items, not a transcript/export or filesystem permission. */
-export interface AgentContinuation {
+export interface AgentResponsesContinuation {
+  /** Missing on legacy saved Web continuations. */
+  kind?: "responses";
   responseId: string;
   rootDispatchId: string;
   input: Record<string, unknown>[];
@@ -133,6 +141,23 @@ export interface AgentContinuation {
   toolMap: { wireName: string; tool: string }[];
   pending: AgentToolRequest[];
 }
+export interface AgentNativeToolDefinition { id: string; description?: string; inputSchema: Record<string, unknown> }
+export interface AgentNativeContinuation {
+  kind: "owned-native";
+  version: 1;
+  protocol: "neko-agent-v1";
+  rootDispatchId: string;
+  taskGeneration: number;
+  taskRevision: number;
+  workerBindingId: string;
+  workerGeneration: number;
+  nativeTurnReceiptId: string;
+  catalog: AgentNativeToolDefinition[];
+  catalogDigest: string;
+  requestIds: string[];
+  pending: AgentNativeToolRequest[];
+}
+export type AgentContinuation = AgentResponsesContinuation | AgentNativeContinuation;
 export interface AgentToolOutcome {
   idempotencyKey: string;
   scope: { taskId: string; generation: number; toolCallId: string };

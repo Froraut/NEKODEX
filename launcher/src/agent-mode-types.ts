@@ -27,6 +27,7 @@ export interface AgentToolReconciliationView {
 }
 export interface AgentModeApi {
   request(body: Record<string, unknown>): Promise<unknown>;
+  nativeAccounts?: import('./native-accounts-types').NativeAccountsApi;
   workspaceRoots?(): Promise<AgentWorkspaceRoot[]>;
   workspaceGrants?(): Promise<AgentWorkspaceGrantSummary[]>;
   revokeWorkspaceGrant?(grantId: string): Promise<unknown>;
@@ -35,7 +36,7 @@ export interface AgentModeStatus {
   configured: boolean;
   accepting?: boolean;
   ownerId?: string;
-  models: { id: string; label?: string }[];
+  models: { id: string; label?: string; provider?: 'local-responses' | 'owned-native'; admissionId?: string; available?: boolean; accepting?: boolean }[];
   capabilities: { tools: boolean; workspace: boolean; autoSchedule: boolean; observedEvidence?: boolean; loopSource?: 'mailbox'; externalWatchers?: boolean };
   tasks: AgentTask[];
   total?: number;

@@ -10,7 +10,8 @@ function registrar(ready: boolean, receipt: unknown = { ok: true, value: { tasks
     handle: (channel: string, callback: typeof handler) => { expect(channel).toBe('launcher:agent-mode'); handler = callback; },
     runtimeHost: { supervisor: {
       readConfig: () => config,
-      ownedRuntimeReady: async (value: unknown) => { expect(value).toBe(config); return ready; },
+      ownedAgentRuntimeReady: async (value: unknown) => { expect(value).toBe(config); return ready; },
+      ownedRuntimeReady: () => { throw new Error('Agent IPC must not require Web tunnel readiness'); },
       control: async (...args: unknown[]) => { calls.push(args); return receipt; },
     } },
   });
@@ -80,7 +81,7 @@ function workspaceRegistrar() {
     },
     workspaceEvidenceService: { observe: (input: unknown) => { observations.push(input); return observedProof; } },
     runtimeHost: { supervisor: {
-      readConfig: () => ({}), ownedRuntimeReady: async () => true,
+      readConfig: () => ({}), ownedAgentRuntimeReady: async () => true,
       control: async (_config: unknown, _kind: unknown, { body }: { body: Record<string, unknown> }) => {
         calls.push(body);
         return { ok: true, value: body.action === 'get' ? { task: { id: taskId, familyId, generation: 3, revision: 2, requirements: [{ id: 'r1', text: 'Artifact requirement' }] } } : { task: { id: taskId } } };

@@ -66,11 +66,11 @@ function fixture(changes: any = {}) {
     }
     done();
   } });
-  child.stdin.on('finish', close);
+  if (!changes.holdClose) child.stdin.on('finish', close);
   const service = createOwnedNativeWorkerService({ ...config,
     onReceipt: (receipt: any) => { callbacks.push(receipt); changes.onReceipt?.(receipt); },
     testHooks: { ...config.testHooks, spawnProcess: (...args: any[]) => { launches.push(args); return child; },
-      terminateProcess: close } });
+      terminateProcess: changes.terminateProcess ?? close } });
   const complete = (message: any, turnId = TURN, text = 'canonical answer', beforeAck = false) => {
     const params = { threadId: THREAD, turnId, completedAtMs: 1000 };
     const emit = () => {
@@ -117,6 +117,41 @@ macTest('native admission is passive and refuses real route, capability drift, m
   const f = fixture({ testHooks: { probeManagedPreferences() { throw Object.assign(new Error('fixture forced policy'), { code: 'unsupported_startup_policy' }); } } });
   await expect(f.service.createOwnedWorker({ actionId: CREATE })).rejects.toMatchObject({ code: 'unsupported_startup_policy' });
   expect(f.launches).toHaveLength(0); await f.service.destroy();
+});
+
+macTest('owned wrapper checks binary, fixed metadata and source pins before any static execution', () => {
+  const config = configuration();
+  const sourceRoot = join(config.authorityHome, '..', 'owned-worker');
+  const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`;
+  const output = join(sourceRoot, 'build', target);
+  mkdirSync(output, { recursive: true, mode: 0o700 }); mkdirSync(join(sourceRoot, 'src'), { mode: 0o700 });
+  const sentinel = join(sourceRoot, 'unexpected-probe');
+  const executable = join(output, 'nekodex-owned-native-worker');
+  writeFileSync(executable, `#!/bin/sh\ntouch '${sentinel}'\nexit 99\n`, { mode: 0o700 });
+  const info = require('../launcher/native/owned-worker/source-pin.json');
+  writeFileSync(join(sourceRoot, 'source-pin.json'), JSON.stringify(info), { mode: 0o600 });
+  writeFileSync(join(sourceRoot, 'Cargo.toml'), 'inert manifest', { mode: 0o600 });
+  writeFileSync(join(sourceRoot, 'Cargo.lock'), 'inert lock', { mode: 0o600 });
+  writeFileSync(join(sourceRoot, 'src', 'main.rs'), 'inert source', { mode: 0o600 });
+  const metadataPath = join(output, 'build-info.json');
+  const metadata = { ...info, executable, target, bytes: readFileSync(executable).length,
+    sha256: digest(readFileSync(executable)), manifestSha256: digest('inert manifest'),
+    cargoLockSha256: digest('inert lock'), mainSha256: digest('inert source') };
+  const pin = () => {
+    const bytes = JSON.stringify(metadata); writeFileSync(metadataPath, bytes, { mode: 0o600 });
+    return { metadataPath, metadataSha256: digest(bytes), sourceRoot,
+      sourcePinSha256: digest(readFileSync(join(sourceRoot, 'source-pin.json'))) };
+  };
+  const base = { ...config, executable, executableVariant: 'owned-wrapper' };
+  expect(() => makeAdmission({ ...base, executableSha256: '0'.repeat(64), wrapperBuildPin: pin() }).prestart()).toThrow('executable pin');
+  expect(existsSync(sentinel)).toBe(false);
+  metadata.pluginStartupTasks = 'start';
+  expect(() => makeAdmission({ ...base, executableSha256: metadata.sha256, wrapperBuildPin: pin() }).prestart()).toThrow('runtime options');
+  expect(existsSync(sentinel)).toBe(false);
+  metadata.pluginStartupTasks = 'skip'; metadata.mainSha256 = '0'.repeat(64);
+  expect(() => makeAdmission({ ...base, executableSha256: metadata.sha256, wrapperBuildPin: pin() }).prestart()).toThrow('source input');
+  expect(existsSync(sentinel)).toBe(false);
+  expect(existsSync(config.authorityHome)).toBe(false);
 });
 
 macTest('connected managed/cloud layers are rejected before any ephemeral thread is created', async () => {
@@ -242,4 +277,39 @@ test.skipIf(process.platform === 'darwin')('native worker is explicitly unavaila
     await expect(service.createOwnedWorker({ actionId: CREATE })).rejects.toMatchObject({ code: 'mac_only' });
     expect(existsSync(config.authorityHome)).toBe(false);
   } finally { await service.destroy(); }
+});
+
+macTest('failed physical Native cleanup retains the exact journal owner until explicit close and cleanup retry', async () => {
+  let terminations = 0;
+  const f = fixture({ holdClose: true, terminateProcess() { terminations++; } });
+  const observer = createOwnedNativeJournal({ directory: f.admission.paths.journal, admissionId: f.admission.admissionId });
+  try {
+    const created = await f.service.createOwnedWorker({ actionId: CREATE });
+    expect(created.workerHandle).toBeTruthy(); expect(f.launches).toHaveLength(1);
+    const lock = join(f.admission.paths.journal, 'owner.lock');
+    const retainedOwner = readFileSync(lock, 'utf8');
+    const attempts = await Promise.allSettled([f.service.destroy(), f.service.destroy()]);
+    expect(attempts.map(row => row.status)).toEqual(['rejected', 'rejected']);
+    for (const row of attempts) if (row.status === 'rejected') expect(row.reason.code).toBe('process_not_settled');
+    expect(terminations).toBe(2); expect(f.child.exitCode).toBeUndefined();
+    expect(f.service.inspectOwnedWorker()).toMatchObject({ state: 'unknown', storageOwner: 'current', workerHandle: created.workerHandle });
+    expect(f.service.currentOperation()).toBe('Awaiting exact native process cleanup');
+    expect(readFileSync(lock, 'utf8')).toBe(retainedOwner);
+    expect(observer.ownerStatus()).toBe('elsewhere-or-unverified');
+    expect(() => observer.acquire()).toThrow();
+    expect(readFileSync(lock, 'utf8')).toBe(retainedOwner);
+    await expect(f.service.createOwnedWorker({ actionId: OFFER2 })).rejects.toMatchObject({ code: 'worker_busy' });
+    await expect(f.service.offerOwnedTurn({ workerHandle: created.workerHandle, actionId: OFFER, text: 'Forbidden after cleanup began.' })).rejects.toMatchObject({ code: 'worker_not_ready' });
+    expect(f.launches).toHaveLength(1); expect(f.received.filter(row => row.method === 'turn/start')).toHaveLength(0);
+    f.close();
+    // Physical close alone leaves the durable owner retained until its exact service reconciles.
+    expect(readFileSync(lock, 'utf8')).toBe(retainedOwner);
+    await Promise.all([f.service.destroy(), f.service.destroy()]);
+    expect(terminations).toBe(2); expect(existsSync(lock)).toBe(false);
+    expect(f.service.inspectOwnedWorker()).toMatchObject({ state: 'retired', storageOwner: 'unclaimed', workerHandle: created.workerHandle });
+    expect(f.service.currentOperation()).toBeNull();
+    observer.acquire(); expect(observer.ownerStatus()).toBe('current'); observer.release();
+    await f.service.destroy();
+    expect(f.launches).toHaveLength(1); expect(f.received.filter(row => row.method === 'turn/start')).toHaveLength(0);
+  } finally { f.close(); await f.service.destroy(); observer.release(); }
 });

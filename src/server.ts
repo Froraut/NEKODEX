@@ -1,6 +1,9 @@
 import { ConversationHistoryStore } from "./conversation-history";
 import { conversationHistoryRequest } from "./conversation-history/http";
-import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort } from "./agent-mode";
+import { AgentModeStore, AgentModeRuntime, activeTaskEvidence, createAgentModeRoutes, createLocalResponsesExecutionPort, createOwnedNativeExecutionPort, createAgentExecutionRouter } from "./agent-mode";
+import { createLauncherNativeBridge } from "./agent-mode/launcher-native-bridge";
+import { createAgentNativeControlRoutes } from "./agent-mode/native-control";
+import { AGENT_NATIVE_DESCRIPTOR_FILE } from "../launcher/electron/agent-native-descriptor.cjs";
 import { createAgentToolsComposition, type AgentToolsComposition } from "./agent-tools/composition";
 import { browserCompanionRequest, createAgentBrowserToolsProvider, createBrowserCompanionRuntime, type AgentBrowserToolsProvider, type BrowserCompanionRuntime } from "./browser-companion";
 import type { ToolScope } from "./agent-tools/types";
@@ -843,6 +846,8 @@ export function startServer(
     readAccountCapabilities?: () => AccountCapabilityFields;
     /** Trusted DEV harness pin. Packaged CLI resolves its own sibling native helper. */
     desktopHelper?: PinnedDesktopHelper;
+    /** Trusted launcher/fixture profile identity, independent of browser readiness. */
+    nativeLauncherProfile?: "production" | "development";
   } = {},
 ): Bun.Server<undefined> & { disposeSignalHandlers(): void } {
   if (config.purpose === "dev-harness") {
@@ -854,6 +859,23 @@ export function startServer(
   // Standalone Agent mode has its own task owner and private store. Typical inference never opens it.
   let agentRuntime: AgentModeRuntime | undefined;
   let agentRoutes: ReturnType<typeof createAgentModeRoutes> | undefined;
+  const nativeBridge = createLauncherNativeBridge({ descriptorPath: join(historyHome, "runtime", AGENT_NATIVE_DESCRIPTOR_FILE),
+    expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === "development" ? "development" : "production") });
+  type NativeInvalidation = { task: Parameters<typeof nativeBridge.invalidateTask>[0]; pending?: Promise<void>; failed: boolean };
+  const nativeInvalidations = new Map<string, NativeInvalidation>();
+  const invalidateNativeTask = (task: NativeInvalidation["task"], retry = false): void => {
+    const key = JSON.stringify([task.id, task.familyId, task.generation]);
+    let entry = nativeInvalidations.get(key);
+    if (entry && (!retry || entry.pending)) return;
+    if (!entry) { entry = { task: structuredClone(task), failed: false }; nativeInvalidations.set(key, entry); }
+    const current = entry;
+    current.failed = false;
+    // Observe failures without discarding the exact cleanup scope or creating an unhandled
+    // rejection. Shutdown retries this cleanup only; it never repeats an inference offer.
+    current.pending = nativeBridge.invalidateTask(current.task).then(() => { nativeInvalidations.delete(key); }, () => { current.failed = true; })
+      .finally(() => { current.pending = undefined; });
+  };
+  const nativeControlRoutes = createAgentNativeControlRoutes({ runtime: () => { getAgentRoutes(); return agentRuntime!; }, authorize: request => controlAuthorized(request) });
   let agentTools: AgentToolsComposition | undefined;
   let browserCompanion: BrowserCompanionRuntime | undefined;
   let agentBrowserTools: AgentBrowserToolsProvider | undefined;
@@ -987,9 +1009,10 @@ export function startServer(
   };
   const getAgentRoutes = () => {
     if (agentRoutes) return agentRoutes;
-    const models = () => availableChatGptWebModelRoutes(liveConfig())
+    const models = () => [...availableChatGptWebModelRoutes(liveConfig())
       .filter(route => route.interactionMode === "automatic")
-      .map(route => ({ id: route.slug, label: route.displayName }));
+      .map(route => ({ id: route.slug, label: route.displayName, accepting: acceptingTurns() })),
+      ...(config.browserHost === "launcher" ? nativeBridge.models() : [])];
     const store = new AgentModeStore(join(historyHome, "agent-mode", "state.sqlite"));
     // A PID proven absent is a stopped-owner receipt. A live/reused/inaccessible PID remains
     // unresolved; neither elapsed time nor opening this page authorizes taking its task.
@@ -1003,22 +1026,35 @@ export function startServer(
         if ((error as NodeJS.ErrnoException).code === "ESRCH") store.recoverOwner(task.id, { ownerId: task.ownerId, stopped: true, receiptId: `recovery:${randomUUID()}` });
       }
     }
-    const executionPort = createLocalResponsesExecutionPort({ models,
+    const webExecution = createLocalResponsesExecutionPort({ models,
       endpoint: () => `http://127.0.0.1:${server.port}/v1/responses`,
       requestHeaders: request => ({ authorization: `Bearer ${config.controlToken}`, "x-nekodex-agent-dispatch": request.dispatch.id }),
       tools: { discover: (scope, options) => getAgentTools().toolsPort.discover(scope, options) },
       selectedSkills: request => getAgentTools().selectedSkillContent({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }),
       // This route offers configured Web models only. A control bearer is never native OAuth.
     });
+    const nativeExecution = createOwnedNativeExecutionPort({ models, bridge: nativeBridge,
+      claimTransport: (request, digest) => agentRuntime!.claimNativeTransport(request, digest),
+      tools: { discover: (scope, options) => getAgentTools().toolsPort.discover(scope, options) },
+      selectedSkills: request => getAgentTools().selectedSkillContent({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }) });
+    const executionPort = createAgentExecutionRouter({ localResponses: webExecution, ownedNative: nativeExecution });
     agentRuntime = new AgentModeRuntime({ store, models, executionPort,
-      ownerId: `agent:${process.pid}:${instanceId}`, canStart: acceptingTurns,
+      ownerId: `agent:${process.pid}:${instanceId}`,
+      canStart: () => acceptingAgentTools() && (acceptingTurns() || nativeBridge.models().some(row => row.available === true && row.accepting !== false)),
+      canExecute: task => acceptingAgentTools() && (task.execution?.provider === "owned-native"
+        ? nativeBridge.models().some(row => row.id === task.execution?.model && task.execution?.provider === "owned-native" && row.admissionId === task.execution.admissionId && row.available === true && row.accepting !== false)
+        : acceptingTurns()),
       beforeOffer: async ({ task, dispatch }) => {
         if (task.workspaceSnapshotGrant === undefined || task.workspaceSnapshotGrant === null) return;
         await getAgentSnapshots().beforeTurn({ task, generation: dispatch.generation, dispatchId: dispatch.id });
       }, snapshotReceipts: task => task.workspaceSnapshotGrant === undefined ? [] : getAgentSnapshots().listTask(task.id),
       lookupToolOutcome: key => getAgentTools().receipt(key),
       reconcileToolReceipt: request => getAgentTools().reconcileReceipt(request),
-      onTaskScopeInvalidated: taskId => agentTools?.invalidateTaskTools(taskId),
+      onTaskScopeInvalidated: taskId => {
+        agentTools?.invalidateTaskTools(taskId);
+        const task = store.getTask(taskId);
+        if (task.execution?.provider === "owned-native") invalidateNativeTask(task);
+      },
       beforeVerify: task => {
         for (const evidence of activeTaskEvidence(task)) if (evidence.observer === "workspace-file-observer-v1") getAgentEvidence().assertCurrent(task, evidence);
       }, workspaceEvidenceReferences: task => task.evidence.some(evidence => evidence.observer === "workspace-file-observer-v1") ? getAgentEvidence().listTask(task.id) : [],
@@ -1069,7 +1105,10 @@ export function startServer(
       status: () => ({ version: VERSION, ready: admission.accepting, activeHttpTurns: httpTurns.count(), activeAgentTasks: agentRuntime?.activeCount ?? 0 }),
       agentTasks: () => agentRuntime?.store.listTasks().map(task => ({ id: task.id, state: task.status, kind: "agent", mode: task.mode, generation: task.generation, revision: task.revision, createdAt: task.createdAt, updatedAt: task.updatedAt })),
       history: () => historyStore,
-    }, agentAction: input => { getAgentRoutes(); return agentRuntime!.executeScopedAction(input); },
+    }, agentAction: input => {
+      if (stopPrepared) throw new Error("Agent runtime is draining");
+      getAgentRoutes(); return agentRuntime!.executeScopedAction(input);
+    },
   });
   const trackInference = (
     req: Request,
@@ -1124,8 +1163,15 @@ export function startServer(
       }
       if (url.pathname === "/admin/agent-mode") {
         if (!controlAuthorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+        if (stopPrepared) {
+          try {
+            const body = await readJsonRequestBody(req.clone(), 768 * 1024, 768 * 1024) as { action?: unknown };
+            if (!["status", "list", "get", "reconcile-tool"].includes(String(body.action))) return Response.json({ ok: false, error: "runtime_draining" }, { status: 409 });
+          } catch { return Response.json({ ok: false, error: "invalid_request" }, { status: 400 }); }
+        }
         return (await getAgentRoutes()(req))!;
       }
+      if (url.pathname === "/admin/agent-native") return nativeControlRoutes(req);
       const localApiRequest = url.pathname === "/v1/chat/completions" || url.pathname.startsWith("/v1/messages")
         || url.pathname.startsWith("/claude/") || req.headers.has("x-api-key")
         || /^Bearer sk-local-/i.test(req.headers.get("authorization") ?? "");
@@ -1503,7 +1549,7 @@ export function startServer(
             const task = agentRuntime.store.getTask(dispatch.taskId);
             const body = await readJsonRequestBody(req.clone(), 768 * 1024, 768 * 1024) as { model?: unknown };
             if (dispatch.ownerId !== agentRuntime.runner.ownerId || dispatch.generation !== task.generation || dispatch.state !== "offered" || task.status !== "running"
-              || typeof body.model !== "string" || body.model !== task.execution?.model || !isChatGptWebModelSlug(body.model)) throw new Error("Agent dispatch scope changed");
+              || task.execution?.provider !== "local-responses" || typeof body.model !== "string" || body.model !== task.execution.model || !isChatGptWebModelSlug(body.model)) throw new Error("Agent dispatch scope changed");
             agentRuntime.store.claimTransport(dispatch.id, agentRuntime.runner.ownerId, createHash("sha256").update(JSON.stringify(body)).digest("hex"));
             const source = dispatch.continuationOf ? agentRuntime.store.getDispatch(dispatch.continuationOf).result?.continuation : undefined;
             agentContext = { producer: "agent", threadId: `agent_thread_${createHash("sha256").update(task.id).digest("hex")}`,
@@ -1572,6 +1618,25 @@ export function startServer(
   // release its process hooks, otherwise later signals act on already-stopped instances.
   const stop = server.stop.bind(server);
   let stopPrepared = false;
+  let nativeShutdownPreparation: Promise<void> | undefined;
+  let nativeShutdown = false;
+  const prepareNativeShutdown = (): Promise<void> => nativeShutdownPreparation ??= (async () => {
+    const runtime = agentRuntime!;
+    // This bounds local observation, not Native inference or physical cleanup. A still-live
+    // local operation leaves the authority listener and SQLite open for reconciliation.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idle = await Promise.race([runtime.waitForIdle().then(() => true), new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 1_000); })]);
+    if (timer) clearTimeout(timer);
+    if (!idle) throw new Error("Agent operations have not settled; Native shutdown remains draining");
+    for (const entry of nativeInvalidations.values()) if (entry.failed) invalidateNativeTask(entry.task, true);
+    // Owner recovery publishes generation fences. Main validates them through this Bun
+    // listener, which must remain alive until every exact physical owner has closed.
+    runtime.finishShutdown();
+    while (nativeInvalidations.size) {
+      await Promise.all([...nativeInvalidations.values()].map(entry => entry.pending));
+      if ([...nativeInvalidations.values()].some(entry => entry.failed)) throw new Error("Owned Native cleanup failed; shutdown remains draining");
+    }
+  })().catch(error => { nativeShutdownPreparation = undefined; throw error; });
   let ownedResourcesFinalizer: Promise<void> | undefined;
   const finalizeOwnedResources = (): Promise<void> => ownedResourcesFinalizer ??= (async () => {
       historyStore?.close();
@@ -1594,10 +1659,13 @@ export function startServer(
       disposeSignalHandlers();
       admission.beginShutdown();
       agentRuntime?.beginShutdown();
+      nativeShutdown = Boolean(agentRuntime && (nativeInvalidations.size || agentRuntime.store.listTasks().some(task => task.execution?.provider === "owned-native")));
     }
     // Every request still reaches Bun: stop(true) can escalate an earlier stop(false)
     // while that listener drains. Only the owned-resource finalizer is shared.
-    return stop(...args).finally(finalizeOwnedResources);
+    return nativeShutdown
+      ? prepareNativeShutdown().then(() => stop(...args).finally(finalizeOwnedResources))
+      : stop(...args).finally(finalizeOwnedResources);
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);

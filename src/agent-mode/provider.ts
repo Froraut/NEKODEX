@@ -3,7 +3,17 @@ import type { StandaloneToolsPort } from "../agent-tools/types";
 import type { AgentContinuation, AgentExecutionPort, AgentTask, AgentToolRequest, ExecutionRequest, ExecutionResult } from "./types";
 import { AgentToolImageProjectionError, buildAgentToolContinuationInput } from "./tool-images";
 
-export interface AgentModelOption { id: string; label?: string }
+export interface AgentModelOption {
+  id: string;
+  label?: string;
+  /** Omitted by existing configured Web rows. */
+  provider?: "local-responses" | "owned-native";
+  admissionId?: string;
+  /** Native requires explicit true, never an inferred account/model capability. */
+  available?: boolean;
+  /** Operational readiness, separate from configured/admitted availability. Never blocks offline creation. */
+  accepting?: boolean;
+}
 export interface LocalResponsesProviderOptions {
   /** Fixed host configuration, never a URL supplied by a task or model. */
   endpoint: () => string;
@@ -30,7 +40,8 @@ export function createLocalResponsesExecutionPort(options: LocalResponsesProvide
       const configured = request.task.execution;
       let url: string; let authorization: string | undefined;
       try {
-        if (!configured || configured.provider !== "local-responses" || !options.models().some(row => row.id === configured.model)) throw new Error("Model is not configured");
+        if (!configured || configured.provider !== "local-responses" || !agentModelAccepting(request.task, options.models())) throw new Error("Model is not configured");
+        if (request.continuation?.source.kind === "owned-native") throw new Error("Native continuation cannot enter Web Responses");
         url = endpoint(options.endpoint()); authorization = options.authorization?.(configured.model);
       } catch {
         return { receiptId: `not-sent:${request.dispatch.id}`, outcome: "not_sent", summary: "Agent provider configuration is unavailable; no request was sent.", actualSpend: 0 };
@@ -128,6 +139,16 @@ function boundedSummary(value: string): string {
   return new TextDecoder().decode(bytes.subarray(0, 16_000)) + "\n[Response summary truncated; full provider history is outside this store.]";
 }
 
-export function agentModelConfigured(task: AgentTask, models: readonly AgentModelOption[]): boolean {
-  return task.execution?.provider === "local-responses" && models.some(model => model.id === task.execution?.model);
+export function agentModelConfigured(task: Pick<AgentTask, "execution">, models: readonly AgentModelOption[]): boolean {
+  const execution = task.execution;
+  return Boolean(execution && models.some(row => row.id === execution.model && (row.provider ?? "local-responses") === execution.provider
+    && (execution.provider === "owned-native" ? row.available === true && row.admissionId === execution.admissionId : row.available !== false)));
+}
+export function agentModelAccepting(task: Pick<AgentTask, "execution">, models: readonly AgentModelOption[]): boolean {
+  return agentModelConfigured(task, models) && models.some(row => agentModelConfigured(task, [row]) && row.accepting !== false);
+}
+
+/** Dispatches through one runner; never switches providers after a send or on failure. */
+export function createAgentExecutionRouter(ports: { localResponses: AgentExecutionPort; ownedNative: AgentExecutionPort }): AgentExecutionPort {
+  return { execute(request, acknowledge) { return (request.task.execution?.provider === "owned-native" ? ports.ownedNative : ports.localResponses).execute(request, acknowledge); } };
 }

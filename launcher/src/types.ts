@@ -620,6 +620,9 @@ export interface LauncherApi extends NativeThreadsApi, WorkspaceTerminalApi, Rem
   copyConversationHistoryText(text: string): Promise<unknown>;
   saveConversationHistoryMarkdown(markdown: string): Promise<{ saved: boolean; path?: string }>;
   agentMode(body: Record<string, unknown>): Promise<unknown>;
+  nativeAccountsRequest(body: import('./native-accounts-types').NativeAccountsRequest | import('./native-accounts-types').NativeInventoryRequest | import('./native-accounts-types').NativeExecutionCloseRequest): Promise<import('./native-accounts-types').NativeAccountsSnapshot>;
+  openNativeAccountVerification(url: string): Promise<unknown>;
+  copyNativeAccountCode(code: string): Promise<unknown>;
   agentWorkspaceRoots(): Promise<AgentWorkspaceRoot[]>;
   agentWorkspaceGrants(): Promise<AgentWorkspaceGrantSummary[]>;
   revokeAgentWorkspaceGrant(grantId: string): Promise<unknown>;

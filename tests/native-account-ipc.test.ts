@@ -1,0 +1,64 @@
+import { expect, test } from 'bun:test';
+import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
+const { registerNativeAccounts } = createRequire(import.meta.url)('../launcher/electron/ipc/native-accounts.cjs');
+
+test('Native account IPC keeps opaque action scope and opens/copies only its current device prompt', async () => {
+  const handlers = new Map<string, Function>(), calls: any[] = [], opened: string[] = [], copied: string[] = [];
+  const id = randomUUID(), epoch = randomUUID(), login = randomUUID(), actionId = randomUUID();
+  const snapshot = { available: true, profiles: [{ id, epoch, state: 'fresh', label: 'Fixture' }] as any[], receipts: [], activeCount: 0, executionAvailable: false };
+  const authority = { inspect: () => snapshot,
+    prepareProfile: (input: any) => calls.push(['prepare', input]),
+    beginDeviceLogin: (input: any) => calls.push(['login', input]),
+    cancelLogin: async (input: any) => calls.push(['cancel', input]),
+  };
+  registerNativeAccounts({ handle: (name: string, handler: Function) => handlers.set(name, handler), getAuthority: () => authority,
+    openExternal: async (url: string) => opened.push(url), clipboard: { writeText: (value: string) => copied.push(value) } });
+  const request = (body: unknown) => handlers.get('launcher:native-accounts')!(null, body);
+  expect(await request({ action: 'status' })).toEqual(snapshot); expect(calls).toHaveLength(0);
+  await expect(request({ action: 'begin-device-login', actionId, profileId: id, epoch, executable: '/foreign' })).rejects.toThrow();
+  expect(calls).toHaveLength(0);
+  expect(await request({ action: 'begin-device-login', actionId, profileId: id, epoch })).toEqual(snapshot);
+  expect(calls).toEqual([['login', { actionId, profileId: id, epoch }]]);
+  const open = (url: string) => handlers.get('launcher:native-accounts-open')!(null, url);
+  await expect(open('https://auth.openai.com/codex/device')).rejects.toThrow();
+  snapshot.profiles[0].login = { id: login, state: 'pending', verificationUrl: 'https://auth.openai.com/codex/device', userCode: 'DEVICE-CODE' };
+  await expect(open('https://example.com')).rejects.toThrow();
+  await open('https://auth.openai.com/codex/device'); expect(opened).toEqual(['https://auth.openai.com/codex/device']);
+  const copy = (code: string) => handlers.get('launcher:native-accounts-copy')!(null, code);
+  expect(() => copy('FOREIGN-CODE')).toThrow(); copy('DEVICE-CODE'); expect(copied).toEqual(['DEVICE-CODE']);
+  snapshot.profiles[0].login.state = 'signed-in-checking';
+  expect(() => copy('DEVICE-CODE')).toThrow();
+  await expect(open('https://auth.openai.com/codex/device')).rejects.toThrow();
+  await request({ action: 'cancel-login', actionId, loginAttemptId: login });
+  expect(calls.at(-1)).toEqual(['cancel', { actionId, loginAttemptId: login }]);
+  authority.beginDeviceLogin = () => { throw Object.assign(new Error('Known fixture precondition'), { actionRecorded: false }); };
+  const refusedId = randomUUID();
+  expect((await request({ action: 'begin-device-login', actionId: refusedId, profileId: id, epoch })).rejectedAction).toEqual({ actionId: refusedId, knownNotStarted: true });
+  expect((await request({ action: 'status', actionId: refusedId })).rejectedAction).toEqual({ actionId: refusedId, knownNotStarted: true });
+});
+
+test('Native inventory IPC admits only inspected visible models and closes the exact account generation', async () => {
+  const handlers = new Map<string, Function>(), profileId = randomUUID(), epoch = randomUUID();
+  let ran = 0, admitted = 0, destroyed = 0, closed = 0;
+  let held = true;
+  const authority = { inspect: () => ({ available: true, profiles: [], receipts: [] }) };
+  const inventory = { async run(body: any) { expect(body).toMatchObject({ profileId, epoch, explicitUserAction: true }); ran++; },
+    trustedInventory: () => ({ picker: [{ id: 'native-one' }, { id: 'hidden', hidden: true }, { id: 'native-two' }, { id: 'native-three' }] }),
+    inspect: () => ({ receipts: [], models: [], activeCount: 0, executionAvailable: false }) };
+  const execution = { async admit(body: any) { expect(body).toMatchObject({ profileId, epoch, modelIds: ['native-one', 'native-two'] }); admitted++; },
+    inspect: () => ({ profileId, epoch, ownerHeld: held, models: [] }), async destroy() { destroyed++; held = false; } };
+  registerNativeAccounts({ handle: (name: string, handler: Function) => handlers.set(name, handler), getAuthority: () => authority,
+    getInventory: () => inventory, getExecution: () => execution, onExecutionClosed: (owner: any) => { expect(owner).toBe(execution); closed++; },
+    openExternal: async () => {}, clipboard: { writeText() {} } });
+  const request = (body: any) => handlers.get('launcher:native-accounts')!(null, body);
+  await request({ action: 'inspect-models', actionId: randomUUID(), profileId, epoch });
+  expect([ran, admitted, destroyed]).toEqual([1, 1, 0]);
+  await expect(request({ action: 'close-execution', actionId: randomUUID(), profileId, epoch: randomUUID() })).rejects.toThrow('scope changed');
+  expect(destroyed).toBe(0);
+  const actionId = randomUUID();
+  const result = await request({ action: 'close-execution', actionId, profileId, epoch });
+  expect([destroyed, closed]).toEqual([1, 1]);
+  expect(result.receipts).toContainEqual({ actionId, kind: 'close-execution', profileId, epoch, state: 'completed' });
+  expect((await request({ action: 'status', actionId })).receipts).toContainEqual({ actionId, kind: 'close-execution', profileId, epoch, state: 'completed' });
+});

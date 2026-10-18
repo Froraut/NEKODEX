@@ -32,8 +32,8 @@ export interface OwnedNativeSnapshot {
   availability: { available: boolean; reasonCode: string | null };
   storageOwner: 'current' | 'elsewhere-or-unverified' | 'stale' | 'unclaimed';
   scope: 'private-owned-ephemeral';
-  delivery: 'local-fixture-only';
-  state: 'disconnected' | 'creating' | 'ready' | 'offering' | 'unknown' | 'retired';
+  delivery: 'local-fixture-only' | 'qualified-account';
+  state: 'disconnected' | 'creating' | 'ready' | 'offering' | 'unknown' | 'retiring' | 'retired';
   workerHandle: string | null;
   threadId: string | null;
   admissionId: string;
@@ -45,6 +45,9 @@ export interface OwnedNativeSnapshot {
 export function createOwnedNativeWorkerService(options: {
   executable: string;
   executableSha256: string;
+  /** Stock default remains unchanged; wrapper is an explicitly admitted DEV executable. */
+  executableVariant?: 'stock-cli' | 'owned-wrapper';
+  wrapperBuildPin?: { metadataPath: string; metadataSha256: string; sourceRoot: string; sourcePinSha256: string };
   authorityHome: string;
   catalog: { json: string; sha256: string; modelId: string };
   route: { kind: 'official-openai' } | { kind: 'local-fixture'; baseUrl: string };
@@ -67,4 +70,16 @@ export function createOwnedNativeWorkerService(options: {
   retireOwnedWorker(input: { workerHandle: string; actionId: string }): Promise<OwnedNativeSnapshot>;
   currentOperation(): string | null;
   destroy(): Promise<void>;
+};
+
+/** Trusted main composition only. Private sender/request methods are never returned. */
+export function createOwnedNativeAccountServer(options:{
+  admission:{serverGeneration:string;paths:{cwd:string};prestart():unknown;checkEffective(read:unknown,requirements:unknown):void;
+    checkAccount(account:unknown,usage:unknown):void;forBinding(binding:import('./agent-native-bridge.cjs').AgentNativeBinding):unknown;
+    compileOutputSchema?:(schema:Record<string,unknown>)=>(value:unknown)=>boolean};
+  requestTimeoutMs?:number;terminalTimeoutMs?:number;stopGraceMs?:number;maxConcurrentThreads?:number;onChange?:()=>void;
+}):{
+  createWorker(binding:import('./agent-native-bridge.cjs').AgentNativeBinding,onReceipt?:(receipt:OwnedNativeReceipt)=>void):ReturnType<typeof createOwnedNativeWorkerService>;
+  inspect():{serverGeneration:string;pid:number|null;closed:boolean;accepting:boolean;threadIds:string[];bindings:string[];activeCount:number};
+  currentOperation():string|null;destroy():Promise<void>;
 };
