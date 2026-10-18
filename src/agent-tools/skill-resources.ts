@@ -11,18 +11,21 @@ export interface SkillResourceTextIdentity { relativePath: string; mediaType: "t
 export interface SkillResourceText extends SkillResourceTextIdentity { content: string; role: "selected-skill-source-material"; kind?: never }
 export interface SkillResourceImageIdentity { relativePath: string; mediaType: "image/png" | "image/jpeg"; digest: string; bytes: number; kind: "image"; width: number; height: number }
 export interface SkillResourceImage extends SkillResourceImageIdentity { data: string; role: "selected-skill-source-material"; content?: never }
-export interface SkillResourceScriptIdentity { relativePath: string; mediaType: "text/javascript"; digest: string; bytes: number; kind: "script" }
-export interface SkillResourceScript extends SkillResourceScriptIdentity { content: string; role: "selected-skill-source-material" }
+interface SkillResourceScriptBase { relativePath: string; digest: string; bytes: number; kind: "script" }
+export type SkillResourceScriptIdentity = SkillResourceScriptBase & (
+  { mediaType: "text/javascript"; runtime?: never } | { mediaType: "text/x-python"; runtime: "python" });
+export type SkillResourceScript = SkillResourceScriptIdentity & { content: string; role: "selected-skill-source-material" };
 export type SkillResourceIdentity = SkillResourceTextIdentity | SkillResourceImageIdentity | SkillResourceScriptIdentity;
 export type SkillResource = SkillResourceText | SkillResourceImage | SkillResourceScript;
-export type SkillResourceDescriptor = SkillResourceText | Omit<SkillResourceImage, "data"> | (Omit<SkillResourceScript, "content"> & { content?: never });
+type ScriptDescriptor<T> = T extends SkillResourceScript ? Omit<T, "content"> & { content?: never } : never;
+export type SkillResourceDescriptor = SkillResourceText | Omit<SkillResourceImage, "data"> | ScriptDescriptor<SkillResourceScript>;
 export interface SkillSourcePin { dev: string; ino: string; size: number; mtimeNs: string; ctimeNs: string }
 interface SkillPackageManifestBase {
   packageDigest: string; totalBytes: number;
   directory: { dev: string; ino: string };
   resources: (SkillResourceIdentity & { source: SkillSourcePin })[];
 }
-export type SkillPackageManifest = SkillPackageManifestBase & ({ version: 1; kind: "selected-local-text-package" } | { version: 2; kind: "selected-local-mixed-package" } | { version: 3; kind: "selected-local-executable-package" });
+export type SkillPackageManifest = SkillPackageManifestBase & ({ version: 1; kind: "selected-local-text-package" } | { version: 2; kind: "selected-local-mixed-package" } | { version: 3; kind: "selected-local-executable-package" } | { version: 4; kind: "selected-local-polyglot-package" });
 export interface SkillPackageSnapshot { manifest: LocalSkillSourceManifest; content: string; resources: SkillResource[] }
 /** Model projection never contains image pixels or script code. Text v1 projections retain their existing shape. */
 export function skillResourceDescriptors(resources: SkillResource[]): SkillResourceDescriptor[] {
@@ -38,9 +41,10 @@ function within(root: string, path: string) { const value = relative(root, path)
 export function classifySkillResourcePath(relativePath: string): { supported: boolean; mediaType?: SkillResourceIdentity["mediaType"]; reason?: string } {
   if (typeof relativePath !== "string" || relativePath.length > 512 || isAbsolute(relativePath) || relativePath.includes("\\") || relativePath.split("/").some(part => !part || part === "." || part === ".." || part.startsWith(".") || !/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(part))) return { supported: false, reason: "Resource must be an explicit safe relative path within references/, assets/ or scripts/" };
   const parts = relativePath.split("/");
-  if (!["references", "assets", "scripts"].includes(parts[0]!) || parts.length < 2 || parts.length > 6 || parts.some(part => /^(?:secrets?|credentials?|tokens?|passwords?)(?:[._-]|$)/i.test(part))) return { supported: false, reason: "Only selected reference, asset or bounded JavaScript paths are supported; secret stores and other executable resources are unavailable" };
+  if (!["references", "assets", "scripts"].includes(parts[0]!) || parts.length < 2 || parts.length > 6 || parts.some(part => /^(?:secrets?|credentials?|tokens?|passwords?)(?:[._-]|$)/i.test(part))) return { supported: false, reason: "Only selected reference, asset or bounded JavaScript/Python paths are supported; secret stores and other executable resources are unavailable" };
   const extension = relativePath.split(".").at(-1)?.toLowerCase();
-  if (parts[0] === "scripts") return extension === "js" || extension === "mjs" ? { supported: true, mediaType: "text/javascript" } : { supported: false, reason: "Only explicitly selected .js/.mjs scripts are supported" };
+  if (parts[0] === "scripts") return extension === "js" || extension === "mjs" ? { supported: true, mediaType: "text/javascript" }
+    : extension === "py" ? { supported: true, mediaType: "text/x-python" } : { supported: false, reason: "Only explicitly selected .js/.mjs/.py scripts are supported" };
   const mediaTypes: Record<string, SkillResourceIdentity["mediaType"]> = { md: "text/markdown", txt: "text/plain", json: "application/json", csv: "text/csv", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg" };
   const mediaType = extension && Object.hasOwn(mediaTypes, extension) ? mediaTypes[extension] : undefined;
   return mediaType ? { supported: true, mediaType } : { supported: false, reason: "Other scripts, binary assets and network resources are unsupported" };
@@ -69,20 +73,24 @@ function readResource(root: string, relativePath: string, privateFile = false): 
     const content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(retained);
     if (content.includes("\0")) throw new Error("Selected skill resource is not supported UTF-8 text");
     if (kind.mediaType === "text/javascript") return { value: { relativePath, mediaType: "text/javascript", digest: sha256(retained), bytes: count, kind: "script", content, role: "selected-skill-source-material" }, source };
+    if (kind.mediaType === "text/x-python") return { value: { relativePath, mediaType: "text/x-python", runtime: "python", digest: sha256(retained), bytes: count, kind: "script", content, role: "selected-skill-source-material" }, source };
     return { value: { relativePath, mediaType: kind.mediaType as SkillResourceText["mediaType"], digest: sha256(retained), bytes: count, content, role: "selected-skill-source-material" }, source };
   } finally { closeSync(fd); }
 }
 function resourceIdentity(resource: SkillResourceIdentity): SkillResourceIdentity {
   const { relativePath, mediaType, digest, bytes } = resource;
-  if ("kind" in resource && resource.kind === "script") return { relativePath, mediaType: "text/javascript", digest, bytes, kind: "script" };
+  if ("kind" in resource && resource.kind === "script") return resource.mediaType === "text/x-python"
+    ? { relativePath, mediaType: "text/x-python", runtime: "python", digest, bytes, kind: "script" }
+    : { relativePath, mediaType: "text/javascript", digest, bytes, kind: "script" };
   return "kind" in resource && resource.kind === "image"
     ? { relativePath, mediaType: resource.mediaType, digest, bytes, kind: "image", width: resource.width, height: resource.height }
     : { relativePath, mediaType: mediaType as SkillResourceTextIdentity["mediaType"], digest, bytes };
 }
 function packageDigest(instructions: { digest: string; bytes: number }, resources: SkillResourceIdentity[]) {
   const executable = resources.some(resource => "kind" in resource && resource.kind === "script");
+  const polyglot = resources.some(resource => resource.mediaType === "text/x-python");
   const mixed = resources.some(resource => "kind" in resource && resource.kind === "image");
-  return sha256(JSON.stringify([executable ? "selected-local-executable-package-v3" : mixed ? "selected-local-mixed-package-v2" : "selected-local-text-package-v1", instructions, resources.map(resourceIdentity)]));
+  return sha256(JSON.stringify([polyglot ? "selected-local-polyglot-package-v4" : executable ? "selected-local-executable-package-v3" : mixed ? "selected-local-mixed-package-v2" : "selected-local-text-package-v1", instructions, resources.map(resourceIdentity)]));
 }
 function validatePackageBounds(instructionBytes: number, resources: SkillResource[]): number {
   const images = resources.filter(resource => resource.kind === "image");
@@ -106,7 +114,7 @@ export function snapshotSkillPackageSource(grant: SkillRootGrant, selection: Ski
   for (const resource of selected) if (JSON.stringify(readResource(root, resource.value.relativePath)) !== JSON.stringify(resource)) throw new Error("Selected skill package source changed during capture");
   const after = statSync(root, { bigint: true }); if (after.dev !== before.dev || after.ino !== before.ino || realpathSync(root) !== root) throw new Error("Selected skill package directory changed during capture");
   const resources = selected.map(resource => resource.value);
-  const format = resources.some(resource => resource.kind === "script") ? { version: 3 as const, kind: "selected-local-executable-package" as const } : resources.some(resource => resource.kind === "image") ? { version: 2 as const, kind: "selected-local-mixed-package" as const } : { version: 1 as const, kind: "selected-local-text-package" as const };
+  const format = resources.some(resource => resource.mediaType === "text/x-python") ? { version: 4 as const, kind: "selected-local-polyglot-package" as const } : resources.some(resource => resource.kind === "script") ? { version: 3 as const, kind: "selected-local-executable-package" as const } : resources.some(resource => resource.kind === "image") ? { version: 2 as const, kind: "selected-local-mixed-package" as const } : { version: 1 as const, kind: "selected-local-text-package" as const };
   snapshot.manifest.package = { ...format, packageDigest: packageDigest({ digest: selection.identity.digest, bytes: selection.identity.bytes }, resources), totalBytes,
     directory: { dev: before.dev.toString(), ino: before.ino.toString() }, resources: selected.map(({ value, source }) => ({ ...resourceIdentity(value), source })) };
   return { ...snapshot, resources };
@@ -114,7 +122,7 @@ export function snapshotSkillPackageSource(grant: SkillRootGrant, selection: Ski
 /** Rechecks the complete selected immutable resource tree before any model/source delivery. */
 export function readRetainedSkillResources(versionRoot: string, manifest: LocalSkillSourceManifest): SkillResource[] {
   const packet = manifest.package; if (!packet) return [];
-  if (!(packet.version === 1 && packet.kind === "selected-local-text-package" || packet.version === 2 && packet.kind === "selected-local-mixed-package" || packet.version === 3 && packet.kind === "selected-local-executable-package") || !Array.isArray(packet.resources) || packet.resources.length > SKILL_PACKAGE_LIMITS.maxResources) throw new Error("Managed skill package manifest is unsupported");
+  if (!(packet.version === 1 && packet.kind === "selected-local-text-package" || packet.version === 2 && packet.kind === "selected-local-mixed-package" || packet.version === 3 && packet.kind === "selected-local-executable-package" || packet.version === 4 && packet.kind === "selected-local-polyglot-package") || !Array.isArray(packet.resources) || packet.resources.length > SKILL_PACKAGE_LIMITS.maxResources) throw new Error("Managed skill package manifest is unsupported");
   const root = join(versionRoot, "resources");
   if (realpathSync(root) !== root || !lstatSync(root).isDirectory() || (lstatSync(root).mode & 0o077) !== 0) throw new Error("Managed skill package tree is not private and canonical");
   const expected = new Set(packet.resources.map(row => row.relativePath)); let entries = 0;
@@ -135,6 +143,6 @@ export function readRetainedSkillResources(versionRoot: string, manifest: LocalS
     return value;
   });
   const bytes = validatePackageBounds(manifest.identity.bytes, resources);
-  if ((resources.some(resource => resource.kind === "script") ? packet.version !== 3 : resources.some(resource => resource.kind === "image") ? packet.version !== 2 : packet.version !== 1) || packet.totalBytes !== bytes || new Set(resources.map(row => row.relativePath)).size !== resources.length || packet.packageDigest !== packageDigest({ digest: manifest.identity.digest, bytes: manifest.identity.bytes }, resources)) throw new Error("Managed skill package digest or aggregate bounds changed");
+  if ((resources.some(resource => resource.mediaType === "text/x-python") ? packet.version !== 4 : resources.some(resource => resource.kind === "script") ? packet.version !== 3 : resources.some(resource => resource.kind === "image") ? packet.version !== 2 : packet.version !== 1) || packet.totalBytes !== bytes || new Set(resources.map(row => row.relativePath)).size !== resources.length || packet.packageDigest !== packageDigest({ digest: manifest.identity.digest, bytes: manifest.identity.bytes }, resources)) throw new Error("Managed skill package digest or aggregate bounds changed");
   return resources;
 }

@@ -1,5 +1,12 @@
 # Explicit selected skill resources
 
+The resource owner also supports explicitly selected inert JS/MJS scripts (v3)
+and Python scripts (v4). Their source is reviewed and retained with the package,
+while model packets contain script metadata only. Execution uses the separate
+[restricted script contract](restricted-skill-scripts.md), admitted runtime,
+workspace grant and per-call approval. Existing v1/v2 text/image behavior below
+keeps its original digest domain and authority.
+
 Standalone Agent skills can carry explicitly selected bounded text and PNG/JPEG
 resources in addition to legacy instructions. Text-only v1 manifests/digests/version
 identity remain unchanged; packages containing images use v2
@@ -38,7 +45,7 @@ and user instructions. JSON text has no executable or permission semantics.
 | `snapshotSkillPackageSource(grant, selection)` | Returns `{manifest, content, resources}` after bounded reads and exact source-pin rechecks. |
 | `SkillResourceText` | `{relativePath, mediaType, digest, bytes, content, role: 'selected-skill-source-material'}`. Contains no host source path or credential references. |
 | `SKILL_PACKAGE_LIMITS` | Sixteen resources; text32 KiB each/128 KiB incl instructions; image160 KiB each,8 images/32 Mi package pixels; mixed512 KiB. |
-| `UNSUPPORTED_SKILL_RESOURCES` | Declares scripts/executables, binary assets other than selected PNG/JPEG, network resources and automatic linked-resource discovery unsupported. |
+| `UNSUPPORTED_SKILL_RESOURCES` | Declares unselected scripts/other executables, binary assets other than selected PNG/JPEG, network resources and automatic linked-resource discovery unsupported. |
 | `readRetainedSkillResources(versionRoot, manifest)` | Internal verification of the complete selected private resource tree. It rejects changed, extra or symlinked entries before returning content. |
 
 `LocalSkillSourceManifest` has an optional `package` field with version/kind,
@@ -144,7 +151,7 @@ That synthetic task had zero model offers/dispatches and zero tool calls. GUI an
 core both closed with exit 0, exact PIDs/port were checked absent and the private
 temporary profile was removed. No OS permission inspection/grant was requested.
 Leaf success alone does not
-prove model use or a completed task outcome. Broader executables/Python/shell,
+prove model use or a completed task outcome. Broader executables, unsupported Python distributions/dependencies and shell,
 other binary/multimedia assets such as PDF, remote resources and automatic dependency discovery
 remain unsupported and require separate authority and executor design.
 

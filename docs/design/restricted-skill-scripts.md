@@ -1,6 +1,6 @@
 # Restricted selected skill scripts
 
-This uncommitted macOS source batch adds explicitly selected `.js`/`.mjs` under
+The macOS source supports explicitly selected `.js`/`.mjs` under
 `scripts/` as v3 `selected-local-executable-package`:32 KiB code each,16 resources
 and512 KiB aggregate. Existing v1 text and v2 mixed-image identities/digests remain
 unchanged. Immutable code is retained with the same package hash/tree owner;
@@ -22,7 +22,8 @@ may be allowed). Read/write roots and private scratch are scoped, with disclosed
 global filesystem metadata and system-library reads. This is a deprecated Seatbelt
 boundary, not a claim that every byte interpreted at runtime has immutable origin:
 readable mutable workspace data can still be interpreted by selected JavaScript.
-No Python/shell/native executor, network grant or Native/account RPC is added.
+No shell/native executor, network grant or Native/account RPC is added by that
+JavaScript route. The separate Python route is described below.
 
 A supervisor durably records exact PID/start identities and the launch permit
 before import. EOF, timeout, output cap and cancellation trigger physical reaping.
@@ -43,7 +44,7 @@ preserve privacy during drain while new picker/grant admission is refused. Real
 component evidence and real macOS execution evidence are separate, as recorded in
 [review](../reviews/2026-10-18-restricted-skill-scripts-and-ssh-aliases.md).
 
-PDF/other binary formats, Python/shell/other executables, network resources,
+PDF/other binary formats, shell/other executables, network resources,
 automatic dependencies and official/vendor copies remain unsupported. Native's
 separate image binding budget is unchanged; execution does not prove real-model
 success, external business outcome or installed delivery.
@@ -52,3 +53,50 @@ Final post-fix bothTS20:02, renderer197/1.20s and plainCLI648/11.29MB/exact `.9`
 20:04 passed; peer P1closed/no additional findings. Root module-map is written,
 finalcheck/paths pending after docs freeze; source commitCI and temporary CLI
 cleanup remain root-owned.
+
+## Selected Python resources
+
+Explicit `scripts/*.py` resources use `text/x-python`, `kind: "script"` and
+`runtime: "python"`. Packages containing Python have a new v4
+`selected-local-polyglot-package` domain. Text/image/JavaScript-only v1/v2/v3
+descriptors and digest domains remain unchanged. The Python source has the same
+32 KiB per-resource and 512 KiB mixed-package bounds; review shows exact source,
+runtime, bytes and SHA. Selected model packets contain metadata only.
+
+The script owner determines the runtime from the verified attached resource;
+the model cannot choose an interpreter or pass an execution runtime argument.
+Discovery exposes a Python entry only when that runtime is admitted, and actual
+handoff rechecks it. Generic JavaScript availability never authorizes Python.
+Import/review remains possible without a Python runtime. The UI reports the two
+runtime capabilities separately.
+
+`skill-python-runtime.ts` admits one fixed Apple Xcode Python 3.9 framework.
+Admission is passive: no PATH lookup, `/usr/bin/python3` shim execution, child
+process, installer, user-site lookup or dependency installation. It bounds and
+pins the canonical root-owned protected interpreter/stdlib dependency closure;
+an in-process branded admission cannot be recreated from model/HTTP paths.
+Status uses cheap retained identity checks. Dispatch revalidates dependency
+metadata and the executable hash. A missing or changed framework leaves Python
+unavailable while preserving the JavaScript runner.
+
+The existing pinned Bun supervisor launches the admitted interpreter with fixed
+`-I -S -B` arguments and a clean private environment. A fixed application-owned
+Python bootstrap validates interpreter/base-prefix/search paths, waits for the
+supervisor's durable PID/start permit, applies Seatbelt, writes and closes the
+sealed control FD, then reads, hashes and compiles the exact selected `.py`.
+Only then are immutable package directories added to module search paths.
+No site customization or automatic dependency loading is enabled. Runtime and
+bootstrap identities are retained with the execution receipt.
+
+Python uses the existing per-operation approval, exact scope, ephemeral workspace
+grant, limits, physical child reaping, retained-owner recovery and unknown/no
+replay contracts. Its disclosed runtime read/map closure extends the JavaScript
+system-library boundary. Fork, further exec and network operations remain
+denied; writable workspace grants cannot overlap the admitted runtime. Selected
+code can interpret data it is allowed to read, so this is not a guarantee that
+every interpreted byte originated in an immutable package. stdout/stderr remains
+untrusted output, and a successful script does not verify a task result.
+
+Other Python distributions/versions, third-party dependencies, shell, PDF/OCR,
+network resources and Windows/Linux execution remain separate work. This source
+contract is not installed-app acceptance or a real-model result.

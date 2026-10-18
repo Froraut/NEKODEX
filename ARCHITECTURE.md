@@ -709,6 +709,16 @@ See
 [SSH contract](docs/design/remote-ssh-config.md) and
 [evidence](docs/reviews/2026-10-18-restricted-skill-scripts-and-ssh-aliases.md).
 
+Selected Python resources extend that owner through a separate v4 package and
+[fixed Apple runtime admission](src/agent-tools/skill-python-runtime.ts).
+The isolated no-site/no-bytecode bootstrap seals Seatbelt before compiling the
+selected `.py`; status does not spawn a child or repeatedly hash the stdlib.
+The same supervisor and ToolJournal retain per-call authority and unknown/no
+replay behavior. JS v3 identities stay unchanged. Actual kernel containment,
+rendered import/grants and a two-offer real Native invoice CSV task with one
+approved effect and independent SHA verification passed; see the
+[Python acceptance report](docs/reviews/2026-10-18-real-python-skill.md).
+
 **Additional surfaces:** standalone MCP host and read-only skill library are
 composed lazily in the daemon, with guarded main IPC and mounted UI. Only explicitly
 configured recipes/granted skill roots are available. The managed installer

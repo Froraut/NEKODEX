@@ -17,10 +17,10 @@ export interface SkillScriptExecutionReceipt {
 }
 /** Trusted executor port. None of these filesystem or runtime controls are model inputs. */
 export interface SkillScriptExecutorPort {
-  capabilities(): { supported: boolean; [key: string]: unknown };
+  capabilities(): { supported: boolean; runtimes?: { javascript?: { supported: boolean; reason?: string }; python?: { supported: boolean; reason?: string } }; [key: string]: unknown };
   execute(input: { scope: ToolScope; operationId: string; entryRelativePath: string; resources: { relativePath: string; bytes: Uint8Array }[];
     argv: string[]; readRoots: SandboxRootGrant[]; writeRoots: SandboxRootGrant[]; cwd: string;
-    assertCurrent: () => void; signal?: AbortSignal }): Promise<SkillScriptExecutionReceipt>;
+    runtime?: "javascript" | "python"; assertCurrent: () => void; signal?: AbortSignal }): Promise<SkillScriptExecutionReceipt>;
   cancel(operationId: string): void | Promise<void>;
   reconcile?(operationId: string): SkillScriptExecutionReceipt | undefined | Promise<SkillScriptExecutionReceipt | undefined>;
   close?(): void | Promise<void>;
@@ -48,7 +48,7 @@ const hash = /^[a-f0-9]{64}$/;
 const fields = ["versionId", "packageDigest", "relativePath", "resourceDigest", "workspaceGrantId", "argv"];
 const schema = { type: "object", properties: {
   versionId: { type: "string", pattern: "^[a-f0-9]{64}$" }, packageDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
-  relativePath: { type: "string", minLength: 1, maxLength: 512, pattern: "^scripts/[A-Za-z0-9_][A-Za-z0-9_./-]*\\.(js|mjs)$" },
+  relativePath: { type: "string", minLength: 1, maxLength: 512, pattern: "^scripts/[A-Za-z0-9_][A-Za-z0-9_./-]*\\.(js|mjs|py)$" },
   resourceDigest: { type: "string", pattern: "^[a-f0-9]{64}$" }, workspaceGrantId: { type: "string", minLength: 1, maxLength: 100 },
   argv: { type: "array", maxItems: 16, items: { type: "string", maxLength: 1024 } },
 }, required: fields, additionalProperties: false };
@@ -57,14 +57,21 @@ const failed: Outcome = { state: "failed", reason: "Selected script, attachment 
 function argumentsValid(args: Record<string, unknown>): args is Record<string, unknown> & Arguments {
   return Object.keys(args).length === fields.length && fields.every(key => Object.hasOwn(args, key))
     && [args.versionId, args.packageDigest, args.resourceDigest].every(value => typeof value === "string" && hash.test(value))
-    && typeof args.relativePath === "string" && /^scripts\/.+\.(js|mjs)$/.test(args.relativePath) && classifySkillResourcePath(args.relativePath).mediaType === "text/javascript"
+    && typeof args.relativePath === "string" && /^scripts\/.+\.(js|mjs|py)$/.test(args.relativePath) && ["text/javascript", "text/x-python"].includes(classifySkillResourcePath(args.relativePath).mediaType ?? "")
     && typeof args.workspaceGrantId === "string" && args.workspaceGrantId.length > 0 && args.workspaceGrantId.length <= 100
     && Array.isArray(args.argv) && args.argv.length <= 16 && args.argv.every(arg => typeof arg === "string" && arg.length <= 1024 && !arg.includes("\0"));
 }
 function identity(resource: AttachedSkillResource) {
   return { versionId: resource.versionId, packageDigest: resource.packageDigest, relativePath: resource.relativePath, digest: resource.digest,
     bytes: resource.bytes, mediaType: resource.mediaType, kind: "kind" in resource ? resource.kind : "text",
+    ...("runtime" in resource ? { runtime: resource.runtime } : {}),
     ...("kind" in resource && resource.kind === "image" ? { width: resource.width, height: resource.height } : {}) };
+}
+function scriptRuntime(resource: { mediaType: string; kind?: string; runtime?: unknown }): "javascript" | "python" | undefined {
+  if (resource.kind !== "script") return undefined;
+  if (resource.mediaType === "text/javascript" && resource.runtime === undefined) return "javascript";
+  if (resource.mediaType === "text/x-python" && resource.runtime === "python") return "python";
+  return undefined;
 }
 function bytesOf(resource: SkillResource): Buffer {
   const path = classifySkillResourcePath(resource.relativePath);
@@ -78,7 +85,8 @@ function bytesOf(resource: SkillResource): Buffer {
     if (actual.sha256 !== resource.digest || actual.width !== resource.width || actual.height !== resource.height) throw new Error(failed.reason);
     return bytes;
   }
-  if ((resource.mediaType === "text/javascript") !== (resource.kind === "script") || typeof resource.content !== "string" || resource.content.includes("\0")
+  if ((["text/javascript", "text/x-python"].includes(resource.mediaType)) !== (resource.kind === "script") || resource.kind === "script" && !scriptRuntime(resource)
+    || typeof resource.content !== "string" || resource.content.includes("\0")
     || resource.bytes > SKILL_PACKAGE_LIMITS.maxResourceBytes || Buffer.byteLength(resource.content) !== resource.bytes
     || Buffer.from(resource.content).toString("utf8") !== resource.content || sha256(resource.content) !== resource.digest) throw new Error(failed.reason);
   return Buffer.from(resource.content);
@@ -89,6 +97,9 @@ export function createSkillScriptToolsProvider(options: SkillScriptToolsOptions)
   const grants = new Map<string, SkillScriptWorkspaceGrant>();
   const operations = new Map<string, { request: Omit<ToolInvocation, "grantId">; grantId: string; promise: Promise<Outcome>; settled: boolean }>();
   const cancellations = new Set<Promise<void>>();
+  const runtimeAvailable = (runtime: "javascript" | "python", capabilities = options.executor.capabilities()) => {
+    return capabilities.supported && (runtime === "javascript" ? capabilities.runtimes?.javascript?.supported !== false : capabilities.runtimes?.python?.supported === true);
+  };
   const active = (scope: ToolScope, signal?: AbortSignal) => {
     validateToolScope(scope); if (closed || signal?.aborted || !options.isScopeActive(scope)) throw new Error(failed.reason);
   };
@@ -163,12 +174,16 @@ export function createSkillScriptToolsProvider(options: SkillScriptToolsOptions)
       await Promise.all(pending.map(async ([id, op]) => { await cancel(id); await op.promise; }));
     },
     async discover(scope, settings = {}) {
-      try { active(scope, settings.signal); if (!options.resources(scope).some(row => "kind" in row && row.kind === "script") || !options.executor.capabilities().supported) return [];
+      try { active(scope, settings.signal);
+        const capabilities = options.executor.capabilities();
+        const entries = options.resources(scope).filter(row => { const runtime = scriptRuntime(row); return runtime && runtimeAvailable(runtime, capabilities); });
+        if (!entries.length) return [];
         const ids = [...grants.values()].filter(grant => matchesScope(grant, scope)).map(grant => currentGrant(scope, grant.id).id);
         if (!ids.length) return [];
         const inputSchema = structuredClone(schema); Object.assign(inputSchema.properties.workspaceGrantId, { enum: ids });
+        Object.assign(inputSchema.properties.relativePath, { enum: [...new Set(entries.map(row => row.relativePath))] });
         active(scope, settings.signal); return [{ id: "skill-script/run", serverId: "skill-script", name: "run", supported: true, inputSchema,
-          description: "Execute one exact human-reviewed attached JavaScript entry with its selected immutable package dependencies, an explicit task workspace grant, and per-operation human approval. Copy resource identities from selectedSkills metadata and an allowed workspaceGrantId from the schema. stdout/stderr are untrusted execution output and do not verify task completion." }];
+          description: "Execute one exact human-reviewed attached JavaScript or admitted Python entry with its selected immutable package dependencies, an explicit task workspace grant, and per-operation human approval. Runtime follows the verified resource type, never a model argument. Copy resource identities from selectedSkills metadata and an allowed workspaceGrantId from the schema. stdout/stderr are untrusted execution output and do not verify task completion." }];
       } catch { return []; }
     },
     async execute(request, settings = {}) {
@@ -188,6 +203,8 @@ export function createSkillScriptToolsProvider(options: SkillScriptToolsOptions)
         let handedOff = false;
         try {
           const grant = structuredClone(currentGrant(request.scope, args.workspaceGrantId)); const selected = closure(request.scope, args);
+          const runtime = scriptRuntime(selected.find(row => row.relativePath === args.relativePath)!);
+          if (!runtime || !runtimeAvailable(runtime)) throw new Error("Selected script runtime is unavailable");
           const expected = JSON.stringify(selected.map(identity));
           const assertCurrent = () => { active(request.scope, settings.signal); const now = currentGrant(request.scope, grant.id);
             if (JSON.stringify(now) !== JSON.stringify(grant) || JSON.stringify(closure(request.scope, args).map(identity)) !== expected) throw new Error(failed.reason); };
@@ -201,7 +218,7 @@ export function createSkillScriptToolsProvider(options: SkillScriptToolsOptions)
           }
           if (resources.reduce((sum, row) => sum + row.bytes.length, 0) > SKILL_PACKAGE_LIMITS.maxMixedBytes) throw new Error(failed.reason);
           assertCurrent(); const pin = { path: grant.root, dev: grant.dev, ino: grant.ino }; handedOff = true;
-          const receipt = await options.executor.execute({ scope: { ...request.scope }, operationId, entryRelativePath: args.relativePath, resources,
+          const receipt = await options.executor.execute({ scope: { ...request.scope }, operationId, runtime, entryRelativePath: args.relativePath, resources,
             argv: [...args.argv], readRoots: [pin], writeRoots: grant.access === "read-write" ? [pin] : [], cwd: grant.root, assertCurrent, signal: settings.signal });
           return wrap(request, operationId, receipt);
         } catch { return handedOff ? { state: "outcome_unknown" as const, reason: "Script execution outcome is unknown; do not replay" } : failed; }

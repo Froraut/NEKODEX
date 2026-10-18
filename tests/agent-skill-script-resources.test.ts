@@ -64,7 +64,8 @@ test("reviewed selected JS/MJS retain exact inert v3 code and expose metadata wi
     expect(() => store.readResource(scope, imported.versionId, selected.packageDigest!, "assets/sample.png", imageIdentity.digest)).toThrow("immutable resource digest");
     chmodSync(retained, 0o600); writeFileSync(retained, code); chmodSync(retained, 0o400);
     store.revoke(imported.versionId); expect(() => store.readResource(scope, imported.versionId, selected.packageDigest!, script.relativePath, script.digest)).toThrow("revoked"); expect(readFileSync(retained, "utf8")).toBe(code);
-    for (const path of ["scripts/../outside.js", "scripts/secret.js", "scripts/code.sh", "scripts/code.py", "assets/code.js", "references/code.mjs", "scripts/.hidden.js"]) expect(classifySkillResourcePath(path).supported).toBe(false);
+    for (const path of ["scripts/../outside.js", "scripts/secret.js", "scripts/code.sh", "assets/code.js", "references/code.mjs", "scripts/.hidden.js"]) expect(classifySkillResourcePath(path).supported).toBe(false);
+    expect(classifySkillResourcePath("scripts/code.py").mediaType).toBe("text/x-python");
     expect(classifySkillResourcePath("scripts/nested/code.mjs").mediaType).toBe("text/javascript");
     symlinkSync(join(source, "scripts/inert.mjs"), join(source, "scripts/link.js")); expect(() => snapshotSkillPackageSource(grant, { identity, resources: ["scripts/link.js"] })).toThrow("canonical");
     expect(() => snapshotSkillPackageSource({ ...grant, source: "vendor-plugin" }, selection)).toThrow("local user/workspace");

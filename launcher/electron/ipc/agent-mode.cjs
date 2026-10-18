@@ -1,3 +1,4 @@
+const path = require('node:path');
 const ACTIONS = new Set(['status', 'list', 'get', 'create', 'control', 'step', 'run', 'review', 'verify', 'evidence', 'workspace-grant', 'resume-continuation', 'enqueue-work', 'cycle', 'workspace-evidence', 'reconcile-tool']);
 const UUID = /^[a-f0-9-]{36}$/;
 const record = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -72,7 +73,13 @@ function registerAgentMode({ handle, runtimeHost, workspaceService, workspaceEvi
   });
   if (workspaceService) {
     const noArgs = action => (_event, ...args) => { if (args.length) throw new Error('This workspace action takes no incoming path'); return action(); };
-    handle('launcher:agent-workspace-roots', noArgs(() => workspaceService.listRoots().map(({ id, name }) => ({ id, name }))));
+    handle('launcher:agent-workspace-roots', noArgs(() => {
+      const roots = workspaceService.listRoots();
+      return roots.map(({ id, name, path: rootPath }) => ({ id,
+        name: roots.filter(root => root.name === name).length > 1
+          ? `${name} — ${typeof rootPath === 'string' ? path.basename(path.dirname(rootPath)) + ' ' : ''}(${id.slice(0, 8)})`
+          : name }));
+    }));
     handle('launcher:agent-workspace-grants', noArgs(() => workspaceService.listAgentWorkspaceGrants()));
     handle('launcher:agent-workspace-revoke', (_event, grantId) => {
       if (typeof grantId !== 'string' || !UUID.test(grantId)) throw new Error('Invalid workspace grant identity');

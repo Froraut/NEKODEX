@@ -10,15 +10,15 @@ import type { SkillScriptExecutorPort } from '../src/agent-tools/skill-script-to
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const evidence = process.env.NEKODEX_SKILL_SCRIPT_PREVIEW_EVIDENCE;
-const scriptPath = 'scripts/example.mjs';
-const script = '// Inert source for human preview only. This fixture must never execute it.\nexport const previewMarker = "REVIEW_ONLY_NO_EXECUTION";\n';
+const scriptPath = 'scripts/example.py';
+const script = '# Inert source for human preview only. This fixture must never execute it.\npreview_marker = "REVIEW_ONLY_NO_EXECUTION"\n';
 const digest = createHash('sha256').update(script).digest('hex');
 const importLabel = 'Import this reviewed immutable version';
 const scriptAckLabel = 'I reviewed the exact script source and hashes shown above. This acknowledges import only.';
 const workspaceAckLabel = 'I approve this exact directory and access mode for the selected task generation and acknowledge the runner restrictions and write risks.';
 const grantLabel = 'Grant this exact workspace access';
 
-test('actual Chrome script import acknowledgement and task workspace grant remain separate from execution', async () => {
+test('actual Chrome Python source import with unavailable runtime keeps acknowledgement and workspace grant separate from execution', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'nekodex-skill-script-preview-')));
   const home = join(root, 'private'), source = join(root, 'source'), workspace = join(root, 'workspace');
   mkdirSync(home, { mode: 0o700 }); mkdirSync(join(source, 'scripts'), { recursive: true }); mkdirSync(workspace);
@@ -28,7 +28,8 @@ test('actual Chrome script import acknowledgement and task workspace grant remai
   const taskId = 'isolated-script-preview-task';
   const scope = () => ({ taskId, generation, toolCallId: 'fixture-ui' });
   const executor: SkillScriptExecutorPort = {
-    capabilities: () => ({ supported: true, network: 'deny-all-new-sockets', processExec: 'deny', fixture: true }),
+    capabilities: () => ({ supported: true, network: 'deny-all-new-sockets', processExec: 'deny', fixture: true,
+      runtimes: { javascript: { supported: true }, python: { supported: false, reason: 'Python is unavailable in this inert preview fixture.' } } }),
     execute: async () => { executions++; throw new Error('No execution is permitted in the preview fixture'); },
     cancel: () => { cancellations++; }, close: () => { executorCloses++; },
   };
@@ -71,17 +72,21 @@ test('actual Chrome script import acknowledgement and task workspace grant remai
     const page = await context.newPage(); page.setDefaultTimeout(4000);
     const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.port}/`);
+    await page.getByText('JavaScript runtime: available', { exact: true }).waitFor();
+    expect(await page.getByText('JavaScript runtime: available', { exact: true }).count()).toBe(1);
+    expect(await page.getByText('Python runtime: unavailable', { exact: true }).count()).toBe(1);
     expect(await page.getByRole('button', { name: grantLabel, exact: true }).isDisabled()).toBe(true);
     expect(await page.getByRole('button', { name: 'Select workspace directory', exact: true }).isDisabled()).toBe(true);
     await page.getByRole('combobox', { name: 'Discovered local source' }).selectOption(sources[0]!.id);
-    await page.getByRole('textbox', { name: 'Supporting text, PNG/JPEG and JS/MJS files' }).fill(scriptPath);
+    await page.getByRole('textbox', { name: 'Supporting text, PNG/JPEG and JS/MJS/Python files' }).fill(scriptPath);
     await page.getByRole('button', { name: 'Review the source and every selected file', exact: true }).click();
     await page.getByText('Reviewed source; separate run approval required', { exact: true }).waitFor();
     expect(await page.locator('pre').filter({ hasText: 'REVIEW_ONLY_NO_EXECUTION' }).first().textContent()).toBe(script);
     expect(await page.getByText(`SHA-256 ${digest}`, { exact: true }).count()).toBe(1);
+    expect(await page.getByText('Runtime: python', { exact: true }).count()).toBe(1);
     expect(reviews).toHaveLength(1); expect(reviews[0].ok).toBe(true);
-    expect(reviews[0].value.action.manifest.package).toMatchObject({ version: 3, kind: 'selected-local-executable-package' });
-    expect(reviews[0].value.resources).toEqual([{ kind: 'script', relativePath: scriptPath, mediaType: 'text/javascript', content: script, digest,
+    expect(reviews[0].value.action.manifest.package).toMatchObject({ version: 4, kind: 'selected-local-polyglot-package' });
+    expect(reviews[0].value.resources).toEqual([{ kind: 'script', relativePath: scriptPath, mediaType: 'text/x-python', runtime: 'python', content: script, digest,
       bytes: Buffer.byteLength(script), role: 'selected-skill-source-material' }]);
     expect(await page.getByRole('button', { name: importLabel, exact: true }).isDisabled()).toBe(true);
     const scriptAck = page.getByRole('checkbox', { name: scriptAckLabel, exact: true });
@@ -139,7 +144,7 @@ test('actual Chrome script import acknowledgement and task workspace grant remai
     expect(executions).toBe(0); expect(cancellations).toBe(0); expect(errors).toEqual([]);
     expect(await page.getByRole('alert').count()).toBe(0);
     receipt = { browser: context.browser()?.version(), components: ['AgentManagedSkills', 'AgentSkillScripts'],
-      imported: { versionId: imported.versionId, packageVersion: 3, scriptSha256: digest, scriptBytes: Buffer.byteLength(script), exactRetainedSource: true, attachedAutomatically: false, explicitAttachmentGeneration: 2 },
+      imported: { versionId: imported.versionId, packageVersion: 4, runtime: 'python', pythonRuntimeAvailable: false, scriptSha256: digest, scriptBytes: Buffer.byteLength(script), exactRetainedSource: true, attachedAutomatically: false, explicitAttachmentGeneration: 2 },
       workspace: { pickerCalls, pickerAloneGrantedAuthority: false, accessChangeClearedAcknowledgement: true, generationChangeClearedAcknowledgement: true,
         grant: workspaceGrant, revoked: true, finalGrants: 0 },
       operations: { reviews: reviews.length, imports: commits.length, grants: grants.length, revokes: revokes.length, executions, cancellations, modelRuntimeCreated: false }, errors };

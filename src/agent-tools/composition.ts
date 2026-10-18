@@ -21,6 +21,7 @@ import { reviewTrustedSandboxConfig, sandboxProviderAvailable } from "./sandbox"
 import { ManagedSkillStore } from "./managed-skills";
 import { createSkillResourceToolsProvider, type AttachedSkillResource } from "./skill-resource-tools";
 import { SkillScriptExecutor } from "./skill-script-executor";
+import { admitApplePythonRuntime, type AdmittedPythonRuntime } from "./skill-python-runtime";
 import { createSkillScriptToolsProvider, type SkillScriptExecutorPort, type SkillScriptToolsProvider } from "./skill-script-tools";
 
 export interface AgentToolsCompositionOptions {
@@ -41,14 +42,16 @@ export interface AgentToolsCompositionOptions {
   /** Trusted test/platform port; never supplied through HTTP or model arguments. */
   scriptExecutor?: SkillScriptExecutorPort;
 }
-/** Passive lazy binding to the already owned plain Bun runtime, with no fallback interpreter. */
+/** Passive lazy binding to the owned Bun and an optional fixed, pinned Apple Python closure. */
 function ownedScriptExecutor(home: string): SkillScriptExecutorPort {
   let executor: SkillScriptExecutor | undefined;
   const get = () => {
     if (!executor) {
       const command = realpathSync(process.execPath);
       if (process.platform !== "darwin" || !/^bun(?:\.exe)?$/.test(basename(command))) throw new Error("Restricted skill script runtime is unavailable");
-      executor = new SkillScriptExecutor({ bunPath: command, bunSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, home });
+      let pythonRuntime: AdmittedPythonRuntime | undefined;
+      try { pythonRuntime = admitApplePythonRuntime(); } catch { /* Missing/untrusted Python cannot change JavaScript authority. */ }
+      executor = new SkillScriptExecutor({ bunPath: command, bunSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, home, pythonRuntime });
     }
     return executor;
   };

@@ -37,8 +37,12 @@ function persist(value) {
   renameSync(path, config.receipt);
   const dir = openSync(config.root, "r"); try { fsyncSync(dir); } finally { closeSync(dir); }
 }
-// No shell, inherited environment, extra descriptors, package command or account startup.
-const child = spawn(config.bunPath, ["--no-install", "--no-env-file", "--config=" + config.bunfig, config.bootstrap, config.childConfig], { cwd: config.cwd, env: config.env, stdio: ["ignore", "pipe", "pipe", "pipe"] });
+// No shell, inherited environment, package command or account startup. Python
+// is an exact owner-admitted interpreter, never PATH/shebang dispatch.
+const child = spawn(config.runtime === "python" ? config.pythonExecutable : config.bunPath,
+  config.runtime === "python" ? ["-I", "-S", "-B", config.bootstrap, config.childConfig]
+    : ["--no-install", "--no-env-file", "--config=" + config.bunfig, config.bootstrap, config.childConfig],
+  { cwd: config.cwd, env: config.env, stdio: ["ignore", "pipe", "pipe", "pipe"] });
 let stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), outputBytes = 0, truncated = false, settled = false;
 function stop(reason) { if (settled) return; owner.reason ??= reason; child.kill("SIGKILL"); }
 function consume(which, bytes) {

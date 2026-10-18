@@ -42,11 +42,11 @@ export interface ManagedSkillImageResourceView {
   digest: string; bytes: number; width: number; height: number; data: string;
   role?: 'selected-skill-source-material';
 }
-export interface ManagedSkillScriptResourceView {
-  kind: 'script'; relativePath: string; mediaType: 'text/javascript';
+export type ManagedSkillScriptResourceView = {
+  kind: 'script'; relativePath: string;
   digest: string; bytes: number; content: string;
   role?: 'selected-skill-source-material';
-}
+} & ({ mediaType: 'text/javascript'; runtime?: never } | { mediaType: 'text/x-python'; runtime: 'python' });
 export type ManagedSkillResourceView = ManagedSkillTextResourceView | ManagedSkillImageResourceView | ManagedSkillScriptResourceView;
 export interface ManagedSkillReviewView {
   action: { actionId: string; state: string; versionId: string; lineageId: string; label: string; reviewDigest: string; manifestDigest: string; manifest: unknown };
@@ -59,7 +59,10 @@ export interface AgentSkillScriptWorkspaceGrant {
 }
 export interface AgentSkillScriptsStatus {
   closed: boolean;
-  capabilities: { supported: boolean; [key: string]: unknown };
+  capabilities: { supported: boolean; runtimes?: {
+    javascript: { supported: boolean; reason?: string };
+    python: { supported: boolean; reason?: string; executable?: string; executableSha256?: string; closureDigest?: string };
+  }; [key: string]: unknown };
   grants: AgentSkillScriptWorkspaceGrant[];
   activeOperations: { operationId: string; workspaceGrantId: string; taskId: string; generation: number }[];
 }
