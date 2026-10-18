@@ -118,3 +118,10 @@ revisions, bounded oversized-line recovery, scope exclusion, explicit deletion,
 and partial/unknown price estimates. A targeted TypeScript check compiles the
 new surface and contracts. No real user log, auth file, provider call, installed
 application or release was used for this evidence.
+
+The subsequent [real macOS import](../reviews/2026-10-18-real-local-api-and-usage.md)
+selected one task-owned Codex `0.163.0` rollout through the native picker. Three
+records matched existing Native receipts (15,487 input including 4,864 cached,
+152 output); repeating the import did not increase them. The source remained
+outside the external aggregate and was paused afterwards. Unknown exact model
+pricing remained `null`; no Claude log or actual invoice is claimed.

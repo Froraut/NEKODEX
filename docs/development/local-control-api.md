@@ -34,3 +34,78 @@ History coverage remains unknown for a full original transcript. Content permiss
 Create `createLocalControlApiRoutes` with explicit `coreHome`, existing `authorizeAdmin` and `localGuard`, live `port`/`peerAddress` callbacks and passive `sources`. Mount it after the ordinary local boundary and **before other authentication or inference/admin dispatch**, so any `nk-read-` bearer is denied outside its read routes. An unrecognized unrelated request returns `undefined` for the existing server to handle.
 
 Sources return whitelisted metadata, or `undefined` when unavailable. The history source returns the already-owned history store. An Agent action delegate must use the existing scoped action method; it must not create another runtime to satisfy a read or action request. The renderer's `LocalControlApiSurface` takes an injected stable `api.request` function and optional language. `registerLocalControlApi({handle, runtimeHost, clipboard})` registers `launcher:local-control-api` and uses the current supervisor's private control request, without auto-starting it.
+
+## Named CLI consumer
+
+`codex-chatgpt-web local-api` consumes the control API of an **already running**
+owned runtime. It is separate from `codex-chatgpt-web api`, which manages the
+inference API credential and its `/v1` routes. The consumer does not load a saved
+credential, start a runtime, enable access, or grant history-content permission.
+
+An explicit origin is required: `http://127.0.0.1:PORT` or
+`http://[::1]:PORT`, using the runtime's actual port. HTTPS, DNS names, URL
+credentials, paths, queries, fragments, and redirects are rejected. Each command
+makes one request, with a 15-second request/response observation timeout and a
+2 MiB streamed response limit. It never follows a redirect or automatically
+retries an action.
+
+The default transport uses a private one-shot HTTP agent with an explicit numeric
+TCP destination. It does not consult inherited HTTP/HTTPS/ALL proxy variables,
+change global environment, or share another consumer's agent. A focused synthetic
+proxy check established that ordinary Bun fetch could route the loopback bearer
+through an inherited proxy; the direct transport is required for this boundary.
+
+Credentials are accepted only through `--token-stdin`: one UTF-8 token line,
+with at most one terminal LF/CRLF, a 1 KiB input bound, and no interactive TTY
+entry. There is no token argument, environment option, credential-file option,
+or credential output. Unknown arguments and request errors never echo their
+values. Read commands require an `nk-read-…` credential. The action command
+requires the separate administrative control credential and refuses read tokens
+before sending a request. Administrative credentials must match the runtime's
+40–512 character alphanumeric/underscore/hyphen control-token format.
+
+In these examples, `read-token-source` and `admin-token-source` are placeholders
+for a trusted local credential provider writing exactly one token line into the
+pipe. They are not commands installed by NEKODEX. Do not replace them with a
+literal secret in shell history or pass credentials through environment variables.
+
+```sh
+read-token-source | codex-chatgpt-web local-api status --origin http://127.0.0.1:17841 --token-stdin
+read-token-source | codex-chatgpt-web local-api agent-tasks --origin http://127.0.0.1:17841 --token-stdin --limit 10 --offset 0
+read-token-source | codex-chatgpt-web local-api tasks --origin http://127.0.0.1:17841 --token-stdin
+read-token-source | codex-chatgpt-web local-api history-coverage --origin http://127.0.0.1:17841 --token-stdin
+```
+
+These fixed reads expose metadata or history coverage only. They cannot request
+saved thread/message content. Missing passive sources remain
+`source_unavailable` (`503`), including generic `tasks` when the runtime has no
+such source. That does not authorize discovery, initialization, or an invented
+empty result.
+
+An administrative action requires the exact task scope supplied by the existing
+owner. Read-task metadata does not expose a family ID or elevate a read token.
+The command invocation is the explicit action; it sends
+`explicitUserAction: true` to the existing action owner and creates no additional
+queue or scheduler. A caller-supplied stable action ID is mandatory:
+
+```sh
+admin-token-source | codex-chatgpt-web local-api action --operation pause --task-id TASK_ID --action-id ACTION_ID --family-id FAMILY_ID --generation 1 --revision 1 --origin http://127.0.0.1:17841 --token-stdin
+```
+
+Allowed operations are `pause`, `resume`, `stop`, `step`, and `review`. `step` can
+start the already-owned task's next model operation; it is an administrative
+mutation, not a status read. Successful output includes the supplied action ID,
+operation, whitelisted task metadata, and duplicate/dispatch information when
+reported. The returned task ID and family must match the requested scope, its
+generation cannot precede the request, and its revision must still match.
+Prompt text and other task fields are excluded.
+
+The process exits `0` for an accepted successful response and `1` for a rejected
+or unavailable result. JSON output retains the API version and safe error code.
+If a POST times out, loses transport, receives a malformed/oversized response, or
+returns an ambiguous `409` action conflict or server failure, output includes
+`outcome: "unknown"` and the **same
+supplied action ID**. This does not prove the action was rejected or cancelled.
+Inspect the existing owner's receipt before any further action; never substitute
+a new ID as an automatic retry. An explicitly repeated unchanged action with its
+original ID remains subject to the owner's durable idempotency contract.

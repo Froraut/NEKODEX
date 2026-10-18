@@ -3,6 +3,7 @@ import { clearTunnelRuntimeKeyEnvironment, importSavedTunnelCredential, readRunt
 import { clientConnectionsCommand } from "./client-connections";
 import { claudeIntegrationCommand } from "./claude-integration";
 import { localApiCommand } from "./local-api-access";
+import { localControlApiCommand } from "./local-control-api/client";
 import { codexProviderCommand } from "./codex-provider-command";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
@@ -59,6 +60,8 @@ Usage:
   codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web provider <status|mixed|web-only> [--catalog PATH]
   codex-chatgpt-web api <status|enable|disable|rotate|key>
+  codex-chatgpt-web local-api <status|tasks|agent-tasks|history-coverage> --origin http://127.0.0.1:PORT --token-stdin
+  codex-chatgpt-web local-api action --operation pause|resume|stop|step|review --task-id ID --action-id ID --family-id ID --generation N --revision N --origin http://127.0.0.1:PORT --token-stdin
   codex-chatgpt-web claude <status|connect|disconnect>
   codex-chatgpt-web config pro-model-version <follow|5.6|5.5|6> --launcher-control
   codex-chatgpt-web config compaction-model <follow|extra-high|5.6-pro|5.5-pro> --launcher-control
@@ -683,6 +686,7 @@ async function main(): Promise<void> {
   else if (command === "connections") clientConnectionsCommand(args);
   else if (command === "claude") claudeIntegrationCommand(args);
   else if (command === "api") localApiCommand(args);
+  else if (command === "local-api") { if (!await localControlApiCommand(args)) process.exitCode = 1; }
   else if (command === "provider") codexProviderCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "config") {
