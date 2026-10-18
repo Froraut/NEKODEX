@@ -2,6 +2,7 @@
 const { createHash } = require('node:crypto');
 const { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTPUT_SCHEMA,
   AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES, isAgentNativeHistorySource } = require('./agent-native-protocol.cjs');
+const { validateOwnedNativeImages, ownedNativeInputHash, ownedNativeImageMetadata, MAX_IMAGES, MAX_IMAGE_BYTES } = require('./owned-native-images.cjs');
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
@@ -20,7 +21,7 @@ function scopeValid(scope) {
 }
 const sameScope = (a, b) => scopeKeys.every(key => a[key] === b[key]);
 function validateEnvelope(value) {
-  if (!closedKeys(value, ['version', 'protocol', 'actionId', 'scope', 'model', 'admissionId', 'outputSchemaId', 'outputSchemaHash', 'authorship', 'text', 'continuation'])
+  if (!closedKeys(value, ['version', 'protocol', 'actionId', 'scope', 'model', 'admissionId', 'outputSchemaId', 'outputSchemaHash', 'authorship', 'text', 'continuation', ...(Object.hasOwn(value ?? {}, 'images') ? ['images'] : [])])
     || value.version !== 1 || value.protocol !== AGENT_NATIVE_PROTOCOL || !scopeValid(value.scope) || value.actionId !== value.scope.dispatchId
     || !UUID.test(value.actionId) || !identity(value.model) || !identity(value.admissionId)
     || value.outputSchemaId !== AGENT_NATIVE_OUTPUT_SCHEMA_ID || value.outputSchemaHash !== AGENT_NATIVE_OUTPUT_SCHEMA_HASH
@@ -29,6 +30,7 @@ function validateEnvelope(value) {
   if (value.continuation !== null && (!closedKeys(value.continuation, ['workerBindingId', 'workerGeneration', 'previousNativeTurnReceiptId'])
     || !identity(value.continuation.workerBindingId) || !identity(value.continuation.previousNativeTurnReceiptId)
     || !Number.isSafeInteger(value.continuation.workerGeneration) || value.continuation.workerGeneration < 1)) throw new Error('Invalid exact Native continuation');
+  if (Object.hasOwn(value, 'images')) validateOwnedNativeImages(value.images);
   return structuredClone(value);
 }
 /** Fixed structural compiler for the one shared schema. No generic schema selection or AJV dependency. */
@@ -79,7 +81,8 @@ function createAgentNativeBridge(options = {}) {
   function project(entry, binding, row) {
     const held = () => Boolean(entry.receipt?.ownerHeld || row?.ownerHeld || binding.service?.currentOperation?.());
     if (!plain(row) || row.kind !== 'offer' || row.actionId !== entry.envelope.actionId || row.admissionId !== entry.envelope.admissionId
-      || row.workerHandle !== binding.workerHandle || row.threadId !== binding.threadId || row.inputHash !== digest(entry.envelope.text)
+      || row.workerHandle !== binding.workerHandle || row.threadId !== binding.threadId || row.inputHash !== ownedNativeInputHash(entry.envelope.text, entry.envelope.images)
+      || canonical(row.imageAttachments ?? []) !== canonical(ownedNativeImageMetadata(entry.envelope.images))
       || row.schemaHash !== leafSchemaHash || row.inputAuthorship !== 'automatic-host' || !STATES.has(row.state) || typeof row.ownerHeld !== 'boolean'
       || !Array.isArray(row.observations) || !row.observations.length || row.observations.length > 32) return unknown(entry, held());
     const leafRevision = row.observations.length, fingerprint = exactDigest(row);
@@ -99,7 +102,8 @@ function createAgentNativeBridge(options = {}) {
     if (binding.retired && !binding.closed && row.state === 'unknown' && !row.ownerHeld && entry.receipt?.ownerHeld) changes.ownerHeld = true;
     if (row.state === 'completed') {
       const items = row.canonicalItems;
-      const user = Array.isArray(items) && items.some(item => item.role === 'user' && item.authorship === 'automatic-host' && item.turnId === row.turnId && item.text === entry.envelope.text);
+      const user = Array.isArray(items) && items.some(item => item.role === 'user' && item.authorship === 'automatic-host' && item.turnId === row.turnId && item.text === entry.envelope.text
+        && canonical(item.imageAttachments ?? []) === canonical(ownedNativeImageMetadata(entry.envelope.images)));
       const finals = Array.isArray(items) ? items.filter(item => item.role === 'assistant' && item.authorship === 'native-assistant' && item.turnId === row.turnId && [null, undefined, 'final_answer'].includes(item.phase)) : [];
       const final = finals.at(-1);
       if (!acknowledged || row.ownerHeld || !user || !final || typeof final.text !== 'string' || Buffer.byteLength(final.text) > AGENT_NATIVE_TEXT_BYTES) return unknown(entry, held());
@@ -171,6 +175,7 @@ function createAgentNativeBridge(options = {}) {
       publish(entry, { state: 'prepared', ownerHeld: false, writeDisposition: 'not-written' });
       const admission = await options.resolveAdmission(e.admissionId, e.model);
       if (!admission || typeof admission.createWorker !== 'function') return knownUnsent(entry);
+      if (e.images?.length && admission.imageInput !== true) return knownUnsent(entry);
       if (admission.historySource !== undefined && !isAgentNativeHistorySource(admission.historySource)) return knownUnsent(entry);
       if (destroyed || fenced(e.scope) || !options.canStart() || (epochs.get(e.scope.taskId) ?? 0) !== epoch) return knownUnsent(entry);
       const key = bindingIdentity(e); binding = bindings.get(key);
@@ -183,7 +188,7 @@ function createAgentNativeBridge(options = {}) {
       if (!binding) {
         if (bindings.size >= 32) return knownUnsent(entry);
         binding = { id: `native-binding:${key}`, generation: 1, taskId: e.scope.taskId, familyId: e.scope.familyId, taskGeneration: e.scope.generation,
-          key, busy: true, retired: false, closed: false, historySource: admission.historySource ? structuredClone(admission.historySource) : undefined };
+          key, busy: true, retired: false, closed: false, imageCount: 0, imageBytes: 0, historySource: admission.historySource ? structuredClone(admission.historySource) : undefined };
         bindings.set(key, binding);
         const context = Object.freeze({ workerBindingId: binding.id, workerGeneration: binding.generation, taskId: e.scope.taskId, familyId: e.scope.familyId,
           generation: e.scope.generation, agentWorkerId: e.scope.agentWorkerId, admissionId: e.admissionId, model: e.model });
@@ -218,8 +223,12 @@ function createAgentNativeBridge(options = {}) {
         || destroyed || binding.retired || fenced(e.scope) || !options.canStart() || (epochs.get(e.scope.taskId) ?? 0) !== epoch) {
         await retire(binding); return knownUnsent(entry);
       }
+      const imageBytes = (e.images ?? []).reduce((sum, image) => sum + image.byteLength, 0);
+      if (binding.imageCount + (e.images?.length ?? 0) > MAX_IMAGES || binding.imageBytes + imageBytes > MAX_IMAGE_BYTES) return knownUnsent(entry);
+      // A possible physical offer consumes this binding's budget even on an uncertain ACK.
+      binding.imageCount += e.images?.length ?? 0; binding.imageBytes += imageBytes;
       possibleOffer = true;
-      const row = await binding.service.offerOwnedTurn({ workerHandle: binding.workerHandle, actionId: e.actionId, text: e.text, outputSchema: AGENT_NATIVE_OUTPUT_SCHEMA });
+      const row = await binding.service.offerOwnedTurn({ workerHandle: binding.workerHandle, actionId: e.actionId, text: e.text, ...(e.images?.length ? { images: e.images } : {}), outputSchema: AGENT_NATIVE_OUTPUT_SCHEMA });
       return project(entry, binding, row);
     } catch {
       if (binding && !possibleOffer && binding.service) { try { await retire(binding); } catch { return unknown(entry, true); } }

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { AgentNativeToolDefinition, ExecutionRequest } from "./types";
 import type { AgentNativeHistorySource } from "../../launcher/electron/agent-native-protocol.cjs";
 export type { AgentNativeHistorySource };
+export type { OwnedNativeImage } from "../../launcher/electron/owned-native-images.cjs";
 
 import { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTPUT_SCHEMA, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES } from "../../launcher/electron/agent-native-protocol.cjs";
 export { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTPUT_SCHEMA, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES };
@@ -34,6 +35,8 @@ export interface AgentNativeOfferEnvelope {
   authorship: "automatic-host";
   /** Fixed host-generated protocol context. No raw paths, RPC, Native tools or schema authority. */
   text: string;
+  /** Typed tool-result pixels; never serialized inside automatic-host text. */
+  images?: import("../../launcher/electron/owned-native-images.cjs").OwnedNativeImage[];
   continuation: null | { workerBindingId: string; workerGeneration: number; previousNativeTurnReceiptId: string };
 }
 export interface AgentNativeLookup { actionId: string; scope: AgentNativeScope; payloadDigest: string }

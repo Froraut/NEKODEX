@@ -72,6 +72,8 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
   const historySource = freeze({ sourceId: digest(canonical(['owned-native-history-source-v1', profile.profileId, profile.epoch, original.usage.accountId])),
     profileId: profile.profileId, backendAccountId: original.usage.accountId, authEpoch: profile.epoch });
   const modelRows = selected.map(model => ({ id: model.slug, label: model.display_name || model.slug, provider: 'owned-native', available: true, accepting: true, historySource,
+    imageInput: Array.isArray(model.input_modalities) && model.input_modalities.includes('image')
+      && original.picker.some(row => row.id === model.slug && Array.isArray(row.inputModalities) && row.inputModalities.includes('image')),
     admissionId: digest(canonical({ ...sharedIdentity, originalModelSha256: digest(canonical(original.catalog.models.find(row => row.slug === model.slug))), modelId: model.slug })) }));
   let started = false;
   function unchanged(checkExecutable = false) {
@@ -122,7 +124,7 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
       const row = modelRows.find(value => value.id === binding.model && value.admissionId === binding.admissionId);
       if (!row || typeof binding.workerBindingId !== 'string') throw fail('invalid_admission', 'Native binding does not match the qualified account model');
       const journal = path.join(paths.journal, digest(binding.workerBindingId));
-      return { ...admission, admissionId: row.admissionId, modelId: row.id, paths: { ...paths, journal } };
+      return { ...admission, admissionId: row.admissionId, modelId: row.id, imageInput: row.imageInput, paths: { ...paths, journal } };
     },
   };
   return Object.freeze(admission);

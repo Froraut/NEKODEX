@@ -60,7 +60,7 @@ export class AgentModeRuntime {
   status() {
     return { configured: this.options.configured?.() ?? this.options.models().length > 0,
       models: this.options.models(), capabilities: { tools: this.options.toolsAvailable?.() ?? false, workspace: false, autoSchedule: true, monetaryQuotes: Boolean(this.options.reserveSpend), loopSource: "mailbox", externalWatchers: false, toolReconciliation: Boolean(this.options.reconcileToolReceipt),
-        ownedNative: { configured: this.options.models().some(row => row.provider === "owned-native" && row.available === true && Boolean(row.admissionId)), imageInput: false, turnUnit: "native-offers", actualProviderRequestCount: null } },
+        ownedNative: { configured: this.options.models().some(row => row.provider === "owned-native" && row.available === true && Boolean(row.admissionId)), imageInput: this.options.models().some(row => row.provider === "owned-native" && row.imageInput === true), turnUnit: "native-offers", actualProviderRequestCount: null } },
       ownerId: this.runner.ownerId, activeDispatchIds: this.runner.liveDispatchIds, accepting: !this.stopping && (this.options.canStart?.() ?? true) };
   }
   create(actionId: string, input: CreateAgentTask): AgentTask {

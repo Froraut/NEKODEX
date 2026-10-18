@@ -25,13 +25,14 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
   writeFileSync(join(p.codexHome, 'auth.json'), 'inert synthetic credential fixture; never read by host', { mode: 0o600 });
   const executable = join(root, 'inert-wrapper'); writeFileSync(executable, 'inert wrapper bytes', { mode: 0o700 });
   const originalCatalog = JSON.parse(catalog.json); originalCatalog.models[0].display_name = 'Actual synthetic inventory model';
+  originalCatalog.models[0].input_modalities = ['text', 'image'];
   const account = { type: 'chatgpt', planType: 'pro', email: 'synthetic@example.invalid' };
   const usage = { accountId: 'synthetic-account', ordinaryUsageAllowed: true, identityConfidence: 'native-active-account-match', rateLimits: null, rateLimitsByLimitId: null };
   const cache = { client_version: VERSION, identity: 'a'.repeat(64), fetched_at: new Date().toISOString(), etag: 'synthetic-inventory', models: originalCatalog.models };
   const cacheBytes = JSON.stringify(cache); writeFileSync(join(p.codexHome, 'models_cache.json'), cacheBytes, { mode: 0o600 });
   const evidence: any = { profileId, epoch, sourceRevision: SOURCE, clientVersion: VERSION, executableSha256: digest(readFileSync(executable)),
     configSha256: digest(readFileSync(p.config)), cacheSha256: digest(cacheBytes), identity: cache.identity, fetchedAt: cache.fetched_at, etag: cache.etag,
-    authStat: (() => { const s = lstatSync(join(p.codexHome, 'auth.json')); return { dev:s.dev, ino:s.ino, size:s.size, mtimeMs:s.mtimeMs, ctimeMs:s.ctimeMs }; })(), account, usage, picker: [{ id: catalog.modelId }], catalog: originalCatalog };
+    authStat: (() => { const s = lstatSync(join(p.codexHome, 'auth.json')); return { dev:s.dev, ino:s.ino, size:s.size, mtimeMs:s.mtimeMs, ctimeMs:s.ctimeMs }; })(), account, usage, picker: [{ id: catalog.modelId, inputModalities: ['text', 'image'] }], catalog: originalCatalog };
   let lease: any, leases = 0, releases = 0, config: any;
   const authority: any = {
     acquireProfileOwner(input: any) { expect(input.kind).toBe('execution'); expect(lease).toBeUndefined(); leases++; return lease = Object.freeze({ ...input, id: randomUUID() }); },
@@ -102,6 +103,7 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
     expect(releases).toBe(2); leases = 0; releases = 0;
     const admitted = await service.admit({ actionId: randomUUID(), inventoryActionId, profileId, epoch });
     expect(launches).toBe(0); expect(admitted.models).toHaveLength(1); expect(leases).toBe(1);
+    expect(admitted.models[0]!.imageInput).toBe(true);
     const sealed = JSON.parse(readFileSync(config.model_catalog_json, 'utf8'));
     expect(sealed.models[0].model_messages ?? sealed.models[0].base_instructions).toEqual(originalCatalog.models[0].model_messages ?? originalCatalog.models[0].base_instructions);
     expect(sealed.models[0]).toMatchObject({ shell_type: 'disabled', apply_patch_tool_type: null, experimental_supported_tools: [], node_repl_disabled: true });
@@ -110,9 +112,14 @@ test.skipIf(process.platform !== 'darwin')('one qualified account generation own
       model: admitted.models[0]!.id, admissionId: admitted.models[0]!.admissionId, outputSchemaId: AGENT_NATIVE_OUTPUT_SCHEMA_ID, outputSchemaHash: AGENT_NATIVE_OUTPUT_SCHEMA_HASH,
       authorship: 'automatic-host', text: `Synthetic own task ${taskId}.`, continuation: null }; };
     const a = envelope('task-a'), b = envelope('task-b');
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNg+A8AAQIBAEK+vGgAAAAASUVORK5CYII=', 'base64');
+    a.images = [{ data: png.toString('base64'), mimeType: 'image/png', width: 1, height: 1, byteLength: png.length, sha256: digest(png),
+      source: { toolCallId: 'synthetic-approved-observation', receipt: 'synthetic-image-receipt', attachmentIndex: 0 } }];
     const pendingA = bridge.offer(a); await firstTurn.promise;
     const pendingB = bridge.offer(b); await secondTurn.promise;
     expect(launches).toBe(1); expect(received.filter(row => row.method === 'initialize')).toHaveLength(1); expect(threadIds).toHaveLength(2); expect(threadIds[0]).not.toBe(threadIds[1]);
+    expect(turns.get(threadIds[0]!).params.input[1]).toMatchObject({ type: 'image', url: `data:image/png;base64,${png.toString('base64')}`, detail: 'high' });
+    expect(turns.get(threadIds[1]!).params.input).toHaveLength(1);
     expect(service.inspect().server).toMatchObject({ pid: child.pid, serverGeneration: admitted.serverGeneration });
     expect(starts.every(row => row.params.ephemeral === true)).toBe(true);
     const turnB = randomUUID(); respond(turns.get(threadIds[1]!), { turn: { id: turnB, status: 'inProgress' } });

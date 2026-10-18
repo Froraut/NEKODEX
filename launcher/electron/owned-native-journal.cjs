@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { fail, plain, privateDirectory, regular, digest } = require('./owned-native-admission.cjs');
+const { validateOwnedNativeImageMetadata, MAX_IMAGES, MAX_IMAGE_BYTES } = require('./owned-native-images.cjs');
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const STATES = ['prepared', 'offered', 'acknowledged', 'completed', 'failed', 'unknown'];
 const NONTERMINAL = ['prepared', 'offered', 'acknowledged'];
@@ -39,6 +40,10 @@ function createOwnedNativeJournal({ directory, admissionId, maxActions = 128 } =
           || typeof fact.ownerHeld !== 'boolean' || !Number.isSafeInteger(fact.timestampMs)
           || fact.turnId !== null && !UUID.test(fact.turnId)))) throw fail('journal_unavailable', 'Native receipt source does not match admission');
     const observed = digest(bytes);
+    for (const row of value.actions) if (row.imageAttachments !== undefined) {
+      try { validateOwnedNativeImageMetadata(row.imageAttachments); }
+      catch { throw fail('journal_unavailable', 'Native image budget receipts are invalid'); }
+    }
     if (owned && lastBytes !== undefined && observed !== lastBytes) throw fail('journal_changed', 'Native receipt storage changed outside its owner');
     lastBytes = observed;
     return value;
@@ -110,14 +115,25 @@ function createOwnedNativeJournal({ directory, admissionId, maxActions = 128 } =
         : { ...row, ownerState };
     }));
   }
-  function begin({ actionId, workerHandle, threadId, inputHash, schemaHash, kind = 'offer' }) {
+  function begin({ actionId, workerHandle, threadId, inputHash, schemaHash, imageAttachments, kind = 'offer' }) {
     uuid(actionId); uuid(workerHandle); if (threadId !== null) uuid(threadId); acquire();
     const value = read();
     if (value.actions.some(row => row.actionId === actionId)) throw fail('intent_already_recorded', 'Native actions cannot be replayed; inspect the existing receipt');
     if (value.actions.length >= maxActions) throw fail('journal_quota', 'Native receipt storage has reached its bound');
+    if (imageAttachments !== undefined) {
+      imageAttachments = validateOwnedNativeImageMetadata(imageAttachments);
+      // Every prepared offer is consumed, including failed/uncertain/retired
+      // offers. The binding journal survives facade/process replacement.
+      const prior = value.actions.flatMap(row => row.imageAttachments || []);
+      if (prior.length + imageAttachments.length > MAX_IMAGES
+        || [...prior, ...imageAttachments].reduce((sum, image) => sum + image.byteLength, 0) > MAX_IMAGE_BYTES) {
+        throw fail('image_budget_exceeded', 'Native binding image budget is exhausted');
+      }
+    }
     const row = { actionId, workerHandle, threadId, kind, turnId: null, clientUserMessageId: randomUUID(),
       admissionId, inputHash, schemaHash: schemaHash || null, state: 'prepared', retired: false, ownerHeld: false,
-      createdAt: Date.now(), updatedAt: Date.now(), inputAuthorship: 'automatic-host', usage: null, observations: [] };
+      createdAt: Date.now(), updatedAt: Date.now(), inputAuthorship: 'automatic-host', usage: null, observations: [],
+      ...(imageAttachments?.length ? { imageAttachments } : {}) };
     observe(row);
     value.actions.push(row); write(value); return structuredClone(row);
   }

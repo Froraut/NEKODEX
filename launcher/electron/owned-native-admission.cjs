@@ -25,7 +25,7 @@ const DISABLED_FEATURES = Object.freeze(['shell_tool', 'view_image', 'request_pe
   'browser_use_external', 'in_app_browser', 'computer_use', 'hooks', 'shell_snapshot',
   'skill_search', 'skill_mcp_dependency_install', 'unbounded_connection_retries',
   'enable_request_compression', 'async_compaction', 'chronicle', 'api_key_model_discovery',
-  'api_key_cyber_access_programs', 'auth_elicitation', 'mentions_v2', 'tool_suggest', 'remote_control', 'network_proxy']);
+  'api_key_cyber_access_programs', 'auth_elicitation', 'mentions_v2', 'tool_suggest', 'remote_control', 'network_proxy', 'omit_app_server_notification_media']);
 const MDM_PROBE = `ObjC.import('CoreFoundation');
 const domain = $('com.openai.codex');
 JSON.stringify({configForced:Boolean($.CFPreferencesAppValueIsForced($('config_toml_base64'),domain)),requirementsForced:Boolean($.CFPreferencesAppValueIsForced($('requirements_toml_base64'),domain))});`;
@@ -288,7 +288,7 @@ function makeAdmission({ executable, executableSha256, executableVariant = 'stoc
     }
   }
   return Object.freeze({ availability, prestart, checkEffective, admissionId, paths, config,
-    modelId: catalog.modelId, provider, version: VERSION, source: SOURCE });
+    modelId: catalog.modelId, imageInput: Array.isArray(model.input_modalities) && model.input_modalities.includes('image'), provider, version: VERSION, source: SOURCE });
 }
 function toml(value) {
   if (plain(value)) return `{ ${Object.entries(value).map(([key, entry]) => `${JSON.stringify(key)} = ${toml(entry)}`).join(', ')} }`;

@@ -12,11 +12,17 @@ const { PassThrough } = require('node:stream');
 const { StringDecoder } = require('node:string_decoder');
 const { createOwnedNativeWorkerService } = require('../../launcher/electron/owned-native-worker.cjs');
 const { digest, fileDigest, makeAdmission, canonical } = require('../../launcher/electron/owned-native-admission.cjs');
-const catalog = require('./owned-native-model.cjs');
+const { ownedNativeImageMetadata } = require('../../launcher/electron/owned-native-images.cjs');
+const baseCatalog = require('./owned-native-model.cjs');
 const Ajv = require('ajv'); // Fixture dependency only; Electron leaf has no Ajv/package dependency.
 const executable = process.argv[2];
-const ownedWrapper = process.argv[3] === '--owned-wrapper';
-assert(process.argv.length <= 4 && (process.argv[3] === undefined || ownedWrapper), 'Unsupported fixture variant');
+const flags = process.argv.slice(3), ownedWrapper = flags.includes('--owned-wrapper'), imagesMode = flags.includes('--images');
+assert(flags.length <= 2 && new Set(flags).size === flags.length && flags.every(flag => ['--owned-wrapper', '--images'].includes(flag)), 'Unsupported fixture variant');
+const imageCatalog = JSON.parse(baseCatalog.json); imageCatalog.models[0].input_modalities = ['text', 'image'];
+const catalog = imagesMode ? { ...baseCatalog, json: JSON.stringify(imageCatalog) } : baseCatalog;
+const imageBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNg+A8AAQIBAEK+vGgAAAAASUVORK5CYII=', 'base64');
+const images = [0, 1].map(attachmentIndex => ({ data: imageBytes.toString('base64'), mimeType: 'image/png', width: 1, height: 1,
+  byteLength: imageBytes.length, sha256: digest(imageBytes), source: { toolCallId: 'local-image-capture', receipt: 'inert-fixture-receipt', attachmentIndex } }));
 assert.equal(process.platform, 'darwin', 'Owned Native worker contract is Mac-first');
 assert(executable && path.isAbsolute(executable), 'Provide the exact reviewed executable');
 let executableAdmission;
@@ -48,6 +54,13 @@ const server = http.createServer(async (request, response) => {
     assert.equal(request.headers['content-encoding'], undefined);
     if (requests.length === 1) assert.deepEqual(body.text?.format?.schema, schema);
     assert(requests.length <= 3, 'No automatic retry/extra provider request is allowed by this fixture');
+    if (imagesMode && requests.length === 2) {
+      const content = body.input.flatMap(item => Array.isArray(item.content) ? item.content : []);
+      const typed = content.filter(item => item.type === 'input_image');
+      assert.equal(typed.length, 2);
+      assert(typed.every(item => item.image_url === `data:image/png;base64,${images[0].data}` && item.detail === 'high'));
+      assert(content.filter(item => item.type === 'input_text').every(item => !item.text.includes(images[0].data)), 'Pixels must remain outside native text');
+    }
     const id = `resp_fixture_${requests.length}`, messageId = `msg_fixture_${requests.length}`;
     const text = requests.length === 1 ? '{"answer":"local first"}' : `local continuation ${requests.length}`;
     // Official pinned core/tests/common/responses.rs ev_* shape (L753–830).
@@ -88,7 +101,7 @@ async function main() {
         const write = child.stdin.write.bind(child.stdin), lost = new Set();
         child.stdin.write = (chunk, ...rest) => {
           const message = JSON.parse(String(chunk));
-          if (message.method === 'turn/start' && ++turnOffers === 3) lost.add(message.id);
+          if (message.method === 'turn/start' && ++turnOffers === 3 && !imagesMode) lost.add(message.id);
           return write(chunk, ...rest);
         };
         const raw = child.stdout, projected = new PassThrough(), decoder = new StringDecoder('utf8');
@@ -119,10 +132,33 @@ async function main() {
     assert(first.canonicalItems.some(item => item.role === 'assistant' && item.text === '{"answer":"local first"}'));
     assert(first.canonicalItems.every(item => item.messageId && item.turnId === first.turnId && Number.isSafeInteger(item.timestampMs)));
     const second = await owner.offerOwnedTurn({ workerHandle: worker.workerHandle, actionId: randomUUID(),
-      text: 'Automatic local continuation two.' });
+      text: 'Automatic local continuation two.', ...(imagesMode ? { images } : {}) });
+    if (imagesMode && second.state === 'unknown') {
+      console.log(JSON.stringify({ proof: 'owned-wrapper-0.163-typed-images-local-fake-only', realOpenAI: false, realAccountAuth: false,
+        typedProviderImages: requests.length === 2 && faults.length === 0, providerRequests: requests.length,
+        canonicalOutcome: second.state, ownerHeld: second.ownerHeld, reasonCode: second.reasonCode,
+        imageMetadataRetained: canonical(second.imageAttachments) === canonical(ownedNativeImageMetadata(images)), noReplay: true }));
+      return;
+    }
     assert.equal(second.state, 'completed'); assert.equal(second.threadId, first.threadId);
     assert.notEqual(second.turnId, first.turnId); assert.equal(launches, 1);
     assert.equal(second.canonicalItems.at(-1).text, 'local continuation 2');
+    if (imagesMode) {
+      assert.deepEqual(second.imageAttachments, ownedNativeImageMetadata(images));
+      const user = second.canonicalItems.find(item => item.role === 'user');
+      assert.deepEqual(user.imageAttachments, ownedNativeImageMetadata(images));
+      assert.equal(user.authorship, 'automatic-host'); assert(user.messageId && user.turnId === second.turnId && Number.isSafeInteger(user.timestampMs));
+      assert(!JSON.stringify(second).includes(images[0].data));
+      await assert.rejects(owner.offerOwnedTurn({ workerHandle: worker.workerHandle, actionId: randomUUID(),
+        text: 'Over-budget local image must never be sent.', images: [images[0]] }), reason => reason.code === 'image_budget_exceeded');
+      assert.equal(requests.length, 2); assert.equal(turnOffers, 2); assert.deepEqual(faults, []);
+      console.log(JSON.stringify({ proof: 'owned-wrapper-0.163-typed-images-local-fake-only', realOpenAI: false, realAccountAuth: false,
+        typedProviderImages: 2, pixelsOutsideText: true, exactCanonicalImageMetadata: true, nativeIdsAndTimestamps: true,
+        userAuthorship: user.authorship, providerRequests: requests.length, ownedChildCount: launches,
+        cumulativeImageBudgetRejectsBeforeSend: true,
+        canonicalUserShape: { keys: Object.keys(user).sort(), imageKeys: Object.keys(user.imageAttachments[0]).sort(), sourceKeys: Object.keys(user.imageAttachments[0].source).sort() } }));
+      return;
+    }
     const unknownId = randomUUID();
     const third = await owner.offerOwnedTurn({ workerHandle: worker.workerHandle, actionId: unknownId,
       text: 'Automatic local receipt loss three.' });

@@ -5,6 +5,7 @@ const { StringDecoder } = require('node:string_decoder');
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require('./process-tree.cjs');
 const { makeAdmission, digest, canonical, fail, plain, freeze } = require('./owned-native-admission.cjs');
 const { createOwnedNativeJournal, uuid } = require('./owned-native-journal.cjs');
+const { prepareOwnedNativeInput } = require('./owned-native-images.cjs');
 const MAX_LINE = 1024 * 1024, MAX_TEXT = 128 * 1024, MAX_PAGE = 384 * 1024;
 const safeId = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f]/.test(value);
 const number = value => Number.isSafeInteger(value) && value >= 0;
@@ -40,7 +41,7 @@ function createTransport({ admitted, requestTimeoutMs, stopGraceMs, onNotificati
         else pending.get(id)?.reject(fail('rpc_timeout', 'Native request receipt is unavailable'));
       }, requestTimeoutMs);
       try {
-        if (Buffer.byteLength(JSON.stringify({ id, method, params })) + 1 > MAX_LINE) throw fail('request_too_large', 'Native request exceeds its bound');
+        if (Buffer.byteLength(JSON.stringify({ id, method, params })) + 1 > (method === 'turn/start' ? 512 * 1024 : MAX_LINE)) throw fail('request_too_large', 'Native request exceeds its bound');
         beforeWrite?.(id); write({ id, method, params });
       } catch (reason) { pending.get(id)?.reject(reason); }
     });
@@ -138,7 +139,7 @@ function createWorkerService(options = {}, shared) {
     return { availability, storageOwner, scope: 'private-owned-ephemeral', delivery: shared ? 'qualified-account' : 'local-fixture-only',
       state, workerHandle: worker?.handle || null, threadId: worker?.threadId || null,
       admissionId: admission.admissionId, receipts,
-      capabilities: { textInput: true, imageInput: false, nativeTools: false, foreignThreadAdoption: false, replay: false, realProviderVerified: false } };
+      capabilities: { textInput: true, imageInput: admission.imageInput === true, nativeTools: false, foreignThreadAdoption: false, replay: false, realProviderVerified: false } };
   }
   function unknown(reasonCode) {
     if (!active) return;
@@ -161,25 +162,41 @@ function createWorkerService(options = {}, shared) {
     if (!safeId(item?.id) || !number(params.completedAtMs)) throw fail('invalid_event', 'Native item identity or timestamp is invalid');
     let text, role, authorship;
     if (item.type === 'userMessage') {
-      if (item.clientId !== offer.row.clientUserMessageId || !Array.isArray(item.content)
-        || item.content.length !== 1 || item.content[0]?.type !== 'text' || typeof item.content[0]?.text !== 'string') {
-        throw fail('invalid_event', 'Native input item is not the admitted automatic request');
+      if (offer.row.imageAttachments?.length) {
+        // An uploaded fileId, omitted media, changed bytes/detail/order, or a
+        // text-only echo cannot prove the typed image that this owner offered.
+        if (item.clientId !== offer.row.clientUserMessageId || canonical(item.content) !== canonical(offer.input)) {
+          throw fail('canonical_image_mismatch', 'Native canonical image identity is unavailable');
+        }
+        text = offer.input[0].text; role = 'user'; authorship = 'automatic-host';
+      } else {
+        if (item.clientId !== offer.row.clientUserMessageId || !Array.isArray(item.content)
+          || item.content.length !== 1 || item.content[0]?.type !== 'text' || typeof item.content[0]?.text !== 'string') {
+          throw fail('invalid_event', 'Native input item is not the admitted automatic request');
+        }
+        text = item.content[0].text; role = 'user'; authorship = 'automatic-host';
+        if (digest(text) !== offer.row.inputHash) throw fail('invalid_event', 'Native canonical input changed');
       }
-      text = item.content[0].text; role = 'user'; authorship = 'automatic-host';
-      if (digest(text) !== offer.row.inputHash) throw fail('invalid_event', 'Native canonical input changed');
     } else { text = item.text; role = 'assistant'; authorship = 'native-assistant'; }
     if (typeof text !== 'string' || Buffer.byteLength(text) > MAX_TEXT) throw fail('invalid_event', 'Native canonical text exceeds its bound');
     return { messageId: item.id, turnId: params.turnId, role, text, timestampMs: params.completedAtMs,
-      authorship, ...(role === 'assistant' ? { phase: item.phase ?? null } : {}) };
+      authorship, ...(role === 'assistant' ? { phase: item.phase ?? null } : {}),
+      ...(role === 'user' && offer.row.imageAttachments?.length ? { imageAttachments: offer.row.imageAttachments } : {}) };
   }
   function processEvent(method, params, offer) {
     if (params.threadId !== worker.threadId || params.turnId !== offer.row.turnId) return;
+    if (offer.canonicalImageMismatch) return;
     if (method === 'item/completed') {
       if (!['userMessage', 'agentMessage'].includes(params.item?.type)) {
         if (['reasoning', 'plan'].includes(params.item?.type)) return;
         throw fail('unexpected_native_tool', 'Inference-only worker emitted an unsupported item');
       }
-      const item = canonicalItem(params.item, params, offer);
+      let item;
+      try { item = canonicalItem(params.item, params, offer); }
+      catch (reason) {
+        if (reason.code !== 'canonical_image_mismatch') throw reason;
+        offer.canonicalImageMismatch = true; held('canonical_image_mismatch'); return;
+      }
       if (offer.items.some(previous => previous.messageId === item.messageId)) throw fail('invalid_event', 'Duplicate native canonical item');
       offer.bytes += Buffer.byteLength(JSON.stringify(item));
       if (offer.items.length >= 100 || offer.bytes > MAX_PAGE) throw fail('response_too_large', 'Native canonical page exceeds its bound');
@@ -270,12 +287,13 @@ function createWorkerService(options = {}, shared) {
         typeof reason.field === 'string' ? { field: reason.field } : {});
     } finally { busy = null; }
   }
-  async function offerOwnedTurn({ workerHandle, actionId, text, outputSchema } = {}) {
+  async function offerOwnedTurn({ workerHandle, actionId, text, images, outputSchema } = {}) {
     uuid(workerHandle); uuid(actionId);
     if (destroyed || busy || active || !worker || worker.handle !== workerHandle || state !== 'ready') {
       throw fail('worker_not_ready', 'Native offer requires the exact idle owned worker');
     }
-    if (typeof text !== 'string' || Buffer.byteLength(text) > MAX_TEXT) throw fail('invalid_input', 'Native worker accepts bounded text only');
+    const prepared = prepareOwnedNativeInput(text, images);
+    if (prepared.imageAttachments.length && admission.imageInput !== true) throw fail('image_input_unsupported', 'Admitted Native model does not support image input');
     if (journal.snapshot().some(row => row.actionId === actionId)) {
       throw fail('intent_already_recorded', 'Inspect the recorded native action instead of replaying it');
     }
@@ -293,16 +311,16 @@ function createWorkerService(options = {}, shared) {
     try {
       await effective(worker.rpc);
       if (destroyed) throw fail('client_closed', 'Native owner was closed before its offer');
-      const row = journal.begin({ actionId, workerHandle, threadId: worker.threadId, inputHash: digest(text),
-        schemaHash: outputSchema === undefined ? null : digest(canonical(outputSchema)) });
+      const row = journal.begin({ actionId, workerHandle, threadId: worker.threadId, inputHash: prepared.inputHash,
+        schemaHash: outputSchema === undefined ? null : digest(canonical(outputSchema)), imageAttachments: prepared.imageAttachments });
       state = 'offering';
       const result = new Promise(resolve => {
-        active = { row, resolve, items: [], bytes: 0, events: [], eventBytes: 0, usage: null, validate,
+        active = { row, resolve, input: prepared.input, items: [], bytes: 0, events: [], eventBytes: 0, usage: null, validate,
           timer: setTimeout(() => held('terminal_receipt_wait'), terminalTimeoutMs) };
       });
       const offer = active;
       const request = worker.rpc.request('turn/start', { threadId: worker.threadId,
-          clientUserMessageId: row.clientUserMessageId, input: [{ type: 'text', text, text_elements: [] }],
+          clientUserMessageId: row.clientUserMessageId, input: prepared.input,
           ...(outputSchema === undefined ? {} : { outputSchema }) },
         requestId => { offer.row = update(actionId, { state: 'offered', ownerHeld: true, requestId }); },
         () => held('ack_receipt_wait'));
@@ -321,6 +339,7 @@ function createWorkerService(options = {}, shared) {
       }).catch(() => { unknown('receipt_not_saved'); });
       return await result;
     } catch (reason) {
+      if (reason.code === 'image_budget_exceeded') { state = 'ready'; throw reason; }
       state = 'retired'; await worker.rpc.destroy(); throw reason;
     } finally { busy = null; }
   }

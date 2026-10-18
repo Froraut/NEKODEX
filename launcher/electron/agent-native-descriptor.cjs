@@ -24,16 +24,17 @@ function createAgentNativeDescriptorPublisher({ coreHome, profile, control }) {
   function publish({ models = [], accepting = false } = {}) {
     if (!Array.isArray(models) || models.length > 64 || typeof accepting !== 'boolean'
       || new Set(models.map(row => `${row.id}:${row.admissionId}`)).size !== models.length
-      || models.some(row => !row || Object.keys(row).some(key => !['id', 'admissionId', 'label', 'available', 'accepting', 'provider', 'historySource'].includes(key))
+      || models.some(row => !row || Object.keys(row).some(key => !['id', 'admissionId', 'label', 'available', 'accepting', 'provider', 'historySource', 'imageInput'].includes(key))
         || !text(row.id, 128) || !text(row.admissionId, 128) || row.available !== true
         || row.provider !== 'owned-native' || row.label !== undefined && !text(row.label, 200)
         || row.accepting !== undefined && typeof row.accepting !== 'boolean'
-        || row.historySource !== undefined && !isAgentNativeHistorySource(row.historySource))) throw new Error('Native descriptor requires explicitly admitted models');
+        || row.historySource !== undefined && !isAgentNativeHistorySource(row.historySource)
+        || row.imageInput !== undefined && typeof row.imageInput !== 'boolean')) throw new Error('Native descriptor requires explicitly admitted models');
     const value = { version: 1, kind: 'nekodex-agent-native', profile, pid: process.pid, instanceId,
       control: { endpoint: endpoint.origin, token }, protocol: AGENT_NATIVE_PROTOCOL,
       outputSchemaHash: AGENT_NATIVE_OUTPUT_SCHEMA_HASH, accepting,
       models: models.map(row => ({ ...structuredClone(row), accepting: accepting && row.accepting !== false })),
-      capabilities: { textInput: true, imageInput: false }, createdAt: new Date().toISOString() };
+      capabilities: { textInput: true, imageInput: models.some(row => row.imageInput === true) }, createdAt: new Date().toISOString() };
     if (fs.realpathSync(directory) !== directory) throw new Error('Native descriptor directory changed');
     if (fs.existsSync(file)) {
       const stat = fs.lstatSync(file);

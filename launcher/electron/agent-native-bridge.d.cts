@@ -6,6 +6,7 @@ export interface AgentNativeBinding {
 }
 export interface AgentNativeAdmission {
   historySource?: import('./agent-native-protocol.cjs').AgentNativeHistorySource;
+  imageInput?: boolean;
   /** Same deterministic binding must resolve its retained journal before thread creation.
    * Constructor/facade creation is passive; only createOwnedWorker may start its owner. */
   createWorker(binding: Readonly<AgentNativeBinding>, onReceipt: (receipt: OwnedNativeReceipt) => void): ReturnType<typeof createOwnedNativeWorkerService>;

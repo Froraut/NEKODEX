@@ -14,6 +14,8 @@ export interface AgentModelOption {
   /** Operational readiness, separate from configured/admitted availability. Never blocks offline creation. */
   accepting?: boolean;
   historySource?: import("./native-protocol").AgentNativeHistorySource;
+  /** True only for the exact admitted Native model's typed image modality. */
+  imageInput?: boolean;
 }
 export interface LocalResponsesProviderOptions {
   /** Fixed host configuration, never a URL supplied by a task or model. */

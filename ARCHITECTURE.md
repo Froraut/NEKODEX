@@ -342,8 +342,9 @@ model/account and generic CG pixel fallback remain unverified. The
 development UI, live provider results and installed delivery. The later Native
 auth/inventory/account-pool source is published in `641f277`, with all four exact
 [CI jobs successful](https://github.com/Froraut/NEKODEX/actions/runs/39150687127).
-The final-summary history batch below is subsequent source work; it does not
-inherit that CI result. No real Native account/model or installed update is proved.
+The final-summary history batch below is published as `e75d073`, with four exact
+[CI jobs successful](https://github.com/Froraut/NEKODEX/actions/runs/39153769800).
+The subsequent image batch does not inherit either earlier CI result. No real Native account/model or installed update is proved.
 
 **Plan content:** the native observer reads only the canonical current turn's
 built-in `update_plan`; request identity is not a content source. The helper
@@ -489,7 +490,7 @@ The shared fixed `neko-agent-result-v1` schema encodes NEKODEX `tool_request` or
 `final` assistant text. Native tools stay empty; Bun checks exact announced tool
 schemas and remains the only effect owner. Native continuations retain binding,
 generation and previous completed native-turn identity rather than fabricating
-Responses function outputs. Current Native input is text only, task concurrency
+Responses function outputs. Current Native task concurrency
 is one, cost is unknown and max-turns counts native offers, not internal provider
 requests. Main resolves admission through the qualified Native account execution owner and
 publishes only its current model rows. Explicit Inspect models runs the selected
@@ -499,11 +500,29 @@ the official browser/passkey boundary, but its CLI attempt ended unsuccessfully;
 no saved login, real inventory or real inference is proved. A fresh explicit epoch
 is required for another login attempt. The account server supports two isolated
 threads across separate tasks; this does not raise the current one-worker limit
-inside each Native task. Retiring a binding requires its exact thread-closed event
+inside each Native task. Bounded typed image input is added in the subsequent
+image batch described below. Retiring a binding requires its exact thread-closed event
 or physical process closure; unsubscribe acknowledgement alone cannot release it.
 Unknown/lost ACK never permits replay. Whole-app cleanup closes the account
 process before binding facades and auth storage; an idle execution lease is not
 itself active inference. The optional Rust helper is a development artifact, outside packaging.
+The subsequent image batch projects matching approved tool results into typed
+`envelope.images` separate from text, covered by the whole-envelope durable claim.
+Model capability requires both original ModelInfo and picker image modalities.
+Main/leaf structural PNG/JPEG admission and journals enforce two cumulative
+attachments/160 KiB per binding, including unknown outcomes; dimensions are at
+most 8192 each/16 Mi pixels. Fixed high-detail data URLs have exact typed canonical
+echo; file IDs/omitted media retain unknown without replay. No image paths/temp
+files or image bytes enter canonical receipts/history. Actual current wrapper
+loopback proof passed once with text then two images and third-image pre-send
+refusal; actual Runtime/ToolJournal/private HTTP/main bridge image flow passed1/40
+with a fake physical leaf. Image-batch root TS18:30/renderer TS18:29,
+renderer195 modules, plainCLI638/exact `.9` and final module-map/paths passed
+at 18:32. Source commit/CI remain separate and pending. Longer Native
+vision loops, real upload correlation and actual account/model proof remain open.
+See [image contract](docs/design/owned-native-images.md) and
+[evidence](docs/reviews/2026-10-18-owned-native-images.md).
+
 Its exact source/build/binary pins are checked before a static probe; stock CLI
 admission retains its previous identity. See the [protocol](docs/design/agent-native-protocol.md),
 [main bridge](docs/design/agent-native-bridge.md) and [build guide](docs/development/owned-native-worker-build.md).

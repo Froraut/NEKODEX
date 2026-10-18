@@ -295,8 +295,8 @@ export function AgentModeSurface({ language, api, disabled = false }: {
   const task = detail?.task;
   const nativeSelection = status?.models.find(row => modelChoice(row) === model)?.provider === 'owned-native';
   const nativeTurnHint = language === 'ru'
-    ? 'Лимит считает ходы, отправленные в Native. Точное число внутренних запросов Codex и их денежная стоимость пока недоступны. В этой версии у Native-задачи один исполнитель.'
-    : 'The bound counts turns offered to Native. Exact internal Codex requests and monetary cost are unavailable. This version admits one worker per Native task.';
+    ? 'Лимит считает ходы, отправленные в Native. Точное число внутренних запросов Codex и их денежная стоимость пока недоступны. У Native-задачи один исполнитель. Поддерживающие изображения модели принимают до двух вложений общим размером 160 КиБ за весь поток; после исчерпания лимита новые изображения не отправляются.'
+    : 'The bound counts turns offered to Native. Exact internal Codex requests and monetary cost are unavailable. A Native task has one worker. Models with image support accept at most two attachments totaling 160 KiB across the entire thread; further images are not sent once that budget is exhausted.';
   useEffect(() => { if (detail?.task.id) heading.current?.focus(); }, [detail?.task.id]);
   useEffect(() => {
     setEvidenceMapped(false);
@@ -349,7 +349,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
             <p className="nk-field__hint">{text.modeHint}</p>
           </div>
           <div className="nk-field"><label htmlFor="agent-mode-model">{text.model}</label>
-            <Select id="agent-mode-model" value={model} options={status?.models.length ? status.models.map(row => ({ value: modelChoice(row), label: `${row.label || row.id}${row.provider === 'owned-native' ? ' · Native' : ''}` })) : [{ value: '', label: text.noModels }]}
+            <Select id="agent-mode-model" value={model} options={status?.models.length ? status.models.map(row => ({ value: modelChoice(row), label: `${row.label || row.id}${row.provider === 'owned-native' ? ` · Native · ${row.imageInput ? (language === 'ru' ? 'изображения' : 'images') : (language === 'ru' ? 'текст' : 'text')}` : ''}` })) : [{ value: '', label: text.noModels }]}
               onChange={value => { setModel(value); if (status?.models.find(row => modelChoice(row) === value)?.provider === 'owned-native') setConcurrent('1'); }} disabled={locked || !status?.models.length} />
           </div>
           <TextField type="number" label={text.turns} value={turns} onChange={event => setTurns(event.target.value)} min={1} max={10000} step={1} required disabled={locked} />

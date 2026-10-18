@@ -6,6 +6,7 @@ export interface OwnedNativeCanonicalItem {
   timestampMs: number;
   phase?: string | null;
   authorship: 'automatic-host' | 'native-assistant';
+  imageAttachments?: import('./owned-native-images.cjs').OwnedNativeImageMetadata[];
 }
 export interface OwnedNativeUsage {
   totalTokens: number; inputTokens: number; cachedInputTokens: number;
@@ -27,6 +28,7 @@ export interface OwnedNativeReceipt {
   reasonCode?: string; nativeStatus?: 'completed' | 'failed' | 'interrupted';
   canonicalItems?: OwnedNativeCanonicalItem[];
   structuredOutput?: unknown;
+  imageAttachments?: import('./owned-native-images.cjs').OwnedNativeImageMetadata[];
 }
 export interface OwnedNativeSnapshot {
   availability: { available: boolean; reasonCode: string | null };
@@ -38,7 +40,7 @@ export interface OwnedNativeSnapshot {
   threadId: string | null;
   admissionId: string;
   receipts: OwnedNativeReceipt[];
-  capabilities: { textInput: true; imageInput: false; nativeTools: false;
+  capabilities: { textInput: true; imageInput: boolean; nativeTools: false;
     foreignThreadAdoption: false; replay: false; realProviderVerified: false };
 }
 /** Trusted-main only. Raw configuration/schema never crosses renderer or Bun admission. */
@@ -62,8 +64,9 @@ export function createOwnedNativeWorkerService(options: {
 }): {
   createOwnedWorker(input: { actionId: string }): Promise<{ workerHandle: string; threadId: string;
     admissionId: string; receipt: OwnedNativeReceipt }>;
-  /** Text only; future public adapter must resolve an admitted fixed schema ID in main. */
+  /** Typed image bytes only; paths and arbitrary image URLs are unavailable. */
   offerOwnedTurn(input: { workerHandle: string; actionId: string; text: string;
+    images?: import('./owned-native-images.cjs').OwnedNativeImage[];
     outputSchema?: Record<string, unknown> }): Promise<OwnedNativeReceipt>;
   /** Passive: no profile/CLI creation; inspect durable receipts rather than re-offering actions. */
   inspectOwnedWorker(workerHandle?: string): OwnedNativeSnapshot;

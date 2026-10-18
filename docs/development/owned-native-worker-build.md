@@ -111,6 +111,24 @@ The actual current arm64 binary was run with an empty disposable private profile
 
 The builder copies the actual pinned official `codex-rs/models-manager/models.json`: 472,072 bytes, SHA256 `943ca7fe1d19ed019054158303f0dbbd80b3bef43b3aa425a71aa7cb3fb52c2b`. Build metadata binds this `officialBootstrapCatalog` resource. It is bootstrap-only; account availability must come from the own-profile online inventory and fresh native cache. The reviewed DEV pin module binds binary, build-metadata and source-pin hashes. A packaged production manifest and real-provider verification remain separate work.
 
+## Subsequent actual typed-image transport proof
+
+The current retained wrapper was run once through the local fixture with
+`--owned-wrapper --images`: exit 0 in 653 ms, one child and two fake-provider
+requests (first text, then two images). Exact Native IDs/timestamps and canonical
+image metadata were observed. A third cumulative image was refused before any
+new provider send. Finally the exact child/listener/temporary profile closed.
+This is a new actual wrapper wire check, separate from the historical three-request
+text-only receipt above. It uses loopback/dummy auth only, not real OpenAI/login.
+
+No Rust rebuild is claimed for this image batch. Fixed high-detail data URLs have
+strict typed echo; ambiguous remote file-ID/media omission retains unknown without
+replay. The durable binding budget is two images/160 KiB across offers, including
+unknown outcomes. Longer vision loops and real file-upload correlation remain
+unverified. Whole Bun/ToolJournal/private HTTP/main image integration passed1/40 with a fake
+physical leaf. Image source gates passed: rootTS18:30/rendererTS18:29, renderer195/plainCLI638
+exact `.9` and final module-map/paths at18:32. Source commit/CI remain pending. See [image evidence](../reviews/2026-10-18-owned-native-images.md).
+
 ## Primary pinned references
 
 - [Public runtime options/entrypoint](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/lib.rs#L460-L509), [plugin-startup option use](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/lib.rs#L1003-L1010).

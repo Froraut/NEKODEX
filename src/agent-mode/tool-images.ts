@@ -43,6 +43,7 @@ function image(mimeType: unknown, data: unknown) {
   if (!bytes.length || bytes.length > MAX_IMAGE_BYTES || bytes.toString("base64") !== data) reject();
   return { mimeType, data, byteLength: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), ...dimensions(bytes, mimeType) };
 }
+export { image as decodeAgentToolImage };
 
 const MAX_CONTINUATION_BYTES = 512 * 1024;
 const OMISSION_NOTICE = "Historical tool image bytes were omitted from this request. The original receipt is retained; this is not a fresh observation.";

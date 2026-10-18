@@ -2,6 +2,9 @@ import type { StandaloneToolsPort } from "../agent-tools/types";
 import { createHash } from "node:crypto";
 import { isAgentNativeHistorySource } from "../../launcher/electron/agent-native-protocol.cjs";
 import type { OwnedNativeHistoryPort, OwnedNativeCaptureLease, OwnedNativeHistoryScope } from "../conversation-history/owned-native";
+import { projectNativeToolImages } from "./native-images";
+import type { OwnedNativeImage } from "./native-protocol";
+import { validateOwnedNativeImages } from "../../launcher/electron/owned-native-images.cjs";
 import type { AgentExecutionPort, AgentNativeContinuation, AgentNativeToolDefinition, ExecutionRequest, ExecutionResult } from "./types";
 import { agentModelAccepting, type AgentModelOption } from "./provider";
 import { AGENT_NATIVE_ENVELOPE_BYTES, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_TEXT_BYTES,
@@ -18,22 +21,9 @@ export interface OwnedNativeExecutionPortOptions {
   /** Optional separate opt-in projection; failure can never replay or fail inference. */
   history?: OwnedNativeHistoryPort;
 }
-function record(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === "object" && !Array.isArray(value)); }
 function identity(value: unknown): value is string { return typeof value === "string" && Boolean(value.trim()) && value.length <= 160 && !/[\u0000-\u001f]/u.test(value); }
-/** Image blocks are unsupported, not flattened into base64 diagnostic text. Ordinary strings stay text. */
-function containsImage(value: unknown): boolean {
-  const pending = [value];
-  while (pending.length) {
-    const part = pending.pop();
-    if (Array.isArray(part)) { pending.push(...part); continue; }
-    if (!record(part)) continue;
-    if (["image", "input_image", "output_image"].includes(String(part.type)) || part.type === "resource" && record(part.resource) && typeof part.resource.mimeType === "string" && part.resource.mimeType.startsWith("image/")) return true;
-    pending.push(...Object.values(part));
-  }
-  return false;
-}
 function notSent(request: ExecutionRequest): ExecutionResult { return { receiptId: `not-sent:${request.dispatch.id}`, outcome: "not_sent", actualSpend: 0,
-  summary: "Native admission, exact continuation, text-only result or bounded protocol context is unavailable; no Native offer was made." }; }
+  summary: "Native admission, exact continuation, supported typed result or bounded protocol context is unavailable; no Native offer was made." }; }
 function validateReceipt(receipt: AgentNativeReceipt, envelope: AgentNativeOfferEnvelope, payloadDigest: string): void {
   if (!receipt || receipt.version !== 1 || receipt.actionId !== envelope.actionId || !receipt.scope || !sameNativeScope(receipt.scope, envelope.scope)
     || receipt.model !== envelope.model || receipt.admissionId !== envelope.admissionId || receipt.outputSchemaId !== envelope.outputSchemaId || receipt.payloadDigest !== payloadDigest
@@ -57,7 +47,7 @@ export function createOwnedNativeExecutionPort(options: OwnedNativeExecutionPort
       if (!configured || configured.provider !== "owned-native" || !agentModelAccepting(request.task, options.models()) || request.task.bounds.maxSpend !== null) return notSent(request);
       if (request.continuation && request.continuation.source.kind !== "owned-native") return notSent(request);
       source = request.continuation?.source as AgentNativeContinuation | undefined;
-      let toolResults: unknown[] = [];
+      let toolResults: unknown[] = [], images: OwnedNativeImage[] = [];
       if (source) {
         if (source.taskGeneration !== request.task.generation || source.taskRevision !== request.task.revision || source.catalogDigest !== nativeDigest(source.catalog) || source.pending.length !== 1
           || !request.dispatch.continuationOf || !Array.isArray(source.requestIds) || source.requestIds.length > 128) return notSent(request);
@@ -66,8 +56,12 @@ export function createOwnedNativeExecutionPort(options: OwnedNativeExecutionPort
         const outcomes = request.continuation!.outcomes;
         const outcome = outcomes.find(outcome => outcome.scope.taskId === request.task.id && outcome.scope.generation === source!.taskGeneration && outcome.scope.toolCallId === call.toolCallId && outcome.tool === call.tool);
         if (call.toolCallId !== nativeToolCallId(request.dispatch.continuationOf, call.requestId) || !source.requestIds.includes(call.requestId)
-          || outcomes.length !== 1 || !outcome || outcome.idempotencyKey !== `tool:${nativeDigest([request.dispatch.continuationOf, call.toolCallId])}` || outcome.state === "outcome_unknown" || containsImage(outcome.result)) return notSent(request);
-        toolResults = [{ toolCallId: call.toolCallId, requestId: call.requestId, tool: call.tool, receipt: outcome.idempotencyKey, state: outcome.state, result: outcome.result ?? null }];
+          || outcomes.length !== 1 || !outcome || outcome.idempotencyKey !== `tool:${nativeDigest([request.dispatch.continuationOf, call.toolCallId])}` || outcome.state === "outcome_unknown") return notSent(request);
+        const projection = projectNativeToolImages({ result: outcome.result ?? null, toolCallId: call.toolCallId, receipt: outcome.idempotencyKey });
+        // Match main's stricter native media admission before claiming or offering.
+        images = validateOwnedNativeImages(projection.images);
+        if (images.length && options.models().find(row => row.provider === "owned-native" && row.id === configured.model && row.admissionId === configured.admissionId)?.imageInput !== true) return notSent(request);
+        toolResults = [{ toolCallId: call.toolCallId, requestId: call.requestId, tool: call.tool, receipt: outcome.idempotencyKey, state: outcome.state, result: projection.result }];
       } else {
         const descriptors = options.tools ? await options.tools.discover({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }, { signal: request.signal }) : [];
         catalog = descriptors.filter(row => row.supported).slice(0, 64).map(row => ({ id: row.id, ...(row.description ? { description: row.description } : {}), inputSchema: structuredClone(row.inputSchema) }));
@@ -82,7 +76,8 @@ export function createOwnedNativeExecutionPort(options: OwnedNativeExecutionPort
       if (Buffer.byteLength(text) > AGENT_NATIVE_TEXT_BYTES) return notSent(request);
       envelope = { version: 1, protocol: AGENT_NATIVE_PROTOCOL, actionId: request.dispatch.id, scope: nativeScopeOf(request), model: configured.model, admissionId: configured.admissionId,
         outputSchemaId: AGENT_NATIVE_OUTPUT_SCHEMA_ID, outputSchemaHash: AGENT_NATIVE_OUTPUT_SCHEMA_HASH, authorship: "automatic-host", text,
-        continuation: source ? { workerBindingId: source.workerBindingId, workerGeneration: source.workerGeneration, previousNativeTurnReceiptId: source.nativeTurnReceiptId } : null };
+        continuation: source ? { workerBindingId: source.workerBindingId, workerGeneration: source.workerGeneration, previousNativeTurnReceiptId: source.nativeTurnReceiptId } : null,
+        ...(images.length ? { images } : {}) };
       if (Buffer.byteLength(JSON.stringify(envelope)) > AGENT_NATIVE_ENVELOPE_BYTES || request.signal.aborted) return notSent(request);
     } catch { return notSent(request); }
     const payloadDigest = nativeDigest(envelope);
