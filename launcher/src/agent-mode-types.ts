@@ -28,6 +28,7 @@ export interface AgentToolReconciliationView {
 export interface AgentModeApi {
   request(body: Record<string, unknown>): Promise<unknown>;
   nativeAccounts?: import('./native-accounts-types').NativeAccountsApi;
+  nativeHistory?: Pick<import('./conversation-history-types').ConversationHistoryApi, 'request'>;
   workspaceRoots?(): Promise<AgentWorkspaceRoot[]>;
   workspaceGrants?(): Promise<AgentWorkspaceGrantSummary[]>;
   revokeWorkspaceGrant?(grantId: string): Promise<unknown>;

@@ -48,7 +48,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   closeBrowserTab: (tabId, expectedTraceId) => ipcRenderer.invoke("launcher:browser-tab-close", tabId, expectedTraceId),
   dismissTask: (accountId, id) => ipcRenderer.invoke('launcher:task-dismiss', accountId, id),
   taskPlanPolicy: () => ipcRenderer.invoke('launcher:task-plan-policy'),
-  conversationHistoryRequest: body => ipcRenderer.invoke('launcher:conversation-history', body),
+  conversationHistoryRequest: body => ipcRenderer.invoke(body?.enabled === false && ['set-recording', 'owned-native-consent', 'canonical-consent'].includes(body?.action)
+    ? 'launcher:conversation-history-revoke' : 'launcher:conversation-history', body),
   copyConversationHistoryText: text => ipcRenderer.invoke('launcher:conversation-history-copy', text),
   saveConversationHistoryMarkdown: markdown => ipcRenderer.invoke('launcher:conversation-history-save', markdown),
   agentMode: body => ipcRenderer.invoke('launcher:agent-mode', body),

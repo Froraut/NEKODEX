@@ -1,11 +1,12 @@
 import { CanonicalHistoryCapture } from "./canonical";
+import { OwnedNativeHistoryCapture, validatedOwnedNativeMetadata } from "./owned-native";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import type {
   CaptureRecord, HistoryMarkdownExport, HistoryMessage, HistoryPage, HistoryPageOptions,
-  HistorySearch, HistoryStatus, HistoryThread, MessageIdentity, RecordResult, ThreadIdentity,
+  HistorySearch, HistoryStatus, HistoryThread, MessageIdentity, OwnedNativeHistoryScope, RecordResult, ThreadIdentity,
 } from "./types";
 
 const owners = new Set<string>();
@@ -38,13 +39,19 @@ function validate(record: CaptureRecord) {
   if (!["human", "assistant", "agent", "unknown"].includes(record.author)) throw new Error("Explicit author required");
   if (!["responses", "native", "chatgpt-web", "manual-import", "unknown"].includes(record.source)) throw new Error("Explicit source required");
   if (!["caller-validated", "unknown", "known-pattern-filtered"].includes(record.sensitivity)) throw new Error("Explicit sensitivity state required");
-  if (!["user-assistant-text-v1","canonical-thread-text-v1"].includes(record.capturePolicy)) throw new Error("Explicit capture policy required");
+  if (!["user-assistant-text-v1","canonical-thread-text-v1","owned-native-final-summary-v1"].includes(record.capturePolicy)) throw new Error("Explicit capture policy required");
   if(record.capturePolicy === "canonical-thread-text-v1") {
     const canonical=record.canonical;
     if(record.sensitivity!=="known-pattern-filtered"||record.source!=="native"||record.author!=="unknown"||record.coverage!=="partial"||!canonical||canonical.policyVersion!=="known-pattern-filter-v1"||!/^[a-f0-9]{64}$/.test(canonical.fingerprint)||!["native","observed-at"].includes(canonical.timestampSource)||!["complete","partial"].includes(canonical.sourceCoverage))throw new Error("Invalid canonical text policy");
     integer(canonical.observedAt,"canonical observation time");integer(canonical.originalBytes,"canonical original bytes");
     if(canonical.originalBytes>16*1024*1024||canonical.exclusionReason!==null&&typeof canonical.exclusionReason!=="string"||canonical.exclusionReason&&record.text!==""||!canonical.exclusionReason&&canonical.originalBytes!==bytes(record.text))throw new Error("Invalid canonical exclusion metadata");
-  } else if(record.sensitivity==="known-pattern-filtered"||record.canonical!==undefined)throw new Error("Manual records cannot claim canonical filtering");
+    if(record.ownedNative!==undefined)throw new Error("Canonical text cannot claim owned Native authorship");
+  } else if(record.capturePolicy === "owned-native-final-summary-v1") {
+    const owned=validatedOwnedNativeMetadata(record.ownedNative!);
+    if(record.sensitivity!=="known-pattern-filtered"||record.source!=="native"||record.author!=="agent"||record.role!=="assistant"||record.coverage!=="partial"||record.compactionId!==null||record.coverageReason!=="validated-owned-native-final-summary-projection"||record.canonical!==undefined
+      || record.clientId!==`owned-native:${owned.scope.sourceId}`||record.messageId!==owned.provenance.messageId||record.threadId!==owned.provenance.threadId||record.turnId!==owned.provenance.turnId||record.timestamp!==owned.provenance.timestampMs||record.revisionId!==`owned-native:${owned.fingerprint}`
+      || owned.exclusionReason&&record.text!==""||!owned.exclusionReason&&owned.originalBytes!==bytes(record.text))throw new Error("Invalid owned Native final-summary policy");
+  } else if(record.sensitivity==="known-pattern-filtered"||record.canonical!==undefined||record.ownedNative!==undefined)throw new Error("Manual records cannot claim Native filtering");
   if (!["complete", "partial"].includes(record.coverage) || typeof record.text !== "string") throw new Error("Invalid text coverage");
   if (record.coverageReason !== undefined && (typeof record.coverageReason !== "string" || bytes(record.coverageReason) > 1024)) throw new Error("Invalid coverageReason");
   if (record.coverage === "partial" && !record.coverageReason?.trim()) throw new Error("Partial text needs a coverage reason");
@@ -67,12 +74,13 @@ function message(row: StoredRow): HistoryMessage {
 export class ConversationHistoryStore {
   readonly path: string;
   readonly canonical: CanonicalHistoryCapture;
+  readonly ownedNative: OwnedNativeHistoryCapture;
   private db: Database;
   private closed = false;
   private maxMessageBytes: number;
   private maxStoredBytes: number;
 
-  constructor(options: { coreHome: string; maxMessageBytes?: number; maxStoredBytes?: number }) {
+  constructor(options: { coreHome: string; maxMessageBytes?: number; maxStoredBytes?: number; trustedCurrentScope?: (taskId: string) => OwnedNativeHistoryScope | null }) {
     if (!options.coreHome?.trim()) throw new Error("Explicit coreHome required");
     this.maxMessageBytes = integer(options.maxMessageBytes ?? DEFAULT_MESSAGE_BYTES, "maxMessageBytes", 1);
     this.maxStoredBytes = integer(options.maxStoredBytes ?? DEFAULT_STORED_BYTES, "maxStoredBytes", 1);
@@ -100,6 +108,7 @@ export class ConversationHistoryStore {
         CREATE INDEX IF NOT EXISTS messages_thread ON messages(client_id, thread_id, timestamp, message_key);
         CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(message_key UNINDEXED, text, tokenize='unicode61');`);
       this.canonical = new CanonicalHistoryCapture({db:this.db,record:record=>this.record(record),getMessage:identity=>this.getMessage(identity),status:()=>this.status()});
+      this.ownedNative = new OwnedNativeHistoryCapture({db:this.db,record:record=>this.record(record),getMessage:identity=>this.getMessage(identity),status:()=>this.status(),trustedCurrentScope:options.trustedCurrentScope});
       owners.add(this.path);
     } catch (error) { this.db.close(); throw error; }
   }
@@ -133,10 +142,10 @@ export class ConversationHistoryStore {
     const canonical: CaptureRecord = { clientId: record.clientId, threadId: record.threadId, messageId: record.messageId,
       revisionId: record.revisionId, revisionNumber: record.revisionNumber, turnId: record.turnId, compactionId: record.compactionId,
       role: record.role, author: record.author, source: record.source, text: record.text, timestamp: record.timestamp,
-      coverage: record.coverage, ...(record.coverageReason === undefined ? {} : { coverageReason: record.coverageReason }), capturePolicy: record.capturePolicy, sensitivity: record.sensitivity, ...(record.canonical?{canonical:record.canonical}:{}) };
+      coverage: record.coverage, ...(record.coverageReason === undefined ? {} : { coverageReason: record.coverageReason }), capturePolicy: record.capturePolicy, sensitivity: record.sensitivity, ...(record.canonical?{canonical:record.canonical}:{}), ...(record.ownedNative?{ownedNative:validatedOwnedNativeMetadata(record.ownedNative)}:{}) };
     const messageKey = key(record);
-    const originalBytes = record.canonical?.originalBytes ?? bytes(record.text);
-    const rejectionReason = record.canonical?.exclusionReason ?? (record.sensitivity === "unknown" ? "sensitivity-unverified" : originalBytes > this.maxMessageBytes ? "message-size-limit" : null);
+    const originalBytes = record.canonical?.originalBytes ?? record.ownedNative?.originalBytes ?? bytes(record.text);
+    const rejectionReason = record.canonical?.exclusionReason ?? record.ownedNative?.exclusionReason ?? (record.sensitivity === "unknown" ? "sensitivity-unverified" : originalBytes > this.maxMessageBytes ? "message-size-limit" : null);
     const rejected = rejectionReason !== null;
     const stored = rejected ? { ...canonical, text: null, coverage: "rejected", coverageReason: rejectionReason } : canonical;
     const recordJson = JSON.stringify(stored);
@@ -268,12 +277,13 @@ export class ConversationHistoryStore {
     const hasMore = rows.length < total;
     const partial = true; // Full transcript coverage cannot be inferred from recorded rows.
     const lines = ["# NEKODEX conversation text export", "", `Client: ${JSON.stringify(options.clientId)}`, `Thread: ${JSON.stringify(options.threadId)}`, "",
-      "Scope: explicitly retained user/assistant text. Manual selections are caller-checked. Native canonical capture excludes structured machine items and known sensitive/generated patterns; unknown secrets may remain. The store does not certify exhaustive redaction.",
+      "Scope: explicitly retained user/assistant text. Manual selections are caller-checked. Native canonical capture excludes structured machine items and known sensitive/generated patterns; owned Native capture stores only explicitly consented future validated final summaries. Unknown secrets may remain. The store does not certify exhaustive redaction.",
       "PARTIAL CORPUS — transcript coverage is unknown. Recording may have been disabled or messages may not have reached the capture boundary.",
       `Selection: ${exact ? "selected exact revisions" : selected ? "selected messages" : "thread latest messages"}; exported ${rows.length}/${total}; incomplete text ${incompleteMessages}${hasMore ? "; PARTIAL: some selected messages are unavailable or the 1000-message export limit was reached" : ""}.`, ""];
     for (const row of rows) lines.push(`## ${row.role} — ${JSON.stringify(row.messageId)}`, "", `[Open exact message revision](${row.link})`, "",
       `Author: ${row.author}; source: ${row.source}; revision: ${JSON.stringify(row.revisionId)} (${row.revisionNumber}); turn: ${JSON.stringify(row.turnId)}; compaction: ${JSON.stringify(row.compactionId)}.`,
-      `Text coverage: ${row.coverage}${row.coverageReason ? ` (${row.coverageReason})` : ""}.`, "", row.text ?? `[Text rejected: ${row.originalBytes} UTF-8 bytes; ${row.coverageReason}.]`, "");
+      `Text coverage: ${row.coverage}${row.coverageReason ? ` (${row.coverageReason})` : ""}.`,
+      ...(row.ownedNative ? [`Owned Native provenance: ${JSON.stringify(row.ownedNative)}.`] : []), "", row.text ?? `[Text rejected: ${row.originalBytes} UTF-8 bytes; ${row.coverageReason}.]`, "");
     const markdown = lines.join("\n");
     if (bytes(markdown) > MAX_EXPORT_BYTES) throw new Error("Export exceeds 8 MiB; select fewer messages");
     return { markdown, exportedMessages: rows.length, totalMessages: total, incompleteMessages, partial, hasMore };

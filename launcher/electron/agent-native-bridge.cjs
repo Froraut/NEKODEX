@@ -1,7 +1,7 @@
 'use strict';
 const { createHash } = require('node:crypto');
 const { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTPUT_SCHEMA,
-  AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES } = require('./agent-native-protocol.cjs');
+  AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES, isAgentNativeHistorySource } = require('./agent-native-protocol.cjs');
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
@@ -93,7 +93,7 @@ function createAgentNativeBridge(options = {}) {
     const changes = { state: row.state, ownerHeld: row.ownerHeld, writeDisposition: acknowledged ? 'written' : possibleWrite ? 'unknown' : 'not-written',
       workerBindingId: binding.id, workerGeneration: binding.generation, nativeTurnReceiptId: turnReceipt,
       acceptanceReceipt: acknowledged ? `native-accept:${digest([entry.envelope.actionId, binding.id, binding.generation, turnReceipt])}` : null,
-      assistantText: undefined };
+      assistantText: undefined, canonicalFinal: undefined };
     // A retirement journal fact can precede process shutdown. Keep an uncertain offer
     // held until this exact physical close confirms release; canonical terminals remain facts.
     if (binding.retired && !binding.closed && row.state === 'unknown' && !row.ownerHeld && entry.receipt?.ownerHeld) changes.ownerHeld = true;
@@ -104,6 +104,10 @@ function createAgentNativeBridge(options = {}) {
       const final = finals.at(-1);
       if (!acknowledged || row.ownerHeld || !user || !final || typeof final.text !== 'string' || Buffer.byteLength(final.text) > AGENT_NATIVE_TEXT_BYTES) return unknown(entry, held());
       changes.assistantText = final.text;
+      if (binding.historySource && identity(final.messageId) && Number.isSafeInteger(final.timestampMs) && final.timestampMs >= 0) {
+        changes.canonicalFinal = { source: structuredClone(binding.historySource), messageId: final.messageId, turnId: row.turnId,
+          threadId: row.threadId, timestampMs: final.timestampMs, rawTextSha256: digest(final.text) };
+      }
     }
     const receipt = publish(entry, changes);
     if (receipt.state === 'unknown' && !receipt.ownerHeld) binding.unsettled = true;
@@ -167,6 +171,7 @@ function createAgentNativeBridge(options = {}) {
       publish(entry, { state: 'prepared', ownerHeld: false, writeDisposition: 'not-written' });
       const admission = await options.resolveAdmission(e.admissionId, e.model);
       if (!admission || typeof admission.createWorker !== 'function') return knownUnsent(entry);
+      if (admission.historySource !== undefined && !isAgentNativeHistorySource(admission.historySource)) return knownUnsent(entry);
       if (destroyed || fenced(e.scope) || !options.canStart() || (epochs.get(e.scope.taskId) ?? 0) !== epoch) return knownUnsent(entry);
       const key = bindingIdentity(e); binding = bindings.get(key);
       if (e.continuation) {
@@ -178,7 +183,7 @@ function createAgentNativeBridge(options = {}) {
       if (!binding) {
         if (bindings.size >= 32) return knownUnsent(entry);
         binding = { id: `native-binding:${key}`, generation: 1, taskId: e.scope.taskId, familyId: e.scope.familyId, taskGeneration: e.scope.generation,
-          key, busy: true, retired: false, closed: false };
+          key, busy: true, retired: false, closed: false, historySource: admission.historySource ? structuredClone(admission.historySource) : undefined };
         bindings.set(key, binding);
         const context = Object.freeze({ workerBindingId: binding.id, workerGeneration: binding.generation, taskId: e.scope.taskId, familyId: e.scope.familyId,
           generation: e.scope.generation, agentWorkerId: e.scope.agentWorkerId, admissionId: e.admissionId, model: e.model });

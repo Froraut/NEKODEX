@@ -50,7 +50,7 @@ function createNativeAccountExecutionService({ authority, inventory, getWrapperP
   return Object.freeze({ admit, models,
     resolveAdmission(admissionId, model) {
       if (!models().some(row => row.id === model && row.admissionId === admissionId)) return undefined;
-      return { createWorker: (binding, onReceipt) => current.server.createWorker(binding, onReceipt) };
+      return { historySource: current.admission.historySource, createWorker: (binding, onReceipt) => current.server.createWorker(binding, onReceipt) };
     },
     inspect: () => ({ models: models(), profileId: current?.lease.profileId ?? null, epoch: current?.lease.epoch ?? null,
       server: current?.server?.inspect() ?? null, ownerHeld: Boolean(current), failed: current?.failed ?? false }),

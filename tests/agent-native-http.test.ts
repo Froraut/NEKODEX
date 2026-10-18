@@ -10,6 +10,7 @@ import { createAgentNativeControlRoutes } from "../src/agent-mode/native-control
 import { createLauncherNativeBridge } from "../src/agent-mode/launcher-native-bridge";
 import { createAgentNativeBridge } from "../launcher/electron/agent-native-bridge.cjs";
 import { createAgentNativeDescriptorPublisher } from "../launcher/electron/agent-native-descriptor.cjs";
+import { ConversationHistoryStore } from "../src/conversation-history";
 const require = createRequire(import.meta.url);
 const { BrowserControlServer } = require("../launcher/electron/control-server.cjs");
 const canonical = (value: any): string => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
@@ -19,6 +20,10 @@ const digest = (value: string) => createHash("sha256").update(value).digest("hex
 test.skipIf(process.platform !== "darwin")("Native private HTTP crosses the actual durable claim and never uses browser readiness or replays an offer", async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "nekodex-native-http-"))); mkdirSync(join(home, "runtime"));
   const store = new AgentModeStore(join(home, "state.sqlite"));
+  const source = { sourceId: "a".repeat(64), profileId: randomUUID(), backendAccountId: "native-http-fixture-account", authEpoch: randomUUID() };
+  const history = new ConversationHistoryStore({ coreHome: home, trustedCurrentScope: taskId => {
+    try { const task = store.getTask(taskId); return { ...source, taskId, generation: task.generation }; } catch { return null; }
+  } });
   let runtime!: AgentModeRuntime; let publisher: ReturnType<typeof createAgentNativeDescriptorPublisher> | undefined;
   let browserReads = 0, factories = 0, offers = 0, retirements = 0, closed = 0, validations = 0;
   let captured: AgentNativeOfferEnvelope | undefined;
@@ -39,7 +44,7 @@ test.skipIf(process.platform !== "darwin")("Native private HTTP crosses the actu
       validations++; captured = envelope;
       return coreControl({ action: "validate-offer", scope: envelope.scope, model: envelope.model, admissionId: envelope.admissionId, payloadDigest });
     },
-    resolveAdmission: (id, selectedModel) => id === admissionId && selectedModel === model ? { createWorker(_binding, notify) {
+    resolveAdmission: (id, selectedModel) => id === admissionId && selectedModel === model ? { historySource: source, createWorker(_binding, notify) {
       factories++; let handle: string | null = null, thread: string | null = null; const rows: any[] = [];
       const snapshot = () => ({ availability: { available: true }, storageOwner: handle ? "current" : "unclaimed", workerHandle: handle, receipts: structuredClone(rows) });
       return {
@@ -74,7 +79,7 @@ test.skipIf(process.platform !== "darwin")("Native private HTTP crosses the actu
     validateNativeInvalidation: (body: any) => coreControl({ action: "validate-invalidation", taskId: body.taskId, familyId: body.familyId, beforeGeneration: body.beforeGeneration }),
   }).start();
   publisher = createAgentNativeDescriptorPublisher({ coreHome: home, profile: "development", control: main.descriptor() });
-  publisher.publish({ models: [{ id: model, provider: "owned-native", admissionId, available: true, accepting: true }], accepting: true });
+  publisher.publish({ models: [{ id: model, provider: "owned-native", admissionId, available: true, accepting: true, historySource: source }], accepting: true });
   const client = createLauncherNativeBridge({ descriptorPath: publisher.path, expectedProfile: "development", fetch: (async (url, init) => {
     const response = await fetch(url, init);
     if (String(url).endsWith("/v1/agent-native/offer")) {
@@ -83,7 +88,7 @@ test.skipIf(process.platform !== "darwin")("Native private HTTP crosses the actu
     }
     return response;
   }) as typeof fetch });
-  const port = createOwnedNativeExecutionPort({ models: () => client.models(), bridge: client, claimTransport: (request, hash) => runtime.claimNativeTransport(request, hash) });
+  const port = createOwnedNativeExecutionPort({ models: () => client.models(), bridge: client, claimTransport: (request, hash) => runtime.claimNativeTransport(request, hash), history: history.ownedNative });
   runtime = new AgentModeRuntime({ store, ownerId: "native-http-owner", models: () => client.models(), executionPort: port });
   const rawPost = async (path: string, body: unknown, instanceId = publisher!.instanceId) => {
     const response = await fetch(`${main.descriptor().endpoint}/v1/agent-native/${path}`, { method: "POST", headers: { authorization: `Bearer ${main.descriptor().token}`, "x-nekodex-native-instance": instanceId, "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -94,6 +99,8 @@ test.skipIf(process.platform !== "darwin")("Native private HTTP crosses the actu
     runtime.create("create", { id: taskId, familyId: taskId, ownerMode: "agent", mode: "manual", originalRequest: "Test synthetic Native HTTP ownership, no real model.",
       requirements: [{ id: "report", text: "Report the fixture result." }], stages: [{ id: "report", instruction: "Report only fixture evidence.", requirementIds: ["report"] }],
       bounds: { maxConcurrent: 1, maxTurns: 1, maxSpend: null }, execution: { provider: "owned-native", model, admissionId } });
+    history.setRecordingEnabled(true);
+    history.ownedNative.setConsent({ scope: { ...source, taskId, generation: 1 }, enabled: true, consent: true, acknowledgeUnknownSecrets: true });
     const foreign = randomUUID();
     const forged: AgentNativeOfferEnvelope = { version: 1, protocol: AGENT_NATIVE_PROTOCOL, actionId: foreign,
       scope: { taskId, familyId: taskId, generation: 1, revision: 1, dispatchId: foreign, ownerId: runtime.runner.ownerId, agentWorkerId: randomUUID() },
@@ -105,7 +112,14 @@ test.skipIf(process.platform !== "darwin")("Native private HTTP crosses the actu
     const dispatch = store.listDispatches(taskId)[0]!;
     expect(dispatch.state).toBe("settled"); expect(dispatch.acceptanceReceipt).toStartWith("native-accept:");
     expect(dispatch.transportClaim?.payloadDigest).toBe(nativeDigest(captured));
-    expect((await rawPost("offer", captured)).body.value.state).toBe("completed");
+    const observed = (await rawPost("offer", captured)).body.value;
+    expect(observed.state).toBe("completed");
+    const saved = history.search({ query: "Synthetic Native HTTP" }).items;
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ role: "assistant", author: "agent", source: "native", capturePolicy: "owned-native-final-summary-v1", coverage: "partial",
+      text: "Synthetic Native HTTP boundary completed.", messageId: observed.canonicalFinal.messageId, turnId: observed.canonicalFinal.turnId, timestamp: observed.canonicalFinal.timestampMs });
+    expect(saved[0]!.ownedNative).toMatchObject({ scope: { ...source, taskId, generation: 1 }, provenance: { dispatchId: dispatch.id } });
+    expect(history.status().totalMessages).toBe(1); // Duplicate HTTP observation does not capture again.
     expect(offers).toBe(1); expect(factories).toBe(1); expect(validations).toBeGreaterThanOrEqual(3); expect(browserReads).toBe(0);
     expect((await rawPost("invalidate", { taskId, familyId: taskId, beforeGeneration: 999 })).status).toBe(409);
     expect(retirements).toBe(0);
@@ -114,6 +128,6 @@ test.skipIf(process.platform !== "darwin")("Native private HTTP crosses the actu
   } finally {
     releaseCreation();
     runtime.beginShutdown(); await runtime.waitForIdle(); runtime.finishShutdown(); await bridge.destroy(); await main.close(); await core.stop(true);
-    store.close(); rmSync(home, { recursive: true, force: true });
+    history.close(); store.close(); rmSync(home, { recursive: true, force: true });
   }
 }, 10_000);

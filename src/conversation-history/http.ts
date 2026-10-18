@@ -1,13 +1,37 @@
 import { readJsonRequestBody } from "../http-body";
 import type { ConversationHistoryStore } from "./store";
 import type { MessageIdentity, ThreadIdentity } from "./types";
+import type { OwnedNativeHistoryScope } from "./types";
+import { z } from "zod";
+const ownedAction = z.object({ action: z.enum(["owned-native-status", "owned-native-consent"]), taskId: z.string().min(1).max(128),
+  scope: z.object({ familyId: z.string().min(1).max(128), generation: z.number().int().positive(), revision: z.number().int().positive() }).strict(),
+  enabled: z.boolean().optional(), consent: z.boolean().optional(), acknowledgeUnknownSecrets: z.boolean().optional() }).strict();
 
 /** Caller must enforce the existing local request + control-token guards first. */
-export async function conversationHistoryRequest(req: Request, getStore: () => ConversationHistoryStore): Promise<Response> {
+export async function conversationHistoryRequest(req: Request, getStore: () => ConversationHistoryStore, options: {
+  /** Resolves actual current task/model source. Incoming IDs never assert account authority. */
+  resolveOwnedNativeScope?: (input: z.infer<typeof ownedAction>) => OwnedNativeHistoryScope | null;
+} = {}): Promise<Response> {
   try {
     const body = await readJsonRequestBody(req, 600_000, 600_000) as Record<string, unknown>;
     if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.action !== "string") throw new Error("History action required");
+    if (["owned-native-status", "owned-native-consent"].includes(body.action) && !options.resolveOwnedNativeScope) throw new Error("Owned Native history task authority is unavailable");
     const store = getStore();
+    if (["owned-native-status", "owned-native-consent"].includes(body.action)) {
+      const input = ownedAction.parse(body), scope = options.resolveOwnedNativeScope?.(input);
+      if (!scope) {
+        const revoked = input.action === "owned-native-consent" && input.enabled === false
+          ? store.ownedNative.revokeTaskGeneration({ taskId: input.taskId, generation: input.scope.generation }) : undefined;
+        if (input.action === "owned-native-consent" && input.enabled !== false) throw new Error("The current Native history source is unavailable");
+        return Response.json({ ok: true, value: { available: false, recordingEnabled: store.status().recordingEnabled,
+          ...(revoked ? { enabled: false, revokedScopes: revoked.revokedScopes } : {}), mode: "future-validated-final-summaries", transcriptCoverage: "partial", unknownSecretsPossible: true } });
+      }
+      const revoked = input.action === "owned-native-consent" && input.enabled === false
+        ? store.ownedNative.revokeTaskGeneration({ taskId: input.taskId, generation: input.scope.generation }) : undefined;
+      const value = input.action === "owned-native-status" || revoked ? { ...store.ownedNative.status(scope), ...(revoked ? { revokedScopes: revoked.revokedScopes } : {}) }
+        : store.ownedNative.setConsent({ scope, enabled: z.boolean().parse(input.enabled), consent: input.consent, acknowledgeUnknownSecrets: input.acknowledgeUnknownSecrets });
+      return Response.json({ ok: true, value: { ...value, available: true } });
+    }
     const thread = { clientId: body.clientId, threadId: body.threadId } as ThreadIdentity;
     const identity = { ...thread, messageId: body.messageId } as MessageIdentity;
     const page = { limit: body.limit, offset: body.offset } as {limit?:number;offset?:number};
@@ -39,6 +63,6 @@ export async function conversationHistoryRequest(req: Request, getStore: () => C
     }
     return Response.json({ ok: true, value });
   } catch (error) {
-    return Response.json({ ok: false, error: error instanceof Error ? error.message : "History operation failed" }, { status: 400 });
+    return Response.json({ ok: false, error: error instanceof z.ZodError ? "Invalid owned Native history request" : error instanceof Error ? error.message : "History operation failed" }, { status: 400 });
   }
 }

@@ -855,12 +855,20 @@ export function startServer(
   }
   const historyHome = getConfigDir();
   let historyStore: ConversationHistoryStore | undefined;
-  const getHistoryStore = () => historyStore ??= new ConversationHistoryStore({ coreHome: historyHome });
+  const getHistoryStore = () => historyStore ??= new ConversationHistoryStore({ coreHome: historyHome, trustedCurrentScope: taskId => nativeHistoryScope(taskId) });
   // Standalone Agent mode has its own task owner and private store. Typical inference never opens it.
   let agentRuntime: AgentModeRuntime | undefined;
   let agentRoutes: ReturnType<typeof createAgentModeRoutes> | undefined;
   const nativeBridge = createLauncherNativeBridge({ descriptorPath: join(historyHome, "runtime", AGENT_NATIVE_DESCRIPTOR_FILE),
     expectedProfile: dependencies.nativeLauncherProfile ?? (process.env.CODEX_CHATGPT_WEB_LAUNCHER_PROFILE === "development" ? "development" : "production") });
+  const nativeHistoryScope = (taskId: string) => {
+    try {
+      const task = agentRuntime?.store.getTask(taskId), execution = task?.execution;
+      if (!task || execution?.provider !== "owned-native") return null;
+      const source = nativeBridge.models().find(row => row.provider === "owned-native" && row.id === execution.model && row.admissionId === execution.admissionId)?.historySource;
+      return source ? { ...source, taskId: task.id, generation: task.generation } : null;
+    } catch { return null; }
+  };
   type NativeInvalidation = { task: Parameters<typeof nativeBridge.invalidateTask>[0]; pending?: Promise<void>; failed: boolean };
   const nativeInvalidations = new Map<string, NativeInvalidation>();
   const invalidateNativeTask = (task: NativeInvalidation["task"], retry = false): void => {
@@ -1036,6 +1044,8 @@ export function startServer(
     const nativeExecution = createOwnedNativeExecutionPort({ models, bridge: nativeBridge,
       claimTransport: (request, digest) => agentRuntime!.claimNativeTransport(request, digest),
       tools: { discover: (scope, options) => getAgentTools().toolsPort.discover(scope, options) },
+      history: { lease: (scope, offer) => getHistoryStore().ownedNative.lease(scope, offer),
+        recordFinal: input => getHistoryStore().ownedNative.recordFinal(input), release: lease => historyStore?.ownedNative.release(lease) },
       selectedSkills: request => getAgentTools().selectedSkillContent({ taskId: request.task.id, generation: request.task.generation, toolCallId: request.dispatch.id }) });
     const executionPort = createAgentExecutionRouter({ localResponses: webExecution, ownedNative: nativeExecution });
     agentRuntime = new AgentModeRuntime({ store, models, executionPort,
@@ -1240,7 +1250,13 @@ export function startServer(
       }
       if (req.method === "POST" && url.pathname === "/admin/conversation-history") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        return conversationHistoryRequest(req, getHistoryStore);
+        return conversationHistoryRequest(req, getHistoryStore, { resolveOwnedNativeScope: input => {
+          getAgentRoutes();
+          const task = agentRuntime!.store.getTask(input.taskId);
+          if (task.familyId !== input.scope.familyId || task.generation !== input.scope.generation || task.revision !== input.scope.revision) throw new Error("History task generation changed");
+          if (stopPrepared && input.action === "owned-native-consent" && input.enabled !== false) throw new Error("Native history admission is draining");
+          return nativeHistoryScope(task.id);
+        } });
       }
       if (req.method === "POST" && url.pathname === "/admin/runtime-session") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });

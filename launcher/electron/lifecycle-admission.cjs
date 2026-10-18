@@ -10,6 +10,7 @@ const OBSERVATION_CHANNELS = new Set([
   "launcher:codex-login-cancel", "launcher:browser-passkey-login-cancel",
   "launcher:browser-existing-chrome-login-cancel", "launcher:cancel-context-change",
   "launcher:update-cancel",
+  "launcher:conversation-history-revoke",
 ]);
 
 function createLifecycleAdmission(onChange = () => {}) {

@@ -42,7 +42,7 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 | Workspace P03–P10, DW8–DW8a | Local editor/Git/base selector/worktree/Open/snapshot/restore/PTY и exact pre-turn scope | Реальная SSH authentication/host/root, remote commands/worktree lifecycle, явная Agent remote authority и заявленные auth flows; current local scopes не расширяются автоматически | Platform paths/SSH/PTY/packaging/ownership и то же сохранение пользовательской работы |
 | Browser/desktop P11–P14 | Chrome MV3 fixture; native capture/type/AXPress на owned fixture; bounded image projection source | Real provider/model integration, task-bound browser flow, доверенный application-outcome observer; ChatGPT companion send/Firefox и заявленные native routes остаются открыты; generic CG fallback пока не verified | Native helpers/providers/permissions и browser compatibility по каждой ОС |
 | MCP/skills/execution P15–P18 | Official frozen install/retained disabled review, MCP SDK host/Seatbelt, managed text versions, selected UTF-8 resource packages и actual UI | Real enabled requested tools, supported auth/OAuth, executable/binary skill resources и заявленный native executor contract; official/excluded distribution rules сохраняются. QuickJS остаётся условным до конкретного composition gap, а не фиктивной обязательной зависимостью | Installer/runtime/private ACL/OS sandbox/skills resource adapters и lifecycle |
-| Long work/history DW1–DW7, DW9–DW11 | Explicit requirements/claims/user-confirmed, selected-text export/search, canonical empty consent/revoke, durable Agent/MCP/bounded Loop fixtures/UI | Native integration source выполнена, но official admission/models[] пусты: auth/own-profile inventory/account-server source уже связан → реальный qualified account/model → Automatic Goal/outcome; canonical nonempty native text, supported client reuse/fork/exclusive handoff и semantic review остаются; localfake не production proof | Поддержанные client/protocol/process/event/persistence adapters и те же outcome boundaries |
+| Long work/history DW1–DW7, DW9–DW11 | Explicit requirements/claims/user-confirmed, selected-text export/search, canonical empty consent/revoke, owned final-summary consent/lease/SQLite source+fixtures, durable Agent/MCP/bounded Loop fixtures/UI | Native integration source выполнена, но official admission/models[] пусты: auth/own-profile inventory/account-server source уже связан → реальный qualified account/model → Automatic Goal/outcome; canonical nonempty native text, supported client reuse/fork/exclusive handoff и semantic review остаются; localfake не production proof | Поддержанные client/protocol/process/event/persistence adapters и те же outcome boundaries |
 | Local API/usage P19–P22 | Scoped API/action owner, metadata-only usage и honest unknown/overlap/estimate UI | Реальный named consumer, реальные разрешённые log/pricing sources; request/receipt reconciliation, actual bill/estimate разграничение | Platform source/parser/privacy и API integration contracts |
 | Platform reliability P23–P24 | Действующие owners/целевые проверки, local offline tools+held SDK detach evidence | Закончить текущие TS/CLI gates и substantive findings; сохранить single owner/drain/cleanup и отдельные source/development/install/release receipts | Нужные target build/sign/package integrity и focused flow checks, не автоматический полный audit |
 
@@ -64,10 +64,11 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
   завершились успешно. Установленная версия остаётся `6.1.32-nekodex.8`.
   Следующие DW1/P07/DW5/P16 изменения — новая исходная партия после baseline;
   его CI не является проверкой новых bytes и не означает installed update.
-- **Последний опубликованный baseline:** `d5da164`, четыре CI jobs точного source
-  завершились успешно. Source версия остаётся `6.1.32-nekodex.9`, установленная
-  D01 — `6.1.32-nekodex.8`; текущая Native integration партия имеет отдельную
-  development evidence и пока не получает baseline CI/publication статус.
+- **Последний опубликованный baseline:** `641f277`, четыре CI jobs точного source
+  [завершились успешно](https://github.com/Froraut/NEKODEX/actions/runs/39150687127).
+  Source версия остаётся `6.1.32-nekodex.9`, установленная D01 — `.8`.
+  Новая owned final-summary history партия идёт после этого baseline;
+  прежний CI не является проверкой её bytes или доказательством real model.
 - **Owned Native integration теперь реализована в source:** Rust DEV wrapper на
   public Codex app-server entrypoint собран и прошёл local fake-wire proof. Это
   отдельный passive/build artifact, не доступный официальный account provider.
@@ -91,10 +92,26 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 - Native development evidence: actual root HTTP1/20, core1/95, Node bridge1/83;
   оба project TS и renderer прошли. Это fixtures/local wire без настоящего model
   account. Peer P2 cleanup findings исправлены с focused receipts; inventory1/185,
-  pool1/92, rootIPC1/16+1/9 и оба TS17:30 прошли. Final integrated build,
-  новый source commit/CI/publication пока не заявляются. Подробные contracts:
+  pool1/92, rootIPC1/16+1/9 и оба TS17:30 прошли. Renderer194, CLI634/exact9
+  и map717 завершены; source641f277 опубликован с exact4CI. Это baseline до
+  новой history партии. Её оба TS18:16, renderer195/18:17, CLI635/exact9 и
+  map write/paths прошли; final map check и новый commit/CI ещё отдельно. Подробные contracts:
   [protocol](agent-native-protocol.md), [main bridge](agent-native-bridge.md),
   [Rust wrapper build/proof](../development/owned-native-worker-build.md).
+- **Owned Native final-summary history — новая source партия:** отдельный
+  default-off `owned-native-final-summary-v1` в существующем SQLite/FTS owner.
+  Global recording + exact future task-generation consent + unknown-risk ack,
+  pre-offer lease, trusted admitted source и actual Native IDs/time/digest;
+  только validated `final.summary`, без raw JSON/host input/tool content.
+  Каждый explicit revoke сохраняется task-generation-wide для всех sources,
+  включая доступный текущий source; возврат alternate source не
+  восстанавливает согласие; unavailable status не обещает enabled:false.
+  Revoke-only IPC работает при drain. Synthetic backend1/44+1/12, actual private
+  NodeHTTP/BunHistory1/24, boundaryHTTP1/14, IPC1/5 и providerfailure1/5 прошли.
+  Оба TS18:16, renderer195/18:17, CLI635/exact9 и map write/paths прошли;
+  final map check ещё отдельно. Real Native history/UI и новый commit/CI не заявляются.
+  [Contract](owned-native-final-history.md),
+  [evidence](../reviews/2026-10-18-owned-native-final-history.md).
 - **Browser/desktop source партия опубликована в `6f6b171`:** после source commit
   `09383bb` добавлены P12 standalone browser tools через существующий host/journal,
   P13/P14 macOS helper/provider/controller/admin UI, canonical tool images и
@@ -325,7 +342,7 @@ macOS; затем Windows/Linux»**. Это порядок реализации 
 | DW2 | Дерево workers, status и reuse | Возврат к контекстному исполнителю без создания лишнего | NativeThreadsSurface, metadata projection и supported app-server read/fork wired; CLI 0.163 DEV empty-profile list/scope наблюдены | Fresh worker reuse/continue лишь при поддержанной capability; отдельная connection не доказывает общий live status | DW1 identity; exact thread/family; supported app-server/client contract | Две семьи с одинаковым name не смешиваются; tab close не завершает worker; restart не запускает; disconnected status unknown; follow-up revalidates identity | F1 |
 | DW3 | Persistent Agent workers/mailboxes | Самостоятельная параллельная работа и reusable sleeping workers | Durable Agent runtime + explicit owned-native router/preclaim/main bridge/early receipt/read-only same-owner wait/invalidation интегрированы; Rustpublicwrapper actualbuild/localfake proof; HTTP1/20/core1/95/node1/83 | Qualified auth/inventory/admission/account pool уже wired source; fake pool1/92, inventory1/185, cleanup findings fixed. Actual auth/account/models/startup policy и real model task ещё не proved; max1/text-only внутри task, pool2 across tasks | P17/P20; workspace/P05 по сценарию; один top-level task owner | Crash до/после accept/ACK не теряет и не дублирует инструкцию; late result сохраняется; unknown send не replay; concurrency соблюдена; at-least-once не назван exactly-once эффектом | F3 |
 | DW4 | Staged task-plan executor | Длинная задача движется по содержательным этапам | Stages/dependencies/correction/control единым owner; Web и owned-native provider routes/continuations строго разделены, Native fixed-schema JSON requests идут в existing ToolJournal | Реальный admitted Native/Web multi-stage outcome и generation/retirement UI; source bridge integration уже есть, production model admission пока отсутствует | DW3/P20; исходные requirements с первой инструкции | Duplicate finish не запускает следующий этап дважды; correction важнее auto-step; restart не переигрывает uncertain dispatch; unchanged passing check не повторяется | F3 |
-| DW5 | Opt-in transcript и Markdown export | Переносимый результат и восстановление контекста | Selected-text flow+canonical source RPC→SQLite1/43/native17; actual GUI scoped consent/EMPTY native endpoint/revoke/globaloff прошли | Owned Native/localfake protocol отдельно дал4nonempty canonical items с IDs/timestamps и automatic-host authorship; consent-aware history integration/real account ещё нужны. Explicit refresh не background capture, unknown-secret risk не устранён known-pattern filter | Native/client event adapter; content opt-in отдельно от metadata ledger | Stream/edit/reload не дублируют; authored human/automatic различены; partial history явна; quota не удаляет активную историю молча; отменённый save не saved | F1 |
+| DW5 | Opt-in transcript и Markdown export | Переносимый результат и восстановление контекста | Selected-text/canonical RPC→SQLite1/43/native17 и actual empty-page consent/revoke UI. Owned final-summary source связан с provider/main receipts/oneSQLite/HTTP/IPC/UI: defaultOFF, global+task-generation future consent+risk ack, pre-offer lease, actual IDs/time/source/digest, persistent all-source task-generation revoke; backend1/44+P1 1/12, actualHTTP1/24 | Actual owned-history UI и real account/model final с provenance; full supported transcript/background subscription отдельно. Explicit canonical refresh не background capture; unknown-secret risk не устранён known-pattern filter | Native/client event adapter; content opt-in отдельно от metadata ledger | Stream/edit/reload не дублируют; authored human/automatic различены; partial history явна; quota не удаляет активную историю молча; отменённый save не saved | F1 |
 | DW6 | Локальный поиск истории | Найти exact сохранённое сообщение без полного сканирования | FTS/query/exact revision UI подключены; DEV selected synthetic answer найден и открыт | Сохранять incremental edit/delete/retention ownership; поиск не обещает несохранённый transcript | DW5 storage/retention owner | Indexed/total/partial видны; edit/delete обновляют результаты; exact message переход; raw tool/credentials вне индекса; несохранённая история не обещается | F1 вместе с history |
 | DW7 | Fork истории через клиент | Продолжить отдельную линию от выбранной точки | Native user-click fork route/UI и private durable fork journal с uncertain reconciliation подключены | Реальный supported fork результата; DEV empty list не доказывает live fork или attachments parity | DW5 context; supported fork method; P20 для action receipt | Исходная ветка сохранена; duplicate action не создаёт второй fork; exact point/partial seed видны; replay всего prompt не маскируется под fork | F1; standalone branch F3 |
 | DW8 | Ручные code snapshots | Сохранить рабочее состояние и вернуть выбранные файлы | Actual DEV snapshot alpha→beta→restore alpha с beta before-image и managed-worktree Open завершены | Новые archive/lifecycle UI изменения проверять отдельно; passing snapshot/restore/Open переиспользовать | Явный workspace owner; P07/P09; history link полезен, но не обязательный блокер | Dirty/untracked сохранены; ignored/binary/submodule scope объявлен; exact root/path/hash; concurrent edit вызывает conflict; failed test не запускает auto rollback | F2, первый checkpoint результат |
@@ -408,7 +425,7 @@ unsupported capability и чужая платформенная parity не об
 
 | Порядок | ID | Конкретный следующий результат |
 | --- | --- | --- |
-| 1 | DW3–DW5, DW9–DW10 | После source auth/inventory/pool и исправлений cleanup завершить явный fresh login, actual qualified account/model inventory/startup policy, real Native task и Automatic Goal/outcome. Pool source2 threads across tasks не снимает per-task max1. Nonempty owned history — только через scoped consent и проверенный final-summary source. |
+| 1 | DW3–DW5, DW9–DW10 | После source auth/inventory/pool и исправлений cleanup завершить явный fresh login, actual qualified account/model inventory/startup policy, real Native task и Automatic Goal/outcome. Pool source2 threads across tasks не снимает per-task max1. Final-summary history source/fixtures уже есть; далее actual UI consent/revoke и real account/model final с provenance. Full transcript/background subscriptions не заявляются. |
 | 2 | DW2, DW7 | Supported existing-client worker continue/reuse и explicit exclusive execution handoff; owned inference Native binding не означает adoption чужих threads. Exact fork по настоящей supported capability. |
 | 3 | P03–P08 | Подключить выбранную реальную SSH среду и явную Agent remote authority; branch/base source и actual local UI уже готовы. |
 | 4 | DW3–DW4, DW9–DW11 | Реальный configured provider и automatic Goal; bounded mailbox Loop UI уже проверен на fake adapter. Semantic review отличать от selected-file observer; external watcher отдельно. |

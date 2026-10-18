@@ -15,10 +15,29 @@ export interface CaptureRecord extends MessageIdentity {
   /** Describes this message's text only, never the entire thread or transcript. */
   coverage: "complete" | "partial";
   coverageReason?: string;
-  capturePolicy: "user-assistant-text-v1" | "canonical-thread-text-v1";
+  capturePolicy: "user-assistant-text-v1" | "canonical-thread-text-v1" | "owned-native-final-summary-v1";
   /** Caller assertion, not a redaction claim. Unknown sensitivity retains metadata only. */
   sensitivity: "caller-validated" | "unknown" | "known-pattern-filtered";
   canonical?: {policyVersion:"known-pattern-filter-v1";fingerprint:string;observedAt:number;timestampSource:"native"|"observed-at";originalBytes:number;exclusionReason:string|null;sourceCoverage:"complete"|"partial"};
+  ownedNative?: OwnedNativeHistoryMetadata;
+}
+
+/** Main-admitted source identity, never renderer-supplied account proof. */
+export interface OwnedNativeHistoryScope {
+  taskId: string; generation: number; sourceId: string; profileId: string;
+  backendAccountId: string; authEpoch: string;
+}
+export interface OwnedNativeHistoryProvenance {
+  dispatchId: string; workerBindingId: string; workerGeneration: number;
+  nativeTurnReceiptId: string; messageId: string; turnId: string; threadId: string;
+  timestampMs: number;
+}
+export interface OwnedNativeHistoryMetadata {
+  policyVersion: "owned-native-final-summary-v1";
+  filterPolicyVersion: "known-pattern-filter-v1";
+  scope: OwnedNativeHistoryScope;
+  provenance: OwnedNativeHistoryProvenance;
+  fingerprint: string; originalBytes: number; exclusionReason: string | null;
 }
 
 export interface ThreadIdentity { clientId: string; threadId: string }

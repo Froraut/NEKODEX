@@ -6,6 +6,7 @@ import { agentModeCopy } from './agent-mode-copy';
 import { stripIpcErrorPrefix } from './ipc-error';
 import './surfaces/agent-mode.css';
 import { NativeAccountsPanel } from './NativeAccountsPanel';
+import { OwnedNativeHistoryPanel } from './OwnedNativeHistoryPanel';
 
 const lines = (text: string) => text.split('\n').map(value => value.trim()).filter(Boolean);
 const requirementRows = (text: string) => lines(text).map((value, index) => ({ id: `r${index + 1}`, text: value }));
@@ -410,6 +411,7 @@ export function AgentModeSurface({ language, api, disabled = false }: {
             <h3>{text.stages.split(' — ')[0]}</h3>
             <RecordList empty={text.none}>{task.stages.map(row => <li key={row.id}><Badge>{text.stageStates[row.status] ?? row.status}</Badge> <strong>{row.id}</strong><p className="agent-mode-prose">{row.instruction}</p><small>{row.requirementIds.join(', ')}</small></li>)}</RecordList>
           </Panel>
+          {task.execution?.provider === 'owned-native' && api.nativeHistory ? <OwnedNativeHistoryPanel language={language} task={task} api={api.nativeHistory} disabled={disabled} /> : null}
           {task.mode === 'loop' ? <Panel title={text.loopMailbox}>
             <p className="agent-mode-muted">{text.loopSourceHint}</p>
             <Notice tone={loopRunActive ? 'info' : 'warning'} title={task.reason === 'waiting_for_mailbox_work' ? text.waitingMailbox : undefined}>{loopRunActive ? text.loopRunActive : text.loopRunInactive}</Notice>

@@ -54,6 +54,7 @@ const historyApi = {
   saveMarkdown: (markdown: string) => api!.saveConversationHistoryMarkdown(markdown),
 };
 const agentModeApi = { request: (body: Record<string, unknown>) => api!.agentMode(body),
+  nativeHistory: { request: historyApi.request },
   nativeAccounts: { request: (body: import('./native-accounts-types').NativeAccountsRequest | import('./native-accounts-types').NativeInventoryRequest | import('./native-accounts-types').NativeExecutionCloseRequest) => api!.nativeAccountsRequest(body),
     openVerificationUrl: (url: string) => api!.openNativeAccountVerification(url), copyCode: (code: string) => api!.copyNativeAccountCode(code) },
   workspaceRoots: () => api!.agentWorkspaceRoots(), workspaceGrants: () => api!.agentWorkspaceGrants(),

@@ -3,6 +3,8 @@ import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import { z } from "zod";
 import type { AgentNativeToolDefinition, ExecutionRequest } from "./types";
+import type { AgentNativeHistorySource } from "../../launcher/electron/agent-native-protocol.cjs";
+export type { AgentNativeHistorySource };
 
 import { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTPUT_SCHEMA, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES } from "../../launcher/electron/agent-native-protocol.cjs";
 export { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_OUTPUT_SCHEMA, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_TEXT_BYTES, AGENT_NATIVE_ENVELOPE_BYTES };
@@ -55,6 +57,8 @@ export interface AgentNativeReceipt {
   inputAuthorship: "automatic-host";
   /** Main obtains this only from the exact owned canonical final assistant item/turn. */
   assistantText?: string;
+  /** Native-issued identity/time plus main-owned source; optional history never changes execution. */
+  canonicalFinal?: { source: AgentNativeHistorySource; messageId: string; turnId: string; threadId: string; timestampMs: number; rawTextSha256: string };
 }
 export interface AgentNativeBridge {
   /** Exactly one offer. Disconnect/timeout never authorizes re-offering this action. */

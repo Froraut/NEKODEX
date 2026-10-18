@@ -47,7 +47,7 @@ test("Electron history registrar proxies only the owned runtime, copy and select
   const {registerConversationHistory}=await import("../launcher/electron/ipc/conversation-history.cjs");
   const handles=new Map<string,Function>(); let ready=false; let copied=""; const calls:unknown[]=[];
   const destination=join(path,"selected.md");
-  registerConversationHistory({handle:(name:string,fn:Function)=>handles.set(name,fn),runtimeHost:{supervisor:{readConfig:()=>({generation:"synthetic"}),ownedRuntimeReady:async()=>ready,control:async(_config:unknown,action:string,options:unknown)=>{calls.push({action,options});return {ok:true,value:{recordingEnabled:false}};}}},clipboard:{writeText:(text:string)=>{copied=text;}},dialog:{showSaveDialog:async()=>({canceled:false,filePath:destination})}});
+  registerConversationHistory({handle:(name:string,fn:Function)=>handles.set(name,fn),runtimeHost:{supervisor:{readConfig:()=>({generation:"synthetic"}),ownedAgentRuntimeReady:async()=>ready,control:async(_config:unknown,action:string,options:unknown)=>{calls.push({action,options});return {ok:true,value:{recordingEnabled:false}};}}},clipboard:{writeText:(text:string)=>{copied=text;}},dialog:{showSaveDialog:async()=>({canceled:false,filePath:destination})}});
   await expect(handles.get("launcher:conversation-history")!({}, {action:"status"})).rejects.toThrow("current NEKODEX runtime");
   expect(calls).toHaveLength(0); ready=true;
   expect(await handles.get("launcher:conversation-history")!({}, {action:"status"})).toEqual({recordingEnabled:false});

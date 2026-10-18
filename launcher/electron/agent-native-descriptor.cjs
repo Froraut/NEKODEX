@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
-const { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_HASH } = require('./agent-native-protocol.cjs');
+const { AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, isAgentNativeHistorySource } = require('./agent-native-protocol.cjs');
 
 const FILE_NAME = 'launcher-agent-native.json';
 const text = (value, limit) => typeof value === 'string' && value.length > 0 && value.length <= limit && !/[\u0000-\u001f]/u.test(value);
@@ -24,14 +24,15 @@ function createAgentNativeDescriptorPublisher({ coreHome, profile, control }) {
   function publish({ models = [], accepting = false } = {}) {
     if (!Array.isArray(models) || models.length > 64 || typeof accepting !== 'boolean'
       || new Set(models.map(row => `${row.id}:${row.admissionId}`)).size !== models.length
-      || models.some(row => !row || Object.keys(row).some(key => !['id', 'admissionId', 'label', 'available', 'accepting', 'provider'].includes(key))
+      || models.some(row => !row || Object.keys(row).some(key => !['id', 'admissionId', 'label', 'available', 'accepting', 'provider', 'historySource'].includes(key))
         || !text(row.id, 128) || !text(row.admissionId, 128) || row.available !== true
         || row.provider !== 'owned-native' || row.label !== undefined && !text(row.label, 200)
-        || row.accepting !== undefined && typeof row.accepting !== 'boolean')) throw new Error('Native descriptor requires explicitly admitted models');
+        || row.accepting !== undefined && typeof row.accepting !== 'boolean'
+        || row.historySource !== undefined && !isAgentNativeHistorySource(row.historySource))) throw new Error('Native descriptor requires explicitly admitted models');
     const value = { version: 1, kind: 'nekodex-agent-native', profile, pid: process.pid, instanceId,
       control: { endpoint: endpoint.origin, token }, protocol: AGENT_NATIVE_PROTOCOL,
       outputSchemaHash: AGENT_NATIVE_OUTPUT_SCHEMA_HASH, accepting,
-      models: models.map(row => ({ ...row, accepting: accepting && row.accepting !== false })),
+      models: models.map(row => ({ ...structuredClone(row), accepting: accepting && row.accepting !== false })),
       capabilities: { textInput: true, imageInput: false }, createdAt: new Date().toISOString() };
     if (fs.realpathSync(directory) !== directory) throw new Error('Native descriptor directory changed');
     if (fs.existsSync(file)) {

@@ -1,4 +1,7 @@
 import type { StandaloneToolsPort } from "../agent-tools/types";
+import { createHash } from "node:crypto";
+import { isAgentNativeHistorySource } from "../../launcher/electron/agent-native-protocol.cjs";
+import type { OwnedNativeHistoryPort, OwnedNativeCaptureLease, OwnedNativeHistoryScope } from "../conversation-history/owned-native";
 import type { AgentExecutionPort, AgentNativeContinuation, AgentNativeToolDefinition, ExecutionRequest, ExecutionResult } from "./types";
 import { agentModelAccepting, type AgentModelOption } from "./provider";
 import { AGENT_NATIVE_ENVELOPE_BYTES, AGENT_NATIVE_OUTPUT_SCHEMA_HASH, AGENT_NATIVE_OUTPUT_SCHEMA_ID, AGENT_NATIVE_PROTOCOL, AGENT_NATIVE_TEXT_BYTES,
@@ -12,6 +15,8 @@ export interface OwnedNativeExecutionPortOptions {
   claimTransport: (request: ExecutionRequest, payloadDigest: string) => void | Promise<void>;
   tools?: Pick<StandaloneToolsPort, "discover">;
   selectedSkills?: (request: ExecutionRequest) => unknown[] | Promise<unknown[]>;
+  /** Optional separate opt-in projection; failure can never replay or fail inference. */
+  history?: OwnedNativeHistoryPort;
 }
 function record(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === "object" && !Array.isArray(value)); }
 function identity(value: unknown): value is string { return typeof value === "string" && Boolean(value.trim()) && value.length <= 160 && !/[\u0000-\u001f]/u.test(value); }
@@ -83,6 +88,15 @@ export function createOwnedNativeExecutionPort(options: OwnedNativeExecutionPort
     const payloadDigest = nativeDigest(envelope);
     try { await options.claimTransport(request, payloadDigest); } catch { return notSent(request); }
     if (request.signal.aborted) return notSent(request);
+    let historyScope: OwnedNativeHistoryScope | undefined, historyLease: OwnedNativeCaptureLease | null = null;
+    try {
+      const selected = options.models().find(row => row.provider === "owned-native" && row.id === envelope.model && row.admissionId === envelope.admissionId);
+      if (options.history && isAgentNativeHistorySource(selected?.historySource)) {
+        historyScope = { ...selected.historySource, taskId: request.task.id, generation: request.task.generation };
+        historyLease = options.history.lease(historyScope, { dispatchId: request.dispatch.id }).lease;
+      }
+    } catch { /* Optional history is independent of Native execution. */ }
+    try {
     // From here on, an exception/abort says nothing about the physical Native offer. Never resend.
     const lookup = { actionId: envelope.actionId, scope: envelope.scope, payloadDigest };
     let acceptance: string | undefined; let callbackFailure: Error | undefined; let newest: AgentNativeReceipt | undefined;
@@ -119,7 +133,21 @@ export function createOwnedNativeExecutionPort(options: OwnedNativeExecutionPort
         try {
           if (typeof receipt.assistantText !== "string") throw new Error("Native canonical assistant result is unavailable");
           const result = parseNativeResult(receipt.assistantText, catalog, source?.requestIds ?? []);
-          if (result.kind === "final") return { receiptId, outcome: "completed", summary: result.summary, actualSpend: null };
+          if (result.kind === "final") {
+            try {
+              const final = receipt.canonicalFinal;
+              if (historyScope && historyLease && final && isAgentNativeHistorySource(final.source)
+                && ["sourceId", "profileId", "backendAccountId", "authEpoch"].every(key => final.source[key as keyof typeof final.source] === historyScope![key as keyof typeof final.source])
+                && [final.messageId, final.turnId, final.threadId].every(value => typeof value === "string" && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f]/u.test(value))
+                && Number.isSafeInteger(final.timestampMs) && final.timestampMs >= 0
+                && final.rawTextSha256 === createHash("sha256").update(receipt.assistantText).digest("hex")) {
+                options.history!.recordFinal({ lease: historyLease, scope: historyScope, final: { kind: "final", summary: result.summary },
+                  provenance: { dispatchId: request.dispatch.id, workerBindingId: receipt.workerBindingId!, workerGeneration: receipt.workerGeneration!,
+                    nativeTurnReceiptId: receipt.nativeTurnReceiptId!, messageId: final.messageId, turnId: final.turnId, threadId: final.threadId, timestampMs: final.timestampMs } });
+              }
+            } catch { /* Text history cannot change a completed Native outcome. */ }
+            return { receiptId, outcome: "completed", summary: result.summary, actualSpend: null };
+          }
           const continuation: AgentNativeContinuation = { kind: "owned-native", version: 1, protocol: AGENT_NATIVE_PROTOCOL, rootDispatchId: source?.rootDispatchId ?? request.dispatch.id,
             taskGeneration: request.task.generation, taskRevision: request.task.revision, workerBindingId: receipt.workerBindingId!, workerGeneration: receipt.workerGeneration!, nativeTurnReceiptId: receipt.nativeTurnReceiptId!,
             catalog, catalogDigest: nativeDigest(catalog), requestIds: [...(source?.requestIds ?? []), result.requestId],
@@ -132,5 +160,6 @@ export function createOwnedNativeExecutionPort(options: OwnedNativeExecutionPort
       receipt = await options.bridge.waitReceipt({ ...lookup, afterRevision: receipt.revision }, { signal: request.signal }) ?? newest ?? receipt;
     }
     throw new Error("Native receipt is unavailable; replay is forbidden");
+    } finally { try { options.history?.release(historyLease); } catch { /* Preserve the Native receipt. */ } }
   } };
 }

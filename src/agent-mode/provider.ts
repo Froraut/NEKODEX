@@ -13,6 +13,7 @@ export interface AgentModelOption {
   available?: boolean;
   /** Operational readiness, separate from configured/admitted availability. Never blocks offline creation. */
   accepting?: boolean;
+  historySource?: import("./native-protocol").AgentNativeHistorySource;
 }
 export interface LocalResponsesProviderOptions {
   /** Fixed host configuration, never a URL supplied by a task or model. */

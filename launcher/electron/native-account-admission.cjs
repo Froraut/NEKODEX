@@ -69,7 +69,9 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
   const sharedIdentity = { profileId: profile.profileId, epoch: profile.epoch, serverGeneration, inventoryActionId,
     source: SOURCE, version: VERSION, executableSha256: wrapperPin.executableSha256, cacheSha256: original.cacheSha256,
     accountId: original.usage.accountId, nativeIdentity: original.identity, sealedCatalogSha256: digest(catalogText), configSha256 };
-  const modelRows = selected.map(model => ({ id: model.slug, label: model.display_name || model.slug, provider: 'owned-native', available: true, accepting: true,
+  const historySource = freeze({ sourceId: digest(canonical(['owned-native-history-source-v1', profile.profileId, profile.epoch, original.usage.accountId])),
+    profileId: profile.profileId, backendAccountId: original.usage.accountId, authEpoch: profile.epoch });
+  const modelRows = selected.map(model => ({ id: model.slug, label: model.display_name || model.slug, provider: 'owned-native', available: true, accepting: true, historySource,
     admissionId: digest(canonical({ ...sharedIdentity, originalModelSha256: digest(canonical(original.catalog.models.find(row => row.slug === model.slug))), modelId: model.slug })) }));
   let started = false;
   function unchanged(checkExecutable = false) {
@@ -85,7 +87,7 @@ function makeNativeAccountAdmission({ authority, lease, profile, inventory, inve
     absent(path.join(profile.cwd, '.codex'));
     for (let dir = profile.cwd;; dir = path.dirname(dir)) { absent(path.join(dir, '.git')); if (dir === path.dirname(dir)) break; }
   }
-  const admission = { serverGeneration, paths: freeze(paths), config: freeze(config), provider: 'openai', models: freeze(modelRows), compileOutputSchema: compileAgentNativeOutputSchema,
+  const admission = { serverGeneration, paths: freeze(paths), config: freeze(config), provider: 'openai', models: freeze(modelRows), historySource, compileOutputSchema: compileAgentNativeOutputSchema,
     availability: () => ({ available: true, reasonCode: null }),
     prestart() {
       unchanged(true);

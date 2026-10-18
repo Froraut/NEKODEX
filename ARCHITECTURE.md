@@ -55,7 +55,7 @@ separate facts.
 | Tunnel | [installation/control](src/tunnel.ts), [status interpretation](src/tunnel-status.ts), [service](src/tunnel-service.ts) with [LaunchAgent helpers](src/launch-agent.ts) | Inventory/diagnostics parsing has no process authority. Scoped stopped proof requires successful inspection, an explicitly non-running process and stopped state; the SDK's missing/null/empty error values mean no status error. Installation, credentials and readiness remain separate steps. |
 | Electron composition | [main](launcher/electron/main.cjs), [preload](launcher/electron/preload.cjs), [IPC registrars](launcher/electron/ipc), [control server](launcher/electron/control-server.cjs) | Main owns guarded IPC and composition. Renderer inputs and helper calls cross validation/admission boundaries. |
 | Native plan content | [source observer](src/adapters/chatgpt-web/task-plan-observation.ts), [capture policy](src/adapters/chatgpt-web/task-plan-policy.ts), [wire validator](launcher/electron/task-plan-observation.cjs), [store](launcher/electron/task-plans.cjs), [requirements](launcher/electron/task-plan-requirements.cjs), [TaskPlans](launcher/src/TaskPlans.tsx) | Separate opt-in content store, never the metadata ledger. `/v1/turn/plan` validates the exact live trace/helper/surface/task and recorded native thread/turn before capture; observed plan claims remain unverified. Explicit requirements/corrections and CAS-bound associations retain trusted action metadata separately from personal user confirmation; property verification is unavailable here. |
-| Conversation text history | [store](src/conversation-history/store.ts), [HTTP actions](src/conversation-history/http.ts), [validated producer adapter](src/conversation-history/capture.ts), [canonical capture](src/conversation-history/canonical.ts), [main recorder](launcher/electron/canonical-native-history.cjs), [filter](launcher/electron/canonical-history-policy.cjs), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | The Bun daemon owns the SQLite/FTS writer. Manual selected text and explicitly refreshed native canonical pages have separate policies. Per-thread consent/recording epoch invalidates late capture; known-pattern exclusions do not guarantee removal of unknown secrets. All corpus coverage remains partial; native empty-page proof is not text proof. |
+| Conversation text history | [store](src/conversation-history/store.ts), [HTTP actions](src/conversation-history/http.ts), [validated producer adapter](src/conversation-history/capture.ts), [canonical capture](src/conversation-history/canonical.ts), [owned Native final projection](src/conversation-history/owned-native.ts), [main recorder](launcher/electron/canonical-native-history.cjs), [filter](launcher/electron/canonical-history-policy.cjs), [IPC](launcher/electron/ipc/conversation-history.cjs), [surface](launcher/src/ConversationHistorySurface.tsx) | The Bun daemon owns the SQLite/FTS writer. Manual selected text, explicitly refreshed native canonical pages and future validated owned Native final summaries have separate default-off policies. Owned final capture requires global recording, exact task-generation consent, risk acknowledgement and a pre-offer lease; trusted admission provenance and current task authority are revalidated at write. Source-unavailable revocation persists across source return; unavailable status never asserts consent is off. Per-thread consent/recording epoch invalidates late capture; known-pattern exclusions do not guarantee removal of unknown secrets. All corpus coverage remains partial; native empty-page proof is not text proof. |
 | Local project workspace | [service](launcher/electron/local-workspace.cjs), [IPC](launcher/electron/ipc/workspace.cjs), [surface](launcher/src/WorkspaceSurface.tsx) | Main's native picker grants an opaque root ID; renderer paths stay relative. The service owns private persisted roots/drafts, bounded reads and revision-aware writes. Opaque captured base choices support HEAD/local/remote-tracking comparisons with stale reference checks, no fetch/checkout. Actual DEV UI showed HEAD and older-base working diffs/full OIDs without moving main. Bounded in-memory comparisons remain read-only, not recoverable code checkpoints. |
 | Native Codex thread control | [client](launcher/electron/codex-client-control.cjs), [IPC](launcher/electron/ipc/codex-client-control.cjs), [surface](launcher/src/NativeThreadsSurface.tsx), [projection](launcher/src/native-threads-model.ts) | Public native thread list/read UI remains metadata-only; the main-only canonical recorder separately reads supported items under explicit consent. Status is scoped to the configured connection/server. Fork is an explicit user action; start/interrupt/approve are unsupported. Executable/home/socket are main-owned dependencies. |
 | Owned Native inference leaf | [admission](launcher/electron/owned-native-admission.cjs), [worker](launcher/electron/owned-native-worker.cjs), [receipts](launcher/electron/owned-native-journal.cjs) | The trusted [auth authority](launcher/electron/native-account-authority.cjs) owns explicit fresh-profile official CLI device login; the [inventory owner](launcher/electron/native-account-inventory.cjs) qualifies only its own exact personal-Pro profile, native account/usage and original catalog. The [execution owner](launcher/electron/native-account-execution.cjs) seals qualified model metadata and resolves model/admission pairs into one account stdio process/AuthManager/sender with up to two new isolated task threads. Main/Bun/Agent UI use a private descriptor and fixed protocol. No actual account/model has been admitted yet. The pinned public-library Rust wrapper keeps mandatory policy; network-denied `--account-info` classification is separate from cloud-aware startup checks. Fixture-route official-account refusal remains unchanged. Existing metadata/fork authority is unchanged; neither fake-provider evidence nor a compiled wrapper proves real delivery. |
@@ -339,7 +339,11 @@ observed, including a separate fresh observe→click→canonical-final flow. Rea
 model/account and generic CG pixel fallback remain unverified. The
 [full adoption program](docs/design/full-adoption-program.md) records the broader
 36-capability scope. Keep composition evidence separate from contract fixtures,
-development UI, live provider results and installed delivery.
+development UI, live provider results and installed delivery. The later Native
+auth/inventory/account-pool source is published in `641f277`, with all four exact
+[CI jobs successful](https://github.com/Froraut/NEKODEX/actions/runs/39150687127).
+The final-summary history batch below is subsequent source work; it does not
+inherit that CI result. No real Native account/model or installed update is proved.
 
 **Plan content:** the native observer reads only the canonical current turn's
 built-in `update_plan`; request identity is not a content source. The helper
@@ -393,6 +397,40 @@ opt-in, exact-thread scoped consent with both acknowledgements, explicit empty
 canonical-page guidance, revoke disabling refresh and global recording off. It
 did not claim an empty original conversation or saved canonical text. See
 [the canonical history contract](docs/development/conversation-history-canonical.md).
+
+`owned-native-final-summary-v1` is a separate leaf of that same SQLite writer.
+It stores only validated Native `final.summary`, tagged assistant/agent/native
+with partial coverage. The provider acquires a private dispatch-bound lease before
+its one offer and releases it in `finally`, including tool-request/failed/aborted
+offers. Global recording plus exact future task-generation consent and explicit
+unknown-secret-risk acknowledgement are required. Trusted main admission supplies
+source/profile/backend-account/auth-epoch; actual canonical Native IDs/time and
+the raw-result digest bind receipt to parsed summary. No renderer message batch,
+raw JSON envelope, automatic-host context, tool request/arguments/results, schemas
+or reasoning enter this projection. Missing actual provenance means no capture.
+The composition root re-resolves the actual task and admitted source at write;
+generation/epoch/source/consent/global recording changes invalidate old leases.
+Known-pattern exclusions retain bounded metadata without unsafe body storage or
+hashing; unfamiliar secrets can remain. Search/export share revisions/quota/FTS
+and expose provenance, without claiming full transcript or task verification.
+
+Every explicit task-history revoke disables all consent scopes for that task
+generation, including alternate admitted sources, while preserving saved content.
+It remains available when its source vanishes:
+authoritative task/family/generation/revision validation precedes persisted
+revocation of all consent scopes for that task generation. Source return cannot
+revive old consent or leases. An unavailable passive status does not manufacture
+`enabled:false`. A revoke-only IPC channel remains usable during drain; canonical
+history uses its dedicated owner before generic runtime readiness, without an
+old Web gate. History failure cannot fail or replay the Native turn. These are
+source/fixture contracts, with no real Native history or actual UI evidence yet.
+Both TypeScript projects passed at 18:16 UTC, renderer (195 modules) at 18:17,
+and plain development CLI (635 modules/exact `.9`) passed with temporary output
+removed. Module-map write/documented-path checks passed; final map check remains
+separate. No new commit/CI result is implied.
+See [design](docs/design/owned-native-final-history.md) and
+[focused evidence](docs/reviews/2026-10-18-owned-native-final-history.md).
+
 
 **Project files:** `local-workspace.cjs` is distinct from ChatGPT browser workspace
 windows. Main captures the picker and private registry path; IPC accepts opaque

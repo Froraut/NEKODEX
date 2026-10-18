@@ -1051,7 +1051,8 @@ function registerIpc({ logger, stateStore }) {
     requestHistory: async body => {
       const supervisor = runtimeHost.supervisor;
       const config = supervisor.readConfig();
-      if (!await supervisor.ownedRuntimeReady(config)) throw new Error('Start the current NEKODEX runtime to record selected native history');
+      const allowDraining = body.action === 'canonical-status' || body.action === 'canonical-consent' && body.enabled === false;
+      if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to record selected native history');
       const receipt = await supervisor.control(config, 'conversation-history', { body });
       if (!receipt || receipt.ok !== true) throw new Error('Selected native history operation failed');
       return receipt.value;
