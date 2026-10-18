@@ -2,6 +2,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdir
 import { isAbsolute, join, relative, sep } from "node:path";
 import { homedir } from "node:os";
 import { sha256 } from "./config";
+import type { SkillPackageManifest, SkillResourceText } from "./skill-resources";
 
 export interface SkillRootGrant {
   id: string;
@@ -11,7 +12,13 @@ export interface SkillRootGrant {
   label: string;
 }
 export interface SkillIdentity { id: string; grantId: string; relativePath: string; source: SkillRootGrant["source"]; digest: string; bytes: number }
-export interface SelectedSkill extends SkillIdentity { content: string; role: "selected-skill-instructions"; precedence: "below-system-developer-user" }
+export interface SelectedSkill extends SkillIdentity {
+  content: string; role: "selected-skill-instructions"; precedence: "below-system-developer-user";
+  /** Explicit bounded source material. No file path here grants execution or new authority. */
+  packageDigest?: string;
+  resources?: SkillResourceText[];
+  unsupportedResources?: readonly string[];
+}
 function inside(root: string, path: string): boolean {
   const rel = relative(root, path); return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
@@ -80,6 +87,8 @@ export interface LocalSkillSourceManifest {
   root: { path: string; dev: string; ino: string };
   file: { path: string; dev: string; ino: string; size: number; mtimeNs: string; ctimeNs: string };
   locator: string;
+  /** Optional selected package; legacy text-only source manifests remain valid. */
+  package?: SkillPackageManifest;
 }
 /** Explicit text import only. Plugin distributions/resources stay with their installation owner. */
 export function snapshotLocalSkillSource(grant: SkillRootGrant, identity: SkillIdentity): { manifest: LocalSkillSourceManifest; content: string } {

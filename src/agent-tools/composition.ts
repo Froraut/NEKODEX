@@ -285,6 +285,12 @@ export class AgentToolsComposition {
     const grant = this.skillRoots.find(row => row.id === identity.grantId); if (!grant) throw new Error("Skill source root is not currently granted");
     return this.managedSkills().review(actionId, grant, identity, label, updateLineageId);
   }
+  reviewSkillPackageImport(actionId: string, selection: { identity: SkillIdentity; resources: string[] }, label: string, updateLineageId: string | undefined, explicitUserAction: boolean) {
+    if (!explicitUserAction || this.closing) throw new Error("Explicit managed skill package source review required");
+    const grant = this.skillRoots.find(row => row.id === selection.identity.grantId);
+    if (!grant) throw new Error("Skill source root is not currently granted");
+    return this.managedSkills().reviewPackage(actionId, grant, selection, label, updateLineageId);
+  }
   commitSkillImport(actionId: string, reviewDigest: string, explicitUserAction: boolean) {
     if (!explicitUserAction || this.closing) throw new Error("Explicit reviewed managed skill import approval required");
     const store = this.managedSkills(); const action = store.action(actionId); if (!action) throw new Error("Managed skill review receipt missing");

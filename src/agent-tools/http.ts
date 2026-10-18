@@ -36,6 +36,7 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("removeSkillRoot"), grantId: z.string().min(1).max(80), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("skillsSelect"), scope, identity, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("reviewSkillImport"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/), identity, label: z.string().trim().min(1).max(200), updateLineageId: z.string().regex(/^[a-f0-9]{64}$/).optional(), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("reviewSkillPackageImport"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/), selection: z.object({ identity, resources: z.array(z.string().min(1).max(4096)).max(16) }).strict(), label: z.string().trim().min(1).max(200), updateLineageId: z.string().regex(/^[a-f0-9]{64}$/).optional(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("commitSkillImport"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/), reviewDigest: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("managedSkillAction"), actionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/) }).strict(),
   z.object({ action: z.literal("attachManagedSkill"), scope, versionId: z.string().regex(/^[a-f0-9]{64}$/), explicitUserAction: z.literal(true) }).strict(),
@@ -81,6 +82,7 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "removeSkillRoot": value = composition.removeSkillRoot(body.grantId, body.explicitUserAction); break;
         case "skillsSelect": value = composition.selectSkill(body.scope, body.identity, body.explicitUserAction); break;
         case "reviewSkillImport": value = composition.reviewSkillImport(body.actionId, body.identity, body.label, body.updateLineageId, body.explicitUserAction); break;
+        case "reviewSkillPackageImport": value = composition.reviewSkillPackageImport(body.actionId, body.selection, body.label, body.updateLineageId, body.explicitUserAction); break;
         case "commitSkillImport": value = composition.commitSkillImport(body.actionId, body.reviewDigest, body.explicitUserAction); break;
         case "managedSkillAction": value = composition.managedSkillAction(body.actionId) ?? null; break;
         case "attachManagedSkill": value = composition.attachManagedSkill(body.scope, body.versionId, body.explicitUserAction); break;

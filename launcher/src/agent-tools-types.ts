@@ -22,10 +22,21 @@ export interface ManagedInstallReceipt {
 export interface ManagedSkillVersionView {
   versionId: string; lineageId: string; label: string; contentDigest: string; bytes: number;
   manifestDigest: string; sourceLocator: string; createdAt: number; revoked: boolean; forgotten: boolean;
+  packageDigest?: string;
+  resourceCount?: number;
+}
+export interface ManagedSkillResourceView {
+  relativePath: string;
+  mediaType: 'text/markdown' | 'text/plain' | 'application/json' | 'text/csv';
+  digest: string;
+  bytes: number;
+  content: string;
+  role?: 'selected-skill-source-material';
 }
 export interface ManagedSkillReviewView {
   action: { actionId: string; state: string; versionId: string; lineageId: string; label: string; reviewDigest: string; manifestDigest: string; manifest: unknown };
   content?: string;
+  resources?: ManagedSkillResourceView[];
 }
 export interface AgentToolsStatus {
   config: { version: 1; enabled: boolean; servers: ServerRecipe[] };

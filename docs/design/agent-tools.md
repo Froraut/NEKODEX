@@ -320,11 +320,20 @@ installation and preserving local adaptations remain with their existing owner.
 `ManagedSkillStore` in `src/agent-tools/managed-skills.ts` owns a separate private
 `managed-skills/metadata.sqlite` and version directories. It does not change the
 existing read-only root grants, source files, Codex skills, plugin distributions
-or account/client registries. Only explicitly selected local user/workspace
-SKILL.md text is supported. Official/vendor source tags and canonical resolved
+or account/client registries. Explicitly selected local user/workspace
+SKILL.md text and bounded selected text resources are supported. Official/vendor source tags and canonical resolved
 ancestry under the effective/default Codex plugin roots are rejected before
 reading import content. This is not a plugin installer, official distribution
-replacement, folder/resource importer or background source watcher.
+replacement, whole-folder importer or background source watcher.
+
+The [selected resource contract](standalone-skills-resources.md) adds an explicit
+`reviewSkillPackageImport` action to the same composition/HTTP/guarded IPC owner.
+The renderer supplies selected relative paths under `references/` or `assets/`,
+then previews every file and digest before the existing separate commit. Only
+UTF-8 `.md/.txt/.json/.csv` is admitted, up to 16 files, 32 KiB each and 128 KiB
+including SKILL.md. Import never automatically attaches or executes resources.
+The existing `selectedSkillContent` packet includes package digest and text
+resources with source-material role, with no absolute source paths.
 
 The review captures canonical root/file path and device/inode identities, file
 timestamps, bounded UTF-8 bytes (including a preserved BOM), content SHA-256 and
