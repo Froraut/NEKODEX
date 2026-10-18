@@ -59,10 +59,11 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   agentWorkspaceRoots: () => ipcRenderer.invoke('launcher:agent-workspace-roots'),
   agentWorkspaceGrants: () => ipcRenderer.invoke('launcher:agent-workspace-grants'),
   revokeAgentWorkspaceGrant: grantId => ipcRenderer.invoke('launcher:agent-workspace-revoke', grantId),
-  agentTools: body => ipcRenderer.invoke(body?.explicitUserAction === true && ['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools'].includes(body?.action)
-    ? 'launcher:agent-tools-revoke' : body?.action === 'remoteStatus' ? 'launcher:agent-tools-observe' : 'launcher:agent-tools', body),
+  agentTools: body => ipcRenderer.invoke(body?.explicitUserAction === true && ['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body?.action)
+    ? 'launcher:agent-tools-revoke' : ['remoteStatus', 'scriptStatus'].includes(body?.action) ? 'launcher:agent-tools-observe' : 'launcher:agent-tools', body),
   pickAgentSkillRoot: () => ipcRenderer.invoke('launcher:agent-tools-pick-skill-root'),
   pickAgentToolsInstallRoot: () => ipcRenderer.invoke('launcher:agent-tools-pick-install-root'),
+  pickAgentScriptWorkspace: () => ipcRenderer.invoke('launcher:agent-tools-pick-script-workspace'),
   browserCompanion: body => ipcRenderer.invoke('launcher:browser-companion', body),
   copyBrowserPairing: text => ipcRenderer.invoke('launcher:browser-companion-copy', text),
   localControlApiRequest: body => ipcRenderer.invoke('launcher:local-control-api', body),

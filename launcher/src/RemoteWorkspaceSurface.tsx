@@ -8,7 +8,7 @@ import RemoteWorktreeControls from './RemoteWorktreeControls';
 const copy = {
   en: { title: 'Remote workspace', subtitle: 'Browse and edit a selected SSH folder with SFTP, then explicitly review any remote command.',
     hosts: 'SSH hosts', add: 'Add host', label: 'Name', hostname: 'Hostname or IP', user: 'SSH user', port: 'Port', root: 'Absolute POSIX folder',
-    host: 'Selected host', connect: 'Connect', disconnect: 'Disconnect', forget: 'Remove host', security: 'Uses system OpenSSH, an existing SSH agent/key and known_hosts. Unknown or changed host keys are rejected. No password is saved. SSH config aliases and proxy commands are not loaded.',
+    host: 'Selected host', connect: 'Connect', disconnect: 'Disconnect', forget: 'Remove host', security: 'Uses system OpenSSH, an existing SSH agent/key and known_hosts. Unknown or changed host keys are rejected. No password is saved. Optional aliases read a bounded Host subset from ~/.ssh/config only when you connect: HostName, User, Port, IdentityFile, IdentitiesOnly and HostKeyAlias. Include, Match, proxy commands and other directives are unsupported. Changes require reconnection and fresh command approval.',
     files: 'Files', refresh: 'Refresh', up: 'Parent folder', path: 'Relative file path', open: 'Open file', save: 'Save remote file', draft: 'Retain draft locally',
     empty: 'Add a host, select it and connect. Connections start only when you choose Connect.', changed: 'Unsaved draft', retained: 'Draft retained locally', saved: 'Saved and read back from the remote host',
     binary: 'This binary file cannot be edited here.', missing: 'Saving creates a new file in this remote folder.', conflict: 'The remote version changed. Your draft is retained. Read the current version and deliberately choose a new baseline.',
@@ -21,7 +21,7 @@ const copy = {
   },
   ru: { title: 'Удалённая рабочая область', subtitle: 'Открывайте и редактируйте выбранную папку SSH через SFTP. Каждая команда запускается после отдельного просмотра.',
     hosts: 'Серверы SSH', add: 'Добавить сервер', label: 'Название', hostname: 'Имя сервера или IP', user: 'Пользователь SSH', port: 'Порт', root: 'Абсолютный путь POSIX',
-    host: 'Выбранный сервер', connect: 'Подключиться', disconnect: 'Отключиться', forget: 'Убрать сервер', security: 'Используются системный OpenSSH, существующий агент/ключ SSH и known_hosts. Неизвестные и изменившиеся ключи отклоняются. Пароль не сохраняется. Псевдонимы и прокси-команды SSH config не загружаются.',
+    host: 'Выбранный сервер', connect: 'Подключиться', disconnect: 'Отключиться', forget: 'Убрать сервер', security: 'Используются системный OpenSSH, существующий агент/ключ SSH и known_hosts. Неизвестные и изменившиеся ключи отклоняются. Пароль не сохраняется. Псевдоним читает ограниченный Host-блок ~/.ssh/config только при подключении: HostName, User, Port, IdentityFile, IdentitiesOnly и HostKeyAlias. Include, Match, прокси-команды и другие директивы не поддерживаются. После изменения нужны переподключение и новое подтверждение команды.',
     files: 'Файлы', refresh: 'Обновить', up: 'Родительская папка', path: 'Относительный путь файла', open: 'Открыть файл', save: 'Сохранить на сервере', draft: 'Сохранить черновик локально',
     empty: 'Добавьте сервер, выберите его и подключитесь. Подключение начинается только по кнопке «Подключиться».', changed: 'Есть несохранённый черновик', retained: 'Черновик сохранён локально', saved: 'Файл сохранён и прочитан с сервера',
     binary: 'Двоичный файл нельзя редактировать здесь.', missing: 'Сохранение создаст новый файл внутри этой папки.', conflict: 'Версия на сервере изменилась. Черновик сохранён. Прочитайте текущую версию и явно выберите новую основу сохранения.',
@@ -94,20 +94,21 @@ export default function RemoteWorkspaceSurface({ language, api }: { language: La
   return <Page><SurfaceHeader title={c.title} subtitle={c.subtitle} />
     {error && <Notice tone="error">{error}</Notice>}{note && <p role="status">{note}</p>}
     <Panel title={c.hosts}><p>{c.security}</p><div className="nk-remote__host-form">
+      <Select label={language === 'ru' ? 'Способ подключения' : 'Connection mode'} value={form.connectionMode ?? 'direct'} disabled={busy} options={[{ value: 'direct', label: language === 'ru' ? 'Явный сервер, пользователь и порт' : 'Explicit host, user and port' }, { value: 'ssh-config-alias', label: language === 'ru' ? 'Псевдоним Host из SSH config' : 'SSH config Host alias' }]} onChange={value => setForm({ ...form, connectionMode: value as 'direct' | 'ssh-config-alias', username: '', port: value === 'ssh-config-alias' ? null : 22 })} />
       <TextField label={c.label} value={form.label} disabled={busy} onChange={e => setForm({ ...form, label: e.target.value })} />
-      <TextField label={c.hostname} value={form.hostname} disabled={busy} onChange={e => setForm({ ...form, hostname: e.target.value })} />
-      <TextField label={c.user} value={form.username} disabled={busy} onChange={e => setForm({ ...form, username: e.target.value })} />
-      <TextField label={c.port} type="number" min={1} max={65535} value={form.port} disabled={busy} onChange={e => setForm({ ...form, port: Number(e.target.value) })} />
+      <TextField label={form.connectionMode === 'ssh-config-alias' ? (language === 'ru' ? 'Псевдоним Host' : 'Host alias') : c.hostname} value={form.hostname} disabled={busy} onChange={e => setForm({ ...form, hostname: e.target.value })} />
+      <TextField label={c.user} value={form.username} placeholder={form.connectionMode === 'ssh-config-alias' ? (language === 'ru' ? 'Из config; иначе текущий пользователь' : 'From config; otherwise current user') : ''} disabled={busy} onChange={e => setForm({ ...form, username: e.target.value })} />
+      <TextField label={c.port} type="number" min={1} max={65535} value={form.port ?? ''} placeholder={form.connectionMode === 'ssh-config-alias' ? 'SSH config / 22' : ''} disabled={busy} onChange={e => setForm({ ...form, port: e.target.value === '' && form.connectionMode === 'ssh-config-alias' ? null : Number(e.target.value) })} />
       <TextField label={c.root} value={form.root} placeholder="/home/user/project" disabled={busy} onChange={e => setForm({ ...form, root: e.target.value })} />
-      <Button disabled={busy || !form.label || !form.hostname || !form.username || !form.root} onClick={() => void act(async () => {
+      <Button disabled={busy || !form.label || !form.hostname || !form.root || form.connectionMode !== 'ssh-config-alias' && (!form.username || form.port === null)} onClick={() => void act(async () => {
         await keepCurrent(); const row = await api.remoteWorkspaceAddHost(form); await refreshHosts(); setForm(initialHost); setSelected(row.id); selection.current = row.id; editorDraft.current = null; setPreview(null); setText(''); setDirty(false); setFilePath(''); setListing(null); setOutput(null); setApproval(null); setNote(c.savedHosts); await refreshHost(row.id);
       })}>{c.add}</Button>
     </div>
-      <div className="nk-remote__actions"><Select label={c.host} value={selected} disabled={busy} options={[{ value: '', label: '—' }, ...hosts.map(h => ({ value: h.id, label: `${h.label} · ${h.username}@${h.hostname}:${h.port}` }))]} onChange={value => void choose(value)} />
+      <div className="nk-remote__actions"><Select label={c.host} value={selected} disabled={busy} options={[{ value: '', label: '—' }, ...hosts.map(h => ({ value: h.id, label: `${h.label} · ${h.sshAlias ? `${h.sshAlias} → ` : ''}${h.username || 'SSH config'}@${h.hostname}:${h.port ?? 'SSH config'}` }))]} onChange={value => void choose(value)} />
         <Button disabled={busy || !host || connected} onClick={() => void act(async () => { await api.remoteWorkspaceConnect(selected); await refreshHosts(); await loadDirectory(selected, ''); await refreshHost(selected); })}>{c.connect}</Button>
         <Button disabled={busy || !connected} onClick={() => void act(async () => { await keepCurrent(); await api.remoteWorkspaceDisconnect(selected); setListing(null); setApproval(null); })}>{c.disconnect}</Button>
         <Button disabled={busy || !host || drafts.length > 0} onClick={() => void act(async () => { await keepCurrent(); await api.remoteWorkspaceForgetHost(selected); setSelected(''); selection.current = ''; setPreview(null); editorDraft.current = null; setListing(null); setReceipts([]); })}>{c.forget}</Button>
-      </div>{host && <p><code>{host.username}@{host.hostname}:{host.port}{host.canonicalRoot ?? host.root}</code></p>}
+      </div>{host && <p><code>{host.sshAlias ? `${host.sshAlias} → ` : ''}{host.username || 'SSH config'}@{host.hostname}:{host.port ?? 'SSH config'}{host.canonicalRoot ?? host.root}</code>{host.sshAlias && !host.aliasResolved ? (language === 'ru' ? ' · цель ещё не определена: подключитесь явно' : ' · destination unresolved: connect explicitly') : null}</p>}
       {!host && <p>{c.empty}</p>}
     </Panel>
     {host && <><div className="nk-remote__columns"><Panel title={c.files}>

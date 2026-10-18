@@ -181,7 +181,7 @@ export class ManagedSkillStore {
     const { version, action, packet } = this.retainedVersion(versionId);
     const resources = skillResourceDescriptors(packet.resources);
     return { id: `managed:${versionId}`, grantId: `managed:${version.lineageId}`, relativePath: `${versionId}/SKILL.md`, source: "user", digest: version.contentDigest, bytes: version.bytes, versionId,
-      ...(packet.resources.some(resource => resource.kind === "image") ? { promptBytes: selectedSkillPromptBytes(action.manifest.identity.bytes, resources) } : {}),
+      ...(packet.resources.some(resource => resource.kind === "image" || resource.kind === "script") ? { promptBytes: selectedSkillPromptBytes(action.manifest.identity.bytes, resources) } : {}),
       content: packet.content, role: "selected-skill-instructions", precedence: "below-system-developer-user",
       ...(action.manifest.package ? { packageDigest: action.manifest.package.packageDigest, resources, unsupportedResources: UNSUPPORTED_SKILL_RESOURCES } : {}) };
   }

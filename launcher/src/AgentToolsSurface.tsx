@@ -6,6 +6,7 @@ import { stripIpcErrorPrefix } from './ipc-error';
 import './surfaces/agent-tools.css';
 import { AgentToolsInstaller } from './AgentToolsInstaller';
 import { AgentManagedSkills } from './AgentManagedSkills';
+import { AgentSkillScripts } from './AgentSkillScripts';
 import { AgentBrowserTools } from './AgentBrowserTools';
 import { AgentDesktopTools } from './AgentDesktopTools';
 import { AgentRemoteTools } from './AgentRemoteTools';
@@ -52,14 +53,15 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
   const remoteEnabledForTask = !!remoteScope && !!remoteStatus?.bindings.some(row => row.taskId === remoteScope.taskId && row.familyId === remoteScope.familyId && row.generation === remoteScope.generation);
   const resourceEnabledForTask = status?.capabilities.skillResourceReads === true && !!selectedTask && !!status.managedSkills?.attachments.some(attachment => attachment.scope.taskId === selectedTask.id && attachment.scope.generation === selectedTask.generation
     && attachment.versionIds.some(versionId => status.managedSkills?.versions.some(version => version.versionId === versionId && !version.revoked && !version.forgotten && (version.resourceCount ?? 0) > 0)));
-  const discoveryEnabled = status?.config.enabled || browserEnabledForTask || desktopEnabledForTask || remoteEnabledForTask || resourceEnabledForTask;
+  const scriptsEnabledForTask = status?.capabilities.skillScripts === true && !!selectedTask && status?.scriptTools?.grants.some(grant => grant.taskId === selectedTask.id && grant.generation === selectedTask.generation);
+  const discoveryEnabled = status?.config.enabled || browserEnabledForTask || desktopEnabledForTask || remoteEnabledForTask || resourceEnabledForTask || scriptsEnabledForTask;
   const callPrefix = selectedCall?.tool.split('/')[0];
   const configuredCallServer = status?.config.servers.find(server => server.id === callPrefix);
   // Existing user MCP namespaces win over built-ins, including remote/ and skill-resource/.
   const selectedCallEnabled = !!selectedCall && (configuredCallServer ? status?.config.enabled && configuredCallServer.enabled
     : callPrefix === 'browser' ? browserEnabledForTask : callPrefix === 'desktop' ? desktopEnabledForTask
-      : callPrefix === 'remote' ? remoteEnabledForTask : callPrefix === 'skill-resource' ? resourceEnabledForTask : status?.config.enabled);
-  const isInspectionOnlyReceipt = (tool: string) => ['browser/', 'desktop/', 'remote/', 'skill-resource/'].some(prefix => tool.startsWith(prefix))
+      : callPrefix === 'remote' ? remoteEnabledForTask : callPrefix === 'skill-resource' ? resourceEnabledForTask : callPrefix === 'skill-script' ? scriptsEnabledForTask : status?.config.enabled);
+  const isInspectionOnlyReceipt = (tool: string) => ['browser/', 'desktop/', 'remote/', 'skill-resource/', 'skill-script/'].some(prefix => tool.startsWith(prefix))
     && !status?.config.servers.some(server => tool.startsWith(`${server.id}/`));
   const scope = (toolCallId = `discovery:${taskId}`): ToolScope => { if (!selectedTask) throw new Error(choose('Select an owned Agent task.', 'Выберите существующую Agent-задачу.')); return { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId }; };
   const refreshRemote = async () => {
@@ -121,7 +123,7 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
       {result ? <div aria-live="polite"><Badge tone={result.state === 'completed' ? 'success' : 'warning'}>{result.state}</Badge><AgentToolOutcomeView outcome={result} choose={choose} />{result.state === 'outcome_unknown' ? <Notice tone="warning">{choose('The effect may already have occurred. The retained receipt blocks automatic replay.', 'Действие могло уже произойти. Сохранённая квитанция блокирует автоматический повтор.')}</Notice> : null}</div> : null}
       <TextField label={choose('Retained receipt key', 'Ключ сохранённой квитанции')} value={receiptKey} onChange={event => { setReceiptKey(event.target.value); setEvidenceReference(null); }} />
       <Button disabled={locked || !receiptKey} onClick={() => void act(async () => { const receipt = await transport.current.request({ action: 'receipt', idempotencyKey: receiptKey }) as ToolOutcome | null; if (mounted.current) setResult(receipt); })}>{choose('Inspect saved receipt', 'Посмотреть сохранённую квитанцию')}</Button>
-      {result && isInspectionOnlyReceipt(result.tool) ? <p className="agent-tools-muted">{choose('Browser, desktop, remote and skill-resource receipts are available for execution inspection and reconciliation. Attaching them as task outcome evidence is unsupported here; application acceptance needs a separate trusted observer.', 'Квитанции браузера, рабочего стола, удалённого исполнения и чтения skill-ресурсов доступны для просмотра и сверки исполнения. Их прикрепление как доказательства результата задачи здесь не поддерживается; результат в приложении требует отдельного доверенного наблюдения.')}</p> : null}
+      {result && isInspectionOnlyReceipt(result.tool) ? <p className="agent-tools-muted">{choose('Browser, desktop, remote, skill-resource and skill-script receipts are available for execution inspection and reconciliation. Attaching them as task outcome evidence is unsupported here; application acceptance needs a separate trusted observer.', 'Квитанции браузера, рабочего стола, удалённого исполнения, чтения skill-ресурсов и исполнения skill-скриптов доступны для просмотра и сверки исполнения. Их прикрепление как доказательства результата задачи здесь не поддерживается; результат в приложении требует отдельного доверенного наблюдения.')}</p> : null}
       <TextField label={choose('Explicit terminal-result requirement ID', 'ID явного требования к terminal result')} value={requirementId} onChange={event => { setRequirementId(event.target.value); setEvidenceReference(null); }} />
       <Button disabled={locked || !result || result.state === 'outcome_unknown' || !requirementId || isInspectionOnlyReceipt(result.tool)} onClick={() => void act(async () => { const reference = await transport.current.request({ action: 'terminalReference', idempotencyKey: result!.idempotencyKey, requirementId }) as typeof evidenceReference; if (mounted.current) setEvidenceReference(reference); })}>{choose('Inspect exact terminal evidence reference', 'Посмотреть точную ссылку на terminal evidence')}</Button>
       {evidenceReference ? <div><pre>{JSON.stringify(evidenceReference, null, 2)}</pre><p>{choose('This proves only the immutable protocol result. To request this exact historical observation, the current task requirement must explicitly be:', 'Это доказывает только неизменяемый результат протокола. Для наблюдения этой исторической квитанции текущее требование задачи должно явно содержать:')}</p><pre>{`Observe the terminal MCP tool result for ${evidenceReference.subject}; property mcp.tool-terminal-result.`}</pre><Button disabled={locked || !selectedTask || !api.attachEvidence} onClick={() => void act(async () => { await transport.current.attachEvidence!(selectedTask!.id, evidenceReference); await refresh(); })}>{choose('Attach observed terminal evidence', 'Приложить наблюдение terminal result')}</Button></div> : null}
@@ -135,6 +137,7 @@ export function AgentToolsSurface({ api, language, disabled = false }: { api: Ag
     <AgentBrowserTools api={api} status={status} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'browser-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
     <AgentDesktopTools api={api} desktop={status?.desktopTools} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'desktop-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
     <AgentRemoteTools api={api} remote={remoteStatus} scope={remoteScope} locked={locked} choose={choose} act={act} refresh={refreshRemote} />
+    <AgentSkillScripts api={api} status={status} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'script-workspace-selection' } : undefined} locked={locked} choose={choose} act={act} onChanged={refresh} />
     <AgentManagedSkills api={api} status={status} sources={skills} scope={selectedTask ? { taskId: selectedTask.id, generation: selectedTask.generation, toolCallId: 'managed-skill-selection' } : undefined} locked={locked} choose={choose} act={act} refresh={refresh} />
   </Page>;
 }

@@ -629,6 +629,7 @@ export interface LauncherApi extends NativeThreadsApi, WorkspaceTerminalApi, Rem
   agentTools: AgentToolsApi['request'];
   pickAgentSkillRoot: AgentToolsApi['pickSkillRoot'];
   pickAgentToolsInstallRoot(): Promise<{ cancelled: boolean; root?: string }>;
+  pickAgentScriptWorkspace(): Promise<{ cancelled: boolean; root?: string }>;
   browserCompanion: BrowserCompanionApi['request'];
   copyBrowserPairing: NonNullable<BrowserCompanionApi['copyPairing']>;
   localControlApiRequest: LocalControlApiAdminApi['request'];

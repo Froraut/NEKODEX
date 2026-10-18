@@ -652,9 +652,31 @@ actualHTTP/runtime/ToolJournal/fakeNative1/62 and actualChromeDOM1/31 passed.
 The DOM flow imported one valid chart/unattached and blocked a structurally/hash
 valid unknown-critical-chunk PNG after decode failure; header/CRC validation is
 not a full-codec guarantee. BothTS/renderer19619:39,CLI644exact `.9`19:41 and
-map731/finalcheck/paths passed; source commit/CI remain pending. Official/vendor copies, scripts/PDF/other binaries/network
-remain unsupported. See [contract](docs/design/standalone-skills-resources.md)
+map731/finalcheck/paths passed; source commit/CI remain pending. Official/vendor copies, PDF/other binaries/network remain unsupported; selected
+restricted JS/MJS execution is described below. See [contract](docs/design/standalone-skills-resources.md)
 and [evidence](docs/reviews/2026-10-18-skill-image-resources.md).
+
+**Restricted skill scripts and SSH aliases:** v3 selected JS/MJS packages retain
+v1/v2 identity compatibility and send metadata only. Separate task-generation
+workspace grants plus existing ToolJournal per-run approval feed a trusted pinned
+Bun bootstrap/supervisor. sandbox_init precedes import; fork/exec/network operations
+are denied with scoped FS and disclosed global metadata/system-library reads.
+Readable mutable data can be interpreted; immutable entry is not all-code-origin
+proof. PID/start/permit persistence,15s/16KiB output/2live/256retained bounds and
+reaping preserve unknown/no replay. Fresh-instance live-owner restart/close P1 is fixed through bounded256 receipt
+scan/status/admission/close holds; pinnedBun1.4.0 executor3/39 passed, keeping
+original effect unknown after physical cleanup. Peer closure review closed P1 with no additional material findings. Store101/provider83,
+real macOS HTTP/runtime/ToolJournal/script61 (fakeNative), ChromeDOM58 (executor0)
+and IPC10 passed; pinnedkernel3/39 passed, peerP1closed/noadditionalfindings; bothTS20:02/renderer197/CLI648exact9 passed20:04, finalmapcheck/commitCI pending.
+
+SSH explicit Host aliases now resolve a bounded data-only user-config subset at
+Connect, preserving old direct argv/fingerprints. Unsupported active directives
+refuse; compiled options still use -F /dev/null/BatchMode/strict host keys. Resolved
+config/key metadata drift fences old approvals/attachments and requires reconnect.
+Fixture44/peer no findings do not prove actual SSH authentication/UI. See
+[script contract](docs/design/restricted-skill-scripts.md),
+[SSH contract](docs/design/remote-ssh-config.md) and
+[evidence](docs/reviews/2026-10-18-restricted-skill-scripts-and-ssh-aliases.md).
 
 **Additional surfaces:** standalone MCP host and read-only skill library are
 composed lazily in the daemon, with guarded main IPC and mounted UI. Only explicitly

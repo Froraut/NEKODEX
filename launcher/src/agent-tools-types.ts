@@ -10,6 +10,7 @@ export type { ServerRecipe, ToolDescriptor, ToolScope, ToolOutcome, SkillIdentit
 export interface AgentToolsApi {
   request(body: Record<string, unknown>): Promise<unknown>;
   pickSkillRoot(): Promise<{ cancelled: boolean; grant?: SkillRootGrant }>;
+  pickScriptWorkspace?(): Promise<{ cancelled: boolean; root?: string }>;
   pickInstallRoot?(): Promise<{ cancelled: boolean; root?: string }>;
   /** Exact private pending calls come from the owned Agent-mode store through its guarded API. */
   listTasks(): Promise<{ tasks: { id: string; generation: number; status: string }[] }>;
@@ -41,11 +42,26 @@ export interface ManagedSkillImageResourceView {
   digest: string; bytes: number; width: number; height: number; data: string;
   role?: 'selected-skill-source-material';
 }
-export type ManagedSkillResourceView = ManagedSkillTextResourceView | ManagedSkillImageResourceView;
+export interface ManagedSkillScriptResourceView {
+  kind: 'script'; relativePath: string; mediaType: 'text/javascript';
+  digest: string; bytes: number; content: string;
+  role?: 'selected-skill-source-material';
+}
+export type ManagedSkillResourceView = ManagedSkillTextResourceView | ManagedSkillImageResourceView | ManagedSkillScriptResourceView;
 export interface ManagedSkillReviewView {
   action: { actionId: string; state: string; versionId: string; lineageId: string; label: string; reviewDigest: string; manifestDigest: string; manifest: unknown };
   content?: string;
   resources?: ManagedSkillResourceView[];
+}
+export interface AgentSkillScriptWorkspaceGrant {
+  id: string; taskId: string; generation: number; root: string; dev: string; ino: string;
+  access: 'read-only' | 'read-write';
+}
+export interface AgentSkillScriptsStatus {
+  closed: boolean;
+  capabilities: { supported: boolean; [key: string]: unknown };
+  grants: AgentSkillScriptWorkspaceGrant[];
+  activeOperations: { operationId: string; workspaceGrantId: string; taskId: string; generation: number }[];
 }
 export interface AgentToolsStatus {
   config: { version: 1; enabled: boolean; servers: ServerRecipe[] };
@@ -54,7 +70,7 @@ export interface AgentToolsStatus {
   descriptors: ToolDescriptor[];
   skillRoots: SkillRootGrant[];
   selections: { scope: ToolScope; skills: SkillIdentity[] }[];
-  capabilities: { stdio: boolean; install: boolean; oauth: boolean; secrets: boolean; nativeSandbox: boolean; mcpSandboxAvailable?: boolean; skillWrites: boolean; managedSkillImports?: boolean; skillResourceReads?: boolean; pendingToolCalls: boolean };
+  capabilities: { stdio: boolean; install: boolean; oauth: boolean; secrets: boolean; nativeSandbox: boolean; mcpSandboxAvailable?: boolean; skillWrites: boolean; managedSkillImports?: boolean; skillResourceReads?: boolean; skillScripts?: boolean; pendingToolCalls: boolean };
   installCatalog: { id: string; label: string; package: string; version: string; integrity: string; source: string; capabilities: string }[];
   installations: { rows: { actionId: string; catalogId: string; state: string; allowedRoot: string; graphSha256?: string; childPid?: number }[]; truncated: boolean };
   serverConfigDigests: Record<string, string>;
@@ -62,4 +78,5 @@ export interface AgentToolsStatus {
   browserTools?: { providerId: string; available: boolean; selected: BrowserBinding | null; bound: boolean; reason: string | null; bindings: { taskId: string; generation: number; binding: BrowserBinding; observed: boolean; active: boolean }[] } | null;
   desktopTools?: AgentDesktopStatus | null;
   remoteTools?: RemoteAgentStatus | null;
+  scriptTools?: AgentSkillScriptsStatus | null;
 }

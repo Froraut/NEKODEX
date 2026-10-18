@@ -20,6 +20,8 @@ import { ManagedMcpInstaller, OFFICIAL_MCP_CATALOG } from "./installer";
 import { reviewTrustedSandboxConfig, sandboxProviderAvailable } from "./sandbox";
 import { ManagedSkillStore } from "./managed-skills";
 import { createSkillResourceToolsProvider, type AttachedSkillResource } from "./skill-resource-tools";
+import { SkillScriptExecutor } from "./skill-script-executor";
+import { createSkillScriptToolsProvider, type SkillScriptExecutorPort, type SkillScriptToolsProvider } from "./skill-script-tools";
 
 export interface AgentToolsCompositionOptions {
   home: string;
@@ -36,6 +38,27 @@ export interface AgentToolsCompositionOptions {
   remoteTools?: AgentRemoteToolsProvider;
   /** Other trusted pure executors (for example an independently configured desktop provider). */
   builtins?: readonly StandaloneBuiltinToolsProvider[];
+  /** Trusted test/platform port; never supplied through HTTP or model arguments. */
+  scriptExecutor?: SkillScriptExecutorPort;
+}
+/** Passive lazy binding to the already owned plain Bun runtime, with no fallback interpreter. */
+function ownedScriptExecutor(home: string): SkillScriptExecutorPort {
+  let executor: SkillScriptExecutor | undefined;
+  const get = () => {
+    if (!executor) {
+      const command = realpathSync(process.execPath);
+      if (process.platform !== "darwin" || !/^bun(?:\.exe)?$/.test(basename(command))) throw new Error("Restricted skill script runtime is unavailable");
+      executor = new SkillScriptExecutor({ bunPath: command, bunSha256: pinnedFile(command, 512 * 1024 * 1024).sha256, home });
+    }
+    return executor;
+  };
+  return {
+    capabilities() { try { return get().capabilities(); } catch { return { supported: false, platform: process.platform, reason: "Restricted owned Bun runtime is unavailable" }; } },
+    execute: input => get().execute({ ...input, timeoutMs: 15_000, maxOutputBytes: 16_384 }),
+    cancel: id => executor?.cancel(id),
+    reconcile: id => { try { return get().reconcile(id); } catch { return undefined; } },
+    close: () => executor ? executor.close() : existsSync(join(home, "skill-script-runs")) ? get().close() : undefined,
+  };
 }
 const recipeInput = z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/), label: z.string().min(1).max(200), version: z.string().min(1).max(100), command: z.string().min(1).max(4096), args: z.array(z.string().max(8192)).max(128), cwd: z.string().min(1).max(4096), pinnedFiles: z.array(z.string().min(1).max(4096)).max(32), sandbox: z.boolean().optional() }).strict();
 const savedScope = z.object({ taskId: z.string().min(1).max(200), generation: z.number().int().positive(), toolCallId: z.string().min(1).max(200) }).strict();
@@ -64,6 +87,7 @@ export class AgentToolsComposition {
   private skillStatePath: string;
   private managedSkillStore?: ManagedSkillStore;
   private readonly skillResourceTools: StandaloneBuiltinToolsProvider;
+  private readonly skillScriptTools: SkillScriptToolsProvider;
   readonly installer: ManagedMcpInstaller;
   readonly toolsPort: StandaloneToolsPort;
   readonly handle: (request: Request) => Promise<Response | undefined>;
@@ -75,6 +99,12 @@ export class AgentToolsComposition {
       resources: scope => this.attachedSkillResources(scope),
       readResource: (scope, versionId, packageDigest, path, digest) => this.managedSkills().readResource(scope, versionId, packageDigest, path, digest),
     });
+    this.skillScriptTools = createSkillScriptToolsProvider({
+      isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope),
+      resources: scope => this.attachedSkillResources(scope),
+      readResource: (scope, versionId, packageDigest, path, digest) => this.managedSkills().readResource(scope, versionId, packageDigest, path, digest),
+      executor: options.scriptExecutor ?? ownedScriptExecutor(options.home), privateOwnerHome: options.home,
+    });
     this.installer = new ManagedMcpInstaller(options.home);
     const persisted = readPrivateMetadata(this.skillStatePath);
     if (persisted !== undefined) { const saved = savedSkills.parse(persisted); this.skillRoots = saved.roots; this.selections = new Map(saved.selections.map(row => [JSON.stringify([row.scope.taskId, row.scope.generation]), row])); }
@@ -82,7 +112,7 @@ export class AgentToolsComposition {
     this.toolsPort = {
       discover: (scope, opts) => this.track(async () => {
         this.scope(scope);
-        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.options.builtins?.length) return [];
+        if (!readToolsConfig(this.configPath).enabled && !this.options.browserTools && !this.options.desktopTools && !this.options.remoteTools && !this.hasSkillResourceTools() && !this.hasSkillScriptTools() && !this.options.builtins?.length) return [];
         this.descriptors = await this.getHost().discover(scope, opts); return structuredClone(this.descriptors);
       }),
       invoke: (request, opts) => this.track(() => this.getHost().invoke(request, opts)),
@@ -100,7 +130,8 @@ export class AgentToolsComposition {
       // remains unavailable until that explicit collision is resolved by its owner.
       const remote = this.options.remoteTools && !config.servers.some(server => server.id === this.options.remoteTools!.serverId) ? [this.options.remoteTools] : [];
       const resources = config.servers.some(server => server.id === this.skillResourceTools.serverId) ? [] : [this.skillResourceTools];
-      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources] });
+      const scripts = config.servers.some(server => server.id === this.skillScriptTools.serverId) ? [] : [this.skillScriptTools];
+      this.host = new StandaloneMcpHost({ config, journalPath: this.journalPath, isScopeActive: scope => !this.closing && !this.changing && this.options.canStart?.() !== false && this.options.isScopeActive(scope), builtins: [...(this.options.builtins ?? []), ...(this.options.browserTools ? [this.options.browserTools] : []), ...(this.options.desktopTools ? [this.options.desktopTools] : []), ...remote, ...resources, ...scripts] });
     }
     return this.host;
   }
@@ -108,7 +139,7 @@ export class AgentToolsComposition {
     const pending = operation(); this.pending.add(pending);
     void pending.then(() => this.pending.delete(pending), () => this.pending.delete(pending)); return pending;
   }
-  get activeCount(): number { return Math.max(this.pending.size, this.host?.pendingBuiltinCount ?? 0, this.options.desktopTools?.status().activeCount ?? 0, this.options.remoteTools?.status().activeCount ?? 0) + (this.changing ? 1 : 0) + this.installer.activeCount; }
+  get activeCount(): number { return Math.max(this.pending.size, this.host?.pendingBuiltinCount ?? 0, this.options.desktopTools?.status().activeCount ?? 0, this.options.remoteTools?.status().activeCount ?? 0, this.skillScriptTools.status().activeOperations.length) + (this.changing ? 1 : 0) + this.installer.activeCount; }
   private managedSkills() { if (this.closing) throw new Error("Managed skill store is closing"); return this.managedSkillStore ??= new ManagedSkillStore(this.options.home); }
   private managedSkillStatus() {
     if (this.managedSkillStore) return this.managedSkillStore.list();
@@ -135,6 +166,18 @@ export class AgentToolsComposition {
     const versions = new Set(state.versions.filter(version => !version.revoked && !version.forgotten && (version.resourceCount ?? 0) > 0).map(version => version.versionId));
     return state.attachments.some(packet => this.options.isScopeActive(packet.scope) && packet.versionIds.some(id => versions.has(id)));
   }
+  hasSkillScriptTools(): boolean {
+    if (this.closing || this.changing || readToolsConfig(this.configPath).servers.some(server => server.id === this.skillScriptTools.serverId)) return false;
+    return this.skillScriptTools.status().grants.some(grant => this.options.isScopeActive({ taskId: grant.taskId, generation: grant.generation, toolCallId: "script-discovery" }));
+  }
+  scriptStatus(scope?: ToolScope) { return this.skillScriptTools.status(scope); }
+  grantScriptWorkspace(scope: ToolScope, root: string, access: "read-only" | "read-write", acknowledged: boolean, explicitUserAction: boolean) {
+    if (!acknowledged || !explicitUserAction) throw new Error("Explicit restricted script workspace acknowledgement required");
+    this.scope(scope);
+    if (readToolsConfig(this.configPath).servers.some(server => server.id === this.skillScriptTools.serverId)) throw new Error("Reserved builtin script namespace is configured by an existing MCP server");
+    return this.skillScriptTools.grant(scope, { root, access }, true);
+  }
+  revokeScriptWorkspace(scope: ToolScope, grantId: string, explicitUserAction: boolean) { return this.skillScriptTools.revoke(scope, grantId, explicitUserAction); }
   status() {
     const config = readToolsConfig(this.configPath);
     return { config, runtime: this.host?.snapshot() ?? { enabled: config.enabled, servers: config.servers.map(server => ({ id: server.id, connected: false, pid: null })), sandbox: "external-server-process" },
@@ -144,7 +187,8 @@ export class AgentToolsComposition {
       browserTools: this.options.browserTools?.status() ?? null,
       desktopTools: this.options.desktopTools?.status() ?? null,
       remoteTools: this.options.remoteTools?.status() ?? null,
-      capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", skillResourceReads: process.platform !== 'win32' && !config.servers.some(server => server.id === this.skillResourceTools.serverId), pendingToolCalls: Boolean(this.options.resolveToolCall) } };
+      scriptTools: this.scriptStatus(),
+      capabilities: { stdio: process.platform !== "win32", install: process.platform !== "win32", oauth: false, secrets: false, nativeSandbox: false, mcpSandboxAvailable: sandboxProviderAvailable(), skillWrites: false, managedSkillImports: process.platform !== "win32", skillResourceReads: process.platform !== 'win32' && !config.servers.some(server => server.id === this.skillResourceTools.serverId), skillScripts: this.skillScriptTools.status().capabilities.supported && !config.servers.some(server => server.id === this.skillScriptTools.serverId), pendingToolCalls: Boolean(this.options.resolveToolCall) } };
   }
   private reviewedSandbox(input: { codeRoots: string[]; readRoots: string[]; writeRoots: string[] }, ownedReadRoots: string[] = [], ownedCodeRoots: string[] = []) {
     const contains = (root: string, path: string) => { const rel = relative(root, path); return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`)); };
@@ -262,6 +306,7 @@ export class AgentToolsComposition {
     this.options.browserTools?.invalidate(taskId);
     this.options.desktopTools?.invalidate(taskId);
     this.options.remoteTools?.invalidate(taskId);
+    this.skillScriptTools.invalidate?.(taskId);
     for (const provider of this.options.builtins ?? []) provider.invalidate?.(taskId);
   }
   private desktopControl(explicitUserAction: boolean, newWork = false) {
@@ -371,9 +416,12 @@ export class AgentToolsComposition {
   }
   detachManagedSkill(scope: ToolScope, versionId: string, explicitUserAction: boolean) {
     if (!explicitUserAction) throw new Error("Explicit managed skill detachment required"); this.scope(scope); this.managedSkills().detach(scope, versionId);
+    return this.skillScriptTools.revokePackage(versionId, scope);
   }
   revokeManagedSkill(versionId: string, forget: boolean, explicitUserAction: boolean) {
-    if (!explicitUserAction || this.closing) throw new Error("Explicit managed skill revoke/forget required"); return this.managedSkills().revoke(versionId, forget);
+    if (!explicitUserAction || this.closing) throw new Error("Explicit managed skill revoke/forget required");
+    const receipt = this.managedSkills().revoke(versionId, forget);
+    return this.skillScriptTools.revokePackage(versionId).then(() => receipt);
   }
   resolveEvidence(task: AgentTask, reference: AgentEvidenceReference) { return this.getHost().resolveTerminalEvidence(task, reference); }
   close(): Promise<void> {
@@ -382,6 +430,7 @@ export class AgentToolsComposition {
       this.closing = true;
       this.options.browserTools?.invalidate();
       this.options.desktopTools?.invalidate();
+      this.skillScriptTools.invalidate?.();
       for (const provider of this.options.builtins ?? []) provider.invalidate?.();
     }
     this.closingPromise = (async () => {
@@ -390,6 +439,7 @@ export class AgentToolsComposition {
       // Physical owners and exact remote revocations settle before their journal closes.
       await this.options.desktopTools?.close();
       await this.options.remoteTools?.close();
+      await this.skillScriptTools.close();
       await this.host?.close(); await Promise.allSettled([...this.pending]); this.host = undefined;
       this.managedSkillStore?.close(); this.managedSkillStore = undefined;
     })().catch(error => { this.closingPromise = undefined; throw error; });

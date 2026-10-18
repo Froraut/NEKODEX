@@ -36,3 +36,27 @@ test('main remote privacy control stays available with the core absent and canno
   await expect(handlers.get('launcher:agent-tools-revoke')!({}, { action: 'bindRemoteTools', explicitUserAction: true })).rejects.toThrow('only revokes');
   expect(coreReads).toBe(0);
 });
+
+test('script workspace picker grants no authority and lifecycle drain permits only observation and revocation', async () => {
+  const handlers = new Map<string, (...args: any[]) => any>();
+  const calls: any[] = [], admission = createLifecycleAdmission();
+  let readinessReads = 0;
+  registerAgentTools({ handle: (name: string, handler: any) => handlers.set(name, admission.guard(name, handler)),
+    runtimeHost: { supervisor: { readConfig: () => ({ fixture: true }),
+      ownedAgentRuntimeReady: async (_config: unknown, options: unknown) => { readinessReads++; calls.push({ readiness: options }); return true; },
+      control: async (_config: unknown, endpoint: string, packet: any) => { calls.push({ endpoint, packet }); return { ok: true, value: { retained: true } }; } } },
+    dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['/fixture/script-workspace'] }) } });
+  expect(await handlers.get('launcher:agent-tools-pick-script-workspace')!({})).toEqual({ cancelled: false, root: '/fixture/script-workspace' });
+  expect(readinessReads).toBe(0); expect(calls).toHaveLength(0);
+  const scope = { taskId: 'script-task', generation: 2, toolCallId: 'workspace-review' };
+  const transition = admission.acquire('script cleanup');
+  try {
+    expect(() => handlers.get('launcher:agent-tools')!({}, { action: 'grantScriptWorkspace', scope, root: '/fixture/script-workspace', access: 'read-write', acknowledgeRestrictions: true, explicitUserAction: true })).toThrow('Wait for');
+    expect(() => handlers.get('launcher:agent-tools-pick-script-workspace')!({})).toThrow('Wait for');
+    expect(() => handlers.get('launcher:agent-tools-revoke')!({}, { action: 'grantScriptWorkspace', explicitUserAction: true })).toThrow('only revokes');
+    expect(await handlers.get('launcher:agent-tools-observe')!({}, { action: 'scriptStatus', scope })).toEqual({ retained: true });
+    expect(await handlers.get('launcher:agent-tools-revoke')!({}, { action: 'revokeScriptWorkspace', scope, grantId: 'fixture-id', explicitUserAction: true })).toEqual({ retained: true });
+    expect(calls.filter(row => row.readiness)).toEqual([{ readiness: { allowDraining: true } }, { readiness: { allowDraining: true } }]);
+    expect(calls.filter(row => row.packet).map(row => row.packet.body.action)).toEqual(['scriptStatus', 'revokeScriptWorkspace']);
+  } finally { admission.release(transition); }
+});

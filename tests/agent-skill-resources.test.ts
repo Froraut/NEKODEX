@@ -46,7 +46,7 @@ test("explicit selected resources remain digest-bound across review, immutable u
     const packet = store.attach(scope, imported.versionId);
     expect(packet.packageDigest).toBe(snapshot.manifest.package!.packageDigest);
     expect(packet.bytes).toBe(snapshot.manifest.package!.totalBytes);
-    expect(packet.unsupportedResources).toContain("scripts-and-executables");
+    expect(packet.unsupportedResources).toContain("unselected-scripts-and-other-executables");
     const resource = packet.resources!.find(row => row.relativePath === "references/format.md")!;
     expect(store.readResource(scope, imported.versionId, packet.packageDigest!, resource.relativePath, resource.digest)).toEqual(resource);
     expect(() => store.readResource({ ...scope, generation: 2 }, imported.versionId, packet.packageDigest!, resource.relativePath, resource.digest)).toThrow("not attached");

@@ -1083,7 +1083,7 @@ export function startServer(
         isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
         || Boolean(agentRemoteTools?.status().available && agentRemoteTools.status().bindings.some(binding =>
           isAgentScopeActive({ taskId: binding.taskId, generation: binding.generation, toolCallId: 'capability-status' })))
-        || getAgentTools().hasSkillResourceTools() });
+        || getAgentTools().hasSkillResourceTools() || getAgentTools().hasSkillScriptTools() });
     agentRoutes = createAgentModeRoutes({ runtime: agentRuntime, authorize: controlAuthorized,
       observeWorkspaceEvidence: (task, proof) => getAgentEvidence().observe(task, proof),
       resolveEvidence: (task, reference) => {

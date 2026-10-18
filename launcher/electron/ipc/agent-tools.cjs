@@ -3,6 +3,7 @@ for (const action of ['reviewSkillImport', 'reviewSkillPackageImport', 'commitSk
 for (const action of ['browserStatus', 'bindBrowserTools', 'revokeBrowserTools']) ACTIONS.add(action);
 for (const action of ['inspectDesktopPermissions', 'listDesktopWindows', 'setDesktopEnabled', 'selectDesktopWindow', 'revokeDesktopTools']) ACTIONS.add(action);
 for (const action of ['remoteStatus', 'bindRemoteTools', 'revokeRemoteTools']) ACTIONS.add(action);
+for (const action of ['scriptStatus', 'grantScriptWorkspace', 'revokeScriptWorkspace']) ACTIONS.add(action);
 /** Existing IPC sender guard and owned supervisor remain the sole authority. */
 function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteService }) {
   const request = async body => {
@@ -22,7 +23,7 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     }
     const supervisor = runtimeHost.supervisor;
     const config = supervisor.readConfig();
-    const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools'].includes(body.action)
+    const allowDraining = ['status', 'receipt', 'installReceipt', 'managedSkillAction', 'browserStatus', 'remoteStatus', 'scriptStatus', 'revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
       || body.action === 'setDesktopEnabled' && body.enabled === false;
     if (!config || !await supervisor.ownedAgentRuntimeReady(config, { allowDraining })) throw new Error('Start the current NEKODEX runtime to use Agent tools');
     const receipt = await supervisor.control(config, 'agent-tools', { body });
@@ -31,11 +32,11 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
   };
   handle('launcher:agent-tools', async (_event, body) => request(body));
   handle('launcher:agent-tools-observe', async (_event, body) => {
-    if (!body || body.action !== 'remoteStatus') throw new Error('This tools action only reads remote metadata');
+    if (!body || !['remoteStatus', 'scriptStatus'].includes(body.action)) throw new Error('This tools action only reads provider metadata');
     return request(body);
   });
   handle('launcher:agent-tools-revoke', async (_event, body) => {
-    if (!body || !['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools'].includes(body.action)
+    if (!body || !['revokeBrowserTools', 'revokeDesktopTools', 'revokeRemoteTools', 'revokeScriptWorkspace'].includes(body.action)
       || body.explicitUserAction !== true) throw new Error('This tools action only revokes task authority');
     return request(body);
   });
@@ -53,6 +54,14 @@ function registerAgentTools({ handle, runtimeHost, dialog, getWindow, remoteServ
     const options = { title: 'Select the directory for official MCP filesystem read/write tools', properties: ['openDirectory'] };
     const window = getWindow?.();
     const selection = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    return selection.canceled || selection.filePaths.length !== 1 ? { cancelled: true } : { cancelled: false, root: selection.filePaths[0] };
+  });
+  handle('launcher:agent-tools-pick-script-workspace', async () => {
+    if (!dialog) throw new Error('Native script workspace picker is unavailable');
+    const options = { title: 'Select the workspace for separately approved restricted skill scripts', properties: ['openDirectory'] };
+    const window = getWindow?.();
+    const selection = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    // Choosing a path is not a workspace grant or an execution approval.
     return selection.canceled || selection.filePaths.length !== 1 ? { cancelled: true } : { cancelled: false, root: selection.filePaths[0] };
   });
 }

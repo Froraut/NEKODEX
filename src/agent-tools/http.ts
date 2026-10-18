@@ -35,6 +35,9 @@ const requestBody = z.discriminatedUnion("action", [
   z.object({ action: z.literal("remoteStatus"), scope: scope.optional() }).strict(),
   z.object({ action: z.literal("bindRemoteTools"), hostId: z.string().uuid(), scope: remoteTaskScopeSchema, explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("revokeRemoteTools"), scope, explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("scriptStatus"), scope: scope.optional() }).strict(),
+  z.object({ action: z.literal("grantScriptWorkspace"), scope, root: z.string().min(1).max(4096), access: z.enum(["read-only", "read-write"]), acknowledgeRestrictions: z.literal(true), explicitUserAction: z.literal(true) }).strict(),
+  z.object({ action: z.literal("revokeScriptWorkspace"), scope, grantId: z.string().uuid(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("skillRoot"), input: z.object({ root: z.string().min(1).max(4096), label: z.string().min(1).max(200) }).strict(), explicitUserAction: z.literal(true) }).strict(),
   z.object({ action: z.literal("skillsDiscover"), grantId: z.string().min(1).max(80) }).strict(),
   z.object({ action: z.literal("removeSkillRoot"), grantId: z.string().min(1).max(80), explicitUserAction: z.literal(true) }).strict(),
@@ -84,6 +87,9 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "remoteStatus": value = await composition.remoteStatus(body.scope); break;
         case "bindRemoteTools": value = await composition.bindRemoteTools(body.scope, body.hostId, body.explicitUserAction); break;
         case "revokeRemoteTools": value = await composition.revokeRemoteTools(body.scope, body.explicitUserAction); break;
+        case "scriptStatus": value = composition.scriptStatus(body.scope); break;
+        case "grantScriptWorkspace": value = composition.grantScriptWorkspace(body.scope, body.root, body.access, body.acknowledgeRestrictions, body.explicitUserAction); break;
+        case "revokeScriptWorkspace": await composition.revokeScriptWorkspace(body.scope, body.grantId, body.explicitUserAction); value = { revoked: true }; break;
         case "skillRoot": value = composition.addSkillRoot(body.input, body.explicitUserAction); break;
         case "skillsDiscover": value = composition.discoverSkills(body.grantId); break;
         case "removeSkillRoot": value = composition.removeSkillRoot(body.grantId, body.explicitUserAction); break;
@@ -93,8 +99,8 @@ export function createAgentToolsRoutes(composition: AgentToolsComposition, path 
         case "commitSkillImport": value = composition.commitSkillImport(body.actionId, body.reviewDigest, body.explicitUserAction); break;
         case "managedSkillAction": value = composition.managedSkillAction(body.actionId) ?? null; break;
         case "attachManagedSkill": value = composition.attachManagedSkill(body.scope, body.versionId, body.explicitUserAction); break;
-        case "detachManagedSkill": composition.detachManagedSkill(body.scope, body.versionId, body.explicitUserAction); value = { detached: true }; break;
-        case "revokeManagedSkill": value = composition.revokeManagedSkill(body.versionId, body.forget, body.explicitUserAction); break;
+        case "detachManagedSkill": await composition.detachManagedSkill(body.scope, body.versionId, body.explicitUserAction); value = { detached: true }; break;
+        case "revokeManagedSkill": value = await composition.revokeManagedSkill(body.versionId, body.forget, body.explicitUserAction); break;
       }
       return Response.json({ ok: true, value });
     } catch (error) {

@@ -17,7 +17,7 @@ export interface SelectedSkill extends SkillIdentity {
   /** Explicit bounded source material. No file path here grants execution or new authority. */
   packageDigest?: string;
   versionId?: string;
-  /** Instruction/text bytes plus image metadata, excluding retained image bytes. */
+  /** Instruction/reference text bytes plus image/script metadata, excluding retained pixels and code. */
   promptBytes?: number;
   resources?: SkillResourceDescriptor[];
   unsupportedResources?: readonly string[];

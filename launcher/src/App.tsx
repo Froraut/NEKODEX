@@ -62,6 +62,7 @@ const agentModeApi = { request: (body: Record<string, unknown>) => api!.agentMod
 const agentToolsApi: import('./agent-tools-types').AgentToolsApi = {
   request: body => api!.agentTools(body), pickSkillRoot: () => api!.pickAgentSkillRoot(),
   pickInstallRoot: () => api!.pickAgentToolsInstallRoot(),
+  pickScriptWorkspace: () => api!.pickAgentScriptWorkspace(),
   attachEvidence: (taskId, evidence) => api!.agentMode({ action: 'evidence', taskId, actionId: crypto.randomUUID(), evidence }),
   listTasks: () => api!.agentMode({ action: 'list' }) as ReturnType<import('./agent-tools-types').AgentToolsApi['listTasks']>,
   getTask: taskId => api!.agentMode({ action: 'get', taskId }) as ReturnType<import('./agent-tools-types').AgentToolsApi['getTask']>,

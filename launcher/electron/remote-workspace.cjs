@@ -8,6 +8,7 @@ const { spawn } = require('node:child_process');
 const { createHash, createHmac, randomBytes, randomUUID } = require('node:crypto');
 const { writePrivateFileAtomic } = require('./atomic-file.cjs');
 const { REMOTE_GIT_HELPER, createRemoteWorktreeController } = require('./remote-worktrees.cjs');
+const { resolveSshConfigAlias, assertSshConfigSnapshot } = require('./remote-ssh-config.cjs');
 const LIMITS = Object.freeze({ bytes: 256 * 1024, entries: 300, hosts: 24, receipts: 100, drafts: 40 });
 const AGENT_LIMITS = Object.freeze({ intents: 48, resultBytes: 180 * 1024, bindings: 64 });
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -53,14 +54,16 @@ class Reader {
   attrs() { const flags = this.u32(); const result = {}; if (flags & 1) result.size = Number(this.take(8).readBigUInt64BE()); if (flags & 2) this.take(8); if (flags & 4) result.mode = this.u32(); if (flags & 8) this.take(8); if (flags & 0x80000000) { const count = this.u32(); if (count > 100) fail('PROTOCOL', 'Too many SFTP attributes.'); for (let i = 0; i < count; i++) { this.string(); this.string(); } } return result; }
 }
 function validateHost(value) {
-  if (!value || typeof value !== 'object' || Object.keys(value).some(key => !['label', 'hostname', 'username', 'port', 'root'].includes(key))) fail('HOST', 'Invalid SSH host settings.');
+  if (!value || typeof value !== 'object' || Object.keys(value).some(key => !['label', 'hostname', 'username', 'port', 'root', 'connectionMode'].includes(key))) fail('HOST', 'Invalid SSH host settings.');
   const { hostname, username, root } = value;
-  if (typeof hostname !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$/.test(hostname)
-      || typeof username !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/.test(username)
+  const alias = value.connectionMode === 'ssh-config-alias';
+  if (value.connectionMode !== undefined && !alias && value.connectionMode !== 'direct') fail('HOST', 'Unsupported SSH connection mode.');
+  if (typeof hostname !== 'string' || !(alias ? /^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$/ : /^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$/).test(hostname)
+      || typeof username !== 'string' || !(alias && !username) && !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/.test(username)
       || typeof root !== 'string' || !root.startsWith('/') || root.length > 4096 || /[\0\r\n]/.test(root)
-      || root.split('/').includes('..') || !Number.isInteger(value.port) || value.port < 1 || value.port > 65535
+      || root.split('/').includes('..') || !(alias && value.port === null) && (!Number.isInteger(value.port) || value.port < 1 || value.port > 65535)
       || typeof value.label !== 'string' || !value.label.trim() || value.label.length > 100) fail('HOST', 'Use a valid host, SSH user, port and absolute POSIX root.');
-  return { label: value.label.trim(), hostname, username, port: value.port, root: path.posix.normalize(root) };
+  return { label: value.label.trim(), hostname, username, port: value.port, root: path.posix.normalize(root), ...(alias ? { connectionMode: 'ssh-config-alias' } : {}) };
 }
 function relative(value, empty = false) {
   if (typeof value !== 'string' || value.length > 4096 || /[\0\\\r\n]/.test(value)
@@ -68,9 +71,10 @@ function relative(value, empty = false) {
   return value;
 }
 function sshArgs(host, subsystem) {
+  if (host.sshConfigSnapshot) assertSshConfigSnapshot(host.sshConfigSnapshot);
   return ['-F', process.platform === 'win32' ? 'NUL' : '/dev/null', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
     '-o', 'ClearAllForwardings=yes', '-o', 'PermitLocalCommand=no', '-o', 'ConnectTimeout=15', '-o', 'ConnectionAttempts=1',
-    '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-p', String(host.port), '-l', host.username,
+    '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', ...(host.sshConfigSnapshot?.options ?? []), '-p', String(host.port), '-l', host.username,
     ...(subsystem ? ['-s'] : []), '--', host.hostname, ...(subsystem ? ['sftp'] : [])];
 }
 class Sftp {
@@ -174,7 +178,7 @@ async function runRemoteProgram(host, request, spawnProcess = spawn, program = C
 
 async function runCommand(host, request, spawnProcess = spawn) { const result = await runRemoteProgram(host, request, spawnProcess); if (!Number.isInteger(result.exitCode) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') throw new Error('Invalid command receipt.'); return result; }
 
-function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, transportFactory, commandRunner, remoteGitRunner, validateAgentTask, validateAgentIntent, agentInstanceId = randomUUID() } = {}) {
+function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, transportFactory, commandRunner, remoteGitRunner, validateAgentTask, validateAgentIntent, agentInstanceId = randomUUID(), sshConfigContext } = {}) {
   if (typeof storagePath !== 'string' || !path.isAbsolute(storagePath)) throw new Error('A private absolute remote-workspace storage path is required.');
   const hosts = new Map(); const sessions = new Map(); const approvals = new Map(); const busy = new Set();
   const active = new Map(); const owners = new Map(); const transports = new Set(); let closing = false;
@@ -219,7 +223,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
   function receipt(host, kind, detail, durable = true) { const r = signed({ id: randomUUID(), hostId: host.id, hostFingerprint: host.fingerprint, root: sessions.get(host.id)?.root ?? host.config.root, kind, time: new Date().toISOString(), ...detail }); if (receipts.length >= LIMITS.receipts) { const pinned = new Set(toolIntents.map(item => item.receiptId)); const removable = receipts.findIndex(entry => !['started', 'unknown'].includes(entry.state) && !pinned.has(entry.id)); if (removable < 0) fail('RECEIPTS', 'Retained transaction proof limit reached; no new operation was started.'); receipts.splice(removable, 1); } receipts.push(r); if (durable) persist(); return r; }
   function settle(id, update) { const index = receipts.findIndex(r => r.id === id); const r = signed({ ...withoutSignature(receipts[index]), ...update }); receipts[index] = r; persist(); return r; }
   function hostOf(id) { const host = hosts.get(id); if (!host) fail('HOST', 'Select a saved SSH host.'); return host; }
-  function connected(id) { const host = hostOf(id); const session = sessions.get(id); if (!session || session.sftp.closed || session.fingerprint !== host.fingerprint) fail('OFFLINE', 'Connect this SSH host first.'); return { host, ...session }; }
+  function connected(id) { const host = hostOf(id); const session = sessions.get(id); if (!session || session.sftp.closed || session.fingerprint !== host.fingerprint) fail('OFFLINE', 'Connect this SSH host first.'); if (session.effectiveHost?.config.sshConfigSnapshot) assertSshConfigSnapshot(session.effectiveHost.config.sshConfigSnapshot); return { host: session.effectiveHost ?? host, ...session }; }
   async function exclusive(id, action, kind = 'read') { hostOf(id); if (closing) fail('CLOSING', 'Remote workspace is closing.'); if (busy.has(id)) fail('BUSY', 'This host has an operation in progress.'); busy.add(id); owners.set(id, kind); const pending = Promise.resolve().then(action); active.set(id, pending); try { return await pending; } finally { active.delete(id); owners.delete(id); busy.delete(id); } }
   async function bounded(session, file, empty = false, missing = false) {
     relative(file, empty); const joined = path.posix.join(session.root, file); const parent = empty && !file ? joined : path.posix.dirname(joined);
@@ -227,7 +231,10 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     const stat = await session.sftp.stat(joined); if (!stat) { if (missing) return joined; fail('MISSING', 'Remote path does not exist.'); }
     if (await session.sftp.realpath(joined) !== joined || (stat.mode & 0xf000) === 0xa000) fail('BOUNDARY', 'Symbolic links are outside the remote editor boundary.'); return joined;
   }
-  function publicHost(host) { const session = sessions.get(host.id); return { id: host.id, ...host.config, fingerprint: host.fingerprint, connected: Boolean(session && !session.sftp.closed), canonicalRoot: session?.root ?? null, busy: busy.has(host.id) }; }
+  function publicHost(host) { const session = sessions.get(host.id), effective = session?.effectiveHost;
+    return { id: host.id, ...host.config, ...(effective ? { hostname: effective.config.hostname, username: effective.config.username, port: effective.config.port } : {}),
+      ...(host.config.connectionMode === 'ssh-config-alias' ? { sshAlias: host.config.hostname, aliasResolved: Boolean(effective) } : {}), fingerprint: effective?.fingerprint ?? host.fingerprint,
+      connected: Boolean(session && !session.sftp.closed), canonicalRoot: session?.root ?? null, busy: busy.has(host.id) }; }
   async function listRemote(s, directory = '') {
     const target = await bounded(s, directory, true); const listing = await s.sftp.list(target);
     return { path: directory, truncated: listing.truncated, entries: listing.entries.map(e => ({ name: e.name, path: directory ? directory + '/' + e.name : e.name,
@@ -243,12 +250,13 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
   function retireHostBindings(hostId) { for (const [key, binding] of agentBindings) if (binding.hostId === hostId) agentBindings.delete(key); }
   function bindingCurrent(binding) {
     const session = sessions.get(binding.hostId), host = hosts.get(binding.hostId);
-    return !closing && !!host && !!session && !session.sftp.closed && binding.mainInstanceId === mainInstanceId && binding.fingerprint === host.fingerprint
+    let unchanged = true; try { if (session?.effectiveHost?.config.sshConfigSnapshot) assertSshConfigSnapshot(session.effectiveHost.config.sshConfigSnapshot); } catch { unchanged = false; }
+    return unchanged && !closing && !!host && !!session && !session.sftp.closed && binding.mainInstanceId === mainInstanceId && binding.fingerprint === (session.effectiveHost ?? host).fingerprint
       && binding.connectionId === session.connectionId && binding.root === session.root;
   }
   function agentStatus(scope) {
     if (scope !== undefined) agentScope(scope);
-    return { mainInstanceId, hosts: [...hosts.values()].map(publicHost),
+    return { mainInstanceId, hosts: [...hosts.values()].map(host => { const h = publicHost(host); return { id: h.id, label: h.label, hostname: h.hostname, username: h.username || '(SSH config)', port: h.port ?? 22, root: h.root, fingerprint: h.fingerprint, connected: h.connected, canonicalRoot: h.canonicalRoot, busy: h.busy }; }),
       bindings: [...agentBindings.values()].filter(b => bindingCurrent(b) && (!scope || b.taskId === scope.taskId && b.generation === scope.generation)).map(b => structuredClone(b)),
       activeCount: agentActive.size };
   }
@@ -403,7 +411,7 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
       return action(scope, run);
     }, kind),
     getRecords: () => worktrees, storeRecords: rows => { worktrees = rows; persist(); },
-    begin: (id, kind, detail) => receipt(hostOf(id), kind, detail), finish: settle,
+    begin: (id, kind, detail) => receipt(connected(id).host, kind, detail), finish: settle,
   });
   return {
     agentStatus, attachAgent, revokeAgent, invalidateAgentTask, executeAgentTool,
@@ -413,8 +421,12 @@ function createRemoteWorkspaceService({ storagePath, spawnProcess = spawn, trans
     listHosts: () => [...hosts.values()].map(publicHost),
     addHost(input) { if (hosts.size >= LIMITS.hosts) fail('HOST', 'Remote host limit reached.'); const config = validateHost(input); const host = { id: randomUUID(), config, fingerprint: hash(JSON.stringify(config)) }; hosts.set(host.id, host); persist(); return publicHost(host); },
     forgetHost(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'Wait for the remote operation to settle.'); if (worktrees.some(w => w.hostId === id)) fail('WORKTREE', 'This host retains managed worktree ownership records.'); if (drafts.some(d => d.hostId === id)) fail('DRAFT', 'Recover or discard this host’s drafts before removing it.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); hosts.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); persist(); return { removed: true }; },
-    connect: id => exclusive(id, async () => { const host = hostOf(id); retireHostBindings(id); for (const [token, approval] of approvals) if (approval.hostId === id) approvals.delete(token); sessions.get(id)?.sftp.close(); sessions.delete(id); const sftp = transportFactory ? transportFactory(host.config) : new Sftp(host.config, spawnProcess); transports.add(sftp); if (sftp.exited) void sftp.exited.then(() => transports.delete(sftp));
-      try { await sftp.ready; const root = await sftp.realpath(host.config.root); if (!root.startsWith('/') || /[\0\r\n]/.test(root)) fail('ROOT', 'Invalid canonical remote root.'); const stat = await sftp.stat(root); if (!stat || (stat.mode & 0xf000) !== 0x4000) fail('ROOT', 'Remote root is not a directory.'); sessions.set(id, { sftp, root, fingerprint: host.fingerprint, connectionId: randomUUID() }); receipt(host, 'connect', { state: 'completed' }); return publicHost(host); }
+    connect: id => exclusive(id, async () => { const host = hostOf(id); retireHostBindings(id); for (const [token, approval] of approvals) if (approval.hostId === id) approvals.delete(token); sessions.get(id)?.sftp.close(); sessions.delete(id);
+      let effectiveHost;
+      if (host.config.connectionMode === 'ssh-config-alias') { const snapshot = resolveSshConfigAlias(host.config, sshConfigContext); assertSshConfigSnapshot(snapshot);
+        effectiveHost = { id: host.id, config: { ...host.config, hostname: snapshot.hostname, username: snapshot.username, port: snapshot.port, sshConfigSnapshot: snapshot }, fingerprint: hash(JSON.stringify([host.fingerprint, snapshot.fingerprint])) }; }
+      const sftp = transportFactory ? transportFactory((effectiveHost ?? host).config) : new Sftp((effectiveHost ?? host).config, spawnProcess); transports.add(sftp); if (sftp.exited) void sftp.exited.then(() => transports.delete(sftp));
+      try { await sftp.ready; const root = await sftp.realpath(host.config.root); if (!root.startsWith('/') || /[\0\r\n]/.test(root)) fail('ROOT', 'Invalid canonical remote root.'); const stat = await sftp.stat(root); if (!stat || (stat.mode & 0xf000) !== 0x4000) fail('ROOT', 'Remote root is not a directory.'); if (effectiveHost) assertSshConfigSnapshot(effectiveHost.config.sshConfigSnapshot); sessions.set(id, { sftp, root, fingerprint: host.fingerprint, connectionId: randomUUID(), ...(effectiveHost ? { effectiveHost } : {}) }); receipt(effectiveHost ?? host, 'connect', { state: 'completed' }); return publicHost(host); }
       catch (error) { sftp.close(); throw error; } }, 'connect'),
     disconnect(id) { hostOf(id); if (busy.has(id)) fail('BUSY', 'This host still owns an active operation.'); retireHostBindings(id); sessions.get(id)?.sftp.close(); sessions.delete(id); for (const [token, a] of approvals) if (a.hostId === id) approvals.delete(token); return { disconnected: true }; },
     list: (id, directory = '') => exclusive(id, () => listRemote(connected(id), directory)),
